@@ -15,7 +15,7 @@
 //! - The rules of a post for `handle`: which thread it goes to, and
 //!   which sessions it wakes (`View::thread_of`, `View::selected`).
 //! - A post to a session that asks for a step that can lose work is an
-//!   action of the proof of presence (`View::step_of`, PROOF_HOSTS).
+//!   action of the proof of presence (`View::step_of`, 01M75WKSJTB28ZQV8ADPBQ86WE).
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::time::Instant;
@@ -291,7 +291,7 @@ pub(super) fn wake(thread: &ThreadName, message: &Message) -> Wake {
 
 impl View<'_> {
     /// The action of a post that asks the riff daemon of a host for a
-    /// step that can lose work (PROOF_HOSTS): a request to each session
+    /// step that can lose work (01M75WKSJTB28ZQV8ADPBQ86WE): a request to each session
     /// that a selector of `to` names by its ID. The daemon acts on such
     /// a request in a direct thread and in the thread of its repository,
     /// so the thread does not matter. A post to the sessions of two
@@ -703,7 +703,7 @@ impl Command for Post {
     }
 
     /// A request to the daemon of a host for a step that can lose work
-    /// (PROOF_HOSTS).
+    /// (01M75WKSJTB28ZQV8ADPBQ86WE).
     fn proof(&self, _: &Caller, view: &View<'_>, now: Now) -> Option<Action> {
         view.step_of(&self.to, &self.body, now.at)
     }

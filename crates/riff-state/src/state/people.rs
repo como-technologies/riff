@@ -10,8 +10,8 @@
 //! - `apply`: one method of [`People`] for each of the kinds
 //!   `riff_made`, `person_joined`, `member_invited`, `member_removed`,
 //!   `admin_set`, `owner_set`, `owner_asked`, `owner_denied`,
-//!   `signins_ended`, `key_added` and `device_removed`. Only they change
-//!   the people: see [`super::riff`].
+//!   `signins_ended`, `key_added`, `device_removed` and `proved`. Only
+//!   they change the people: see [`super::riff`].
 //! - Checkpoint: `Saved`, the fields `riff_id`, `users`, `members`,
 //!   `admins`, `owner`, `no_owner`, `owner_asked`, `signins_ended` and
 //!   `keys`.
@@ -20,6 +20,9 @@
 //!   command [`Admit`] of the token path, and the commands
 //!   [`GrantOwner`], [`EndOwner`] and [`NameOwner`] of the server. No
 //!   client can send the last four.
+//! - [`Invite`], [`Remove`], [`SetAdmin`], [`PassOwner`] and
+//!   [`TakeOwner`] are actions of the proof of presence
+//!   ([`Command::proof`], 01M75WKSD5A66RHQMMM5CMKWJB).
 //!
 //! # The rules
 //!
@@ -285,7 +288,7 @@ impl People {
         Ok(())
     }
 
-    /// The key `name` of `user` signed a proof (PROOF_LOG): the time of
+    /// The key `name` of `user` signed a proof (01M75WKS4RF17WF85MWA4GFK0C): the time of
     /// the record is its last use, and the counter of the proof is its
     /// counter now. A key that the person does not have changes nothing.
     pub(super) fn proved(&mut self, proved: &Proved, at_ms: u64) -> Result<(), &'static str> {

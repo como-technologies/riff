@@ -54,8 +54,8 @@
 //! | `notes_set` | It keeps the `by` and the time of the record with the text, and each old text (01M59258K3TYR09HC4AWHWZPEX). | Yes. |
 //! | `key_added` | It keeps the time of the record as the time of the add and of the last use of the key (01M75NH2P3QHCYDKQH60KGSF97). A name that the person has, or a credential that the riff knows, changes nothing: `handle` refuses such an add. | Yes. |
 //! | `device_removed` | A name that the person has no device with changes nothing. | Yes. |
-//! | `policy_set` | It keeps the policy of the proof of presence (PROOF_POLICY). | Yes. |
-//! | `proved` | It keeps the time of the record as the time of the last use of the key, and the counter of the proof (PROOF_LOG). A key that the person does not have changes nothing. | Yes. |
+//! | `policy_set` | It keeps the policy of the proof of presence (01M75WKS7H066EXQPGF003B4SC). | Yes. |
+//! | `proved` | It keeps the time of the record as the time of the last use of the key, and the counter of the proof (01M75WKS4RF17WF85MWA4GFK0C). A key that the person does not have changes nothing. | Yes. |
 
 use riff_core::record::{Change, Record};
 

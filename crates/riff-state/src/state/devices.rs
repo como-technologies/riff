@@ -16,9 +16,9 @@
 //! that a person of the riff has, and a key over [`KEYS_MOST`]
 //! (01M75NH33CVGBVASSACBPXRR2G). `handle` of `remove_device` refuses a
 //! name that the person has no device with. With the policy
-//! `required`, the removal needs a proof (PROOF_KEYS). `handle` of
+//! `required`, the removal needs a proof (01M75WKSVEXMNGZQ4RYVGXH0FX). `handle` of
 //! `prove` refuses a key that the person does not have, and a counter
-//! that did not grow (PROOF_CHECK).
+//! that did not grow (01M75WKS1TS9FME704FQNBZQN1).
 //!
 //! ```mermaid
 //! flowchart LR
@@ -50,10 +50,10 @@ pub struct PersonKey {
     /// The time of the add, in milliseconds since the Unix epoch.
     pub added_ms: u64,
     /// The time of the last use. The add is a use, and so is each proof
-    /// (PROOF_LOG).
+    /// (01M75WKS4RF17WF85MWA4GFK0C).
     pub used_ms: u64,
     /// The counter of the last proof of the key: 0 for an authenticator
-    /// that counts nothing, and before the first proof (PROOF_CHECK).
+    /// that counts nothing, and before the first proof (01M75WKS1TS9FME704FQNBZQN1).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub counter: u64,
 }
@@ -182,7 +182,7 @@ impl Command for RemoveDevice {
     type Note = Option<DeviceInfo>;
 
     /// With the policy `required`, the removal needs a proof of a key of
-    /// the person (PROOF_KEYS).
+    /// the person (01M75WKSVEXMNGZQ4RYVGXH0FX).
     fn proof(&self, _: &Caller, _: &View<'_>, _: Now) -> Option<Action> {
         Some(Action::RemoveDevice {
             name: self.name.clone(),
@@ -229,7 +229,7 @@ impl Command for RemoveDevice {
 }
 
 /// A proof of presence that riff-server checked: the key `name` of the
-/// caller signed the challenge of `action` (PROOF_CHECK, PROOF_LOG).
+/// caller signed the challenge of `action` (01M75WKS1TS9FME704FQNBZQN1, 01M75WKS4RF17WF85MWA4GFK0C).
 /// riff-server sends it after its check of the signature, as the person
 /// of the start of the proof. No client can send it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -244,7 +244,7 @@ pub struct Prove {
 /// The record `proved` of a proof. `handle` refuses a key that the
 /// person does not have, and a counter that did not grow: when the key
 /// or the proof counts, the counter of the proof is greater than the
-/// counter of the last proof (PROOF_CHECK). An authenticator that counts
+/// counter of the last proof (01M75WKS1TS9FME704FQNBZQN1). An authenticator that counts
 /// nothing gives 0 each time.
 impl Command for Prove {
     const KIND: CommandKind = CommandKind::Prove;

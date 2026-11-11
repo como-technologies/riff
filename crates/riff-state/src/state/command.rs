@@ -128,7 +128,7 @@ pub struct Caller {
     email: Option<String>,
     /// The action of the proof of presence of the call: the engine
     /// sets it from the header `riff-proof`, after its check of the
-    /// proof (PROOF_REFUSE).
+    /// proof (01M75WKSFX84BHHGFX8VJ37DC6).
     proof: Option<Action>,
 }
 
@@ -421,7 +421,7 @@ impl CommandKind {
         // person decides (01M51JBTEM10W68K6F267BB79N). A device is a
         // device of a person, so a riff with no sign-in has none
         // (01M75NH30PNATYN33MXZQMVBW8), and it has no proof and no
-        // policy of the proof (PROOF_POLICY).
+        // policy of the proof (01M75WKS7H066EXQPGF003B4SC).
         match self {
             CommandKind::SetPolicy | CommandKind::Prove => true,
             CommandKind::Approve => false,
@@ -580,10 +580,10 @@ pub enum Code {
     /// The fields of the call do not agree.
     BadRequest,
     /// The action needs a proof of presence, and the call has none
-    /// (PROOF_REFUSE).
+    /// (01M75WKSFX84BHHGFX8VJ37DC6).
     NeedsProof,
     /// The proof of the call is for another action or person, used, old,
-    /// or not checked (PROOF_REFUSE).
+    /// or not checked (01M75WKSFX84BHHGFX8VJ37DC6).
     BadProof,
 }
 
@@ -760,7 +760,7 @@ pub fn permits(kind: CommandKind, caller: &Caller, needs: Role) -> Result<(), Re
         // An authenticator is a device of the person, never of a
         // session (01M75NH30PNATYN33MXZQMVBW8).
         CommandKind::AddKey | CommandKind::RemoveDevice => (&[Person], Can),
-        // A session never gives a proof (PROOF_ASK). Only a person sets
+        // A session never gives a proof (01M75WKC8RCPHQW3NADHRA31SG). Only a person sets
         // the policy and approves a deploy (01M6WZ40SFVZ6CRQ1H4Z27CWP4).
         CommandKind::Prove | CommandKind::SetPolicy | CommandKind::Approve => (&[Person], Can),
         CommandKind::Admit => (&[SignIn], Can),
@@ -890,7 +890,7 @@ pub trait Command: Send + 'static {
     }
 
     /// The action of the command of `caller` that a proof of presence
-    /// covers, when it is one of the list (PROOF_ACTIONS). Most
+    /// covers, when it is one of the list (01M75WKSD5A66RHQMMM5CMKWJB). Most
     /// commands have none. [`State::check`](super::State::check) runs
     /// the rule of the proof ([`super::proof::check`]) after
     /// [`permits`] and before `handle`.

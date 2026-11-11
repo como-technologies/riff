@@ -79,7 +79,7 @@
 //!   the browser, `GET /device/key`, and its two calls need no token:
 //!   the ticket of the add is their proof. See [`devices`], and
 //!   [`webauthn`] for the check of the reply of the authenticator.
-//! - A proof of presence (PROOF_ASK) is a fresh signature of a key of a
+//! - A proof of presence (01M75WKC8RCPHQW3NADHRA31SG) is a fresh signature of a key of a
 //!   person for one action. `POST /v1/proof` and `/v1/proof/wait` need
 //!   a person token; the page of the proof and its two calls need no
 //!   token. The call of an action carries the ticket of its proof in the
@@ -2035,7 +2035,7 @@ impl Service {
             .route(PlanSeen::PATH, post(plan_seen))
             .route(PlanShow::PATH, post(plan_show))
             .route(NotesShow::PATH, post(notes_show))
-            // A step that riff-server does not do itself (PROOF_GATE).
+            // A step that riff-server does not do itself (01M75WKSNREGG95CK40W2A5JPQ).
             .route(UseProof::PATH, post(proofs::use_proof))
             .route("/v1/me", get(me))
             .route("/v1/watch", get(watch))
@@ -2084,8 +2084,8 @@ impl Service {
             .route(RemoveDevice::PATH, post(command::<RemoveDevice>))
             .route(KeyStart::PATH, post(devices::start))
             .route(KeyWait::PATH, post(devices::wait))
-            // A proof of presence, and the policy (PROOF_ASK,
-            // PROOF_POLICY).
+            // A proof of presence, and the policy (01M75WKC8RCPHQW3NADHRA31SG,
+            // 01M75WKS7H066EXQPGF003B4SC).
             .route(ProofStart::PATH, post(proofs::start))
             .route(ProofWait::PATH, post(proofs::wait))
             .route(SetPolicy::PATH, post(command::<SetPolicy>))
@@ -2115,7 +2115,7 @@ impl Service {
             .route(KeyTicket::PATH, post(devices::options))
             .route(KeyReply::PATH, post(devices::reply))
             // The page of a proof has no riff token: the ticket is its
-            // proof (PROOF_ASK).
+            // proof (01M75WKC8RCPHQW3NADHRA31SG).
             .route(proofs::PAGE_PATH, get(proofs::page))
             .route(ProofTicket::PATH, post(proofs::options))
             .route(ProofReply::PATH, post(proofs::reply))

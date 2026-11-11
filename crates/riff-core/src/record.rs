@@ -319,10 +319,10 @@ changes! {
     /// (01M75NH3625QATGDT6DK652ZK6).
     DeviceRemoved(DeviceRemoved) = "device_removed",
     /// An admin set the policy of the proof of presence of the riff
-    /// (PROOF_POLICY).
+    /// (01M75WKS7H066EXQPGF003B4SC).
     PolicySet(PolicySet) = "policy_set",
     /// riff-server checked a proof of presence of a person for one
-    /// action (PROOF_LOG).
+    /// action (01M75WKS4RF17WF85MWA4GFK0C).
     Proved(Proved) = "proved",
 }
 // ANCHOR_END: record
@@ -1230,7 +1230,7 @@ pub struct DeviceRemoved {
     pub name: String,
 }
 
-/// The policy of the proof of presence of the riff (PROOF_POLICY). An
+/// The policy of the proof of presence of the riff (01M75WKS7H066EXQPGF003B4SC). An
 /// admin set it with a proof.
 ///
 /// ```
@@ -1245,7 +1245,7 @@ pub struct PolicySet {
     pub proof: crate::proof::Policy,
 }
 
-/// A proof of presence that riff-server checked (PROOF_LOG): the key
+/// A proof of presence that riff-server checked (01M75WKS4RF17WF85MWA4GFK0C): the key
 /// `name` of the person `user` signed the challenge of the action. The
 /// time of the record is the last use of the key.
 ///

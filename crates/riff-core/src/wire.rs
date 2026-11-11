@@ -98,7 +98,7 @@
 //! | `POST /device/key/reply` | [`KeyReply`] | [`KeyReplied`] | the page of the add |
 //!
 //! Five calls give a proof of presence, use it and set the policy
-//! (PROOF_ASK, PROOF_POLICY). A call of an action carries the ticket of
+//! (01M75WKC8RCPHQW3NADHRA31SG, 01M75WKS7H066EXQPGF003B4SC). A call of an action carries the ticket of
 //! its proof in the header [`crate::proof::PROOF_HEADER`]. The page of the
 //! proof makes two more calls, with no token: the ticket is their proof.
 //!
@@ -2511,7 +2511,7 @@ pub struct RiffReply {
     /// Each repository that is paused, in the order of the names.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub repositories: Vec<RepositoryPause>,
-    /// The policy of the proof of presence of the riff (PROOF_SHOW).
+    /// The policy of the proof of presence of the riff (01M75WKSYCMMJFGAM3W4ASGN85).
     #[serde(default, skip_serializing_if = "crate::proof::Policy::is_off")]
     pub proof: crate::proof::Policy,
 }
@@ -3389,7 +3389,7 @@ pub struct KeyReplied {
 }
 
 /// `POST /v1/proof`: the start of a proof of presence of `action` by
-/// the person of the token (PROOF_START). riff-server
+/// the person of the token (01M75WKC8RCPHQW3NADHRA31SG). riff-server
 /// keeps the proof for 5 minutes, and gives the URL of its page. A
 /// session token gets 403.
 ///
@@ -4071,7 +4071,7 @@ pub struct MembersReply {
     pub members: Vec<String>,
     /// The allowed domains (R15).
     pub allowed_domains: Vec<String>,
-    /// The policy of the proof of presence of the riff (PROOF_SHOW).
+    /// The policy of the proof of presence of the riff (01M75WKSYCMMJFGAM3W4ASGN85).
     #[serde(default, skip_serializing_if = "crate::proof::Policy::is_off")]
     pub proof: crate::proof::Policy,
 }

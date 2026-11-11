@@ -1,4 +1,4 @@
-//! The rule of a proof of presence (PROOF_REFUSE): one function for
+//! The rule of a proof of presence (01M75WKSFX84BHHGFX8VJ37DC6): one function for
 //! each action of the list, in a command and in a step that riff-server
 //! does not do itself.
 //!

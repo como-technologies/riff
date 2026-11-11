@@ -310,7 +310,7 @@ pub(crate) async fn start(
         .read(|state| state.refuse_key_name(user, &name))
         .map_err(|refused| Failed::Refused(refused).into_response())?;
     // With the policy required, the add of a second key needs a proof of
-    // a key of the person (PROOF_KEYS). The first key rests on the
+    // a key of the person (01M75WKSVEXMNGZQ4RYVGXH0FX). The first key rests on the
     // trust of the sign-in.
     if s.engine.read(|state| state.has_key(user)) {
         let ticket = crate::proofs::ticket_of(&headers).map_err(IntoResponse::into_response)?;

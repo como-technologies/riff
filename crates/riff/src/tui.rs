@@ -751,7 +751,8 @@ impl Effect {
                 anyhow::bail!(text::needs_the_host("riff questions --answered"))
             }
             Effect::Answered { repo, item } => {
-                crate::questions::answered(gh, api, me, &thread(repo)?, *item).await
+                let quiet = crate::proof::Asker::quiet();
+                crate::questions::answered(gh, api, me, &thread(repo)?, *item, &quiet).await
             }
             Effect::Pause { repo, state } => {
                 let (riff, repo) = match repo {
@@ -759,7 +760,15 @@ impl Effect {
                     None => (true, None),
                 };
                 reach
-                    .pause_as(api, me, me.place(), riff, repo, *state)
+                    .pause_as(
+                        api,
+                        me,
+                        me.place(),
+                        riff,
+                        repo,
+                        *state,
+                        &crate::proof::Asker::quiet(),
+                    )
                     .await
             }
         }
@@ -2341,13 +2350,13 @@ async fn frames(
             }
             Action::Takeover(name) => {
                 leave(mouse);
-                let taken = take_over(dir.as_deref(), &name).await;
+                let taken = take_over(api, me, dir.as_deref(), &name).await;
                 *terminal = enter(mouse)?;
                 state.took_over(&name, &taken);
                 (tasks.next, tasks.next_ask) = (Instant::now(), Instant::now());
             }
             Action::End(name) => {
-                state.done(end(dir.as_deref(), &name).await);
+                state.done(end(api, me, dir.as_deref(), &name).await);
                 (tasks.next, tasks.next_ask) = (Instant::now(), Instant::now());
             }
             Action::Limit { .. } | Action::Host { .. } | Action::Do(_)
@@ -2511,9 +2520,21 @@ async fn attach(name: &str) -> Result<crate::lead::Left> {
 
 /// The takeover of `t` of the session `name`: the code of
 /// `riff takeover NAME`, with the daemon in the folder `dir`. It stops
-/// the turn at once (01M51KJ1R9K7A7RW8T8XH8VW43).
-async fn take_over(dir: Option<&std::path::Path>, name: &str) -> Result<i32> {
+/// the turn at once (01M51KJ1R9K7A7RW8T8XH8VW43). riff-server checks it
+/// first, with a proof when it asks for one (01M75WKSNREGG95CK40W2A5JPQ): the TUI has
+/// left its screen, so the lines of the proof show.
+async fn take_over(
+    api: &Api,
+    me: &SessionUri,
+    dir: Option<&std::path::Path>,
+    name: &str,
+) -> Result<i32> {
     let dir = dir.ok_or_else(|| anyhow::anyhow!(text::NO_DAEMON_HERE))?;
+    let action = riff_core::proof::Action::TakeOver {
+        host: me.place().host().to_owned(),
+        name: name.to_owned(),
+    };
+    crate::proof::gate(api, &action, &crate::proof::Asker::terminal()).await?;
     #[cfg(target_os = "linux")]
     {
         crate::takeover::takeover(
@@ -2534,9 +2555,20 @@ async fn take_over(dir: Option<&std::path::Path>, name: &str) -> Result<i32> {
 
 /// The end of `x` of the session `name`: the code of `riff daemon end
 /// NAME`, with the daemon in the folder `dir`. It gives the last line of
-/// the daemon.
-async fn end(dir: Option<&std::path::Path>, name: &str) -> Result<String> {
+/// the daemon. riff-server checks it first, with a proof in the browser
+/// when it asks for one (01M75WKSNREGG95CK40W2A5JPQ).
+async fn end(
+    api: &Api,
+    me: &SessionUri,
+    dir: Option<&std::path::Path>,
+    name: &str,
+) -> Result<String> {
     let dir = dir.ok_or_else(|| anyhow::anyhow!(text::NO_DAEMON_HERE))?;
+    let action = riff_core::proof::Action::End {
+        host: me.place().host().to_owned(),
+        name: name.to_owned(),
+    };
+    crate::proof::gate(api, &action, &crate::proof::Asker::quiet()).await?;
     let mut lines = Vec::new();
     crate::daemon::ask_end(dir, name, |line| lines.push(line.to_owned())).await?;
     Ok(lines.pop().unwrap_or_else(|| text::daemon_ended(name)))

@@ -12406,7 +12406,8 @@ mod tests {
         assert!(steps.contains(&"plans the wave".to_owned()), "{steps:?}");
 
         // A work session cannot pause, tell a fact or read the denials.
-        let refused = worker.pause_as(&api, &user, &place, false, None, RiffState::Paused);
+        let quiet = crate::proof::Asker::quiet();
+        let refused = worker.pause_as(&api, &user, &place, false, None, RiffState::Paused, &quiet);
         assert_eq!(
             refused.await.unwrap_err().to_string(),
             text::DAEMON_PAUSE_ONLY_LEAD
@@ -12430,7 +12431,7 @@ mod tests {
         // The lead pauses and resumes the repository, and reads the
         // denials.
         for state in [RiffState::Paused, RiffState::Running] {
-            let line = lead.pause_as(&api, &user, &place, false, None, state);
+            let line = lead.pause_as(&api, &user, &place, false, None, state, &quiet);
             assert!(line.await.unwrap().contains(REPO));
         }
         assert!(lead.denials(&api, &user, 0).await.unwrap().is_empty());

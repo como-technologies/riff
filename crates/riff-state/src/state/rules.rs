@@ -25,6 +25,7 @@ mod devices;
 mod notes;
 mod people;
 mod plan;
+mod proof;
 
 fn ann() -> SessionUri {
     "riff://ann@heron/acme/app?session=a1".parse().unwrap()

@@ -3861,6 +3861,77 @@
   the person: its kind, its name, the time of its add and the time of
   its last use, in UTC. `riff device remove NAME` removes the device
   NAME of the person at once.
+- **01M75WKC8RCPHQW3NADHRA31SG** riff asks a person for a proof of
+  presence before an action of the list: a fresh signature of a key of
+  the person, on a page of riff-server in the browser, as the add of a
+  key. The challenge names the action and the person. A proof is good
+  for one action of one person, one time, for 5 minutes from its start.
+  Only a person token starts a proof and waits for it: riff-server
+  refuses a session token with 403. A person with no key gets the way to
+  add one: riff device add --key NAME.
+- **01M75WKS1TS9FME704FQNBZQN1** riff-server checks each signature of a
+  proof: the type webauthn.get, the challenge of the proof, the origin
+  of riff-server, the hash of its relying party ID, the flag of user
+  presence, a credential of a key of the person, and the signature of
+  that key. When the key or the proof counts, the counter of the proof
+  is greater than the counter of the last proof of the key. riff-server
+  refuses each other signature, and says why.
+- **01M75WKS4RF17WF85MWA4GFK0C** A record proved holds the USER, the
+  name of the key, the text of the action and the counter of each proof
+  that riff-server checked. The time of the record is the last use of
+  the key. The state keeps the counter of each key, also in a
+  checkpoint.
+- **01M75WKS7H066EXQPGF003B4SC** The policy of the proof of presence of
+  a riff is off or required. A new riff is off. A record policy_set
+  holds the policy, and the checkpoint keeps it. A riff with no sign-in
+  has no people, so its policy stays off.
+- **01M75WKSADNAW4RNFAXD48D7DF** An admin sets the policy with riff
+  admin proof required or riff admin proof off. The change needs a proof
+  of the admin, also to off. A session never sets it.
+- **01M75WKSD5A66RHQMMM5CMKWJB** The actions of the list: the approval
+  of the deploy of a release, the answer to a decision that waits for
+  the person (riff questions --answered N), the pass and the take of the
+  owner role, an invite, a removal, a change of an admin, the pause and
+  the resume of the whole riff, the end of a session, riff leave --now,
+  riff lead stop, riff daemon sweep --remove NAME --force, a take-over,
+  the add of a second key, the removal of a device, and the change of
+  the policy. Each runs on this host or on another one with --host. The
+  accept of an outside pull request joins the list when riff has it.
+- **01M75WKSFX84BHHGFX8VJ37DC6** With required, riff-server refuses each
+  action of the list with no proof, with the code needs_proof and the
+  status 403. The text names the action and says how to add an
+  authenticator. riff then asks for the proof in the browser, and sends
+  the action again with the ticket of the proof in the header
+  riff-proof. riff-server refuses a proof for another action or person,
+  a used or old proof, and a proof whose signature did not check, with
+  the code bad_proof. With off, riff asks for no proof, and an action
+  with a proof is marked in the log by its record proved.
+- **01M75WKSJTB28ZQV8ADPBQ86WE** A step on another host goes to its
+  daemon in a post to the session of the daemon. riff-server reads the
+  request of each post to a session. With required, it refuses a step
+  that can lose work with no proof, before the daemon gets it. The
+  action names the host of the daemon. riff lead stop --host asks for
+  the proof before the wait for the notes of the lead.
+- **01M75WKSNREGG95CK40W2A5JPQ** riff asks riff-server through POST
+  /v1/proof/use before a step that riff-server does not do itself: a
+  step of the daemon of this host, a take-over, and an answer on GitHub.
+  riff stops on a refusal. When riff cannot reach riff-server, it warns,
+  and the step goes on.
+- **01M75WKSRP6P4GGJPWTVRMDW85** riff release approve sends POST
+  /v1/release/approve before the approval on GitHub. It pauses the whole
+  riff, as the pause of the approval did, and it needs an admin. With
+  required, it needs the proof of the approval of the tag of the
+  repository.
+- **01M75WKSVEXMNGZQ4RYVGXH0FX** With required, the add of a key by a
+  person who has a key, and the removal of a device, need a proof of a
+  key of the person. The first key of a person needs no proof: it rests
+  on the trust of the sign-in.
+- **01M75WKSYCMMJFGAM3W4ASGN85** riff whoami and riff members show the
+  policy on the line proof.
+- **01M75WKT1A7K8RTNB4NVTXB41V** riff device test gives a proof of the
+  action test a proof of presence, with each policy, and prints the name
+  of the key that signed. So a person tests each key before an admin
+  sets the policy required.
 
 ## Sign-in and tokens
 

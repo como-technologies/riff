@@ -48,7 +48,7 @@
 //!   `notes_set` records: two texts for one user, and one text for
 //!   another user in another repository. The last has no caller.
 //! - `fixtures/4.17.0`: the keys of a person (01M75NH2P3QHCYDKQH60KGSF97),
-//!   and the proof of presence (PROOF_POLICY, PROOF_LOG). `log.jsonl`
+//!   and the proof of presence (01M75WKS7H066EXQPGF003B4SC, 01M75WKS4RF17WF85MWA4GFK0C). `log.jsonl`
 //!   adds two keys of one person, one key of a second person and one of
 //!   a third, and removes the first key. The sixth record has no caller.
 //!   Then the policy is `required`, a key signs a proof, the riff

@@ -6,7 +6,7 @@
 //!
 //! - Part of the riff: [`TheRiff`]. The pauses ([`Pauses`]), the
 //!   settings of idle workers, and the policy of the proof of presence
-//!   (PROOF_POLICY).
+//!   (01M75WKS7H066EXQPGF003B4SC).
 //! - `apply`: `TheRiff::pause_set` for a `pause_set` record,
 //!   `TheRiff::setting_changed` for a `setting_changed` record, and
 //!   `TheRiff::policy_set` for a `policy_set` record. The
@@ -16,7 +16,7 @@
 //!   `pauses` and `proof`.
 //! - A pause and a resume of the whole riff, a change of the policy
 //!   and an approval are actions of the proof of presence
-//!   ([`Command::proof`], PROOF_ACTIONS).
+//!   ([`Command::proof`], 01M75WKSD5A66RHQMMM5CMKWJB).
 //!
 //! # The two pauses (01M3XAHZBGSSJB3YX23K88W01K)
 //!
@@ -173,13 +173,13 @@ pub struct TheRiff {
     pub(super) pauses: Pauses,
     /// The settings of idle workers (01M3Q5A0TF9K49V8Z1ZY9NDF74).
     pub(super) idle: Idle,
-    /// The policy of the proof of presence (PROOF_POLICY). A new riff
+    /// The policy of the proof of presence (01M75WKS7H066EXQPGF003B4SC). A new riff
     /// is `off`.
     pub(super) proof: Policy,
 }
 
 impl TheRiff {
-    /// The policy of the proof of presence (PROOF_POLICY).
+    /// The policy of the proof of presence (01M75WKS7H066EXQPGF003B4SC).
     pub fn proof(&self) -> Policy {
         self.proof
     }
@@ -270,7 +270,7 @@ pub(super) struct Saved {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pauses: BTreeMap<ThreadName, PauseInfo>,
     /// The policy of the proof of presence. Absent while it is `off`
-    /// (PROOF_POLICY).
+    /// (01M75WKS7H066EXQPGF003B4SC).
     #[serde(default, skip_serializing_if = "Policy::is_off")]
     proof: Policy,
 }
@@ -543,7 +543,7 @@ impl Command for Resume {
     }
 }
 
-/// An admin sets the policy of the proof of presence (PROOF_POLICY). It
+/// An admin sets the policy of the proof of presence (01M75WKS7H066EXQPGF003B4SC). It
 /// needs a proof with each policy, so a session never sends it. The reply
 /// is the policy of the written copy.
 impl Command for SetPolicy {
@@ -575,7 +575,7 @@ impl Command for SetPolicy {
     }
 }
 
-/// The step of riff-server of the approval of a deploy (PROOF_APPROVE):
+/// The step of riff-server of the approval of a deploy (01M75WKSRP6P4GGJPWTVRMDW85):
 /// it pauses the whole riff, as [`Pause`] of the whole riff does, and
 /// it needs an admin. Its action is the approval of the tag of the
 /// repository.

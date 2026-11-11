@@ -437,7 +437,7 @@ pub struct Check<N> {
     /// The changes and the note of the command, or why it is refused.
     pub result: Result<(Vec<Change>, N), Refused>,
     /// True when the command passed with the proof of its call: the
-    /// engine then uses the proof (PROOF_REFUSE).
+    /// engine then uses the proof (01M75WKSFX84BHHGFX8VJ37DC6).
     pub proved: bool,
 }
 
@@ -1025,7 +1025,7 @@ impl State {
     }
 
     /// The rule of the proof of presence of a command of `caller`
-    /// ([`proof::check`], PROOF_REFUSE), on the pending copy: true when
+    /// ([`proof::check`], 01M75WKSFX84BHHGFX8VJ37DC6), on the pending copy: true when
     /// the command uses the proof of the call.
     fn check_proof<C: Command>(
         &self,
@@ -1040,23 +1040,35 @@ impl State {
         }
     }
 
+    /// The action of the proof of presence of a command of `caller` on
+    /// the pending copy, when it is one of the list (01M75WKSD5A66RHQMMM5CMKWJB). The
+    /// engine takes the proof of a call only for such a command.
+    pub fn proof_of<C: Command>(
+        &self,
+        caller: &Caller,
+        command: &C,
+        now: Instant,
+    ) -> Option<Action> {
+        command.proof(caller, &self.pending_view(), self.now(now))
+    }
+
     /// The rule of the proof of presence of a step that riff-server
     /// does not do itself: a step of the daemon of a host, or on GitHub
-    /// (PROOF_GATE). It reads the policy of the pending copy, as a
+    /// (01M75WKSNREGG95CK40W2A5JPQ). It reads the policy of the pending copy, as a
     /// command does.
     pub fn check_step(&self, action: &Action, proved: Option<&Action>) -> Result<bool, Refused> {
         proof::check(self.pending.the_riff().proof(), action, proved)
     }
 
     /// The policy of the proof of presence in the written copy
-    /// (PROOF_SHOW).
+    /// (01M75WKSYCMMJFGAM3W4ASGN85).
     pub fn policy(&self) -> Policy {
         self.written.the_riff().proof()
     }
 
     /// True when `user` has a key in the pending copy: the add of a
     /// second key then needs a proof with the policy `required`
-    /// (PROOF_KEYS).
+    /// (01M75WKSVEXMNGZQ4RYVGXH0FX).
     pub fn has_key(&self, user: &str) -> bool {
         self.pending.people().keys_of(user).next().is_some()
     }
@@ -1143,7 +1155,7 @@ impl State {
     }
 
     /// Each key of `user` in the written copy, by name: the check of the
-    /// assertion of a proof finds the key that signed (PROOF_CHECK).
+    /// assertion of a proof finds the key that signed (01M75WKS1TS9FME704FQNBZQN1).
     pub fn keys(&self, user: &str) -> Vec<(String, PersonKey)> {
         self.written
             .people()

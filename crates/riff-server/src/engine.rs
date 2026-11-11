@@ -502,7 +502,7 @@ pub struct Authenticated<C> {
     /// for each command of the server.
     call: Option<String>,
     /// The ticket of the proof of presence of the call: the header
-    /// `riff-proof` (PROOF_REFUSE). The check of the command takes it.
+    /// `riff-proof` (01M75WKSFX84BHHGFX8VJ37DC6). The check of the command takes it.
     ticket: Option<String>,
 }
 
@@ -521,7 +521,7 @@ impl<C> Authenticated<C> {
 
     /// The same call with the ticket of its proof of presence. The
     /// check of the command takes the proof under the lock of the
-    /// state, and uses it only when the command passes (PROOF_REFUSE).
+    /// state, and uses it only when the command passes (01M75WKSFX84BHHGFX8VJ37DC6).
     pub fn with_ticket(self, ticket: Option<String>) -> Authenticated<C> {
         Authenticated { ticket, ..self }
     }
@@ -648,7 +648,7 @@ struct Core {
     /// the second tries that wait for it (01M48VFX8K93F8XRWDB2BDP240).
     pending: BTreeMap<Key, Vec<oneshot::Sender<()>>>,
     /// The proofs of presence that wait for their page or their use
-    /// (PROOF_ASK). They are under the lock of the state, so the check
+    /// (01M75WKC8RCPHQW3NADHRA31SG). They are under the lock of the state, so the check
     /// of a command takes its proof in the same step.
     proofs: Proofs,
 }
@@ -954,9 +954,12 @@ impl Engine {
                 }
             }
             called = key;
-            // The proof of the call (PROOF_REFUSE): the engine takes it
+            // The proof of the call (01M75WKSFX84BHHGFX8VJ37DC6): the engine takes it
             // here, under the lock, and uses it only when the command
             // passes with it.
+            // A call that is no action of the list takes no proof: its
+            // ticket does not matter.
+            let ticket = ticket.filter(|_| core.state.proof_of(&caller, &command, now).is_some());
             match Engine::proved(&core, &caller, ticket.as_deref(), call.as_deref(), now) {
                 Err(refused) => Check {
                     registered: None,
@@ -987,7 +990,7 @@ impl Engine {
     }
 
     /// `caller` with the action of the proof of `ticket`, when the call
-    /// has one (PROOF_REFUSE): a proof of the person of the caller, that
+    /// has one (01M75WKSFX84BHHGFX8VJ37DC6): a proof of the person of the caller, that
     /// the key signed, in its life, and not used. A session never gives
     /// a proof. Else the refusal `bad_proof`, with the reason.
     fn proved(
@@ -1122,7 +1125,7 @@ impl Engine {
     }
 
     /// The record of a proof of presence after the check of its
-    /// assertion: the command `prove` (PROOF_CHECK, PROOF_LOG). The page
+    /// assertion: the command `prove` (01M75WKS1TS9FME704FQNBZQN1, 01M75WKS4RF17WF85MWA4GFK0C). The page
     /// of the proof has no token, so the caller is the person of
     /// `start`: the proof of the token that started the proof. A
     /// sign-in that ended since the start sends no command.
@@ -1140,13 +1143,13 @@ impl Engine {
     }
 
     /// Runs `with` on the proofs of presence, under the lock of the
-    /// state (PROOF_ASK).
+    /// state (01M75WKC8RCPHQW3NADHRA31SG).
     pub fn proofs<T>(&self, with: impl FnOnce(&mut Proofs) -> T) -> T {
         with(&mut self.core().proofs)
     }
 
     /// The rule of the proof of a step that riff-server does not do
-    /// itself (PROOF_GATE): a step of the daemon of a host, or on
+    /// itself (01M75WKSNREGG95CK40W2A5JPQ): a step of the daemon of a host, or on
     /// GitHub, or the add of a second key. The caller is the caller of
     /// `signed_in`, and `ticket` the ticket of its proof. Gives true when
     /// the step uses the proof, and then the proof is used. A session

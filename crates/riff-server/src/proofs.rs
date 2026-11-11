@@ -1,4 +1,4 @@
-//! A proof of presence on riff-server (PROOF_ASK): the page of the
+//! A proof of presence on riff-server (01M75WKC8RCPHQW3NADHRA31SG): the page of the
 //! proof in the browser, the check of its assertion, and the use of a
 //! proof by the call of an action.
 //!
@@ -43,17 +43,17 @@
 //!   line holds it. The page and its two calls need no riff token: the
 //!   ticket is their proof.
 //! - Only a person token starts a proof and waits for it: riff-server
-//!   refuses a session token with 403 (PROOF_ASK). A session never gives
+//!   refuses a session token with 403 (01M75WKC8RCPHQW3NADHRA31SG). A session never gives
 //!   a proof.
-//! - [`crate::webauthn::assert`] checks the assertion. Then
+//! - [`crate::webauthn::check_assertion`] checks the assertion. Then
 //!   [`crate::engine::Engine::prove`] sends the command `prove` with the
 //!   proof of the token of the start: its `handle` checks the counter,
-//!   and its record `proved` names the key and the action (PROOF_LOG).
+//!   and its record `proved` names the key and the action (01M75WKS4RF17WF85MWA4GFK0C).
 //! - The call of an action carries the ticket in the header
 //!   [`PROOF_HEADER`]. The engine takes the proof under the lock of the
 //!   state, and uses it only when the command passes its check
-//!   (PROOF_REFUSE). `POST /v1/proof/use` does the same for a step that
-//!   riff-server does not do itself (PROOF_GATE).
+//!   (01M75WKSFX84BHHGFX8VJ37DC6). `POST /v1/proof/use` does the same for a step that
+//!   riff-server does not do itself (01M75WKSNREGG95CK40W2A5JPQ).
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -76,10 +76,10 @@ use crate::webauthn::{self, Party};
 /// The path of the page of a proof.
 pub const PAGE_PATH: &str = "/proof";
 
-/// How long a proof is good, from its start (PROOF_ASK).
+/// How long a proof is good, from its start (01M75WKC8RCPHQW3NADHRA31SG).
 pub const LIFE: Duration = Duration::from_secs(LIFE_SECS);
 
-/// The refusal of a call of a session token (PROOF_ASK).
+/// The refusal of a call of a session token (01M75WKC8RCPHQW3NADHRA31SG).
 pub const PERSON_ONLY: &str = "a session never gives a proof of presence: an authenticator \
     is a device of your person. Your person runs the command in a terminal.";
 
@@ -118,7 +118,7 @@ enum Step {
 }
 
 /// The proofs that riff-server keeps in memory, by their ticket
-/// (PROOF_ASK). Each is good for its life, for one reply of the page and
+/// (01M75WKC8RCPHQW3NADHRA31SG). Each is good for its life, for one reply of the page and
 /// for one use.
 ///
 /// ```
@@ -302,7 +302,7 @@ impl Proofs {
     }
 
     /// The action of the proof of `ticket` for a call of `user` with the
-    /// call ID `call` (PROOF_REFUSE): a proof that the key of the person
+    /// call ID `call` (01M75WKSFX84BHHGFX8VJ37DC6): a proof that the key of the person
     /// signed, in its life, and not used. A second try of the call that
     /// used it gets it again. Else why riff-server does not take it.
     pub fn resolve(
@@ -381,7 +381,7 @@ fn call_of(headers: &HeaderMap) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// Refuses a session token (PROOF_ASK).
+/// Refuses a session token (01M75WKC8RCPHQW3NADHRA31SG).
 fn person_only(signed_in: &SignedIn) -> Result<(), (StatusCode, String)> {
     match signed_in.who.session() {
         Some(_) => Err((StatusCode::FORBIDDEN, PERSON_ONLY.to_owned())),
@@ -395,7 +395,7 @@ fn party(s: &crate::Server) -> Party {
 }
 
 /// `POST /v1/proof`: a new proof of the action, and the URL of its page
-/// (PROOF_ASK). A person with no key gets the way to add one.
+/// (01M75WKC8RCPHQW3NADHRA31SG). A person with no key gets the way to add one.
 pub(crate) async fn start(
     AxumState(s): AxumState<crate::Shared>,
     Extension(signed_in): Extension<SignedIn>,
@@ -433,7 +433,7 @@ pub(crate) async fn wait(
 }
 
 /// `POST /v1/proof/use`: the check of riff-server before a step that it
-/// does not do itself (PROOF_GATE): the policy, and the proof of the
+/// does not do itself (01M75WKSNREGG95CK40W2A5JPQ): the policy, and the proof of the
 /// header, which it uses.
 pub(crate) async fn use_proof(
     AxumState(s): AxumState<crate::Shared>,
@@ -472,7 +472,7 @@ pub(crate) async fn page() -> Response {
 }
 
 /// `POST /proof/options`: the options of the assertion of the proof of
-/// the ticket (PROOF_ASK).
+/// the ticket (01M75WKC8RCPHQW3NADHRA31SG).
 pub(crate) async fn options(
     AxumState(s): AxumState<crate::Shared>,
     Json(ProofTicket { ticket }): Json<ProofTicket>,
@@ -492,7 +492,7 @@ pub(crate) async fn options(
 }
 
 /// `POST /proof/reply`: the check of the assertion, and the command
-/// `prove` (PROOF_CHECK, PROOF_LOG). Each assertion ends the wait of
+/// `prove` (01M75WKS1TS9FME704FQNBZQN1, 01M75WKS4RF17WF85MWA4GFK0C). Each assertion ends the wait of
 /// the proof: proved, or refused with the reason.
 pub(crate) async fn reply(
     AxumState(s): AxumState<crate::Shared>,
@@ -511,7 +511,7 @@ pub(crate) async fn reply(
         (status, reason)
     };
     let keys = s.engine.read(|state| state.keys(&user));
-    let asserted = match webauthn::assert(&party(&s), &taken.challenge, &reply, &keys) {
+    let asserted = match webauthn::check_assertion(&party(&s), &taken.challenge, &reply, &keys) {
         Ok(asserted) => asserted,
         Err(refused) => return Err(failed(StatusCode::BAD_REQUEST, refused.0)),
     };

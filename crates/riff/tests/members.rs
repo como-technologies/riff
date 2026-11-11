@@ -154,7 +154,7 @@ async fn the_owner_invites_lists_and_removes() {
     assert_eq!(
         members(&list),
         "owner            ada@gmail.com\nadmins           none\nmembers          bob@gmail.com\n\
-         allowed domains  none\n"
+         allowed domains  none\nproof            off\n"
     );
 
     let removed = signed_in
@@ -230,7 +230,7 @@ async fn the_owner_makes_an_admin_who_invites_and_removes() {
     assert_eq!(
         members(&list),
         "owner            ada@gmail.com\nadmins           bob@gmail.com\nmembers          carol@gmail.com\n\
-         allowed domains  none\n"
+         allowed domains  none\nproof            off\n"
     );
 }
 
@@ -327,7 +327,7 @@ async fn the_owner_passes_the_role_to_a_member() {
     assert_eq!(
         members(&list),
         "owner            bob@gmail.com\nadmins           ada@gmail.com\nmembers          none\n\
-         allowed domains  none\n"
+         allowed domains  none\nproof            off\n"
     );
 }
 
@@ -723,6 +723,7 @@ fn the_book_has_one_how_to_for_riff_members() {
         admins: vec!["ada@example.com".into()],
         members: vec!["bob@gmail.com".into()],
         allowed_domains: vec!["example.com".into()],
+        proof: riff_core::proof::Policy::Off,
     };
     assert!(part.contains(&members(&list)), "{part}");
     assert!(part.contains("shows the owner `none`"), "{part}");

@@ -1,6 +1,6 @@
 //! The check of the reply of a FIDO2 / WebAuthn authenticator: the add
 //! of a key of a person (01M75NH2VF6HGZVY04GB358JG0), and the assertion
-//! of a proof of presence ([`assert`], PROOF_CHECK).
+//! of a proof of presence ([`check_assertion`], 01M75WKS1TS9FME704FQNBZQN1).
 //!
 //! # Design
 //!
@@ -338,7 +338,7 @@ pub fn check(party: &Party, challenge: &[u8], reply: &KeyReply) -> Result<Checke
     })
 }
 
-/// A proof that [`assert`] took: the name of the key that signed, and
+/// A proof that [`check_assertion`] took: the name of the key that signed, and
 /// the counter of the authenticator in the signed data.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Asserted {
@@ -347,7 +347,7 @@ pub struct Asserted {
 }
 
 /// Checks the assertion of a proof of presence with the challenge
-/// `challenge` on `party` (PROOF_CHECK): the type `webauthn.get`, the
+/// `challenge` on `party` (01M75WKS1TS9FME704FQNBZQN1): the type `webauthn.get`, the
 /// challenge, the origin of riff-server, the hash of the relying party
 /// ID, the flag of user presence, a credential of `keys`, and the
 /// signature of that key over the authenticator data and the hash of
@@ -369,7 +369,7 @@ pub struct Asserted {
 ///
 /// ```
 /// use riff_core::device::fake::{Authenticator, Proof, proof_options};
-/// use riff_server::webauthn::{Party, assert};
+/// use riff_server::webauthn::{Party, check_assertion};
 /// use riff_state::state::PersonKey;
 ///
 /// let party = Party::of("https://riff.example.com");
@@ -379,13 +379,13 @@ pub struct Asserted {
 /// // The challenge "c2VlZA" is the base64url of "seed".
 /// let options = proof_options(&party.id, "c2VlZA", &key);
 /// let good = key.assert("T", &options, &party.origin);
-/// let asserted = assert(&party, b"seed", &good, &keys).unwrap();
+/// let asserted = check_assertion(&party, b"seed", &good, &keys).unwrap();
 /// assert_eq!((asserted.name.as_str(), asserted.counter), ("yubikey", 1));
 ///
 /// let bad = key.assert_as("T", &options, &party.origin, Proof::BadSignature);
-/// assert!(assert(&party, b"seed", &bad, &keys).unwrap_err().0.contains("signature"));
+/// assert!(check_assertion(&party, b"seed", &bad, &keys).unwrap_err().0.contains("signature"));
 /// ```
-pub fn assert(
+pub fn check_assertion(
     party: &Party,
     challenge: &[u8],
     reply: &ProofReply,
@@ -459,7 +459,7 @@ pub fn assert(
     })
 }
 
-/// The options of the assertion of a proof (PROOF_ASK): the challenge,
+/// The options of the assertion of a proof (01M75WKC8RCPHQW3NADHRA31SG): the challenge,
 /// the relying party, the credential of each key of the person, and the
 /// text of the action for the page.
 pub fn proof_options(
@@ -883,7 +883,7 @@ mod tests {
         let options = fake::proof_options(&party().id, &B64.encode(b"seed"), &key);
         for counter in 1..=2 {
             let reply = key.assert("T", &options, &party().origin);
-            let asserted = assert(&party(), b"seed", &reply, &kept(&key)).unwrap();
+            let asserted = check_assertion(&party(), b"seed", &reply, &kept(&key)).unwrap();
             assert_eq!(asserted.name, "yubikey");
             assert_eq!(asserted.counter, counter);
         }
@@ -891,7 +891,7 @@ mod tests {
         let options = fake::proof_options(&party().id, &B64.encode(b"seed"), &zero);
         let reply = zero.assert("T", &options, &party().origin);
         assert_eq!(
-            assert(&party(), b"seed", &reply, &kept(&zero))
+            check_assertion(&party(), b"seed", &reply, &kept(&zero))
                 .unwrap()
                 .counter,
             0
@@ -917,20 +917,20 @@ mod tests {
             (Proof::OtherType, "not webauthn.get"),
         ] {
             let reply = key.assert_as("T", &options, &party().origin, shape);
-            let reason = assert(&party(), b"seed", &reply, &kept(&key))
+            let reason = check_assertion(&party(), b"seed", &reply, &kept(&key))
                 .unwrap_err()
                 .0;
             assert!(reason.contains(part), "{shape:?}: {reason}");
         }
         // The challenge of another proof.
         let reply = key.assert("T", &options, &party().origin);
-        let reason = assert(&party(), b"other", &reply, &kept(&key))
+        let reason = check_assertion(&party(), b"other", &reply, &kept(&key))
             .unwrap_err()
             .0;
         assert!(reason.contains("did not give"), "{reason}");
         // A key that is not one of the person.
         let other = Authenticator::new();
-        let reason = assert(&party(), b"seed", &reply, &kept(&other))
+        let reason = check_assertion(&party(), b"seed", &reply, &kept(&other))
             .unwrap_err()
             .0;
         assert!(reason.contains("not one of yours"), "{reason}");
@@ -939,7 +939,7 @@ mod tests {
             authenticator_data: B64.encode([0u8; 36]),
             ..reply.clone()
         };
-        let reason = assert(&party(), b"seed", &short, &kept(&key))
+        let reason = check_assertion(&party(), b"seed", &short, &kept(&key))
             .unwrap_err()
             .0;
         assert!(reason.contains("too short"), "{reason}");
@@ -947,7 +947,9 @@ mod tests {
             signature: "*".into(),
             ..reply
         };
-        let reason = assert(&party(), b"seed", &bad, &kept(&key)).unwrap_err().0;
+        let reason = check_assertion(&party(), b"seed", &bad, &kept(&key))
+            .unwrap_err()
+            .0;
         assert!(reason.contains("not base64url"), "{reason}");
     }
 

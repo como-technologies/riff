@@ -1313,8 +1313,14 @@ pub async fn ask_host(
 ) -> String {
     let asked = match reach {
         Reach::Daemon(_) => reach.host(host, request).await,
+        // A step that can lose work asks for a proof in the browser
+        // (01M75WKSJTB28ZQV8ADPBQ86WE).
         Reach::Direct(_) => match asker(me, repo) {
-            Ok(asker) => remote::ask(api, &asker, host, request, remote::REPLY_WAIT).await,
+            Ok(asker) => {
+                let quiet = crate::proof::Asker::quiet();
+                let wait = remote::REPLY_WAIT;
+                remote::ask_with_proof(api, &asker, host, request, wait, &quiet).await
+            }
             Err(e) => Err(e),
         },
     };
