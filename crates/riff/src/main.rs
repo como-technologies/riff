@@ -549,7 +549,9 @@ enum Command {
     /// pass when the body has Closes #N for an issue with a line Live: in
     /// Done when: change that line to Refs #N. Before its comment, a pass
     /// gives the squash message to the auto-merge: the title with (#N), and
-    /// the body with its trailers as the last paragraph.
+    /// the body with its trailers as the last paragraph. This turns
+    /// auto-merge on, also when it was off: to keep a pull request from the
+    /// merge, hold its verify-issue-N before the verify starts.
     Verify {
         /// pass sets the status success, fail sets failure.
         verdict: VerdictArg,

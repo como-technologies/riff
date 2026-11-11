@@ -7199,6 +7199,47 @@ esac
         assert!(!here.calls("/rules/branches/main").is_empty());
     }
 
+    /// #1816, 01M4ZV3B6M7PZRJ39XTXBZP3ZH: a held `verify-issue-1` starts no
+    /// verify of a pull request whose required check passed, look after
+    /// look. A free of the hold starts the verify at the next look. So a
+    /// hold of the verify keeps a pull request from the merge while a
+    /// person runs a check on a host.
+    #[tokio::test]
+    async fn a_held_verify_starts_no_verify_of_a_pull_request_whose_checks_passed_and_a_free_starts_it()
+     {
+        let here = Here::looking().await;
+        here.put(
+            "rules",
+            r#"[{"type":"required_status_checks","parameters":{"required_status_checks":[
+                {"context":"checks / lint"},{"context":"riff/verify"}]}}]"#,
+        );
+        {
+            let mut forge = here.forge();
+            forge.checked = true;
+            forge.pulls.insert(1, Pr::Asked);
+            forge.holds.insert("verify-issue-1".into());
+        }
+        here.run();
+
+        // The check of the head passed, and the wave looks again and again:
+        // no verify starts.
+        here.until(0, |h| !h.calls("check_name=checks%20%2F%20lint").is_empty())
+            .await;
+        here.looks_more(3).await;
+        assert!(here.forge().starts.is_empty(), "{:?}", here.forge());
+
+        // The lead frees the hold: the verify starts.
+        here.forge().holds.remove("verify-issue-1");
+        here.until(1, |h| h.running("verify-issue-1").is_some())
+            .await;
+        let verify = Work::Verify {
+            issue: 1,
+            pull: 41,
+            commit: "c1".into(),
+        };
+        assert_eq!(here.forge().works, [verify]);
+    }
+
     /// The look of the daemon at `main` (#1351, 01M5QVH3MAEPPJN9PPVDX6N2EY,
     /// 01M51QEYKTD7ZEB0YA0C3MQTPN, 01M51QEYPGD6W345MZ4F85C38F,
     /// 01M51QEYVQN74Q1VDTVHB0445Q): the Gate of the head of `main` fails
