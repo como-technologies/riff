@@ -1459,8 +1459,10 @@ async fn in_a_terminal_at_shows_the_names_and_tab_completes_one() {
 
     // Tab completes the name, with a space after it.
     mike.keys("@r").await;
-    let rows = mike.shows(listed).await;
-    assert_eq!(rows[rows.len() - 3], format!("{PROMPT}@r"), "{rows:#?}");
+    // `@` shows the same note: wait for the prompt too.
+    let want = format!("{PROMPT}@r");
+    mike.shows(|rows| listed(rows) && rows.len() >= 3 && rows[rows.len() - 3] == want)
+        .await;
     mike.keys("\t").await;
     mike.shows(prompt("@riff ")).await;
     // The cursor is after the space: the next key types there.
