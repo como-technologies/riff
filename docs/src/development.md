@@ -2854,9 +2854,16 @@ An item with a session is in `claimed`, not in `stuck`.
 
 #### Turn on auto-merge for a pull request
 
-A pull request whose verify passed and that has auto-merge off never
-merges, and nothing turns it on. Your lead gets one message for each
-head commit:
+A pass turns auto-merge on. `riff verify pass` gives the squash message
+with `gh pr merge --auto --squash`, also for a pull request whose
+auto-merge a person turned off (see
+[The squash message of a pass](how-it-works.md#the-squash-message-of-a-pass)).
+So auto-merge off does not keep a pull request from the merge: see
+[Hold a pull request for a check on a host](#hold-a-pull-request-for-a-check-on-a-host).
+
+Auto-merge can go off after the pass, for example when a person turns
+it off. Then the pull request never merges, and nothing turns it on
+again. Your lead gets one message for each head commit:
 
 ```text
 PR #41, branch worktree-issue-13, passed its verify at commit 1a2b3c4, but auto-merge is off, so it never merges. Turn it on: gh pr merge --auto --squash 41
@@ -3532,6 +3539,54 @@ A hold of `verify-issue-12`, or the label `no-verify` on the issue,
 also stops the verify request after the build: the lead gets a note
 with the reason (see
 [Keep the verify of an item from the workers](how-it-works.md#keep-the-verify-of-an-item-from-the-workers)).
+
+### Hold a pull request for a check on a host
+
+Some checks run only on a host, not in CI: for example a test that
+needs the hardware of the host. To keep a pull request from the merge
+until that check passed, hold the verify of its item before the verify
+starts. With no verify there is no pass, and with no pass there is no
+merge:
+
+```mermaid
+flowchart LR
+    H["riff plan hold verify-issue-12"] --> N["the wave starts no verify,<br/>also when the checks passed"]
+    N --> T["you run the check on the host"]
+    T --> F["riff plan free verify-issue-12"]
+    F --> V["the wave starts the verify"]
+    V --> P["the pass turns auto-merge on"]
+    P --> M["the pull request merges"]
+```
+
+```sh
+riff plan hold verify-issue-12 waits for the test on thelio
+```
+
+The wave starts no verify of a held item, also when the checks of the
+pull request passed. Run the check on the host. When it passed, free
+the hold. The wave starts the verify at its next look:
+
+```sh
+riff plan free verify-issue-12
+```
+
+Auto-merge off does not hold a pull request. The verify starts, and the
+pass turns auto-merge on (see
+[Turn on auto-merge for a pull request](#turn-on-auto-merge-for-a-pull-request)).
+Then the pull request merges at once, also before your check on the
+host.
+
+A hold does not end a claim, so it does not stop a verify that runs.
+When a verify of the item runs already, hold the item first. Then end
+the session of the verify, for example `riff-verify-issue-12-1a2b3c4d`
+(see [End one container session](#end-one-container-session)). The
+hold keeps the wave from a new start:
+
+```sh
+riff plan hold verify-issue-12 waits for the test on thelio
+riff daemon status
+riff daemon end riff-verify-issue-12-1a2b3c4d
+```
 
 ### Ask the person a question
 

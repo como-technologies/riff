@@ -79,12 +79,16 @@
 //! ([`same_commit`]).
 //!
 //! A pass gives the squash message to the auto-merge before its comment
-//! ([`squash`], 01M6Y95BMYDXFDYG3DKE2KG2PP): the subject `TITLE (#N)`
+//! ([`squash`], 01M748RKC7BYP8FC6W2E20SQA7): the subject `TITLE (#N)`
 //! and the body of the pull request, with its trailers as one last
 //! paragraph. With no message, GitHub adds a last paragraph
 //! `Co-authored-by:` with the bot, and the line of the person, one
 //! paragraph up, does not count. A new push needs a new pass, so the
 //! message is that of the commit that passed: `--match-head-commit`.
+//! The call is `gh pr merge --auto`, so a pass turns auto-merge on, also
+//! when a person turned it off. Auto-merge off does not hold a pull
+//! request: a hold of `verify-issue-N` before the verify starts does
+//! ([`crate::wave::pick`]).
 //!
 //! ```mermaid
 //! flowchart LR
@@ -2328,7 +2332,7 @@ pub struct AutoMerge {
 }
 
 /// The squash message that `riff verify pass` gives to the auto-merge of
-/// a pull request ([`squash`], 01M6Y95BMYDXFDYG3DKE2KG2PP).
+/// a pull request ([`squash`], 01M748RKC7BYP8FC6W2E20SQA7).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Squash {
     /// `TITLE (#N)`.
@@ -2367,7 +2371,7 @@ impl Squash {
 }
 
 /// The squash message of pull request `number` with `title` and `body`
-/// (01M6Y95BMYDXFDYG3DKE2KG2PP): the subject `TITLE (#N)`, as GitHub
+/// (01M748RKC7BYP8FC6W2E20SQA7): the subject `TITLE (#N)`, as GitHub
 /// writes it, and the body of the pull request. The trailers of the body
 /// ([`hygiene::trailers`]) become one last paragraph. GitHub reads a
 /// co-author only from the last paragraph, and with this message it adds
@@ -2423,11 +2427,12 @@ pub fn squash(number: u64, title: &str, body: &str) -> Squash {
 
 /// Gives the squash message `message` to the auto-merge of pull request
 /// `number` at its head `commit`, before the pass makes its comment and
-/// sets its status (01M6Y95BMYDXFDYG3DKE2KG2PP). `auto` is the auto-merge
-/// before the call. An auto-merge with the message gets no call. Else
-/// `gh pr merge --auto --squash` gives the message. When an auto-merge
-/// that was on has another message after it, it turns auto-merge off and
-/// on again with the message.
+/// sets its status (01M748RKC7BYP8FC6W2E20SQA7,
+/// 01M6Y95BMYDXFDYG3DKE2KG2PP). `auto` is the auto-merge before the call.
+/// An auto-merge with the message gets no call. Else `gh pr merge --auto
+/// --squash` gives the message, and turns auto-merge on when it was off
+/// (`auto` is `None`). When an auto-merge that was on has another message
+/// after it, it turns auto-merge off and on again with the message.
 fn give_squash(
     gh: &Gh,
     number: u64,
@@ -3135,7 +3140,7 @@ fn closes_no_live_check(gh: &Gh, number: u64, body: &str) -> Result<()> {
 /// whose body closes an issue with a line `Live:` in "Done when"
 /// ([`rollout::has_live_check`], 01M6WW5WSSRMTBP882FQP3TS2Q). Before
 /// the comment of a pass, it gives the squash message to the auto-merge
-/// ([`squash`], 01M6Y95BMYDXFDYG3DKE2KG2PP). The caller
+/// ([`squash`], 01M748RKC7BYP8FC6W2E20SQA7). The caller
 /// posts it to the holder of the issue.
 pub fn report(
     gh: &Gh,
@@ -3860,9 +3865,10 @@ mod tests {
         Gh::at(isolated::write_program(dir.join("gh"), script))
     }
 
-    /// #1807, 01M6Y95BMYDXFDYG3DKE2KG2PP: the calls of each auto-merge
-    /// before the pass: off, on with the message, on with another message
-    /// that the call changes, and on with another message that stays.
+    /// #1807, 01M748RKC7BYP8FC6W2E20SQA7, 01M6Y95BMYDXFDYG3DKE2KG2PP: the
+    /// calls of each auto-merge before the pass: off, which the one call
+    /// turns on, on with the message, on with another message that the
+    /// call changes, and on with another message that stays.
     #[test]
     fn the_squash_message_goes_to_each_auto_merge_once() {
         let message = squash(40, "Show the wave", "Closes #12\n\nIssue: #12\n");

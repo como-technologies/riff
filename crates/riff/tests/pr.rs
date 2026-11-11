@@ -374,7 +374,7 @@ async fn verify(verdict: &str, state: &str) {
              -f target_url=https://github.com/como-technologies/riff/pull/40#issuecomment-7"
         )]
     );
-    // A pass gives the squash message first (01M6Y95BMYDXFDYG3DKE2KG2PP),
+    // A pass gives the squash message first (01M748RKC7BYP8FC6W2E20SQA7),
     // a fail gives none.
     let merges = calls(&log)
         .into_iter()
@@ -420,7 +420,7 @@ fn stdin_of(log: &str, call: &str) -> String {
 }
 
 /// The call of `riff verify pass 40` that gives the squash message of
-/// [`VERIFY`] to the auto-merge (01M6Y95BMYDXFDYG3DKE2KG2PP).
+/// [`VERIFY`] to the auto-merge (01M748RKC7BYP8FC6W2E20SQA7).
 const SQUASH: &str = "gh pr merge 40 --auto --squash --match-head-commit 1a2b3c4d \
                       --subject Show the wave (#40) --body-file -";
 
@@ -441,11 +441,13 @@ async fn pass(fake: &str) -> (String, std::process::Output) {
     (log(machine.bin.path()), out)
 }
 
-/// #1807, 01M6Y95BMYDXFDYG3DKE2KG2PP: `riff verify pass` gives the
-/// subject `TITLE (#N)` and the body of the pull request to `gh pr merge
-/// N --auto --squash` before its comment and its status. The trailers end
-/// the body as one last paragraph, so GitHub adds no paragraph of its own
-/// and the `Co-authored-by:` of the person counts.
+/// #1807, #1816, 01M748RKC7BYP8FC6W2E20SQA7: `riff verify pass` gives
+/// the subject `TITLE (#N)` and the body of the pull request to `gh pr
+/// merge N --auto --squash` before its comment and its status. The
+/// trailers end the body as one last paragraph, so GitHub adds no
+/// paragraph of its own and the `Co-authored-by:` of the person counts.
+/// The pull request of [`VERIFY`] has auto-merge off, and the pass turns
+/// it on with that one call.
 #[tokio::test]
 async fn verify_pass_gives_the_squash_message_before_the_status() {
     let body = r#""Refs #12\n\nShow the wave.\n\nIssue: #12\nMilestone: Wave 3\n\nRiff-Session: author\nCo-authored-by: Mike Sandman <7+mike@users.noreply.github.com>\n""#;
