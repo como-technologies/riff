@@ -935,6 +935,12 @@ mod tests {
                 installed: Some(true),
                 installation: Some(1010),
                 has_repo: Some(false),
+                owner: Some(GitHubOwner {
+                    login: text("acme"),
+                    organization: true,
+                }),
+                to_set: [(text("merge_queues"), text("read"))].into(),
+                to_accept: [(text("contents"), text("write"))].into(),
             }],
         });
         c.trip(&GitHubCheck {

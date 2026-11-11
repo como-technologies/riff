@@ -3333,6 +3333,35 @@ pub struct GitHubAppFacts {
     /// `None` for a query with no repository.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub has_repo: Option<bool>,
+    /// The account of the App on GitHub, for the page of its rights.
+    /// `None` for a query with no account.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<GitHubOwner>,
+    /// Each right that the App must change on GitHub to have the rights
+    /// of riff (01M74FVDCJT8P0670P46MWR1MJ): the name and the level to
+    /// set, `none` for a right more. Empty for a query with no account.
+    #[serde(default, skip_serializing_if = "Rights::is_empty")]
+    pub to_set: Rights,
+    /// Each right of riff that the install on the account of the query
+    /// has not accepted: the name and the level. Empty for a query with
+    /// no account, and for an App that is not installed there.
+    #[serde(default, skip_serializing_if = "Rights::is_empty")]
+    pub to_accept: Rights,
+}
+
+/// The account of a GitHub App, as `GET /app` gives it.
+///
+/// ```
+/// use riff_core::wire::GitHubOwner;
+///
+/// let owner: GitHubOwner = serde_json::from_str(r#"{"login":"acme","organization":true}"#).unwrap();
+/// assert_eq!(owner, GitHubOwner { login: "acme".into(), organization: true });
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct GitHubOwner {
+    pub login: String,
+    /// True for an organization, false for a personal account.
+    pub organization: bool,
 }
 
 /// `POST /v1/github/check`: `riff github check` for one repository

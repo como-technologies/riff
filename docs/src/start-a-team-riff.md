@@ -333,33 +333,38 @@ account on GitHub. Then run `riff github create` again.
 
 The lead App asks for three rights on the alerts:
 `security_events: write`, `secret_scanning_alerts: write` and
-`vulnerability_alerts: read`. GitHub gives a right to an install only
-when the owner of the account accepts it. On a new App, **Install**
-accepts each right of the App. A lead App that you made before has none
+`vulnerability_alerts: read`. A lead App that you made before has none
 of them. The deploy needs no step of yours first: until each install
 has the rights, riff-server gives the lead a token with its other
 rights, and logs one warning. Then the lead works as before, with no
-access to the alerts. To give the rights:
-
-1. On GitHub, open the settings of the lead App: **Settings** of the
-   account, **Developer settings**, **GitHub Apps**,
-   `riff-OWNER-lead`, **Edit**, **Permissions & events**.
-2. Under **Repository permissions**, set **Code scanning alerts** to
-   **Read and write**, **Secret scanning alerts** to **Read and
-   write**, and **Dependabot alerts** to **Read-only**. Click **Save
-   changes**.
-3. GitHub asks the owner of each install to accept the new rights. On
-   each account with an install of `riff-OWNER-lead`, open
-   **Settings**, **GitHub Apps**, **Configure** of `riff-OWNER-lead`,
-   then **Review request**. Click **Accept new permissions**.
-
-Then check the tokens of each role in a clone of each repository of the
-riff. The row `lead` must have `secret_scanning_alerts: write`,
-`security_events: write` and `vulnerability_alerts: read`. Before the
-accept, the row names each missing right with the fix:
+access to the alerts. `riff github check` names each missing right
+with the fix. The owner or an admin of the riff runs the fix in a
+plain terminal, in a clone of a repository of the account. Put the
+account in place of `OWNER`:
 
 ```sh
-riff github check
+riff github install OWNER
+```
+
+riff compares the rights of each App and of its install on the account
+with the rights of riff: the rights of the manifest of `riff github
+create`. GitHub has no API call that sets them. So for each App that
+lacks a right, your browser opens the page of its rights, and riff
+prints each right to set. Then for each install that has not accepted
+the rights, your browser opens its page **Configure**. riff opens each
+page one time, and waits at most 10 minutes. Then it checks the token
+of each role. With nothing to do, it changes nothing and says so in
+one line. Run it again on each account with an install of the Apps.
+
+```mermaid
+flowchart LR
+    I["riff github install OWNER"] --> A{"each App has<br/>the rights of riff?"}
+    A -- no --> P["your browser:<br/>the page of its rights"]
+    P --> A
+    A -- yes --> N{"each install<br/>accepted them?"}
+    N -- no --> C["your browser:<br/>the page Configure"]
+    C --> N
+    N -- yes --> K["riff github check"]
 ```
 
 ## Invite a person

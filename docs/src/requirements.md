@@ -3654,8 +3654,7 @@
   of the lead with no right on the alerts, and logs one warning with the
   fix. The lead and the daemon get that token, so the deploy of
   riff-server needs no step of the owner first. `riff github check`
-  names each right that a role misses, with the fix: give the right to
-  the App on GitHub, and accept it on each install.
+  names each right that a role misses.
 - **01M74A2TT5N3BZPCT04XSHNDCV** riff-server takes a delivery of the
   webhook of the session App at POST /hooks/github only with a good
   X-Hub-Signature-256: the HMAC-SHA256 of the body with the webhook
@@ -3666,6 +3665,28 @@
 - **01M74A2TWZBEJF4HCPXJSDQ2Y0** riff-server keeps the X-GitHub-Delivery
   of each delivery with a good signature for one day, at most 100,000. A
   delivery that comes again gets status 202 and wakes nobody.
+- **01M74FVDCJT8P0670P46MWR1MJ** riff keeps one list of the rights of
+  each GitHub App, in code: the rights of its manifest
+  (01M6WG52QHC8E24RJ33ZPVHZSJ). For a query with an account, riff-server
+  reads the rights of each App and of its install on the account from
+  GitHub. It gives each right that the App must set to have the list,
+  and each right of the list that the install has not accepted.
+- **01M74FVDGM0342M8TZQCCK5H4H** `riff github install OWNER` brings each
+  App and each install on OWNER to the list of the rights. For an App
+  whose rights are not the list, riff opens the page of the rights of
+  the App on GitHub, prints one line for each right to set, and waits.
+  For an install that has not accepted the rights of the list, riff
+  opens the page Configure of the install, where the owner of the
+  account accepts them, and waits. riff opens each page one time. Then
+  it runs `riff github check`. A run with nothing to do opens no page,
+  changes nothing, and says so in one line. `riff github create` ends
+  with the same steps. `riff github check` and the warning of
+  riff-server for a refused token of the lead name the fix `riff github
+  install OWNER`. Supersedes 01M6ZHWVPD7MN6GH6GS0GVETHA in part.
+- **01M74FVDMYDR8685BA1TFAS70R** The how-to "Accept the new rights of
+  the lead App" of "Start a Team Riff" has one copyable `sh` block,
+  `riff github install OWNER`. No how-to of the book lists the steps on
+  GitHub that set the rights of an App or accept them.
 
 ## Sign-in and tokens
 

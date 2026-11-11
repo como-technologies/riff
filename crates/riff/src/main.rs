@@ -979,9 +979,13 @@ enum GithubCommand {
     /// account. The owner of the account clicks "Install" for each App. In
     /// a clone of a repository of the account, or with --repo, riff also
     /// opens the page Configure of each install that does not have the
-    /// repository: add it under "Repository access". riff waits at most 10
-    /// minutes for the two installs, each with the repository. Then it
-    /// runs riff github check for the repository. Only the owner or an
+    /// repository: add it under "Repository access". For an App without
+    /// the rights of riff, riff opens the page of its rights, and prints
+    /// each right to set. For an install that has not accepted them, riff
+    /// opens its page Configure: click "Review request". riff waits at
+    /// most 10 minutes for the two installs, each with the repository and
+    /// the rights. Then it runs riff github check for the repository. With
+    /// nothing to do, it changes nothing and says so. Only the owner or an
     /// admin of the riff can.
     Install {
         /// The organization or the personal account, for example

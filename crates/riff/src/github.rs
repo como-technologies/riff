@@ -6,7 +6,7 @@
 //! | Command | Does |
 //! |---|---|
 //! | `riff github create --owner OWNER` | Opens the start page of riff-server, which makes the session App `riff-OWNER` and the lead App `riff-OWNER-lead` on OWNER. Then the steps of `install` ([`create`]) |
-//! | `riff github install OWNER [--repo OWNER/NAME]` | Opens the install page of each App for OWNER, and the page Configure of each install without the repository. It waits for the two installs, each with the repository, and runs `check` ([`install`]) |
+//! | `riff github install OWNER [--repo OWNER/NAME]` | Opens the install page of each App for OWNER, the page of the rights of each App without the rights of riff, and the page Configure of each install without the repository or the rights. It waits for the two installs, each with the repository and the rights, and runs `check` ([`install`]) |
 //! | `riff github check` | Asks riff-server for a token of each role for the repository of this folder, and prints the bot and the rights of each role ([`check`]) |
 //! | `riff github events` | Asks riff-server for the last wakes of the GitHub App for the repository of this folder, and prints them with the counts of the deliveries ([`events`], #1655) |
 //!
@@ -21,12 +21,32 @@
 //! ```mermaid
 //! flowchart LR
 //!     C["riff github create"] --> B["browser: two clicks to make,<br/>two clicks to install"]
-//!     I["riff github install"] --> B
+//!     I["riff github install"] --> N{"nothing to do?"}
+//!     N -- yes --> K["riff github check"]
+//!     N -- no --> B
 //!     B --> W["wait for the two installs,<br/>at most 10 minutes"]
+//!     W -- "an App without<br/>the rights of riff" --> R["browser: the page of its rights,<br/>set each right"]
+//!     R --> W
+//!     W -- "an install that did not<br/>accept the rights" --> A["browser: the page Configure,<br/>accept the new rights"]
+//!     A --> W
 //!     W -- "an install<br/>without the repository" --> P["browser: the page Configure,<br/>add the repository"]
 //!     P --> W
-//!     W --> K["riff github check"]
+//!     W --> K
 //! ```
+//!
+//! ## The rights
+//!
+//! riff-server compares the rights of each App, and of its install on
+//! OWNER, with the one list of riff: the rights of the manifest
+//! (`riff_server::github::app_rights`, 01M74FVDCJT8P0670P46MWR1MJ).
+//! GitHub has no API call that sets the rights of an App, or that
+//! accepts them for an install. So for an App whose rights are not the
+//! list, riff opens the page of its rights ([`rights_page`]) and prints
+//! one line for each right to set. When the App has the list, riff opens
+//! the page Configure of each install that has not accepted it. riff
+//! opens each page one time, and waits (01M74FVDGM0342M8TZQCCK5H4H). A
+//! run of `install` with nothing to do opens no page, says so in one
+//! line, and runs `check`.
 //!
 //! ## The repository
 //!
@@ -50,7 +70,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use riff_client::api::Api;
-use riff_core::wire::{GitHubApp, GitHubAppFacts, GitHubCreate};
+use riff_core::wire::{GitHubApp, GitHubAppFacts, GitHubAppsReply, GitHubCreate, GitHubOwner};
 use serde::Deserialize;
 
 use crate::text;
@@ -133,6 +153,36 @@ pub fn configure_page(web: &str, account: &Account, installation: u64) -> String
         )
     } else {
         format!("{web}/settings/installations/{installation}")
+    }
+}
+
+/// The page of the rights of the App `slug` of the account `owner`, on
+/// the site `web`: there a manager of the App sets each right, and
+/// clicks "Save changes" (01M74FVDGM0342M8TZQCCK5H4H).
+///
+/// ```
+/// use riff::github::rights_page;
+/// use riff_core::wire::GitHubOwner;
+///
+/// let org = GitHubOwner { login: "acme".into(), organization: true };
+/// assert_eq!(
+///     rights_page("https://github.com", &org, "riff-acme-lead"),
+///     "https://github.com/organizations/acme/settings/apps/riff-acme-lead/permissions"
+/// );
+/// let user = GitHubOwner { login: "ada".into(), organization: false };
+/// assert_eq!(
+///     rights_page("https://github.com", &user, "riff-ada"),
+///     "https://github.com/settings/apps/riff-ada/permissions"
+/// );
+/// ```
+pub fn rights_page(web: &str, owner: &GitHubOwner, slug: &str) -> String {
+    if owner.organization {
+        format!(
+            "{web}/organizations/{}/settings/apps/{slug}/permissions",
+            owner.login
+        )
+    } else {
+        format!("{web}/settings/apps/{slug}/permissions")
     }
 }
 
@@ -224,9 +274,10 @@ pub async fn create(
 
 /// `riff github install OWNER`: the install page of each App for OWNER
 /// that is not installed there, then the wait for the two installs, each
-/// with the repository `repo` of OWNER, and [`check`]. `repo` is the
-/// repository of `--repo`, else of this folder, when it has one
-/// (01M6Z7DMYAW52X62TN1DEX9NCG).
+/// with the repository `repo` of OWNER and the rights of riff, and
+/// [`check`]. `repo` is the repository of `--repo`, else of this folder,
+/// when it has one (01M6Z7DMYAW52X62TN1DEX9NCG). With nothing to do, it
+/// opens no page and says so in one line (01M74FVDGM0342M8TZQCCK5H4H).
 pub async fn install(
     api: &Api,
     account: &Account,
@@ -236,9 +287,18 @@ pub async fn install(
     repo: Option<&str>,
     out: &mut impl Write,
 ) -> Result<bool> {
-    let apps = api.github_apps(Some(&account.login), None).await?;
+    let goal = Goal::new(account, web, repo, Making::new());
+    let apps = api.github_apps(Some(&account.login), goal.repo).await?;
     if apps.apps.len() < GitHubApp::ALL.len() {
         anyhow::bail!(text::github_no_apps(&account.login));
+    }
+    if goal.all_reached(&apps) {
+        writeln!(
+            out,
+            "{}",
+            text::github_install_nothing(&account.login, goal.repo)
+        )?;
+        return after_installs(api, &goal, out).await;
     }
     for app in apps.apps.iter().filter(|app| app.installed != Some(true)) {
         let url = format!(
@@ -248,7 +308,6 @@ pub async fn install(
         writeln!(out, "{}", text::github_install_opens(&app.slug, &url))?;
         open(&url);
     }
-    let goal = Goal::new(account, web, repo, Making::new());
     wait_for(api, &goal, wait, &open, out).await?;
     after_installs(api, &goal, out).await
 }
@@ -292,10 +351,33 @@ impl<'a> Goal<'a> {
             .is_none_or(|(_, old)| *old != Some(facts.id))
     }
 
-    /// True when `facts` is of a made App, installed on the account and
-    /// on the repository of the goal.
+    /// True when `facts` is of a made App with the rights of riff,
+    /// installed on the account and on the repository of the goal, and
+    /// its install accepted the rights.
     fn reached(&self, facts: &GitHubAppFacts) -> bool {
-        self.made(facts) && facts.installed == Some(true) && facts.has_repo != Some(false)
+        self.made(facts)
+            && facts.installed == Some(true)
+            && facts.has_repo != Some(false)
+            && facts.to_set.is_empty()
+            && facts.to_accept.is_empty()
+    }
+
+    /// True when `apps` has both Apps, each [`Goal::reached`].
+    fn all_reached(&self, apps: &GitHubAppsReply) -> bool {
+        GitHubApp::ALL.into_iter().all(|app| {
+            apps.apps
+                .iter()
+                .any(|facts| facts.app == app && self.reached(facts))
+        })
+    }
+
+    /// The account of the App of `facts`, for the page of its rights:
+    /// the one that riff-server read, else the account of the goal.
+    fn owner_of(&self, facts: &GitHubAppFacts) -> GitHubOwner {
+        facts.owner.clone().unwrap_or_else(|| GitHubOwner {
+            login: self.account.login.clone(),
+            organization: self.account.organization(),
+        })
     }
 }
 
@@ -303,7 +385,15 @@ impl<'a> Goal<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Fact {
     Made,
+    /// The App does not have the rights of riff.
+    ToSet,
+    /// The App has the rights of riff, after [`Fact::ToSet`].
+    Set,
     Installed,
+    /// The install has not accepted the rights of riff.
+    ToAccept,
+    /// The install accepted the rights of riff, after [`Fact::ToAccept`].
+    Accepted,
     /// The install does not have the repository of the goal.
     Without,
     /// The install has the repository of the goal.
@@ -311,8 +401,10 @@ enum Fact {
 }
 
 /// Waits until riff-server has both Apps of the [`Goal`]
-/// ([`Goal::reached`]). It prints one line for each new fact, and opens
-/// the page Configure of each install without the repository, one time.
+/// ([`Goal::reached`]). It prints one line for each new fact. It opens
+/// the page of the rights of each App without the rights of riff, and
+/// the page Configure of each install without the rights or the
+/// repository, one time each.
 async fn wait_for(
     api: &Api,
     goal: &Goal<'_>,
@@ -333,12 +425,7 @@ async fn wait_for(
                 }
             }
         }
-        let ready = |app: GitHubApp| {
-            apps.apps
-                .iter()
-                .any(|facts| facts.app == app && goal.reached(facts))
-        };
-        if GitHubApp::ALL.into_iter().all(ready) {
+        if goal.all_reached(&apps) {
             return Ok(());
         }
         if start.elapsed() >= wait.most {
@@ -349,14 +436,18 @@ async fn wait_for(
 }
 
 /// The lines of the facts of one App that riff did not print yet: made,
-/// installed, then without or with the repository of the goal. The line
-/// of an install without the repository comes with its page Configure,
-/// to open.
+/// without or with the rights of riff, installed, the rights that the
+/// install did not accept or accepted, then without or with the
+/// repository of the goal. The line of an App without the rights comes
+/// with the page of its rights, to open. The line of an install without
+/// the rights or the repository comes with its page Configure, to open.
 fn new_lines(
     facts: &GitHubAppFacts,
     goal: &Goal<'_>,
     told: &mut Vec<(GitHubApp, Fact)>,
 ) -> Vec<(String, Option<String>)> {
+    let had = |told: &[(GitHubApp, Fact)], fact: Fact| told.contains(&(facts.app, fact));
+    let (had_to_set, had_to_accept) = (had(told, Fact::ToSet), had(told, Fact::ToAccept));
     let mut first = |fact: Fact| {
         let new = !told.contains(&(facts.app, fact));
         if new {
@@ -369,12 +460,32 @@ fn new_lines(
     if making && first(Fact::Made) {
         lines.push((text::github_app_made(&facts.slug, &facts.bot), None));
     }
+    let has_rights = facts.to_set.is_empty();
+    if !has_rights && first(Fact::ToSet) {
+        let page = rights_page(goal.web, &goal.owner_of(facts), &facts.slug);
+        let line = text::github_rights_to_set(&facts.slug, &page, &facts.to_set);
+        lines.push((line, Some(page)));
+    }
+    if has_rights && had_to_set && first(Fact::Set) {
+        lines.push((text::github_rights_set(&facts.slug), None));
+    }
     if facts.installed != Some(true) {
         return lines;
     }
+    let owner = &goal.account.login;
     if first(Fact::Installed) {
-        let owner = &goal.account.login;
         lines.push((text::github_app_installed(&facts.slug, owner), None));
+    }
+    let accepted = facts.to_accept.is_empty();
+    if let (true, false, Some(installation)) = (has_rights, accepted, facts.installation)
+        && first(Fact::ToAccept)
+    {
+        let page = configure_page(goal.web, goal.account, installation);
+        let line = text::github_rights_to_accept(&facts.slug, owner, &page, &facts.to_accept);
+        lines.push((line, Some(page)));
+    }
+    if accepted && had_to_accept && first(Fact::Accepted) {
+        lines.push((text::github_rights_accepted(&facts.slug, owner), None));
     }
     let Some(repo) = goal.repo else {
         return lines;
