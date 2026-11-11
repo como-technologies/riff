@@ -1092,6 +1092,24 @@ git fetch origin
 git show origin/HEAD:riff.toml
 ```
 
+### The folders of the home above a volume
+
+Before the start of each container, riff makes each folder between
+`$HOME` and each volume or bind under it, owned by the session user. For
+the volume `riff-sccache = "$HOME/.cache/sccache"`, that folder is
+`~/.cache`. riff also makes `~/.cache`, `~/.local`, `~/.local/share` and
+`~/.local/state` in each session. Each of these folders is a tmpfs of
+its own, in memory, as the home is. So a tool of the session makes its
+own folder in them, with no `XDG_CACHE_HOME` and no `XDG_STATE_HOME`.
+riff makes no folder in a volume: the folders in it belong to the
+volume.
+
+To see the owner of each folder, run this in a session:
+
+```sh
+ls -ld ~/.cache ~/.local ~/.local/share ~/.local/state
+```
+
 ## Set the model of the sessions
 
 riff starts the lead, each work item and each verify of a repository

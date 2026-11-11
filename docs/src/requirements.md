@@ -7199,6 +7199,13 @@ of this part when they merge.
   `ghp_`, `ghu_`, `ghr_` or `github_pat_`, and the letters, digits and
   `_` after it. riff reads no token of the person for a session
   (01M6Z87A04EXTT1FFJSJ1EM6TB), so the form of the token hides it.
+- **01M748WY71EFVZR6SG5CCEQYE0** Before the start of each container,
+  riff makes each folder between `$HOME` and the target of each bind or
+  volume under it, and `~/.cache`, `~/.local`, `~/.local/share` and
+  `~/.local/state`, owned by the session user. Each of them is a tmpfs:
+  `--mount type=tmpfs,destination=FOLDER,tmpfs-mode=0755,U=true`. A
+  folder at the target of a bind, or in it, belongs to the bind and gets
+  no tmpfs.
 
 ### The security of riff's own code
 

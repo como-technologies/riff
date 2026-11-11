@@ -944,6 +944,17 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         "8",
         "--mount",
         &format!("type=tmpfs,destination={h},tmpfs-mode=0700,U=true"),
+        // The folders of the home: each folder above a bind, and the
+        // folders of each session. The session user owns each
+        // (01M748WY71EFVZR6SG5CCEQYE0).
+        "--mount",
+        &format!("type=tmpfs,destination={h}/.cache,tmpfs-mode=0755,U=true"),
+        "--mount",
+        &format!("type=tmpfs,destination={h}/.local,tmpfs-mode=0755,U=true"),
+        "--mount",
+        &format!("type=tmpfs,destination={h}/.local/share,tmpfs-mode=0755,U=true"),
+        "--mount",
+        &format!("type=tmpfs,destination={h}/.local/state,tmpfs-mode=0755,U=true"),
         "-v",
         &format!("{c}:{c}"),
         "-v",

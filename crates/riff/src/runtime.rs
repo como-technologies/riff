@@ -77,7 +77,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::task::{Context, Poll, ready};
@@ -152,7 +152,8 @@ pub struct SessionSpec {
     pub name: String,
     /// The image.
     pub image: String,
-    /// The home of the person: a tmpfs in the session.
+    /// The home of the person: a tmpfs in the session, with the folders
+    /// of [`SessionSpec::home_folders`].
     pub home: PathBuf,
     /// The working folder in the session.
     pub workdir: PathBuf,
@@ -168,7 +169,106 @@ pub struct SessionSpec {
     pub command: Vec<String>,
 }
 
+/// The folders of the home that each session has from its start, in
+/// addition to the folders above its binds ([`SessionSpec::home_folders`],
+/// 01M748WY71EFVZR6SG5CCEQYE0).
+pub const HOME_FOLDERS: [&str; 4] = [".cache", ".local", ".local/share", ".local/state"];
+
 impl SessionSpec {
+    /// The folders of the home that the session user owns from the start
+    /// of the container (01M748WY71EFVZR6SG5CCEQYE0): each folder between
+    /// [`SessionSpec::home`] and the target of each bind under it, and
+    /// [`HOME_FOLDERS`]. A parent comes before its folders. A folder at
+    /// the target of a bind, or in it, is not in the list: it belongs to
+    /// the bind. A target with `..` adds no folder.
+    ///
+    /// The runtime makes each folder before it makes the binds: on
+    /// podman, each is a tmpfs of the session user
+    /// ([`crate::podman::run_args`]). With no such folder, podman makes
+    /// each missing folder above a bind as root, and the session cannot
+    /// write in it.
+    ///
+    /// ```mermaid
+    /// flowchart TD
+    ///     H["~: the tmpfs of the home"] --> C["~/.cache: a tmpfs"]
+    ///     C --> S["~/.cache/sccache: a volume"]
+    ///     H --> L["~/.local: a tmpfs"]
+    ///     L --> LS["~/.local/share: a tmpfs"]
+    ///     L --> ST["~/.local/state: a tmpfs"]
+    ///     LS --> R["~/.local/share/riff/...: a tmpfs for each folder"]
+    ///     R --> K["the clone of the session: a bind"]
+    /// ```
+    ///
+    /// ```
+    /// use std::path::PathBuf;
+    /// use riff::runtime::{Bind, SessionSpec, Source};
+    ///
+    /// let bind = |target: &str| Bind {
+    ///     source: Source::Volume("v".into()),
+    ///     target: target.into(),
+    ///     write: true,
+    /// };
+    /// let spec = SessionSpec {
+    ///     name: "s".into(),
+    ///     image: "i".into(),
+    ///     home: "/h".into(),
+    ///     workdir: "/w".into(),
+    ///     binds: vec![
+    ///         bind("/h/.cache/sccache"),
+    ///         bind("/h/.local/share/riff/s/clone"),
+    ///         bind("/h/.claude"),
+    ///         bind("/h/.claude/.credentials.json"),
+    ///         bind("/h/src/../x/y"),
+    ///         bind("/run/riff"),
+    ///     ],
+    ///     env: vec![],
+    ///     memory: "8g".into(),
+    ///     cpus: 4,
+    ///     command: vec![],
+    /// };
+    /// let folders = [
+    ///     "/h/.cache",
+    ///     "/h/.local",
+    ///     "/h/.local/share",
+    ///     "/h/.local/share/riff",
+    ///     "/h/.local/share/riff/s",
+    ///     "/h/.local/state",
+    /// ];
+    /// assert_eq!(spec.home_folders(), folders.map(PathBuf::from));
+    ///
+    /// // A volume at `~/.local` holds its own folders.
+    /// let volume = SessionSpec {
+    ///     binds: vec![bind("/h/.local"), bind("/h/.local/share/riff/s/clone")],
+    ///     ..spec
+    /// };
+    /// assert_eq!(volume.home_folders(), [PathBuf::from("/h/.cache")]);
+    /// ```
+    pub fn home_folders(&self) -> Vec<PathBuf> {
+        let mut folders: BTreeSet<PathBuf> =
+            HOME_FOLDERS.iter().map(|f| self.home.join(f)).collect();
+        for bind in &self.binds {
+            let Ok(rest) = bind.target.strip_prefix(&self.home) else {
+                continue;
+            };
+            let parts: Vec<Component> = rest.components().collect();
+            if !parts.iter().all(|p| matches!(p, Component::Normal(_))) {
+                continue;
+            }
+            let Some((_, above)) = parts.split_last() else {
+                continue;
+            };
+            let mut folder = self.home.clone();
+            for part in above {
+                folder.push(part);
+                folders.insert(folder.clone());
+            }
+        }
+        folders
+            .into_iter()
+            .filter(|f| !self.binds.iter().any(|b| f.starts_with(&b.target)))
+            .collect()
+    }
+
     /// Checks the values of the host for this spec: one value for each
     /// [`Env::Host`], and no value for another name. Each runtime calls
     /// it in [`Runtime::start`].
