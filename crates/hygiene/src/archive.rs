@@ -45,6 +45,24 @@
 //! ([`crate::part::Part::has`]). A name that two test binaries share
 //! runs in each of them.
 //!
+//! CI builds at the same path on each runner: `deploy/session-test.sh`
+//! binds the checkout at `/var/tmp/riff-ci/riff` in the container
+//! (01M75NDR15DNBFHDBNKA3CA1BE). A verifier runs a test of the commit
+//! from the archive of CI with `just ci-test NAME`
+//! (01M75NDQY6BHZBV9PF735E3FGY): `deploy/ci-test.sh` puts a linked
+//! worktree of `HEAD` at that path, unpacks the archive in it, and runs
+//! `hygiene test-name NAME --archive DIR` there. It runs the tests whose
+//! name has NAME ([`named`]), as `cargo test NAME` chooses them, and
+//! compiles nothing:
+//!
+//! ```mermaid
+//! flowchart LR
+//!     C["clone of the verifier,<br/>HEAD at the commit"] --> D["gh run download<br/>tests-TREE"]
+//!     D --> W["worktree of HEAD at<br/>/var/tmp/riff-ci/riff"]
+//!     W --> U["tar -xf tests.tar"]
+//!     U --> N["hygiene test-name NAME:<br/>--exact the names with NAME"]
+//! ```
+//!
 //! ```
 //! use hygiene::archive::{artifacts, Kind, Manifest};
 //! use std::path::Path;
@@ -275,6 +293,60 @@ impl Manifest {
 /// ```
 pub fn summary(part: crate::part::Part, run: usize, all: usize) -> String {
     format!("just test-part {part} runs {run} of {all} tests of the archive")
+}
+
+/// The names of `names` that have `filter` in them: the tests of a test
+/// binary that `hygiene test-name FILTER --archive` runs, as `cargo test
+/// FILTER` chooses them.
+///
+/// ```
+/// use hygiene::archive::named;
+///
+/// let names = ["one::a".to_owned(), "one::b".to_owned(), "two::a".to_owned()];
+/// assert_eq!(named(&names, "one::"), ["one::a", "one::b"]);
+/// assert_eq!(named(&names, "two::a"), ["two::a"]);
+/// assert!(named(&names, "three").is_empty());
+/// ```
+pub fn named<'a>(names: &'a [String], filter: &str) -> Vec<&'a str> {
+    names
+        .iter()
+        .map(String::as_str)
+        .filter(|name| name.contains(filter))
+        .collect()
+}
+
+/// The line that `hygiene test-name` prints before it runs the tests:
+/// how many of the tests of the binaries have `filter` in their name.
+///
+/// ```
+/// use hygiene::archive::named_summary;
+///
+/// assert_eq!(
+///     named_summary("one::", 2, 2280),
+///     "just ci-test one:: runs 2 of 2280 tests of the archive"
+/// );
+/// ```
+pub fn named_summary(filter: &str, run: usize, all: usize) -> String {
+    format!("just ci-test {filter} runs {run} of {all} tests of the archive")
+}
+
+/// The error of `hygiene test-name` when no test of the archive has
+/// `filter` in its name.
+///
+/// ```
+/// use hygiene::archive::none_named;
+///
+/// assert_eq!(
+///     none_named("three"),
+///     "no test of the archive has \"three\" in its name. The archive holds no doc test: \
+///      the job Build ran them"
+/// );
+/// ```
+pub fn none_named(filter: &str) -> String {
+    format!(
+        "no test of the archive has {filter:?} in its name. The archive holds no doc test: the \
+         job Build ran them"
+    )
 }
 
 #[cfg(test)]

@@ -395,8 +395,11 @@ fn the_session_tests_run_in_the_pinned_image_with_an_init() {
         ["run", "--rm", "--init", "--userns=keep-id"],
         "{args:?}"
     );
-    assert!(has(["-v", &format!("{root}:{root}")]), "{args:?}");
-    assert!(has(["-w", &root]), "{args:?}");
+    // The checkout is at the same path on each machine
+    // (01M75NDR15DNBFHDBNKA3CA1BE).
+    let at = "/var/tmp/riff-ci/riff";
+    assert!(has(["-v", &format!("{root}:{at}")]), "{args:?}");
+    assert!(has(["-w", at]), "{args:?}");
     assert!(has(["--cpus", "4"]), "{args:?}");
     assert!(has(["--memory", "8g"]), "{args:?}");
     assert!(has(["-e", "HOME=/tmp/home"]), "{args:?}");
@@ -404,7 +407,7 @@ fn the_session_tests_run_in_the_pinned_image_with_an_init() {
     let user = String::from_utf8(id.stdout).unwrap().trim().to_owned();
     assert!(has(["-e", &format!("USER={user}")]), "{args:?}");
     assert!(has(["-e", &format!("LOGNAME={user}")]), "{args:?}");
-    let target = format!("CARGO_TARGET_DIR={root}/target/session");
+    let target = format!("CARGO_TARGET_DIR={at}/target/session");
     assert!(has(["-e", &target]), "{args:?}");
     assert!(has(["-e", "CARGO_INCREMENTAL"]), "{args:?}");
     let image = Image::of_repository(&top()).unwrap().to_string();
@@ -703,7 +706,8 @@ fn bound(run: &[String], file: &str) -> String {
 /// 01M6QQ1P5YCT0JX90X5FCKM4W1: the job Build builds the tests in the
 /// session image, with docker and a cache of `target/session`, and the
 /// jobs "Tests I/N" of the Gate run each part from its archive in the
-/// same image. No other job runs the session tests.
+/// same image. No other job runs the session tests. The key of the cache
+/// has the hash of `deploy/session-test.sh` (01M75NDR415ES5GK69MX80PTBS).
 #[test]
 fn the_gate_runs_the_tests_in_the_session_image() {
     let build = ci_job("build");
@@ -712,7 +716,7 @@ fn the_gate_runs_the_tests_in_the_session_image() {
         "CARGO_INCREMENTAL: 0\n",
         "uses: actions/cache@",
         "path: target/session\n",
-        "key: session-${{ hashFiles('riff.toml', 'rust-toolchain.toml', 'Cargo.lock') }}\n",
+        "key: session-${{ hashFiles('riff.toml', 'rust-toolchain.toml', 'Cargo.lock', 'deploy/session-test.sh') }}\n",
         "run: deploy/session-test.sh --build\n",
         "path: target/test-archive/\n",
     ] {
@@ -733,7 +737,7 @@ fn the_gate_runs_the_tests_in_the_session_image() {
     assert!(!job.contains("actions/cache"), "{job}");
     assert!(!job.contains("cargo"), "{job}");
     let workflow = read(".github/workflows/ci.yml");
-    assert_eq!(workflow.matches("deploy/session-test.sh").count(), 2);
+    assert_eq!(workflow.matches("run: deploy/session-test.sh").count(), 2);
     assert!(!workflow.contains("\n  session_tests:\n"), "{workflow}");
     let justfile = read("justfile");
     assert!(

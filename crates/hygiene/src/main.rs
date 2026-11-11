@@ -11,7 +11,8 @@
 //! test-part I/N` runs part I of N of the tests. `hygiene test-build DIR`
 //! builds the test binaries once and packs them into DIR, and `hygiene
 //! test-part I/N --archive DIR` runs part I of N from DIR with no build.
-//! See the library docs.
+//! `hygiene test-name NAME --archive DIR` runs the tests whose name has
+//! NAME from DIR with no build. See the library docs.
 
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -23,7 +24,8 @@ use serde::de::DeserializeOwned;
 const USAGE: &str = "usage: hygiene pr NUMBER | hygiene commit [REV] | hygiene book [DIR] \
                      | hygiene wrap [DIR] | hygiene blank PATH... \
                      | hygiene versions [ROOT] | hygiene ci [BASE] | hygiene crates [BASE] \
-                     | hygiene test-part I/N [--archive DIR] | hygiene test-build DIR";
+                     | hygiene test-part I/N [--archive DIR] | hygiene test-name NAME --archive DIR \
+                     | hygiene test-build DIR";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -44,6 +46,7 @@ fn main() -> ExitCode {
         ["crates", base] => crates(base),
         ["test-part", part] => test_part(part),
         ["test-part", part, "--archive", dir] => test_archive(part, Path::new(dir)),
+        ["test-name", name, "--archive", dir] => test_named(name, Path::new(dir)),
         ["test-build", dir] => test_build(Path::new(dir)),
         _ => {
             eprintln!("{USAGE}");
@@ -486,26 +489,82 @@ fn test_archive(part: &str, dir: &Path) -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    let (manifest, top) = match open_archive(dir) {
+        Ok(open) => open,
+        Err(e) => return tool_error(&e),
+    };
+    let lists = match list_archive(&manifest, &top) {
+        Ok(lists) => lists,
+        Err(e) => return tool_error(&e),
+    };
+    let all: usize = lists.iter().map(|(_, names)| names.len()).sum();
+    if all == 0 {
+        return tool_error(&format!("the archive in {} lists no test", dir.display()));
+    }
+    let plans: Vec<(&hygiene::archive::Test, Vec<&str>)> = lists
+        .iter()
+        .map(|(test, names)| (*test, part.plan(names).tests))
+        .collect();
+    let run = plans.iter().map(|(_, names)| names.len()).sum();
+    eprintln!("{}", hygiene::archive::summary(part, run, all));
+    run_archive(&top, &plans)
+}
+
+/// Runs the tests whose name has `name` from the archive in `dir`, with
+/// no build (01M75NDQY6BHZBV9PF735E3FGY): `just ci-test NAME`. It lists
+/// the tests of each test binary, and runs the names that
+/// [`hygiene::archive::named`] keeps. The exit status is 1 when a test
+/// binary fails, and 2 when the archive is not there, is for another
+/// folder, or has no test with `name` in its name.
+fn test_named(name: &str, dir: &Path) -> ExitCode {
+    if name.is_empty() {
+        eprintln!("error: give the name of a test\n{USAGE}");
+        return ExitCode::from(2);
+    }
+    let (manifest, top) = match open_archive(dir) {
+        Ok(open) => open,
+        Err(e) => return tool_error(&e),
+    };
+    let lists = match list_archive(&manifest, &top) {
+        Ok(lists) => lists,
+        Err(e) => return tool_error(&e),
+    };
+    let all: usize = lists.iter().map(|(_, names)| names.len()).sum();
+    let plans: Vec<(&hygiene::archive::Test, Vec<&str>)> = lists
+        .iter()
+        .map(|(test, names)| (*test, hygiene::archive::named(names, name)))
+        .collect();
+    let run: usize = plans.iter().map(|(_, names)| names.len()).sum();
+    if run == 0 {
+        return tool_error(&hygiene::archive::none_named(name));
+    }
+    eprintln!("{}", hygiene::archive::named_summary(name, run, all));
+    run_archive(&top, &plans)
+}
+
+/// The manifest of the archive in `dir`, and the top of the checkout:
+/// the current folder. It fails when the archive is not there, is for
+/// another folder, or is not unpacked.
+fn open_archive(dir: &Path) -> Result<(hygiene::archive::Manifest, PathBuf), String> {
     let path = dir.join("manifest.json");
-    let manifest: hygiene::archive::Manifest = match std::fs::read(&path)
+    let manifest: hygiene::archive::Manifest = std::fs::read(&path)
         .map_err(|e| e.to_string())
         .and_then(|bytes| serde_json::from_slice(&bytes).map_err(|e| e.to_string()))
-    {
-        Ok(manifest) => manifest,
-        Err(e) => return tool_error(&format!("{}: {e}", path.display())),
-    };
-    let top = match std::env::current_dir() {
-        Ok(top) => top,
-        Err(e) => return tool_error(&format!("the current folder: {e}")),
-    };
-    if let Err(e) = manifest
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    let top = std::env::current_dir().map_err(|e| format!("the current folder: {e}"))?;
+    manifest
         .check_root(&top)
-        .and_then(|()| manifest.check_files(&top))
-    {
-        return tool_error(&e);
-    }
-    let mut plans = Vec::new();
-    let (mut run, mut all) = (0, 0);
+        .and_then(|()| manifest.check_files(&top))?;
+    Ok((manifest, top))
+}
+
+/// Each test binary of `manifest` in the checkout `top`, with the names
+/// of the tests that it lists.
+fn list_archive<'m>(
+    manifest: &'m hygiene::archive::Manifest,
+    top: &Path,
+) -> Result<Vec<(&'m hygiene::archive::Test, Vec<String>)>, String> {
+    let mut lists = Vec::new();
     for test in &manifest.tests {
         let crate_dir = top.join(&test.dir);
         let list = match Command::new(top.join(&test.exe))
@@ -517,26 +576,20 @@ fn test_archive(part: &str, dir: &Path) -> ExitCode {
             .output()
         {
             Ok(out) if out.status.success() => out,
-            Ok(out) => {
-                return tool_error(&format!("{} --list: {}", test.exe, out.status));
-            }
-            Err(e) => return tool_error(&format!("{} --list: {e}", test.exe)),
+            Ok(out) => return Err(format!("{} --list: {}", test.exe, out.status)),
+            Err(e) => return Err(format!("{} --list: {e}", test.exe)),
         };
         let names = hygiene::part::names(&String::from_utf8_lossy(&list.stdout));
-        let chosen: Vec<String> = part
-            .plan(&names)
-            .tests
-            .into_iter()
-            .map(str::to_owned)
-            .collect();
-        all += names.len();
-        run += chosen.len();
-        plans.push((test, chosen));
+        lists.push((test, names));
     }
-    if all == 0 {
-        return tool_error(&format!("the archive in {} lists no test", dir.display()));
-    }
-    eprintln!("{}", hygiene::archive::summary(part, run, all));
+    Ok(lists)
+}
+
+/// Runs each test binary of `plans` with `--exact` and its names, in the
+/// folder of its crate of the checkout `top`, as cargo runs it. A binary
+/// with no name does not run. The exit status is 1 when a test binary
+/// fails.
+fn run_archive(top: &Path, plans: &[(&hygiene::archive::Test, Vec<&str>)]) -> ExitCode {
     let mut failed = false;
     for (test, names) in plans {
         // With no name, the binary would run each test.
@@ -547,7 +600,7 @@ fn test_archive(part: &str, dir: &Path) -> ExitCode {
         eprintln!("     Running {} ({})", test.name, test.exe);
         let status = Command::new(top.join(&test.exe))
             .arg("--exact")
-            .args(&names)
+            .args(names)
             .current_dir(&crate_dir)
             .env("CARGO_MANIFEST_DIR", &crate_dir)
             .env("TMPDIR", TMPDIR)

@@ -1100,7 +1100,7 @@ flowchart LR
 |---|---|
 | Work | The commands to run before a push, and how to read the result. |
 | Issues | What a `Done when:` line names. |
-| Verify | What a verifier reads and runs, and what it does not run. |
+| Verify | What a verifier reads and runs, and what it does not run, for example the command that runs a test from the test build of CI. |
 
 Write the file with your own commands in place of `make check`, and push
 it with a pull request:

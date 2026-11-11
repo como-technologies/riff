@@ -39,6 +39,9 @@ The book in `docs/src/` holds the requirements and the big picture.
 ## Verify
 
 - A verifier does not run `just ci`: it reads the Gate and reviews.
+- A verifier runs a test by its name with `just ci-test NAME`: the test
+  binaries of CI, with no build. When it exits with 3, say so in the
+  result, then run `just test NAME`.
 - A verifier reads the book, the rustdoc and the requirements, and
   checks that the change fits them.
 

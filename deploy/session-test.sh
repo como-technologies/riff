@@ -22,7 +22,8 @@
 # no build (01M6QQ1P5YCT0JX90X5FCKM4W1). It runs podman, else docker, or
 # the engine in RIFF_ENGINE. It pulls the image first, up to 3 times
 # (01M6QPKG1X8VZTDF8RTTKFW67C). The image has a toolchain of its own, so
-# the build goes to target/session.
+# the build goes to target/session. The checkout is at
+# /var/tmp/riff-ci/riff in the container (01M75NDR15DNBFHDBNKA3CA1BE).
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")/.."
 
@@ -106,7 +107,11 @@ podman) user=(--userns=keep-id) ;;
 esac
 
 ROOT="$PWD"
-binds=(-v "$ROOT:$ROOT")
+# The checkout is at TOP in the container, the same path on each machine
+# (01M75NDR15DNBFHDBNKA3CA1BE). So the test binaries of CI name that path,
+# and a verifier runs them in a checkout there (deploy/ci-test.sh).
+TOP=/var/tmp/riff-ci/riff
+binds=(-v "$ROOT:$TOP")
 # A linked worktree: its git folder is in the main clone. The build reads
 # the last commit from it (crates/riff-core/build.rs).
 common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
@@ -118,10 +123,10 @@ esac
 mkdir -p target/session
 echo "session-test.sh: ${run[*]} in $IMAGE, with $ENGINE."
 exec "$ENGINE" run --rm --init "${user[@]}" --cpus 4 --memory 8g \
-    "${binds[@]}" -w "$ROOT" \
+    "${binds[@]}" -w "$TOP" \
     -e HOME=/tmp/home -e USER="$(id -un)" -e LOGNAME="$(id -un)" \
-    -e CARGO_HOME="$ROOT/target/session/cargo" \
-    -e CARGO_TARGET_DIR="$ROOT/target/session" \
+    -e CARGO_HOME="$TOP/target/session/cargo" \
+    -e CARGO_TARGET_DIR="$TOP/target/session" \
     -e CARGO_INCREMENTAL \
     "$IMAGE" \
     bash -c 'mkdir -p "$HOME" && exec "$@"' bash "${run[@]}"
