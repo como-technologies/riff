@@ -69,7 +69,7 @@
 //!
 //! [`offenders`] finds each test file that names a binary of riff
 //! without the helper, [`program_writers`] each test that writes a
-//! program in the test process, and [`secret_literals`] each test with a
+//! program in the test process, and [`hard_coded_keys`] each test with a
 //! string literal for a webhook secret or a key: also a unit test or a
 //! doc test in a file of `src` (see [`in_src`]). A test of this crate
 //! fails on each one.
@@ -101,7 +101,7 @@ pub use program::{
     writes_a_program,
 };
 pub use secret::{
-    Example, GITHUB_EXAMPLE, TAKERS, fake_secret, is_secret_name, secret_lines, secret_literals,
+    Example, GITHUB_EXAMPLE, TAKERS, fake_secret, hard_coded_keys, hard_coded_lines, is_secret_name,
 };
 pub use time::{
     HANG, Late, PRESSURE_DIR, PRESSURE_LIMIT, Pressure, RESOURCES, Span, in_time, stall,

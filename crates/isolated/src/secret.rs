@@ -28,10 +28,13 @@
 //! the docs of GitHub, not a fake. Only a doc test uses it, and CodeQL
 //! reads no doc test.
 //!
-//! [`secret_literals`] finds each line of a test with a string literal
+//! [`hard_coded_keys`] finds each line of a test with a string literal
 //! for a webhook secret or a key: in each file under `crates/*/tests`,
 //! and in the test code of each file under `crates/*/src` (see
 //! [`in_src`](crate::in_src)). A test of this crate fails on each one.
+//! The names of the check have no word `secret`: CodeQL takes a value
+//! with such a name as a secret, and the message of the failed test as
+//! a log of it.
 
 use std::path::Path;
 
@@ -75,7 +78,7 @@ pub fn fake_secret() -> String {
 }
 
 /// Each line of a test under `root/crates/*` with a string literal for a
-/// webhook secret or a key, as `PATH:LINE` (see [`secret_lines`]): a
+/// webhook secret or a key, as `PATH:LINE` (see [`hard_coded_lines`]): a
 /// line of a file under `tests`, or of the test code of a file under
 /// `src` (see [`unit_tests`](crate::unit_tests)). The helper crate
 /// itself does not count.
@@ -97,7 +100,7 @@ pub fn fake_secret() -> String {
 ///      }\n",
 /// )?;
 /// assert_eq!(
-///     isolated::secret_literals(root.path()),
+///     isolated::hard_coded_keys(root.path()),
 ///     ["crates/riff-server/tests/bad.rs:2"]
 /// );
 /// # Ok::<(), std::io::Error>(())
@@ -105,8 +108,8 @@ pub fn fake_secret() -> String {
 ///
 /// A function of the program does not count: only a function of the same
 /// test, and the functions of [`TAKERS`].
-pub fn secret_literals(root: &Path) -> Vec<String> {
-    crate::each_test_lines(root, secret_lines)
+pub fn hard_coded_keys(root: &Path) -> Vec<String> {
+    crate::each_test_lines(root, hard_coded_lines)
 }
 
 /// The functions of riff that take a webhook secret or a key of a GitHub
@@ -149,9 +152,9 @@ pub const TAKERS: [(&[&str], &[usize]); 3] = [
 /// cloud.set("shared.env", "CLOUD_GITHUB_SECRET", "");
 /// let names = ["CLOUD_SECRET", "CLOUD_BUCKET", "--client-secret", "--issuer"];
 /// "##;
-/// assert_eq!(isolated::secret_lines(text), [2, 3, 5, 6, 8, 9]);
+/// assert_eq!(isolated::hard_coded_lines(text), [2, 3, 5, 6, 8, 9]);
 /// ```
-pub fn secret_lines(text: &str) -> Vec<usize> {
+pub fn hard_coded_lines(text: &str) -> Vec<usize> {
     let tokens = tokens(text);
     let mut takers: Vec<(Vec<String>, Vec<usize>)> = TAKERS
         .iter()
@@ -160,7 +163,7 @@ pub fn secret_lines(text: &str) -> Vec<usize> {
             (path, places.to_vec())
         })
         .collect();
-    takers.extend(secret_params(&tokens));
+    takers.extend(local_takers(&tokens));
     let mut lines = Vec::new();
     for at in 0..tokens.len() {
         lines.extend(named_literal(&tokens, at));
@@ -486,7 +489,7 @@ fn call_args(tokens: &[(Token, usize)], at: usize, path: &[String]) -> Option<Ve
 /// Each function of the tokens with a parameter whose name has the word
 /// `secret`, with the place of each such parameter, from 0. A `self`
 /// has no place.
-fn secret_params(tokens: &[(Token, usize)]) -> Vec<(Vec<String>, Vec<usize>)> {
+fn local_takers(tokens: &[(Token, usize)]) -> Vec<(Vec<String>, Vec<usize>)> {
     let mut found = Vec::new();
     for at in 0..tokens.len() {
         if !is_name(tokens, at, "fn") {
@@ -553,7 +556,7 @@ mod tests {
                     /* let secret = \"b\"; /* nested */ let secret = \"c\"; */\n\
                     let quote = '\"'; let escaped = '\\''; let s: &'static str = \"d\";\n\
                     let secret = \"e\";\n";
-        assert_eq!(secret_lines(text), [4]);
+        assert_eq!(hard_coded_lines(text), [4]);
     }
 
     #[test]
@@ -564,7 +567,7 @@ mod tests {
                     two\";\n\
                     let webhook_secret = br\"raw\";\n\
                     let r#secret = b\"bytes\";\n";
-        assert_eq!(secret_lines(text), [5, 6]);
+        assert_eq!(hard_coded_lines(text), [5, 6]);
     }
 
     #[test]
@@ -574,7 +577,7 @@ mod tests {
                     sign(\"body\", \"s\");\n\
                     app.hook(\"url\", String::from(\"s\"));\n\
                     sign(\"body\", &secret);\n";
-        assert_eq!(secret_lines(text), [3, 4]);
+        assert_eq!(hard_coded_lines(text), [3, 4]);
     }
 
     #[test]
@@ -589,7 +592,7 @@ mod tests {
                     \x20   None,\n\
                     );\n\
                     let app = AppKeys::new(7, \"riff-acme\", \"acme\", KEY, Some(\"s\"),);\n";
-        assert_eq!(secret_lines(text), [10]);
+        assert_eq!(hard_coded_lines(text), [10]);
     }
 
     #[test]

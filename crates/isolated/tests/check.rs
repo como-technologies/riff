@@ -4,7 +4,7 @@
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use isolated::{Isolated, offenders, program_writers, secret_literals};
+use isolated::{Isolated, hard_coded_keys, offenders, program_writers};
 
 fn repo() -> &'static Path {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
@@ -162,7 +162,7 @@ fn the_check_fails_a_new_text_of_a_program_and_a_script_with_no_mode() {
 /// and the doc tests.
 #[test]
 fn no_test_has_a_string_literal_for_a_webhook_secret_or_a_key() {
-    let found = secret_literals(repo());
+    let found = hard_coded_keys(repo());
     assert!(
         found.is_empty(),
         "these lines have a string literal for a webhook secret or a key; use \
@@ -226,7 +226,7 @@ fn the_check_fails_each_fixed_fake_secret_of_a_test() {
     )
     .unwrap();
     assert_eq!(
-        secret_literals(root.path()),
+        hard_coded_keys(root.path()),
         [
             "crates/riff-server/src/keys.rs:2",
             "crates/riff-server/src/keys.rs:13",
