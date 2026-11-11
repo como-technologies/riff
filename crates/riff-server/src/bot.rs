@@ -1,6 +1,6 @@
-//! The lines of riff-bot that riff writes for a person: the lines of
-//! `riff release cut` and `riff release publish`, the ask while a deploy
-//! waits, and the lines of the daemon about a lead
+//! The lines of riff-bot that riff writes for a person: the line of
+//! `riff release cut` and the line of the release pull request of an older
+//! riff, the ask while a deploy waits, and the lines of the daemon about a lead
 //! (01M74BPHQZHXFYYNXAJ1WFASQQ). A question for a person gets no line
 //! (01M75QTMB42NME9Z2Y0XC0AN97): the Waves tab and `riff questions` show it.
 //!
@@ -29,7 +29,7 @@
 //!
 //! | Fact | Who sends it | The line names |
 //! |---|---|---|
-//! | `release_cut`, `release_published` | `riff release cut`, `publish` | the owner |
+//! | `release_cut`, `release_published` | the release cut of an older riff, `riff release cut` | the owner |
 //! | `release_waits` | the watch of the deploy | the owner |
 //! | `lead_started`, `lead_waits`, `lead_no_main`, `lead_failed`, `lead_stale`, `lead_no_network` | the daemon | no one |
 //!
@@ -39,8 +39,8 @@
 //! wakes no session (01M5NJ87YEHHGJBANM7CRYV56Z).
 //!
 //! Only a person, and the lead of the person in its repository, sends a
-//! fact: `riff release cut` and `publish` also run in the container of
-//! the lead, and the daemon sends each other fact as the person.
+//! fact: `riff release cut` also runs in the container of the lead, and
+//! the daemon sends each other fact as the person.
 
 use riff_core::hold::Hold;
 use riff_core::name::{SessionUri, lead_container};
@@ -291,7 +291,7 @@ mod tests {
         }
     }
 
-    /// The line of `publish` names the run, or says that GitHub shows
+    /// The line of the cut names the run, or says that GitHub shows
     /// none yet. A reminder says so.
     #[test]
     fn the_publish_line_and_the_reminder() {

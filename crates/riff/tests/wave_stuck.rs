@@ -548,7 +548,7 @@ fn the_book_shows_how_the_lead_reviews_a_codeql_alert() {
         "Give the reason of GitHub: `false positive`, `used in tests` or `won't fix`.",
         "in at most 280 characters",
         "(how-it-works.md#who-acts-on-github-for-each-role)",
-        "(#cut-the-release-pull-request)",
+        "(#cut-the-release)",
         "The next scan still finds the flow of a dismissed alert, but GitHub keeps the alert \
          dismissed and opens no new alert for it.",
     ] {

@@ -3,7 +3,7 @@
 //!
 //! # Design
 //!
-//! Before it makes the release issue and the release pull request,
+//! Before it makes the release issue and the tag,
 //! [`crate::cycle::cut`] reads the alerts of the repository with
 //! [`crate::cycle::Forge::alerts`]: the code scanning alerts, of security
 //! and of quality, the secret scanning alerts and the Dependabot alerts
@@ -22,7 +22,7 @@
 //!     R -- "a read fails" --> U["refuse: the error and the fix"]
 //!     R --> Q{"an open alert, or an alert dismissed<br/>by a person with no comment?"}
 //!     Q -- yes --> F["refuse: each alert with its kind,<br/>rule, file and line, and link"]
-//!     Q -- no --> P["the release issue<br/>and the release pull request"]
+//!     Q -- no --> P["the release issue<br/>and the tag"]
 //! ```
 //!
 //! | Kind | The read | Open | Dismissed | Closed |

@@ -9,7 +9,7 @@
 //! not answer in the container. The riff tools already go through the
 //! socket. [`Reach`] makes `riff wave list`, `riff wave move`, `riff wave end
 //! --move-open-to-backlog`, `riff release check` and the chat steps of
-//! `riff release cut` and `publish` go the same way: the daemon makes
+//! `riff release cut` go the same way: the daemon makes
 //! the call on the riff-server of the
 //! session, with the sign-in of the person on the host
 //! ([`crate::daemon::ServerCall`]). So do `riff members`, `riff audit`,
@@ -97,7 +97,7 @@ use crate::watches::{Op, Registered, Watches};
 use crate::{identity, session_relay, text};
 use riff_client::api::{Api, PauseScope};
 
-/// What `riff release cut` and `publish` read of the riff.
+/// What `riff release cut` reads of the riff.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Roster {
     /// The USER of this session.
@@ -1001,7 +1001,6 @@ pub const COMMANDS: &[InContainer] = &[
     socket(&["build", "--host", "thelio"]),
     socket(&["release", "cut", "3.4.0"]),
     socket(&["release", "verify", "40"]),
-    socket(&["release", "publish", "v3.4.0"]),
     socket(&["release", "status"]),
     socket(&["release", "approve", "v3.4.0"]),
     socket(&["release", "hold", "v3.4.0", "a reading at 19:40"]),

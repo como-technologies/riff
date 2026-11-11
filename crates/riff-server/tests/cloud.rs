@@ -439,10 +439,10 @@ fn the_book_deploys_a_release_again() {
 }
 
 /// The book how-to makes a release with the riff commands
-/// (01M3N73AW2J3TVSZWFJ88A91PG, 01M58B0HZYMAK1B2AJMWKHCXG0). The pull
-/// request states the level, and its body gives the notes, with what
-/// each person runs (01M3N73EGY4NQDQQP8Y185E9VZ). GitHub generates the
-/// rest of the notes (01M3NB3EWE2V9PCTMNTZAKEXMA).
+/// (01M3N73AW2J3TVSZWFJ88A91PG, 01M7641BHHND5JJA8DGJPFNAN7). The notes
+/// state the level, with what each person runs (01M765808DM2V10BRGAAPE8CCT,
+/// 01M3N73EGY4NQDQQP8Y185E9VZ). GitHub generates the rest of the notes
+/// (01M3NB3EWE2V9PCTMNTZAKEXMA).
 #[test]
 fn the_book_makes_a_release() {
     let page = fs::read_to_string(deploy().join("../docs/src/development.md")).unwrap();
@@ -455,7 +455,8 @@ fn the_book_makes_a_release() {
         "the commands that each\nperson runs",
         "`riff update --tag v3.3.0`",
         "riff release cut 3.3.0\n",
-        "each lead may. The riff runs on:\n\n```sh\nriff release publish v3.3.0\n",
+        "each lead may. The riff runs on:\n\n```sh\nriff release cut 3.3.0\n",
+        "riff release cut 3.3.0 --run \"riff update --tag v3.3.0\"\n",
         "the ruleset `releases` lets only\nan admin of the repository and the lead App push a tag `v*`",
         "riff release approve v3.3.0\n",
         "the notes that GitHub\nmakes from the last release",

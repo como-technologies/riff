@@ -1162,11 +1162,13 @@ mod tests {
         );
     }
 
-    /// 01M75R6FPVZA3JA5C48PQ26A85: from the cut to the publish, the rows
-    /// under the header say the step of the release and who acts next at 80
-    /// x 24, on two rows at most. The body of the tab starts under them.
+    /// 01M75R6FPVZA3JA5C48PQ26A85, 01M7642H27T4862WZENFAN4277: for the steps
+    /// of a release pull request of an older riff, and for the steps before
+    /// the tag, the rows under the header say the step of the release and who
+    /// acts next at 80 x 24, on two rows at most. The body of the tab starts
+    /// under them.
     #[test]
-    fn the_header_says_each_step_of_a_release_from_the_cut_at_80_x_24() {
+    fn the_header_says_each_step_of_a_release_before_the_tag_at_80_x_24() {
         use riff_client::daemons::ReleaseStep;
         let steps: [(ReleaseStep, &[&str]); 9] = [
             (
@@ -1194,8 +1196,8 @@ mod tests {
             (
                 ReleaseStep::Merged,
                 &[
-                    " v3.3.0: the release pull request merged; it waits for the real-session test of",
-                    " the lead of como-technologies/riff",
+                    " v3.3.0: the release build passed; it waits for the real-session test of the",
+                    " lead of como-technologies/riff",
                 ],
             ),
             (
@@ -1212,7 +1214,7 @@ mod tests {
             (
                 ReleaseStep::Tested,
                 &[
-                    " v3.3.0: the real-session test passed; it waits for the publish of the lead of",
+                    " v3.3.0: the real-session test passed; it waits for the cut of the lead of",
                     " como-technologies/riff",
                 ],
             ),

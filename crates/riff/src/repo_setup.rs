@@ -422,8 +422,8 @@ pub const RELEASES: &str = "releases";
 /// ID `lead`, as `just github` makes it (01M6WZ40PZNBHW2BZHMQX80WJ8): only
 /// the admin role of the repository (`RepositoryRole` 5) and the lead App
 /// (an `Integration`) create, move or delete a release tag. So the lead
-/// pushes the tag of `riff release publish` from its container, and a
-/// worker cannot.
+/// pushes the tag of `riff release cut` from its container, and a worker
+/// cannot.
 ///
 /// ```
 /// let ruleset = riff::repo_setup::releases(7);
@@ -3271,8 +3271,8 @@ esac
         assert_eq!(
             releases_line(&github),
             "fail  the ruleset releases: the ruleset releases of acme/app has no bypass of \
-             riff-acme-lead, so riff release publish of the lead cannot push a tag v*. Fix: make \
-             the ruleset releases on the tags v*, with the admin role and riff-acme-lead as bypass \
+             riff-acme-lead, so riff release cut of the lead cannot push a tag v*. Fix: make the \
+             ruleset releases on the tags v*, with the admin role and riff-acme-lead as bypass \
              actors. See \"Let the lead push the release tag\" in the book. Then run riff init again"
         );
         let person = with_the_release_cycle(&[("releases", old), ("not_admin", "")]);

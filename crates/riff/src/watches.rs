@@ -12,7 +12,7 @@
 //!
 //! ```mermaid
 //! flowchart LR
-//!     C["riff release cut, verify, test,<br/>publish, approve, retry, rollback"] -- "register" --> F["watches.json<br/>in the folder of the daemon"]
+//!     C["riff release test, cut, verify,<br/>approve, retry, rollback"] -- "register" --> F["watches.json<br/>in the folder of the daemon"]
 //!     W["riff join"] -- "one watch for the wave" --> F
 //!     D["riff daemon:<br/>a look each minute"] -- "read" --> F
 //!     D -- "gh, git" --> G["the forge"]
@@ -22,9 +22,9 @@
 //!
 //! | Command | [`Op`] | Ends when |
 //! |---|---|---|
-//! | `riff release cut`, `riff release verify` | [`Op::Pull`] | the Gate of the release pull request ends, or the pull request merges or closes |
+//! | `riff release cut`, `riff release verify` | [`Op::Pull`] | the Gate of the pull request of the next version ends, or it merges or closes |
 //! | `riff release test --host HOST` | [`Op::Test`] | the real-session test passes or fails |
-//! | `riff release publish`, `approve`, `retry`, `rollback` | [`Op::Deploy`] | the job `Deploy` of the tag passes or fails |
+//! | `riff release cut`, `approve`, `retry`, `rollback` | [`Op::Deploy`] | the job `Deploy` of the tag passes or fails |
 //! | `riff join` | [`Op::Wave`] | never: it posts each time the last open item of the current wave closes |
 //! | the end of the watch of a deploy | [`Op::Check`] | the check of the lead ends the release, or another deploy follows (see "The check" below) |
 //!
@@ -44,33 +44,28 @@
 //! full check of `main` runs, it failed, or it passed and the lead cuts
 //! next. The daemon gives it to the facts of its host, so `riff who` and
 //! the TUI say that the release waits for its cut ([`crate::view::release`]).
-//! The release issue that the cut makes in the wave ends it.
+//! The release issue that `riff release test` or the cut makes in the wave
+//! ends it.
 //!
-//! From the cut to the check, the watch of the wave reads the release of the
-//! newest release issue of the wave, as `riff release status` does
-//! ([`Seen::release`], [`cycle::stage`], 01M75R6FPVZA3JA5C48PQ26A85). At the
-//! cut, it also reads the full check and the verify of the release pull
-//! request. A read costs about ten calls of `gh`, so it comes each
-//! [`read_every`] at most, and at once for a new release issue. Before the
-//! tag, the read needs the commits of `origin/main` for the real-session
-//! test: the look fetches `origin` first. The daemon gives the release at its
-//! step to the facts of its host. Of one tag, the latest step that a host saw
+//! From the release issue to the check, the watch of the wave reads the
+//! release of the newest release issue of the wave, as `riff release status`
+//! does ([`Seen::release`], [`cycle::stage`], 01M75R6FPVZA3JA5C48PQ26A85,
+//! 01M7642H27T4862WZENFAN4277). A read costs about ten calls of `gh`, so it
+//! comes each [`read_every`] at most, and at once for a new release issue.
+//! Before the tag, the read needs the last commit of `origin/main`, its
+//! release build and its tests: the look fetches `origin` first. The daemon
+//! gives the release at its step to the facts of its host. Of one tag, the latest step that a host saw
 //! wins ([`riff_client::daemons::release`]), so the watch of a deploy and the
 //! watch of a check, which look each minute, give the newer step.
 //!
 //! ```mermaid
 //! stateDiagram-v2
-//!     [*] --> PullRuns: riff release cut
-//!     PullRuns --> PullFailed: the full check failed
-//!     PullFailed --> PullRuns: the failed jobs run again
-//!     PullRuns --> Verify: the full check passed
-//!     Verify --> Merges: riff release verify
-//!     Merges --> Merged: the merge
+//!     [*] --> Merged: riff release test makes the release issue
 //!     Merged --> TestRuns: riff release test
 //!     TestRuns --> TestFailed
 //!     TestFailed --> TestRuns: the fix merges, the test runs again
 //!     TestRuns --> Tested
-//!     Tested --> Published: riff release publish
+//!     Tested --> Published: riff release cut
 //!     Published --> Waits: the job Deploy waits for production
 //!     Waits --> [*]: the steps of the deploy and of the check
 //! ```
@@ -126,7 +121,7 @@
 //!
 //! ```mermaid
 //! stateDiagram-v2
-//!     [*] --> Builds: riff release publish
+//!     [*] --> Builds: riff release cut
 //!     Builds --> Waits: the job Deploy waits for production
 //!     Builds --> Failed: a job failed
 //!     Waits --> Waits: 4 hours: a reminder to the owner
@@ -224,11 +219,10 @@
 //! | [`Op::Check`] after a pass | [`ReleaseStep::Passed`] |
 //! | [`Op::Check`] after a failure | [`ReleaseStep::DeployFailed`] |
 //! | [`Op::Check`], the last check failed | [`ReleaseStep::CheckFailed`] |
-//! | [`Op::Wave`], the state `cut` of the release | [`ReleaseStep::PullRuns`], [`ReleaseStep::PullFailed`], [`ReleaseStep::Verify`] or [`ReleaseStep::Merges`] |
-//! | [`Op::Wave`], the state `merged` | [`ReleaseStep::Merged`], [`ReleaseStep::TestRuns`] or [`ReleaseStep::TestFailed`] |
+//! | [`Op::Wave`], the state `built` | [`ReleaseStep::Merged`], [`ReleaseStep::TestRuns`] or [`ReleaseStep::TestFailed`] |
 //! | [`Op::Wave`], the states `tested` and `published` | [`ReleaseStep::Tested`], [`ReleaseStep::Published`] |
 //! | [`Op::Wave`], the states `waiting`, `deploying`, `deployed` and `failed` | the step of the same state of the watch of the deploy or of the check |
-//! | [`Op::Wave`], the states `checked` and `rolled back` | none |
+//! | [`Op::Wave`], the states `building`, `checked` and `rolled back` | none |
 //!
 //! A new watch of a deploy ends each watch of a check of its repository
 //! ([`Watches::register`]): a retry, a rollback and the next release
@@ -502,8 +496,10 @@ pub struct Stale {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Op {
-    /// The release pull request `number` of `tag`: its Gate, then its
-    /// merge (`riff release cut`, `riff release verify`).
+    /// The pull request `number` of the version of the release `tag`: its
+    /// Gate, then its merge (`riff release cut`, `riff release verify`,
+    /// 01M76428R8GY6J323AWG3JV8HA). The cut watches its pull request of the
+    /// next version.
     Pull {
         /// The tag of the release, `vX.Y.Z`.
         tag: String,
@@ -518,7 +514,7 @@ pub enum Op {
         commit: String,
     },
     /// The CI run of `tag` up to the end of the job `Deploy`
-    /// (`riff release publish`, `approve`, `retry`, `rollback`).
+    /// (`riff release cut`, `approve`, `retry`, `rollback`).
     Deploy {
         /// The tag of the release, `vX.Y.Z`.
         tag: String,
@@ -582,7 +578,7 @@ impl Op {
     /// ```
     pub fn what(&self) -> String {
         match self {
-            Op::Pull { number, .. } => format!("the release pull request #{number}"),
+            Op::Pull { number, .. } => format!("the pull request #{number} of the release"),
             Op::Test { tag, commit } => format!("the real-session test of {tag} on {commit}"),
             Op::Deploy { tag, .. } => format!("the deploy of {tag}"),
             Op::Wave => "the current wave".to_owned(),
@@ -663,14 +659,16 @@ impl ReleaseRead {
     }
 
     /// True when the read at `now_ms` needs a fetch of `origin` first: the
-    /// stage of a release before its tag reads the commits of `origin/main`
-    /// for the real-session test ([`cycle::tested`]).
+    /// stage of a release before its tag reads the last commit of
+    /// `origin/main` ([`cycle::head`]). A read with no release, for
+    /// example of the state `building` or of a main clone that lags, reads
+    /// again after a fetch too.
     fn fetches(&self, now_ms: i64) -> bool {
         self.due(now_ms)
             && self
                 .release
                 .as_ref()
-                .is_some_and(|r| r.step < ReleaseStep::Published)
+                .is_none_or(|r| r.step < ReleaseStep::Published)
     }
 }
 
@@ -1353,17 +1351,18 @@ fn next_of(forge: &dyn Forge, tag: &str, fallback: &str) -> String {
         .map_or_else(|| fallback.to_owned(), |stage| cycle::next(&stage))
 }
 
-/// The next step after the release pull request `number` of `tag` merged
-/// (01M6QBEJYHKS8G26CM46P4P077). The merge is a fact: a read of the stage
-/// that lags behind it, or that fails, does not name the step before it
-/// ([`cycle::after_merge`]). A `tag` with no version gets `riff release
-/// status`.
-fn next_after_merge(forge: &dyn Forge, tag: &str, number: u64) -> String {
+/// The next step after the pull request `number` of the release `tag`
+/// merged (01M6QBEJYHKS8G26CM46P4P077, 01M76428R8GY6J323AWG3JV8HA). The
+/// merge is a fact: a read of the stage that lags behind it, or that fails,
+/// does not name the step before it ([`cycle::after_merge`]). For the pull
+/// request of the next version, the release has its tag, and its step
+/// stays. A `tag` with no version gets `riff release status`.
+fn next_after_merge(forge: &dyn Forge, tag: &str) -> String {
     let Ok(version) = cycle::tag_version(tag) else {
         return "riff release status".to_owned();
     };
     let read = cycle::stage(forge, version).ok().flatten();
-    cycle::next(&cycle::after_merge(read, version, number))
+    cycle::next(&cycle::after_merge(read, version))
 }
 
 /// The failed jobs for a line: `: A, B`, or a text for no name.
@@ -1466,9 +1465,9 @@ fn look_pull(forge: &dyn Forge, seen: &mut Seen, tag: &str, number: u64) -> Resu
     let pull = forge.candidate(number)?;
     match pull.state.as_str() {
         "MERGED" => {
-            let next = next_after_merge(forge, tag, number);
+            let next = next_after_merge(forge, tag);
             return Ok(say(
-                format!("The release pull request #{number} of {tag} merged. next: {next}"),
+                format!("The pull request #{number} of the release {tag} merged. next: {next}"),
                 true,
             ));
         }
@@ -1479,7 +1478,8 @@ fn look_pull(forge: &dyn Forge, seen: &mut Seen, tag: &str, number: u64) -> Resu
             );
             return Ok(say(
                 format!(
-                    "The release pull request #{number} of {tag} closed with no merge. next: {cut}"
+                    "The pull request #{number} of the release {tag} closed with no merge. \
+                     next: {cut}"
                 ),
                 true,
             ));
@@ -1492,8 +1492,8 @@ fn look_pull(forge: &dyn Forge, seen: &mut Seen, tag: &str, number: u64) -> Resu
             let jobs = forge.failed_jobs(&checks, &pull.head)?;
             Ok(say(
                 format!(
-                    "The Gate of the release pull request #{number} failed{}. next: run the \
-                     failed jobs again, then riff release verify {number}",
+                    "The Gate of the pull request #{number} of the release {tag} failed{}. next: \
+                     run the failed jobs again, then riff release verify {number}",
                     jobs_text(&jobs, &conclusion)
                 ),
                 true,
@@ -1506,8 +1506,8 @@ fn look_pull(forge: &dyn Forge, seen: &mut Seen, tag: &str, number: u64) -> Resu
             }
             Ok(say(
                 format!(
-                    "The Gate of the release pull request #{number} passed. next: riff release \
-                     verify {number}"
+                    "The Gate of the pull request #{number} of the release {tag} passed. next: \
+                     riff release verify {number}"
                 ),
                 false,
             ))
@@ -1756,7 +1756,10 @@ fn look_wave(forge: &dyn Forge, repo: &str, seen: &mut Seen, now_ms: i64) -> Res
     }
     seen.wave = None;
     let next = match release {
-        true => format!("riff release cut X.Y.Z, or riff wave end {number} --no-release TEXT"),
+        true => format!(
+            "riff release test vX.Y.Z --host HOST, then riff release cut X.Y.Z, or riff wave end \
+             {number} --no-release TEXT"
+        ),
         false => format!("riff wave end {number}"),
     };
     Ok(Outcome {
@@ -1771,10 +1774,11 @@ fn look_wave(forge: &dyn Forge, repo: &str, seen: &mut Seen, now_ms: i64) -> Res
 
 /// The release of the release issue `issue` of the current wave of `repo` at
 /// its step, as `riff release status` reads it ([`cycle::stage`],
-/// 01M75R6FPVZA3JA5C48PQ26A85). At the cut, the full check and the verify of
-/// the release pull request give the step ([`pull_step`]). `None` for a
-/// title with no version, a release with no pull request and no tag, a
-/// checked release and a release after a rollback.
+/// 01M75R6FPVZA3JA5C48PQ26A85, 01M7642H27T4862WZENFAN4277). Before the tag,
+/// the real-session test of the last commit of `origin/main` gives the step.
+/// `None` for a title with no version, a release with no tag that is not
+/// the version on `origin/main`, the state `building`, a checked release
+/// and a release after a rollback.
 fn read_release(forge: &dyn Forge, repo: &str, issue: &str) -> Result<Option<daemons::Release>> {
     let Some(version) = issue
         .strip_prefix("Release ")
@@ -1786,15 +1790,10 @@ fn read_release(forge: &dyn Forge, repo: &str, issue: &str) -> Result<Option<dae
         return Ok(None);
     };
     let step = match stage.state {
-        State::Cut => match stage.pr {
-            Some(number) => pull_step(forge, number)?,
-            None => ReleaseStep::PullRuns,
-        },
-        State::Merged => match stage.test.map(|(_, state)| state) {
-            None => ReleaseStep::Merged,
+        State::Built => match stage.head.and_then(|h| h.real_session) {
+            None | Some(TestState::Passed) => ReleaseStep::Merged,
             Some(TestState::Running) => ReleaseStep::TestRuns,
             Some(TestState::Failed) => ReleaseStep::TestFailed,
-            Some(TestState::Passed) => ReleaseStep::Tested,
         },
         State::Tested => ReleaseStep::Tested,
         State::Published => ReleaseStep::Published,
@@ -1803,28 +1802,13 @@ fn read_release(forge: &dyn Forge, repo: &str, issue: &str) -> Result<Option<dae
         State::Deployed => ReleaseStep::Passed,
         State::Failed if stage.checks_failed => ReleaseStep::CheckFailed,
         State::Failed => ReleaseStep::DeployFailed,
-        State::Checked | State::RolledBack => return Ok(None),
+        State::Building | State::Checked | State::RolledBack => return Ok(None),
     };
     Ok(Some(daemons::Release {
         repo: repo.to_owned(),
         tag: cycle::tag(version),
         step,
     }))
-}
-
-/// The step of the open release pull request `number`
-/// (01M75R6FPVZA3JA5C48PQ26A85): its full check runs or failed, the lead
-/// verifies it next, or its verify passed and it merges. A full check that
-/// ended with no success failed, as for the watch of the pull request.
-fn pull_step(forge: &dyn Forge, number: u64) -> Result<ReleaseStep> {
-    let head = forge.candidate(number)?.head;
-    let checks = forge.full_check()?;
-    Ok(match forge.gate(&checks, &head)? {
-        Gate::Passed if forge.verify_passed(&head)? => ReleaseStep::Merges,
-        Gate::Passed => ReleaseStep::Verify,
-        Gate::Ended(_) => ReleaseStep::PullFailed,
-        Gate::Missing | Gate::Running => ReleaseStep::PullRuns,
-    })
 }
 
 /// Why the cut of the release of a complete wave waits, from the full check
@@ -1862,7 +1846,7 @@ mod tests {
 
     use super::*;
     use crate::cycle::tests::Fake;
-    use crate::cycle::{Candidate, Deploy, ReleasePr};
+    use crate::cycle::{Candidate, Deploy};
 
     const REPO: &str = "o/r";
 
@@ -2044,7 +2028,7 @@ mod tests {
         }
     }
 
-    /// A forge with an open release pull request whose Gate runs.
+    /// A forge with an open pull request of the version whose Gate runs.
     fn open_pull() -> Fake {
         Fake {
             candidate: Candidate {
@@ -2059,16 +2043,12 @@ mod tests {
         }
     }
 
+    /// The release pull request of 3.3.0 of an older riff merged: the last
+    /// commit c1 of origin/main has 3.3.0, its release build and a passed
+    /// release test.
     fn merged(fake: &mut Fake) {
         fake.candidate.state = "MERGED".into();
-        fake.release_pr = Some(ReleasePr {
-            number: 1140,
-            url: "https://github.com/o/r/pull/1140".into(),
-            merge: "m1".into(),
-            head: "h1".into(),
-            body: String::new(),
-        });
-        fake.since = vec!["m1"];
+        fake.main = "3.3.0".into();
     }
 
     fn deploy(state: DeployState, failed: &[&str]) -> Option<Deploy> {
@@ -2094,7 +2074,10 @@ mod tests {
         look(dir.path(), &ground, 2 * MINUTE).await;
         assert_eq!(
             ground.told(),
-            ["The Gate of the release pull request #1140 passed. next: riff release verify 1140"]
+            [
+                "The Gate of the pull request #1140 of the release v3.3.0 passed. next: riff \
+                 release verify 1140"
+            ]
         );
         look(dir.path(), &ground, 3 * MINUTE).await;
         assert!(ground.told().is_empty(), "no second message for the Gate");
@@ -2106,7 +2089,7 @@ mod tests {
         assert_eq!(
             ground.told(),
             [
-                "The release pull request #1140 of v3.3.0 merged. next: riff release test \
+                "The pull request #1140 of the release v3.3.0 merged. next: riff release test \
                  v3.3.0 --host HOST, or just real-session on origin/main"
             ]
         );
@@ -2115,35 +2098,25 @@ mod tests {
         assert!(kept(dir.path()).is_empty(), "the watch goes");
     }
 
-    const AFTER_MERGE: &str = "The release pull request #1140 of v3.3.0 merged. next: riff release \
-                               test v3.3.0 --host HOST, or just real-session on origin/main";
-
+    /// 01M6QBEJYHKS8G26CM46P4P077: the merge is a fact. While the fetch of
+    /// origin/main does not hold it yet, the stage has no release, and the
+    /// message names the step of a merged release with no test.
     #[tokio::test]
-    async fn a_merge_names_the_next_step_while_the_list_of_open_pull_requests_lags() {
+    async fn a_merge_names_the_next_step_while_the_read_lags() {
         let dir = daemon_dir();
         let ground = Ground::new(open_pull());
         watch(dir.path(), pull());
-        // The pull request is `MERGED`, but the list of merged pull requests
-        // does not hold it yet, and the list of open ones still does.
-        ground.forge(|f| {
-            f.candidate.state = "MERGED".into();
-            f.open_pr = Some((1140, "3.3.0"));
-        });
-        look(dir.path(), &ground, MINUTE).await;
-        assert_eq!(ground.told(), [AFTER_MERGE]);
-        assert!(kept(dir.path()).is_empty(), "the watch goes");
-    }
-
-    #[tokio::test]
-    async fn a_merge_names_the_next_step_while_no_list_holds_the_pull_request() {
-        let dir = daemon_dir();
-        let ground = Ground::new(open_pull());
-        watch(dir.path(), pull());
-        // The list of open pull requests dropped it, and the list of merged
-        // ones does not hold it yet: the stage has no release.
         ground.forge(|f| f.candidate.state = "MERGED".into());
         look(dir.path(), &ground, MINUTE).await;
-        assert_eq!(ground.told(), [AFTER_MERGE]);
+        assert_eq!(
+            ground.told(),
+            [
+                "The pull request #1140 of the release v3.3.0 merged. next: wait for the release \
+                 build of the last commit of origin/main in the CI run of its push to main; when \
+                 a job of it failed, run that job again"
+            ]
+        );
+        assert!(kept(dir.path()).is_empty(), "the watch goes");
     }
 
     #[tokio::test]
@@ -2151,15 +2124,44 @@ mod tests {
         let dir = daemon_dir();
         let ground = Ground::new(open_pull());
         watch(dir.path(), pull());
-        // A fast test passed on the merge commit before the first look.
+        // A fast test passed on the last commit before the first look.
         ground.forge(|f| {
             merged(f);
-            f.real = vec![("m1", true)];
+            f.real = vec![("c1", true)];
         });
         look(dir.path(), &ground, MINUTE).await;
         assert_eq!(
             ground.told(),
-            ["The release pull request #1140 of v3.3.0 merged. next: riff release publish v3.3.0"]
+            ["The pull request #1140 of the release v3.3.0 merged. next: riff release cut 3.3.0"]
+        );
+    }
+
+    /// 01M76428R8GY6J323AWG3JV8HA: the pull request of the next version
+    /// merges after the cut. Its message names the next step of the release
+    /// that it follows, here the approval of the deploy.
+    #[tokio::test]
+    async fn the_merge_of_the_next_version_names_the_step_of_its_release() {
+        let dir = daemon_dir();
+        let ground = Ground::new(open_pull());
+        let op = Op::Pull {
+            tag: "v3.3.0".into(),
+            number: 1141,
+        };
+        watch(dir.path(), op);
+        ground.forge(|f| {
+            f.candidate.state = "MERGED".into();
+            f.main = "3.4.0".into();
+            f.releases = vec!["3.0.0", "3.2.0", "3.3.0"];
+            f.tags = vec!["v3.3.0".into()];
+            f.deploy = deploy(DeployState::Waiting, &[]);
+        });
+        look(dir.path(), &ground, MINUTE).await;
+        assert_eq!(
+            ground.told(),
+            [
+                "The pull request #1141 of the release v3.3.0 merged. next: a person runs riff \
+                 release approve v3.3.0 in a terminal"
+            ]
         );
     }
 
@@ -2177,8 +2179,8 @@ mod tests {
         assert_eq!(
             ground.told(),
             [
-                "The Gate of the release pull request #1140 failed: Clippy, Tests 1/4. next: \
-                 run the failed jobs again, then riff release verify 1140"
+                "The Gate of the pull request #1140 of the release v3.3.0 failed: Clippy, Tests \
+                 1/4. next: run the failed jobs again, then riff release verify 1140"
             ]
         );
         look(dir.path(), &ground, 2 * MINUTE).await;
@@ -2196,7 +2198,7 @@ mod tests {
         assert_eq!(
             ground.told(),
             [
-                "The release pull request #1140 of v3.3.0 closed with no merge. next: riff \
+                "The pull request #1140 of the release v3.3.0 closed with no merge. next: riff \
                  release cut 3.3.0"
             ]
         );
@@ -2223,14 +2225,15 @@ mod tests {
     fn test_op() -> Op {
         Op::Test {
             tag: "v3.3.0".into(),
-            commit: "m1".into(),
+            commit: "c1".into(),
         }
     }
 
-    /// A forge with a merged release and a test that runs.
+    /// A forge whose last commit c1 of origin/main has 3.3.0, its release
+    /// build, and a real-session test that runs.
     fn testing() -> Fake {
-        let mut fake = Fake::ready("3.2.0");
-        fake.running = vec!["m1"];
+        let mut fake = Fake::ready("3.3.0");
+        fake.running = vec!["c1"];
         fake.real = vec![];
         fake
     }
@@ -2245,12 +2248,12 @@ mod tests {
 
         ground.forge(|f| {
             f.running.clear();
-            f.real = vec![("m1", true)];
+            f.real = vec![("c1", true)];
         });
         look(dir.path(), &ground, 2 * MINUTE).await;
         assert_eq!(
             ground.told(),
-            ["The real-session test of v3.3.0 passed on m1. next: riff release publish v3.3.0"]
+            ["The real-session test of v3.3.0 passed on c1. next: riff release cut 3.3.0"]
         );
         look(dir.path(), &ground, 3 * MINUTE).await;
         assert!(ground.told().is_empty());
@@ -2264,14 +2267,14 @@ mod tests {
         watch(dir.path(), test_op());
         ground.forge(|f| {
             f.running.clear();
-            f.real = vec![("m1", false)];
+            f.real = vec![("c1", false)];
         });
         look(dir.path(), &ground, MINUTE).await;
         let told = ground.told();
         assert_eq!(told.len(), 1, "{told:?}");
         assert!(
             told[0].starts_with(
-                "The real-session test of v3.3.0 failed on m1. The failed step is on the \
+                "The real-session test of v3.3.0 failed on c1. The failed step is on the \
                  release issue. next: file the bug in the wave"
             ),
             "{told:?}"
@@ -2960,8 +2963,8 @@ mod tests {
         assert_eq!(
             ground.told(),
             [
-                "Wave 41 is complete: next riff release cut X.Y.Z, or riff wave end 41 \
-                 --no-release TEXT"
+                "Wave 41 is complete: next riff release test vX.Y.Z --host HOST, then riff \
+                 release cut X.Y.Z, or riff wave end 41 --no-release TEXT"
             ]
         );
         // The watch of each host makes this key, and riff-server keeps one post
@@ -3046,56 +3049,55 @@ mod tests {
     }
 
     /// A forge with the current wave 41 of a repository with the table
-    /// `[release]`, no open item, and the open release pull request #1140 of
-    /// v3.3.0 whose full check runs.
+    /// `[release]`, no open item, and the release issue of v3.3.0 that
+    /// `riff release test` made. The last commit c1 of origin/main has
+    /// 3.3.0, and its release test runs.
     fn cut_forge() -> Fake {
         Fake {
             wave_open: Some(("Wave 41: only the current release".into(), 0)),
             has_release: true,
             wave_release: Some("Release v3.3.0".into()),
-            open_pr: Some((1140, "3.3.0")),
+            main: "3.3.0".into(),
+            release_test: Some(TestState::Running),
             ..open_pull()
         }
     }
 
-    /// 01M75R6FPVZA3JA5C48PQ26A85: from the cut to the check, the watch of
-    /// the wave reads the release of the newest release issue of the wave at
-    /// each step, as `riff release status` does, and gives it to the facts of
-    /// its host. A checked release has no step.
+    /// 01M75R6FPVZA3JA5C48PQ26A85, 01M7642H27T4862WZENFAN4277: from the
+    /// release issue to the check, the watch of the wave reads the release
+    /// of the newest release issue of the wave at each step, as `riff
+    /// release status` does, and gives it to the facts of its host. The
+    /// state `building` and a checked release have no step.
     #[tokio::test]
-    async fn the_watch_of_a_wave_reads_each_step_of_the_release_from_the_cut() {
+    async fn the_watch_of_a_wave_reads_each_step_of_the_release_from_its_issue() {
         let dir = daemon_dir();
         let ground = Ground::new(cut_forge());
         let every = i64::try_from(read_every().as_millis()).unwrap();
         // A change of the forge, then the step of the next read.
         type Step = (fn(&mut Fake), Option<ReleaseStep>);
-        let steps: [Step; 15] = [
-            (|_| {}, Some(ReleaseStep::PullRuns)),
+        let steps: [Step; 12] = [
+            (|_| {}, None),
             (
-                |f| f.gate = Gate::Ended("failure".into()),
-                Some(ReleaseStep::PullFailed),
-            ),
-            (|f| f.gate = Gate::Passed, Some(ReleaseStep::Verify)),
-            (|f| f.verify = true, Some(ReleaseStep::Merges)),
-            (
-                |f| {
-                    f.open_pr = None;
-                    f.release_pr = Fake::ready("3.3.0").release_pr;
-                    f.since = vec!["m2", "m1"];
-                },
+                |f| f.release_test = Some(TestState::Passed),
                 Some(ReleaseStep::Merged),
             ),
-            (|f| f.running = vec!["m2"], Some(ReleaseStep::TestRuns)),
+            (|f| f.running = vec!["c1"], Some(ReleaseStep::TestRuns)),
             (
                 |f| {
                     f.running = vec![];
-                    f.real = vec![("m2", false)];
+                    f.real = vec![("c1", false)];
                 },
                 Some(ReleaseStep::TestFailed),
             ),
-            (|f| f.real = vec![("m2", true)], Some(ReleaseStep::Tested)),
+            (|f| f.real = vec![("c1", true)], Some(ReleaseStep::Tested)),
+            // The cut, then the merge of the pull request of the next
+            // version: the read follows v3.3.0.
             (
-                |f| f.tags = vec!["v3.3.0".into()],
+                |f| {
+                    f.tags = vec!["v3.3.0".into()];
+                    f.releases = vec!["3.0.0", "3.2.0", "3.3.0"];
+                    f.main = "3.4.0".into();
+                },
                 Some(ReleaseStep::Published),
             ),
             (
@@ -3139,57 +3141,54 @@ mod tests {
 
     /// 01M75R6FPVZA3JA5C48PQ26A85: the watch of the wave reads the release
     /// again only each `read_every`, and at once for a new release issue,
-    /// for example the cut of a fix forward. The read of a release before
-    /// its tag fetches the main clone first, and a read that fails keeps the
-    /// last read.
+    /// for example the test of a fix forward. The read of a release before
+    /// its tag, and a read with no release, fetch the main clone first, and
+    /// a read that fails keeps the last read.
     #[tokio::test]
     async fn the_watch_of_a_wave_reads_the_release_each_few_minutes() {
         let dir = daemon_dir();
         let ground = Ground::new(cut_forge());
+        ground.forge(|f| f.release_test = Some(TestState::Passed));
         let every = i64::try_from(read_every().as_millis()).unwrap();
         look(dir.path(), &ground, MINUTE).await;
-        assert_eq!(wave_step(dir.path()), Some(ReleaseStep::PullRuns));
-        // The first read of the cut needs only `gh`.
+        assert_eq!(wave_step(dir.path()), Some(ReleaseStep::Merged));
+        // The first read of a new release issue fetches nothing.
         assert_eq!(*ground.fetches.lock().unwrap(), [false]);
 
-        ground.forge(|f| f.gate = Gate::Passed);
+        ground.forge(|f| f.running = vec!["c1"]);
         look(dir.path(), &ground, 2 * MINUTE).await;
         assert_eq!(
             wave_step(dir.path()),
-            Some(ReleaseStep::PullRuns),
+            Some(ReleaseStep::Merged),
             "no read yet"
         );
         look(dir.path(), &ground, MINUTE + every).await;
-        assert_eq!(wave_step(dir.path()), Some(ReleaseStep::Verify));
+        assert_eq!(wave_step(dir.path()), Some(ReleaseStep::TestRuns));
         assert_eq!(*ground.fetches.lock().unwrap(), [false, false, true]);
 
-        // A fix forward: the cut of v3.3.1 makes a new release issue.
+        // A fix forward: the test of v3.4.0 makes a new release issue.
         ground.forge(|f| {
-            f.wave_release = Some("Release v3.3.1".into());
-            f.open_pr = Some((1150, "3.3.1"));
-            f.gate = Gate::Running;
+            f.wave_release = Some("Release v3.4.0".into());
+            f.main = "3.4.0".into();
+            f.commit = "c2";
         });
         look(dir.path(), &ground, MINUTE + every + MINUTE).await;
         let watches = Watches::new(dir.path()).read().unwrap();
         let release = watches[0].release().unwrap();
         assert_eq!(
             (release.tag.as_str(), release.step),
-            ("v3.3.1", ReleaseStep::PullRuns)
+            ("v3.4.0", ReleaseStep::Merged)
         );
 
         // A read that fails keeps the last read.
         *ground.fault.lock().unwrap() = Some("gh: HTTP 502".into());
         look(dir.path(), &ground, 3 * every).await;
         let watches = Watches::new(dir.path()).read().unwrap();
-        assert_eq!(watches[0].release().unwrap().tag, "v3.3.1");
+        assert_eq!(watches[0].release().unwrap().tag, "v3.4.0");
 
         // After the tag, the read needs no fetch.
         *ground.fault.lock().unwrap() = None;
-        ground.forge(|f| {
-            f.open_pr = None;
-            f.release_pr = Fake::ready("3.3.1").release_pr;
-            f.tags = vec!["v3.3.1".into()];
-        });
+        ground.forge(|f| f.tags = vec!["v3.4.0".into()]);
         look(dir.path(), &ground, 4 * every).await;
         assert_eq!(wave_step(dir.path()), Some(ReleaseStep::Published));
         ground.fetches.lock().unwrap().clear();
@@ -3308,9 +3307,9 @@ mod tests {
         assert_eq!(
             ground.told(),
             [
-                "riff cannot read the state of the release pull request #1140 and the current \
-                 wave: gh: HTTP 502. riff tries again each minute, and tells you this fault one \
-                 time."
+                "riff cannot read the state of the pull request #1140 of the release and the \
+                 current wave: gh: HTTP 502. riff tries again each minute, and tells you this \
+                 fault one time."
             ]
         );
         assert_eq!(ground.keys(), [Some(watch_fault_key("gh: HTTP 502"))]);
@@ -3572,17 +3571,17 @@ mod tests {
             Case {
                 command: "riff release cut",
                 op: pull(),
-                ok: (Box::new(merged), "of v3.3.0 merged"),
+                ok: (Box::new(merged), "of the release v3.3.0 merged"),
                 bad: (
                     Box::new(|f| f.gate = Gate::Ended("failure".into())),
-                    "Gate of the release pull request #1140 failed",
+                    "Gate of the pull request #1140 of the release v3.3.0 failed",
                 ),
                 stays_on_ok: false,
             },
             Case {
                 command: "riff release verify",
                 op: pull(),
-                ok: (Box::new(merged), "of v3.3.0 merged"),
+                ok: (Box::new(merged), "of the release v3.3.0 merged"),
                 bad: (
                     Box::new(|f| f.candidate.state = "CLOSED".into()),
                     "closed with no merge",
@@ -3595,21 +3594,21 @@ mod tests {
                 ok: (
                     Box::new(|f| {
                         f.running.clear();
-                        f.real = vec![("m1", true)];
+                        f.real = vec![("c1", true)];
                     }),
-                    "passed on m1",
+                    "passed on c1",
                 ),
                 bad: (
                     Box::new(|f| {
                         f.running.clear();
-                        f.real = vec![("m1", false)];
+                        f.real = vec![("c1", false)];
                     }),
-                    "failed on m1",
+                    "failed on c1",
                 ),
                 stays_on_ok: false,
             },
             Case {
-                command: "riff release publish",
+                command: "riff release cut",
                 op: Op::Deploy {
                     tag: tag(),
                     stale: None,
@@ -3672,15 +3671,8 @@ mod tests {
                 let name = format!("{} {}", case.command, if ok { "ok" } else { "bad" });
                 let dir = daemon_dir();
                 let mut forge = open_pull();
-                forge.running = vec!["m1"];
-                forge.release_pr = Some(ReleasePr {
-                    number: 1140,
-                    url: String::new(),
-                    merge: "m1".into(),
-                    head: "h1".into(),
-                    body: String::new(),
-                });
-                forge.since = vec!["m1"];
+                forge.main = "3.3.0".into();
+                forge.running = vec!["c1"];
                 forge.tags = vec!["v3.3.0".into(), "v3.2.0".into()];
                 forge.deploy = match &case.op {
                     // The state that the command saw before.

@@ -79,7 +79,7 @@
 //! | `Bash(/opt/riff/riff wave move *)` | allow | lead | session | the same, in a container |
 //! | `Bash(/opt/riff/riff wave end *)` | allow | lead | session | the same, in a container |
 //! | `Bash(/opt/riff/riff release status)` | allow | lead | session | the state of the release cycle, in a container |
-//! | `Bash(/opt/riff/riff release cut *)` | allow | lead | session | the release pull request, in a container |
+//! | `Bash(/opt/riff/riff release cut *)` | allow | lead | session | the tag, the release and the pull request of the next version, in a container |
 //! | `Bash(/opt/riff/riff release hold *)` | allow | lead | session | the hold of a release by a lead in a critical place, in a container (01M5SNV7KZRDBRC3NM2E5W92KS) |
 //! | `Bash(gh pr create *)` | allow | worker | project, session | open the pull request |
 //! | `Bash(gh pr merge --auto --squash *)` | allow | worker | project, session | turn on auto-merge |

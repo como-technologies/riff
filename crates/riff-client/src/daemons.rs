@@ -336,23 +336,25 @@ pub struct Test {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReleaseStep {
-    /// The full check of the release pull request runs.
+    /// The full check of the release pull request of an older riff runs.
     PullRuns,
-    /// The full check of the release pull request failed.
+    /// The full check of the release pull request of an older riff failed.
     PullFailed,
-    /// The full check of the release pull request passed: the lead
-    /// verifies it next.
+    /// The full check of the release pull request of an older riff passed:
+    /// the lead verifies it next.
     Verify,
-    /// The verify of the release pull request passed: it merges.
+    /// The verify of the release pull request of an older riff passed: it
+    /// merges.
     Merges,
-    /// The release pull request merged: the lead starts the real-session
-    /// test next.
+    /// The last commit of `main` has its release build and a passed release
+    /// test, or the release pull request of an older riff merged: the lead
+    /// starts the real-session test next.
     Merged,
     /// The real-session test runs.
     TestRuns,
     /// The real-session test failed: the lead files the bug next.
     TestFailed,
-    /// The real-session test passed: the lead publishes the release next.
+    /// The real-session test passed: the lead cuts the release next.
     Tested,
     /// The tag and the GitHub release exist: the jobs of the CI run of the
     /// tag before the job `Deploy` run.

@@ -1,8 +1,8 @@
-//! The release cycle in riff commands (#671): `riff release cut`
-//! (01M58B0HZYMAK1B2AJMWKHCXG0, 01M58B0J4VQ61ER69Q09JYP7CG), `publish`
-//! (01M58B0JABCET719T3HFB19NDW), `status` (01M58B0JEYNAW67NS226FMX5XH)
+//! The release cycle in riff commands (#671, #1949): `riff release cut`
+//! (01M7641BHHND5JJA8DGJPFNAN7 to 01M7641T9XH5NAXHE8YKBR4JJY), `verify`
+//! (01M5ND0ZNFFAPT1AWD3DP1Y77N), `status` (01M76428NPN7HZCNFCJW8H67RS)
 //! and `approve` (01M58B0JMFQ5E40TWTQ48MPSGK), with their guards
-//! (01M58B0JSQMWNCMSNX19536XT8).
+//! (01M7641T7FX9416CYY1XKHTJE6, 01M58B0JSQMWNCMSNX19536XT8).
 //!
 //! The origin is a bare git repository in a folder. A fake `gh` on
 //! `PATH` logs each call and the body on its stdin, and answers from a
@@ -91,9 +91,14 @@ impl Machine {
         );
         write("Cargo.lock", LOCK);
         write("riff.toml", config);
-        isolated::copy_program(
-            top().join("deploy/release-check.sh"),
-            clone.join("deploy/release-check.sh"),
+        for script in ["deploy/release-check.sh", "deploy/artifact-run.sh"] {
+            isolated::copy_program(top().join(script), clone.join(script));
+        }
+        // The release commands build nothing: a cargo that fails and logs
+        // shows each call.
+        isolated::write_program(
+            root.path().join("bin/cargo"),
+            "#!/bin/sh\necho \"cargo $*\" >> \"$(dirname \"$0\")/cargo.log\"\nexit 1\n",
         );
         git(&clone, &["add", "-A"]);
         git(&clone, &["commit", "-q", "-m", "Release v3.2.0"]);
@@ -125,6 +130,16 @@ impl Machine {
 
     fn head(&self) -> String {
         git(&self.clone(), &["rev-parse", "HEAD"])
+    }
+
+    /// The git tree of the commit `HEAD` of the clone.
+    fn tree(&self) -> String {
+        git(&self.clone(), &["rev-parse", "HEAD^{tree}"])
+    }
+
+    /// Each call of `cargo`: none, as a release command builds nothing.
+    fn cargo_log(&self) -> String {
+        std::fs::read_to_string(self.bin().join("cargo.log")).unwrap_or_default()
     }
 
     /// A fake `gh` that logs `gh ARGS`, copies its stdin for
@@ -342,7 +357,6 @@ async fn each_release_command_refuses_a_repository_with_no_release_table() {
     for args in [
         &["release", "cut", "3.3.0"][..],
         &["release", "verify", "7"],
-        &["release", "publish", "v3.3.0"],
         &["release", "status"],
         &["release", "approve", "v3.3.0"],
         &["release", "check", "v3.3.0"],
@@ -376,147 +390,365 @@ async fn wave_end_has_no_release_gate_in_a_repository_with_no_release_table() {
     assert!(!log.contains("-X PATCH"), "{log}");
 }
 
+/// The commit statuses of a commit whose release test and real-session
+/// test passed.
+const TESTED: &str = r#"{"statuses":[{"context":"riff/release-test","state":"success"},{"context":"riff/real-session","state":"success"}]}"#;
+
+/// The commit statuses of a commit whose release test passed, with no
+/// real-session test.
+const BUILT: &str = r#"{"statuses":[{"context":"riff/release-test","state":"success"}]}"#;
+
+/// The commit statuses of a commit whose release test failed.
+const TEST_FAILED: &str = r#"{"statuses":[{"context":"riff/release-test","state":"failure"}]}"#;
+
+/// The cases of `gh` for the release of the commit `commit` with the tree
+/// `tree`, the last commit of origin/main: each artifact of its release
+/// build is in the run 77 of its push to main, as
+/// `deploy/artifact-run.sh` reads it, and `statuses` are its commit
+/// statuses. Then the release, the CI run of the tag, and the pull
+/// request #1141 of the next version.
+fn ready_cases(commit: &str, tree: &str, statuses: &str) -> String {
+    format!(
+        "'api repos/como-technologies/riff/actions/artifacts?name='*) echo 77 ;;\n\
+         'api repos/como-technologies/riff/actions/runs/77/jobs'*) printf 'Build=success\\nmacOS riff=success\\nLinux riff of a Mac=success\\n' ;;\n\
+         'api repos/como-technologies/riff/actions/runs/77 '*) echo 'push main {commit} {tree} .github/workflows/ci.yml' ;;\n\
+         'api repos/{{owner}}/{{repo}}/commits/{commit}/status') printf '%s\\n' '{statuses}' ;;\n\
+         'release create'*) printf '%s\\n' 'https://github.com/como-technologies/riff/releases/tag/v3.3.0' ;;\n\
+         'run list --workflow CI --branch v3.3.0'*) printf '%s\\n' '[{{\"databaseId\":9,\"url\":\"https://github.com/como-technologies/riff/actions/runs/9\"}}]' ;;\n\
+         'pr create'*) printf '%s\\n' 'https://github.com/como-technologies/riff/pull/1141' ;;"
+    )
+}
+
+impl Machine {
+    /// [`ready_cases`] of the last commit of the clone.
+    fn ready(&self, statuses: &str) -> String {
+        ready_cases(&self.head(), &self.tree(), statuses)
+    }
+}
+
+/// origin/main with the version 3.3.0 of the next release, and a gh that
+/// knows the release build of its last commit and a pass of its release
+/// test and of its real-session test. It gives the last commit.
+async fn ready_release() -> (Machine, String) {
+    ready_release_on(crate::common::start_signed().await).await
+}
+
+/// [`ready_release`] at the server `server`.
+async fn ready_release_on(server: crate::common::Signed) -> (Machine, String) {
+    let machine = Machine::on("[release]\n", server).await;
+    let clone = machine.clone();
+    for name in ["Cargo.toml", "Cargo.lock"] {
+        let file = clone.join(name);
+        let new = std::fs::read_to_string(&file)
+            .unwrap()
+            .replace("version = \"3.2.0\"", "version = \"3.3.0\"");
+        std::fs::write(file, new).unwrap();
+    }
+    git(
+        &clone,
+        &["commit", "-q", "-am", "Set the next version 3.3.0 (#1139)"],
+    );
+    git(&clone, &["push", "-q", "origin", "main"]);
+    // A local tag that the cut must not push.
+    git(&clone, &["tag", "v9.9.9"]);
+    machine.fake_gh(&machine.ready(TESTED));
+    let commit = machine.head();
+    (machine, commit)
+}
+
+/// The cut made no release issue, no tag, no release, no branch and no
+/// pull request, and built nothing.
+fn cut_nothing(machine: &Machine) {
+    let log = machine.log();
+    assert!(!log.contains("issue create"), "{log}");
+    assert!(!log.contains("release create"), "{log}");
+    assert!(!log.contains("pr create"), "{log}");
+    assert_eq!(git(&machine.origin(), &["tag"]), "v3.2.0");
+    assert_eq!(
+        git(&machine.origin(), &["branch", "--format=%(refname:short)"]),
+        "main"
+    );
+    assert_eq!(machine.cargo_log(), "");
+}
+
+/// #1949, 01M7641BHHND5JJA8DGJPFNAN7, 01M7641T2JH2K6SYBCWQGM56FY,
+/// 01M765808DM2V10BRGAAPE8CCT: the cut tags the last commit of origin/main
+/// and builds nothing: no cargo, no version commit, and the release build
+/// of the tree from the run of its push to main. It makes the release with
+/// the notes of the merged pull requests, and opens the pull request of the
+/// next version from the tagged commit. The riff runs on: the cut tells the
+/// owner in riff chat, and registers the watches of the tag and of the pull
+/// request (01M76428R8GY6J323AWG3JV8HA). A second cut refuses while that
+/// pull request is open (01M7641T51JY09YVVKR4WGEE72).
 #[tokio::test]
-async fn cut_pushes_the_branch_and_opens_the_release_pull_request() {
-    let machine = Machine::new().await;
+async fn cut_tags_the_last_commit_builds_nothing_makes_the_release_and_opens_the_next_version() {
+    let (machine, commit) = ready_release().await;
+    let tree = machine.tree();
     machine.serve();
+    machine.name_lead(&LEAD).await;
     let out = machine
-        .ok(&[], &["release", "cut", "3.3.0", "--why", "New commands."])
+        .ok(
+            &LEAD,
+            &[
+                "release",
+                "cut",
+                "3.3.0",
+                "--why",
+                "New commands.",
+                "--run",
+                "riff update --tag v3.3.0",
+            ],
+        )
         .await;
     assert_eq!(
         out,
-        "The release pull request #1140 for issue #7, with auto-merge on: \
-         https://github.com/como-technologies/riff/pull/1140\n\
-         riff watches the release pull request #1140. The lead gets one message when it ends.\n\
-         next: wait for the verify and the merge of pull request #1140\n"
+        format!(
+            "riff tagged {commit} as v3.3.0, and made the release: \
+             https://github.com/como-technologies/riff/releases/tag/v3.3.0\n\
+             The CI run of the tag: https://github.com/como-technologies/riff/actions/runs/9\n\
+             riff told the owner brett in riff chat.\n\
+             riff watches the deploy of v3.3.0. The lead gets one message when it ends.\n\
+             The pull request #1141 sets the next version 3.4.0 on main, for issue #7, with \
+             auto-merge on: https://github.com/como-technologies/riff/pull/1141\n\
+             riff watches the pull request #1141 of the release. The lead gets one message when \
+             it ends.\n\
+             next: riff release verify 1141 after its Gate passed; a person runs riff release \
+             approve v3.3.0 in a terminal when the deploy waits\n"
+        )
     );
-    // 01M5RGCW5NCKQYA61RM63914TX: the command registered the watch of the
-    // Gate and the merge in the same call.
-    let watches = machine.watches();
-    assert_eq!(watches.len(), 1, "{watches:?}");
+    // Only the new tag is pushed: annotated, on the last commit of main.
+    let origin = machine.origin();
+    assert_eq!(git(&origin, &["tag"]), "v3.2.0\nv3.3.0");
+    assert_eq!(git(&origin, &["rev-parse", "v3.3.0^{commit}"]), commit);
+    assert_eq!(git(&origin, &["cat-file", "-t", "v3.3.0"]), "tag");
+    // It builds nothing: no cargo, no commit of the version 3.3.0, and main
+    // did not move.
+    assert_eq!(machine.cargo_log(), "");
+    assert_eq!(git(&origin, &["rev-parse", "main"]), commit);
     assert_eq!(
-        watches[0].op,
-        riff::watches::Op::Pull {
-            tag: "v3.3.0".into(),
-            number: 1140
-        }
+        git(&origin, &["branch", "--format=%(refname:short)"]),
+        "main\nrelease-next-v3.4.0"
     );
-    assert_eq!(watches[0].repo, "como-technologies/riff");
-    let branch = git(&machine.origin(), &["show", "release-v3.3.0:Cargo.toml"]);
-    assert!(branch.contains("version = \"3.3.0\""), "{branch}");
-    let lock = git(&machine.origin(), &["show", "release-v3.3.0:Cargo.lock"]);
+    let log = machine.log();
+    // The release build of the tree: the script of the commit read the
+    // artifacts that a tag takes (01M7641T03M977BBF4M8AQZ74M).
+    for name in ["static-release", "macos-riff", "mac-session-riff"] {
+        assert!(
+            log.contains(&format!(
+                "gh api repos/como-technologies/riff/actions/artifacts?name={name}-{tree}&per_page=100"
+            )),
+            "{name}: {log}"
+        );
+    }
     assert!(
-        lock.contains("name = \"riff-server\"\nversion = \"3.3.0\""),
+        log.contains(
+            "gh release create v3.3.0 --verify-tag --title v3.3.0 --notes-file - --generate-notes \
+             --latest --notes-start-tag v3.2.0\nLevel: minor, 3.3.0. New commands.\n\nEach person \
+             runs:\n\n- `riff update --tag v3.3.0`\n\nWaves in this release: Wave 34: Release.\n"
+        ),
+        "{log}"
+    );
+    assert!(log.contains("- #12: Show the line (#41).\n"), "{log}");
+    assert!(!log.contains("#30"), "{log}");
+    assert!(
+        log.contains("gh issue create --title Release v3.3.0 --label release --milestone Wave 34: Release --body-file -"),
+        "{log}"
+    );
+    // The pull request of the next version, from the tagged commit.
+    assert!(
+        log.contains(
+            "gh pr create --head release-next-v3.4.0 --base main --title Set the next version \
+             3.4.0 --label release --milestone Wave 34: Release --body-file -\nRefs #7\n\nPart of \
+             #7: the next version after v3.3.0."
+        ),
+        "{log}"
+    );
+    assert!(!log.contains("Closes #7"), "{log}");
+    assert!(log.contains("gh pr merge 1141 --auto --squash"), "{log}");
+    let branch = git(&origin, &["show", "release-next-v3.4.0:Cargo.toml"]);
+    assert!(branch.contains("version = \"3.4.0\""), "{branch}");
+    let lock = git(&origin, &["show", "release-next-v3.4.0:Cargo.lock"]);
+    assert!(
+        lock.contains("name = \"riff-server\"\nversion = \"3.4.0\""),
         "{lock}"
     );
     assert!(
         lock.contains("name = \"serde\"\nversion = \"1.0.229\""),
         "{lock}"
     );
-    let subject = git(
-        &machine.origin(),
-        &["log", "-1", "--format=%s", "release-v3.3.0"],
-    );
-    assert_eq!(subject, "Release v3.3.0");
-    let log = machine.log();
-    assert!(
-        log.contains("gh issue create --title Release v3.3.0 --label release --milestone Wave 34: Release --body-file -"),
-        "{log}"
-    );
-    assert!(
-        log.contains(
-            "gh pr create --head release-v3.3.0 --base main --title Release v3.3.0 --label release \
-             --milestone Wave 34: Release --body-file -\nRefs #7\n\nPart of #7: the release pull request."
+    assert_eq!(
+        git(
+            &origin,
+            &["log", "-1", "--format=%s", "release-next-v3.4.0"]
         ),
-        "{log}"
+        "Set the next version 3.4.0"
     );
-    assert!(
-        log.contains("Level: minor, 3.3.0. New commands.\n"),
-        "{log}"
-    );
-    assert!(
-        log.contains("Waves in this release: Wave 34: Release.\n"),
-        "{log}"
-    );
-    assert!(log.contains("- #12: Show the line (#41).\n"), "{log}");
-    assert!(!log.contains("#30"), "{log}");
-    assert!(!log.contains("Closes #7"), "{log}");
-    assert!(log.contains("gh pr merge 1140 --auto --squash"), "{log}");
-    // The worktree of the cut is gone.
+    assert_eq!(git(&origin, &["rev-parse", "release-next-v3.4.0^"]), commit);
+    // The worktree of the branch is gone.
     assert_eq!(
         git(&machine.clone(), &["worktree", "list"]).lines().count(),
         1
     );
-}
-
-#[tokio::test]
-async fn cut_refuses_an_old_version_and_a_version_on_main_with_no_release() {
-    let machine = Machine::new().await;
-    let out = machine.run(&[], &["release", "cut", "3.2.0"], "").await;
-    assert!(!out.status.success());
+    // The CI run builds: the line does not say that the deploy waits.
+    let chat = machine
+        .ok(&LEAD, &["read", "--thread", "chat", "--all"])
+        .await;
     assert!(
-        text(&out.stderr).contains("3.2.0 is not newer than the last release v3.2.0"),
-        "{}",
-        text(&out.stderr)
+        chat.contains(
+            "riff release v3.3.0 is published. Its CI run builds: \
+             https://github.com/como-technologies/riff/actions/runs/9. riff tells you when its \
+             deploy waits for your approval."
+        ),
+        "{chat}"
+    );
+    let ops: Vec<riff::watches::Op> = machine.watches().into_iter().map(|w| w.op).collect();
+    assert_eq!(
+        ops,
+        [
+            riff::watches::Op::Deploy {
+                tag: "v3.3.0".into(),
+                stale: None
+            },
+            riff::watches::Op::Pull {
+                tag: "v3.3.0".into(),
+                number: 1141
+            }
+        ]
     );
 
-    // origin/main has 3.3.0, and 3.3.0 has no release.
-    let clone = machine.clone();
-    let toml = std::fs::read_to_string(clone.join("Cargo.toml"))
-        .unwrap()
-        .replace("3.2.0", "3.3.0");
-    std::fs::write(clone.join("Cargo.toml"), toml).unwrap();
-    git(&clone, &["commit", "-q", "-am", "Release v3.3.0"]);
-    git(&clone, &["push", "-q", "origin", "main"]);
-    let out = machine.run(&[], &["release", "cut", "3.4.0"], "").await;
+    // Again: the release exists, and its pull request of the next version
+    // is open.
+    machine.fake_gh(&format!(
+        "'release list'*) printf '%s\\n' '[{{\"tagName\":\"v3.3.0\"}},{{\"tagName\":\"v3.2.0\"}}]' ;;\n\
+         'pr list --state open --label release'*) printf '%s\\n' '[{{\"number\":1141,\"title\":\"Set the next version 3.4.0\"}}]' ;;\n\
+         {}",
+        machine.ready(TESTED)
+    ));
+    let out = machine.run(&LEAD, &["release", "cut", "3.3.0"], "").await;
     assert!(!out.status.success());
     assert!(
         text(&out.stderr).contains(
-            "the version 3.3.0 on origin/main has no published release. To go on with no release \
-             3.3.0, give --skip 3.3.0 --reason TEXT. next: riff release publish v3.3.0"
+            "the release v3.3.0 exists, and pull request #1141 sets the next version 3.4.0. riff \
+             changed nothing. next: riff release verify 1141 after its Gate passed"
         ),
         "{}",
         text(&out.stderr)
     );
-    assert!(!machine.log().contains("pr create"), "{}", machine.log());
-    assert!(!git(&machine.origin(), &["branch"]).contains("release-v"));
-
-    let out = machine
-        .ok(
-            &[],
-            &[
-                "release",
-                "cut",
-                "3.4.0",
-                "--skip",
-                "3.3.0",
-                "--reason",
-                "the push of the tag was refused",
-            ],
-        )
-        .await;
-    assert!(out.contains("#1140"), "{out}");
-    assert!(
-        machine
-            .log()
-            .contains("No release 3.3.0 exists: the push of the tag was refused."),
-        "{}",
-        machine.log()
-    );
 }
 
+/// #1949, 01M7641BHHND5JJA8DGJPFNAN7, 01M7641T03M977BBF4M8AQZ74M: the cut
+/// refuses while the last commit of origin/main has no release build, also
+/// when only a run of a pull request has the files of a Mac; while its
+/// release test failed; and while it has no pass of the real-session test.
+/// It tags nothing and builds nothing.
 #[tokio::test]
-async fn skip_needs_a_reason() {
+async fn cut_refuses_while_the_commit_has_no_release_build_or_a_failed_release_test() {
+    let (machine, commit) = ready_release().await;
+    let tree = machine.tree();
+    machine.name_lead(&LEAD).await;
+    // The run 78 of a pull request has the files of a Mac of the tree: a tag
+    // does not take them (01M75YKD063DE6ZFA0H3K8BNZB).
+    machine.fake_gh(&format!(
+        "'api repos/como-technologies/riff/actions/artifacts?name=macos-riff-'*) echo 78 ;;\n\
+         'api repos/como-technologies/riff/actions/artifacts?name=mac-session-riff-'*) ;;\n\
+         'api repos/como-technologies/riff/actions/runs/78 '*) echo 'pull_request worktree-issue-1 {commit} {tree} .github/workflows/ci.yml' ;;\n\
+         {}",
+        machine.ready(TESTED)
+    ));
+    let out = machine.run(&LEAD, &["release", "cut", "3.3.0"], "").await;
+    assert_eq!(out.status.code(), Some(1));
+    let error = text(&out.stderr);
+    assert!(
+        error.contains(&format!(
+            "riff release cut: the last commit {commit} of origin/main has no release build: no \
+             run of a merge group or of a push to main gives macos-riff-{tree}, \
+             mac-session-riff-{tree} to its tag, and the cut builds nothing. riff changed \
+             nothing. next: wait for the release build of {commit} in the CI run of its push to \
+             main"
+        )),
+        "{error}"
+    );
+    cut_nothing(&machine);
+
+    machine.fake_gh(&machine.ready(TEST_FAILED));
+    let out = machine.run(&LEAD, &["release", "cut", "3.3.0"], "").await;
+    assert_eq!(out.status.code(), Some(1));
+    let error = text(&out.stderr);
+    assert!(
+        error.contains(&format!(
+            "the release test of the last commit {commit} of origin/main did not pass \
+             (riff/release-test: failed). riff changed nothing. next: the release test of \
+             {commit} failed: file the bug in the wave"
+        )),
+        "{error}"
+    );
+    cut_nothing(&machine);
+
+    machine.fake_gh(&machine.ready(BUILT));
+    let out = machine.run(&LEAD, &["release", "cut", "3.3.0"], "").await;
+    assert_eq!(out.status.code(), Some(1));
+    let error = text(&out.stderr);
+    assert!(
+        error.contains(&format!(
+            "the last commit {commit} of origin/main has no pass of the real-session test \
+             (riff/real-session). riff changed nothing. next: riff release test v3.3.0 --host \
+             HOST, or just real-session on origin/main"
+        )),
+        "{error}"
+    );
+    cut_nothing(&machine);
+}
+
+/// 01M7641BHHND5JJA8DGJPFNAN7, 01M7641T51JY09YVVKR4WGEE72: the cut tags
+/// only the version on origin/main. A cut of the version of a release that
+/// is there opens only the pull request of the next version, while the
+/// release issue is open.
+#[tokio::test]
+async fn cut_refuses_a_version_that_is_not_on_main_and_finishes_a_release_that_is_there() {
     let machine = Machine::new().await;
-    let out = machine
-        .run(&[], &["release", "cut", "3.4.0", "--skip", "3.3.0"], "")
-        .await;
+    machine.name_lead(&LEAD).await;
+    let out = machine.run(&LEAD, &["release", "cut", "3.3.0"], "").await;
     assert!(!out.status.success());
     assert!(
-        text(&out.stderr).contains("--reason"),
+        text(&out.stderr).contains(
+            "the version on origin/main is 3.2.0, not 3.3.0. The cut tags the last commit of \
+             origin/main, and makes no version commit. riff changed nothing. next: riff release \
+             status"
+        ),
         "{}",
         text(&out.stderr)
     );
+    cut_nothing(&machine);
+    // The release 3.2.0 is there, and its issue is closed.
+    let out = machine.run(&LEAD, &["release", "cut", "3.2.0"], "").await;
+    assert!(!out.status.success());
+    assert!(
+        text(&out.stderr).contains("the release v3.2.0 exists, it has no open release issue"),
+        "{}",
+        text(&out.stderr)
+    );
+    cut_nothing(&machine);
+    // Its issue is open: the cut stopped before the pull request.
+    machine.fake_gh(
+        "'issue list --state all'*) printf '%s\\n' '[{\"number\":6,\"title\":\"Release v3.2.0\",\"state\":\"OPEN\",\"comments\":[]}]' ;;",
+    );
+    let out = machine.ok(&LEAD, &["release", "cut", "3.2.0"]).await;
+    assert!(
+        out.starts_with(
+            "The pull request #1140 sets the next version 3.3.0 on main, for issue #6, with \
+             auto-merge on: https://github.com/como-technologies/riff/pull/1140\n"
+        ),
+        "{out}"
+    );
+    let log = machine.log();
+    assert!(
+        log.contains(
+            "gh pr create --head release-next-v3.3.0 --base main --title Set the next version 3.3.0"
+        ),
+        "{log}"
+    );
+    assert!(!log.contains("release create"), "{log}");
+    assert_eq!(git(&machine.origin(), &["tag"]), "v3.2.0");
 }
 
 /// The alerts of GitHub, one JSON object for each, as `gh api --paginate
@@ -556,26 +788,22 @@ fn alert_cases(
     .join("\n")
 }
 
-/// The cut made no release issue, no branch and no pull request.
-fn cut_nothing(machine: &Machine) {
-    let log = machine.log();
-    assert!(!log.contains("issue create"), "{log}");
-    assert!(!log.contains("pr create"), "{log}");
-    assert!(!git(&machine.origin(), &["branch"]).contains("release-v"));
-}
-
 /// 01M6ZM68Y1QCTA2M8DHYRMKBPN: an open alert of each kind, of code
 /// scanning (security and quality), secret scanning and Dependabot,
 /// stops the cut before the release issue. The refusal lists each one
 /// with its kind, its rule, its file and line, and its link.
 #[tokio::test]
 async fn cut_refuses_an_open_alert_of_each_kind_and_lists_it() {
-    let machine = Machine::new().await;
-    machine.fake_gh(&alert_cases(
-        &[SECURITY_OPEN, QUALITY_OPEN],
-        &[],
-        &[SECRET_OPEN],
-        &[DEPENDABOT_OPEN],
+    let (machine, _) = ready_release().await;
+    machine.fake_gh(&format!(
+        "{}\n{}",
+        alert_cases(
+            &[SECURITY_OPEN, QUALITY_OPEN],
+            &[],
+            &[SECRET_OPEN],
+            &[DEPENDABOT_OPEN],
+        ),
+        machine.ready(TESTED)
     ));
     let out = machine.run(&[], &["release", "cut", "3.3.0"], "").await;
     assert!(!out.status.success());
@@ -612,16 +840,20 @@ async fn cut_refuses_an_open_alert_of_each_kind_and_lists_it() {
 /// let the cut go on. One dismissed alert with no comment stops it.
 #[tokio::test]
 async fn cut_goes_on_with_a_reason_on_each_dismiss_and_refuses_a_dismiss_with_none() {
-    let machine = Machine::new().await;
+    let (machine, _) = ready_release().await;
     let no_reason = CODE_DISMISSED
         .replace("\"number\":6", "\"number\":9")
         .replace("code-scanning/6", "code-scanning/9")
         .replace("\"The value is a test key, not a secret.\"", "null");
-    machine.fake_gh(&alert_cases(
-        &[],
-        &[CODE_DISMISSED, &no_reason],
-        &[SECRET_RESOLVED],
-        &[DEPENDABOT_DISMISSED],
+    machine.fake_gh(&format!(
+        "{}\n{}",
+        alert_cases(
+            &[],
+            &[CODE_DISMISSED, &no_reason],
+            &[SECRET_RESOLVED],
+            &[DEPENDABOT_DISMISSED],
+        ),
+        machine.ready(TESTED)
     ));
     let out = machine.run(&[], &["release", "cut", "3.3.0"], "").await;
     assert!(!out.status.success());
@@ -643,14 +875,18 @@ async fn cut_goes_on_with_a_reason_on_each_dismiss_and_refuses_a_dismiss_with_no
     }
     cut_nothing(&machine);
 
-    machine.fake_gh(&alert_cases(
-        &[],
-        &[CODE_DISMISSED],
-        &[SECRET_RESOLVED],
-        &[DEPENDABOT_DISMISSED],
+    machine.fake_gh(&format!(
+        "{}\n{}",
+        alert_cases(
+            &[],
+            &[CODE_DISMISSED],
+            &[SECRET_RESOLVED],
+            &[DEPENDABOT_DISMISSED]
+        ),
+        machine.ready(TESTED)
     ));
     let out = machine.ok(&[], &["release", "cut", "3.3.0"]).await;
-    assert!(out.contains("The release pull request #1140"), "{out}");
+    assert!(out.starts_with("riff tagged "), "{out}");
     assert!(machine.log().contains("gh pr create"), "{}", machine.log());
 }
 
@@ -659,13 +895,17 @@ async fn cut_goes_on_with_a_reason_on_each_dismiss_and_refuses_a_dismiss_with_no
 /// scanning alert dismissed with no comment still stops it.
 #[tokio::test]
 async fn cut_needs_no_comment_on_a_revoked_secret_or_an_auto_dismiss() {
-    let machine = Machine::new().await;
+    let (machine, _) = ready_release().await;
     let no_reason = CODE_DISMISSED.replace("\"The value is a test key, not a secret.\"", "null");
-    machine.fake_gh(&alert_cases(
-        &[],
-        &[&no_reason],
-        &[SECRET_REVOKED],
-        &[DEPENDABOT_AUTO_DISMISSED],
+    machine.fake_gh(&format!(
+        "{}\n{}",
+        alert_cases(
+            &[],
+            &[&no_reason],
+            &[SECRET_REVOKED],
+            &[DEPENDABOT_AUTO_DISMISSED]
+        ),
+        machine.ready(TESTED)
     ));
     let out = machine.run(&[], &["release", "cut", "3.3.0"], "").await;
     assert!(!out.status.success());
@@ -687,14 +927,13 @@ async fn cut_needs_no_comment_on_a_revoked_secret_or_an_auto_dismiss() {
     }
     cut_nothing(&machine);
 
-    machine.fake_gh(&alert_cases(
-        &[],
-        &[],
-        &[SECRET_REVOKED],
-        &[DEPENDABOT_AUTO_DISMISSED],
+    machine.fake_gh(&format!(
+        "{}\n{}",
+        alert_cases(&[], &[], &[SECRET_REVOKED], &[DEPENDABOT_AUTO_DISMISSED]),
+        machine.ready(TESTED)
     ));
     let out = machine.ok(&[], &["release", "cut", "3.3.0"]).await;
-    assert!(out.contains("The release pull request #1140"), "{out}");
+    assert!(out.starts_with("riff tagged "), "{out}");
     assert!(machine.log().contains("gh pr create"), "{}", machine.log());
 }
 
@@ -703,10 +942,11 @@ async fn cut_needs_no_comment_on_a_revoked_secret_or_an_auto_dismiss() {
 /// the read and the fix.
 #[tokio::test]
 async fn cut_refuses_when_it_cannot_read_the_alerts() {
-    let machine = Machine::new().await;
-    machine.fake_gh(
-        "*'secret-scanning/alerts?'*) echo 'gh: Resource not accessible by integration (HTTP 403)' >&2; exit 1 ;;",
-    );
+    let (machine, _) = ready_release().await;
+    machine.fake_gh(&format!(
+        "*'secret-scanning/alerts?'*) echo 'gh: Resource not accessible by integration (HTTP 403)' >&2; exit 1 ;;\n{}",
+        machine.ready(TESTED)
+    ));
     let out = machine.run(&[], &["release", "cut", "3.3.0"], "").await;
     assert!(!out.status.success());
     let err = text(&out.stderr);
@@ -733,8 +973,8 @@ async fn status_shows_the_versions_and_a_run_that_waits() {
     let out = machine.ok(&[], &["release", "status"]).await;
     assert_eq!(
         out,
-        "version on origin/main: 3.2.0\nlast release: v3.2.0\nmerged, not published: none\n\
-         waits for production: v3.2.0 https://github.com/como-technologies/riff/actions/runs/9. \
+        "version on origin/main: 3.2.0\nlast release: v3.2.0\npull request of the next version: \
+         none: riff release cut 3.2.0 opens it\nwaits for production: v3.2.0 https://github.com/como-technologies/riff/actions/runs/9. \
          A person runs: riff release approve v3.2.0\nrelease: v3.2.0 published\nnext: wait for the CI run of the tag v3.2.0\n"
     );
 }
@@ -841,105 +1081,57 @@ async fn approve_refuses_each_agent_session() {
     assert_eq!(machine.log(), "");
 }
 
+/// 01M7641T7FX9416CYY1XKHTJE6: the cut is a step of the lead. It refuses a
+/// worker, a container session and a session that is not the lead, before
+/// each call of `gh`.
 #[tokio::test]
-async fn publish_refuses_a_worker_a_container_and_a_session_that_is_not_the_lead() {
+async fn cut_refuses_a_worker_a_container_and_a_session_that_is_not_the_lead() {
     let machine = Machine::new().await;
     let socket = machine.no_daemon();
     let cases: [(&[(&str, &str)], String); 4] = [
         (
             &[("RIFF_WORKER", "1"), ("RIFF_SESSION", "w1")],
-            riff::text::release_refused("publish", Refusal::Worker),
+            riff::text::release_refused("cut", Refusal::Worker),
         ),
         (
             &[("RIFF_SOCKET", socket.as_str()), ("RIFF_SESSION", "c1")],
-            riff::text::release_refused("publish", Refusal::Container),
+            riff::text::release_refused("cut", Refusal::Container),
         ),
         (
             &[("RIFF_SESSION", "s2")],
-            riff::text::release_refused("publish", Refusal::NotTheLead),
+            riff::text::release_refused("cut", Refusal::NotTheLead),
         ),
         (
             &[
                 ("RIFF_SESSION", "s3"),
                 ("RIFF_SERVER", "http://127.0.0.1:9"),
             ],
-            riff::text::release_refused("publish", Refusal::LeadUnknown),
+            riff::text::release_refused("cut", Refusal::LeadUnknown),
         ),
     ];
     for (vars, want) in cases {
-        let out = machine
-            .run(vars, &["release", "publish", "v3.3.0"], "")
-            .await;
+        let out = machine.run(vars, &["release", "cut", "3.3.0"], "").await;
         assert_eq!(out.status.code(), Some(1), "{vars:?}");
         assert_eq!(text(&out.stderr), format!("{want}\n"), "{vars:?}");
     }
     assert_eq!(machine.log(), "");
 }
 
-impl Machine {
-    /// The cases of `gh` for the merged release pull request of 3.3.0
-    /// with the merge commit `merge`. With `tested`, the real-session
-    /// test passed on it.
-    fn release_cases(&self, merge: &str, tested: bool) -> String {
-        let real = if tested {
-            r#"{"statuses":[{"context":"riff/real-session","state":"success"}]}"#
-        } else {
-            r#"{"statuses":[]}"#
-        };
-        format!(
-            "'pr list --state merged --label release'*) printf '%s\n' '[{{\"number\":1140,\"title\":\"Release v3.3.0\",\"url\":\"https://github.com/como-technologies/riff/pull/1140\",\"body\":\"Refs #7\\n\\nPart of #7: the release pull request.\\n\\nLevel: minor, 3.3.0.\\n\\nIssue: #7\\nMilestone: Wave 34\\n\",\"mergeCommit\":{{\"oid\":\"{merge}\"}},\"headRefOid\":\"h1\"}}]' ;;\n\
-             'api repos/{{owner}}/{{repo}}/commits/h1/status') printf '%s\n' '{{\"statuses\":[{{\"context\":\"riff/verify\",\"state\":\"success\"}}]}}' ;;\n\
-             'api repos/{{owner}}/{{repo}}/commits/{merge}/status') printf '%s\n' '{real}' ;;\n\
-             'release create'*) printf '%s\n' 'https://github.com/como-technologies/riff/releases/tag/v3.3.0' ;;\n\
-             'run list --workflow CI --branch v3.3.0'*) printf '%s\n' '[{{\"databaseId\":9,\"url\":\"https://github.com/como-technologies/riff/actions/runs/9\"}}]' ;;"
-        )
-    }
-}
-
-/// origin/main with the merged release pull request of 3.3.0, tested by
-/// the real-session test, and a gh that knows it.
-async fn merged_release() -> (Machine, String) {
-    merged_release_on(crate::common::start_signed().await).await
-}
-
-/// [`merged_release`] at the server `server`.
-async fn merged_release_on(server: crate::common::Signed) -> (Machine, String) {
-    let machine = Machine::on("[release]\n", server).await;
-    let clone = machine.clone();
-    for name in ["Cargo.toml", "Cargo.lock"] {
-        let file = clone.join(name);
-        let new = std::fs::read_to_string(&file)
-            .unwrap()
-            .replace("version = \"3.2.0\"", "version = \"3.3.0\"");
-        std::fs::write(file, new).unwrap();
-    }
-    git(&clone, &["commit", "-q", "-am", "Release v3.3.0 (#1140)"]);
-    git(&clone, &["push", "-q", "origin", "main"]);
-    let merge = machine.head();
-    // A local tag that publish must not push.
-    git(&clone, &["tag", "v9.9.9"]);
-    machine.fake_gh(&machine.release_cases(&merge, true));
-    (machine, merge)
-}
-
-/// 01M6WZ40VYDBBTJBTQEBY2984P: `riff release publish` asks `gh` for no
-/// role: the ruleset `releases` decides the push of the tag. When GitHub
-/// refuses the push, publish names the ruleset, the admin role and the
-/// lead App, deletes the local tag, and makes no GitHub release.
+/// 01M7641BHHND5JJA8DGJPFNAN7: the cut asks `gh` for no role: the ruleset
+/// `releases` decides the push of the tag. When GitHub refuses the push,
+/// the cut names the ruleset, the admin role and the lead App, deletes the
+/// local tag, and makes no GitHub release and no pull request.
 #[tokio::test]
-async fn publish_asks_no_role_and_names_the_ruleset_when_github_refuses_the_tag() {
-    let (machine, _) = merged_release().await;
+async fn cut_asks_no_role_and_names_the_ruleset_when_github_refuses_the_tag() {
+    let (machine, _) = ready_release().await;
     // The origin refuses each push, as the ruleset `releases` refuses an
     // account that is not an admin and not the lead App.
     isolated::write_program(
         machine.origin().join("hooks/pre-receive"),
         "#!/bin/sh\necho 'the ruleset releases refuses the tag' >&2\nexit 1\n",
     );
-    let lead = [("RIFF_SESSION", "s1")];
-    machine.name_lead(&lead).await;
-    let out = machine
-        .run(&lead, &["release", "publish", "v3.3.0"], "")
-        .await;
+    machine.name_lead(&LEAD).await;
+    let out = machine.run(&LEAD, &["release", "cut", "3.3.0"], "").await;
     assert_eq!(out.status.code(), Some(1));
     let error = text(&out.stderr);
     assert!(
@@ -959,111 +1151,40 @@ async fn publish_asks_no_role_and_names_the_ruleset_when_github_refuses_the_tag(
     let log = machine.log();
     assert!(!log.contains("permissions"), "{log}");
     assert!(!log.contains("release create"), "{log}");
+    assert!(!log.contains("pr create"), "{log}");
 }
 
+/// 01M7641T51JY09YVVKR4WGEE72: the tag of a cut that stopped is there with
+/// no GitHub release. The cut again makes the release and the pull request
+/// of the next version, and checks no commit: the checks passed before the
+/// tag.
 #[tokio::test]
-async fn publish_tags_the_tested_merge_commit_in_a_running_riff_and_tells_the_chat() {
-    let (machine, merge) = merged_release().await;
-    let lead = [("RIFF_SESSION", "s1")];
-    machine.name_lead(&lead).await;
-    // The real-session test did not run: publish refuses.
-    machine.fake_gh(&machine.release_cases(&merge, false));
-    let out = machine
-        .run(&lead, &["release", "publish", "v3.3.0"], "")
-        .await;
-    assert!(!out.status.success());
+async fn a_second_cut_makes_the_release_of_a_tag_that_is_there() {
+    let (machine, commit) = ready_release().await;
+    let clone = machine.clone();
+    git(&clone, &["tag", "-a", "v3.3.0", "-m", "Release v3.3.0"]);
+    git(&clone, &["push", "-q", "origin", "v3.3.0"]);
+    machine.fake_gh(&machine.ready(BUILT));
+    machine.name_lead(&LEAD).await;
+    let out = machine.ok(&LEAD, &["release", "cut", "3.3.0"]).await;
     assert!(
-        text(&out.stderr).contains(&format!(
-            "no commit from the merge commit {merge} to origin/main has the status \
-             riff/real-session. next: just real-session on origin/main"
-        )),
-        "{}",
-        text(&out.stderr)
-    );
-    assert!(
-        git(&machine.origin(), &["tag"])
-            .lines()
-            .all(|t| t != "v3.3.0")
-    );
-
-    // The riff runs: only the approval of the deploy pauses it.
-    machine.fake_gh(&machine.release_cases(&merge, true));
-    machine.serve();
-    let out = machine.ok(&lead, &["release", "publish", "v3.3.0"]).await;
-    assert_eq!(
-        out,
-        "Published v3.3.0: https://github.com/como-technologies/riff/releases/tag/v3.3.0\n\
-         The CI run of the tag: https://github.com/como-technologies/riff/actions/runs/9\n\
-         riff told the owner brett in riff chat.\n\
-         riff watches the deploy of v3.3.0. The lead gets one message when it ends.\n\
-         next: wait for the jobs of the CI run; then a person runs riff release approve v3.3.0 \
-         in a terminal\n"
-    );
-    let chat = machine
-        .ok(&lead, &["read", "--thread", "chat", "--all"])
-        .await;
-    // The CI run builds: the line does not say that the deploy waits.
-    assert!(
-        chat.contains(
-            "riff release v3.3.0 is published. Its CI run builds: \
-             https://github.com/como-technologies/riff/actions/runs/9. riff tells you when its \
-             deploy waits for your approval."
+        out.starts_with(
+            "The tag v3.3.0 was there. riff made the release: \
+             https://github.com/como-technologies/riff/releases/tag/v3.3.0\n"
         ),
-        "{chat}"
+        "{out}"
     );
-    assert!(!chat.contains("Its deploy waits"), "{chat}");
-    let watches = machine.watches();
-    assert_eq!(watches.len(), 1, "{watches:?}");
-    assert_eq!(
-        watches[0].op,
-        riff::watches::Op::Deploy {
-            tag: "v3.3.0".into(),
-            stale: None
-        }
-    );
-    let tags = git(&machine.origin(), &["tag"]);
-    assert_eq!(tags, "v3.2.0\nv3.3.0", "only the new tag is pushed");
-    assert_eq!(
-        git(&machine.origin(), &["rev-parse", "v3.3.0^{commit}"]),
-        merge
-    );
-    assert_eq!(git(&machine.origin(), &["cat-file", "-t", "v3.3.0"]), "tag");
     let log = machine.log();
+    assert!(log.contains("gh release create v3.3.0 "), "{log}");
     assert!(
-        log.contains(
-            "gh release create v3.3.0 --verify-tag --title v3.3.0 --notes-file - --generate-notes \
-             --latest --notes-start-tag v3.2.0\nLevel: minor, 3.3.0.\n"
-        ),
+        log.contains("gh pr create --head release-next-v3.4.0 "),
         "{log}"
     );
-
-    // Again: the tag exists.
-    let out = machine
-        .run(&lead, &["release", "publish", "v3.3.0"], "")
-        .await;
-    assert!(
-        text(&out.stderr).contains("the tag v3.3.0 exists on GitHub already"),
-        "{}",
-        text(&out.stderr)
+    assert!(!log.contains("actions/artifacts"), "{log}");
+    assert_eq!(
+        git(&machine.origin(), &["rev-parse", "v3.3.0^{commit}"]),
+        commit
     );
-}
-
-#[tokio::test]
-async fn publish_refuses_a_version_that_is_not_on_main() {
-    let (machine, _) = merged_release().await;
-    let lead = [("RIFF_SESSION", "s1")];
-    machine.name_lead(&lead).await;
-    let out = machine
-        .run(&lead, &["release", "publish", "v3.4.0"], "")
-        .await;
-    assert!(!out.status.success());
-    assert!(
-        text(&out.stderr)
-            .contains("no merged pull request \"Release v3.4.0\" with the label release"),
-        "{}",
-        text(&out.stderr)
-    );
-    assert!(!machine.log().contains("release create"));
 }
 
 /// The tag of the build of this riff-server: the checks after a deploy
@@ -1291,8 +1412,8 @@ async fn status_tries_a_read_again_after_a_504_of_github() {
     let out = machine.ok(&QUICK, &["release", "status"]).await;
     assert!(out.starts_with("version on origin/main: 3.2.0\n"), "{out}");
     assert!(out.contains("last release: v3.2.0\n"), "{out}");
-    // The two reads of the status, and the one new try.
-    assert_eq!(machine.log().matches("gh release list").count(), 3);
+    // The one read of the status, and the one new try.
+    assert_eq!(machine.log().matches("gh release list").count(), 2);
 }
 
 /// A failure that is no 502, 503 or 504 is not tried again.
@@ -1355,30 +1476,28 @@ fn assert_limit_out(out: &Output, resource: &str, reset: i64) {
     assert!(!error.contains("rate limit already exceeded"), "{error}");
 }
 
-/// 01M6QB459TJVK6CS9FHWH6EVK2: the read of the release pull request fails
-/// on the GraphQL limit (#1604). `riff release publish` makes no new try.
-/// It says when the counter starts again and what to run then, and exits
-/// with 1. It tags nothing and makes no release.
+/// 01M6QB459TJVK6CS9FHWH6EVK2: the read of the merged pull requests fails on
+/// the GraphQL limit (#1604). `riff release cut` makes no new try. It says
+/// when the counter starts again and what to run then, and exits with 1.
+/// It tags nothing and makes no release.
 #[tokio::test]
-async fn publish_stops_on_the_graphql_limit_and_says_when_it_starts_again() {
-    let (machine, merge) = merged_release().await;
+async fn cut_stops_on_the_graphql_limit_and_says_when_it_starts_again() {
+    let (machine, _) = ready_release().await;
     let lead = [("RIFF_SESSION", "s1"), (riff::pr::RETRY_VAR, "1")];
     machine.name_lead(&lead).await;
     let reset = reset_in_50_minutes();
     machine.fake_gh(&format!(
         "{}\n{}",
         limit_cases(
-            "'pr list --state merged --label release'*",
+            "'pr list --state merged --base main'*",
             GRAPHQL_OUT,
             "graphql",
             0,
             reset
         ),
-        machine.release_cases(&merge, true)
+        machine.ready(TESTED)
     ));
-    let out = machine
-        .run(&lead, &["release", "publish", "v3.3.0"], "")
-        .await;
+    let out = machine.run(&lead, &["release", "cut", "3.3.0"], "").await;
     assert_limit_out(&out, "GraphQL", reset);
     let error = text(&out.stderr);
     assert!(
@@ -1387,8 +1506,7 @@ async fn publish_stops_on_the_graphql_limit_and_says_when_it_starts_again() {
     );
     let log = machine.log();
     assert_eq!(
-        log.matches("gh pr list --state merged --label release")
-            .count(),
+        log.matches("gh pr list --state merged --base main").count(),
         1,
         "{log}"
     );
@@ -1400,8 +1518,8 @@ async fn publish_stops_on_the_graphql_limit_and_says_when_it_starts_again() {
 /// 01M6QB459TJVK6CS9FHWH6EVK2: no counter shows that it is out. The reset
 /// is a guess, and the error says so.
 #[tokio::test]
-async fn publish_says_that_the_reset_of_the_limit_is_a_guess() {
-    let (machine, merge) = merged_release().await;
+async fn cut_says_that_the_reset_of_the_limit_is_a_guess() {
+    let (machine, _) = ready_release().await;
     let lead = [("RIFF_SESSION", "s1"), (riff::pr::RETRY_VAR, "1")];
     machine.name_lead(&lead).await;
     let reset = reset_in_50_minutes();
@@ -1409,17 +1527,15 @@ async fn publish_says_that_the_reset_of_the_limit_is_a_guess() {
     machine.fake_gh(&format!(
         "{}\n{}",
         limit_cases(
-            "'pr list --state merged --label release'*",
+            "'pr list --state merged --base main'*",
             GRAPHQL_OUT,
             "graphql",
             3204,
             reset
         ),
-        machine.release_cases(&merge, true)
+        machine.ready(TESTED)
     ));
-    let out = machine
-        .run(&lead, &["release", "publish", "v3.3.0"], "")
-        .await;
+    let out = machine.run(&lead, &["release", "cut", "3.3.0"], "").await;
     assert_limit_out(&out, "GraphQL", reset);
     assert!(
         text(&out.stderr).contains(
@@ -1637,30 +1753,26 @@ async fn check_retry_and_rollback_refuse_a_worker_a_container_and_another_sessio
     assert_eq!(machine.log(), "");
 }
 
-/// HUMAN GATE 3: only a person skips a version
-/// (01M58KMMKZ8T11KT3R3Z7D0RE1).
+/// 01M7641T7FX9416CYY1XKHTJE6: the cut has no `--skip` and no `--reason`:
+/// the version on origin/main is always the version of the next release.
 #[tokio::test]
-async fn cut_with_a_skip_refuses_each_agent_session() {
+async fn cut_has_no_skip() {
     let machine = Machine::new().await;
-    for vars in [&[("RIFF_SESSION", "s1")][..], &[("CLAUDECODE", "1")]] {
-        let out = machine
-            .run(
-                vars,
-                &[
-                    "release", "cut", "3.4.0", "--skip", "3.3.0", "--reason", "x",
-                ],
-                "",
-            )
-            .await;
-        assert_eq!(out.status.code(), Some(1), "{vars:?}");
-        assert_eq!(
-            text(&out.stderr),
-            format!(
-                "{}\n",
-                riff::text::release_refused("cut --skip", Refusal::Agent)
-            )
-        );
-    }
+    let out = machine
+        .run(
+            &[],
+            &[
+                "release", "cut", "3.4.0", "--skip", "3.3.0", "--reason", "x",
+            ],
+            "",
+        )
+        .await;
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    assert!(
+        text(&out.stderr).contains("--skip"),
+        "{}",
+        text(&out.stderr)
+    );
     assert_eq!(machine.log(), "");
 }
 
@@ -1676,7 +1788,7 @@ async fn wave_end_refuses_a_wave_with_no_release() {
     assert!(
         text(&out.stderr).contains(
             "riff wave end 34: these merged pull requests of the wave are in no release: #41. \
-             next: riff release cut X.Y.Z."
+             next: riff release test vX.Y.Z --host HOST, then riff release cut X.Y.Z."
         ),
         "{}",
         text(&out.stderr)
@@ -1735,7 +1847,6 @@ fn the_book_shows_the_release_cycle_with_its_gates_and_a_how_to_for_each_command
         "HUMAN GATE 1: riff release approve vX.Y.Z",
         "HUMAN GATE 2: riff release approve vPREV",
         "| Gate | Who | Command | With no answer |",
-        "| HUMAN GATE 3: skip |",
         "| Log access |",
         "`deploying`, `deployed`,\n`checked`, `failed` or `rolled back`",
         // 01M5RGCW5NCKQYA61RM63914TX: the diagram says what wakes the lead
@@ -1785,7 +1896,7 @@ fn the_book_shows_the_release_cycle_with_its_gates_and_a_how_to_for_each_command
         // command stops on a limit of GitHub.
         (
             "#### When the GitHub limit is out for a release command",
-            "riff release publish v3.3.0",
+            "riff release cut 3.3.0",
             &cycle,
         ),
         (
@@ -1809,24 +1920,34 @@ fn the_book_shows_the_release_cycle_with_its_gates_and_a_how_to_for_each_command
             &cycle,
         ),
         (
-            "#### Cut the release pull request",
-            "riff release cut 3.3.0",
+            "#### Test the last commit of main",
+            "just real-session",
             &make,
         ),
         (
-            "#### Skip a version",
-            "riff release cut 3.4.0 --skip 3.3.0 --reason \"the push of the tag was refused\"",
-            &make,
-        ),
-        ("#### Test the merged release", "just real-session", &make),
-        (
-            "#### Test the merged release",
+            "#### Test the last commit of main",
             "riff release test v3.3.0 --host thelio",
             &make,
         ),
+        ("#### Cut the release", "riff release cut 3.3.0", &make),
         (
-            "#### Publish the release",
-            "riff release publish v3.3.0",
+            "#### Cut the release",
+            "riff release cut 3.3.0 --next 4.0.0",
+            &make,
+        ),
+        (
+            "#### Cut the release",
+            "riff release cut 3.3.0 --run \"riff update --tag v3.3.0\"",
+            &make,
+        ),
+        (
+            "#### Verify the pull request of the next version",
+            "riff release verify 1141",
+            &make,
+        ),
+        (
+            "#### Finish a cut that stopped",
+            "riff release cut 3.3.0",
             &make,
         ),
         (
@@ -1842,6 +1963,11 @@ fn the_book_shows_the_release_cycle_with_its_gates_and_a_how_to_for_each_command
         (
             "#### Roll back to an older release",
             "riff release rollback v3.2.0",
+            &again,
+        ),
+        (
+            "#### Fix forward after a failed check",
+            "riff release cut 3.4.0",
             &again,
         ),
     ] {
@@ -1918,9 +2044,9 @@ async fn sign_in(
 
 /// In a riff with sign-in, a member is refused in a terminal and in its
 /// lead; the owner and its lead pass the guard
-/// (01M58B0JSQMWNCMSNX19536XT8).
+/// (01M7641T7FX9416CYY1XKHTJE6).
 #[tokio::test(flavor = "multi_thread")]
-async fn publish_refuses_a_member_and_the_lead_of_a_member() {
+async fn cut_refuses_a_member_and_the_lead_of_a_member() {
     let (listener, url) = crate::common::listen().await;
     let service = riff_server::Service::new(riff_server::auth::Config {
         require_sign_in: true,
@@ -1945,56 +2071,42 @@ async fn publish_refuses_a_member_and_the_lead_of_a_member() {
         ("RIFF_USER", "bob"),
     ];
     member.name_lead(&lead).await;
-    let out = member
-        .run(&lead, &["release", "publish", "v3.3.0"], "")
-        .await;
+    let out = member.run(&lead, &["release", "cut", "3.3.0"], "").await;
     assert_eq!(out.status.code(), Some(1));
     assert_eq!(
         text(&out.stderr),
-        format!(
-            "{}\n",
-            riff::text::release_refused("publish", Refusal::Member)
-        )
+        format!("{}\n", riff::text::release_refused("cut", Refusal::Member))
     );
     assert_eq!(member.log(), "");
 
     // The member in a terminal, with no session: the same refusal.
     let person = [("RIFF_SERVER", url.as_str()), ("RIFF_USER", "bob")];
-    let out = member
-        .run(&person, &["release", "publish", "v3.3.0"], "")
-        .await;
+    let out = member.run(&person, &["release", "cut", "3.3.0"], "").await;
     assert_eq!(out.status.code(), Some(1));
     assert_eq!(
         text(&out.stderr),
-        format!(
-            "{}\n",
-            riff::text::release_refused("publish", Refusal::Member)
-        )
+        format!("{}\n", riff::text::release_refused("cut", Refusal::Member))
     );
     assert_eq!(member.log(), "");
 
     // The control: the lead of the owner passes the guard, and stops at a
-    // later check of publish.
+    // later check of the cut.
     let lead = [("RIFF_SESSION", "m1"), ("RIFF_SERVER", url.as_str())];
     owner.name_lead(&lead).await;
-    let out = owner
-        .run(&lead, &["release", "publish", "v3.3.0"], "")
-        .await;
+    let out = owner.run(&lead, &["release", "cut", "3.3.0"], "").await;
     assert_eq!(out.status.code(), Some(1));
     assert!(
-        text(&out.stderr).starts_with("Error: riff release publish: "),
+        text(&out.stderr).starts_with("Error: riff release cut: "),
         "{}",
         text(&out.stderr)
     );
 
     // The owner in a terminal passes the guard too.
     let person = [("RIFF_SERVER", url.as_str())];
-    let out = owner
-        .run(&person, &["release", "publish", "v3.3.0"], "")
-        .await;
+    let out = owner.run(&person, &["release", "cut", "3.3.0"], "").await;
     assert_eq!(out.status.code(), Some(1));
     assert!(
-        text(&out.stderr).starts_with("Error: riff release publish: "),
+        text(&out.stderr).starts_with("Error: riff release cut: "),
         "{}",
         text(&out.stderr)
     );
@@ -2019,17 +2131,20 @@ fn daemon_socket(answer: &'static str) -> (tempfile::TempDir, String) {
     (dir, path)
 }
 
+/// 01M7641T7FX9416CYY1XKHTJE6: the lead in its container cuts: the daemon
+/// says that it is the lead (01M59269HHZ5C82DR3RG3QHAM3).
 #[tokio::test]
-async fn the_lead_container_of_the_owner_publishes_the_release() {
-    let (machine, merge) = merged_release().await;
+async fn the_lead_container_of_the_owner_cuts_the_release() {
+    let (machine, merge) = ready_release().await;
     let (_dir, socket) =
         daemon_socket(r#"{"say":"caller","lead":true,"role":null,"role_unknown":false}"#);
     let vars = [("RIFF_SOCKET", socket.as_str()), ("RIFF_SESSION", "c1")];
-    let out = machine.ok(&vars, &["release", "publish", "v3.3.0"]).await;
+    let out = machine.ok(&vars, &["release", "cut", "3.3.0"]).await;
     assert!(
-        out.starts_with(
-            "Published v3.3.0: https://github.com/como-technologies/riff/releases/tag/v3.3.0\n"
-        ),
+        out.starts_with(&format!(
+            "riff tagged {merge} as v3.3.0, and made the release: \
+             https://github.com/como-technologies/riff/releases/tag/v3.3.0\n"
+        )),
         "{out}"
     );
     assert_eq!(git(&machine.origin(), &["tag"]), "v3.2.0\nv3.3.0");
@@ -2041,7 +2156,7 @@ async fn the_lead_container_of_the_owner_publishes_the_release() {
 }
 
 #[tokio::test]
-async fn publish_refuses_a_work_container_a_lead_of_a_member_and_an_unknown_role() {
+async fn cut_refuses_a_work_container_a_lead_of_a_member_and_an_unknown_role() {
     let machine = Machine::new().await;
     let cases: [(&'static str, Refusal); 3] = [
         (
@@ -2060,13 +2175,11 @@ async fn publish_refuses_a_work_container_a_lead_of_a_member_and_an_unknown_role
     for (answer, refusal) in cases {
         let (_dir, socket) = daemon_socket(answer);
         let vars = [("RIFF_SOCKET", socket.as_str()), ("RIFF_SESSION", "c1")];
-        let out = machine
-            .run(&vars, &["release", "publish", "v3.3.0"], "")
-            .await;
+        let out = machine.run(&vars, &["release", "cut", "3.3.0"], "").await;
         assert_eq!(out.status.code(), Some(1), "{answer}");
         assert_eq!(
             text(&out.stderr),
-            format!("{}\n", riff::text::release_refused("publish", refusal)),
+            format!("{}\n", riff::text::release_refused("cut", refusal)),
             "{answer}"
         );
     }
@@ -2135,18 +2248,30 @@ impl Machine {
     }
 }
 
-/// The lead with the lead mark, and the fake `gh` that knows the
-/// release 3.3.0 and a run that waits.
+/// The lead with the lead mark cut the release 3.3.0, and the fake `gh`
+/// knows the release and a run of its tag that waits.
 async fn lead_with_a_waiting_run() -> Machine {
     lead_with_a_waiting_run_on(crate::common::start_signed().await).await
 }
 
 /// [`lead_with_a_waiting_run`] at the server `server`.
 async fn lead_with_a_waiting_run_on(server: crate::common::Signed) -> Machine {
-    let (machine, merge) = merged_release_on(server).await;
+    let (machine, _) = ready_release_on(server).await;
     machine.name_lead(&LEAD).await;
-    machine.fake_gh(&format!("{WAITS}\n{}", machine.release_cases(&merge, true)));
+    machine.ok(&LEAD, &["release", "cut", "3.3.0"]).await;
+    machine.deploy_waits();
     machine
+}
+
+impl Machine {
+    /// The fake `gh` after the cut of 3.3.0: the release is published, and
+    /// the job Deploy of the CI run 9 of its tag waits.
+    fn deploy_waits(&self) {
+        self.fake_gh(&format!(
+            "'release list'*) printf '%s\\n' '[{{\"tagName\":\"v3.3.0\"}},{{\"tagName\":\"v3.2.0\"}}]' ;;\n{WAITS}\n{}",
+            self.ready(TESTED)
+        ));
+    }
 }
 
 /// 01M6WZ40SFVZ6CRQ1H4Z27CWP4: only a person approves a deploy. The lead
@@ -2156,7 +2281,6 @@ async fn lead_with_a_waiting_run_on(server: crate::common::Signed) -> Machine {
 #[tokio::test]
 async fn approve_refuses_each_agent_session_also_the_lead_with_the_word_of_the_owner() {
     let machine = lead_with_a_waiting_run().await;
-    machine.ok(&LEAD, &["release", "publish", "v3.3.0"]).await;
     machine.tell_bot("mike", waits(false)).await;
     machine.say("mike", "Yes, approve v3.3.0 please.").await;
     machine.say("mike", "approved").await;
@@ -2200,13 +2324,12 @@ fn waits(reminder: bool) -> riff_core::wire::BotFact {
 }
 
 /// 01M74BPHQZHXFYYNXAJ1WFASQQ: riff-server posts the lines of `riff
-/// release publish` and of the watch of the deploy, as riff-bot: the kind
+/// release cut` and of the watch of the deploy, as riff-bot: the kind
 /// `riff`, from riff-server itself. Each names the owner brett, and riff
 /// tells it the run of the tag.
 #[tokio::test]
 async fn the_chat_lines_of_riff_go_as_riff_bot() {
     let machine = lead_with_a_waiting_run().await;
-    machine.ok(&LEAD, &["release", "publish", "v3.3.0"]).await;
     machine.tell_bot("mike", waits(false)).await;
     machine.tell_bot("mike", waits(true)).await;
 
@@ -2290,9 +2413,12 @@ fn lead_vars(socket: &str) -> [(&str, &str); 3] {
     ]
 }
 
+/// 01M5P21M7MSP503125GD2PJGRE, 01M74BPHQZHXFYYNXAJ1WFASQQ: in the lead
+/// container, the cut tells the chat, the other leads and the watches
+/// through the socket of the session.
 #[tokio::test]
 async fn cut_in_the_lead_container_tells_the_chat_through_the_socket() {
-    let machine = Machine::new().await;
+    let (machine, _) = ready_release().await;
     let (_dir, socket, seen) = lead_daemon(|call| match call {
         "roster" => roster(),
         "watch" => serde_json::json!("new"),
@@ -2304,63 +2430,50 @@ async fn cut_in_the_lead_container_tells_the_chat_through_the_socket() {
         .await;
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(text(&out.stderr), "");
-    assert_eq!(names(&seen), ["bot", "release_news", "watch"]);
-    // 01M74BPHQZHXFYYNXAJ1WFASQQ: the cut tells riff-server the fact, and
-    // riff-server writes the line of riff-bot.
-    let fact = seen.lock().unwrap()[0]["fact"].clone();
-    assert_eq!(
-        fact,
-        serde_json::json!({"fact": "release_cut", "tag": "v3.3.0"})
-    );
-    // 01M5SNV75DRFHR26BT2M8243VV: the note to the other leads goes through the socket.
-    let note = seen.lock().unwrap()[1]["body"].as_str().unwrap().to_owned();
-    assert!(
-        note.contains(
-            "the lead of como-technologies/riff cut the release v3.3.0: pull request #1140"
-        ),
-        "{note}"
-    );
-    // The watch goes through the daemon of the host (01M5RGCW5NCKQYA61RM63914TX).
-    let op = seen.lock().unwrap()[2]["op"].clone();
-    assert_eq!(
-        op,
-        serde_json::json!({"kind": "pull", "tag": "v3.3.0", "number": 1140})
-    );
-    assert!(
-        text(&out.stdout).contains("riff watches the release pull request #1140."),
-        "{}",
-        text(&out.stdout)
-    );
-}
-
-#[tokio::test]
-async fn publish_in_the_lead_container_tells_the_chat_through_the_socket() {
-    let (machine, _) = merged_release().await;
-    let (_dir, socket, seen) = lead_daemon(|call| match call {
-        "roster" => roster(),
-        "watch" => serde_json::json!("new"),
-        "release_news" => serde_json::json!(0),
-        _ => serde_json::Value::Null,
-    });
-    let out = machine
-        .run(&lead_vars(&socket), &["release", "publish", "v3.3.0"], "")
-        .await;
-    assert!(out.status.success(), "{}", text(&out.stderr));
     assert!(
         text(&out.stdout).contains("riff told the owner mike in riff chat."),
         "{}",
         text(&out.stdout)
     );
-    assert_eq!(names(&seen), ["roster", "bot", "release_news", "watch"]);
-    // 01M74BPHQZHXFYYNXAJ1WFASQQ: the fact has the ID of the CI run of the
-    // tag, and no text of the line.
+    assert_eq!(
+        names(&seen),
+        ["roster", "bot", "release_news", "watch", "watch"]
+    );
+    // The fact has the ID of the CI run of the tag, and no text of the
+    // line: riff-server writes the line of riff-bot.
     let fact = seen.lock().unwrap()[1]["fact"].clone();
     assert_eq!(
         fact,
         serde_json::json!({"fact": "release_published", "tag": "v3.3.0", "run": 9})
     );
-    let op = seen.lock().unwrap()[3]["op"].clone();
-    assert_eq!(op, serde_json::json!({"kind": "deploy", "tag": "v3.3.0"}));
+    // 01M5SNV75DRFHR26BT2M8243VV: the note to the other leads goes through
+    // the socket.
+    let note = seen.lock().unwrap()[2]["body"].as_str().unwrap().to_owned();
+    assert!(
+        note.contains(
+            "the lead of como-technologies/riff cut the release v3.3.0: the tag and the GitHub \
+             release. The CI run of the tag builds, and pull request #1141 sets the next version."
+        ),
+        "{note}"
+    );
+    // The watches go through the daemon of the host
+    // (01M76428R8GY6J323AWG3JV8HA).
+    let ops: Vec<serde_json::Value> = seen.lock().unwrap()[3..]
+        .iter()
+        .map(|c| c["op"].clone())
+        .collect();
+    assert_eq!(
+        ops,
+        [
+            serde_json::json!({"kind": "deploy", "tag": "v3.3.0"}),
+            serde_json::json!({"kind": "pull", "tag": "v3.3.0", "number": 1141})
+        ]
+    );
+    assert!(
+        text(&out.stdout).contains("riff watches the pull request #1141 of the release."),
+        "{}",
+        text(&out.stdout)
+    );
 }
 
 /// 01M6WZ40SFVZ6CRQ1H4Z27CWP4: in the container of the lead of the owner,
@@ -2391,12 +2504,23 @@ async fn approve_in_the_lead_container_refuses_and_asks_the_daemon_nothing() {
     assert_eq!(machine.log(), "");
 }
 
+/// The body of a release pull request as the release cut of an older riff
+/// writes it: its link line, its line `Part of`, its level line and its
+/// trailers.
+const OLDER_BODY: &str = "Refs #7\\n\\nPart of #7: the release pull request.\\n\\nLevel: minor, 3.3.0.\\n\\nIssue: #7\\nMilestone: Wave 34\\n";
+
 /// The cases of `gh` for `riff release verify 1140`: an open release pull
 /// request with the version files, and a Gate that `gate` is.
 fn verify_cases(gate: &str) -> String {
-    let body = "Refs #7\\n\\nPart of #7: the release pull request.\\n\\nLevel: minor, 3.3.0.\\n\\nIssue: #7\\nMilestone: Wave 34\\n";
+    verify_cases_of(1140, "Release v3.3.0", OLDER_BODY, gate)
+}
+
+/// The cases of `gh` for `riff release verify NUMBER`: the open pull
+/// request `number` with the title `title`, the body `body`, the label
+/// `release` and the version files, and a Gate that `gate` is.
+fn verify_cases_of(number: u64, title: &str, body: &str, gate: &str) -> String {
     format!(
-        "'pr view 1140 --json number,title,body,state,labels,milestone,headRefOid,files'*) printf '%s\\n' '{{\"number\":1140,\"title\":\"Release v3.3.0\",\"body\":\"{body}\",\"state\":\"OPEN\",\"labels\":[{{\"name\":\"release\"}}],\"milestone\":{{\"title\":\"Wave 34: Release\"}},\"headRefOid\":\"h1\",\"files\":[{{\"path\":\"Cargo.toml\"}},{{\"path\":\"Cargo.lock\"}}]}}' ;;\n\
+        "'pr view {number} --json number,title,body,state,labels,milestone,headRefOid,files'*) printf '%s\\n' '{{\"number\":{number},\"title\":\"{title}\",\"body\":\"{body}\",\"state\":\"OPEN\",\"labels\":[{{\"name\":\"release\"}}],\"milestone\":{{\"title\":\"Wave 34: Release\"}},\"headRefOid\":\"h1\",\"files\":[{{\"path\":\"Cargo.toml\"}},{{\"path\":\"Cargo.lock\"}}]}}' ;;\n\
          'api repos/{{owner}}/{{repo}}') printf '%s\\n' '{{\"default_branch\":\"main\"}}' ;;\n\
          'api repos/{{owner}}/{{repo}}/rules/branches/main?per_page=100') printf '%s\\n' '[{{\"type\":\"required_status_checks\",\"parameters\":{{\"required_status_checks\":[{{\"context\":\"Gate\"}},{{\"context\":\"riff/verify\"}}]}}}}]' ;;\n\
          'api repos/{{owner}}/{{repo}}/commits/h1/check-runs?check_name=Gate') printf '%s\\n' '{{\"check_runs\":[{gate}]}}' ;;"
@@ -2415,8 +2539,8 @@ async fn verify_registers_the_watch_of_the_merge() {
     assert_eq!(
         out,
         "Pull request #1140 passed: the status riff/verify of h1 is a success.\n\
-         riff watches the release pull request #1140. The lead gets one message when it ends.\n\
-         next: the auto-merge merges pull request #1140\n"
+         riff watches the pull request #1140 of the release. The lead gets one message when it \
+         ends.\nnext: the auto-merge merges pull request #1140\n"
     );
     assert!(
         machine.log().contains("context=riff/verify"),
@@ -2436,7 +2560,7 @@ async fn verify_registers_the_watch_of_the_merge() {
     // The same pull request again: the watch is one watch.
     let out = machine.ok(&[], &["release", "verify", "1140"]).await;
     assert!(
-        out.contains("riff watches the release pull request #1140 already."),
+        out.contains("riff watches the pull request #1140 of the release already."),
         "{out}"
     );
     assert_eq!(machine.watches().len(), 1);
@@ -2454,27 +2578,131 @@ async fn a_verify_that_refuses_registers_no_watch() {
     assert!(machine.watches().is_empty());
 }
 
+/// 01M5ND0ZNFFAPT1AWD3DP1Y77N, 01M7641T2JH2K6SYBCWQGM56FY: `riff release
+/// verify` passes the pull request of the next version, and its watch
+/// follows the release that the pull request comes after.
+#[tokio::test]
+async fn verify_passes_the_pull_request_of_the_next_version_and_watches_its_release() {
+    let machine = Machine::new().await;
+    machine.serve();
+    let passed = r#"{"status":"completed","conclusion":"success","head_sha":"h1"}"#;
+    let body = "Refs #7\\n\\nPart of #7: the next version after v3.3.0. The issue closes when the \
+                checks after the deploy pass.\\n\\nThis sets 3.4.0 in `Cargo.toml` and \
+                `Cargo.lock`.\\n\\nIssue: #7\\nMilestone: Wave 34\\n";
+    machine.fake_gh(&format!(
+        "'release list'*) printf '%s\\n' '[{{\"tagName\":\"v3.3.0\"}},{{\"tagName\":\"v3.2.0\"}}]' ;;\n{}",
+        verify_cases_of(1141, "Set the next version 3.4.0", body, passed)
+    ));
+    let out = machine.ok(&[], &["release", "verify", "1141"]).await;
+    assert!(
+        out.starts_with("Pull request #1141 passed: the status riff/verify of h1 is a success.\n"),
+        "{out}"
+    );
+    let watches = machine.watches();
+    assert_eq!(watches.len(), 1, "{watches:?}");
+    assert_eq!(
+        watches[0].op,
+        riff::watches::Op::Pull {
+            tag: "v3.3.0".into(),
+            number: 1141
+        }
+    );
+}
+
+/// #1949: the riff of the hosts can be older than this cut, and cut the
+/// release that brings it with a release pull request: the label
+/// `release`, and a diff of only `Cargo.toml` and `Cargo.lock`. That pull
+/// request still passes Hygiene and the Gate. Hygiene has no rule of the
+/// label, and the body of the older cut passes the issue hygiene. The Gate
+/// runs as for each pull request: the plan of CI reads no label, and the
+/// tree with the next version passes `deploy/release-check.sh`, with each
+/// crate of the workspace at that version in `Cargo.lock`, so the build
+/// with `--locked` takes the lock as it is. `riff release verify` passes it
+/// too: see [`verify_registers_the_watch_of_the_merge`].
+#[test]
+fn a_release_pull_request_of_an_older_riff_still_passes_hygiene_and_the_gate() {
+    let wave = "Wave 34: Release";
+    let body = OLDER_BODY.replace("\\n", "\n");
+    let pr = hygiene::PullRequest::new("Release v3.3.0", &body, Some(wave));
+    let issue = hygiene::Issue::new(7, "OPEN", Some(wave));
+    let errors = hygiene::check_pr(&pr, Some(&issue));
+    assert!(errors.is_empty(), "{errors:?}");
+    for workflow in ["ci.yml", "hygiene.yml"] {
+        let text = std::fs::read_to_string(top().join(".github/workflows").join(workflow)).unwrap();
+        assert!(!text.contains("labels"), "{workflow} reads the labels");
+    }
+    // The diff of the older cut: the next version in Cargo.toml and
+    // Cargo.lock of this tree.
+    let toml = std::fs::read_to_string(top().join("Cargo.toml")).unwrap();
+    let lock = std::fs::read_to_string(top().join("Cargo.lock")).unwrap();
+    let next = riff::cycle::next_minor(riff::cycle::cargo_version(&toml).unwrap());
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(
+        root.path().join("Cargo.toml"),
+        riff::cycle::set_cargo(&toml, next).unwrap(),
+    )
+    .unwrap();
+    let new_lock = riff::cycle::set_lock(&lock, next);
+    std::fs::write(root.path().join("Cargo.lock"), &new_lock).unwrap();
+    let check = Command::new(top().join(riff::cycle::CHECK))
+        .arg(riff::cycle::tag(next))
+        .arg(root.path())
+        .output()
+        .unwrap();
+    assert!(check.status.success(), "{}", text(&check.stderr));
+    let crates: Vec<String> = std::fs::read_dir(top().join("crates"))
+        .unwrap()
+        .filter_map(|e| std::fs::read_to_string(e.unwrap().path().join("Cargo.toml")).ok())
+        .map(|manifest| {
+            assert!(
+                manifest.contains("\nversion.workspace = true\n"),
+                "{manifest}"
+            );
+            let name = manifest
+                .lines()
+                .find_map(|l| l.strip_prefix("name = \""))
+                .unwrap();
+            name.trim_end_matches('"').to_owned()
+        })
+        .collect();
+    assert!(crates.iter().any(|c| c == "riff"), "{crates:?}");
+    for name in &crates {
+        assert!(
+            new_lock.contains(&format!("name = \"{name}\"\nversion = \"{next}\"\n")),
+            "{name} in the lock"
+        );
+    }
+    // Only the crates of the workspace have no source.
+    let local = new_lock.matches("[[package]]").count() - new_lock.matches("\nsource = ").count();
+    assert_eq!(local, crates.len(), "the packages with no source");
+}
+
 /// A command that starts an operation with no daemon that serves the
 /// repository still runs the operation. It says on stderr what the lead
 /// misses.
 #[tokio::test]
 async fn a_cut_with_no_daemon_that_serves_the_repository_says_that_the_lead_gets_no_message() {
-    let machine = Machine::new().await;
+    let (machine, _) = ready_release().await;
     let out = machine.run(&[], &["release", "cut", "3.3.0"], "").await;
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert!(
-        text(&out.stdout).contains("The release pull request #1140"),
+        text(&out.stdout).contains("The pull request #1141 sets the next version 3.4.0"),
         "{}",
         text(&out.stdout)
     );
     let stderr = text(&out.stderr);
-    assert!(
-        stderr.contains(
-            "riff could not register the watch of the release pull request #1140: The riff \
-             daemon does not serve como-technologies/riff yet"
-        ),
-        "{stderr}"
-    );
+    for what in [
+        "the deploy of v3.3.0",
+        "the pull request #1141 of the release",
+    ] {
+        assert!(
+            stderr.contains(&format!(
+                "riff could not register the watch of {what}: The riff daemon does not serve \
+                 como-technologies/riff yet"
+            )),
+            "{stderr}"
+        );
+    }
     assert!(
         stderr.contains("the lead gets no message when it ends"),
         "{stderr}"
@@ -2555,7 +2783,7 @@ impl Machine {
 /// for it. The lead that cuts hears no note: it runs the step.
 #[tokio::test]
 async fn the_cut_gives_the_other_lead_one_note() {
-    let machine = Machine::new().await;
+    let (machine, _) = ready_release().await;
     machine.serve();
     machine.name_lead(&LEAD).await;
     let other = machine.other_lead().await;
@@ -2566,7 +2794,7 @@ async fn the_cut_gives_the_other_lead_one_note() {
     );
     assert_eq!(
         machine.heard(&other).await,
-        [note(Step::Cut { number: 1140 }, "v3.3.0")]
+        [note(Step::Cut { number: 1141 }, "v3.3.0")]
     );
     assert!(machine.heard(&machine.first_lead()).await.is_empty());
     assert!(
@@ -2575,18 +2803,20 @@ async fn the_cut_gives_the_other_lead_one_note() {
     );
 }
 
-/// 01M5SNV75DRFHR26BT2M8243VV: the publish and the approval each give the
+/// 01M5SNV75DRFHR26BT2M8243VV: the cut and the approval each give the
 /// other lead one note.
 #[tokio::test]
-async fn the_publish_and_the_approval_give_the_other_lead_one_note_each() {
-    let machine = lead_with_a_waiting_run().await;
+async fn the_cut_and_the_approval_give_the_other_lead_one_note_each() {
+    let (machine, _) = ready_release().await;
     machine.serve();
+    machine.name_lead(&LEAD).await;
     let other = machine.other_lead().await;
-    machine.ok(&LEAD, &["release", "publish", "v3.3.0"]).await;
+    machine.ok(&LEAD, &["release", "cut", "3.3.0"]).await;
     assert_eq!(
         machine.heard(&other).await,
-        [note(Step::Published, "v3.3.0")]
+        [note(Step::Cut { number: 1141 }, "v3.3.0")]
     );
+    machine.deploy_waits();
 
     machine.ok(&[], &["resume", "--riff"]).await;
     let out = machine

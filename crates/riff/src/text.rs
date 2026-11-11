@@ -2409,26 +2409,27 @@ pub struct LeadOnly {
 pub const NO_RELEASE: &str =
     "this repository has no release cycle of riff: riff.toml has no [release]";
 
-/// The error of `riff release publish` when GitHub refused the push of
-/// the tag `tag` (01M6WZ40VYDBBTJBTQEBY2984P): the ruleset `releases`
+/// The error of `riff release cut` when GitHub refused the push of the tag
+/// `tag` (01M7641BHHND5JJA8DGJPFNAN7): the ruleset `releases`
 /// lets only the admin role of the repository and the lead App of the
 /// riff push it (01M6WZ40PZNBHW2BZHMQX80WJ8). The error of git follows.
 ///
 /// ```
 /// assert_eq!(
 ///     riff::text::tag_refused("v3.3.0"),
-///     "riff release publish: GitHub refused the push of the tag v3.3.0. The ruleset releases \
-///      lets only the admin role of the repository and the lead App of the riff push a tag v*. \
-///      riff deleted the tag on this machine. next: the lead runs riff release publish v3.3.0 in \
-///      its container, or an admin of the repository runs it in a terminal. The error of git:"
+///     "riff release cut: GitHub refused the push of the tag v3.3.0. The ruleset releases lets \
+///      only the admin role of the repository and the lead App of the riff push a tag v*. riff \
+///      deleted the tag on this machine. next: the lead runs riff release cut 3.3.0 in its \
+///      container, or an admin of the repository runs it in a terminal. The error of git:"
 /// );
 /// ```
 pub fn tag_refused(tag: &str) -> String {
     format!(
-        "riff release publish: GitHub refused the push of the tag {tag}. The ruleset releases lets \
+        "riff release cut: GitHub refused the push of the tag {tag}. The ruleset releases lets \
          only the admin role of the repository and the lead App of the riff push a tag v*. riff \
-         deleted the tag on this machine. next: the lead runs riff release publish {tag} in its \
-         container, or an admin of the repository runs it in a terminal. The error of git:"
+         deleted the tag on this machine. next: the lead runs riff release cut {} in its \
+         container, or an admin of the repository runs it in a terminal. The error of git:",
+        tag.trim_start_matches('v')
     )
 }
 
@@ -2512,7 +2513,8 @@ pub fn release_refused(command: &str, refusal: crate::cycle::Refusal) -> String 
 ///
 /// let at = |step| Release { repo: "o/r".into(), tag: "v3.3.0".into(), step };
 /// let line = |step, paused| release_line(&at(step), paused);
-/// // From the cut to the publish (01M75R6FPVZA3JA5C48PQ26A85).
+/// // The steps of a release pull request of an older riff, then the steps
+/// // before the tag (01M75R6FPVZA3JA5C48PQ26A85, 01M7642H27T4862WZENFAN4277).
 /// assert_eq!(
 ///     line(ReleaseStep::PullRuns, false).unwrap(),
 ///     "v3.3.0: the full check of the release pull request runs"
@@ -2533,8 +2535,7 @@ pub fn release_refused(command: &str, refusal: crate::cycle::Refusal) -> String 
 /// );
 /// assert_eq!(
 ///     line(ReleaseStep::Merged, false).unwrap(),
-///     "v3.3.0: the release pull request merged; it waits for the real-session test of the lead \
-///      of o/r"
+///     "v3.3.0: the release build passed; it waits for the real-session test of the lead of o/r"
 /// );
 /// assert_eq!(line(ReleaseStep::TestRuns, false).unwrap(), "v3.3.0: the real-session test runs");
 /// assert_eq!(
@@ -2543,7 +2544,7 @@ pub fn release_refused(command: &str, refusal: crate::cycle::Refusal) -> String 
 /// );
 /// assert_eq!(
 ///     line(ReleaseStep::Tested, false).unwrap(),
-///     "v3.3.0: the real-session test passed; it waits for the publish of the lead of o/r"
+///     "v3.3.0: the real-session test passed; it waits for the cut of the lead of o/r"
 /// );
 /// assert_eq!(line(ReleaseStep::Published, false).unwrap(), "v3.3.0: the CI run of the tag builds");
 /// // From the wait for the approve to the check (01M6XTS1GCW7PTWSMM1HKQTHSN).
@@ -2589,15 +2590,14 @@ pub fn release_line(release: &riff_client::daemons::Release, paused: bool) -> Op
             "the verify of the release pull request passed; it merges".to_owned()
         }
         (ReleaseStep::Merged, _) => format!(
-            "the release pull request merged; it waits for the real-session test of the lead of \
-             {repo}"
+            "the release build passed; it waits for the real-session test of the lead of {repo}"
         ),
         (ReleaseStep::TestRuns, _) => "the real-session test runs".to_owned(),
         (ReleaseStep::TestFailed, _) => {
             format!("the real-session test failed: the lead of {repo} files the bug in the wave")
         }
         (ReleaseStep::Tested, _) => {
-            format!("the real-session test passed; it waits for the publish of the lead of {repo}")
+            format!("the real-session test passed; it waits for the cut of the lead of {repo}")
         }
         (ReleaseStep::Published, _) => "the CI run of the tag builds".to_owned(),
         (ReleaseStep::Waits, _) => {
@@ -2671,8 +2671,10 @@ pub fn complete_line(complete: &riff_client::daemons::Complete) -> String {
 ///
 /// assert_eq!(
 ///     riff::text::release_note(Step::Cut { number: 1140 }, "v4.4.0", "the lead of o/r"),
-///     "the lead of o/r cut the release v4.4.0: pull request #1140. next for you: nothing yet. \
-///      To ask the riff to wait before the deploy, run: riff release hold v4.4.0 REASON"
+///     "the lead of o/r cut the release v4.4.0: the tag and the GitHub release. The CI run of \
+///      the tag builds, and pull request #1140 sets the next version. A person approves the \
+///      deploy later. next for you: nothing yet. To ask the riff to wait, run: riff release \
+///      hold v4.4.0 REASON"
 /// );
 /// assert!(
 ///     riff::text::release_note(Step::Approved, "v4.4.0", "the lead of o/r")
@@ -2689,12 +2691,9 @@ pub fn release_note(step: crate::hold::Step, tag: &str, by: &str) -> String {
     let hold = format!("run: riff release hold {tag} REASON");
     match step {
         Step::Cut { number } => format!(
-            "{by} cut the release {tag}: pull request #{number}. next for you: nothing yet. To \
-             ask the riff to wait before the deploy, {hold}"
-        ),
-        Step::Published => format!(
-            "{by} published the release {tag}. The CI run of the tag builds. A person approves \
-             the deploy later. next for you: nothing yet. To ask the riff to wait, {hold}"
+            "{by} cut the release {tag}: the tag and the GitHub release. The CI run of the tag \
+             builds, and pull request #{number} sets the next version. A person approves the \
+             deploy later. next for you: nothing yet. To ask the riff to wait, {hold}"
         ),
         Step::Waits => format!(
             "The deploy of {tag} waits for the approval of a person. next for you: when you are \
@@ -10126,14 +10125,14 @@ pub fn init_releases_on(repo: &str, slug: &str) -> String {
 /// ```
 /// assert_eq!(
 ///     riff::text::init_releases_other("o/r", "riff-o-lead"),
-///     "the ruleset releases of o/r has no bypass of riff-o-lead, so riff release publish of \
-///      the lead cannot push a tag v*"
+///     "the ruleset releases of o/r has no bypass of riff-o-lead, so riff release cut of the \
+///      lead cannot push a tag v*"
 /// );
 /// ```
 pub fn init_releases_other(repo: &str, slug: &str) -> String {
     format!(
-        "the ruleset releases of {repo} has no bypass of {slug}, so riff release publish of the \
-         lead cannot push a tag v*"
+        "the ruleset releases of {repo} has no bypass of {slug}, so riff release cut of the lead \
+         cannot push a tag v*"
     )
 }
 
@@ -12659,7 +12658,8 @@ pub fn wave_verify_start(
     let release = if release {
         "   When the pull request has the label `release`, verify it against the part \"Verify of \
          the release pull request\" of its issue, and not against the \"Done when\" line or \
-         heading: the release is not published before the merge.\n"
+         heading: the pull request changes only the version, and the steps of the release are \
+         not in it.\n"
     } else {
         ""
     };

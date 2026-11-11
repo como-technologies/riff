@@ -3015,6 +3015,34 @@ Backlog (01M53NGWN190T2MYB1EZAD36VB).
   `message` and the mark `[by riff] ` at the start of the body. Any
   other refusal of the post is an error. This adds to
   01M5TKMVB7CF0QNAWXEVGEQETJ. Superseded by 01M6Y4ZCTSTVM971BDC1F7GJPK.
+- **01M58B0JABCET719T3HFB19NDW** `riff release publish vX.Y.Z` refuses,
+  and changes nothing, when one of these is false: the pull request
+  "Release vX.Y.Z" with the label `release` merged, and the status
+  `riff/verify` of its head commit is a success; its merge commit is on
+  `origin/main`, and `Cargo.toml` there has X.Y.Z; the tag does not
+  exist on GitHub; a commit from the merge commit to `origin/main` has a
+  pass of `just real-session` (01M58KMKZ2EG8NZG4F085S6NQX). Then it
+  makes the annotated tag on the newest commit with a pass, pushes only
+  that tag, and makes the GitHub release: the body of the pull request
+  with no link line, no line `Part of` and no trailer, then the
+  generated notes from the last release tag, marked as the latest. It
+  prints the URL of the CI run of the tag, and says that the deploy
+  waits for the approval of `production` by a person. When GitHub
+  refuses the push of the tag, it says so, names the ruleset of the
+  tags, and deletes the local tag. After the release, it posts a chat
+  line to the owner in `riff chat`: the version, the CI run, and `riff
+  release approve vX.Y.Z` (01M58KMM1BHX3YY81BPZG04JSX).
+- **01M6WZ40VYDBBTJBTQEBY2984P** `riff release publish` does not check
+  that the account of `gh` is an admin of the repository: the ruleset
+  `releases` decides. The lead in a container pushes the tag with the
+  token of the lead App. When GitHub refuses the push, the refusal names
+  the ruleset `releases`, the admin role and the lead App. Supersedes
+  01M58B0JABCET719T3HFB19NDW in part.
+- **01M58B0J4VQ61ER69Q09JYP7CG** `riff release cut` refuses while the
+  version on `origin/main` is newer than the last published release
+  and has no published release. Only `--skip VERSION --reason TEXT`
+  with that version lets it go on. The reason goes into the body of the
+  new release pull request, and from there into its GitHub release.
 
 ### The release cycle
 
@@ -3024,6 +3052,17 @@ Backlog (01M53NGWN190T2MYB1EZAD36VB).
   wakes the lead with the state and the next step. The first look
   after a start only learns the state. Superseded by
   01M5RGCW5NCKQYA61RM63914TX and 01M5RGD0RTXYA7FF5K1TH72MGX.
+- **01M58KMKTE2XC35CNJBFKZWAXF** `riff release status` shows the state
+  of the current release: the open release pull request, else the
+  version on `origin/main`. The states are `cut`, `merged`, `tested`,
+  `published`, `waiting`, `deploying`, `deployed`, `checked`, `failed`
+  and `rolled back`. A closed release issue, or a passed check on it,
+  is `checked`. A rollback on it is `rolled back`.
+- **01M58KMM1BHX3YY81BPZG04JSX** `riff release publish` does not need a
+  paused riff. After the release, it posts a chat line to the owner in
+  `riff chat`.
+- **01M58KMMKZ8T11KT3R3Z7D0RE1** HUMAN GATE 3: `riff release cut
+  --skip` refuses in each agent session, and for a member.
 
 ## The UIs
 

@@ -291,7 +291,7 @@ echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.zprofile
 
 ## Approve a release
 
-The lead publishes each release: in its container, it pushes the tag
+The lead cuts each release: in its container, it pushes the tag
 `vX.Y.Z` with the token of the lead App. Only a person approves the
 deploy: the owner or an admin of a riff that deploys its own server.
 No session approves, also not the lead when you say approve in riff
@@ -302,7 +302,7 @@ Approve it in a plain terminal, outside Claude Code:
 riff release approve v3.3.0
 ```
 
-You also give the other human gates: a rollback and a skip. See
+You also give the other human gate: a rollback. See
 [Who tags and who approves a release](how-it-works.md#who-tags-and-who-approves-a-release)
 and [The release cycle](development.md#the-release-cycle).
 
