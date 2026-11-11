@@ -1322,8 +1322,8 @@ pub enum Stuck {
     /// again.
     Dequeued(String),
     /// The verify passed, auto-merge is on, and GitHub waits for an
-    /// approving review of a person (01M6FZ141Y0J8G2AYX0G5HY1CX). No session approves a pull
-    /// request.
+    /// approving review of a person (01M6FZ141Y0J8G2AYX0G5HY1CX,
+    /// 01M74MGTCR650HNX4E1THAAG69). No session approves a pull request.
     Review(Review),
     /// The verify passed, auto-merge is on, and this run of a pull request
     /// from a fork waits for the approval of a maintainer (01M6FZ144M0BTEDWNB9V4MGWDD). The
@@ -1338,8 +1338,9 @@ pub enum Review {
     /// `reviewDecision` is `REVIEW_REQUIRED`: a rule of the branch asks
     /// for the review.
     Required,
-    /// GitHub blocks the merge, `reviewDecision` is empty, no check
-    /// failed or goes, and no run waits for approval. The likely cause is
+    /// GitHub blocks the merge, `reviewDecision` is empty, no required
+    /// check failed, no check goes, and no run waits for approval
+    /// (01M74MGTCR650HNX4E1THAAG69). The likely cause is
     /// the rule "require extra approval for unattributed changes": a
     /// commit has an author with no GitHub account, and the rule asks one
     /// approving review of a person, although the count of reviews is 0.
@@ -1723,7 +1724,8 @@ impl Pull {
     /// the cause. The look reads the runs that wait only for such a pull
     /// request ([`pulls`]). Only the newest run of a check counts, as for
     /// [`Pull::failed_checks`] (01M6G0BFAJJV9YNQZT502P1KGJ). A failed
-    /// check that the ruleset does not require blocks no merge.
+    /// check that the ruleset does not require blocks no merge
+    /// (01M74MGTCR650HNX4E1THAAG69).
     ///
     /// ```
     /// use riff::rollout::{Check, Pull};
@@ -1774,11 +1776,12 @@ impl Pull {
     /// failed check that it does not require holds no merge
     /// ([`Pull::failed_optional`]). In this order:
     ///
-    /// 1. A release with a failed check: [`Stuck::Checks`], with its
-    ///    verify in any state. `release` says that its issue has the label
-    ///    of a release; a branch `release-…`, as `riff release cut` names
-    ///    it, is one too. No session builds a release, so the lead hears
-    ///    of it.
+    /// 1. A release with a failed required check: [`Stuck::Checks`], with
+    ///    its verify in any state (01M5QW2M4WX53N29SHRV0S32WM,
+    ///    01M74MGTCR650HNX4E1THAAG69). `release` says that its issue has the
+    ///    label of a release; a branch `release-…`, as `riff release cut`
+    ///    names it, is one too. No session builds a release, so the lead
+    ///    hears of it.
     /// 2. A conflict with `main` with auto-merge on, or after a removal
     ///    from the merge queue, and a verify that did not fail:
     ///    [`Stuck::Conflict`]. A release has none: the wave rebases no
@@ -1796,7 +1799,9 @@ impl Pull {
     ///    for approval ([`Pull::waiting`]): [`Stuck::Approve`].
     /// 8. A passed verify, auto-merge on, and a pull request that GitHub
     ///    blocks with no decision and no check open ([`Pull::settled`]):
-    ///    [`Stuck::Review`] with [`Review::Blocked`].
+    ///    [`Stuck::Review`] with [`Review::Blocked`]
+    ///    (01M74MGTCR650HNX4E1THAAG69). A failed check that no rule
+    ///    requires does not explain the block.
     ///
     /// ```
     /// use riff::rollout::{Check, Pull, Queue, Review, Run, Stuck};
@@ -1904,6 +1909,12 @@ impl Pull {
     ///     ruled(pull(vec![knurl(), gate("FAILURE")], "MERGEABLE", true)).stuck(false),
     ///     Some(Stuck::Checks(vec!["Gate".into()]))
     /// );
+    /// // 01M74MGTCR650HNX4E1THAAG69: a release hears of its failed required checks only, also
+    /// // with a failed verify, and GitHub blocks a merge that a failed `knurl adapter` does not explain.
+    /// let release = ruled(pull(vec![Check::verify("FAILURE"), knurl(), gate("FAILURE")], "MERGEABLE", true));
+    /// assert_eq!(release.stuck(true), Some(Stuck::Checks(vec!["Gate".into()])));
+    /// let held = ruled(blocked(vec![passed(), gate("SUCCESS"), knurl()]));
+    /// assert_eq!(held.stuck(false), Some(Stuck::Review(Review::Blocked)));
     /// ```
     pub fn stuck(&self, release: bool) -> Option<Stuck> {
         if self.draft || self.queued() {

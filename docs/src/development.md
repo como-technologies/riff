@@ -2984,11 +2984,13 @@ The rule "require extra approval for unattributed changes" can ask for
 a review when the count of reviews is 0. A commit with an author who has
 no GitHub account, for example a co-author that is no person on GitHub,
 needs one approving review then. GitHub shows no review rule for it: it
-says only that the merge is `BLOCKED`. When no check failed or goes and
-no run waits, the wave says that a review is the likely cause:
+says only that the merge is `BLOCKED`. When no required check failed,
+no check goes and no run waits, the wave says that a review is the
+likely cause. A failed check that the ruleset of `main` does not
+require blocks no merge, so it does not stop this message:
 
 ```text
-PR #40, branch worktree-issue-12, passed its verify at commit 1a2b3c4, but no check failed or goes, and GitHub blocks the merge. A review is the likely cause: a commit can have an author with no GitHub account, and the rule of the branch then asks one approving review of a person. No session approves a pull request, so it waits for you. See the merge box: gh pr view 40 --web. A person other than the author approves it: gh pr review 40 --approve
+PR #40, branch worktree-issue-12, passed its verify at commit 1a2b3c4, but no required check failed, no check goes, and GitHub blocks the merge. A review is the likely cause: a commit can have an author with no GitHub account, and the rule of the branch then asks one approving review of a person. No session approves a pull request, so it waits for you. See the merge box: gh pr view 40 --web. A person other than the author approves it: gh pr review 40 --approve
 ```
 
 Look at the merge box to see what GitHub waits for. Then a person other

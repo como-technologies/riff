@@ -404,8 +404,9 @@
 //!     B -- "no push, the check runs again" --> T["a note to the lead"]
 //! ```
 //!
-//! - **A failed check** (01M5QW2KVAS05Q72630RNW47G0).
-//!   [`rollout::Pull::verify`] reads only the status `riff/verify`. A
+//! - **A failed check** (01M5QW2KVAS05Q72630RNW47G0,
+//!   01M74MGTCR650HNX4E1THAAG69). [`rollout::Pull::verify`] reads only
+//!   the status `riff/verify`. A
 //!   check of the rollup that failed ([`rollout::Check::failed`]) and that
 //!   the ruleset of the default branch requires, for example the `Gate` or
 //!   `Hygiene`, is no free work for a verify: the verify of that head can
@@ -414,7 +415,8 @@
 //!   none. The fix starts before or after a verify, not while a verify
 //!   of the item runs.
 //!   The wave starts a build session for the item with the start text
-//!   [`text::wave_checks_start`]: it names the checks, tells to read the
+//!   [`text::wave_checks_start`]: it names the failed required runs of
+//!   Actions ([`rollout::Pull::failed_runs`]), tells to read the
 //!   failed run, and to fix the code and push to the same pull request.
 //!   For a failed pull of the session image, with no test run, it tells
 //!   to change no code and to run the failed jobs again one time
@@ -450,15 +452,17 @@
 //!   ([`rollout::Pull::conflict`] needs auto-merge). The lead gets one
 //!   message with the reason and the command
 //!   (`gh pr merge --auto --squash N`).
-//! - **A review** (01M6FZ141Y0J8G2AYX0G5HY1CX). A pull request whose verify passed, with
+//! - **A review** (01M6FZ141Y0J8G2AYX0G5HY1CX, 01M74MGTCR650HNX4E1THAAG69).
+//!   A pull request whose verify passed, with
 //!   auto-merge on, can wait for a person. GitHub says `reviewDecision`
 //!   `REVIEW_REQUIRED` when a rule of the branch asks for a review
 //!   ([`rollout::Review::Required`]). It says nothing when the count of
 //!   reviews is 0 and the rule "require extra approval for unattributed
 //!   changes" asks one review for a commit with an author who has no
-//!   GitHub account. Then the merge state is `BLOCKED`, no check failed or
-//!   goes, and no run waits ([`rollout::Review::Blocked`],
-//!   [`rollout::Pull::settled`]). No session approves a pull request. The
+//!   GitHub account. Then the merge state is `BLOCKED`, no required check
+//!   failed, no check goes, and no run waits ([`rollout::Review::Blocked`],
+//!   [`rollout::Pull::settled`]). A failed check that no rule requires
+//!   does not explain the block. No session approves a pull request. The
 //!   lead gets one message with the reason and the command
 //!   (`gh pr review N --approve`).
 //! - **A run that waits for approval** (01M6FZ144M0BTEDWNB9V4MGWDD). A run of GitHub Actions of
@@ -470,10 +474,13 @@
 //!   ([`rollout::Pull::settled`]). The lead gets one message for each run,
 //!   with the run and the command
 //!   (`gh api -X POST repos/OWNER/REPO/actions/runs/RUN/approve`).
-//! - **A release** (01M5QW2M4WX53N29SHRV0S32WM). No session builds a
-//!   release (the label `release`, or a branch `release-…`). A failed
-//!   check of a release pull request gets a message to the lead, with the
-//!   names of the checks, at any state of its verify.
+//! - **A release** (01M5QW2M4WX53N29SHRV0S32WM,
+//!   01M74MGTCR650HNX4E1THAAG69). No session builds a release (the label
+//!   `release`, or a branch `release-…`). A failed required check of a
+//!   release pull request gets a message to the lead, with the names of
+//!   the checks, at any state of its verify. A failed check of a release
+//!   that no rule requires gets its message only when the verify waits or
+//!   passed, as for each pull request.
 //!
 //! Each stuck state comes one time. A message is keyed by the pull
 //! request, its head commit and its reason (and the run, for a run that
@@ -486,11 +493,13 @@
 //! the new head has new checks.
 //!
 //! The session may not push: for a flake it runs the job again
-//! (01M5QW2KYFM4C287D9NMSPH8TA). After its end the daemon reads the pull
-//! request. When the head is the same and a check still failed, the lead
-//! gets a message ([`text::wave_checks_not_fixed`]); else the lead gets a
-//! note ([`text::wave_checks_rerun`]). A push gets the verify request of
-//! the new head, as each build does.
+//! (01M5QW2KYFM4C287D9NMSPH8TA, 01M74MGTCR650HNX4E1THAAG69). After its
+//! end the daemon reads the pull request. When the head is the same and
+//! a required run of Actions still failed ([`rollout::Pull::failed_runs`]),
+//! the lead gets a message ([`text::wave_checks_not_fixed`]); else the
+//! lead gets a note ([`text::wave_checks_rerun`]). A failed run that no
+//! rule requires gives the note. A push gets the verify request of the
+//! new head, as each build does.
 //!
 //! `riff top` and `riff wave list` show the item of a stuck pull request
 //! in the group `stuck`, with the reason, for example
@@ -3113,11 +3122,13 @@ fn clone_at(main: &Path, clone: &Path, pull: u64, commit: &str) -> Result<()> {
 ///   rebase; with no conflict it is a notice ([`rollout::Stuck::Dequeued`]).
 /// - A pull request that no session can fix gets a notice for the lead:
 ///   one with auto-merge off after a pass ([`rollout::Stuck::AutoMergeOff`]),
-///   a release or a tracker with a failed check, and a failed check that
+///   a release or a tracker with a failed required check
+///   (01M74MGTCR650HNX4E1THAAG69), and a failed check that
 ///   is no run of GitHub Actions ([`rollout::Stuck::Other`]), one notice
 ///   for each check. No session builds a release (the label `release`) or
 ///   a tracker. A verified pull request that waits for a person is a notice
-///   too: a review that GitHub needs ([`rollout::Stuck::Review`], 01M6FZ141Y0J8G2AYX0G5HY1CX), and
+///   too: a review that GitHub needs ([`rollout::Stuck::Review`],
+///   01M6FZ141Y0J8G2AYX0G5HY1CX, 01M74MGTCR650HNX4E1THAAG69), and
 ///   a run of a fork that waits for approval, one notice for each run
 ///   ([`rollout::Stuck::Approve`]).
 ///
@@ -6748,8 +6759,9 @@ mod tests {
         assert!(here.forge().works.is_empty());
     }
 
-    /// 01M6FZ141Y0J8G2AYX0G5HY1CX: a pull request with a passed verify that GitHub holds for an
-    /// approving review (`REVIEW_REQUIRED`) never merges by itself. The
+    /// 01M6FZ141Y0J8G2AYX0G5HY1CX, 01M74MGTCR650HNX4E1THAAG69: a pull
+    /// request with a passed verify that GitHub holds for an approving
+    /// review (`REVIEW_REQUIRED`) never merges by itself. The
     /// wave starts no session, and tells the lead one time for each head,
     /// with the reason and the step of a person. A pull request with no
     /// review rule gets no message.
@@ -7231,10 +7243,11 @@ mod tests {
         assert_eq!(forge.works.len(), 1, "{:?}", forge.works);
     }
 
-    /// 01M749P62T24VDPX20D40KRJEK: a failed run that the ruleset requires
-    /// (`Gate`) still gets the fix session and no verify of the head, also
-    /// next to a failed run that no rule requires. The session gets the
-    /// name of the required run only, and the lead hears of the other one.
+    /// 01M749P62T24VDPX20D40KRJEK, 01M74MGTCR650HNX4E1THAAG69: a failed
+    /// run that the ruleset requires (`Gate`) still gets the fix session
+    /// and no verify of the head, also next to a failed run that no rule
+    /// requires. The session gets the name of the required run only, and
+    /// the lead hears of the other one.
     #[tokio::test]
     async fn a_failed_required_run_still_gets_the_fix_and_no_verify() {
         let free = Arc::new(AtomicU64::new(64));
@@ -8912,8 +8925,8 @@ esac
         assert_eq!(*kind, Kind::Note);
     }
 
-    /// 01M749P62T24VDPX20D40KRJEK: the session fixed the required runs
-    /// only. A run of Actions that the ruleset does not require, and that
+    /// 01M749P62T24VDPX20D40KRJEK, 01M74MGTCR650HNX4E1THAAG69: the session
+    /// fixed the required runs only. A run of Actions that the ruleset does not require, and that
     /// still fails, is not its fix: the lead heard of it at the look, so
     /// the end of the session gives a note. A required run that still fails
     /// gives the message.

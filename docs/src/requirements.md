@@ -6055,27 +6055,21 @@ of this part when they merge.
   head commit: a check run that ended with failure, timed out or startup
   failure, or a status in failure or error, except riff/verify. The wave
   of the daemon reads the rollup of each open pull request at each look.
-  For the item of a pull request with a failed run of GitHub Actions, it
-  starts a build session with the names of the failed runs in the start
-  text. The text tells the session to read the failed run, to fix the
-  work and push to the same pull request, and, for a known flake, to run
-  the job again one time. Each head commit starts one such session in a
-  run of the wave. A pull request with a conflict gets the rebase first.
-  A cancelled or skipped check did not fail.
+  The start text of a build session for failed checks tells the session
+  to read the failed run, to fix the work and push to the same pull
+  request, and, for a known flake, to run the job again one time. Each
+  head commit starts one such session in a run of the wave. A pull
+  request with a conflict gets the rebase first. A cancelled or skipped
+  check did not fail.
 - **01M5QW2KYFM4C287D9NMSPH8TA** When a session of a wave for failed
   checks ends with the same head commit, the daemon sends no verify
-  request. It reads the checks of the pull request. The lead gets a
-  message when a run of GitHub Actions still fails, and a note when none
-  fails because the session ran the job again.
+  request. It reads the checks of the pull request.
 - **01M5QW2M1M5QZJXSP0BY6XG118** A pull request whose verify passed and
   that has auto-merge off never merges. The wave starts no session for
   it. It tells the lead one time for each head commit, with the reason
   and the command gh pr merge --auto --squash N.
 - **01M5QW2M4WX53N29SHRV0S32WM** No session builds a release: a pull
-  request on a branch release- or of an issue with the label release. A
-  failed check of a release pull request, at any state of its verify,
-  gets one message to the lead for each head commit, with the names of
-  the checks.
+  request on a branch release- or of an issue with the label release.
 - **01M5QW2M8FPBMMF4S0D8PC39AB** riff top and riff wave list show an
   item with no claim whose pull request cannot merge by itself in the
   group stuck, with the reason: conflict, checks, or auto-merge off. The
@@ -6179,11 +6173,8 @@ of this part when they merge.
   daemon reads reviewDecision and mergeStateStatus of each open pull
   request at each look. It starts no session. It tells the lead one time
   for each head commit, with the reason and the command gh pr review N
-  --approve, when reviewDecision is REVIEW_REQUIRED, or when the merge
-  state is BLOCKED with no decision, no failed check, no check that goes
-  and no run that waits for approval (the likely cause is an author with
-  no GitHub account). riff top and riff wave list show stuck with the
-  word review (#1433).
+  --approve, when reviewDecision is REVIEW_REQUIRED. riff top and riff
+  wave list show stuck with the word review (#1433).
 - **01M6FZ144M0BTEDWNB9V4MGWDD** A run of GitHub Actions of a pull
   request from a fork waits in action_required until a maintainer
   approves it. GitHub counts its required check as not reported. For a
@@ -6437,6 +6428,26 @@ of this part when they merge.
   line of each wave, the verifies and the rebases that wait for another
   pull request: one line waits for #N: #A #B for each such pull request
   N, with the issues A and B that wait for it, in the order of N.
+- **01M74MGTCR650HNX4E1THAAG69** The wave starts a build session for the
+  failed checks of an item (01M5QW2KVAS05Q72630RNW47G0) only for a
+  failed run of GitHub Actions that the ruleset of the default branch
+  requires (01M749P62T24VDPX20D40KRJEK), with the names of those runs in
+  the start text. When such a session ends with the same head commit,
+  the lead gets a message when a required run of Actions still fails,
+  and a note when none fails because the session ran the job again
+  (01M5QW2KYFM4C287D9NMSPH8TA). The lead gets the message of a review
+  (01M6FZ141Y0J8G2AYX0G5HY1CX), and riff top and riff wave list show
+  stuck with the word review, also when the merge state is BLOCKED with
+  no decision, no failed required check, no check that goes and no run
+  that waits for approval. The likely cause is an author with no GitHub
+  account. A failed check that no rule requires does not explain the
+  block. A failed required check of a release pull request
+  (01M5QW2M4WX53N29SHRV0S32WM), at any state of its verify, gets one
+  message to the lead for each head commit, with the names of those
+  checks. A failed check of a release that no rule requires gets its
+  message only when the verify waits or passed. Supersedes
+  01M5QW2KVAS05Q72630RNW47G0, 01M5QW2KYFM4C287D9NMSPH8TA,
+  01M6FZ141Y0J8G2AYX0G5HY1CX and 01M5QW2M4WX53N29SHRV0S32WM in part.
 
 ### The lead, the view and the takeover
 
