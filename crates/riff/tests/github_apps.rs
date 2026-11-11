@@ -181,7 +181,9 @@ async fn riff_github_events_prints_the_last_wakes_and_the_counts() {
         api: fake.url.clone(),
         web: fake.url.clone(),
         keys: At::Dir(keys.path().to_owned()),
-        debounce: Duration::from_millis(100),
+        // The real window: both deliveries go into one wake, also on a
+        // slow runner.
+        debounce: riff_server::hooks::DEBOUNCE,
         ..Settings::default()
     };
     let server = common::start_signed_config(
