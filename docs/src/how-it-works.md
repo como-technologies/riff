@@ -2111,10 +2111,11 @@ The daemon needs no wave of the repository for this. A host that runs no
 wave of it starts the lead again too: see
 [Update the lead on a host that runs no wave of the repository](development.md#update-the-lead-on-a-host-that-runs-no-wave-of-the-repository).
 
-You get one line in riff chat for each lead that started again:
+You get one line of `riff-bot` in riff chat for each lead that started
+again:
 
 ```text
-riff started the lead riff-lead-como-technologies-riff again on the new riff, and its conversation goes on. Attach with: riff lead start, or l in the Sessions tab of riff.
+14:05 <riff-bot> riff started the lead of mike in como-technologies/riff on thelio again on the new riff, and its conversation goes on. Attach with: riff lead start, or l in the Sessions tab of riff.
 ```
 
 Attach to the lead again, in your project:
@@ -3627,12 +3628,25 @@ names of the chat"):
 | riff-server itself | `riff-bot` | `<riff-bot>` |
 | another session, for example a worker | no name: the user and the start of its session ID | `[mike a6cf2205]` |
 
-Only riff-server writes as `riff-bot`, for example the line that a
-person passed the owner role. riff-server refuses such a line from a
-person and from a session. A line that riff writes for you, for example
-the ask to approve a deploy, shows as you, with the mark `[by riff]` at
-its start. A line that a person types with the mark shows as that
-person too.
+Only riff-server writes as `riff-bot`. riff-server refuses such a line
+from a person and from a session. Each line that riff writes for you is
+a line of `riff-bot` too. These are the lines of `riff-bot`:
+
+- the line that a person passed the owner role,
+- the lines of `riff release cut` and `riff release publish`,
+- the ask while a deploy waits for your approval, and its reminder,
+- the ask when a lead adds the label `question` to an issue,
+- the lines of the riff daemon about your lead, for example "riff
+  started the lead of mike in como-technologies/riff on thelio again on
+  the new riff".
+
+Your riff tells riff-server only the fact, for example the version and
+the CI run of a deploy that waits. riff-server writes the text of the
+line itself: no client puts its own words in a line of `riff-bot`. An
+ask names you with `@USER`, so it is a highlight on your terminal (see
+"Get a highlight in the chat"). A line of the daemon names no one. The
+log of the riff daemon on the host has the cause of a fault. A line
+that a person types with the words of `riff-bot` shows as that person.
 
 The lead of each person in a project shows with the same name, and the
 name wakes your own lead there (see "Wake a person or a project by
@@ -3650,7 +3664,8 @@ riff chat
 ```text
 14:02 <brett> @riff is the release out?
 14:03 <riff> @brett not yet: #207 waits for CI.
-14:05 <mike> [by riff] @mike riff release waits for your approval
+14:05 <riff-bot> @mike riff release waits for your approval: https://github.com/como-technologies/riff/actions/runs/9.
+14:05 <riff-bot> riff started the lead of brett in como-technologies/riff on heron again on the new riff.
 14:06 [mike a6cf2205] the checks of #207 passed
 14:07 <riff-bot> members: mike passed the owner role to brett@acme.io.
 ```
@@ -3933,9 +3948,10 @@ is a highlight on your terminal when:
 - it is a direct line to you: a post to your terminals with
   `person=true`, or a line of the other person in a direct thread;
 - it holds a word of your list, as a whole word, in any case;
-- it is an ask of riff to you: riff names you first, so the line wakes
-  your terminals, for example `@mike riff release v3.3.0 waits for your
-  approval`.
+- it is an ask of riff to you: a line of `riff-bot` that names you
+  first, so the line wakes your terminals, for example `<riff-bot>
+  @mike riff release v3.3.0 waits for your approval` (see "The names in
+  the log").
 
 A line that you typed is no highlight. The server does not change the
 line: your own riff finds the highlight. The Chat tab of the TUI and

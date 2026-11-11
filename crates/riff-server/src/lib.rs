@@ -194,6 +194,10 @@
 //!   [`lease::Timing::exit_after`] later.
 //! - A server refuses each proof issued before it started to serve
 //!   (R142).
+//! - `POST /v1/bot` takes a fact of the riff of a person, and riff-server
+//!   posts the line of riff-bot for it in riff chat, with the kind `riff`
+//!   (01M74BPHQZHXFYYNXAJ1WFASQQ). riff-server writes the text itself:
+//!   see [`bot`].
 //! - `GET /v1/server` gives the facts of the instance, for `riff server`
 //!   (01M3TJWJ12WEDCXW3W0529KRP2): if it serves, its last error, the
 //!   log, the checkpoint, its sizes and its start. The route is outside

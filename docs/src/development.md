@@ -7322,7 +7322,7 @@ Then cut the release again:
 riff release cut 3.3.0
 ```
 
-riff also writes a line in riff chat to the owner. It says that the
+riff-bot also writes a line in riff chat to the owner. It says that the
 release is cut, and that riff tells the owner when the deploy waits for
 an approval. It asks for nothing.
 
@@ -7468,8 +7468,9 @@ same line: it pushes the tag with the token of the lead App. A work
 session in a container never publishes. The lead in a container builds
 the riff of main with `riff build` in its own folder `RIFF_CHECK`, and
 its riff commands know their user from `RIFF_USER`: the daemon sets
-both. `publish` writes its line in riff chat through the riff daemon of
-the host, so the container needs no `--server` and no sign-in.
+both. `publish` tells riff-server the fact of its line in riff chat
+through the riff daemon of the host, so the container needs no
+`--server` and no sign-in.
 
 GitHub decides the push of the tag: the ruleset `releases` lets only
 an admin of the repository and the lead App push a tag `v*`. riff

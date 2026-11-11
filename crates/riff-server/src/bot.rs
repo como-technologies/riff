@@ -7,7 +7,7 @@
 //!
 //! The riff of the person sends only the fact, in the call `bot`
 //! ([`BotPost`](riff_core::wire::BotPost)). riff-server writes the text
-//! of the line itself ([`line`]), from the fact and from what it holds
+//! of the line itself ([`line()`]), from the fact and from what it holds
 //! ([`Facts`]): the owner of the riff, the place of the caller, and the
 //! holds of the version in the thread `release` ([`riff_core::hold`]).
 //! It posts the line in the chat with the kind `riff`, so the chat shows

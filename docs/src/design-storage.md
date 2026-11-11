@@ -514,9 +514,10 @@ goes to the owner.
 - A rollback of riff-server past a release line is also a rollback of
   each machine: `riff update --tag`.
 - A machine that is newer than the server can stay. A line that riff
-  writes in riff chat has the kind `message` and the mark `[by riff] `
-  at the start of the body, so each server takes it. Only riff-server
-  itself posts the kind `riff`.
+  writes in riff chat for a person goes through the call `bot`: the
+  machine sends the fact, and riff-server writes the line with the kind
+  `riff`. An older server refuses a fact that it does not know, and the
+  command logs it. Only riff-server itself posts the kind `riff`.
 
 ### Local development
 
