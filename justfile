@@ -159,12 +159,13 @@ test-archived PART:
     tar -xf target/test-archive/tests.tar
     {{test_env}} "${CARGO_TARGET_DIR:-target}/debug/hygiene" test-part {{PART}} --archive target/test-archive
 
-# A verifier runs a test of the commit with this (01M75NDQY6BHZBV9PF735E3FGY).
-# deploy/ci-test.sh takes the artifact tests-TREE of the tree of HEAD from
-# CI, puts a worktree of HEAD at the path of the archive, unpacks the
-# archive there, and runs test-named there in the environment of the
-# jobs Tests I/N. It compiles nothing. Exit 3: CI kept no test build of
-# the tree that runs here.
+# A verifier runs a test of the commit with this (01M75NDQY6BHZBV9PF735E3FGY,
+# 01M75T9RGR89MAC6S78K42QN7Q). deploy/ci-test.sh takes the artifact
+# tests-TREE of the tree that the newest CI run at HEAD built, else of the
+# tree of HEAD, puts a worktree of HEAD at the path of the archive,
+# unpacks the archive there, and runs test-named there in the environment
+# of the jobs Tests I/N. It compiles nothing. Exit 3: CI kept no test
+# build of the tree that runs here.
 # Run the tests whose name has NAME from the test binaries that CI built for HEAD, with no build, for example: just ci-test the_archive_runs
 [positional-arguments]
 ci-test NAME:

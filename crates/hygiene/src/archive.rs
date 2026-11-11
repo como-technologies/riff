@@ -49,7 +49,9 @@
 //! binds the checkout at `/var/tmp/riff-ci/riff` in the container
 //! (01M75NDR15DNBFHDBNKA3CA1BE). A verifier runs a test of the commit
 //! from the archive of CI with `just ci-test NAME`
-//! (01M75NDQY6BHZBV9PF735E3FGY): `deploy/ci-test.sh` puts a linked
+//! (01M75NDQY6BHZBV9PF735E3FGY): `deploy/ci-test.sh` takes the archive
+//! of the tree that the newest CI run at `HEAD` built, for a pull request
+//! the merge with `main` (01M75T9RGR89MAC6S78K42QN7Q). It puts a linked
 //! worktree of `HEAD` at that path, unpacks the archive in it, and runs
 //! `hygiene test-name NAME --archive DIR` there. It runs the tests whose
 //! name has NAME ([`named`]), as `cargo test NAME` chooses them, and
