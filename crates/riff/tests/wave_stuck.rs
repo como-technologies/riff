@@ -537,7 +537,11 @@ fn the_book_shows_how_the_lead_reviews_a_codeql_alert() {
     let text = how_to.split_whitespace().collect::<Vec<_>>().join(" ");
     for words in [
         "The check `CodeQL` of a pull request is no run of Actions.",
-        "with the app `github.com`",
+        "When the ruleset of `main` requires the check `CodeQL`, your lead gets the message \
+         above, with the app `github.com`.",
+        "When the ruleset does not require it, your lead gets the message of [See a failed \
+         check that no rule requires](#see-a-failed-check-that-no-rule-requires), and the \
+         merge goes on.",
         "1. Fix it.",
         "2. Rename it.",
         "3. Dismiss it.",
@@ -545,6 +549,8 @@ fn the_book_shows_how_the_lead_reviews_a_codeql_alert() {
         "in at most 280 characters",
         "(how-it-works.md#who-acts-on-github-for-each-role)",
         "(#cut-the-release-pull-request)",
+        "The next scan still finds the flow of a dismissed alert, but GitHub keeps the alert \
+         dismissed and opens no new alert for it.",
     ] {
         assert!(text.contains(words), "{words}: {how_to}");
     }
@@ -621,6 +627,92 @@ fn the_book_shows_how_the_lead_reviews_a_codeql_alert() {
     // "Who acts on GitHub for each role" points to the how-to.
     let how = crate::book::page("how-it-works.md");
     assert!(how.contains("(development.md#review-a-codeql-alert)"));
+}
+
+/// The check run `CodeQL` of the code scanning of GitHub, with
+/// `conclusion`, as `gh pr view` gives it: no workflow, and a link to
+/// `github.com`.
+fn codeql(conclusion: &str) -> String {
+    format!(
+        r#"{{"__typename":"CheckRun","name":"CodeQL","conclusion":"{conclusion}","workflowName":"","detailsUrl":"https://github.com/o/r/runs/130479646072"}}"#
+    )
+}
+
+/// 01M74HD9XRS2PM121JD2A6QRD6, as "Review a CodeQL alert" says: a failed
+/// `CodeQL` starts no session. When the ruleset of `main` does not require
+/// it, the lead gets the message of a failed check that no rule requires,
+/// with no app, and the verify goes on. When the ruleset requires it, the
+/// lead gets the message of a check of another app, with the app
+/// `github.com`.
+#[test]
+fn a_failed_codeql_is_a_notice_of_an_optional_check_or_of_another_app() {
+    let dir = tempfile::tempdir().unwrap();
+    let gh = forge(
+        dir.path(),
+        &[pull(
+            1,
+            "aaaa111",
+            &[verify("SUCCESS"), run("Gate", "SUCCESS"), codeql("FAILURE")],
+        )],
+    );
+    let link = "https://github.com/o/r/runs/130479646072";
+    let check = OtherCheck {
+        name: "CodeQL".into(),
+        app: Some("github.com".into()),
+        link: Some(link.into()),
+    };
+
+    // The ruleset of the fake `gh` does not require `CodeQL`.
+    let look = looks(&gh);
+    assert!(look.fixes.failed.is_empty(), "{:?}", look.fixes.failed);
+    assert_eq!(
+        look.fixes.notices,
+        [Notice {
+            pull: 41,
+            branch: "worktree-issue-1".into(),
+            commit: "aaaa111".into(),
+            stuck: Stuck::Optional(check.clone()),
+        }]
+    );
+    let optional = riff::text::wave_stuck(
+        REPO,
+        41,
+        "worktree-issue-1",
+        "main",
+        "aaaa111",
+        &look.fixes.notices[0].stuck,
+    );
+    assert!(
+        optional.contains("has the failed check CodeQL at commit aaaa111"),
+        "{optional}"
+    );
+    assert!(
+        optional.contains("The ruleset of main does not require it"),
+        "{optional}"
+    );
+    assert!(!optional.contains("github.com failed"), "{optional}");
+
+    // A ruleset that requires `CodeQL`: the check of another app.
+    let mut pulls = riff::rollout::pulls(&gh, REPO).unwrap();
+    let pull = &mut pulls[0];
+    assert!(pull.failed_others().is_empty(), "{pull:?}");
+    pull.required = Some(vec!["Gate".into(), "CodeQL".into()]);
+    assert_eq!(pull.failed_others(), std::slice::from_ref(&check));
+    assert!(pull.failed_optional().is_empty(), "{pull:?}");
+    assert_eq!(pull.failed_checks(), ["CodeQL"], "it holds the merge");
+    assert!(pull.failed_runs().is_empty(), "no session: {pull:?}");
+    let other = riff::text::wave_stuck(
+        REPO,
+        41,
+        "worktree-issue-1",
+        "main",
+        "aaaa111",
+        &Stuck::Other(check),
+    );
+    assert!(
+        other.contains("the check CodeQL of the app github.com failed"),
+        "{other}"
+    );
 }
 
 #[test]

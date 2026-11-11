@@ -3056,9 +3056,13 @@ gh pr checks 40
 
 The check `CodeQL` of a pull request is no run of Actions. It is the
 code scanning of GitHub, and its link goes to `github.com`. It fails
-when the scan finds a new alert in the change. Then your lead gets the
-message above, with the app `github.com`. Only the lead and a person
-can read and dismiss an alert. A worker has no right on the alerts (see
+when the scan finds a new alert in the change. When the ruleset of
+`main` requires the check `CodeQL`, your lead gets the message above,
+with the app `github.com`. When the ruleset does not require it, your
+lead gets the message of
+[See a failed check that no rule requires](#see-a-failed-check-that-no-rule-requires),
+and the merge goes on. Only the lead and a person can read and dismiss
+an alert. A worker has no right on the alerts (see
 [Who acts on GitHub for each role](how-it-works.md#who-acts-on-github-for-each-role)).
 
 To see the open alerts of the pull request 40, put the repository in
@@ -3099,7 +3103,8 @@ To dismiss the alert 128 as a false positive:
 gh api -X PATCH repos/OWNER/REPO/code-scanning/alerts/128 -f state=dismissed -f dismissed_reason="false positive" -f dismissed_comment="A session ID is a public random ID. riff who and each message show it. Nothing takes it as a credential."
 ```
 
-The next scan does not find a dismissed alert again.
+The next scan still finds the flow of a dismissed alert, but GitHub
+keeps the alert dismissed and opens no new alert for it.
 
 #### See a failed check that no rule requires
 
