@@ -14,11 +14,14 @@
 //! - Checkpoint: `Saved`, the field `threads`.
 //! - The rules of a post for `handle`: which thread it goes to, and
 //!   which sessions it wakes (`View::thread_of`, `View::selected`).
+//! - A post to a session that asks for a step that can lose work is an
+//!   action of the proof of presence (`View::step_of`, 01M75WKSJTB28ZQV8ADPBQ86WE).
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::time::Instant;
 
-use riff_core::name::{ThreadName, Who};
+use riff_core::name::{SessionUri, ThreadName, Who};
+use riff_core::proof::{Action, of_step};
 use riff_core::record::{Change, Member, Posted, Record};
 use riff_core::selector::Selector;
 use riff_core::signed::payload_hash;
@@ -287,6 +290,30 @@ pub(super) fn wake(thread: &ThreadName, message: &Message) -> Wake {
 }
 
 impl View<'_> {
+    /// The action of a post that asks the riff daemon of a host for a
+    /// step that can lose work (01M75WKSJTB28ZQV8ADPBQ86WE): a request to each session
+    /// that a selector of `to` names by its ID. The daemon acts on such
+    /// a request in a direct thread and in the thread of its repository,
+    /// so the thread does not matter. A post to the sessions of two
+    /// hosts names both hosts: no proof of one step covers it.
+    fn step_of(&self, to: &[Selector], body: &str, now: Instant) -> Option<Action> {
+        let targets: Vec<SessionUri> = to
+            .iter()
+            .filter_map(|selector| selector.session.as_deref())
+            .filter_map(|id| {
+                self.presence
+                    .sessions
+                    .keys()
+                    .find(|who| who.session() == Some(id))
+            })
+            .map(|who| self.uri(who, now))
+            .collect();
+        let first = targets.first()?;
+        let hosts: BTreeSet<&str> = targets.iter().map(|uri| uri.place().host()).collect();
+        let hosts: Vec<&str> = hosts.into_iter().collect();
+        of_step(body, &hosts.join(","), &first.place().repo_text())
+    }
+
     /// Finds the one session that a direct message goes to (R179). A
     /// lead gets it while its lead holds, also while it is gone, for
     /// example after a load before it calls again
@@ -673,6 +700,12 @@ impl Command for Post {
             repeat: None,
         };
         Ok((changes, note))
+    }
+
+    /// A request to the daemon of a host for a step that can lose work
+    /// (01M75WKSJTB28ZQV8ADPBQ86WE).
+    fn proof(&self, _: &Caller, view: &View<'_>, now: Now) -> Option<Action> {
+        view.step_of(&self.to, &self.body, now.at)
     }
 
     fn reply(

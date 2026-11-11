@@ -293,19 +293,27 @@ pub fn asked(gh: &Gh, repo: &str, number: u64) -> Result<bool> {
 /// `question` gets a note, and riff changes nothing. It gives the line
 /// of the result ([`text::questions_answered`],
 /// [`text::questions_not_asked`]). The calls of `gh` run on a thread of
-/// their own ([`crate::pr::on_thread`]).
+/// their own ([`crate::pr::on_thread`]). The answer is a decision that
+/// waits for the person: riff-server checks it first, with a proof that
+/// `asker` asks for when the policy is `required` (01M75WKSNREGG95CK40W2A5JPQ).
 pub async fn answered(
     gh: &Gh,
     api: &Api,
     me: &SessionUri,
     repo: &ThreadName,
     number: u64,
+    asker: &crate::proof::Asker,
 ) -> Result<String> {
     let name = repo.to_string();
     let (read, at) = (gh.clone(), name.clone());
     if !crate::pr::on_thread(move || asked(&read, &at, number)).await?? {
         return Ok(text::questions_not_asked(&name, number));
     }
+    let action = riff_core::proof::Action::Answer {
+        repo: repo.clone(),
+        number,
+    };
+    crate::proof::gate(api, &action, asker).await?;
     let (edit, at) = (gh.clone(), name.clone());
     crate::pr::on_thread(move || {
         let number = number.to_string();

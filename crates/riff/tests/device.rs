@@ -6,7 +6,6 @@
 //! sign-in is in the mock store of `keyring-core`, so the tests run in
 //! process.
 
-use crate::book;
 use crate::common;
 
 use std::time::Duration;
@@ -34,15 +33,16 @@ fn riff(args: &[&str]) -> String {
     String::from_utf8(out.stdout).unwrap()
 }
 
-/// The help of `riff device` lists `add --key`, `list` and `remove`.
+/// The help of `riff device` lists `add --key`, `list`, `remove` and `test`.
 /// `riff device add` needs `--key NAME`.
 #[test]
-fn the_help_of_device_lists_add_with_key_list_and_remove() {
+fn the_help_of_device_lists_add_with_key_list_remove_and_test() {
     let help = riff(&["device", "--help"]);
     for line in [
         "  add     Add an authenticator with --key NAME\n",
         "  list    List your devices\n",
         "  remove  Remove one of your devices at once\n",
+        "  test    Test a proof of presence with one of your keys\n",
     ] {
         assert!(help.contains(line), "{line:?}: {help}");
     }
@@ -58,7 +58,7 @@ fn the_help_of_device_lists_add_with_key_list_and_remove() {
     assert!(stderr.contains("--key <NAME>"), "{stderr}");
     let top = riff(&["--help"]);
     assert!(
-        top.contains("  device        Add, list and remove your authenticators\n"),
+        top.contains("  device        Add, list, test and remove your authenticators\n"),
         "{top}"
     );
 }
@@ -73,6 +73,7 @@ fn riff_device_refuses_in_an_agent_session_and_in_a_container() {
         &["device", "add", "--key", "yubikey"][..],
         &["device", "list"],
         &["device", "remove", "yubikey"],
+        &["device", "test"],
     ] {
         for (var, value, container) in [
             ("CLAUDECODE", "1", false),
@@ -89,21 +90,6 @@ fn riff_device_refuses_in_an_agent_session_and_in_a_container() {
             );
         }
     }
-}
-
-/// The how-tos of the book run with `--help`.
-#[test]
-fn each_how_to_of_the_book_is_a_real_command() {
-    let commands = book::commands_of_part("how-it-works.md", "A proof of presence");
-    assert_eq!(
-        commands,
-        [
-            "riff device add --key yubikey",
-            "riff device list",
-            "riff device remove yubikey"
-        ]
-    );
-    book::each_is_real(&commands);
 }
 
 /// A riff with sign-in, and `email` signed in on this device.

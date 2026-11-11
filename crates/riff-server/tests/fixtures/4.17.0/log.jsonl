@@ -5,3 +5,7 @@
 {"position":4,"written_at_ms":1794100003000,"by":{"person":"bob"},"command":"add_key","change":{"key_added":{"user":"bob","name":"yubikey","credential":"Y3JlZC1ib2ItMQ","public_key":"pAEDAzkBACBZAQA"}}}
 {"position":5,"written_at_ms":1794100004000,"by":{"person":"ann"},"command":"remove_device","change":{"device_removed":{"user":"ann","name":"yubikey"}}}
 {"position":6,"written_at_ms":1794100005000,"command":"add_key","change":{"key_added":{"user":"cy","name":"touch-id","credential":"Y3JlZC1jeS0x","public_key":"pAEBAycgBiFYIA"}}}
+{"position":7,"written_at_ms":1794100006000,"by":{"person":"ann"},"command":"set_policy","change":{"policy_set":{"proof":"required"}}}
+{"position":8,"written_at_ms":1794100007000,"by":{"person":"ann"},"command":"prove","change":{"proved":{"user":"ann","name":"phone","action":"resume the whole riff","counter":4}}}
+{"position":9,"written_at_ms":1794100008000,"by":{"person":"ann"},"command":"resume","change":{"pause_set":{"scope":"riff","state":"running"}}}
+{"position":10,"written_at_ms":1794100009000,"by":{"person":"ann"},"command":"approve","change":{"pause_set":{"scope":"riff","state":"paused"}}}

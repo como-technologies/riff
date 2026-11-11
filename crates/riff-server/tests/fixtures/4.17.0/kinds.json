@@ -1,10 +1,15 @@
 {
   "records": [
     "key_added",
-    "device_removed"
+    "device_removed",
+    "policy_set",
+    "proved"
   ],
   "commands": [
     "add_key",
-    "remove_device"
+    "remove_device",
+    "set_policy",
+    "prove",
+    "approve"
   ]
 }

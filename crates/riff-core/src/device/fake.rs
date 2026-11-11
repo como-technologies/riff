@@ -14,6 +14,13 @@
 //! A [`Shape`] other than [`Shape::Packed`] and [`Shape::None`] makes a
 //! reply that riff-server must refuse.
 //!
+//! It also signs the assertion of a proof of presence ([`ProofReply`]),
+//! as `navigator.credentials.get` gives it: the authenticator data with
+//! the hash of the relying party ID, the flags and the counter, and the
+//! signature over the data and the hash of `clientDataJSON`. A
+//! [`Proof`] other than [`Proof::Good`] makes an assertion that
+//! riff-server must refuse.
+//!
 //! ```
 //! use riff_core::device::fake::{Authenticator, Shape, options};
 //!
@@ -33,6 +40,7 @@ use sha2::{Digest, Sha256};
 
 use crate::wire::{
     KeyAlgorithm, KeyCredential, KeyOptions, KeyParty, KeyReply, KeySelection, KeyUser,
+    ProofOptions, ProofReply,
 };
 
 /// The COSE number of ES256.
@@ -71,10 +79,35 @@ pub enum Shape {
     Form(&'static str),
 }
 
+/// The shape of an assertion of [`Authenticator::assert_as`]: the
+/// signature of a proof of presence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Proof {
+    /// A good assertion: the key signs it, and the counter grows.
+    Good,
+    /// A signature of another key.
+    BadSignature,
+    /// A challenge that riff-server did not give.
+    OtherChallenge,
+    /// An origin that is not riff-server.
+    OtherOrigin,
+    /// The hash of another relying party ID.
+    OtherParty,
+    /// No flag of user presence.
+    NoPresence,
+    /// The type `webauthn.create`, of a new credential.
+    OtherType,
+    /// The counter of the last assertion again: a copy of the key.
+    SameCounter,
+}
+
 /// A fake authenticator with one credential: a P-256 key and an ID.
 pub struct Authenticator {
     key: SigningKey,
     credential: Vec<u8>,
+    /// The counter of the last assertion. `None` for an authenticator
+    /// that counts nothing: each assertion has the counter 0.
+    counter: Option<std::sync::atomic::AtomicU32>,
 }
 
 impl Default for Authenticator {
@@ -92,6 +125,95 @@ impl Authenticator {
         Authenticator {
             key: new_key(),
             credential,
+            counter: Some(std::sync::atomic::AtomicU32::new(0)),
+        }
+    }
+
+    /// An authenticator that counts nothing, as a passkey of a phone:
+    /// each assertion has the counter 0.
+    pub fn not_counting() -> Authenticator {
+        Authenticator {
+            counter: None,
+            ..Authenticator::new()
+        }
+    }
+
+    /// A good assertion of the proof of `ticket` with `options` on
+    /// `origin`, as the page of the proof sends it.
+    pub fn assert(&self, ticket: &str, options: &ProofOptions, origin: &str) -> ProofReply {
+        self.assert_as(ticket, options, origin, Proof::Good)
+    }
+
+    /// An assertion of the shape `shape`.
+    ///
+    /// ```
+    /// use riff_core::device::fake::{Authenticator, Proof, proof_options};
+    ///
+    /// let key = Authenticator::new();
+    /// let options = proof_options("riff.example.com", "c2VlZA", &key);
+    /// let one = key.assert("T", &options, "https://riff.example.com");
+    /// let two = key.assert("T", &options, "https://riff.example.com");
+    /// // The counter grows, so the data differ.
+    /// assert_ne!(one.authenticator_data, two.authenticator_data);
+    /// let again = key.assert_as("T", &options, "https://riff.example.com", Proof::SameCounter);
+    /// assert_eq!(again.authenticator_data, two.authenticator_data);
+    /// ```
+    pub fn assert_as(
+        &self,
+        ticket: &str,
+        options: &ProofOptions,
+        origin: &str,
+        shape: Proof,
+    ) -> ProofReply {
+        use std::sync::atomic::Ordering;
+        let challenge = match shape {
+            Proof::OtherChallenge => B64.encode(b"a challenge of another proof"),
+            _ => options.challenge.clone(),
+        };
+        let origin = match shape {
+            Proof::OtherOrigin => "https://evil.example.com",
+            _ => origin,
+        };
+        let kind = match shape {
+            Proof::OtherType => "webauthn.create",
+            _ => "webauthn.get",
+        };
+        let client_data = serde_json::json!({
+            "type": kind,
+            "challenge": challenge,
+            "origin": origin,
+            "crossOrigin": false,
+        })
+        .to_string();
+        let party = match shape {
+            Proof::OtherParty => "evil.example.com",
+            _ => options.rp_id.as_str(),
+        };
+        let flags = match shape {
+            Proof::NoPresence => VERIFIED,
+            _ => PRESENT | VERIFIED,
+        };
+        let counter = match (&self.counter, shape) {
+            (None, _) => 0,
+            (Some(counter), Proof::SameCounter) => counter.load(Ordering::SeqCst),
+            (Some(counter), _) => counter.fetch_add(1, Ordering::SeqCst) + 1,
+        };
+        let mut data = Sha256::digest(party.as_bytes()).to_vec();
+        data.push(flags);
+        data.extend_from_slice(&counter.to_be_bytes());
+        let mut signed = data.clone();
+        signed.extend_from_slice(&Sha256::digest(client_data.as_bytes()));
+        let signer = match shape {
+            Proof::BadSignature => new_key(),
+            _ => self.key.clone(),
+        };
+        let signature: Signature = signer.sign(&signed);
+        ProofReply {
+            ticket: ticket.to_owned(),
+            raw_id: self.credential(),
+            client_data: B64.encode(client_data.as_bytes()),
+            authenticator_data: B64.encode(&data),
+            signature: B64.encode(signature.to_der().as_bytes()),
         }
     }
 
@@ -240,6 +362,24 @@ pub fn options(party: &str, challenge: &str) -> KeyOptions {
         },
         attestation: "none".into(),
         name: "yubikey".into(),
+    }
+}
+
+/// The options of a proof on the relying party `party` with the
+/// challenge `challenge` for the key of `key`, as riff-server gives them:
+/// for a test that needs no riff-server.
+pub fn proof_options(party: &str, challenge: &str, key: &Authenticator) -> ProofOptions {
+    ProofOptions {
+        challenge: challenge.to_owned(),
+        timeout: 300_000,
+        rp_id: party.to_owned(),
+        allow_credentials: vec![KeyCredential {
+            kind: "public-key".into(),
+            id: key.credential(),
+        }],
+        user_verification: "preferred".into(),
+        action: "test a proof of presence".into(),
+        user: "mike".into(),
     }
 }
 

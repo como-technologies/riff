@@ -112,6 +112,7 @@ pub mod tools;
 #[cfg(target_os = "linux")]
 pub mod podman;
 pub mod pr;
+pub mod proof;
 pub mod ps;
 pub mod questions;
 pub mod reach;

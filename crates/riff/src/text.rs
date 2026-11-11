@@ -5723,6 +5723,128 @@ pub fn device_add_no_reply(name: &str) -> String {
     )
 }
 
+/// The lines of a proof of presence before the browser opens its page
+/// (01M75WKC8RCPHQW3NADHRA31SG).
+///
+/// ```
+/// let text = riff::text::proof_opens("pause the whole riff", "http://localhost:7878/proof#T");
+/// assert!(text.starts_with("riff asks for a proof of presence: pause the whole riff."), "{text}");
+/// assert!(text.contains("\n  http://localhost:7878/proof#T\n"), "{text}");
+/// ```
+pub fn proof_opens(action: &str, url: &str) -> String {
+    format!(
+        "riff asks for a proof of presence: {action}. Your browser opens the page of the proof. \
+         When it does not, open this URL:\n  {url}\n\
+         Press the button on the page, then touch your security key, use the fingerprint \
+         reader or the PIN of this computer, or scan the QR code with your phone.\n\
+         riff waits at most 5 minutes."
+    )
+}
+
+/// The note of the TUI while it waits for a proof of presence: one line
+/// with the URL of the page (01M75WKC8RCPHQW3NADHRA31SG).
+///
+/// ```
+/// let note = riff::text::proof_note("end the session x on the host y", "http://localhost:7878/proof#T");
+/// assert_eq!(
+///     note,
+///     "riff asks for a proof of presence to end the session x on the host y: http://localhost:7878/proof#T"
+/// );
+/// ```
+pub fn proof_note(action: &str, url: &str) -> String {
+    format!("riff asks for a proof of presence to {action}: {url}")
+}
+
+/// The refusal of an action of the list in an agent session and in a
+/// container while the policy is `required` (01M75WKSJTB28ZQV8ADPBQ86WE).
+///
+/// ```
+/// let text = riff::text::proof_in_session("stop the lead of o/r on the host thelio");
+/// assert!(text.starts_with("riff: stop the lead of o/r on the host thelio needs a proof"), "{text}");
+/// ```
+pub fn proof_in_session(action: &str) -> String {
+    format!(
+        "riff: {action} needs a proof of presence, and a session never gives one. riff changed \
+         nothing. next: your person runs the command in a terminal"
+    )
+}
+
+/// The error of a proof that riff-server refused, with its reason.
+///
+/// ```
+/// let text = riff::text::proof_failed("pause the whole riff", "a bad signature");
+/// assert_eq!(text, "riff has no proof of presence to pause the whole riff: a bad signature");
+/// ```
+pub fn proof_failed(action: &str, reason: &str) -> String {
+    format!("riff has no proof of presence to {action}: {reason}")
+}
+
+/// The error of a proof with no signature of the page in its time.
+pub fn proof_no_reply(action: &str) -> String {
+    proof_failed(
+        action,
+        "the page of the proof sent no signature in 5 minutes. next: run the command again",
+    )
+}
+
+/// The line of `riff device test` after a good proof (01M75WKT1A7K8RTNB4NVTXB41V).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::proof_tested("yubikey"),
+///     "riff: your key yubikey gave a good proof of presence. riff device list shows its last use."
+/// );
+/// ```
+pub fn proof_tested(name: &str) -> String {
+    format!(
+        "riff: your key {name} gave a good proof of presence. riff device list shows its last use."
+    )
+}
+
+/// The line of `riff admin proof POLICY` (01M75WKSADNAW4RNFAXD48D7DF).
+///
+/// ```
+/// use riff_core::proof::Policy;
+/// use riff_core::wire::PolicyReply;
+///
+/// let on = PolicyReply { proof: Policy::Required, changed: true };
+/// assert_eq!(
+///     riff::text::policy_set(&on),
+///     "riff: the proof of presence of the riff is required now. Each action of the list needs a proof."
+/// );
+/// let same = PolicyReply { proof: Policy::Off, changed: false };
+/// assert_eq!(riff::text::policy_set(&same), "riff: the proof of presence of the riff was off already.");
+/// ```
+pub fn policy_set(reply: &riff_core::wire::PolicyReply) -> String {
+    use riff_core::proof::Policy;
+    match (reply.proof, reply.changed) {
+        (Policy::Required, true) => "riff: the proof of presence of the riff is required now. \
+                                     Each action of the list needs a proof."
+            .into(),
+        (Policy::Off, true) => {
+            "riff: the proof of presence of the riff is off now. No action needs a proof.".into()
+        }
+        (policy, false) => {
+            format!("riff: the proof of presence of the riff was {policy} already.")
+        }
+    }
+}
+
+/// The warning of a step on this host when riff cannot ask riff-server
+/// for its check (01M75WKSNREGG95CK40W2A5JPQ): the step goes on.
+///
+/// ```
+/// let text = riff::text::proof_unchecked("end the session x on the host y", "connection refused");
+/// assert!(text.starts_with("riff: warning: riff cannot ask riff-server"), "{text}");
+/// assert!(text.ends_with("riff goes on."), "{text}");
+/// ```
+pub fn proof_unchecked(action: &str, why: &str) -> String {
+    format!(
+        "riff: warning: riff cannot ask riff-server for the check of the proof of presence of \
+         the step \"{action}\": {why}. riff goes on."
+    )
+}
+
 /// The table of `riff device list` (01M75NH3625QATGDT6DK652ZK6): the
 /// kind, the name, the time of the add and of the last use of each
 /// device, in UTC.

@@ -567,16 +567,27 @@ impl Reach {
         }
     }
 
-    /// Pauses the whole riff, and gives the line for the person. Only
-    /// `riff release approve` of a person in a terminal pauses so: a
-    /// session in a container gets the refusal of a step of a person
-    /// (01M6WZ40SFVZ6CRQ1H4Z27CWP4).
-    pub async fn pause_riff(&self) -> Result<String> {
+    /// The step of riff-server of the approval of the deploy of `tag` of
+    /// `repo` (01M75WKSRP6P4GGJPWTVRMDW85): it pauses the whole riff, and gives the
+    /// line for the person. With the policy `required`, riff asks for the
+    /// proof of the approval first. Only `riff release approve` of a
+    /// person in a terminal pauses so: a session in a container gets the
+    /// refusal of a step of a person (01M6WZ40SFVZ6CRQ1H4Z27CWP4).
+    pub async fn approve(&self, repo: &ThreadName, tag: &str) -> Result<String> {
         match self {
             Reach::Direct(server) => {
                 let (api, me) = signed(server)?;
+                let action = riff_core::proof::Action::Approve {
+                    repo: repo.clone(),
+                    tag: tag.to_owned(),
+                };
+                let asker = crate::proof::Asker::terminal();
+                let (reply, posted) = crate::proof::act(&api, &action, &asker, |api| {
+                    let me = me.clone();
+                    async move { api.approve(&me, repo, tag).await }
+                })
+                .await?;
                 let state = RiffState::Paused;
-                let (reply, posted) = api.set_pause(&me, &PauseScope::Riff, state).await?;
                 Ok(text::riff_set(None, state, &reply, &posted))
             }
             Reach::Daemon(_) => anyhow::bail!(text::release_refused(
@@ -586,13 +597,21 @@ impl Reach {
         }
     }
 
-    /// Resumes the whole riff, and gives the line for the person.
+    /// Resumes the whole riff, and gives the line for the person. With
+    /// the policy `required`, a person gives a proof first, and a session
+    /// gets the refusal (01M75WKSD5A66RHQMMM5CMKWJB).
     pub async fn resume_riff(&self) -> Result<String> {
         match self {
             Reach::Direct(server) => {
                 let (api, me) = signed(server)?;
                 let state = RiffState::Running;
-                let (reply, posted) = api.set_pause(&me, &PauseScope::Riff, state).await?;
+                let action = riff_core::proof::Action::ResumeRiff;
+                let asker = crate::proof::Asker::terminal();
+                let (reply, posted) = crate::proof::act(&api, &action, &asker, |api| {
+                    let me = me.clone();
+                    async move { api.set_pause(&me, &PauseScope::Riff, state).await }
+                })
+                .await?;
                 Ok(text::riff_set(None, state, &reply, &posted))
             }
             Reach::Daemon(socket) => ask(socket, &ServerCall::ResumeRiff).await,
@@ -810,7 +829,10 @@ impl Reach {
 
     /// `riff pause` and `riff resume`: pauses or resumes the repository of
     /// `here`, the repository `repo`, or with `riff` the whole riff, and
-    /// gives the line for the person ([`pause`]).
+    /// gives the line for the person ([`pause`]). With the policy
+    /// `required`, the pause and the resume of the whole riff need a proof:
+    /// `asker` asks for it (01M75WKSD5A66RHQMMM5CMKWJB).
+    #[allow(clippy::too_many_arguments)]
     pub async fn pause_as(
         &self,
         api: &Api,
@@ -819,8 +841,19 @@ impl Reach {
         riff: bool,
         repo: Option<ThreadName>,
         state: RiffState,
+        asker: &crate::proof::Asker,
     ) -> Result<String> {
         match self {
+            Reach::Direct(_) if riff => {
+                let action = match state {
+                    RiffState::Paused => riff_core::proof::Action::PauseRiff,
+                    RiffState::Running => riff_core::proof::Action::ResumeRiff,
+                };
+                crate::proof::act(api, &action, asker, |api| async move {
+                    pause(&api, me, here, PauseScope::Riff, state).await
+                })
+                .await
+            }
             Reach::Direct(_) => pause(api, me, here, PauseScope::of(riff, repo), state).await,
             Reach::Daemon(socket) => ask(socket, &ServerCall::Pause { riff, repo, state }).await,
         }
@@ -1011,6 +1044,7 @@ pub const COMMANDS: &[InContainer] = &[
     host(&["remove", "ada@example.com"]),
     host(&["admin", "add", "ada@example.com"]),
     host(&["admin", "remove", "ada@example.com"]),
+    host(&["admin", "proof", "required"]),
     host(&["owner", "--take"]),
     host(&["chat"]),
     host(&["tail"]),
@@ -1041,6 +1075,7 @@ pub const COMMANDS: &[InContainer] = &[
     host(&["device", "add", "--key", "yubikey"]),
     host(&["device", "list"]),
     host(&["device", "remove", "yubikey"]),
+    host(&["device", "test"]),
     // No riff-server.
     local(&["usage"]),
     local(&["setup", "--check"]),

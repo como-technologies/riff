@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 use chrono::TimeZone;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use futures::StreamExt;
+use riff::proof::{self, Asker};
 use riff::reach::Reach;
 use riff::{
     audit, binary, claude_settings, cloud, dropped, help, identity, lifecycle, local, login,
@@ -18,6 +19,7 @@ use riff_client::link::STREAM_RETRY;
 use riff_client::sessions::Sessions;
 
 use riff_core::name::{Place, SessionUri, ThreadName};
+use riff_core::proof::{Action, Policy};
 use riff_core::selector::Selector;
 use riff_core::wire::{BotFact, Kind, PullState, RiffState, StepChange};
 
@@ -408,7 +410,7 @@ enum Command {
         #[arg(long, requires = "all")]
         user: Option<String>,
     },
-    /// Add, list and remove your authenticators
+    /// Add, list, test and remove your authenticators
     ///
     /// A device of the kind key is a FIDO2 / WebAuthn authenticator: a
     /// security key such as a YubiKey, a passkey on a phone, or the
@@ -443,9 +445,11 @@ enum Command {
     /// It lists the owner, the admins, the members and the allowed domains
     /// of the riff of riff-server. The lead runs it in its container too.
     Members,
-    /// Make a person an admin, or a member again
+    /// Make or remove an admin, or set the proof of presence
     ///
-    /// An admin can invite and remove members. Only the owner can.
+    /// An admin can invite and remove members. Only the owner makes an
+    /// admin. riff admin proof sets the policy of the proof of presence of
+    /// the riff: only the owner or an admin can.
     Admin {
         #[command(subcommand)]
         command: Admin,
@@ -1000,6 +1004,15 @@ enum DeviceCommand {
         /// The name of the device, as riff device list shows it.
         name: String,
     },
+    /// Test a proof of presence with one of your keys
+    ///
+    /// It opens the page of a proof of riff-server in your browser. Press
+    /// the button, then touch your authenticator. riff says whether
+    /// riff-server checked the signature, and riff device list shows the
+    /// new time of the last use of the key. It works with each policy of
+    /// the riff, so test each key before an admin sets the policy
+    /// required.
+    Test,
 }
 
 /// The subcommands of `riff github` (01M6WG52J7WTP079W1AYEQ4W08).
@@ -1330,6 +1343,19 @@ enum Admin {
     Remove {
         /// The email of the admin.
         email: String,
+    },
+    /// Set the proof of presence of the riff: off or required
+    ///
+    /// With required, each action of the list needs a proof of presence:
+    /// a touch of an authenticator of the person who acts. riff asks for
+    /// it in the browser, and refuses the action with no proof. A new riff
+    /// is off. The change needs a proof of your key, also to off, so add
+    /// a key first: riff device add --key NAME. Only the owner or an admin
+    /// can. riff whoami and riff members show the policy.
+    Proof {
+        /// The policy: off or required.
+        #[arg(value_parser = ["off", "required"])]
+        policy: String,
     },
 }
 
@@ -1945,6 +1971,13 @@ async fn cli() -> Result<()> {
         return relay_command(terminal, session, command).await;
     }
     if let Command::Takeover { name, at_end } = &command {
+        // A take-over stops the turn of the session: a step of the list
+        // (01M75WKSNREGG95CK40W2A5JPQ).
+        gate_here(cli.server.as_deref(), |host| Action::TakeOver {
+            host: host.to_owned(),
+            name: name.clone(),
+        })
+        .await?;
         let code = riff::takeover::here(name, *at_end).await?;
         if code != 0 {
             std::process::exit(code);
@@ -2127,14 +2160,26 @@ async fn cli() -> Result<()> {
         }
         Command::Invite { email } => {
             let me = person(&api)?;
-            let changed = api.signed_in(None)?.invite(&me, email).await?;
+            let api = api.signed_in(None)?;
+            let action = Action::invite(email);
+            let changed = proof::act(&api, &action, &Asker::terminal(), |api| {
+                let me = me.clone();
+                async move { api.invite(&me, email).await }
+            })
+            .await?;
             println!("{}", text::invited(&changed.done));
             print_members_news(&changed.news);
             return Ok(());
         }
         Command::Remove { email } => {
             let me = person(&api)?;
-            let changed = api.signed_in(None)?.remove(&me, email).await?;
+            let api = api.signed_in(None)?;
+            let action = Action::remove(email);
+            let changed = proof::act(&api, &action, &Asker::terminal(), |api| {
+                let me = me.clone();
+                async move { api.remove(&me, email).await }
+            })
+            .await?;
             println!("{}", text::removed(&changed.done));
             print_members_news(&changed.news);
             return Ok(());
@@ -2180,7 +2225,8 @@ async fn cli() -> Result<()> {
                 let api = api.signed_in(None)?;
                 println!(
                     "{}",
-                    riff::questions::answered(&gh, &api, &me, &repo, *number).await?
+                    riff::questions::answered(&gh, &api, &me, &repo, *number, &Asker::terminal())
+                        .await?
                 );
                 return Ok(());
             }
@@ -2217,13 +2263,35 @@ async fn cli() -> Result<()> {
             }
             return Ok(());
         }
+        Command::Admin {
+            command: Admin::Proof { policy },
+        } => {
+            // A change of the policy needs a proof, also to off
+            // (01M75WKSADNAW4RNFAXD48D7DF).
+            let policy: Policy = policy.parse().map_err(anyhow::Error::msg)?;
+            let api = api.signed_in(None)?;
+            let action = Action::Policy { proof: policy };
+            let set = proof::act(&api, &action, &Asker::terminal(), |api| async move {
+                api.set_policy(policy).await
+            })
+            .await?;
+            println!("{}", text::policy_set(&set));
+            return Ok(());
+        }
         Command::Admin { command } => {
             let (email, admin) = match command {
                 Admin::Add { email } => (email, true),
                 Admin::Remove { email } => (email, false),
+                Admin::Proof { .. } => unreachable!("the arm above takes the policy"),
             };
             let me = person(&api)?;
-            let changed = api.signed_in(None)?.set_admin(&me, email, admin).await?;
+            let api = api.signed_in(None)?;
+            let action = Action::admin(email, admin);
+            let changed = proof::act(&api, &action, &Asker::terminal(), |api| {
+                let me = me.clone();
+                async move { api.set_admin(&me, email, admin).await }
+            })
+            .await?;
             println!("{}", text::admin_set(&changed.done));
             print_members_news(&changed.news);
             return Ok(());
@@ -2232,13 +2300,26 @@ async fn cli() -> Result<()> {
             email: Some(email), ..
         } => {
             let me = person(&api)?;
-            let changed = api.signed_in(None)?.pass_owner(&me, email).await?;
+            let api = api.signed_in(None)?;
+            let action = Action::pass_owner(email);
+            let changed = proof::act(&api, &action, &Asker::terminal(), |api| {
+                let me = me.clone();
+                async move { api.pass_owner(&me, email).await }
+            })
+            .await?;
             println!("{}", text::owner_passed(&changed.done));
             print_members_news(&changed.news);
             return Ok(());
         }
         Command::Owner { take: true, .. } => {
-            let asked = api.signed_in(None)?.take_owner().await?;
+            let api = api.signed_in(None)?;
+            let asked = proof::act(
+                &api,
+                &Action::TakeOwner,
+                &Asker::terminal(),
+                |api| async move { api.take_owner().await },
+            )
+            .await?;
             println!("{}", text::owner_asked(&asked));
             return Ok(());
         }
@@ -2393,13 +2474,17 @@ async fn cli() -> Result<()> {
         Command::Pause { riff, repo } => {
             let repo = repo_of(repo)?;
             let state = RiffState::Paused;
-            let line = reach.pause_as(&api, &me, &here, riff, repo, state).await?;
+            let line = reach
+                .pause_as(&api, &me, &here, riff, repo, state, &Asker::terminal())
+                .await?;
             println!("{line}");
         }
         Command::Resume { riff, repo } => {
             let repo = repo_of(repo)?;
             let state = RiffState::Running;
-            let line = reach.pause_as(&api, &me, &here, riff, repo, state).await?;
+            let line = reach
+                .pause_as(&api, &me, &here, riff, repo, state, &Asker::terminal())
+                .await?;
             println!("{line}");
         }
         Command::Post {
@@ -2828,17 +2913,34 @@ async fn device_command(command: &DeviceCommand, server: &str) -> Result<()> {
     let api = Api::new(server).signed_in(None)?;
     match command {
         DeviceCommand::Add { key } => {
-            let show = |lines: &str| eprintln!("{lines}");
-            let open = |url: &str| {
-                let _ = open::that_detached(url);
-            };
-            let wait = riff::device::Wait::default();
-            let name = riff::device::add_key(&api, key, show, open, wait).await?;
+            // With the policy required, a second key needs a proof of a
+            // key of the person (01M75WKSVEXMNGZQ4RYVGXH0FX).
+            let action = Action::AddKey { name: key.clone() };
+            let name = proof::act(&api, &action, &Asker::terminal(), |api| async move {
+                let show = |lines: &str| eprintln!("{lines}");
+                let open = |url: &str| {
+                    let _ = open::that_detached(url);
+                };
+                let wait = riff::device::Wait::default();
+                riff::device::add_key(&api, key, show, open, wait).await
+            })
+            .await?;
             println!("{}", text::device_added(&name));
         }
         DeviceCommand::List => print!("{}", text::device_list(&api.devices().await?)),
         DeviceCommand::Remove { name } => {
-            println!("{}", text::device_removed(&api.remove_device(name).await?));
+            // With the policy required, the removal needs a proof
+            // (01M75WKSVEXMNGZQ4RYVGXH0FX).
+            let action = Action::RemoveDevice { name: name.clone() };
+            let removed = proof::act(&api, &action, &Asker::terminal(), |api| async move {
+                api.remove_device(name).await
+            })
+            .await?;
+            println!("{}", text::device_removed(&removed));
+        }
+        DeviceCommand::Test => {
+            let proved = proof::prove(&api, &Action::Test, &Asker::terminal()).await?;
+            println!("{}", text::proof_tested(&proved.name));
         }
     }
     Ok(())
@@ -2937,6 +3039,15 @@ async fn daemon_command(command: Option<&DaemonCommand>, server: Option<&str>) -
             force,
             ..
         } => {
+            // The work in the clone is lost: a step of the list
+            // (01M75WKSNREGG95CK40W2A5JPQ).
+            if *force {
+                gate_here(server, |host| Action::Sweep {
+                    host: host.to_owned(),
+                    name: name.clone(),
+                })
+                .await?;
+            }
             let ask = riff::daemon::Ask::Remove {
                 name: name.clone(),
                 force: *force,
@@ -2945,6 +3056,11 @@ async fn daemon_command(command: Option<&DaemonCommand>, server: Option<&str>) -
         }
         DaemonCommand::Sweep { .. } => riff::daemon::ask_sweep(&dir).await,
         DaemonCommand::End { name, .. } => {
+            gate_here(server, |host| Action::End {
+                host: host.to_owned(),
+                name: name.clone(),
+            })
+            .await?;
             riff::daemon::ask_end(&dir, name, |line| println!("{line}")).await
         }
         DaemonCommand::Restart { .. } => {
@@ -3076,6 +3192,22 @@ fn remote_request(command: &DaemonCommand) -> Option<(&str, riff::daemon::remote
     Some((host.as_deref()?, request))
 }
 
+/// The check of riff-server before a step that can lose work on this
+/// host (01M75WKSNREGG95CK40W2A5JPQ), as the person of this process or
+/// its agent session. `action` makes the action from the name of this
+/// host. A machine with no sign-in asks nothing: it gives no proof, and
+/// a riff with no sign-in has no policy.
+async fn gate_here(server: Option<&str>, action: impl FnOnce(&str) -> Action) -> Result<()> {
+    let (server, _) = server_of(server)?;
+    let here = identity::place(&identity::working_dir()?)?;
+    let action = action(here.host());
+    let session = identity::session_id();
+    let Ok(api) = Api::new(&server).signed_in(session.as_deref()) else {
+        return Ok(());
+    };
+    proof::gate(&api, &action, &Asker::terminal()).await
+}
+
 /// The client and the caller of a request to the daemon of another
 /// host, in the repository of the place `here`: the agent session of
 /// this process, or else the person.
@@ -3103,7 +3235,8 @@ async fn ask_daemon(
         Reach::Direct(server) => {
             let (api, me) = daemon_asker(here, server)?;
             let wait = riff::daemon::remote::REPLY_WAIT;
-            riff::daemon::remote::ask(&api, &me, host, request, wait).await
+            let asker = Asker::terminal();
+            riff::daemon::remote::ask_with_proof(&api, &me, host, request, wait, &asker).await
         }
         Reach::Daemon(_) => reach.host(host, request).await,
     };
@@ -3793,8 +3926,13 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
                 Approved::No => println!("riff changed nothing."),
                 Approved::Yes(run) => {
                     // The pause is only for the deploy, and it tells each
-                    // other lead (01M58KMM3NFGJRW4CCV50KJQB2).
-                    println!("{}", reach.pause_riff().await?);
+                    // other lead (01M58KMM3NFGJRW4CCV50KJQB2). With the
+                    // policy required, it needs the proof of the approval
+                    // (01M75WKSRP6P4GGJPWTVRMDW85).
+                    let repo = identity::place(&here)?
+                        .default_thread()
+                        .context(text::RUN_NO_REPO)?;
+                    println!("{}", reach.approve(&repo, &run.tag).await?);
                     cycle::approve_run(&forge, &run).with_context(|| {
                         format!(
                             "riff release approve: the approval of {} failed, and the riff stays \
@@ -4277,13 +4415,38 @@ async fn lead_stop_command(
         (Some(host), Reach::Daemon(_)) => ask_daemon(host, &request, here, reach).await?,
         (_, Reach::Direct(_)) => {
             let (api, me) = daemon_asker(here, server)?;
+            // The stop waits for the notes of the lead: a session learns
+            // first that it cannot stop the lead with the policy required,
+            // and on this host the check comes first
+            // (01M75WKSJTB28ZQV8ADPBQ86WE, 01M75WKSNREGG95CK40W2A5JPQ).
+            let action = Action::LeadStop {
+                host: named.to_owned(),
+                repo: here.repo_text(),
+            };
+            let asker = Asker::terminal();
+            match host {
+                Some(_) => proof::refuse_in_session(&api, &me, &action, &asker).await?,
+                None => proof::gate(&api, &action, &asker).await?,
+            }
             let wait = riff::lead::HANDOVER_WAIT;
             if let Err(e) = riff::lead::stop_notes(&api, &me, named, wait).await {
                 eprintln!("{e:#}");
                 std::process::exit(1);
             }
             match host {
-                Some(host) => ask_daemon(host, &request, here, reach).await?,
+                Some(host) => {
+                    let wait = riff::daemon::remote::REPLY_WAIT;
+                    let asked = riff::daemon::remote::ask_with_proof(
+                        &api, &me, host, &request, wait, &asker,
+                    );
+                    match asked.await {
+                        Ok(reply) => println!("{reply}"),
+                        Err(e) => {
+                            eprintln!("{e:#}");
+                            std::process::exit(1);
+                        }
+                    }
+                }
                 None => {
                     let (dir, repo) = (riff::daemon::dir()?, here.repo_text());
                     if let Err(e) = riff::lead::stop_here(&dir, &repo).await {
@@ -4315,7 +4478,18 @@ async fn leave_command(host: Option<&str>, now: bool, here: &Place, reach: &Reac
             eprintln!("{}", text::leave_in_container(&repo));
             std::process::exit(1);
         }
-        (None, Reach::Direct(_)) => riff::wave::ask_leave(&riff::daemon::dir()?, here, now).await,
+        (None, Reach::Direct(server)) => {
+            // The end of the sessions that run: a step of the list
+            // (01M75WKSNREGG95CK40W2A5JPQ).
+            if now {
+                gate_here(Some(server), |host| Action::Leave {
+                    host: host.to_owned(),
+                    repo: repo.clone(),
+                })
+                .await?;
+            }
+            riff::wave::ask_leave(&riff::daemon::dir()?, here, now).await
+        }
     }
 }
 

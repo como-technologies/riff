@@ -395,8 +395,9 @@ members of the riff, see [See the members](#see-the-members).
 
 ## See the members
 
-To see the owner, the admins, the members and the allowed domains of
-the riff, run:
+To see the owner, the admins, the members, the allowed domains and the
+[proof of presence](how-it-works.md#a-proof-of-presence) of the riff,
+run:
 
 ```sh
 riff members
@@ -410,6 +411,7 @@ owner            mike@example.com
 admins           ada@example.com
 members          bob@gmail.com
 allowed domains  example.com
+proof            off
 ```
 
 A riff with no owner shows the owner `none`. Its last line, in

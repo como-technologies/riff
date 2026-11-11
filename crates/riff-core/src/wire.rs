@@ -97,6 +97,22 @@
 //! | `POST /device/key/options` | [`KeyTicket`] | [`KeyOptions`] | the page of the add |
 //! | `POST /device/key/reply` | [`KeyReply`] | [`KeyReplied`] | the page of the add |
 //!
+//! Five calls give a proof of presence, use it and set the policy
+//! (01M75WKC8RCPHQW3NADHRA31SG, 01M75WKS7H066EXQPGF003B4SC). A call of an action carries the ticket of
+//! its proof in the header [`crate::proof::PROOF_HEADER`]. The page of the
+//! proof makes two more calls, with no token: the ticket is their proof.
+//!
+//! | Path | Request | Reply | Who |
+//! |---|---|---|---|
+//! | `POST /v1/proof` | [`ProofStart`] | [`ProofStarted`] | a person |
+//! | `POST /v1/proof/wait` | [`ProofWait`] | [`ProofState`] | the person of the proof |
+//! | `POST /v1/proof/use` | [`UseProof`] | [`ProofUsed`] | a person or a session |
+//! | `POST /v1/policy` | [`SetPolicy`] | [`PolicyReply`] | an admin, with a proof |
+//! | `POST /v1/release/approve` | [`Approve`] | [`RiffReply`] | an admin |
+//! | `GET /proof` | the ticket in the fragment | the page of the proof | the browser |
+//! | `POST /proof/options` | [`ProofTicket`] | [`ProofOptions`] | the page of the proof |
+//! | `POST /proof/reply` | [`ProofReply`] | [`ProofReplied`] | the page of the proof |
+//!
 //! Six calls make and check the GitHub Apps of the riff, give the token
 //! of a session and of a daemon, and show the last wakes of the App
 //! (01M6WG52J7WTP079W1AYEQ4W08, 01M6WPMEEWX09DHJZF18BKBPYW,
@@ -287,6 +303,13 @@ calls! {
     KeyWait => "/v1/device/key/wait", KeyState;
     KeyTicket => "/device/key/options", KeyOptions;
     KeyReply => "/device/key/reply", KeyReplied;
+    ProofStart => "/v1/proof", ProofStarted;
+    ProofWait => "/v1/proof/wait", ProofState;
+    ProofTicket => "/proof/options", ProofOptions;
+    ProofReply => "/proof/reply", ProofReplied;
+    UseProof => "/v1/proof/use", ProofUsed;
+    SetPolicy => "/v1/policy", PolicyReply;
+    Approve => "/v1/release/approve", RiffReply;
     GitHubCreate => "/v1/github/create", GitHubStarted;
     GitHubApps => "/v1/github/apps", GitHubAppsReply;
     GitHubCheck => "/v1/github/check", GitHubChecked;
@@ -2485,6 +2508,9 @@ pub struct RiffReply {
     /// Each repository that is paused, in the order of the names.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub repositories: Vec<RepositoryPause>,
+    /// The policy of the proof of presence of the riff (01M75WKSYCMMJFGAM3W4ASGN85).
+    #[serde(default, skip_serializing_if = "crate::proof::Policy::is_off")]
+    pub proof: crate::proof::Policy,
 }
 
 /// The pauses of a riff with no pause of a repository: `paused` is a
@@ -2504,6 +2530,7 @@ impl From<RiffState> for RiffReply {
             changed: false,
             riff: (state == RiffState::Paused).then(PauseInfo::default),
             repositories: Vec::new(),
+            proof: crate::proof::Policy::Off,
         }
     }
 }
@@ -3358,6 +3385,174 @@ pub struct KeyReplied {
     pub text: String,
 }
 
+/// `POST /v1/proof`: the start of a proof of presence of `action` by
+/// the person of the token (01M75WKC8RCPHQW3NADHRA31SG). riff-server
+/// keeps the proof for 5 minutes, and gives the URL of its page. A
+/// session token gets 403.
+///
+/// ```
+/// use riff_core::proof::Action;
+/// use riff_core::wire::{Call, ProofStart};
+///
+/// let start = ProofStart { action: Action::PauseRiff };
+/// assert_eq!(serde_json::to_string(&start).unwrap(), r#"{"action":{"action":"pause_riff"}}"#);
+/// assert_eq!(ProofStart::PATH, "/v1/proof");
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ProofStart {
+    pub action: crate::proof::Action,
+}
+
+/// The reply to [`ProofStart`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ProofStarted {
+    /// The page of the proof, with the ticket in its fragment.
+    pub url: String,
+    /// The ticket of the proof: `riff` waits with [`ProofWait`], then
+    /// sends it in the header [`crate::proof::PROOF_HEADER`] of the call
+    /// of the action.
+    pub ticket: String,
+}
+
+/// `POST /v1/proof/wait`: where the proof of the ticket is. Only the
+/// person who started it can ask.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ProofWait {
+    pub ticket: String,
+}
+
+/// The reply to [`ProofWait`].
+///
+/// ```
+/// use riff_core::wire::ProofState;
+///
+/// let proved: ProofState = serde_json::from_str(r#"{"state":"proved","name":"yubikey"}"#).unwrap();
+/// assert_eq!(proved, ProofState::Proved { name: "yubikey".into() });
+/// assert!(ProofState::Waiting.waits() && !proved.waits());
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ProofState {
+    /// The page has not sent a good reply yet.
+    Waiting,
+    /// riff-server checked the signature of the key `name`.
+    Proved { name: String },
+    /// riff-server refused the reply, or the time of the proof ended.
+    Failed { reason: String },
+}
+
+impl ProofState {
+    /// True while the proof waits for the reply of the page.
+    pub fn waits(&self) -> bool {
+        matches!(self, ProofState::Waiting)
+    }
+}
+
+/// `POST /proof/options`: the page of the proof asks for the options of
+/// the assertion with the ticket of its fragment. It has no riff token:
+/// the ticket is its proof.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ProofTicket {
+    pub ticket: String,
+}
+
+/// The options of an assertion, as the page gives them to
+/// `navigator.credentials.get`: the JSON form of
+/// `PublicKeyCredentialRequestOptions` of WebAuthn, with each binary
+/// value in base64url with no padding. `action` and `user` are no fields
+/// of WebAuthn: the page shows them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProofOptions {
+    /// The challenge: it names the action and the person.
+    pub challenge: String,
+    /// How long the browser waits for the authenticator, in
+    /// milliseconds.
+    pub timeout: u64,
+    /// The relying party ID: the host of riff-server.
+    pub rp_id: String,
+    /// The keys of the person: only one of them can sign.
+    pub allow_credentials: Vec<KeyCredential>,
+    pub user_verification: String,
+    /// The text of the action, for example `pause the whole riff`.
+    pub action: String,
+    /// The USER of the person.
+    pub user: String,
+}
+
+/// `POST /proof/reply`: the assertion of the authenticator, which the
+/// page of the proof sends with the ticket of its fragment. Each binary
+/// value is in base64url with no padding.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ProofReply {
+    pub ticket: String,
+    /// The `rawId` of the credential that signed.
+    pub raw_id: String,
+    /// The `clientDataJSON` of the assertion.
+    pub client_data: String,
+    /// The `authenticatorData` of the assertion.
+    pub authenticator_data: String,
+    /// The `signature` of the assertion.
+    pub signature: String,
+}
+
+/// The reply to [`ProofReply`]: the text that the page shows.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ProofReplied {
+    pub text: String,
+}
+
+/// `POST /v1/proof/use`: the check of riff-server before a step that it
+/// does not do itself: a step of the riff daemon of this host, or a
+/// step on GitHub. With the policy `required`, it refuses with no proof.
+/// The proof of the header [`crate::proof::PROOF_HEADER`] is then used.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct UseProof {
+    pub action: crate::proof::Action,
+}
+
+/// The reply to [`UseProof`]: true when the call had a good proof.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ProofUsed {
+    pub proved: bool,
+}
+
+/// `POST /v1/policy`: an admin sets the policy of the proof of presence
+/// of the riff. It needs a proof, also when the policy is `off`.
+///
+/// ```
+/// use riff_core::proof::Policy;
+/// use riff_core::wire::{Call, SetPolicy};
+///
+/// let set = SetPolicy { proof: Policy::Required };
+/// assert_eq!(serde_json::to_string(&set).unwrap(), r#"{"proof":"required"}"#);
+/// assert_eq!(SetPolicy::PATH, "/v1/policy");
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SetPolicy {
+    pub proof: crate::proof::Policy,
+}
+
+/// The reply to [`SetPolicy`]: the policy now, and whether the call
+/// changed it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PolicyReply {
+    pub proof: crate::proof::Policy,
+    pub changed: bool,
+}
+
+/// `POST /v1/release/approve`: the step of riff-server of the approval
+/// of the deploy of the release `tag` of `repo`: it pauses the whole
+/// riff, as a pause of the whole riff by `me` does. `riff release
+/// approve` sends it before it approves on GitHub. Its action is
+/// [`crate::proof::Action::Approve`].
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct Approve {
+    pub me: SessionUri,
+    pub repo: ThreadName,
+    pub tag: String,
+}
+
 /// `POST /v1/log`: the records of the log of one repository, for an
 /// audit (01M3ZWRC11R5M9V1KTF05P240W). Only the owner and the admins
 /// can read them.
@@ -3873,6 +4068,9 @@ pub struct MembersReply {
     pub members: Vec<String>,
     /// The allowed domains (R15).
     pub allowed_domains: Vec<String>,
+    /// The policy of the proof of presence of the riff (01M75WKSYCMMJFGAM3W4ASGN85).
+    #[serde(default, skip_serializing_if = "crate::proof::Policy::is_off")]
+    pub proof: crate::proof::Policy,
 }
 
 /// An OAuth error reply, for example `{"error":"invalid_grant"}`.

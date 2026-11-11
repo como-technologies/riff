@@ -1044,6 +1044,32 @@ pub async fn ask(
     }
 }
 
+/// [`ask`], with a proof of presence when the request is a step that can
+/// lose work and riff-server asks for one (01M75WKSJTB28ZQV8ADPBQ86WE): `daemon end
+/// NAME`, `leave REPO --now`, `lead stop`, and `daemon sweep --remove
+/// NAME --force`. The action names the host and the repository of the
+/// request, as riff-server reads them from the post ([`of_step`]).
+/// `asker` asks for the proof.
+///
+/// [`of_step`]: riff_core::proof::of_step
+pub async fn ask_with_proof(
+    api: &Api,
+    me: &SessionUri,
+    host: &str,
+    request: &Request,
+    wait: Duration,
+    asker: &crate::proof::Asker,
+) -> Result<String> {
+    let body = request.to_string();
+    let Some(action) = riff_core::proof::of_step(&body, host, &me.place().repo_text()) else {
+        return ask(api, me, host, request, wait).await;
+    };
+    crate::proof::act(api, &action, asker, |api| async move {
+        ask(&api, me, host, request, wait).await
+    })
+    .await
+}
+
 /// The new start of a daemon on a new riff: is it old, and the ask to
 /// systemd.
 pub struct Again {

@@ -77,6 +77,7 @@ mod owner;
 mod package_sources;
 mod pause;
 mod pr;
+mod proof;
 #[cfg(target_os = "linux")]
 mod ps;
 mod pull_limit;

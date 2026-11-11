@@ -733,6 +733,7 @@ impl Effect {
         me: &SessionUri,
         reach: &Reach,
         gh: &crate::pr::Gh,
+        asker: &crate::proof::Asker,
     ) -> Result<String> {
         let thread = |repo: &str| repo.parse::<ThreadName>();
         match self {
@@ -751,7 +752,7 @@ impl Effect {
                 anyhow::bail!(text::needs_the_host("riff questions --answered"))
             }
             Effect::Answered { repo, item } => {
-                crate::questions::answered(gh, api, me, &thread(repo)?, *item).await
+                crate::questions::answered(gh, api, me, &thread(repo)?, *item, asker).await
             }
             Effect::Pause { repo, state } => {
                 let (riff, repo) = match repo {
@@ -759,7 +760,7 @@ impl Effect {
                     None => (true, None),
                 };
                 reach
-                    .pause_as(api, me, me.place(), riff, repo, *state)
+                    .pause_as(api, me, me.place(), riff, repo, *state, asker)
                     .await
             }
         }
@@ -2117,9 +2118,15 @@ async fn frames(
     });
     let mut shows = crate::hooks::Shows::default();
     let mut last_click: Option<(Key, Instant)> = None;
+    // The lines of a proof of presence of an action that runs: each one is
+    // the next note, with the URL of the page (01M75WKC8RCPHQW3NADHRA31SG).
+    let (proof_notes, mut proof_lines) = tokio::sync::mpsc::unbounded_channel::<String>();
     let shown = loop {
         for came in link.came() {
             state.chat_came(came);
+        }
+        while let Ok(line) = proof_lines.try_recv() {
+            state.note(line);
         }
         while let Ok(wake) = wakes.try_recv() {
             shows.wake(&wake);
@@ -2341,19 +2348,28 @@ async fn frames(
             }
             Action::Takeover(name) => {
                 leave(mouse);
-                let taken = take_over(dir.as_deref(), &name).await;
+                let taken = take_over(api, me, dir.as_deref(), &name).await;
                 *terminal = enter(mouse)?;
                 state.took_over(&name, &taken);
                 (tasks.next, tasks.next_ask) = (Instant::now(), Instant::now());
             }
-            Action::End(name) => {
-                state.done(end(dir.as_deref(), &name).await);
-                (tasks.next, tasks.next_ask) = (Instant::now(), Instant::now());
-            }
-            Action::Limit { .. } | Action::Host { .. } | Action::Do(_)
+            Action::End(_) | Action::Limit { .. } | Action::Host { .. } | Action::Do(_)
                 if tasks.acting.is_some() =>
             {
                 state.note(STILL_ACTING);
+            }
+            // The end runs in a task of its own: it can wait for a proof of
+            // presence (01M75WKSNREGG95CK40W2A5JPQ).
+            Action::End(name) => {
+                let (api, me, dir) = (api.clone(), me.clone(), dir.clone());
+                let asker = crate::proof::Asker::notes(proof_notes.clone());
+                tasks.next_ask = Instant::now();
+                tasks.acting = Some(tokio::spawn(async move {
+                    match end(&api, &me, dir.as_deref(), &name, &asker).await {
+                        Ok(line) => line,
+                        Err(e) => format!("{e:#}"),
+                    }
+                }));
             }
             Action::Host {
                 host,
@@ -2362,8 +2378,9 @@ async fn frames(
             } => {
                 state.note(text::asking_host(&host, &request.to_string()));
                 let (api, me, reach) = (api.clone(), me.clone(), reach.clone());
+                let asker = crate::proof::Asker::notes(proof_notes.clone());
                 tasks.acting = Some(tokio::spawn(async move {
-                    sessions::ask_host(&api, &me, &reach, &host, &repo, &request).await
+                    sessions::ask_host(&api, &me, &reach, &host, &repo, &request, &asker).await
                 }));
             }
             Action::Limit { host, sessions } => {
@@ -2377,8 +2394,9 @@ async fn frames(
             Action::Do(effect) => {
                 state.note(effect.doing());
                 let (api, me, reach, gh) = (api.clone(), me.clone(), reach.clone(), gh.clone());
+                let asker = crate::proof::Asker::notes(proof_notes.clone());
                 tasks.acting = Some(tokio::spawn(async move {
-                    match effect.run(&api, &me, &reach, &gh).await {
+                    match effect.run(&api, &me, &reach, &gh, &asker).await {
                         Ok(line) => line,
                         Err(e) => format!("riff: {e:#}"),
                     }
@@ -2511,9 +2529,21 @@ async fn attach(name: &str) -> Result<crate::lead::Left> {
 
 /// The takeover of `t` of the session `name`: the code of
 /// `riff takeover NAME`, with the daemon in the folder `dir`. It stops
-/// the turn at once (01M51KJ1R9K7A7RW8T8XH8VW43).
-async fn take_over(dir: Option<&std::path::Path>, name: &str) -> Result<i32> {
+/// the turn at once (01M51KJ1R9K7A7RW8T8XH8VW43). riff-server checks it
+/// first, with a proof when it asks for one (01M75WKSNREGG95CK40W2A5JPQ): the TUI has
+/// left its screen, so the lines of the proof show.
+async fn take_over(
+    api: &Api,
+    me: &SessionUri,
+    dir: Option<&std::path::Path>,
+    name: &str,
+) -> Result<i32> {
     let dir = dir.ok_or_else(|| anyhow::anyhow!(text::NO_DAEMON_HERE))?;
+    let action = riff_core::proof::Action::TakeOver {
+        host: me.place().host().to_owned(),
+        name: name.to_owned(),
+    };
+    crate::proof::gate(api, &action, &crate::proof::Asker::terminal()).await?;
     #[cfg(target_os = "linux")]
     {
         crate::takeover::takeover(
@@ -2534,9 +2564,21 @@ async fn take_over(dir: Option<&std::path::Path>, name: &str) -> Result<i32> {
 
 /// The end of `x` of the session `name`: the code of `riff daemon end
 /// NAME`, with the daemon in the folder `dir`. It gives the last line of
-/// the daemon.
-async fn end(dir: Option<&std::path::Path>, name: &str) -> Result<String> {
+/// the daemon. riff-server checks it first, with a proof in the browser
+/// when it asks for one (01M75WKSNREGG95CK40W2A5JPQ).
+async fn end(
+    api: &Api,
+    me: &SessionUri,
+    dir: Option<&std::path::Path>,
+    name: &str,
+    asker: &crate::proof::Asker,
+) -> Result<String> {
     let dir = dir.ok_or_else(|| anyhow::anyhow!(text::NO_DAEMON_HERE))?;
+    let action = riff_core::proof::Action::End {
+        host: me.place().host().to_owned(),
+        name: name.to_owned(),
+    };
+    crate::proof::gate(api, &action, asker).await?;
     let mut lines = Vec::new();
     crate::daemon::ask_end(dir, name, |line| lines.push(line.to_owned())).await?;
     Ok(lines.pop().unwrap_or_else(|| text::daemon_ended(name)))

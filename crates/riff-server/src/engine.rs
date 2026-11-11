@@ -181,23 +181,25 @@ use axum::extract::{FromRef, FromRequest, Request, State as AxumState};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use riff_core::name::{SessionUri, ThreadName, Who};
+use riff_core::proof::Action;
 use riff_core::record::{Change, Record};
 use riff_core::wire::{
-    AliveReply, CALL_HEADER, Call, Claim, DenyOwner, End, Free, GitHubChange, Hold, Invite, Join,
-    Keys, Lead, Leave, PassOwner, Pause, PlanChanged, PlanOff, Post, REFUSED_HEADER, REPEAT_HEADER,
-    Register, Release, ReleaseFor, Remove, RemoveDevice, Resume, Revoke, SetAdmin, SetIdle,
-    SetNotes, SetPlan, Start, Tailed, TakeOwner, Wake,
+    AliveReply, Approve, CALL_HEADER, Call, Claim, DenyOwner, End, Free, GitHubChange, Hold,
+    Invite, Join, Keys, Lead, Leave, PassOwner, Pause, PlanChanged, PlanOff, Post, REFUSED_HEADER,
+    REPEAT_HEADER, Register, Release, ReleaseFor, Remove, RemoveDevice, Resume, Revoke, SetAdmin,
+    SetIdle, SetNotes, SetPlan, SetPolicy, Start, Tailed, TakeOwner, Wake,
 };
 use riff_state::log::Written;
 use riff_state::state::{
     AddKey, Admit, Admitted as SignedInAs, Announce, Arrive, Caller, Cause, Check, Code, Command,
     CommandKind, Delivery, Done, EndOwner, Forget, GrantOwner, Import, Imported, Key, MakeRiff,
-    NameOwner, OwnerChange, Refused, Role, Signal, State,
+    NameOwner, OwnerChange, Prove, Refused, Role, Signal, State,
 };
 use tokio::sync::{Notify, broadcast, oneshot};
 
 use crate::auth::SignedIn;
 use crate::oidc::Identity;
+use crate::proofs::Proofs;
 use crate::trace::{Denied, DeniedCode, Limit, Named, Outcome, Traced};
 
 /// Events that a slow stream may miss before it drops them.
@@ -281,7 +283,7 @@ macro_rules! routed {
 
 routed!(
     Register, Start, End, Join, Leave, Claim, Release, ReleaseFor, Lead, Pause, Resume, SetIdle,
-    Hold, Free, SetPlan, PlanOff, SetNotes
+    Hold, Free, SetPlan, PlanOff, SetNotes, Approve
 );
 
 /// Gives each command of the people its [`Routed`]. Its body names no
@@ -304,7 +306,8 @@ routed_by_token!(
     TakeOwner,
     DenyOwner,
     Revoke,
-    RemoveDevice
+    RemoveDevice,
+    SetPolicy
 );
 
 /// With sign-in, a post needs a valid signature from the key of its
@@ -362,7 +365,9 @@ impl Failed {
     /// for code in Code::ALL {
     ///     let status = Failed::Refused(Refused::new(code, "")).status();
     ///     let expected = match code.as_str() {
-    ///         "not_allowed" | "no_sign_in" | "not_member" => StatusCode::FORBIDDEN,
+    ///         "not_allowed" | "no_sign_in" | "not_member" | "needs_proof" | "bad_proof" => {
+    ///             StatusCode::FORBIDDEN
+    ///         }
     ///         "bad_request" => StatusCode::BAD_REQUEST,
     ///         _ => StatusCode::CONFLICT,
     ///     };
@@ -382,6 +387,7 @@ impl Failed {
                 | Code::NotHolder
                 | Code::OtherUser => StatusCode::CONFLICT,
                 Code::BadRequest => StatusCode::BAD_REQUEST,
+                Code::NeedsProof | Code::BadProof => StatusCode::FORBIDDEN,
             },
             Failed::Stopped => StatusCode::SERVICE_UNAVAILABLE,
         }
@@ -495,6 +501,9 @@ pub struct Authenticated<C> {
     /// (01M48VFX22S4811DYBBD7QDW24). `None` for a call with no ID, and
     /// for each command of the server.
     call: Option<String>,
+    /// The ticket of the proof of presence of the call: the header
+    /// `riff-proof` (01M75WKSFX84BHHGFX8VJ37DC6). The check of the command takes it.
+    ticket: Option<String>,
 }
 
 impl<C> Authenticated<C> {
@@ -508,6 +517,13 @@ impl<C> Authenticated<C> {
     /// only (01M48VFX22S4811DYBBD7QDW24).
     pub fn with_call(self, call: Option<String>) -> Authenticated<C> {
         Authenticated { call, ..self }
+    }
+
+    /// The same call with the ticket of its proof of presence. The
+    /// check of the command takes the proof under the lock of the
+    /// state, and uses it only when the command passes (01M75WKSFX84BHHGFX8VJ37DC6).
+    pub fn with_ticket(self, ticket: Option<String>) -> Authenticated<C> {
+        Authenticated { ticket, ..self }
     }
 }
 
@@ -631,6 +647,10 @@ struct Core {
     /// Each call with a call ID whose entry waits for the writer, with
     /// the second tries that wait for it (01M48VFX8K93F8XRWDB2BDP240).
     pending: BTreeMap<Key, Vec<oneshot::Sender<()>>>,
+    /// The proofs of presence that wait for their page or their use
+    /// (01M75WKC8RCPHQW3NADHRA31SG). They are under the lock of the state, so the check
+    /// of a command takes its proof in the same step.
+    proofs: Proofs,
 }
 
 struct Shared {
@@ -663,6 +683,7 @@ impl Engine {
                 queue: Vec::new(),
                 stopped: false,
                 pending: BTreeMap::new(),
+                proofs: Proofs::default(),
             }),
             queued: Arc::new(Notify::new()),
             wakes,
@@ -759,6 +780,7 @@ impl Engine {
             admitted,
             command,
             call: None,
+            ticket: None,
         })
     }
 
@@ -772,6 +794,7 @@ impl Engine {
             },
             command,
             call: None,
+            ticket: None,
         }
     }
 
@@ -877,6 +900,7 @@ impl Engine {
             admitted,
             command,
             call,
+            ticket,
         } = call;
         let mut core = self.core();
         let caller = self.with_role(&admitted, &core.state);
@@ -893,6 +917,7 @@ impl Engine {
                 registered: None,
                 caller,
                 result: Err(refused),
+                proved: false,
             }
         } else if C::KIND.of_people() && self.0.sign_ins.trusted() {
             Check {
@@ -905,6 +930,7 @@ impl Engine {
                         C::KIND
                     ),
                 )),
+                proved: false,
             }
         } else {
             let key = call.as_deref().map(|id| Key::new(&caller.by(), id));
@@ -922,12 +948,34 @@ impl Engine {
                         admitted,
                         command,
                         call,
+                        ticket,
                     };
                     return Try::Wait(again, rx);
                 }
             }
             called = key;
-            core.state.check(&caller, &command, now)
+            // The proof of the call (01M75WKSFX84BHHGFX8VJ37DC6): the
+            // engine takes it here, under the lock, and uses it only when
+            // the command passes with it. A call that is no action of the
+            // list takes no proof: its ticket does not matter.
+            let ticket = ticket.filter(|_| core.state.proof_of(&caller, &command, now).is_some());
+            match Engine::proved(&core, &caller, ticket.as_deref(), call.as_deref(), now) {
+                Err(refused) => Check {
+                    registered: None,
+                    caller,
+                    result: Err(refused),
+                    proved: false,
+                },
+                Ok(caller) => {
+                    let check = core.state.check(&caller, &command, now);
+                    if check.proved
+                        && let Some(ticket) = &ticket
+                    {
+                        core.proofs.spend(ticket, call.as_deref());
+                    }
+                    check
+                }
+            }
         };
         Try::Run(Checked {
             engine: self,
@@ -938,6 +986,29 @@ impl Engine {
             called,
             now,
         })
+    }
+
+    /// `caller` with the action of the proof of `ticket`, when the call
+    /// has one (01M75WKSFX84BHHGFX8VJ37DC6): a proof of the person of the caller, that
+    /// the key signed, in its life, and not used. A session never gives
+    /// a proof. Else the refusal `bad_proof`, with the reason.
+    fn proved(
+        core: &Core,
+        caller: &Caller,
+        ticket: Option<&str>,
+        call: Option<&str>,
+        now: Instant,
+    ) -> Result<Caller, Refused> {
+        let Some(ticket) = ticket else {
+            return Ok(caller.clone());
+        };
+        if caller.who().session().is_some() {
+            return Err(Refused::new(Code::BadProof, crate::proofs::PERSON_ONLY));
+        }
+        match core.proofs.resolve(ticket, caller.who().user(), call, now) {
+            Ok(action) => Ok(caller.clone().with_proof(action)),
+            Err(why) => Err(Refused::new(Code::BadProof, why)),
+        }
     }
 
     /// The caller of `admitted` with its role. The role of a caller
@@ -1024,6 +1095,7 @@ impl Engine {
             },
             command: admit,
             call: None,
+            ticket: None,
         })
         .await
     }
@@ -1046,8 +1118,75 @@ impl Engine {
             admitted,
             command: add,
             call: None,
+            ticket: None,
         })
         .await
+    }
+
+    /// The record of a proof of presence after the check of its
+    /// assertion: the command `prove` (01M75WKS1TS9FME704FQNBZQN1, 01M75WKS4RF17WF85MWA4GFK0C). The page
+    /// of the proof has no token, so the caller is the person of
+    /// `start`: the proof of the token that started the proof. A
+    /// sign-in that ended since the start sends no command.
+    pub async fn prove(&self, start: &SignedIn, prove: Prove) -> Result<(), Failed> {
+        let place = SessionUri::server().place().clone();
+        let me = SessionUri::new(start.who.clone(), place);
+        let admitted = self.admit(Some(start), &me)?;
+        self.dispatch(Authenticated {
+            admitted,
+            command: prove,
+            call: None,
+            ticket: None,
+        })
+        .await
+    }
+
+    /// Runs `with` on the proofs of presence, under the lock of the
+    /// state (01M75WKC8RCPHQW3NADHRA31SG).
+    pub fn proofs<T>(&self, with: impl FnOnce(&mut Proofs) -> T) -> T {
+        with(&mut self.core().proofs)
+    }
+
+    /// The rule of the proof of a step that riff-server does not do
+    /// itself (01M75WKSNREGG95CK40W2A5JPQ): a step of the daemon of a host, or on
+    /// GitHub, or the add of a second key. The caller is the caller of
+    /// `signed_in`, and `ticket` the ticket of its proof. Gives true when
+    /// the step uses the proof, and then the proof is used. A session
+    /// never gives a proof.
+    pub fn use_step(
+        &self,
+        signed_in: Option<&SignedIn>,
+        ticket: Option<&str>,
+        call: Option<&str>,
+        action: &Action,
+    ) -> Result<bool, Failed> {
+        let now = Instant::now();
+        let mut core = self.core();
+        let proved = match (signed_in, ticket) {
+            (_, None) => None,
+            (None, Some(_)) => {
+                return Err(Refused::new(Code::BadProof, "a proof needs a sign-in").into());
+            }
+            (Some(signed_in), Some(_)) if signed_in.who.session().is_some() => {
+                return Err(Refused::new(Code::BadProof, crate::proofs::PERSON_ONLY).into());
+            }
+            (Some(signed_in), Some(ticket)) => Some(
+                core.proofs
+                    .resolve(ticket, signed_in.who.user(), call, now)
+                    .map_err(|why| Refused::new(Code::BadProof, why))?,
+            ),
+        };
+        let used = core.state.check_step(action, proved.as_ref())?;
+        if used && let Some(ticket) = ticket {
+            core.proofs.spend(ticket, call);
+        }
+        Ok(used)
+    }
+
+    /// The life of each new proof of presence: [`crate::proofs::LIFE`],
+    /// or a shorter one for a test.
+    pub fn set_proof_life(&self, life: std::time::Duration) {
+        self.core().proofs = Proofs::new(life);
     }
 
     /// Pauses the whole riff as the server: the command `pause` of the
@@ -1113,6 +1252,7 @@ impl Engine {
             admitted: admitted.clone(),
             command: Arrive { me: me.clone() },
             call: None,
+            ticket: None,
         })
         .await
     }
@@ -1435,6 +1575,7 @@ impl<'s, C: Command> Checked<'s, C> {
             registered,
             caller,
             result,
+            proved: _,
         } = check;
         // A log line names a sign-in by its USER: an email is in no log
         // line (01M3XA87CJHCGZX283ZQAFKARZ).
@@ -1534,13 +1675,15 @@ where
         let engine = Engine::from_ref(state);
         let proof = request.extensions().get::<SignedIn>().cloned();
         let call = call_id(&request).map_err(IntoResponse::into_response)?;
+        let ticket =
+            crate::proofs::ticket_of(request.headers()).map_err(IntoResponse::into_response)?;
         let Json(command) = Json::<C>::from_request(request, state)
             .await
             .map_err(IntoResponse::into_response)?;
         let me = command.me().cloned();
         engine
             .authenticate(proof.as_ref(), command)
-            .map(|call_of| call_of.with_call(call))
+            .map(|call_of| call_of.with_call(call).with_ticket(ticket))
             .inspect_err(|failed| failed.trace_denied(engine.limit(), C::PATH, me.as_ref()))
             .map_err(IntoResponse::into_response)
     }

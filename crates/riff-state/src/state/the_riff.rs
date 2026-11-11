@@ -1,16 +1,22 @@
 //! The group "the riff": the commands [`MakeRiff`], [`Pause`],
-//! [`Resume`], [`SetIdle`], [`Forget`] and [`Import`], and what is one
-//! for the whole riff. [`MakeRiff`], [`Forget`] and [`Import`] are
-//! commands of the server: no client can send them.
+//! [`Resume`], [`SetIdle`], [`Forget`], [`Import`], [`SetPolicy`] and
+//! [`Approve`], and what is one for the whole riff. [`MakeRiff`],
+//! [`Forget`] and [`Import`] are commands of the server: no client can
+//! send them.
 //!
-//! - Part of the riff: [`TheRiff`]. The pauses ([`Pauses`]), and the
-//!   settings of idle workers.
-//! - `apply`: `TheRiff::pause_set` for a `pause_set` record, and
-//!   `TheRiff::setting_changed` for a `setting_changed` record. The
+//! - Part of the riff: [`TheRiff`]. The pauses ([`Pauses`]), the
+//!   settings of idle workers, and the policy of the proof of presence
+//!   (01M75WKS7H066EXQPGF003B4SC).
+//! - `apply`: `TheRiff::pause_set` for a `pause_set` record,
+//!   `TheRiff::setting_changed` for a `setting_changed` record, and
+//!   `TheRiff::policy_set` for a `policy_set` record. The
 //!   `session_forgotten` record of [`Forget`] changes each part: see
 //!   [`super::riff`].
-//! - Checkpoint: `Saved`, the fields `riff`, `idle`, `riff_pause` and
-//!   `pauses`.
+//! - Checkpoint: `Saved`, the fields `riff`, `idle`, `riff_pause`,
+//!   `pauses` and `proof`.
+//! - A pause and a resume of the whole riff, a change of the policy
+//!   and an approval are actions of the proof of presence
+//!   ([`Command::proof`], 01M75WKSD5A66RHQMMM5CMKWJB).
 //!
 //! # The two pauses (01M3XAHZBGSSJB3YX23K88W01K)
 //!
@@ -31,11 +37,13 @@
 use std::collections::BTreeMap;
 
 use riff_core::name::ThreadName;
+use riff_core::proof::{Action, Policy};
 use riff_core::record::{
-    Change, Envelope, Forgotten, PauseSet, Record, RiffMade, Scope, SettingChanged,
+    Change, Envelope, Forgotten, PauseSet, PolicySet, Record, RiffMade, Scope, SettingChanged,
 };
 use riff_core::wire::{
-    Idle, Pause, PauseInfo, RepositoryPause, Resume, RiffReply, RiffState, SetIdle,
+    Approve, Idle, Pause, PauseInfo, PolicyReply, RepositoryPause, Resume, RiffReply, RiffState,
+    SetIdle, SetPolicy,
 };
 use serde::{Deserialize, Serialize};
 
@@ -153,6 +161,7 @@ impl Pauses {
             changed,
             riff: self.riff.clone(),
             repositories,
+            proof: Policy::Off,
         }
     }
 }
@@ -164,9 +173,23 @@ pub struct TheRiff {
     pub(super) pauses: Pauses,
     /// The settings of idle workers (01M3Q5A0TF9K49V8Z1ZY9NDF74).
     pub(super) idle: Idle,
+    /// The policy of the proof of presence (01M75WKS7H066EXQPGF003B4SC). A new riff
+    /// is `off`.
+    pub(super) proof: Policy,
 }
 
 impl TheRiff {
+    /// The policy of the proof of presence (01M75WKS7H066EXQPGF003B4SC).
+    pub fn proof(&self) -> Policy {
+        self.proof
+    }
+
+    /// The policy of the record.
+    pub(super) fn policy_set(&mut self, set: &PolicySet) -> Result<(), &'static str> {
+        self.proof = set.proof;
+        Ok(())
+    }
+
     /// Sets or ends the pause of `scope`, as `record` says: its `by`
     /// and its time are who set the pause, and when. A scope that this
     /// build does not know changes no pause
@@ -214,6 +237,7 @@ impl TheRiff {
         let TheRiff {
             pauses: Pauses { riff, repositories },
             idle,
+            proof,
         } = self.clone();
         Saved {
             riff: match riff {
@@ -223,6 +247,7 @@ impl TheRiff {
             idle,
             riff_pause: riff.filter(|pause| *pause != PauseInfo::default()),
             pauses: repositories,
+            proof,
         }
     }
 }
@@ -244,6 +269,10 @@ pub(super) struct Saved {
     /// Each repository that is paused.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pauses: BTreeMap<ThreadName, PauseInfo>,
+    /// The policy of the proof of presence. Absent while it is `off`
+    /// (01M75WKS7H066EXQPGF003B4SC).
+    #[serde(default, skip_serializing_if = "Policy::is_off")]
+    proof: Policy,
 }
 
 impl Saved {
@@ -253,6 +282,7 @@ impl Saved {
             idle,
             riff_pause,
             pauses,
+            proof,
         } = self;
         let riff = match riff {
             RiffState::Paused => Some(riff_pause.unwrap_or_default()),
@@ -264,6 +294,7 @@ impl Saved {
                 repositories: pauses,
             },
             idle,
+            proof,
         }
     }
 }
@@ -440,10 +471,13 @@ fn set_pause(
 /// the caller sees them, and whether the command changed one.
 fn riff_reply(caller: &Caller, view: &View<'_>, done: &Done) -> RiffReply {
     let thread = repository_of(caller, view);
-    view.riff
-        .the_riff()
-        .pauses
-        .reply(thread.as_ref(), !done.made.is_empty())
+    let the_riff = view.riff.the_riff();
+    RiffReply {
+        proof: the_riff.proof,
+        ..the_riff
+            .pauses
+            .reply(thread.as_ref(), !done.made.is_empty())
+    }
 }
 
 /// Pauses the repository of the call, a named repository, or the whole
@@ -469,6 +503,12 @@ impl Command for Pause {
 
     fn reply(&self, caller: &Caller, view: &View<'_>, done: &Done, (): (), _: Now) -> RiffReply {
         riff_reply(caller, view, done)
+    }
+
+    /// The pause of the whole riff by a person or a session. The server
+    /// pauses the riff with no proof (01M6YC3SYATQW7GZZV3APFG85B).
+    fn proof(&self, caller: &Caller, _: &View<'_>, _: Now) -> Option<Action> {
+        (self.riff && caller.class() != Class::Server).then_some(Action::PauseRiff)
     }
 }
 
@@ -496,6 +536,79 @@ impl Command for Resume {
 
     fn reply(&self, caller: &Caller, view: &View<'_>, done: &Done, (): (), _: Now) -> RiffReply {
         riff_reply(caller, view, done)
+    }
+
+    fn proof(&self, _: &Caller, _: &View<'_>, _: Now) -> Option<Action> {
+        self.riff.then_some(Action::ResumeRiff)
+    }
+}
+
+/// An admin sets the policy of the proof of presence (01M75WKS7H066EXQPGF003B4SC). It
+/// needs a proof with each policy, so a session never sends it. The reply
+/// is the policy of the written copy.
+impl Command for SetPolicy {
+    const KIND: CommandKind = CommandKind::SetPolicy;
+    type Reply = PolicyReply;
+    type Note = ();
+
+    fn needs(&self, _: &Caller) -> Role {
+        Role::Admin
+    }
+
+    fn handle(&self, _: &Caller, view: &View<'_>, _: Now) -> Result<(Vec<Change>, ()), Refused> {
+        let mut changes = Vec::new();
+        if view.riff.the_riff().proof != self.proof {
+            changes.push(Change::PolicySet(PolicySet { proof: self.proof }));
+        }
+        Ok((changes, ()))
+    }
+
+    fn reply(&self, _: &Caller, view: &View<'_>, done: &Done, (): (), _: Now) -> PolicyReply {
+        PolicyReply {
+            proof: view.riff.the_riff().proof,
+            changed: !done.made.is_empty(),
+        }
+    }
+
+    fn proof(&self, _: &Caller, _: &View<'_>, _: Now) -> Option<Action> {
+        Some(Action::Policy { proof: self.proof })
+    }
+}
+
+/// The step of riff-server of the approval of a deploy (01M75WKSRP6P4GGJPWTVRMDW85):
+/// it pauses the whole riff, as [`Pause`] of the whole riff does, and
+/// it needs an admin. Its action is the approval of the tag of the
+/// repository.
+impl Command for Approve {
+    const KIND: CommandKind = CommandKind::Approve;
+    type Reply = RiffReply;
+    type Note = ();
+
+    fn needs(&self, _: &Caller) -> Role {
+        Role::Admin
+    }
+
+    fn handle(
+        &self,
+        caller: &Caller,
+        view: &View<'_>,
+        now: Now,
+    ) -> Result<(Vec<Change>, ()), Refused> {
+        if self.tag.trim().is_empty() {
+            return Err("an approval names the tag of its release".into());
+        }
+        set_pause(RiffState::Paused, true, None, caller, view, now)
+    }
+
+    fn reply(&self, caller: &Caller, view: &View<'_>, done: &Done, (): (), _: Now) -> RiffReply {
+        riff_reply(caller, view, done)
+    }
+
+    fn proof(&self, _: &Caller, _: &View<'_>, _: Now) -> Option<Action> {
+        Some(Action::Approve {
+            repo: self.repo.clone(),
+            tag: self.tag.clone(),
+        })
     }
 }
 

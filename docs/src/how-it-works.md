@@ -1268,9 +1268,7 @@ An authenticator is a FIDO2 / WebAuthn authenticator of yours:
 - the authenticator of your computer: Touch ID, Windows Hello or a
   fingerprint reader.
 
-Today `riff-server` keeps your authenticators, and no action asks for
-a proof yet. Add two or more, so that a lost one locks you out of
-nothing.
+Add two or more, so that a lost one locks you out of nothing.
 
 ```mermaid
 sequenceDiagram
@@ -1307,6 +1305,85 @@ sequenceDiagram
   `riff-server` refuses the token of a session, and `riff device`
   refuses in an agent session and in a container.
 
+### The policy
+
+The policy of the riff says when riff asks for a proof. `riff whoami`
+and `riff members` show it on the line `proof`.
+
+| Policy | The actions of the list |
+|---|---|
+| `off` | No action asks for a proof. A new riff is `off`. |
+| `required` | Each action needs a proof of the person who acts. With no proof, `riff-server` refuses the action, and says how to add an authenticator. |
+
+An admin sets the policy, with a proof: see
+[Turn on the proof of presence](#turn-on-the-proof-of-presence). With
+each policy, an action that comes with a proof is marked in the log.
+
+### The actions of the list
+
+- Approvals: the deploy of a release (`riff release approve`), and the
+  answer to a decision that waits for you (`riff questions --answered
+  N`, and `a` in the Waves tab). The accept of an outside pull request
+  joins the list when riff has it.
+- The commands that only a person does: take or pass the owner role
+  (`riff owner`), invite (`riff invite`), remove (`riff remove`), make
+  an admin or a member again (`riff admin`), and pause or resume the
+  whole riff (`riff pause --riff`, `riff resume --riff`).
+- The steps that can lose work, on this host or on another one with
+  `--host`: end a session (`riff daemon end NAME`, and `x` in the
+  Sessions tab), `riff leave --now`, `riff lead stop`, the removal of a
+  folder with its work (`riff daemon sweep --remove NAME --force`), and
+  a take-over (`riff takeover`, and `t` in the Sessions tab).
+- Your keys: the add of a second key, and the removal of a device. Your
+  first key needs no proof: it rests on your sign-in.
+- The change of the policy, with each policy.
+
+With `required`, a lead in a container cannot do these actions: you do
+them in your terminal. For example, after a deploy, `riff release
+check` of the lead cannot resume the riff: you run `riff resume
+--riff`.
+
+### How a proof works
+
+```mermaid
+sequenceDiagram
+    participant P as you
+    participant R as riff
+    participant S as riff-server
+    participant B as your browser
+    participant A as your authenticator
+    R->>S: the action, for example riff pause --riff
+    S-->>R: refused: this action needs a proof
+    R->>S: a proof of the action
+    S-->>R: the page of the proof, for 5 minutes
+    R->>B: open the page
+    B->>S: the challenge: it names the action and you
+    P->>B: press the button
+    P->>A: a touch, a fingerprint or a PIN
+    A-->>B: the signature
+    B->>S: the signature
+    S->>S: check it with your key, and write "proved" in the log
+    R->>S: the action again, with the ticket of the proof
+    S->>S: the proof is for this action and for you, and it is new
+    S-->>R: done
+```
+
+- The page names the action. Press the button only for an action that
+  you asked for.
+- A proof is good for one action, one time, for 5 minutes.
+  `riff-server` refuses a proof of another action or person, a used or
+  old one, a challenge that it did not give, and a bad signature.
+- For a step on another host, `riff-server` reads the request before
+  the daemon of that host gets it, and refuses it with no proof.
+- For a step that `riff-server` does not do itself, for example the
+  end of a session on this host or an answer on GitHub, `riff` asks
+  `riff-server` first, and waits at most 5 seconds. When `riff` cannot
+  reach `riff-server`, it warns, and the step goes on.
+- When the browser does not open, open the URL that `riff` prints. In
+  the TUI, the note line shows the URL.
+- `riff lead stop --host` asks for the proof after it waits for the
+  notes of the lead.
+
 ### Add an authenticator
 
 ```sh
@@ -1326,6 +1403,8 @@ riff: added the key yubikey. riff device list shows it.
 The name has 1 to 64 letters, digits, `-`, `_` and `.`. Each of your
 devices has a name of its own. You can have at most 10 keys. When
 `riff-server` refuses the reply, `riff` prints why, and adds no key.
+With the policy `required`, a second key needs a proof of a key that
+you have: `riff` asks for it first.
 
 ### List your authenticators
 
@@ -1339,13 +1418,57 @@ key   phone    2026-11-11 09:12 UTC  2026-11-11 09:12 UTC
 key   yubikey  2026-11-11 09:10 UTC  2026-11-11 09:10 UTC
 ```
 
+Each proof is a use of its key.
+
 ### Remove an authenticator
 
 ```sh
 riff device remove yubikey
 ```
 
-`riff-server` forgets the key at once. Remove a lost key so.
+`riff-server` forgets the key at once. Remove a lost key so. With the
+policy `required`, the removal needs a proof of a key that you have.
+
+### Test a proof
+
+```sh
+riff device test
+```
+
+Your browser opens the page of a proof. Press the button, then touch
+one of your authenticators. `riff` prints:
+
+```text
+riff: your key yubikey gave a good proof of presence. riff device list shows its last use.
+```
+
+It works with each policy. Test each of your keys before an admin turns
+on the proof of presence.
+
+### Turn on the proof of presence
+
+```sh
+riff admin proof required
+```
+
+Only the owner or an admin can. The change needs a proof of your key,
+so add one first. Before you turn it on, each person of the riff adds
+an authenticator and tests a proof: with `required`, a person with no
+authenticator cannot do an action of the list. `riff` prints:
+
+```text
+riff: the proof of presence of the riff is required now. Each action of the list needs a proof.
+```
+
+A lead never turns it on: a session gives no proof.
+
+### Turn off the proof of presence
+
+```sh
+riff admin proof off
+```
+
+The change needs a proof too. Then no action asks for one.
 
 ## A session URI
 
@@ -1384,7 +1507,11 @@ session  mike@pangolin:riff#issue-6 (a6cf2205)
 uri      riff://mike@pangolin/como-technologies/riff?session=a6cf2205-…&claim=issue-6#issue-6
 riff     running
 build    v0.7.0  (f45be4d, 2026-09-29)
+proof    off
 ```
+
+The line `proof` is the policy of the
+[proof of presence](#a-proof-of-presence).
 
 The lead runs it in its container too. The riff daemon of the host
 reads riff-server for the session, and `whoami` shows the URI that

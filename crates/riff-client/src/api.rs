@@ -111,6 +111,7 @@ use futures::{Stream, StreamExt};
 use riff_core::build::{self, Build};
 use riff_core::dpop::Key;
 use riff_core::name::{SessionUri, ThreadName};
+use riff_core::proof::{Action, Policy};
 use riff_core::selector::Selector;
 use riff_core::wire::{
     Activity, AdminSet, Alive, AliveReply, BlockedLook, CALL_HEADER, Call, ChatName, Claim,
@@ -125,6 +126,9 @@ use riff_core::wire::{
     SetNotesReply, SetStatus, SetStep, SignInConfig, Start, StartReason, Status, StepChange,
     Tailed, TakeOwner, ThreadInfo, Threads, TokenError, TokenReply, TokenRequest, Unanswered, Wake,
     WhoReply, WhoRequest,
+};
+use riff_core::wire::{
+    Approve, PolicyReply, ProofStart, ProofStarted, ProofState, ProofWait, SetPolicy, UseProof,
 };
 use riff_core::wire::{BotFact, BotPost, SetMachine};
 use riff_core::wire::{
@@ -373,6 +377,9 @@ pub struct Api {
     /// The mark of the leave of the session of this client. `None` for
     /// a person, and for a client that no session uses.
     mark: Option<Arc<Mark>>,
+    /// The ticket of a proof of presence: each call of this client
+    /// carries it in the header `riff-proof` (01M75WKSFX84BHHGFX8VJ37DC6).
+    proof: Option<String>,
 }
 
 /// Where the mark of the leave of one session is.
@@ -450,7 +457,30 @@ impl Api {
             auth: None,
             waits: None,
             mark: None,
+            proof: None,
         }
+    }
+
+    /// The same caller, with the ticket of the proof of presence
+    /// `ticket` on each call (01M75WKSFX84BHHGFX8VJ37DC6). riff-server takes the proof
+    /// for the action of a call that needs one, one time.
+    ///
+    /// ```
+    /// let api = riff_client::api::Api::new("http://127.0.0.1:7878");
+    /// assert_eq!(api.proof(), None);
+    /// assert_eq!(api.with_proof("T1").proof(), Some("T1"));
+    /// ```
+    pub fn with_proof(&self, ticket: &str) -> Api {
+        Api {
+            proof: Some(ticket.to_owned()),
+            ..self.clone()
+        }
+    }
+
+    /// The ticket of the proof of presence of this client, when it has
+    /// one.
+    pub fn proof(&self) -> Option<&str> {
+        self.proof.as_deref()
     }
 
     /// The link of the server of this client.
@@ -1874,8 +1904,22 @@ impl Api {
                 self.call(&resume).await?
             }
         };
+        let posted = self.pause_news(me, scope, state, &reply).await?;
+        Ok((reply, posted))
+    }
+
+    /// The news of a pause or a resume of `scope` that changed it: to the
+    /// repositories that it stops or starts, and to the lead of each
+    /// repository with a pause of its own.
+    async fn pause_news(
+        &self,
+        me: &SessionUri,
+        scope: &PauseScope,
+        state: RiffState,
+        reply: &RiffReply,
+    ) -> Result<Vec<Posted>> {
         if !reply.changed {
-            return Ok((reply, Vec::new()));
+            return Ok(Vec::new());
         }
         let thread = scope.repository(me);
         let body = text::riff_news(thread.as_ref(), state);
@@ -1908,7 +1952,7 @@ impl Api {
                     .await?,
             );
         }
-        Ok((reply, posted))
+        Ok(posted)
     }
 
     /// The repository of each session in `who` (`all` counts the gone
@@ -2228,6 +2272,65 @@ impl Api {
         .await
     }
 
+    /// The start of a proof of presence of `action`: the URL of its page,
+    /// and its ticket (01M75WKC8RCPHQW3NADHRA31SG).
+    pub async fn proof_start(&self, action: &Action) -> Result<ProofStarted> {
+        self.need_sign_in().await?;
+        self.call(&ProofStart {
+            action: action.clone(),
+        })
+        .await
+    }
+
+    /// Where the proof with the ticket `ticket` is.
+    pub async fn proof_wait(&self, ticket: &str) -> Result<ProofState> {
+        self.call(&ProofWait {
+            ticket: ticket.to_owned(),
+        })
+        .await
+    }
+
+    /// The check of riff-server before a step that it does not do itself
+    /// (01M75WKSNREGG95CK40W2A5JPQ): a step of the daemon of this host, or on GitHub.
+    /// True when the step used the proof of this client.
+    pub async fn use_proof(&self, action: &Action) -> Result<bool> {
+        let used = self
+            .call(&UseProof {
+                action: action.clone(),
+            })
+            .await?;
+        Ok(used.proved)
+    }
+
+    /// Sets the policy of the proof of presence of the riff
+    /// (01M75WKSADNAW4RNFAXD48D7DF). It needs a proof.
+    pub async fn set_policy(&self, proof: Policy) -> Result<PolicyReply> {
+        self.need_sign_in().await?;
+        self.call(&SetPolicy { proof }).await
+    }
+
+    /// The step of riff-server of the approval of the deploy of `tag` of
+    /// `repo` (01M75WKSRP6P4GGJPWTVRMDW85): the pause of the whole riff, with its news,
+    /// as a pause of the whole riff.
+    pub async fn approve(
+        &self,
+        me: &SessionUri,
+        repo: &ThreadName,
+        tag: &str,
+    ) -> Result<(RiffReply, Vec<Posted>)> {
+        let reply: RiffReply = self
+            .call(&Approve {
+                me: me.clone(),
+                repo: repo.clone(),
+                tag: tag.to_owned(),
+            })
+            .await?;
+        let posted = self
+            .pause_news(me, &PauseScope::Riff, RiffState::Paused, &reply)
+            .await?;
+        Ok((reply, posted))
+    }
+
     /// Fails with what to do when this device has no sign-in.
     async fn need_sign_in(&self) -> Result<()> {
         if self.auth.is_some() {
@@ -2247,9 +2350,14 @@ impl Api {
     /// runs a command one time only.
     async fn call<C: Call>(&self, call: &C) -> Result<C::Reply> {
         let id = link::call_id();
+        let proof = self.proof.clone();
         let response = self
             .send(reqwest::Method::POST, C::PATH, |r| {
-                r.json(call).header(CALL_HEADER, &id)
+                let r = r.json(call).header(CALL_HEADER, &id);
+                match &proof {
+                    Some(ticket) => r.header(riff_core::proof::PROOF_HEADER, ticket),
+                    None => r,
+                }
             })
             .await?;
         let status = response.status;

@@ -249,7 +249,8 @@ pub(crate) fn state_facts(
 }
 
 /// `riff whoami`: the session, its URI, the pauses of the riff, the
-/// build, and in a container how the session acts on GitHub
+/// build, the policy of the proof of presence (01M75WKSYCMMJFGAM3W4ASGN85), and in a
+/// container how the session acts on GitHub
 /// (01M6WPMWYSW98MQYQCCJ54ZX04). `state` is the error text when riff
 /// cannot read the pauses.
 ///
@@ -266,6 +267,7 @@ pub(crate) fn state_facts(
 /// assert_eq!(lines[1], "uri      riff://mike@pangolin/como-technologies/riff?session=a6cf2205-1");
 /// assert_eq!(lines[2], "riff     running");
 /// assert!(lines[3].starts_with("build    v"), "{plain}");
+/// assert_eq!(lines[4], "proof    off");
 /// assert!(!plain.contains("github"), "{plain}");
 ///
 /// // In a container: the bot, the role, the rights and the end of the token.
@@ -342,6 +344,8 @@ pub fn whoami(
             rows.extend(facts);
             action = act;
             rows.extend(build_facts(riff_client::link::server_build().as_ref()));
+            // The policy of the proof of presence (01M75WKSYCMMJFGAM3W4ASGN85).
+            rows.push(("proof", pauses.proof.word().to_owned()));
         }
         Err(e) => rows.push(("riff", styled(ERROR, &format!("unknown: {}", safe(&e))))),
     }
@@ -742,11 +746,12 @@ pub fn detail_cell(s: &SessionInfo) -> String {
         .join("  ")
 }
 
-/// `riff members`: the owner, the admins, the
-/// members and the allowed domains. A riff with no owner ends with the
-/// action (01M3Q63NNC6SC03BFCG80M7B4D).
+/// `riff members`: the owner, the admins, the members, the allowed
+/// domains and the policy of the proof of presence (01M75WKSYCMMJFGAM3W4ASGN85). A riff
+/// with no owner ends with the action (01M3Q63NNC6SC03BFCG80M7B4D).
 ///
 /// ```
+/// use riff_core::proof::Policy;
 /// use riff_core::wire::MembersReply;
 ///
 /// let reply = MembersReply {
@@ -754,11 +759,12 @@ pub fn detail_cell(s: &SessionInfo) -> String {
 ///     admins: vec![],
 ///     members: vec!["bob@gmail.com".into()],
 ///     allowed_domains: vec!["x.io".into()],
+///     proof: Policy::Required,
 /// };
 /// assert_eq!(
 ///     anstream::adapter::strip_str(&riff::view::members(&reply)).to_string(),
 ///     "owner            ada@gmail.com\nadmins           none\nmembers          bob@gmail.com\n\
-///      allowed domains  x.io\n"
+///      allowed domains  x.io\nproof            required\n"
 /// );
 /// let none = MembersReply { owner: None, ..reply };
 /// let plain = anstream::adapter::strip_str(&riff::view::members(&none)).to_string();
@@ -778,6 +784,7 @@ pub fn members(reply: &MembersReply) -> String {
         ("admins", list(&reply.admins)),
         ("members", list(&reply.members)),
         ("allowed domains", list(&reply.allowed_domains)),
+        ("proof", reply.proof.word().to_owned()),
     ]);
     if reply.owner.is_none() {
         let _ = writeln!(out, "{}", styled(WARNING, text::NO_OWNER));

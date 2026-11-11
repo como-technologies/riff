@@ -55,11 +55,12 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use axum::http::{StatusCode, header};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::{Extension, Json, extract::State as AxumState};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
+use riff_core::proof::Action;
 use riff_core::wire::{
     Devices, DevicesReply, KeyOptions, KeyReplied, KeyReply, KeyStart, KeyStarted, KeyState,
     KeyTicket, KeyWait,
@@ -300,13 +301,27 @@ pub(crate) async fn list(
 pub(crate) async fn start(
     AxumState(s): AxumState<crate::Shared>,
     Extension(signed_in): Extension<SignedIn>,
+    headers: HeaderMap,
     Json(KeyStart { name }): Json<KeyStart>,
-) -> crate::Reply<KeyStarted> {
-    person_only(&signed_in)?;
+) -> Result<Json<KeyStarted>, Response> {
+    person_only(&signed_in).map_err(IntoResponse::into_response)?;
     let user = signed_in.who.user();
     s.engine
         .read(|state| state.refuse_key_name(user, &name))
-        .map_err(|refused| <(StatusCode, String)>::from(Failed::Refused(refused)))?;
+        .map_err(|refused| Failed::Refused(refused).into_response())?;
+    // With the policy required, the add of a second key needs a proof of
+    // a key of the person (01M75WKSVEXMNGZQ4RYVGXH0FX). The first key rests on the
+    // trust of the sign-in.
+    if s.engine.read(|state| state.has_key(user)) {
+        let ticket = crate::proofs::ticket_of(&headers).map_err(IntoResponse::into_response)?;
+        let call = headers
+            .get(riff_core::wire::CALL_HEADER)
+            .and_then(|value| value.to_str().ok());
+        let action = Action::AddKey { name: name.clone() };
+        s.engine
+            .use_step(Some(&signed_in), ticket.as_deref(), call, &action)
+            .map_err(IntoResponse::into_response)?;
+    }
     let ticket = adds(&s).start(&signed_in, &name, Instant::now());
     tracing::info!(%user, %name, "riff device add: a page for a new key");
     Ok(Json(KeyStarted {

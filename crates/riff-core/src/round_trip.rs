@@ -282,6 +282,60 @@ mod tests {
         s.to_owned()
     }
 
+    /// One action of each kind.
+    fn actions() -> Vec<crate::proof::Action> {
+        use crate::proof::{Action, Policy};
+        let host = || text("heron");
+        let name = || text("riff-issue-7-1a2b3c4d");
+        vec![
+            Action::Test,
+            Action::Policy {
+                proof: Policy::Required,
+            },
+            Action::Approve {
+                repo: thread(),
+                tag: text("v1.2.0"),
+            },
+            Action::Answer {
+                repo: thread(),
+                number: 7,
+            },
+            Action::PauseRiff,
+            Action::ResumeRiff,
+            Action::invite("bob@acme.io"),
+            Action::remove("bob@acme.io"),
+            Action::admin("bob@acme.io", true),
+            Action::pass_owner("bob@acme.io"),
+            Action::TakeOwner,
+            Action::End {
+                host: host(),
+                name: name(),
+            },
+            Action::Leave {
+                host: host(),
+                repo: text("acme/app"),
+            },
+            Action::LeadStop {
+                host: host(),
+                repo: text("acme/app"),
+            },
+            Action::Sweep {
+                host: host(),
+                name: name(),
+            },
+            Action::TakeOver {
+                host: host(),
+                name: name(),
+            },
+            Action::AddKey {
+                name: text("phone"),
+            },
+            Action::RemoveDevice {
+                name: text("phone"),
+            },
+        ]
+    }
+
     fn selector() -> Selector {
         Selector {
             user: Some(text("ann")),
@@ -784,6 +838,7 @@ mod tests {
                     repository: thread(),
                     pause: pause(),
                 }],
+                proof: crate::proof::Policy::Required,
             });
         }
         c.trip(&IdleQuery { me: me() });
@@ -969,6 +1024,60 @@ mod tests {
         c.trip(&KeyReplied {
             text: text("riff added the key yubikey"),
         });
+        for action in actions() {
+            c.trip(&UseProof { action });
+        }
+        c.trip(&ProofStart {
+            action: crate::proof::Action::PauseRiff,
+        });
+        c.trip(&ProofStarted {
+            url: text("https://riff.example/proof#T"),
+            ticket: text("T"),
+        });
+        c.trip(&ProofWait { ticket: text("T") });
+        c.trip(&ProofState::Waiting);
+        c.trip(&ProofState::Proved {
+            name: text("yubikey"),
+        });
+        c.trip(&ProofState::Failed {
+            reason: text("a bad signature"),
+        });
+        c.trip(&ProofTicket { ticket: text("T") });
+        c.trip(&ProofOptions {
+            challenge: text("c2VlZA"),
+            timeout: 300_000,
+            rp_id: text("riff.example"),
+            allow_credentials: vec![KeyCredential {
+                kind: text("public-key"),
+                id: text("Y3JlZA"),
+            }],
+            user_verification: text("preferred"),
+            action: text("pause the whole riff"),
+            user: text("ann"),
+        });
+        c.trip(&ProofReply {
+            ticket: text("T"),
+            raw_id: text("Y3JlZA"),
+            client_data: text("e30"),
+            authenticator_data: text("AAAA"),
+            signature: text("MEUC"),
+        });
+        c.trip(&ProofReplied {
+            text: text("riff checked your proof"),
+        });
+        c.trip(&ProofUsed { proved: true });
+        for proof in [crate::proof::Policy::Off, crate::proof::Policy::Required] {
+            c.trip(&SetPolicy { proof });
+            c.trip(&PolicyReply {
+                proof,
+                changed: true,
+            });
+        }
+        c.trip(&Approve {
+            me: me(),
+            repo: thread(),
+            tag: text("v1.2.0"),
+        });
         c.trip(&LogQuery { repo: thread() });
         c.trip(&Pruned {
             first: 1918,
@@ -1059,6 +1168,7 @@ mod tests {
             admins: vec![text("bob@acme.io")],
             members: vec![text("cy@acme.io")],
             allowed_domains: vec![text("acme.io")],
+            proof: crate::proof::Policy::Required,
         });
         c.trip(&TokenError {
             error: text("invalid_grant"),
@@ -1160,6 +1270,7 @@ mod tests {
             ("selector", include_str!("selector.rs")),
             ("signed", include_str!("signed.rs")),
             ("dpop", include_str!("dpop.rs")),
+            ("proof", include_str!("proof.rs")),
         ] {
             for name in serde_types(source) {
                 if !c.types.contains(&name) && !by_their_module.contains(&name.as_str()) {

@@ -490,7 +490,9 @@ impl Presence {
             | Change::PlanEnded(_)
             | Change::NotesSet(_)
             | Change::KeyAdded(_)
-            | Change::DeviceRemoved(_) => {}
+            | Change::DeviceRemoved(_)
+            | Change::PolicySet(_)
+            | Change::Proved(_) => {}
         }
     }
 

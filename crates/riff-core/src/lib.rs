@@ -19,6 +19,8 @@
 //! - [`dpop`]: device keys and the proofs that bind tokens to them.
 //! - [`device`]: the devices of a person: the check of a name, and a
 //!   fake authenticator for the tests.
+//! - [`proof`]: a proof of presence: the policy of the riff, and the
+//!   actions that a proof covers.
 //! - [`signed`]: the signature that each message carries.
 //! - [`record`]: the records of the log of `riff-server`.
 //! - [`notes`]: the checks of the notes of the lead.
@@ -88,6 +90,7 @@ pub mod name;
 pub mod notes;
 pub mod number_keys;
 pub mod pipe;
+pub mod proof;
 pub mod record;
 #[cfg(any(test, feature = "test-support"))]
 pub mod round_trip;
