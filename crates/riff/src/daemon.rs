@@ -6083,17 +6083,64 @@ impl Client {
     }
 
     /// The next line of the daemon, or `None` when the daemon closed
-    /// the connection.
+    /// the connection. A line that this riff cannot read gives the error
+    /// [`Unreadable`].
     pub async fn next(&mut self) -> Result<Option<Say>> {
         match self.lines.next_line().await? {
-            Some(line) => Ok(Some(
-                serde_json::from_str(&line)
-                    .context("the riff daemon said a line that riff cannot read")?,
-            )),
+            Some(line) => match serde_json::from_str(&line) {
+                Ok(say) => Ok(Some(say)),
+                Err(e) => Err(Unreadable::of(&line, &e).into()),
+            },
             None => Ok(None),
         }
     }
 }
+
+/// A line of the daemon that this riff cannot read (#1856): the daemon
+/// runs, and it answers in another shape, for example a daemon of another
+/// riff.
+#[derive(Debug)]
+pub struct Unreadable {
+    /// Why this riff cannot read the line.
+    pub fault: String,
+    /// The field `build` of the line, when it names one: a status of
+    /// another shape names it too.
+    pub build: Option<String>,
+}
+
+impl Unreadable {
+    /// The line `line`, which gave the fault `fault`.
+    ///
+    /// ```
+    /// let line = r#"{"say":"status","pid":"724","build":"4.14.0 aaaa 2026-11-06T10:00:00Z"}"#;
+    /// let fault = serde_json::from_str::<riff::daemon::Say>(line).unwrap_err();
+    /// let unreadable = riff::daemon::Unreadable::of(line, &fault);
+    /// assert_eq!(unreadable.build.as_deref(), Some("4.14.0 aaaa 2026-11-06T10:00:00Z"));
+    /// assert!(unreadable.fault.contains("invalid type: string \"724\""), "{}", unreadable.fault);
+    /// assert_eq!(riff::daemon::Unreadable::of("{", &fault).build, None);
+    /// ```
+    pub fn of(line: &str, fault: &serde_json::Error) -> Unreadable {
+        let build = serde_json::from_str::<Value>(line)
+            .ok()
+            .and_then(|value| value.get("build")?.as_str().map(str::to_owned));
+        Unreadable {
+            fault: fault.to_string(),
+            build,
+        }
+    }
+}
+
+impl std::fmt::Display for Unreadable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "the riff daemon said a line that riff cannot read: {}",
+            self.fault
+        )
+    }
+}
+
+impl std::error::Error for Unreadable {}
 
 /// Says each line of `done` and [`Say::Done`], or [`Say::Failed`].
 fn say_lines(out: &Out, done: Result<Vec<String>>) {
@@ -6152,9 +6199,51 @@ fn unit_state(manager: &impl crate::service::ServiceManager, state: &str) -> Str
     text::daemon_unit_state(&manager.unit_name(), state, &manager.log_command())
 }
 
+/// The build of the daemon in the folder `dir`, as its status names it.
+/// A status of another shape names it too ([`Unreadable`]). `None` when
+/// the daemon does not answer, or names no build.
+async fn daemon_build(dir: &Path) -> Option<String> {
+    match status(dir).await {
+        Ok(status) => Some(status.build),
+        Err(e) => e.downcast::<Unreadable>().ok()?.build,
+    }
+}
+
+/// The lines of `riff daemon status` and `riff ps` when the daemon in
+/// the folder `dir` gave no answer that this riff can read, with the
+/// error `e`. A daemon that runs and answers in a shape that this riff
+/// cannot read gives one line, [`text::daemon_unreadable`], with the
+/// build of the daemon from its status (#1856,
+/// 01M74BPK605BKMRRBQAFJE6CZZ). Else the lines are `e`, and the state of
+/// the unit of `manager` with the way to start it.
+pub async fn no_answer(
+    dir: &Path,
+    e: &anyhow::Error,
+    manager: &impl crate::service::ServiceManager,
+) -> Vec<String> {
+    if let Some(unreadable) = e.downcast_ref::<Unreadable>() {
+        let theirs = match &unreadable.build {
+            Some(build) => Some(build.clone()),
+            None => daemon_build(dir).await,
+        };
+        return vec![text::daemon_unreadable(
+            &unreadable.fault,
+            &Build::this(),
+            theirs.as_deref(),
+            &manager.log_command(),
+        )];
+    }
+    let state = match manager.state() {
+        Ok(state) => unit_state(manager, &state),
+        Err(e) => format!("{e:#}"),
+    };
+    vec![format!("{e:#}"), state]
+}
+
 /// `riff ps` on the host: prints the tree of the processes in `width`
 /// columns, and gives the exit code. When no daemon answers, it says so,
-/// shows the state of the unit with the way to start it, and gives 1.
+/// shows the state of the unit with the way to start it, and gives 1
+/// ([`no_answer`]).
 pub async fn show_ps(
     dir: &Path,
     manager: &impl crate::service::ServiceManager,
@@ -6166,10 +6255,8 @@ pub async fn show_ps(
             0
         }
         Err(e) => {
-            eprintln!("{e:#}");
-            match manager.state() {
-                Ok(state) => eprintln!("{}", unit_state(manager, &state)),
-                Err(e) => eprintln!("{e:#}"),
+            for line in no_answer(dir, &e, manager).await {
+                eprintln!("{line}");
             }
             1
         }
@@ -6375,8 +6462,9 @@ pub async fn ask_end(dir: &Path, name: &str, show: impl FnMut(&str)) -> Result<(
 }
 
 /// `riff daemon status`: shows the daemon in the folder `dir` and its
-/// sessions, or, with no daemon, the state of its unit. It gives the
-/// exit code: 1 when no daemon answers (01M4ZDTVNBKDM64043GGWQEV4S).
+/// sessions, or, with no daemon, the state of its unit ([`no_answer`]).
+/// It gives the exit code: 1 when no daemon answers, or when this riff
+/// cannot read its answer (01M4ZDTVNBKDM64043GGWQEV4S).
 pub async fn show_status(dir: &Path, manager: &impl crate::service::ServiceManager) -> i32 {
     match status(dir).await {
         Ok(status) => {
@@ -6385,10 +6473,8 @@ pub async fn show_status(dir: &Path, manager: &impl crate::service::ServiceManag
             0
         }
         Err(e) => {
-            println!("{e:#}");
-            match manager.state() {
-                Ok(state) => println!("{}", unit_state(manager, &state)),
-                Err(e) => println!("{e:#}"),
+            for line in no_answer(dir, &e, manager).await {
+                println!("{line}");
             }
             1
         }
@@ -8461,6 +8547,127 @@ mod tests {
         assert!(socket(&dir).exists());
         assert!(status(&dir).await.is_err());
         listen(&dir).await.unwrap();
+    }
+
+    /// A daemon in the folder `dir` that runs, and answers each ask in a
+    /// shape that this riff cannot read: `status` to a status, and
+    /// `other` to each other ask (#1856).
+    async fn unreadable_daemon(dir: &Path, status: Value, other: Value) {
+        let listener = listen(dir).await.unwrap();
+        tokio::spawn(async move {
+            while let Ok((conn, _)) = listener.accept().await {
+                let (read, mut write) = conn.into_split();
+                let mut lines = BufReader::new(read).lines();
+                let Ok(Some(first)) = lines.next_line().await else {
+                    continue;
+                };
+                let hello: Value = serde_json::from_str(&first).unwrap();
+                let say = if hello["ask"]["ask"] == "status" {
+                    &status
+                } else {
+                    &other
+                };
+                write
+                    .write_all(format!("{say}\n").as_bytes())
+                    .await
+                    .unwrap();
+            }
+        });
+    }
+
+    /// #1856, 01M74BPK605BKMRRBQAFJE6CZZ: a daemon that runs and answers a
+    /// status that this riff cannot read gives one line: the daemon runs,
+    /// this riff cannot read its answer, and why. It does not say to
+    /// install the daemon.
+    #[tokio::test]
+    async fn a_status_that_riff_cannot_read_says_that_the_daemon_runs_and_not_to_install_it() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = dir_in(root.path());
+        let ours = Build::this().to_string();
+        let line = serde_json::json!({"say": "status", "pid": "724", "build": ours});
+        unreadable_daemon(&dir, line.clone(), line.clone()).await;
+
+        let e = status(&dir).await.unwrap_err();
+        let lines = no_answer(&dir, &e, &Units::of(Path::new("/r"))).await;
+        let fault = serde_json::from_str::<Say>(&line.to_string())
+            .unwrap_err()
+            .to_string();
+        assert!(fault.contains("invalid type: string \"724\""), "{fault}");
+        let log = "journalctl --user -u riff";
+        assert_eq!(
+            lines,
+            [text::daemon_unreadable(
+                &fault,
+                &Build::this(),
+                Some(&ours),
+                log
+            )]
+        );
+        assert!(
+            lines[0].starts_with("The riff daemon runs, but this riff cannot read its answer: "),
+            "{}",
+            lines[0]
+        );
+        assert!(!lines[0].contains("riff daemon install"), "{}", lines[0]);
+    }
+
+    /// #1856: the answer of `riff ps` of an older daemon names no build:
+    /// riff takes the build from the status of the daemon, which it cannot
+    /// read either, and names the two builds and the step.
+    #[tokio::test]
+    async fn a_ps_that_riff_cannot_read_names_the_build_of_the_status_and_the_step() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = dir_in(root.path());
+        let old = "0.1.0 aaaa 2020-01-01T00:00:00Z";
+        unreadable_daemon(
+            &dir,
+            serde_json::json!({"say": "status", "pid": "7", "build": old}),
+            serde_json::json!({"say": "ps", "daemon": "812"}),
+        )
+        .await;
+
+        let e = ps(&dir).await.unwrap_err();
+        let lines = no_answer(&dir, &e, &Units::of(Path::new("/r"))).await;
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        let line = &lines[0];
+        assert!(
+            line.contains(&format!(
+                "The riff daemon runs the build {old}, and this riff is the build {}.",
+                Build::this()
+            )),
+            "{line}"
+        );
+        assert!(
+            line.contains("Start it at once: riff daemon restart."),
+            "{line}"
+        );
+        assert!(!line.contains("riff daemon install"), "{line}");
+    }
+
+    /// #1856: a daemon that does not answer gives the lines of today: no
+    /// daemon answers, and the state of the unit with the way to start it.
+    #[tokio::test]
+    async fn a_daemon_that_does_not_answer_gives_the_state_of_the_unit_and_how_to_start_it() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = dir_in(root.path());
+        let e = status(&dir).await.unwrap_err();
+        let lines = no_answer(&dir, &e, &Units::of(Path::new("/r"))).await;
+        assert_eq!(
+            lines,
+            [
+                text::daemon_none(&socket(&dir)),
+                text::daemon_unit_state(
+                    crate::service::UNIT,
+                    "active",
+                    "journalctl --user -u riff"
+                ),
+            ]
+        );
+        assert!(
+            lines[1].contains("Start it: riff daemon install."),
+            "{}",
+            lines[1]
+        );
     }
 
     #[test]

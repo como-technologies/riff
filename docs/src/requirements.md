@@ -5705,6 +5705,14 @@ of this part when they merge.
   writes its error to its own stderr only. At its stop, the daemon puts
   its stdout and its stderr of before back, and waits up to 2 seconds
   for its last lines to reach `daemon.log`.
+- **01M74BPK605BKMRRBQAFJE6CZZ** When the daemon answers `riff daemon
+  status` or `riff ps` with a line that riff cannot read, riff says that
+  the daemon runs and that this riff cannot read its answer, with the
+  fault. It names the build of the daemon and the build of this riff,
+  once when they are the same, the step, and the command that shows the
+  log of the daemon. It does not say to install the daemon, and exits
+  with 1. A line that names no build of the daemon gets the build from
+  the status of the daemon.
 
 ### riff relay
 

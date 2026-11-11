@@ -1282,6 +1282,39 @@ On a Mac:
 tail -f ~/Library/Logs/riff/daemon.log
 ```
 
+#### When riff cannot read the answer of the daemon
+
+The daemon can run another riff than your terminal, for example just
+after an update. Then `riff daemon status` and `riff ps` can get an
+answer that they cannot read. They say that the daemon runs, name the
+two builds and the step, and exit with 1:
+
+```text
+The riff daemon runs, but this riff cannot read its answer: invalid type: string "724", expected u32. The riff daemon runs the build 3.2.0 929605821e54 2026-09-27T22:03:01Z, and this riff is the build 3.3.0 7213825ab1c2 2026-09-28T20:10:44Z. The daemon starts again on the new riff when it runs no session. Start it at once: riff daemon restart. See its log: journalctl --user -u riff
+```
+
+| The daemon runs | The step |
+|---|---|
+| an older build | wait for its new start after its last session, or start it at once with `riff daemon restart` |
+| a newer build | run the riff of the daemon, or update your riff with `riff update` |
+| the same build | a fault of riff: file an issue with the line |
+| no build that riff can read | read its build in its log: the daemon names it at its start |
+
+The daemon runs, so `riff daemon install` does not repair it. To see
+the build of your riff:
+
+```sh
+riff --version
+```
+
+```mermaid
+flowchart LR
+    S["riff daemon status<br/>riff ps"] --> A{"the daemon answers?"}
+    A -- "yes, and riff reads it" --> OK["the status"]
+    A -- "yes, and riff cannot read it" --> B["the daemon runs:<br/>the two builds and the step"]
+    A -- no --> U["the state of the unit:<br/>Start it: riff daemon install"]
+```
+
 ### Read the log file of the daemon
 
 On a busy host, the journal can drop old lines in a few hours. So on
@@ -1355,7 +1388,9 @@ the container of the lead too. A session that is not the lead gets a
 refusal: the answer holds command lines of the host.
 
 When no daemon answers, `riff ps` says so, shows the state of the unit
-and exits with 1. Start the daemon with `riff daemon install`.
+and exits with 1. Start the daemon with `riff daemon install`. When
+the daemon runs and riff cannot read its answer, see
+[When riff cannot read the answer of the daemon](#when-riff-cannot-read-the-answer-of-the-daemon).
 
 ### Restart or stop the daemon
 
