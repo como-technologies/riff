@@ -35,9 +35,11 @@ Why:
   no one token can make its calls." (`git log -S` finds ce2c1a64,
   #1335.) The "Done when:" line accepts "a comment in it says why".
 - The grep of the issue, in `crates/riff/tests`, lists
-  `broken_main.rs` and `first_run.rs`. `first_run.rs` came later, and it
-  says why in a comment too: `crates/riff/tests/first_run.rs:791-793`
-  ("a riff-server with no sign-in: it has no session App") and :799.
+  `broken_main.rs` and `first_run.rs`. `first_run.rs` came with #748,
+  on 2026-10-15, before the issue. Its riff-server with no sign-in came
+  later, with #1745 (70063385, 2026-11-08). It says why in a comment
+  too: `crates/riff/tests/first_run.rs:791-793` ("a riff-server with no
+  sign-in: it has no session App") and :799.
 - Five other `riff_server::router()` calls of a test have a comment
   that says why: `states.rs:31`, `restart.rs:19`, `chat.rs:29`,
   `run.rs:505` and `top_fault.rs:56`, in `crates/riff/tests`.
@@ -114,8 +116,13 @@ New title: The WIP save of an ended build fails on a host with no git identity
 - `leave::wip` commits with no identity
   (crates/riff/src/leave.rs:125-138). On a host with no `user.name`
   and `user.email`, git fails with "Author identity unknown". The
-  daemon prints the error (wave.rs:2486-2489). The work is not pushed,
-  and the lead gets no message.
+  daemon prints the error on stderr (wave.rs:2486-2489), and the work
+  is not pushed.
+- Then the lead gets the note `text::wave_no_pull` (wave.rs:2646-2654,
+  crates/riff/src/text.rs:10755-10761): "the session of the wave
+  ended, and no open pull request has the branch {branch}. The work is
+  in the clone {clone}. The item is free." The note says where the
+  work is, but not that the save failed, or why.
 - The sweep of a kept folder commits as `riff <riff@localhost>`
   (crates/riff/src/daemon/sweep.rs:668-675), so it works with no
   identity.
@@ -135,9 +142,12 @@ New title: The WIP save of an ended build fails on a host with no git identity
 
 - A test: `leave::save` in a clone with no identity commits and
   pushes, and the commit has the author `riff <riff@localhost>`. It
-  runs with `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1` and
-  `isolated::rerun_without_git_config`, as
-  crates/riff/tests/save.rs:70 does.
+  runs in `isolated::rerun_without_git_config`, as
+  crates/riff/tests/save.rs:70 does. The git of `leave::save` gets
+  `GIT_CONFIG_GLOBAL=/dev/null` and `GIT_CONFIG_NOSYSTEM=1`, so it
+  finds no identity of the host. Today only the helper `git` of the
+  test sets these two (save.rs:12-13), and it gives an author identity
+  too (save.rs:14-17).
 - Docs: "When a session of the wave ends with no push" in
   docs/src/development.md says which identity the WIP commit has.
 ```
@@ -164,7 +174,13 @@ Why:
 - Only `riff release verify N` sets `riff/verify`
   (`crates/riff/src/cycle.rs:1181`, 01M5ND0ZNFFAPT1AWD3DP1Y77N).
 - `Stage` keeps no state of the Gate or of `riff/verify`
-  (`crates/riff/src/cycle.rs:672-691`).
+  (`crates/riff/src/cycle.rs:672-691`), and `cycle::next(stage:
+  &Stage)` (`crates/riff/src/cycle.rs:854`) takes no forge. So the
+  Gate goes into `Stage` first: `cycle::stage`
+  (`crates/riff/src/cycle.rs:765`) reads the forge, and for
+  `State::Cut` it reads only the number of the open release pull
+  request (`forge.open_release`, :826-829). The `Forge` has `gate` and
+  `verify_passed` already (:548, :556).
 - The book has the old words too: the diagram of "The release cycle"
   says "Verify by another session" (`docs/src/development.md:6557`),
   and its table says "a session that did not write the change" (:6587).
@@ -190,8 +206,12 @@ New title: riff release cut and riff release status name riff release verify N a
 
 ## What
 
-- For `State::Cut`, `cycle::next` reads the Gate and `riff/verify` of
-  the head of the release pull request, and gives:
+- For `State::Cut`, `cycle::stage` (crates/riff/src/cycle.rs:765)
+  reads the head of the open release pull request, and the Gate and
+  `riff/verify` of that head, with `Forge::gate` and
+  `Forge::verify_passed`. It keeps them in a new field of `Stage`.
+  `cycle::next` takes no forge (cycle.rs:854): it reads that field,
+  and gives:
   - the Gate runs: "wait for the Gate of pull request #N, then riff
     release verify N";
   - the Gate failed: "run the failed jobs again, then riff release
@@ -203,8 +223,11 @@ New title: riff release cut and riff release status name riff release verify N a
 
 ## Done when:
 
-- A test: a unit test of `cycle::next` with a fake forge gives each of
-  the four lines.
+- A test: a unit test of `cycle::stage` with the fake forge of the
+  tests of cycle.rs gives `State::Cut` with the state of the Gate and
+  of `riff/verify` of the head.
+- A test: a doc test of `cycle::next` gives each of the four lines
+  from a `Stage`.
 - A test: `riff release cut` prints "next: wait for the Gate of pull
   request #N, then riff release verify N".
 - Docs: "The release cycle" in docs/src/development.md: the diagram
@@ -301,7 +324,8 @@ Why:
   - PR #1536 tells the lead of each fork run that waits, with the `gh
     api ... /approve` command (01M6FZ144M0BTEDWNB9V4MGWDD, "Approve the
     run of a pull request from a fork",
-    `docs/src/development.md:2914`). So an agent still approves it.
+    `docs/src/development.md:2914`). So an agent can still approve
+    it.
   - #571 is closed as a design. #1658 (open) puts "the accept of an
     outside pull request" in the approvals that need a proof under the
     policy `required`.
@@ -319,8 +343,9 @@ head in another repository, a fork. Example: #1348.
 
 - The wave takes a pull request from a fork as the work of its item:
   `Pull::issue` (crates/riff/src/rollout.rs:1398) reads `Issue: #N`,
-  the branch, then `Closes #N`. The look reads no head repository
-  (rollout.rs:782). Nothing marks a pull request as outside.
+  then `Closes #N` (rollout.rs:930-933), then the branch. The look
+  reads no head repository (rollout.rs:782). Nothing marks a pull
+  request as outside.
 - The wave verifies a pull request from a fork
   (crates/riff/src/wave.rs:2994-3003, 01M5QVARWYFHTQV5THNRB09SZA).
 - The lead gets the command that approves a fork run that waits
@@ -512,7 +537,7 @@ Verdict: rewrite
 Why:
 
 - The fault is still there. The room starts a session only when `live
-  + slots < sessions` and the free memory is over the floor
+  + slots < sessions` and the free memory is at or over the floor
   (`crates/riff/src/room.rs:353-367`). `live` is `Daemon::live_count`:
   the sessions that the daemon owns, and not the lead
   (`crates/riff/src/daemon.rs:2926-2933`).
@@ -536,9 +561,9 @@ New title: The limit of a host counts a real-session test that runs
 
 - The daemon starts a session only when the live sessions and the
   starts that took a slot are fewer than the limit, and the free memory
-  is over the floor (crates/riff/src/room.rs:353-367, :538-539). A
-  start keeps its slot until the daemon owns the session
-  (room.rs:449-450).
+  is at or over the floor (crates/riff/src/room.rs:353-367, :538-539).
+  The doc test at room.rs:349 shows it. A start keeps its slot until
+  the daemon owns the session (room.rs:449-450).
 - The live sessions are the sessions that this daemon owns
   (crates/riff/src/daemon.rs:2926-2933).
 - `riff release test --host` runs the test in the daemon
@@ -622,9 +647,13 @@ Questions for mike:
   does nothing for it.
 - Q4: Does `look::once` go? Proposal: yes, after Q1 and Q2. Its tests
   move to `look_wave`. The words that name "the look of the lead" or a
-  look of the `riff mcp` of the lead change:
-  - `docs/src/how-it-works.md:4863`, :4874 and :5128;
-  - `docs/src/design-plan.md:36`, :44, :73, :102, :419 and :429;
+  look of the `riff relay mcp` of the lead (the requirements say `riff
+  mcp`) change:
+  - `docs/src/how-it-works.md:4863`, :4874 and :5128-5133;
+  - `docs/src/development.md:5582-5583`, under "Count the calls to the
+    keyring": the book form of 01M54510SFK1Z9VPFYBYYSV10F;
+  - `docs/src/design-plan.md`: the term "look" (:36), and each text
+    that uses it, for example :44, :73, :102, :128, :419 and :429;
   - the requirements 01M41FZP2C4Z4J6WKRXZ5B31EH,
     01M41FZQ545HQ9Q75CSKX8HF8H, 01M41FZQKZKW131Z8822G31T5G,
     01M49Q30XMVRFX42YTM1PHX0RZ, 01M49Q316RXNATJP587DWGDNCD,
@@ -689,9 +718,13 @@ Why:
   cut line is not JSON, so `View::shown`
   (`crates/riff/src/run.rs:1788`) gives it back as it is. The daemon
   must make the plain lines before the cut.
-- Each command that prints data takes `--format text` or `--format
-  json` (01M542168PYP1WH78D3D9DKEK6). So the flag is `--format json`,
-  not `--json`. After the change, no record keeps the raw stream of
+- The requirement 01M542168PYP1WH78D3D9DKEK6 says that each command
+  that prints data takes `--format text` or `--format json`. Today
+  only `riff denials` has `--format` (`DenialsFormat`,
+  `crates/riff/src/main.rs:299`, :1758). #1000 (open) adds it to the
+  other commands, with one type for the flag, but its list does not
+  name `riff session why`. So the flag is `--format json`, not
+  `--json`. After the change, no record keeps the raw stream of
   claude: `--format json` prints the records.
 - The reason gives only the number of the code: "exit code {code}"
   (`crates/riff/src/ends.rs:199`).
@@ -714,9 +747,11 @@ Asked by Mike (riff chat, 2026-10-25).
   (crates/riff/src/ends.rs:84, :174). A cut line is not JSON, so
   `View::shown` (crates/riff/src/run.rs:1788) gives it back as it is.
 - The reason gives the exit code as a number only (ends.rs:199).
-- Each command that prints data takes `--format text` or `--format
-  json` (01M542168PYP1WH78D3D9DKEK6). `riff session why` has no
-  `--format`.
+- 01M542168PYP1WH78D3D9DKEK6 says that each command that prints data
+  takes `--format text` or `--format json`. Today only `riff denials`
+  has `--format` (crates/riff/src/main.rs:299). #1000 adds it to the
+  other commands, with one type for the flag. `riff session why` is not
+  in its list.
 
 ## What
 
@@ -728,7 +763,9 @@ Asked by Mike (riff chat, 2026-10-25).
   daemon stopped the container", 137 "SIGKILL", and each other code as
   it is.
 - `riff session why ITEM --format json` prints the records of ITEM as
-  JSON, with the same facts as the text.
+  JSON, with the same facts as the text. The flag has the one type of
+  #1000. When #1000 is not merged yet, it has the type of `riff
+  denials` (main.rs:1758), and #1000 then shares that type.
 - A requirement supersedes 01M5A5HXKZTDP5M5HY2FHCEBZA in part.
 
 ## Done when:
@@ -742,6 +779,8 @@ Asked by Mike (riff chat, 2026-10-25).
 - Docs: "See why a session ended with no pull request" in
   docs/src/development.md shows the plain output in a `text` block,
   and `riff session why issue-1203 --format json` in an `sh` block.
+
+Related: #1000.
 ```
 
 ## #1400 A pause and a resume of the wave send the message about an issue with no Done when line again
@@ -778,9 +817,14 @@ Why:
   `busy() == 0` (`crates/riff/src/daemon.rs:3816`, `Status::busy` at
   :1610). The wave admits new starts with no check of a replaced riff:
   `wave.rs` has no "replaced".
-- A part is done. PR #1718 added two rules:
-  - the daemon on a replaced riff starts no lead again (`leads_again`,
-    `crates/riff/src/daemon.rs:3001-3003`, 01M6WBX2FT7Y9FV9VGGPDBKAHM);
+- A part is done. PR #1718 added four rules
+  (01M6WBX2FQEHW92Y1A5HM4H8BM, 01M6WBX2FT7Y9FV9VGGPDBKAHM,
+  01M6WBX2FYPH0K8RAKXMRKDGX7 and 01M6WBX2G1PX11D89HNBAZ6MCM). Two of
+  them are about this issue:
+  - the daemon on a replaced riff does not start an old lead again on
+    the new riff (`leads_again`, `crates/riff/src/daemon.rs:3001-3003`,
+    01M6WBX2FT7Y9FV9VGGPDBKAHM). That is the only check: the start of
+    a new lead is not checked;
   - in a container, a command that cannot read the answer of the
     daemon names the two builds (01M6WBX2FYPH0K8RAKXMRKDGX7).
 - That error does not come for a call that the old daemon cannot read.
@@ -803,9 +847,10 @@ New title: After an update, a busy old daemon starts no new work, and a call tha
   (crates/riff/src/daemon.rs:738-749). After `riff update`, the path
   holds the new riff (01M4Z60B800BH5BHX0H9JVDG6A).
 - A daemon on a replaced riff starts again only at `busy() == 0`
-  (daemon.rs:3816). Until then, its waves start new sessions, which
-  run the new riff under the old daemon. Only a lead waits
-  (daemon.rs:3001-3003, 01M6WBX2FT7Y9FV9VGGPDBKAHM).
+  (daemon.rs:3816). Until then, its waves start new sessions, and a
+  person can start a new lead. Each runs the new riff under the old
+  daemon. Only the restart of an old lead on the new riff waits
+  (`leads_again`, daemon.rs:3001-3003, 01M6WBX2FT7Y9FV9VGGPDBKAHM).
 - A new riff sends calls that an old daemon cannot read. The daemon
   answers "The riff daemon cannot read the first line: it is not a
   hello of riff." (crates/riff/src/text.rs:7360-7362), and the relay
@@ -817,7 +862,9 @@ New title: After an update, a busy old daemon starts no new work, and a call tha
 
 - While its riff is replaced, the waves of the daemon start no new
   session and no new job. The sessions that run go on. The daemon
-  starts again on the new riff after its last session.
+  starts again on the new riff after its last session. A new lead that
+  a person starts still starts: its calls that the old daemon cannot
+  read get the error that names the two builds, as below.
 - `riff daemon status` says that the daemon runs an old riff, starts
   no new work, and starts again on the new riff after its last session.
 - In a container, a call that gets the answer "not a hello of riff"
@@ -835,7 +882,9 @@ New title: After an update, a busy old daemon starts no new work, and a call tha
   the error names the two builds and the next step.
 - Docs: "Update a session that runs an old riff" in
   docs/src/how-it-works.md says that the daemon starts no new work on
-  an old riff.
+  an old riff. "When the riff daemon runs another riff than the
+  container" (docs/src/how-it-works.md:2066) says that the answer "not
+  a hello of riff" gives the error with the two builds too.
 ```
 
 ## #1408 No wave test checks that the verify start text names the checks of the repository
@@ -853,11 +902,16 @@ Why:
   their fake `gh` requires `Gate` (`crates/riff/tests/run.rs:101`).
 - `repo_setup::full_check` has tests of its own now
   (`crates/riff/src/repo_setup.rs:2577`, :2611).
-- The part about the requirement is done. 01M5R580VCRCHJM8FY7NT485R1
-  says "The verify text names the checks of the full check as riff read
-  them." 01M5SMNKDWBD1J6Y18ENQG87CK supersedes
-  01M5QZ01Y14Z76RC220RT7YTX7 in part already. No new requirement is
-  needed.
+- No new requirement is needed, but not because the old words went.
+  01M5QZ01Y14Z76RC220RT7YTX7 still says "The verifier of the wave gets
+  the same rule in its start text". 01M5SMNKDWBD1J6Y18ENQG87CK
+  supersedes it in part, but that change (4a5044bf, #1468) kept the
+  sentence. The behaviour has a requirement all the same:
+  01M5R580VCRCHJM8FY7NT485R1 says "The verify text names the checks of
+  the full check as riff read them." For the empty list,
+  `text::wave_verify_start` (`crates/riff/src/text.rs:11391`) says
+  "The repository has no CI: riff/verify is its only check", as
+  01M5SMNKDWBD1J6Y18ENQG87CK says (the doc test at text.rs:11385-11389).
 - The book does not say that the start text of a verify names the
   checks: see the part on a verify session in "What the wave does"
   (`docs/src/development.md:4046-4054`).
