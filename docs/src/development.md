@@ -219,8 +219,9 @@ Mac (see [The files of a Mac](#the-files-of-a-mac)).
 `Gate` keeps its pass. The name of an artifact has the git tree of the
 commit, `git rev-parse HEAD^{tree}`. The merge queue of `main` tests
 the tree of each merge group, and that tree is the commit on `main`. So
-a commit of `main`, its merge group and often its pull request have the
-same tree, and the same artifacts:
+a commit of `main` and its merge group have the same tree, and the same
+artifacts. Often its pull request has the same tree too, but a push to
+`main` takes no artifact of a pull request:
 
 | Artifact | Holds |
 |---|---|
@@ -233,14 +234,18 @@ same tree, and the same artifacts:
 
 The job `Plan` asks for the artifacts of the tree first. Each job
 builds only what is missing. When `gate-TREE` is there, no test runs
-again:
+again. The job `Build` of a pull request runs the code of its tree, and
+that code did not merge. So a push to `main`, a merge group and a tag
+take the artifacts of a tree only from a merge group or a push to
+`main`:
 
 ```mermaid
 flowchart LR
-    P["pull request: Build,<br/>tests and macOS once"] --> Q{"merge group:<br/>the same tree?"}
-    Q -- "yes: gate-TREE" --> N["no build, no test"]
-    Q -- "no: main moved" --> O["Build, tests and<br/>macOS once"]
-    N --> M["push to main: no test,<br/>the release build once"]
+    P["pull request: Build,<br/>tests and macOS"] --> Q{"merge queue<br/>on?"}
+    Q -- yes --> G["merge group: Build,<br/>tests and macOS once"]
+    G -- "gate-TREE" --> N["push to main: no test,<br/>the release build once"]
+    Q -- no --> O["push to main: Build, tests,<br/>macOS and the release build once"]
+    N --> M["the commit on main<br/>and its artifacts"]
     O --> M
     M --> S["Static riff and Stage<br/>take the static binaries"]
     M -- "same tree" --> R["tag: the release files,<br/>no build"]
@@ -250,27 +255,26 @@ flowchart LR
 
 - A pull request builds the test binaries and the profile `dev`, with
   a cache. It builds no release binary, also with the label `release`.
-- A merge group with the tree of its pull request takes the artifacts
-  and `gate-TREE` of the pull request. It builds nothing, and runs no
-  test and no `macOS`. The `Gate` passes on the pass of the pull
-  request. When `main` moved, the merge group has a new tree: it builds
-  it and tests it once, as a pull request does, and keeps its artifacts
-  and `gate-TREE`.
+- A merge group takes no artifact of its pull request. It builds its
+  tree and tests it once, as a pull request does, and keeps its
+  artifacts and `gate-TREE`.
 - A push to `main` takes the artifacts and `gate-TREE` of its merge
   group. It runs no test and no `macOS`. It builds the release of its
   tree once: see
   [The release build of each commit of main](#the-release-build-of-each-commit-of-main).
-  `Static riff` and `Stage` run. With no `gate-TREE`, for example after
-  a push by hand, the run also builds and tests as a pull request does.
+  `Static riff` and `Stage` run. With no merge queue, or after a push
+  by hand, it has no `gate-TREE`: the run also builds and tests as a
+  pull request does.
 - A tree with the artifacts of a run whose Gate failed has no
   `gate-TREE`. The run takes the test binaries, and runs the tests
   again.
 - A tag takes `static-release-TREE`, `macos-riff-TREE` and
-  `mac-session-riff-TREE` of its tree, and compiles nothing. The job
-  `Static riff` checks the static binaries, and the jobs `Static riff
-  release` and `macOS riff release` add the files to the release. When
-  an artifact is not there, for example because it expired, the tag
-  builds it as a push to `main` does. A tag needs no test binary.
+  `mac-session-riff-TREE` of the push to `main` of its tree, and
+  compiles nothing. The job `Static riff` checks the static binaries,
+  and the jobs `Static riff release` and `macOS riff release` add the
+  files to the release. When an artifact is not there, for example
+  because it expired, the tag builds it as a push to `main` does. A tag
+  needs no test binary.
 - The jobs `Deploy` and `Stage` build no binary and no `riff`: see
   [Check that the image holds the release binary](#check-that-the-image-holds-the-release-binary).
 - A person takes the same binaries for the real-session test: see
@@ -282,39 +286,46 @@ true:
 
 - It is a run of the workflow `.github/workflows/ci.yml` on a branch of
   this repository. An artifact of a run on a fork does not count.
-- It is a push to `main`, a merge group or the run itself. Else the head
-  commit of the run has the folders `.github/workflows` and `deploy` and
-  the `justfile` of `main`. These files say what each job runs and how
-  it names the artifacts.
 - Its job that made the artifact passed: `Gate` for `gate-TREE`,
   `macOS riff` for `macos-riff-TREE`, `Linux riff of a Mac` for
   `mac-session-riff-TREE`, and `Build` for the others.
+- It is the run that asks, or the run that asks trusts it:
+  - A push to `main`, a merge group, a tag and a run by hand trust only
+    a merge group and a push to `main` whose commit has the tree in the
+    name of the artifact.
+  - A pull request, `just ci-test` and `just real-session` trust a
+    merge group, a push to `main`, and a run whose head commit has the
+    folders `.github/workflows` and `deploy` and the `justfile` of
+    `main`. These files say what each job runs and how it names the
+    artifacts.
 
-So a pull request that changes a workflow, a script of `deploy` or the
-`justfile` gives no artifact to another run. Its own run builds and
-tests, and its merge group builds and tests its tree again. A pull
-request whose branch has old copies of these files does the same until
-you rebase it on `main`. Of the runs that give an artifact, the newest
-artifact wins.
+So while the workflows, the scripts of `deploy` or the `justfile` of a
+pull request differ from those of `main`, its artifacts count only for
+its own run. Of the runs that give an artifact, the newest artifact
+wins.
 
 ```mermaid
 flowchart LR
     A["a run with the<br/>artifact"] --> W{"ci.yml on a<br/>branch of this<br/>repository?"}
     W -- no --> N["the artifact<br/>does not count"]
-    W -- yes --> E{"push to main,<br/>merge group<br/>or this run?"}
-    E -- no --> F{"workflows, deploy<br/>and justfile<br/>of main?"}
-    F -- no --> N
-    F -- yes --> J{"the job that made<br/>it passed?"}
+    W -- yes --> T{"the run<br/>that asks?"}
+    T -- yes --> J{"the job that made<br/>it passed?"}
+    T -- no --> K{"who asks?"}
+    K -- "push to main, merge group,<br/>tag, run by hand" --> E{"merge group or<br/>push to main, with<br/>the tree of the artifact?"}
+    E -- no --> N
     E -- yes --> J
+    K -- "pull request, ci-test,<br/>real-session" --> F{"merge group, push<br/>to main, or the workflows,<br/>deploy and justfile of main?"}
+    F -- no --> N
+    F -- yes --> J
     J -- no --> N
     J -- yes --> C["the artifact counts"]
 ```
 
 A binary that `Build` made for a pull request has the id of its code.
-The squash commit on `main` has the same tree, so it has the same id:
-the binary is the same build. Its time is the time of the last commit of
-the pull request that changed the code. Only the version decides which
-builds can talk (see [Builds](how-it-works.md#builds)).
+The squash commit on `main` has the same tree, so its build has the same
+id. The time of a build is the time of the last commit that changed the
+code. Only the version decides which builds can talk (see
+[Builds](how-it-works.md#builds)).
 
 #### The release build of each commit of main
 
@@ -404,10 +415,13 @@ build_mac_session_riff=false
 mac_session_riff_run=
 ```
 
-A push to `main` wants the profile `release`, and the files of a Mac:
+With no `GITHUB_EVENT_NAME`, the plan takes the artifacts that a pull
+request takes. A push to `main` and a tag have the event `push`. A push
+to `main` wants the profile `release`, and the files of a Mac. To see
+its plan:
 
 ```sh
-GH_REPO=como-technologies/riff PROFILE=release deploy/build-plan.sh
+GITHUB_EVENT_NAME=push GH_REPO=como-technologies/riff PROFILE=release deploy/build-plan.sh
 ```
 
 For a commit of `main` whose push made its release build, each
@@ -423,7 +437,7 @@ build-plan: mac-session-riff-3cb7dddb… is in run 42170112233: no build of mac_
 A tag wants the same, and needs no test binary:
 
 ```sh
-GH_REPO=como-technologies/riff PROFILE=release TESTS=false deploy/build-plan.sh
+GITHUB_EVENT_NAME=push GH_REPO=como-technologies/riff PROFILE=release TESTS=false deploy/build-plan.sh
 ```
 
 ### See which run gives an artifact
@@ -438,6 +452,20 @@ GH_REPO=como-technologies/riff deploy/artifact-run.sh tests-TREE
 
 ```text
 artifact-run: tests-27c04e42… of the run 43065681019 does not count: its head commit eaa70cbf… does not have the .github/workflows, the deploy and the justfile of main.
+```
+
+### See which run gives an artifact to main
+
+A push to `main`, a merge group and a tag take an artifact only from a
+merge group or a push to `main`. To see the run that a push to `main`
+or a tag takes, give their event:
+
+```sh
+GITHUB_EVENT_NAME=push GH_REPO=como-technologies/riff deploy/artifact-run.sh tests-TREE
+```
+
+```text
+artifact-run: tests-41d5b2b3… of the run 43074661715 does not count: it is a run of pull_request on worktree-issue-1969, and a run of push takes only a merge group or a push to main.
 ```
 
 ### Keep the actions up to date
@@ -2904,10 +2932,10 @@ its verify passed. GitHub builds a merge group for it: `main` and the
 pull request. The Gate and Hygiene run on the merge group, and the job
 `Verify of the merge group` sets `riff/verify` on it from the passed
 verify of the head commit of the pull request. No new verify starts.
-GitHub squash-merges the group when the checks pass. When `main` did
-not move, the merge group has the tree of the pull request, and the
-Gate builds and tests nothing again: see
-[Build once for each tree](#build-once-for-each-tree).
+GitHub squash-merges the group when the checks pass. The merge group
+takes no artifact of the pull request: its Gate builds and tests its
+tree once, and the push to `main` takes its tests and their pass (see
+[Build once for each tree](#build-once-for-each-tree)).
 
 ```mermaid
 flowchart LR
@@ -7923,12 +7951,12 @@ paused: run `riff release approve v3.3.0` again, or `riff resume
 
 The tag of a release compiles nothing. Each binary of the release
 comes from the push of the commit of the tag to `main`, or from the
-pull request or the merge group of that tree (see
+merge group of that tree (see
 [The release build of each commit of main](#the-release-build-of-each-commit-of-main)):
 
 | Binary | Built by | Taken by |
 |---|---|---|
-| The test binaries | `Build` of the pull request or of the merge group | `Tests 1/4` to `Tests 4/4` |
+| The test binaries | `Build` of the merge group, or of the push to `main` with no merge queue | `Tests 1/4` to `Tests 4/4` of the same run |
 | The static `riff` and `riff-server`, profile `release`, no cache | `Build` of the push to `main` | `Static riff` of the push and of the tag checks them and runs the release test. `Static riff release` puts them on the release. |
 | The image of `riff-server` | `deploy/cloud/image.sh` in the job `Deploy`, with no compile | The shared riff |
 | The `riff` that deploys | The release: the file `riff-x86_64-unknown-linux-musl` | The job `Deploy` |
@@ -8469,10 +8497,10 @@ gh variable set STAGE_DEPLOY --body true
 
 The job `Stage` of the CI run of the merge deploys the merge commit and
 runs the smoke test. It compiles nothing: it takes the static
-`riff-server` and `riff` that `Build` made for the tree of the merge,
-or took from the pull request with the same tree. That is the profile
-`dev`, and the profile `release` for the merge of a release pull
-request. The smoke test prints one line for each step:
+`riff-server` and `riff` of the profile `release` that `Build` made for
+the tree of the merge (see
+[The release build of each commit of main](#the-release-build-of-each-commit-of-main)).
+The smoke test prints one line for each step:
 sign in, post, read, build and end. See the last run on `main`, and the
 log of the job:
 

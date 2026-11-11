@@ -236,6 +236,7 @@ impl Fake {
             .env("PATH", path)
             .env("GH_REPO", "o/r")
             .env("LEAK", "1")
+            .env_remove("GITHUB_EVENT_NAME")
             .output()
             .unwrap()
     }

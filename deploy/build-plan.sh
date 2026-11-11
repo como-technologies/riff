@@ -8,9 +8,9 @@
 #   deploy/build-plan.sh [TREE]
 #
 # TREE is the git tree of HEAD, `git rev-parse HEAD^{tree}`, unless the
-# argument gives it. A tree names its artifacts, so a push to main, a
-# merge group or a tag finds what the run of a pull request or of a merge
-# group with the same tree made:
+# argument gives it. A tree names its artifacts, so a run finds what
+# another run made for the same tree. A push to main, a merge group and a
+# tag find only what a merge group or a push to main made:
 #
 #   gate-TREE              the pass of the Gate of a run that ran the tests
 #   tests-TREE             the test binaries and their manifest
@@ -21,8 +21,9 @@
 # The input is in the environment: PROFILE, dev or release, the profile
 # of the static build that the run wants (dev); TESTS, true or false, for
 # a run that needs the tests (true); GH_REPO, the repository OWNER/REPO;
-# GITHUB_RUN_ID, the run that makes what is missing. gh signs in with
-# GH_TOKEN, which needs the right to read actions.
+# GITHUB_RUN_ID, the run that makes what is missing; GITHUB_EVENT_NAME,
+# the event of that run. gh signs in with GH_TOKEN, which needs the right
+# to read actions.
 #
 # The plan is lines `name=value`, in the file GITHUB_OUTPUT when it is
 # set, else on stdout:
@@ -51,8 +52,8 @@
 # of a Mac, and takes the release binaries of Linux when they are there:
 # the release of a tree is the better build. The plan takes only an
 # artifact that counts: see deploy/artifact-run.sh
-# (01M75TT13241HC22M0KBJ6HW96). When gh fails, the plan takes the
-# artifact as missing.
+# (01M75TT13241HC22M0KBJ6HW96, 01M75YKD063DE6ZFA0H3K8BNZB). When gh
+# fails, the plan takes the artifact as missing.
 set -euo pipefail
 HERE="$(dirname "$(readlink -f "$0")")"
 

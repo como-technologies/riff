@@ -6,11 +6,11 @@
 //! it take them. A commit of `main` gets one release build, of Linux and
 //! of a Mac, and its tag takes it (01M75TMWKT8E0YYEENWVX4B67A,
 //! 01M75TN3EC2T25FH0D09JESHZF). The tests run `deploy/build-plan.sh`
-//! with a fake `gh`, and read the workflow. The plan is the same for each
-//! event of a profile: a merge group and a push to `main` differ in the
-//! profile that they want and in the artifacts that the forge holds. The
-//! fake prints what the `--jq` filter of the real `gh` prints: the filter
-//! is checked by a read of the live API, not here.
+//! with a fake `gh`, and read the workflow. Each run of the fake forge is
+//! a push to `main`, and the plan asks with no event, so each artifact
+//! counts: the tests of `artifact_run` say which runs count for each
+//! event. The fake prints what the `--jq` filter of the real `gh` prints:
+//! the filter is checked by a read of the live API, not here.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -69,6 +69,7 @@ fn run_plan(dir: &Path, profile: &str, tests: &str) -> (BTreeMap<String, String>
         .env("PATH", path)
         .env("GH_REPO", "o/r")
         .env("GITHUB_RUN_ID", "900")
+        .env_remove("GITHUB_EVENT_NAME")
         .env("GITHUB_OUTPUT", &outputs)
         .env("PROFILE", profile)
         .env("TESTS", tests)
@@ -149,11 +150,11 @@ fn a_tree_with_no_artifact_is_built_in_this_run() {
     expect(&plan, &BUILD_AND_TEST);
 }
 
-/// 01M75NAF7VV5S7343P9Q7H7F60: a merge group whose tree is the tree of its
-/// pull request takes what the run of the pull request made: it builds
-/// nothing, and the tests and macOS do not run.
+/// 01M75NAF4JQWQG3ZVGJM74XRBG: a run whose tree passed its Gate in a run
+/// that counts takes what that run made: it builds nothing, and the tests
+/// and macOS do not run.
 #[test]
-fn a_merge_group_with_the_tree_of_its_pull_request_builds_nothing_and_tests_nothing() {
+fn a_tree_that_passed_its_gate_builds_nothing_and_tests_nothing() {
     let dir = forge(&passed("77"));
     let (plan, out) = run_plan(dir.path(), "dev", "true");
     assert!(out.status.success(), "{}", stderr(&out));
@@ -302,8 +303,9 @@ fn released_plan(plan: &BTreeMap<String, String>, run: &str) {
 }
 
 /// 01M75TN3EC2T25FH0D09JESHZF: a tag needs the release binaries and no
-/// test binary. It takes those of Linux and of a Mac that a run made for
-/// its tree, and builds nothing. With no such artifact, it builds them.
+/// test binary. It takes those of Linux and of a Mac that a merge group
+/// or a push to `main` made for its tree, and builds nothing. With no such
+/// artifact, it builds them.
 #[test]
 fn a_tag_takes_the_release_binaries_of_its_tree_or_builds_them() {
     let dir = forge(&released("78"));
@@ -570,6 +572,7 @@ fn the_tree_comes_from_git_when_no_argument_gives_it() {
         .env("PATH", path)
         .env("GH_REPO", "o/r")
         .env("GITHUB_RUN_ID", "900")
+        .env_remove("GITHUB_EVENT_NAME")
         .env_remove("GITHUB_OUTPUT")
         .current_dir(repo.path())
         .output()
@@ -691,6 +694,7 @@ impl Checkout {
             .arg(self.top.path().join("deploy/static/fetch.sh"))
             .env("PATH", path)
             .env("GH_REPO", "o/r")
+            .env_remove("GITHUB_EVENT_NAME")
             .output()
             .unwrap()
     }

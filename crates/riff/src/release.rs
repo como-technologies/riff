@@ -11,8 +11,9 @@
 //!
 //! `just static` builds the static `riff` and `riff-server` of a tree in
 //! the image `rust:CHANNEL-alpine` (01M4ZPJ04D9MJHNPAV0WN1KCES). The CI
-//! job "Build" builds them for each pull request and each push, one time
-//! for each tree (01M6QQ1NXY0CXMZEEEP413W4PK). The job "Static riff"
+//! job "Build" builds them for each pull request and each push that has
+//! no build of its tree (01M6QQ1NXY0CXMZEEEP413W4PK,
+//! 01M75YKD063DE6ZFA0H3K8BNZB). The job "Static riff"
 //! checks that each ELF has no interpreter and that `riff --version`
 //! runs in the session image that `riff.toml` pins
 //! (01M4ZPJ06QYVA23N9SQ45T8WQC). For a release tag, the release binaries
