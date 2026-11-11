@@ -22,6 +22,7 @@
 //! - [`notes`]: the checks of the notes of the lead.
 //! - [`build`]: the build of each side, and the check that they match.
 //! - [`pipe`]: the quiet end of a command at a closed pipe.
+//! - [`number_keys`]: a map with number keys on the wire.
 //!
 //! ## Sessions
 //!
@@ -80,6 +81,7 @@ pub mod build;
 pub mod dpop;
 pub mod name;
 pub mod notes;
+pub mod number_keys;
 pub mod pipe;
 pub mod record;
 #[cfg(any(test, feature = "test-support"))]

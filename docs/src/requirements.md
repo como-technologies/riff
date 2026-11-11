@@ -5713,6 +5713,15 @@ of this part when they merge.
   log of the daemon. It does not say to install the daemon, and exits
   with 1. A line that names no build of the daemon gets the build from
   the status of the daemon.
+- **01M74BVSFDAE67FA1PRYK7E2PN** Each line that the riff daemon writes
+  reads again in riff, also a status with the waits of a wave. A map
+  with number keys has text keys on the wire, and riff reads each key as
+  text or as a number, also in a tagged enum, an untagged enum or a
+  flattened struct (riff_core::number_keys). A test writes each status
+  of the daemon with one wait and with several, and reads it with the
+  reader of riff. A wait does not stop riff daemon status, riff lead
+  start, or the loop of the daemon that sets its status and sends its
+  facts.
 
 ### riff relay
 
@@ -6317,6 +6326,10 @@ of this part when they merge.
   of a counter that shows no points left, or the end of the hour of the
   counter that riff saw, as a guess (#1872). Supersedes
   01M6JEQ2HQBNYVRH75ZS8XQPBB in part.
+- **01M74BVZ8V7YQJM8QPZ2KEKS0T** riff daemon status shows, under the
+  line of each wave, the verifies and the rebases that wait for another
+  pull request: one line waits for #N: #A #B for each such pull request
+  N, with the issues A and B that wait for it, in the order of N.
 
 ### The lead, the view and the takeover
 

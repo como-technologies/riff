@@ -222,8 +222,13 @@ pub struct Wave {
     /// The verifies and the rebases that wait for another pull request with
     /// a file in common, by issue, with the number of that pull request
     /// (#1710, #1801). `riff wave list` and the Waves tab show them
-    /// ([`crate::waves::Board`]).
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    /// ([`crate::waves::Board`]). The keys are text on the wire
+    /// ([`riff_core::number_keys`]).
+    #[serde(
+        default,
+        skip_serializing_if = "BTreeMap::is_empty",
+        with = "riff_core::number_keys"
+    )]
     pub waits: BTreeMap<u64, u64>,
 }
 
@@ -757,6 +762,37 @@ mod tests {
         assert!(facts.line().contains(r#""step":"check_failed""#));
         assert_eq!(Facts::parse(&facts.line()), Some(facts.clone()));
         assert!(!facts.line().contains('\n'));
+    }
+
+    /// 01M74BVSFDAE67FA1PRYK7E2PN, #1855: the waits of a wave read again
+    /// from the line of the facts, and also in a tagged enum, where serde
+    /// gets each key as text.
+    #[test]
+    fn the_waits_of_a_wave_read_again_also_in_a_tagged_enum() {
+        #[derive(Debug, PartialEq, Serialize, Deserialize)]
+        #[serde(tag = "say", rename_all = "snake_case")]
+        enum Said {
+            Wave(Wave),
+        }
+        let wave = Wave {
+            repo: "o/r".into(),
+            word: "no free work now".into(),
+            image: None,
+            waits: BTreeMap::from([(724, 728), (725, 728), (730, 731)]),
+        };
+        let facts = Facts {
+            waves: vec![wave.clone()],
+            ..Facts::default()
+        };
+        let line = facts.line();
+        assert!(
+            line.contains(r#""waits":{"724":728,"725":728,"730":731}"#),
+            "{line}"
+        );
+        assert_eq!(Facts::parse(&line), Some(facts));
+        let said = Said::Wave(wave);
+        let line = serde_json::to_string(&said).unwrap();
+        assert_eq!(serde_json::from_str::<Said>(&line).unwrap(), said);
     }
 
     /// 01M6WFNDS76NESPXHMQPGHHQSS: the facts carry `update.auto` of the

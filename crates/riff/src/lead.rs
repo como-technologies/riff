@@ -1736,6 +1736,33 @@ mod tests {
         assert!(fake.screen().ends_with(TERMINAL_RESET.as_bytes()));
     }
 
+    /// 01M74BVSFDAE67FA1PRYK7E2PN, #1855: `riff lead start` reads a status
+    /// line in which item 724 of a wave waits for the pull request #728,
+    /// and attaches to the lead that runs.
+    #[tokio::test]
+    async fn a_lead_start_reads_a_status_with_a_wait_and_attaches_to_the_lead() {
+        let fake = Fake::default().with_image("img");
+        let _end = lead(&fake).await;
+        let root = tempfile::tempdir().unwrap();
+        let dir = daemon::dir_in(root.path());
+        let said = daemon::says_once(&dir, daemon::A_WAIT).await;
+        let repo = riff_core::name::Repo::Git {
+            owner: "como-technologies".into(),
+            name: "riff".into(),
+        };
+        let here = Place::new("thelio", repo, None).unwrap();
+        let server = "http://127.0.0.1:9";
+        start_with(&dir, &fake, Api::new(server), &here, server)
+            .await
+            .unwrap();
+        said.await.unwrap();
+        assert!(
+            fake.calls().contains(&format!("attach {NAME}")),
+            "{:?}",
+            fake.calls()
+        );
+    }
+
     /// The bytes of a `claude` with its fullscreen renderer: the
     /// alternate screen, and the mouse reports of each click, drag and
     /// move, in the SGR form.
