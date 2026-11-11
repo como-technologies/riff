@@ -732,19 +732,38 @@ The list has the admin role, `RepositoryRole` 5, and the lead App, an
 
 #### See the state of an open release
 
-While a release deploys, and until the lead checks it, `riff who` and
-the header of the TUI have one line of the release: what runs, what it
-waits for, and who acts next. For example, after the approval of the
-deploy:
+From the cut to the check, `riff who` and the header of the TUI have
+one line of the release: its step in `riff release status`, what it
+waits for, and who acts next. For example, while the real-session test
+runs:
 
 ```sh
 riff who
 ```
 
 ```text
-riff     paused
-release  v3.3.0: the deploy runs; the riff is paused
+riff     running
+release  v3.3.0: the real-session test runs
 ```
+
+The row `release` shows these lines, one after the other, from the cut
+to the check:
+
+```text
+release  v3.3.0: the full check of the release pull request runs
+release  v3.3.0: the full check of the release pull request passed; it waits for the verify of the lead of como-technologies/riff
+release  v3.3.0: the verify of the release pull request passed; it merges
+release  v3.3.0: the release pull request merged; it waits for the real-session test of the lead of como-technologies/riff
+release  v3.3.0: the real-session test runs
+release  v3.3.0: the real-session test passed; it waits for the publish of the lead of como-technologies/riff
+release  v3.3.0: the CI run of the tag builds
+release  v3.3.0: the deploy waits for a person (riff release approve v3.3.0)
+release  v3.3.0: the deploy runs; the riff is paused
+release  v3.3.0: the deploy passed; it waits for the check of the lead of como-technologies/riff
+```
+
+After a passed check, the line goes. A failed step has a line too, with
+who acts next.
 
 Before the cut, the same line tells you when the release is ready. When
 each item of the current wave is closed, the line says that the wave is
@@ -758,13 +777,14 @@ release  Wave 41 is complete: the release waits for its cut; the full check of m
 ```
 
 When the full check of `main` passes, the line names the lead that cuts
-the release. The line goes when the cut opens the release.
+the release. When the cut opens the release, the line of the release
+takes its place.
 
 The line comes from the watches of the riff daemons and from the pause
 of the riff. With no open release and no complete wave, there is no
 line. See
 [See who acts next on the release](development.md#see-who-acts-next-on-the-release)
-for the line of each step.
+for the line of each step, also of a failed step.
 
 ### Install one release
 

@@ -544,8 +544,9 @@ pub fn who(
 
 /// The line of the open release of the riff (01M6XTS1GCW7PTWSMM1HKQTHSN), the
 /// same in the row `release` of `riff who` and in the header of the TUI: the
-/// release that the watches of the hosts in `sessions` follow
-/// ([`riff_client::daemons::release`]), with the pause of the whole riff in
+/// release that the watches of the hosts in `sessions` follow, from the cut
+/// to the check ([`riff_client::daemons::release`],
+/// 01M75R6FPVZA3JA5C48PQ26A85), with the pause of the whole riff in
 /// `pauses` ([`text::release_line`]). With no line of an open release, the
 /// line of a wave with no open item whose release waits for its cut
 /// ([`riff_client::daemons::complete`], [`text::complete_line`],
@@ -574,6 +575,11 @@ pub fn who(
 ///     "v3.3.0: the deploy runs; the riff is paused"
 /// );
 /// assert_eq!(riff::view::release(&running, &[daemon(ReleaseStep::Passed)]), None);
+/// // From the cut (01M75R6FPVZA3JA5C48PQ26A85).
+/// assert_eq!(
+///     riff::view::release(&running, &[daemon(ReleaseStep::TestRuns)]).unwrap(),
+///     "v3.3.0: the real-session test runs"
+/// );
 ///
 /// // A wave with no open item, whose release waits for its cut: its line,
 /// // while no open release has a line.

@@ -29,9 +29,11 @@
 //! (01M6WJYQJ58MHQF1XPXXZW2ET6): `riff who` and the Machines tab of the TUI
 //! show it. They carry the [`Caps`] of each new container of the host too:
 //! the Machines tab shows them. They carry the [`Release`] of each watch of a
-//! deploy or of a check that the daemon follows (01M6XTS7RGXB30MFM6DZ7PVZ75):
-//! `riff who` and the header of the TUI make the line of the open release
-//! from the facts of each host ([`release`]). With no open release, they
+//! deploy or of a check that the daemon follows (01M6XTS7RGXB30MFM6DZ7PVZ75),
+//! and of each watch of a wave from the cut to the check
+//! (01M75R6FPVZA3JA5C48PQ26A85): `riff who` and the header of the TUI make
+//! the line of the open release from the facts of each host ([`release`]).
+//! With no open release, they
 //! make the line of a wave with no open item whose release waits for its
 //! cut ([`Complete`], [`complete`], 01M75N6YNHQQHGS0VGKTKSNJTR).
 //!
@@ -325,13 +327,36 @@ pub struct Test {
     pub secs: u64,
 }
 
-/// A step of a release that a watch of the daemon follows
-/// (01M6XTS7RGXB30MFM6DZ7PVZ75): the watch of the deploy, then the watch of
-/// the check of the lead. The order of the variants is the order of the
-/// steps.
+/// A step of a release that a watch of the daemon follows: the watch of the
+/// wave reads each step from the cut to the check
+/// (01M75R6FPVZA3JA5C48PQ26A85), and the watch of the deploy, then the watch
+/// of the check of the lead, read the steps from the wait for the approve
+/// (01M6XTS7RGXB30MFM6DZ7PVZ75). The order of the variants is the order of
+/// the steps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReleaseStep {
+    /// The full check of the release pull request runs.
+    PullRuns,
+    /// The full check of the release pull request failed.
+    PullFailed,
+    /// The full check of the release pull request passed: the lead
+    /// verifies it next.
+    Verify,
+    /// The verify of the release pull request passed: it merges.
+    Merges,
+    /// The release pull request merged: the lead starts the real-session
+    /// test next.
+    Merged,
+    /// The real-session test runs.
+    TestRuns,
+    /// The real-session test failed: the lead files the bug next.
+    TestFailed,
+    /// The real-session test passed: the lead publishes the release next.
+    Tested,
+    /// The tag and the GitHub release exist: the jobs of the CI run of the
+    /// tag before the job `Deploy` run.
+    Published,
     /// The job `Deploy` waits for a person.
     Waits,
     /// The job `Deploy` runs.
@@ -346,7 +371,7 @@ pub enum ReleaseStep {
 }
 
 /// The release that a watch of the daemon follows, at its step
-/// (01M6XTS7RGXB30MFM6DZ7PVZ75).
+/// (01M6XTS7RGXB30MFM6DZ7PVZ75, 01M75R6FPVZA3JA5C48PQ26A85).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Release {
     /// The repository, as `OWNER/REPO`.
@@ -379,6 +404,13 @@ pub struct Release {
 ///     host("b", vec![of("o/r", "v3.3.0", ReleaseStep::Runs)]),
 /// ];
 /// assert_eq!(release(&hosts), Some(of("o/r", "v3.3.0", ReleaseStep::Runs)));
+/// // The watch of the wave of one host read the stage of the release
+/// // before the watch of the wave of another host (01M75R6FPVZA3JA5C48PQ26A85).
+/// let hosts = [
+///     host("a", vec![of("o/r", "v3.3.0", ReleaseStep::Verify)]),
+///     host("b", vec![of("o/r", "v3.3.0", ReleaseStep::PullRuns)]),
+/// ];
+/// assert_eq!(release(&hosts), Some(of("o/r", "v3.3.0", ReleaseStep::Verify)));
 /// // A fix forward: the newer tag wins, also at an earlier step.
 /// let hosts = [
 ///     host("a", vec![of("o/r", "v3.3.0", ReleaseStep::CheckFailed)]),
@@ -589,9 +621,10 @@ pub struct Facts {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto: Option<bool>,
     /// The release of each watch of a deploy or of a check that the daemon
-    /// follows, at its step (01M6XTS7RGXB30MFM6DZ7PVZ75): `riff who` and the
-    /// TUI make the line of the release from them ([`release`]). A daemon of
-    /// an older build sends none.
+    /// follows, at its step (01M6XTS7RGXB30MFM6DZ7PVZ75), and of each watch
+    /// of a wave from the cut to the check (01M75R6FPVZA3JA5C48PQ26A85):
+    /// `riff who` and the TUI make the line of the release from them
+    /// ([`release`]). A daemon of an older build sends none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub releases: Vec<Release>,
     /// The current wave of each watch of a wave of the daemon that has no
@@ -882,6 +915,46 @@ mod tests {
         let said = Said::Wave(wave);
         let line = serde_json::to_string(&said).unwrap();
         assert_eq!(serde_json::from_str::<Said>(&line).unwrap(), said);
+    }
+
+    /// 01M75R6FPVZA3JA5C48PQ26A85: the steps from the cut come before the
+    /// steps of the deploy, in the order of the cycle, and each step reads
+    /// again from the line.
+    #[test]
+    fn the_steps_from_the_cut_come_before_the_deploy_and_read_again() {
+        use ReleaseStep::*;
+        let steps = [
+            PullRuns,
+            PullFailed,
+            Verify,
+            Merges,
+            Merged,
+            TestRuns,
+            TestFailed,
+            Tested,
+            Published,
+            Waits,
+            Runs,
+            Passed,
+            DeployFailed,
+            CheckFailed,
+        ];
+        assert!(steps.windows(2).all(|w| w[0] < w[1]));
+        let facts = Facts {
+            releases: steps
+                .iter()
+                .map(|&step| Release {
+                    repo: "o/r".into(),
+                    tag: "v4.17.0".into(),
+                    step,
+                })
+                .collect(),
+            ..Facts::default()
+        };
+        let line = facts.line();
+        assert!(line.contains(r#""step":"pull_runs""#), "{line}");
+        assert!(line.contains(r#""step":"test_failed""#), "{line}");
+        assert_eq!(Facts::parse(&line), Some(facts));
     }
 
     /// 01M6WFNDS76NESPXHMQPGHHQSS: the facts carry `update.auto` of the

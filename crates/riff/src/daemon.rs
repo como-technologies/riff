@@ -1674,6 +1674,12 @@ pub struct Status {
     /// An old daemon gives none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub complete: Vec<riff_client::daemons::Complete>,
+    /// The release of the current wave of each repository at its step, from
+    /// the last read of the watch of the wave
+    /// ([`crate::watches::Seen::release`], 01M75R6FPVZA3JA5C48PQ26A85). An
+    /// old daemon gives none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub releases: Vec<riff_client::daemons::Release>,
     /// The leads that lost their network at the restart of the daemon,
     /// while they run (01M5SMQBTA3HQXPKKK01ZGFB4H). An old daemon gives
     /// none.
@@ -3955,7 +3961,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                 .iter()
                 .map(|(repo, name)| (repo.as_str(), name.as_str())),
         );
-        let (watches, complete) = self.watches_shown();
+        let (watches, complete, releases) = self.watches_shown();
         Status {
             pid: std::process::id(),
             build: Build::this().to_string(),
@@ -3989,6 +3995,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             claude_token,
             watches,
             complete,
+            releases,
             lost,
             github: {
                 let now = now_ms();
@@ -4107,8 +4114,15 @@ impl<R: Runtime + 'static> Daemon<R> {
 
     /// The watches in the file, but the watch of a wave: a wave shows in
     /// [`Status::waves`]. With them, the complete wave that each watch of a
-    /// wave saw ([`Status::complete`]).
-    fn watches_shown(&self) -> (Vec<WatchShown>, Vec<riff_client::daemons::Complete>) {
+    /// wave saw ([`Status::complete`]), and the release of each watch of a
+    /// wave at its step ([`Status::releases`]).
+    fn watches_shown(
+        &self,
+    ) -> (
+        Vec<WatchShown>,
+        Vec<riff_client::daemons::Complete>,
+        Vec<riff_client::daemons::Release>,
+    ) {
         let all = crate::watches::Watches::new(&self.dir).read();
         let (waves, others): (Vec<_>, Vec<_>) = all
             .unwrap_or_default()
@@ -4123,8 +4137,9 @@ impl<R: Runtime + 'static> Daemon<R> {
                 since_ms: w.since_ms,
             })
             .collect();
+        let releases = waves.iter().filter_map(|w| w.release()).collect();
         let complete = waves.into_iter().filter_map(|w| w.seen.complete).collect();
-        (shown, complete)
+        (shown, complete, releases)
     }
 
     /// Tells each lead on this host that the daemon starts again on a new
@@ -13349,6 +13364,31 @@ mod tests {
         assert_eq!(status.complete, std::slice::from_ref(&complete));
         assert_eq!(status.watches.len(), 1, "{:?}", status.watches);
         assert_eq!(facts::of_status(&status).complete, [complete]);
+        assert!(status.releases.is_empty());
+
+        // 01M75R6FPVZA3JA5C48PQ26A85: the release that the watch of the wave
+        // read at its step goes into the status, and from there into the
+        // facts of the host, with the release of each other watch.
+        let release = riff_client::daemons::Release {
+            repo: "o/r".into(),
+            tag: "v1.2.3".into(),
+            step: riff_client::daemons::ReleaseStep::TestRuns,
+        };
+        let mut all = watches.read().unwrap();
+        all.iter_mut()
+            .find(|w| w.op == Op::Wave)
+            .unwrap()
+            .seen
+            .release = Some(crate::watches::ReleaseRead {
+            issue: "Release v1.2.3".into(),
+            at_ms: 9,
+            release: Some(release.clone()),
+        });
+        std::fs::write(&file, serde_json::to_vec(&all).unwrap()).unwrap();
+        let status = here.daemon.status().await;
+        assert_eq!(status.releases, std::slice::from_ref(&release));
+        assert_eq!(status.watches.len(), 1, "{:?}", status.watches);
+        assert_eq!(facts::of_status(&status).releases, [release]);
     }
 
     /// 01M6GYN0CSFRBSHGE5CEBHDVZH (#1549): the status of the daemon has the
@@ -14580,6 +14620,11 @@ mod tests {
                 repo: "o/q".into(),
                 wave: 41,
                 waits: Some(riff_client::daemons::CutWaits::MainFailed),
+            }],
+            releases: vec![riff_client::daemons::Release {
+                repo: "o/s".into(),
+                tag: "v2.0.0".into(),
+                step: riff_client::daemons::ReleaseStep::PullRuns,
             }],
             lost: vec![LostShown {
                 repo: "o/r".into(),

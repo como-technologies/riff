@@ -564,6 +564,80 @@ async fn the_header_says_the_state_of_an_open_release_at_each_step() {
     assert_eq!(tty.exits().await, Some(0));
 }
 
+/// 01M75R6FPVZA3JA5C48PQ26A85: the header of the TUI at 80 x 24 says the step
+/// of a release from the cut, from the facts that the watch of the wave of
+/// the daemon of thelio sent to riff-server: the full check of the release
+/// pull request runs, the real-session test runs, and the deploy waits for
+/// the approve. Of one tag, the latest step that a host saw wins.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_header_says_the_step_of_a_release_from_the_cut_to_the_approve() {
+    use riff_client::daemons::{Facts, Release, ReleaseStep};
+
+    let server = crate::common::start_signed().await;
+    let daemon: riff_core::name::SessionUri =
+        "riff://brett@thelio/como-technologies/riff?session=d1"
+            .parse()
+            .unwrap();
+    let api = server.api("brett", Some("d1"));
+    api.register(&daemon).await.unwrap();
+    let _watch = api.watch(&daemon).await.unwrap();
+    let brett: riff_core::name::SessionUri = "riff://brett@thelio".parse().unwrap();
+    crate::common::api_of(&server, &brett)
+        .set_pause(
+            &brett,
+            &riff_client::api::PauseScope::Riff,
+            riff_core::wire::RiffState::Running,
+        )
+        .await
+        .unwrap();
+
+    let mut tty = Tty::start(&server, "brett", "thelio", true);
+    tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
+    let build: String = riff_core::build::Build::this().id.chars().take(7).collect();
+    let header = format!(" riff running · owner brett · build {build} · link ok ");
+    let release = |step| Release {
+        repo: "como-technologies/riff".into(),
+        tag: "v3.3.0".into(),
+        step,
+    };
+    let steps: [(&[ReleaseStep], &[&str]); 3] = [
+        (
+            &[ReleaseStep::PullRuns],
+            &[" v3.3.0: the full check of the release pull request runs"],
+        ),
+        (
+            &[ReleaseStep::Merged, ReleaseStep::TestRuns],
+            &[" v3.3.0: the real-session test runs"],
+        ),
+        // The watch of the wave read the publish; the watch of the deploy
+        // saw the wait for the approve after it.
+        (
+            &[ReleaseStep::Published, ReleaseStep::Waits],
+            &[" v3.3.0: the deploy waits for a person (riff release approve v3.3.0)"],
+        ),
+    ];
+    for (seen, lines) in steps {
+        let facts = Facts {
+            build: riff_core::build::Build::this().to_string(),
+            limit: 3,
+            releases: seen.iter().copied().map(release).collect(),
+            ..Facts::default()
+        };
+        api.machine(&daemon, &facts.line()).await.unwrap();
+        tty.press("r").await;
+        let rows = tty
+            .shows(|rows| {
+                rows[1].starts_with(&header)
+                    && rows[2..2 + lines.len()] == *lines
+                    && rows[2 + lines.len()].starts_with(" 1 session")
+            })
+            .await;
+        assert!(rows[23].starts_with(" ↑↓ select"), "{seen:?}: {rows:#?}");
+    }
+    tty.press("q").await;
+    assert_eq!(tty.exits().await, Some(0));
+}
+
 /// 01M75N6YNHQQHGS0VGKTKSNJTR: the header of the TUI at 80 x 24 says that
 /// the current wave is complete and that its release waits for its cut, and
 /// why, from the facts that the daemon of thelio sent to riff-server. When
