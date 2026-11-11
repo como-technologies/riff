@@ -1264,6 +1264,21 @@ On a Mac:
 tail -f ~/Library/Logs/riff/daemon.log
 ```
 
+### Read the log file of the daemon
+
+On a busy host, the journal can drop old lines in a few hours. So on
+Linux, the daemon also writes each line of its log to a file of its
+own, with the time in UTC first:
+
+```sh
+less ~/.local/share/riff/daemon/daemon.log
+```
+
+When the file has 10 MB, the daemon moves it to `daemon.log.1` and
+starts a new file. So the two files hold the last 10 to 20 MB of lines.
+The file is in the folder of the daemon: `riff daemon status` shows the
+folder.
+
 ### See the riff processes of this host
 
 ```sh

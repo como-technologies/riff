@@ -541,6 +541,11 @@ impl ServiceManager for Launchd {
     fn log_command(&self) -> String {
         format!("tail -f {}", self.log.display())
     }
+
+    /// launchd writes the log of the daemon to a file of its own.
+    fn keeps_log(&self) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]
