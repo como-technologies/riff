@@ -6940,7 +6940,7 @@ sequenceDiagram
 | The real-session test | `riff release test --host HOST` | the test passed, or failed |
 | The CI run of the tag | `riff release publish` | the job `Deploy` waits for a person (the owner gets the line in `riff chat`), or a job failed |
 | The job `Deploy` | `riff release approve`, `retry`, `rollback` | the job failed (the failed jobs), or it passed and your container runs the release (see [Wait for the new riff before the check](#wait-for-the-new-riff-before-the-check)) |
-| The wave | `riff join` | the last open item of the current wave closed |
+| The wave | `riff join` | the last open item of the current wave closed; from the cut to the check, it also gives the step of the release to `riff who` and the TUI |
 | The check of the lead | the watch of the job `Deploy`, at its end | never: it gives the step to `riff who` and the TUI (see [See who acts next on the release](#see-who-acts-next-on-the-release)) |
 
 The message ends with `next:` and the command of the next step. A
@@ -7043,6 +7043,15 @@ release  v3.3.0: the deploy runs; the riff is paused
 
 | Step | The line | Who acts next |
 |---|---|---|
+| The full check of the release pull request runs | `v3.3.0: the full check of the release pull request runs` | nobody: the check runs |
+| The full check of the release pull request failed | `v3.3.0: the full check of the release pull request failed: the lead of como-technologies/riff runs the failed jobs again` | the lead: the failed jobs again, then `riff release verify N` |
+| The full check of the release pull request passed | `v3.3.0: the full check of the release pull request passed; it waits for the verify of the lead of como-technologies/riff` | the lead: `riff release verify N` |
+| The verify passed | `v3.3.0: the verify of the release pull request passed; it merges` | nobody: GitHub merges it |
+| The release pull request merged | `v3.3.0: the release pull request merged; it waits for the real-session test of the lead of como-technologies/riff` | the lead: `riff release test v3.3.0 --host HOST` |
+| The real-session test runs | `v3.3.0: the real-session test runs` | nobody: the test runs |
+| The real-session test failed | `v3.3.0: the real-session test failed: the lead of como-technologies/riff files the bug in the wave` | the lead: the bug in the wave; the test runs again after its fix |
+| The real-session test passed | `v3.3.0: the real-session test passed; it waits for the publish of the lead of como-technologies/riff` | the lead: `riff release publish v3.3.0` |
+| The release is published | `v3.3.0: the CI run of the tag builds` | nobody: the jobs before `Deploy` run |
 | The job `Deploy` waits | `v3.3.0: the deploy waits for a person (riff release approve v3.3.0)` | a person in a terminal |
 | The deploy runs | `v3.3.0: the deploy runs; the riff is paused` | nobody: the job runs |
 | The deploy passed | `v3.3.0: the deploy passed; it waits for the check of the lead of como-technologies/riff` | the lead: `riff release check v3.3.0` |
@@ -7060,16 +7069,33 @@ a line comes first. The watch of the wave on each host that runs the
 wave reads the wave and the full check of `main` at each look. When riff
 cannot read the full check, the line is `Wave 41 is complete: the
 release waits for its cut`. The cut makes the release issue of the wave,
-and the line goes.
+and the line of the release takes its place.
 
 The line comes from the watches of the daemon of each host (see
 [See the watches of the daemon](#see-the-watches-of-the-daemon)) and
-from the pause of the riff. At the end of the job `Deploy`, the watch
-of the deploy leaves a watch of the check in its place. It reads the
-release issue each minute, posts nothing, and ends with a passed check,
-the check of a failed deploy, a rollback or a newer release. Only a
-comment after its start counts, so a check before a retry ends no
-watch. So the line can come up to a minute after a step.
+from the pause of the riff:
+
+```mermaid
+flowchart LR
+    W["the watch of the wave:<br/>riff release status, each 5 minutes"] -- "each step from the cut" --> F["the facts of the host"]
+    D["the watch of the deploy,<br/>then of the check: each minute"] -- "each step from the wait for the approve" --> F
+    F --> S[riff-server]
+    S --> R["riff who and the TUI:<br/>the latest step of the newest tag"]
+```
+
+From the cut, the watch of the wave reads the state of the newest
+release issue of the wave, as `riff release status` does. It reads it
+each 5 minutes, and at once after a cut. The watches of the deploy and
+of the check read their step each minute. Of one tag, the latest step
+that a host saw wins. So a step before the deploy can come up to 5
+minutes late.
+
+At the end of the job `Deploy`, the watch of the deploy leaves a watch
+of the check in its place. It reads the release issue each minute,
+posts nothing, and ends with a passed check, the check of a failed
+deploy, a rollback or a newer release. Only a comment after its start
+counts, so a check before a retry ends no watch. So a step of the
+deploy can come up to a minute late.
 
 #### Know what the other leads hear
 

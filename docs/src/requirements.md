@@ -8938,10 +8938,32 @@ that builds it merges.
   knows it: `; the full check of main runs`, `; the full check of main
   failed`, or ` by the lead of OWNER/REPO` after a passed full check. At
   each look, the watch of the wave of each daemon gives this state to
-  the facts of its host. The line goes when the cut makes the release
-  issue of the wave. With no open release and no such wave, there is no
-  line. This supersedes 01M6XTS1GCW7PTWSMM1HKQTHSN in part: the line
+  the facts of its host. With no open release and no such wave, there is
+  no line. This supersedes 01M6XTS1GCW7PTWSMM1HKQTHSN in part: the line
   with no open release.
+- **01M75R6FPVZA3JA5C48PQ26A85** From the cut to the check, the line of
+  the open release in the TUI and in `riff who`
+  (01M6XTS1GCW7PTWSMM1HKQTHSN) shows the step of `riff release status`
+  and who acts next: `vX.Y.Z: the full check of the release pull request
+  runs`, `vX.Y.Z: the full check of the release pull request failed: the
+  lead of OWNER/REPO runs the failed jobs again`, `vX.Y.Z: the full
+  check of the release pull request passed; it waits for the verify of
+  the lead of OWNER/REPO`, `vX.Y.Z: the verify of the release pull
+  request passed; it merges`, `vX.Y.Z: the release pull request merged;
+  it waits for the real-session test of the lead of OWNER/REPO`,
+  `vX.Y.Z: the real-session test runs`, `vX.Y.Z: the real-session test
+  failed: the lead of OWNER/REPO files the bug in the wave`, `vX.Y.Z:
+  the real-session test passed; it waits for the publish of the lead of
+  OWNER/REPO`, and `vX.Y.Z: the CI run of the tag builds`. Then the
+  lines of the deploy and of the check follow. At each look, the watch
+  of the wave of each daemon reads the state of the newest release issue
+  of the current wave, as `riff release status` does, and gives the
+  release at its step to the facts of its host. Of one tag, the latest
+  step that a host saw wins. A checked release and a release after a
+  rollback have no line. When the cut makes the release issue of the
+  wave, the line of the release takes the place of the line of the
+  complete wave. This supersedes 01M75N6YNHQQHGS0VGKTKSNJTR in part: the
+  line after the cut.
 
 ## The notes of the lead
 

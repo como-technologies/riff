@@ -2499,11 +2499,12 @@ pub fn release_refused(command: &str, refusal: crate::cycle::Refusal) -> String 
 }
 
 /// The line of the state of `release` in the header of the TUI and in `riff
-/// who` (01M6XTS1GCW7PTWSMM1HKQTHSN): what runs, what it waits for, and who
-/// acts next. `paused` is true while the whole riff is paused. `riff release
-/// check` resumes the riff after a passed check and after a failed deploy, so
-/// those steps have a line only while the riff is paused. The tag and the
-/// repository come from the facts of a host: the line has them [`safe`].
+/// who` (01M6XTS1GCW7PTWSMM1HKQTHSN, 01M75R6FPVZA3JA5C48PQ26A85): what runs,
+/// what it waits for, and who acts next, from the cut to the check. `paused`
+/// is true while the whole riff is paused. `riff release check` resumes the
+/// riff after a passed check and after a failed deploy, so those steps have
+/// a line only while the riff is paused. The tag and the repository come
+/// from the facts of a host: the line has them [`safe`].
 ///
 /// ```
 /// use riff_client::daemons::{Release, ReleaseStep};
@@ -2511,6 +2512,41 @@ pub fn release_refused(command: &str, refusal: crate::cycle::Refusal) -> String 
 ///
 /// let at = |step| Release { repo: "o/r".into(), tag: "v3.3.0".into(), step };
 /// let line = |step, paused| release_line(&at(step), paused);
+/// // From the cut to the publish (01M75R6FPVZA3JA5C48PQ26A85).
+/// assert_eq!(
+///     line(ReleaseStep::PullRuns, false).unwrap(),
+///     "v3.3.0: the full check of the release pull request runs"
+/// );
+/// assert_eq!(
+///     line(ReleaseStep::PullFailed, false).unwrap(),
+///     "v3.3.0: the full check of the release pull request failed: the lead of o/r runs the \
+///      failed jobs again"
+/// );
+/// assert_eq!(
+///     line(ReleaseStep::Verify, false).unwrap(),
+///     "v3.3.0: the full check of the release pull request passed; it waits for the verify of \
+///      the lead of o/r"
+/// );
+/// assert_eq!(
+///     line(ReleaseStep::Merges, false).unwrap(),
+///     "v3.3.0: the verify of the release pull request passed; it merges"
+/// );
+/// assert_eq!(
+///     line(ReleaseStep::Merged, false).unwrap(),
+///     "v3.3.0: the release pull request merged; it waits for the real-session test of the lead \
+///      of o/r"
+/// );
+/// assert_eq!(line(ReleaseStep::TestRuns, false).unwrap(), "v3.3.0: the real-session test runs");
+/// assert_eq!(
+///     line(ReleaseStep::TestFailed, false).unwrap(),
+///     "v3.3.0: the real-session test failed: the lead of o/r files the bug in the wave"
+/// );
+/// assert_eq!(
+///     line(ReleaseStep::Tested, false).unwrap(),
+///     "v3.3.0: the real-session test passed; it waits for the publish of the lead of o/r"
+/// );
+/// assert_eq!(line(ReleaseStep::Published, false).unwrap(), "v3.3.0: the CI run of the tag builds");
+/// // From the wait for the approve to the check (01M6XTS1GCW7PTWSMM1HKQTHSN).
 /// assert_eq!(
 ///     line(ReleaseStep::Waits, false).unwrap(),
 ///     "v3.3.0: the deploy waits for a person (riff release approve v3.3.0)"
@@ -2540,7 +2576,30 @@ pub fn release_refused(command: &str, refusal: crate::cycle::Refusal) -> String 
 pub fn release_line(release: &riff_client::daemons::Release, paused: bool) -> Option<String> {
     use riff_client::daemons::ReleaseStep;
     let (tag, repo) = (safe(&release.tag), safe(&release.repo));
+    let pull = "the full check of the release pull request";
     let state = match (release.step, paused) {
+        (ReleaseStep::PullRuns, _) => format!("{pull} runs"),
+        (ReleaseStep::PullFailed, _) => {
+            format!("{pull} failed: the lead of {repo} runs the failed jobs again")
+        }
+        (ReleaseStep::Verify, _) => {
+            format!("{pull} passed; it waits for the verify of the lead of {repo}")
+        }
+        (ReleaseStep::Merges, _) => {
+            "the verify of the release pull request passed; it merges".to_owned()
+        }
+        (ReleaseStep::Merged, _) => format!(
+            "the release pull request merged; it waits for the real-session test of the lead of \
+             {repo}"
+        ),
+        (ReleaseStep::TestRuns, _) => "the real-session test runs".to_owned(),
+        (ReleaseStep::TestFailed, _) => {
+            format!("the real-session test failed: the lead of {repo} files the bug in the wave")
+        }
+        (ReleaseStep::Tested, _) => {
+            format!("the real-session test passed; it waits for the publish of the lead of {repo}")
+        }
+        (ReleaseStep::Published, _) => "the CI run of the tag builds".to_owned(),
         (ReleaseStep::Waits, _) => {
             format!("the deploy waits for a person (riff release approve {tag})")
         }
@@ -8795,6 +8854,7 @@ const LIMIT_GUESS: &str = " riff cannot read the reset: this time is the end of 
 ///     claude_token: riff_client::daemons::Token::NotSet,
 ///     watches: vec![],
 ///     complete: vec![],
+///     releases: vec![],
 ///     lost: vec![],
 ///     github: Default::default(),
 ///     no_starts: vec![],
@@ -10448,6 +10508,7 @@ pub const INIT_CONTAINER_DONE: &str = "Each check passed. riff changed nothing: 
 ///     claude_token: Default::default(),
 ///     watches: vec![],
 ///     complete: vec![],
+///     releases: vec![],
 ///     lost: vec![],
 ///     github: Default::default(),
 ///     no_starts: vec![],

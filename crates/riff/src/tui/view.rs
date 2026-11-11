@@ -18,9 +18,10 @@
 //! - [`Layout::Small`], under 40 columns or 10 rows: a line that asks
 //!   for a bigger terminal.
 //!
-//! While a release is open, the line of its state comes under the header in
-//! each layout, on up to [`RELEASE_ROWS`] rows ([`crate::view::release`],
-//! 01M6XTS1GCW7PTWSMM1HKQTHSN). With no open release, the line of a
+//! While a release is open, from its cut to its check, the line of its step
+//! comes under the header in each layout, on up to [`RELEASE_ROWS`] rows
+//! ([`crate::view::release`], 01M6XTS1GCW7PTWSMM1HKQTHSN,
+//! 01M75R6FPVZA3JA5C48PQ26A85). With no open release, the line of a
 //! current wave with no open item says that its release waits for its cut,
 //! and why when riff knows it (01M75N6YNHQQHGS0VGKTKSNJTR). When the riff
 //! file of this process has
@@ -1159,6 +1160,78 @@ mod tests {
             rows(&Facts::default())[2],
             " The Devices tab is not built yet."
         );
+    }
+
+    /// 01M75R6FPVZA3JA5C48PQ26A85: from the cut to the publish, the rows
+    /// under the header say the step of the release and who acts next at 80
+    /// x 24, on two rows at most. The body of the tab starts under them.
+    #[test]
+    fn the_header_says_each_step_of_a_release_from_the_cut_at_80_x_24() {
+        use riff_client::daemons::ReleaseStep;
+        let steps: [(ReleaseStep, &[&str]); 9] = [
+            (
+                ReleaseStep::PullRuns,
+                &[" v3.3.0: the full check of the release pull request runs"],
+            ),
+            (
+                ReleaseStep::PullFailed,
+                &[
+                    " v3.3.0: the full check of the release pull request failed: the lead of",
+                    " como-technologies/riff runs the failed jobs again",
+                ],
+            ),
+            (
+                ReleaseStep::Verify,
+                &[
+                    " v3.3.0: the full check of the release pull request passed; it waits for the",
+                    " verify of the lead of como-technologies/riff",
+                ],
+            ),
+            (
+                ReleaseStep::Merges,
+                &[" v3.3.0: the verify of the release pull request passed; it merges"],
+            ),
+            (
+                ReleaseStep::Merged,
+                &[
+                    " v3.3.0: the release pull request merged; it waits for the real-session test of",
+                    " the lead of como-technologies/riff",
+                ],
+            ),
+            (
+                ReleaseStep::TestRuns,
+                &[" v3.3.0: the real-session test runs"],
+            ),
+            (
+                ReleaseStep::TestFailed,
+                &[
+                    " v3.3.0: the real-session test failed: the lead of como-technologies/riff files",
+                    " the bug in the wave",
+                ],
+            ),
+            (
+                ReleaseStep::Tested,
+                &[
+                    " v3.3.0: the real-session test passed; it waits for the publish of the lead of",
+                    " como-technologies/riff",
+                ],
+            ),
+            (
+                ReleaseStep::Published,
+                &[" v3.3.0: the CI run of the tag builds"],
+            ),
+        ];
+        for (step, lines) in steps {
+            let mut state = with_release(Some(step), false);
+            state.on_key(Key::Open(Tab::Devices));
+            let drawn = drawn(&state, 80, 24);
+            assert_eq!(drawn[2..2 + lines.len()], *lines, "{step:?}");
+            assert_eq!(
+                drawn[2 + lines.len()],
+                " The Devices tab is not built yet.",
+                "{step:?}"
+            );
+        }
     }
 
     /// 01M748V7Y8DQPCQJ9D2Q7HKB76: when the riff file of the TUI has a
