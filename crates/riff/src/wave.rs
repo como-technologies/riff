@@ -236,10 +236,11 @@
 //!   pull request that cannot merge", #1575). A failed check that it does
 //!   not require holds no verify (01M749P62T24VDPX20D40KRJEK);
 //! - a verify or a rebase of a pull request that shares a file with a
-//!   pull request before it: one whose verify runs or passed, whose item
-//!   a session holds, or whose item had its verify request first
-//!   ([`order()`], [`crate::order`], 01M6WCGNCC3HWS47158WTWNQ8B,
-//!   01M6YPYTGR2JEBDHGX4K1RDCAW).
+//!   pull request before it: one whose verify runs or passed, or whose
+//!   item had its verify request first ([`order()`], [`crate::order`],
+//!   01M6WCGNCC3HWS47158WTWNQ8B, 01M6YPYTGR2JEBDHGX4K1RDCAW). A session
+//!   of its item does not put a pull request before the others
+//!   (01M74EP20TDQEXW42MK0XE73QF).
 //!   It waits until that pull request merges or its verify fails. The loop
 //!   keeps these waits for the look and for `riff wave list`
 //!   ([`Daemon::order_waits`]);
@@ -345,8 +346,9 @@
 //! conflict. Of these, only the next of the order gets its rebase. The
 //! others keep their conflict until the pull request before them merges
 //! or its verify fails, and the look sends no message of their conflict.
-//! A pull request goes first while a session rebases it, and keeps its
-//! place after its push, also while it reads `UNKNOWN`.
+//! A pull request keeps its place while a session rebases it, and after
+//! its push, also while it reads `UNKNOWN`. The session does not make it
+//! go first (01M74EP20TDQEXW42MK0XE73QF).
 //!
 //! Each head commit with a conflict starts one session in a run of the
 //! wave: [`Work::key`] names the rebase by the item and the head. A pause
@@ -1290,15 +1292,19 @@ pub fn pick(
 /// The verifies and the rebases of `look` that wait for another pull
 /// request with a file in common, by issue, with the number of that pull
 /// request ([`order::waits`], 01M6WCGNCC3HWS47158WTWNQ8B, #1801). A pull
-/// request goes first while a session claims its verify or its item, or
-/// a job of the wave runs them (`running`), and while its verify passed
-/// and nothing stops its merge. So a pull request goes first while a
-/// session rebases it. Then come the pull requests whose next step the
-/// pick can start, in the order of the requests of their items: the
-/// rebase of a conflict, or a verify. Each is in the free work, not held,
-/// and has starts left (`starts`). A verify whose full check is not done
-/// yet takes its place too: it starts when the check is done. So does a
-/// pull request that reads `UNKNOWN` and whose verify is not held.
+/// request goes first while a session claims its verify, or a job of the
+/// wave runs it (`running`), and while its verify passed and nothing
+/// stops its merge. A session of its item does not make it go first
+/// (01M74EP20TDQEXW42MK0XE73QF, #1894). Then come the pull requests whose
+/// next step the pick can start, in the order of the requests of their
+/// items: the rebase of a conflict, or a verify. Each is in the free
+/// work, not held, and has starts left (`starts`). A verify whose full
+/// check is not done yet takes its place too: it starts when the check is
+/// done. So does a pull request that reads `UNKNOWN` and whose verify is
+/// not held, and one with a conflict while a session holds its item, for
+/// example to rebase it. Each other pull request whose item a session
+/// holds has no place: its verify cannot start, so no verify waits for
+/// it.
 ///
 /// ```
 /// use std::collections::{BTreeMap, BTreeSet};
@@ -1328,6 +1334,11 @@ pub fn pick(
 /// // The lead holds the verify of 2: 1 waits for nobody.
 /// let held = Look { holds: ["verify-issue-2".to_owned()].into(), ..look.clone() };
 /// assert!(order(&held, &none, &BTreeMap::new()).is_empty());
+/// // #1894: a session holds issue-2, for example to fix its checks. 2 does
+/// // not go first, and its verify cannot start: the verify of 1 starts.
+/// let claimed = Look { claims: ["issue-2".to_owned()].into(), ..look.clone() };
+/// assert!(order(&claimed, &none, &BTreeMap::new()).is_empty());
+/// assert_eq!(pick(&claimed, &none, &BTreeMap::new()), Some(Work::Verify { issue: 1, pull: 41, commit: "c1".into() }));
 /// // The verify of 2 passed: 1 waits for its merge.
 /// let passed = Look {
 ///     free: vec!["verify-issue-1".into()],
@@ -1347,10 +1358,12 @@ pub fn pick(
 /// };
 /// assert_eq!(order(&rebases, &none, &BTreeMap::new()), BTreeMap::from([(5, 44)]));
 /// let rebase = Work::Rebase { issue: 4, pull: 44, commit: "c4".into() };
-/// assert_eq!(pick(&rebases, &none, &BTreeMap::new()), Some(rebase));
-/// // A job rebases 4: it goes first, and 5 still waits.
+/// assert_eq!(pick(&rebases, &none, &BTreeMap::new()), Some(rebase.clone()));
+/// // A job rebases 4: it keeps its place, and 5 still waits.
 /// let rebasing: BTreeSet<String> = ["issue-4".to_owned()].into();
-/// assert_eq!(pick(&rebases, &rebasing, &BTreeMap::new()), None);
+/// let started: BTreeMap<String, u32> = [(rebase.key(), 1)].into();
+/// assert_eq!(order(&rebases, &rebasing, &started), BTreeMap::from([(5, 44)]));
+/// assert_eq!(pick(&rebases, &rebasing, &started), None);
 /// // 4 pushed, and reads UNKNOWN: it keeps its place.
 /// let pushed = Look {
 ///     free: vec!["issue-5".into()],
@@ -1368,30 +1381,31 @@ pub fn order(
 ) -> BTreeMap<u64, u64> {
     let busy = |item: &str| running.contains(item) || look.claims.contains(item);
     let left = |work: Work| starts.get(&work.key()).copied().unwrap_or(0) < work.most();
-    // Its verify runs, a session holds its item, or it waits for its merge.
-    let goes = |lane: &order::Lane| {
-        lane.passed
-            || busy(&format!("verify-issue-{}", lane.issue))
-            || busy(&format!("issue-{}", lane.issue))
-    };
+    // Its verify runs, or it waits for its merge. A session of its item
+    // does not make it go first (#1894).
+    let goes = |lane: &order::Lane| lane.passed || busy(&format!("verify-issue-{}", lane.issue));
     // The pick can start its next step: the rebase of its conflict, or its
-    // verify. One that reads `UNKNOWN` keeps its place for the next look.
+    // verify. A rebase that runs keeps its place, and so does one that
+    // reads `UNKNOWN`, for the next look.
     let next = |lane: &order::Lane| {
         let issue = lane.issue;
+        let item = format!("issue-{issue}");
         if lane.conflict {
-            let item = format!("issue-{issue}");
             return look.free.contains(&item)
                 && !look.holds.contains(&item)
-                && look.fixes.conflicts.get(&issue).is_some_and(|c| {
-                    left(Work::Rebase {
-                        issue,
-                        pull: c.pull,
-                        commit: c.commit.clone(),
-                    })
-                });
+                && (busy(&item)
+                    || look.fixes.conflicts.get(&issue).is_some_and(|c| {
+                        left(Work::Rebase {
+                            issue,
+                            pull: c.pull,
+                            commit: c.commit.clone(),
+                        })
+                    }));
         }
-        let item = format!("verify-issue-{issue}");
-        let free = look.free.contains(&item)
+        // No verify starts while a session holds the item.
+        let verify = format!("verify-issue-{issue}");
+        let free = !busy(&item)
+            && look.free.contains(&verify)
             && look.pulls.get(&issue).is_some_and(|waiting| {
                 left(Work::Verify {
                     issue,
@@ -1399,7 +1413,7 @@ pub fn order(
                     commit: waiting.commit.clone(),
                 })
             });
-        !look.holds.contains(&item) && (lane.unknown || free)
+        !look.holds.contains(&verify) && (lane.unknown || free)
     };
     let first = look.lanes.values().filter(|lane| goes(lane));
     let asked = look.lanes.values().filter(|lane| !goes(lane) && next(lane));
@@ -5685,6 +5699,32 @@ mod tests {
         assert!(here.daemon.order_waits("o/r").is_empty());
     }
 
+    /// #1894: two pull requests change the same file, and a session of
+    /// another host holds the item of the first, for example to fix its
+    /// checks. The first does not go first: the verify of the second
+    /// starts. The session ends: the verify of the first waits for the
+    /// second.
+    #[tokio::test]
+    async fn a_session_of_the_item_of_a_pull_request_holds_up_no_verify() {
+        let tui = "crates/riff/src/tui.rs";
+        let here = two_verifies(&[tui], &[tui]).await;
+        here.forge()
+            .claims
+            .insert("issue-1".into(), "65f510d7".into());
+        here.run();
+        here.until(3, |h| h.running("verify-issue-2").is_some())
+            .await;
+        assert!(here.running("verify-issue-1").is_none());
+        assert!(here.daemon.order_waits("o/r").is_empty());
+        // The session ends: the verify of 1 waits for the verify of 2.
+        here.forge().claims.remove("issue-1");
+        let after = BTreeMap::from([(1, 42)]);
+        here.until(3, |h| h.daemon.order_waits("o/r") == after)
+            .await;
+        here.idle(3).await;
+        assert!(here.running("verify-issue-1").is_none(), "it waits");
+    }
+
     /// #1801: three pull requests change one file, and the verify of the
     /// first passed. Its merge gives the two others a conflict. Only the
     /// next of the order gets a rebase. The third keeps its conflict, and
@@ -7880,6 +7920,61 @@ esac
         // The verify ends: the rebase starts, then the fix.
         let after: BTreeMap<String, u32> = [(rebase.key(), 1)].into();
         assert_eq!(pick(&look, &none, &after), Some(checks));
+    }
+
+    /// 01M74EP20TDQEXW42MK0XE73QF, #1894: the pull requests of 1 and 2
+    /// change `tui.rs`, and the verify request of 1 came first. A session
+    /// holds `issue-1`, for example to fix its checks: 1 does not go
+    /// first, and the verify of 2 is the pick. After the session, the
+    /// verify of 1 waits while the verify of 2 runs.
+    #[test]
+    fn a_session_of_the_item_of_a_pull_request_does_not_make_it_go_first() {
+        let lane = |issue: u64, asked| order::Lane {
+            issue,
+            pull: 40 + issue,
+            files: ["crates/riff/src/tui.rs".to_owned()].into(),
+            asked: Some(asked),
+            ..order::Lane::default()
+        };
+        let waiting = |issue: u64| Waiting {
+            pull: 40 + issue,
+            commit: format!("c{issue}"),
+            gate_done: true,
+        };
+        let verify = |issue: u64| Work::Verify {
+            issue,
+            pull: 40 + issue,
+            commit: format!("c{issue}"),
+        };
+        let look = Look {
+            free: vec!["verify-issue-1".into(), "verify-issue-2".into()],
+            claims: ["issue-1".to_owned()].into(),
+            pulls: [(1, waiting(1)), (2, waiting(2))].into(),
+            lanes: [(1, lane(1, 0)), (2, lane(2, 1))].into(),
+            ..Look::default()
+        };
+        let none = BTreeSet::new();
+        let starts = BTreeMap::new();
+        assert!(order(&look, &none, &starts).is_empty());
+        assert_eq!(pick(&look, &none, &starts), Some(verify(2)));
+        // A job of the wave holds the item: the same.
+        let unclaimed = Look {
+            claims: BTreeSet::new(),
+            ..look
+        };
+        let job: BTreeSet<String> = ["issue-1".to_owned()].into();
+        assert!(order(&unclaimed, &job, &starts).is_empty());
+        assert_eq!(pick(&unclaimed, &job, &starts), Some(verify(2)));
+        // The session ended, and the verify of 2 runs: 1 waits for #42.
+        let verifying: BTreeSet<String> = ["verify-issue-2".to_owned()].into();
+        assert_eq!(
+            order(&unclaimed, &verifying, &starts),
+            BTreeMap::from([(1, 42)])
+        );
+        assert_eq!(pick(&unclaimed, &verifying, &starts), None);
+        // With no session, the request of 1 came first: 2 waits for #41.
+        assert_eq!(order(&unclaimed, &none, &starts), BTreeMap::from([(2, 41)]));
+        assert_eq!(pick(&unclaimed, &none, &starts), Some(verify(1)));
     }
 
     #[test]

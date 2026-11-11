@@ -1,7 +1,8 @@
 //! The order of the verifies of a wave (#1710, 01M6WCGNCC3HWS47158WTWNQ8B):
 //! the pull requests of the items that change the same files get their
 //! verifies one at a time, and their rebases too (#1801,
-//! 01M6YPYTGR2JEBDHGX4K1RDCAW, 01M6YPYTKQKSJRS0A8WZQRCCFD).
+//! 01M6YPYTGR2JEBDHGX4K1RDCAW, 01M6YPYTKQKSJRS0A8WZQRCCFD,
+//! 01M74EP20TDQEXW42MK0XE73QF).
 //!
 //! # Design
 //!
@@ -11,12 +12,14 @@
 //! lost. So the wave ([`crate::wave::pick`]) starts the verify or the
 //! rebase of one of them, and the others wait until it merges or fails:
 //!
-//! - A pull request goes first while its verify runs, while a session
-//!   holds its item, for example to rebase it, and while its verify
-//!   passed and nothing stops its merge ([`Lane::passed`]). A pull request
-//!   that cannot merge by itself for another reason
+//! - A pull request goes first while its verify runs, and while its
+//!   verify passed and nothing stops its merge ([`Lane::passed`]). A pull
+//!   request that cannot merge by itself for another reason
 //!   ([`crate::rollout::Stuck`]) does not go first, for example with a
-//!   failed check or with auto-merge off.
+//!   failed check or with auto-merge off. A session of its item does not
+//!   make it go first (01M74EP20TDQEXW42MK0XE73QF, #1894): it keeps its
+//!   place while the session rebases it, and else it has no place while
+//!   the session runs, as its verify cannot start.
 //! - Then come the pull requests that wait for a verify or for a rebase
 //!   ([`Lane::conflict`]). The one whose item had its first verify request
 //!   first goes first ([`Lane::asked`], [`crate::wave::requests`]): a new
@@ -123,10 +126,10 @@ impl Lane {
 /// The verifies and the rebases that wait for another pull request: for
 /// each issue of `asked`, the pull requests whose verify or rebase the
 /// wave can start, the pull request before it that shares a file with it.
-/// The pull requests of `first` go first: their verify runs or passed, or
-/// a session rebases them. Then `asked` go in the order of the verify
-/// requests of their items ([`Lane::asked`]). A pull request that waits
-/// for nobody goes before the next ones.
+/// The pull requests of `first` go first: their verify runs or passed.
+/// Then `asked` go in the order of the verify requests of their items
+/// ([`Lane::asked`]). A pull request that waits for nobody goes before
+/// the next ones.
 ///
 /// ```
 /// use std::collections::BTreeMap;
@@ -275,8 +278,8 @@ mod tests {
         };
         let (two, three) = (conflict(2, 2), conflict(3, 3));
         assert_eq!(waits([], [&two, &three]), BTreeMap::from([(3, 42)]));
-        // A session rebases 2: it goes first.
-        assert_eq!(waits([&two], [&three]), BTreeMap::from([(3, 42)]));
+        // A session rebases 2: it keeps its place (#1894).
+        assert_eq!(waits([], [&three, &two]), BTreeMap::from([(3, 42)]));
         // The new head of 2 keeps the place of its item, and waits for a verify.
         let pushed = lane(2, &["tui.rs"], false, Some(2));
         assert_eq!(waits([], [&three, &pushed]), BTreeMap::from([(3, 42)]));

@@ -4,7 +4,8 @@
 //! thread. The verify of one starts, and the others wait until it merges.
 //! Pull requests that change other files get their verifies side by side.
 //! The rebases go in the same order (#1801): of the pull requests with a
-//! conflict, only the next of the order gets a rebase.
+//! conflict, only the next of the order gets a rebase. A session of the
+//! item of a pull request does not make it go first (#1894).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -247,6 +248,43 @@ fn the_verify_whose_request_came_first_starts_and_the_other_waits_for_its_merge(
     let merged = look(&gh, &bodies);
     assert!(wave::order(&merged, &none, &starts).is_empty());
     assert_eq!(wave::pick(&merged, &none, &starts), Some(verify(1, one)));
+}
+
+/// #1894: issues 1 and 2 each change `tui.rs`, and the verify request of
+/// 1 came first. A session holds `issue-1`, for example to fix its
+/// checks. 1 does not go first, and its verify cannot start: the verify
+/// of 2 starts. When the session ends, 1 waits for #42.
+#[test]
+fn a_session_of_the_item_of_a_pull_request_does_not_make_it_go_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let (one, two) = ("aaaa1111", "bbbb2222");
+    let tui: &[&str] = &["crates/riff/src/tui.rs"];
+    let gh = forge(
+        dir.path(),
+        &[pull(1, one, None), pull(2, two, None)],
+        &[(41, tui), (42, tui)],
+    );
+    let bodies = [request(1, one), request(2, two)];
+    let bodies: Vec<&str> = bodies.iter().map(String::as_str).collect();
+    let claims: BTreeSet<String> = ["issue-1".to_owned()].into();
+    let held = wave::look_with(&gh, REPO, claims, BTreeSet::new(), &bodies).unwrap();
+    assert_eq!(held.lanes[&1].asked, Some(0));
+    let none = BTreeSet::new();
+    let starts = BTreeMap::new();
+    assert!(wave::order(&held, &none, &starts).is_empty());
+    assert_eq!(wave::pick(&held, &none, &starts), Some(verify(2, two)));
+
+    // The session ended, and the verify of 2 runs: 1 waits for #42.
+    let free = wave::look_with(&gh, REPO, BTreeSet::new(), BTreeSet::new(), &bodies).unwrap();
+    let running: BTreeSet<String> = ["verify-issue-2".to_owned()].into();
+    assert_eq!(
+        wave::order(&free, &running, &starts),
+        BTreeMap::from([(1, 42)])
+    );
+    assert_eq!(
+        wave::pick(&free, &running, &starts),
+        Some(Work::Build { issue: 3 })
+    );
 }
 
 /// The verify of 2 failed: the verify of 1 waits for nobody.

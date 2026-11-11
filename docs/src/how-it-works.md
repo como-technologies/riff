@@ -2749,12 +2749,15 @@ a new Gate run and a new verify, and a verify that passed before the
 conflict is lost. So the wave starts the verify or the rebase of one of
 them, and the others wait until it merges or its verify fails:
 
-- A pull request goes first while its verify runs, while a session
-  holds its item, for example to rebase it, and while its verify passed
-  and it waits for the merge.
+- A pull request goes first while its verify runs, and while its verify
+  passed and it waits for the merge.
 - Then come the pull requests that wait for a verify or for a rebase,
   in the order of the first verify request of their item in the
   repository thread. A new head after a rebase keeps the place.
+- A session that holds the item of a pull request does not make it go
+  first. A pull request keeps its place while a session rebases it.
+  While a session holds the item for other work, for example to fix
+  its checks, its verify cannot start, and no verify waits for it.
 - A verify or a rebase that shares a file with a pull request before it
   waits. One that shares no file starts beside the others.
 - So after a merge, only the next pull request of the order gets its
@@ -2797,10 +2800,9 @@ repository:
 riff wave list
 ```
 
-Each verify that waits is in the group `verify waits for #N`, where
-`#N` is the pull request that goes first. Each rebase that waits for
-its turn is in the group `rebase waits for #N`, where `#N` is the pull
-request before it:
+Each verify that waits is in the group `verify waits for #N`, and each
+rebase that waits for its turn is in the group `rebase waits for #N`.
+`#N` is the pull request before it:
 
 ```text
 Wave 50: The TUI  current  runs on thelio  6 open, 12 closed
