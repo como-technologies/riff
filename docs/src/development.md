@@ -4310,7 +4310,16 @@ first free work:
    [Add a Done when line to an issue](#add-a-done-when-line-to-an-issue)).
 2. It starts nothing while the riff or the repository is paused. It
    never starts a held item, or an item that a session claims.
-3. It starts the verify of an item only when no session holds the
+3. It never starts a build of a merged item. A merged item has a pull
+   request that merged with `Refs #N` (see
+   [Leave the issue open for a check after the release](#leave-the-issue-open-for-a-check-after-the-release)),
+   or with `Closes #N` in the last hour. GitHub closes the issue of a
+   merge with `Closes #N`, but the close can come to the daemon after
+   the merge. In that time the wave still sees the issue open, with no
+   open pull request. So for one hour after the merge, the issue is
+   merged, and gets no comment `Merged in`. After that hour, an issue
+   that you open again is free work.
+4. It starts the verify of an item only when no session holds the
    item, and the full check of the head commit is done: each check that
    the ruleset of the default branch requires, but `riff/verify`, has a
    run that ended. A check with no run is not done. A repository with no
@@ -4318,17 +4327,17 @@ first free work:
    check on the head, it starts the fix of the check first (see
    [See why a verify waits](#see-why-a-verify-waits)). The verify is a
    new session: an author never verifies its own item.
-4. It starts the rebase of a pull request, or the fix of its failed
+5. It starts the rebase of a pull request, or the fix of its failed
    check, only when no verify of the same item runs. The verify tests
    the head that the fix replaces. The rebase or the fix starts after
    the verify ends.
-5. It starts one item at most 3 times in a run of the wave. A verify
+6. It starts one item at most 3 times in a run of the wave. A verify
    counts for each head commit of its pull request, and a verify with a
    PASS or FAIL does not count (see
    [See why a verify stopped for a head](#see-why-a-verify-stopped-for-a-head)).
    Then your lead gets a message, and the item waits for you (see
    [Start a spent item again](#start-a-spent-item-again)).
-6. It starts nothing while a fact of the machine fails: the sign-in of
+7. It starts nothing while a fact of the machine fails: the sign-in of
    `gh`, or the sign-in of `claude` with 60 minutes or more left. No
    start counts (see
    [When the sign-in of claude ends soon](#when-the-sign-in-of-claude-ends-soon)).

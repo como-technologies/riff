@@ -727,6 +727,15 @@
   question. The call `bot` has no key (#1917). Supersedes
   01M6QBJHV7PVV5893Q6RCPENJQ in full, and 01M74BPHQZHXFYYNXAJ1WFASQQ in
   part.
+- **01M75WEDFKXGHMRFR73D1QDZCE** A merged pull request whose body has no
+  line `Refs #N` closes its issue: the trailer `Issue: #N`, else the
+  line `Closes #N`, else the branch names the issue. For one hour after
+  the merge, by its `mergedAt`, the free work counts the issue as
+  merged, also while a look still sees the issue open. So the wave
+  starts no build of it before the close of the issue reaches the look.
+  Such a merge gets no comment `Merged in #PR`. The newest merged pull
+  request of an issue decides. After the hour, an issue that a person
+  opened again is free work.
 
 ## Issue hygiene on GitHub
 

@@ -32,8 +32,10 @@
 //! - **Free work** ([`free_items`], [`waiting_verifies`],
 //!   01M3Q5QE2EWGKVD57Y6YCWA4BR). The current wave is the open milestone
 //!   `Wave N` with the lowest N. A free item is an open issue of it that
-//!   no session claims, that has no comment `Merged in #` and no merged
-//!   pull request with `Refs #N` ([`merges`], #1754), whose
+//!   no session claims, that has no comment `Merged in #`, no merged
+//!   pull request with `Refs #N` ([`merges`], #1754), and no merged pull
+//!   request that closes it in the last [`CLOSES_FOR`]
+//!   (01M75WEDFKXGHMRFR73D1QDZCE), whose
 //!   `Needs:` issues are all closed, and whose body has a line that
 //!   starts with `Done when:`, or a heading of `Done when`
 //!   ([`Issue::has_done_when`], 01M5R0HEP1MXWYY643F1N1DWEM,
@@ -438,8 +440,9 @@ pub struct Issue {
     pub milestone: Option<Milestone>,
     #[serde(default)]
     pub labels: Vec<Label>,
-    /// The merged pull request that links the issue with `Refs #N`
-    /// (R194, [`merges`]). `gh issue list` does not tell it: [`Open::of`]
+    /// The merged pull request of the issue ([`merges`]): with `Refs #N`
+    /// (R194), or one that closes the issue and is less than
+    /// [`CLOSES_FOR`] old. `gh issue list` does not tell it: [`Open::of`]
     /// reads it.
     #[serde(skip)]
     pub merge: Option<Merge>,
@@ -481,15 +484,19 @@ impl Comment {
 
 impl Issue {
     /// True when a comment says `Merged in #PR`, or a merged pull request
-    /// links the issue with `Refs #N` ([`Issue::merge`]): the issue waits
-    /// only for its checks after the release.
+    /// of the issue counts ([`Issue::merge`]): with `Refs #N`, the issue
+    /// waits only for its checks after the release. A merge that closes
+    /// the issue keeps it merged until the close reaches the look
+    /// (01M75WEDFKXGHMRFR73D1QDZCE).
     ///
     /// ```
     /// use riff::rollout::{Comment, Issue, Merge};
     ///
     /// let said = Issue { comments: vec![Comment { body: "Merged in #40 (abc)".into() }], ..Issue::default() };
-    /// let merge = Issue { merge: Some(Merge { pull: 40, commit: "abc".into() }), ..Issue::default() };
-    /// assert!(said.merged() && merge.merged());
+    /// let merge = Merge { pull: 40, commit: "abc".into(), closes: false };
+    /// let refs = Issue { merge: Some(merge.clone()), ..Issue::default() };
+    /// let closes = Issue { merge: Some(Merge { closes: true, ..merge }), ..Issue::default() };
+    /// assert!(said.merged() && refs.merged() && closes.merged());
     /// assert!(!Issue::default().merged());
     /// ```
     pub fn merged(&self) -> bool {
@@ -500,25 +507,28 @@ impl Issue {
                 .any(|c| c.body.trim_start().starts_with("Merged in #"))
     }
 
-    /// The merge of the issue ([`Issue::merge`]) when no comment says
-    /// `Merged in #PULL` for its pull request: the look of the wave adds
-    /// that comment ([`crate::wave::World::merged_in`]). A release issue
-    /// gets none.
+    /// The merge of the issue ([`Issue::merge`]) with `Refs #N` when no
+    /// comment says `Merged in #PULL` for its pull request: the look of
+    /// the wave adds that comment ([`crate::wave::World::merged_in`]). A
+    /// release issue gets none, and a merge that closes the issue
+    /// ([`Merge::closes`]) gets none.
     ///
     /// ```
     /// use riff::rollout::{Comment, Issue, Label, Merge};
     ///
-    /// let merge = Merge { pull: 40, commit: "abc".into() };
+    /// let merge = Merge { pull: 40, commit: "abc".into(), closes: false };
     /// let issue = Issue { number: 12, merge: Some(merge.clone()), ..Issue::default() };
     /// assert_eq!(issue.unsaid(), Some(&merge));
     /// let said = Issue { comments: vec![Comment { body: "Merged in #40 (abc)".into() }], ..issue.clone() };
     /// assert_eq!(said.unsaid(), None);
+    /// let closes = Issue { merge: Some(Merge { closes: true, ..merge }), ..issue.clone() };
+    /// assert_eq!(closes.unsaid(), None);
     /// let release = Issue { labels: vec![Label { name: "release".into() }], ..issue };
     /// assert_eq!(release.unsaid(), None);
     /// assert_eq!(Issue::default().unsaid(), None);
     /// ```
     pub fn unsaid(&self) -> Option<&Merge> {
-        let merge = self.merge.as_ref()?;
+        let merge = self.merge.as_ref().filter(|m| !m.closes)?;
         let said = self.comments.iter().any(|c| c.merged_in(merge.pull));
         (!said && !self.release()).then_some(merge)
     }
@@ -601,10 +611,11 @@ pub fn needs(body: &str) -> Vec<u64> {
 /// The free items of the wave `wave`, from all `open` issues of the
 /// repository, the `claims` of all sessions and the open `pulls`: an
 /// open issue of the wave that no session claims, that is not merged
-/// ([`Issue::merged`]: no comment `Merged in #`, and no merged pull
-/// request with `Refs #N`), and with each issue of its `Needs:` line
-/// closed. An open need blocks the item, also a need outside the wave,
-/// and also a need that is merged but not closed.
+/// ([`Issue::merged`]: no comment `Merged in #`, no merged pull request
+/// with `Refs #N`, and no recent merge that closes it), and with each
+/// issue of its `Needs:` line closed. An open need blocks the item, also
+/// a need outside the wave, and also a need that is merged but not
+/// closed.
 ///
 /// An item whose pull request ([`Pull::issue`]) waits for a verify or
 /// for the merge is not free: it is work for a verify, not for a build
@@ -613,7 +624,7 @@ pub fn needs(body: &str) -> Vec<u64> {
 ///
 /// ```
 /// use std::collections::HashSet;
-/// use riff::rollout::{Check, Comment, Issue, Milestone, Pull, free_items};
+/// use riff::rollout::{Check, Comment, Issue, Merge, Milestone, Pull, free_items};
 ///
 /// let issue = |number, wave: &str, body: &str, merged| Issue {
 ///     number,
@@ -644,13 +655,17 @@ pub fn needs(body: &str) -> Vec<u64> {
 /// assert_eq!(free_items(&more, "Wave 2", &claims, &[]), [1, 4]);
 ///
 /// // The pull request of 4 merged with `Refs #4`: 4 is merged at once,
-/// // before its comment `Merged in` (#1754).
-/// let merge = Some(riff::rollout::Merge { pull: 44, commit: "abc".into() });
+/// // before its comment `Merged in` (#1754). So is 1, whose pull request
+/// // merged with `Closes #1`, before its close reaches the look.
+/// let merge = |closes| Some(Merge { pull: 44, commit: "abc".into(), closes });
 /// let merged: Vec<Issue> = open
 ///     .iter()
-///     .map(|i| Issue { merge: merge.clone().filter(|_| i.number == 4), ..i.clone() })
+///     .map(|i| Issue { merge: merge(false).filter(|_| i.number == 4), ..i.clone() })
 ///     .collect();
 /// assert_eq!(free_items(&merged, "Wave 2", &claims, &[]), [1]);
+/// let closed = [Issue { merge: merge(true), ..merged[0].clone() }];
+/// let closed = [&closed[..], &merged[1..]].concat();
+/// assert_eq!(free_items(&closed, "Wave 2", &claims, &[]), Vec::<u64>::new());
 ///
 /// // The author of 1 asked for a verify and released the item. The
 /// // verify of 4 failed.
@@ -2283,15 +2298,26 @@ pub fn pulls(gh: &Gh, repo: &str) -> Result<Vec<Pull>> {
     Ok(pulls)
 }
 
-/// A merged pull request that links its issue with `Refs #N` (R194): the
-/// merge left the issue open.
+/// A merged pull request of an issue ([`merges_of`]). With the line
+/// `Refs #N` (R194), the merge left the issue open. Else the merge closes
+/// the issue, and a look can still see the issue open for a short time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Merge {
     /// The number of the pull request.
     pub pull: u64,
     /// The merge commit.
     pub commit: String,
+    /// True when the merge closes the issue: the body has no line `Refs
+    /// #N`. Such a merge gets no comment `Merged in` ([`Issue::unsaid`]).
+    pub closes: bool,
 }
+
+/// How long a merge that closes its issue ([`Merge::closes`]) keeps the
+/// issue out of the free work, from the time of the merge: GitHub closes
+/// the issue, but the close comes to the look later. The safety look
+/// ([`crate::hooks::SAFETY_LOOK_EVERY`]) reads the open issues in less
+/// time. An issue that a person opens again is free work after it.
+pub const CLOSES_FOR: Duration = Duration::from_secs(60 * 60);
 
 /// The fields of `gh pr list --state merged --json` that [`MergedPull`]
 /// reads. It names no field of [`CONNECTIONS`].
@@ -2301,7 +2327,7 @@ pub struct Merge {
 ///
 /// assert!(MERGED_FIELDS.split(',').all(|f| !CONNECTIONS.contains(&f)));
 /// ```
-pub const MERGED_FIELDS: &str = "number,state,headRefName,body,mergeCommit";
+pub const MERGED_FIELDS: &str = "number,state,headRefName,body,mergeCommit,mergedAt";
 
 /// A pull request, as `gh pr list --state merged --json` with
 /// [`MERGED_FIELDS`] gives it.
@@ -2321,6 +2347,9 @@ pub struct MergedPull {
     pub body: String,
     #[serde(rename = "mergeCommit", default)]
     pub commit: Option<MergeCommit>,
+    /// The time of the merge, in RFC 3339.
+    #[serde(rename = "mergedAt", default)]
+    pub merged_at: String,
 }
 
 /// The merge commit of a pull request, as `gh` gives it.
@@ -2346,54 +2375,95 @@ pub fn refs(body: &str, issue: u64) -> bool {
     body.lines().any(|l| l.trim() == line)
 }
 
-/// The merges of `pulls`, newest first, by issue: each merged pull
-/// request whose issue ([`Pull::issue`]: its trailer `Issue: #N`, else its
-/// branch) has the line `Refs #N` in its body ([`refs`]). The newest merge
-/// of an issue counts. A pull request that is not `MERGED`, or that names
-/// no issue, gives none.
+/// The merges of `pulls`, newest first, by issue. The issue of a pull
+/// request is its trailer `Issue: #N`, else its line `Closes #N`, else
+/// its branch, as for [`Pull::issue`]. The newest merge of an issue
+/// decides. With the line `Refs #N` ([`refs`]), the merge left the issue
+/// open (R194). Else the merge closes the issue ([`Merge::closes`],
+/// 01M75WEDFKXGHMRFR73D1QDZCE): it counts while it is less than
+/// [`CLOSES_FOR`] older than `now` ([`closing`]), by its `mergedAt`. A
+/// pull request that is not `MERGED`, or that names no issue, gives none.
 ///
 /// ```
 /// use riff::rollout::{Merge, MergedPull, merges_of};
 ///
 /// let pulls: Vec<MergedPull> = serde_json::from_str(r#"[
+///   {"number":46,"state":"MERGED","headRefName":"worktree-issue-16","body":"Closes #16\n\nIssue: #16\n","mergeCommit":{"oid":"fff"},"mergedAt":"2026-11-11T11:30:00Z"},
+///   {"number":45,"state":"MERGED","headRefName":"fix-it","body":"Closes #17\n","mergeCommit":{"oid":"eee"},"mergedAt":"2026-11-11T11:59:00Z"},
 ///   {"number":42,"state":"MERGED","headRefName":"worktree-issue-12","body":"Refs #12\n","mergeCommit":{"oid":"ccc"}},
 ///   {"number":40,"state":"MERGED","headRefName":"x","body":"Refs #12\n\nIssue: #12\n","mergeCommit":{"oid":"aaa"}},
-///   {"number":41,"state":"MERGED","headRefName":"worktree-issue-13","body":"Closes #13\n","mergeCommit":{"oid":"bbb"}},
+///   {"number":41,"state":"MERGED","headRefName":"worktree-issue-13","body":"Closes #13\n","mergeCommit":{"oid":"bbb"},"mergedAt":"2026-11-11T10:59:00Z"},
+///   {"number":39,"state":"MERGED","headRefName":"worktree-issue-13","body":"Refs #13\n","mergeCommit":{"oid":"999"}},
 ///   {"number":43,"state":"OPEN","headRefName":"worktree-issue-14","body":"Refs #14\n"},
 ///   {"number":44,"state":"MERGED","headRefName":"main","body":"Refs #15\n","mergeCommit":{"oid":"ddd"}}
 /// ]"#)?;
-/// let merges = merges_of(&pulls);
-/// assert_eq!(merges.len(), 1, "{merges:?}");
-/// assert_eq!(merges[&12], Merge { pull: 42, commit: "ccc".into() });
+/// let now = chrono::DateTime::parse_from_rfc3339("2026-11-11T12:00:00Z").unwrap().timestamp_millis();
+/// let merges = merges_of(&pulls, now);
+/// assert_eq!(merges.len(), 3, "{merges:?}");
+/// assert_eq!(merges[&12], Merge { pull: 42, commit: "ccc".into(), closes: false });
+/// assert_eq!(merges[&16], Merge { pull: 46, commit: "fff".into(), closes: true });
+/// assert_eq!(merges[&17].pull, 45);
+/// // The merge of #41 is more than an hour old: #13 is free work again,
+/// // also with the older merge of #39.
+/// assert!(!merges.contains_key(&13));
 /// # Ok::<(), serde_json::Error>(())
 /// ```
-pub fn merges_of(pulls: &[MergedPull]) -> HashMap<u64, Merge> {
+pub fn merges_of(pulls: &[MergedPull], now: i64) -> HashMap<u64, Merge> {
     let mut merges = HashMap::new();
+    let mut seen = HashSet::new();
     for pull in pulls.iter().filter(|p| p.state == "MERGED") {
-        let issue = crate::pr::trailer_issue(&pull.body).or_else(|| branch_issue(&pull.branch));
-        let Some(issue) = issue.filter(|n| refs(&pull.body, *n)) else {
+        let issue = crate::pr::trailer_issue(&pull.body)
+            .or_else(|| crate::pr::closes_issue(&pull.body))
+            .or_else(|| branch_issue(&pull.branch));
+        let Some(issue) = issue.filter(|n| seen.insert(*n)) else {
             continue;
         };
-        merges.entry(issue).or_insert_with(|| Merge {
-            pull: pull.number,
-            commit: pull
-                .commit
-                .as_ref()
-                .map(|c| c.oid.clone())
-                .unwrap_or_default(),
-        });
+        let closes = !refs(&pull.body, issue);
+        if closes && !closing(&pull.merged_at, now) {
+            continue;
+        }
+        let commit = pull.commit.as_ref().map(|c| c.oid.clone());
+        merges.insert(
+            issue,
+            Merge {
+                pull: pull.number,
+                commit: commit.unwrap_or_default(),
+                closes,
+            },
+        );
     }
     merges
 }
 
+/// True when a merge at the time `at` (RFC 3339) that closes its issue
+/// still keeps the issue out of the free work: it is less than
+/// [`CLOSES_FOR`] older than `now`, in milliseconds since the epoch. A
+/// time that does not read keeps nothing.
+///
+/// ```
+/// let now = chrono::DateTime::parse_from_rfc3339("2026-11-11T12:00:00Z").unwrap().timestamp_millis();
+/// assert!(riff::rollout::closing("2026-11-11T11:01:00Z", now));
+/// assert!(riff::rollout::closing("2026-11-11T12:01:00Z", now));
+/// assert!(!riff::rollout::closing("2026-11-11T11:00:00Z", now));
+/// assert!(!riff::rollout::closing("", now));
+/// ```
+pub fn closing(at: &str, now: i64) -> bool {
+    let Ok(at) = chrono::DateTime::parse_from_rfc3339(at) else {
+        return false;
+    };
+    let window = i64::try_from(CLOSES_FOR.as_millis()).unwrap_or(i64::MAX);
+    now - at.timestamp_millis() < window
+}
+
 /// The merges of the last 100 merged pull requests of the repository
-/// `repo` (`OWNER/REPO`) with `Refs #N`, by issue ([`merges_of`]), with
-/// one `gh pr list` (01M6XSSCTA3E1GJ8EC9646PP1R). [`Open::of`] gives
-/// each to its issue: such an issue is merged at once, also before the
-/// comment `Merged in`.
+/// `repo` (`OWNER/REPO`), by issue ([`merges_of`]), now, with one `gh pr
+/// list` (01M6XSSCTA3E1GJ8EC9646PP1R, 01M75WEDFKXGHMRFR73D1QDZCE).
+/// [`Open::of`] gives each to its issue: such an issue is merged at once,
+/// also before the comment `Merged in`, and before its close reaches the
+/// look.
 pub fn merges(gh: &Gh, repo: &str) -> Result<HashMap<u64, Merge>> {
     let pulls: Vec<MergedPull> = gh.read_json(&merged_args(repo))?;
-    Ok(merges_of(&pulls))
+    Ok(merges_of(&pulls, crate::daemon::now_ms()))
 }
 
 /// The arguments of `gh` for the last 100 merged pull requests of `repo`
@@ -2426,7 +2496,7 @@ pub(crate) fn merged_args(repo: &str) -> [&str; 10] {
 /// assert!(MERGED_FIELDS.split(',').all(|f| view.contains(&f)));
 /// ```
 pub const PULL_VIEW_FIELDS: &str = "number,headRefName,headRefOid,isDraft,statusCheckRollup,\
-     mergeable,mergeStateStatus,reviewDecision,autoMergeRequest,body,state,mergeCommit";
+     mergeable,mergeStateStatus,reviewDecision,autoMergeRequest,body,state,mergeCommit,mergedAt";
 
 /// The fields of `gh issue view N --json` for the read of one issue that a
 /// wake of the GitHub App names ([`crate::hooks`], #1656): the fields of
@@ -2486,7 +2556,7 @@ pub struct Open {
 impl Open {
     /// The open milestones, issues and pull requests of the repository
     /// `repo` (`OWNER/REPO`), with `gh`. Each issue gets the merge of its
-    /// merged pull request with `Refs #N` ([`merges`], [`Issue::merge`]).
+    /// merged pull request, when it counts ([`merges`], [`Issue::merge`]).
     pub fn of(gh: &Gh, repo: &str) -> Result<Self> {
         let milestones: Vec<Milestone> = gh.json(&[
             "api",
@@ -2511,7 +2581,7 @@ impl Open {
     /// ```
     /// use riff::rollout::{Issue, Merge, Open};
     ///
-    /// let merge = Merge { pull: 40, commit: "abc".into() };
+    /// let merge = Merge { pull: 40, commit: "abc".into(), closes: false };
     /// let open = Open {
     ///     issues: vec![Issue { number: 12, merge: Some(merge.clone()), ..Issue::default() }, Issue { number: 13, ..Issue::default() }],
     ///     ..Open::default()

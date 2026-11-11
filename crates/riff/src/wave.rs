@@ -227,7 +227,9 @@
 //!   look after the line comes. A verify and a rebase do not change;
 //! - a build of an issue whose pull request merged with `Refs #N`: the
 //!   item is merged, also before its comment `Merged in` (see "A merge
-//!   that leaves the issue open");
+//!   that leaves the issue open"). Nor a build of an issue whose pull
+//!   request merged with `Closes #N`, before the close of the issue
+//!   reaches the look (see "A merge that closes the issue");
 //! - an item that a session claims, or that a job of the wave runs;
 //! - the verify of an item while a session holds the item: its author
 //!   still works. The verify is a new session: an author never verifies
@@ -316,6 +318,30 @@
 //!     Note over W: #12 is merged: no free work
 //!     W->>G: gh issue comment 12: Merged in #40 (COMMIT)
 //!     W->>W: pick: the next free item
+//! ```
+//!
+//! # A merge that closes the issue
+//!
+//! GitHub closes the issue of a pull request that merges with `Closes #N`.
+//! The close comes to the look later than the merge: the event of the
+//! issue can come after the event of the pull request, and the safety
+//! look reads the open issues each [`hooks::SAFETY_LOOK_EVERY`]. In that
+//! time the issue is open with no open pull request. So the merges of the
+//! look ([`rollout::merges_of`], 01M75WEDFKXGHMRFR73D1QDZCE) also count a
+//! merged pull request with no line `Refs #N`, for
+//! [`rollout::CLOSES_FOR`] after its merge: its issue is merged, and the
+//! wave starts no build of it. Such a merge gets no comment `Merged in`.
+//! An issue that a person opens again is free work after that time.
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant G as GitHub
+//!     participant W as the loop of the wave
+//!     G->>W: the event of pull request #40: merged, Closes #12
+//!     W->>G: gh pr view 40: the kept list of the merged ones
+//!     Note over W: #12 is still open in the kept list, but merged: no build
+//!     G->>W: the event of issue #12: closed
+//!     W->>G: gh issue view 12: #12 leaves the kept list
 //! ```
 //!
 //! # A conflict with main
@@ -6012,6 +6038,75 @@ esac
         );
     }
 
+    /// 01M75WEDFKXGHMRFR73D1QDZCE (#1975): a wave with a fake forge and the
+    /// events of GitHub on. Pull request #41 merges with `Closes #1`, and
+    /// GitHub sends its event, but no event of the close of #1: the kept
+    /// list still has #1 open, with no open pull request. The wave starts
+    /// no build of issue-1, and adds no comment `Merged in`. Then issue 2
+    /// comes with its event, and the wave starts it.
+    #[tokio::test]
+    async fn a_merge_with_closes_starts_no_build_of_its_issue_before_the_close() {
+        let bin = tempfile::tempdir().unwrap();
+        let put = |name: &str, value: serde_json::Value| {
+            std::fs::write(bin.path().join(name), value.to_string()).unwrap();
+        };
+        let mut pull = pull_41();
+        pull["body"] = "Closes #1\n\nThe summary.\n\nIssue: #1\n".into();
+        put("issues", serde_json::json!([open_issue(1)]));
+        put("pulls", serde_json::json!([pull.clone()]));
+        let (here, told) = reading(bin.path()).await;
+        here.run();
+        here.until(0, |h| h.forge().branch_reads >= 1).await;
+        item_reads(bin.path());
+
+        // Pull request #41 merges, and GitHub sends its event only.
+        let mut merged = pull;
+        merged["state"] = "MERGED".into();
+        merged["mergeCommit"] = serde_json::json!({ "oid": "m41" });
+        merged["mergedAt"] = chrono::Utc::now().to_rfc3339().into();
+        put("pull-41", merged.clone());
+        put("pulls", serde_json::json!([]));
+        put("merged", serde_json::json!([merged]));
+        told.add(&riff_core::wire::GitHubWake {
+            id: told.last().unwrap() + 1,
+            repo: "o/r".parse().unwrap(),
+            kinds: vec![riff_core::wire::GitHubEvent::PullRequest],
+            number: Some(41),
+            events: 3,
+        });
+        let log = bin.path().join("gh.log");
+        let viewed = || std::fs::read_to_string(&log).is_ok_and(|l| l.contains("pr view 41"));
+        here.until(0, |_| viewed()).await;
+        // No session starts: issue-1 is merged.
+        here.idle(0).await;
+        let reads = item_reads(bin.path());
+        assert!(
+            !reads.iter().any(|c| c.starts_with("issue")),
+            "no read of the issue: {reads:?}"
+        );
+
+        // Issue 2 comes into the wave with its event: the wave starts it,
+        // and still not issue-1.
+        let mut view = open_issue(2);
+        view["state"] = "OPEN".into();
+        view["url"] = "https://github.com/o/r/issues/2".into();
+        put("issue-2", view);
+        put("issues", serde_json::json!([open_issue(2), open_issue(1)]));
+        told.add(&riff_core::wire::GitHubWake {
+            id: told.last().unwrap() + 1,
+            repo: "o/r".parse().unwrap(),
+            kinds: vec![riff_core::wire::GitHubEvent::Issues],
+            number: Some(2),
+            events: 1,
+        });
+        here.until(1, |h| h.running("issue-2").is_some()).await;
+        here.idle(1).await;
+        let forge = here.forge();
+        let started: Vec<&str> = forge.starts.iter().map(|(i, _)| i.as_str()).collect();
+        assert_eq!(started, ["issue-2"], "no build of the merged item");
+        assert!(forge.merged_ins.is_empty(), "{:?}", forge.merged_ins);
+    }
+
     /// 01M74N3544C338R6BV06DQ1DH0: `riff daemon status` shows the line of
     /// the events of each repository with a wake: the age of the last wake,
     /// the time of the safety look, and the dropped events of the last day
@@ -6278,6 +6373,7 @@ esac
             let merge = rollout::Merge {
                 pull: 41,
                 commit: "1a2b3c4d".into(),
+                closes: false,
             };
             forge.merges.insert(1, merge);
         }
@@ -6302,6 +6398,7 @@ esac
             let merge = rollout::Merge {
                 pull: 41,
                 commit: "1a2b3c4d".into(),
+                closes: false,
             };
             forge.merges.insert(1, merge);
             forge.merged_in_fails = 1;
