@@ -1244,8 +1244,12 @@ mike@thelio (12s ago)
 
 A fact in yellow needs the person: no podman, a wave with no session
 image or with an image that the host does not have, a sign-in that is
-off or has less than 2 hours left, low memory or a full disk. A host
-whose daemon sent no facts for 3 minutes shows none.
+off or has less than 2 hours left, low memory or a full disk.
+
+The time after the host, for example `(12s ago)`, is the age of its
+facts. The daemon sends them each 30 seconds, so the age stays under 30
+seconds while the daemon works. A host line can be up to 3 minutes old:
+riff drops the line of a host whose facts are older.
 
 The daemon also posts a note to the lead:
 
@@ -1264,6 +1268,48 @@ flowchart LR
     S --> M["riff: the Machines tab"]
     S --> L["the lead"]
     H["riff daemon of your host"] -->|"its socket, at each look"| M
+```
+
+#### Find why a host has no line
+
+Each step of the look of the daemon at its host has a time limit: 20
+seconds for the status of the daemon, 10 seconds for each `podman` and
+`gh`, and 60 seconds for the whole look. So a step that hangs does not
+stop the next send. When a send of the facts fails, the daemon logs one
+warning line with the cause, and no line for the next failures. It
+tries again at each look. The first send that goes out again logs one
+line:
+
+```text
+riff daemon: warning: o/r: cannot send the facts of this host: machine failed (500 Internal Server Error): down. riff tries again at each look.
+riff daemon: o/r: the facts of this host go out again, after 3 failed sends in 1m.
+```
+
+While the sends fail, `riff daemon status` on that host says why. From
+another host, add `--host HOST`:
+
+```sh
+riff daemon status
+riff daemon status --host thelio
+```
+
+```text
+Facts: 3 sends of the facts of this host for o/r failed in 1m. The last cause: machine failed (500 Internal Server Error): down
+```
+
+To read the log of the daemon, see [Read the log file of the
+daemon](development.md#read-the-log-file-of-the-daemon).
+
+```mermaid
+flowchart TD
+    L["each 30 s: a look, each step in its time limit"] --> S{"the send goes out?"}
+    S -- "yes, and the last one too" --> L
+    S -- "yes, after failed sends" --> A["one line: the facts go out again"]
+    S -- "no, the first failure" --> W["one warning line with the cause"]
+    S -- "no, again" --> Q["no line: riff daemon status shows the last cause"]
+    A --> L
+    W --> L
+    Q --> L
 ```
 
 #### See the hosts in the TUI

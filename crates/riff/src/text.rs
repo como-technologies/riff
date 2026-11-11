@@ -4053,8 +4053,21 @@ pub fn forge_de_opt<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Str
 /// assert_eq!(line, "gh pr list --head worktree-issue-12: no answer in 30 s. riff stopped it.");
 /// ```
 pub fn gh_no_answer(args: &str, limit: std::time::Duration) -> String {
+    no_answer("gh", args, limit)
+}
+
+/// The error of a step of the host, `program ARGS`, that gave no answer
+/// in `limit` (#1858): riff stopped it.
+///
+/// ```
+/// use std::time::Duration;
+///
+/// let line = riff::text::no_answer("podman", "image exists img", Duration::from_secs(10));
+/// assert_eq!(line, "podman image exists img: no answer in 10 s. riff stopped it.");
+/// ```
+pub fn no_answer(program: &str, args: &str, limit: std::time::Duration) -> String {
     format!(
-        "gh {args}: no answer in {} s. riff stopped it.",
+        "{program} {args}: no answer in {} s. riff stopped it.",
         limit.as_secs_f64()
     )
 }
@@ -8077,6 +8090,7 @@ const LIMIT_GUESS: &str = " riff cannot read the reset: this time is the end of 
 ///     no_starts: vec![],
 ///     no_tokens: vec![],
 ///     writes: vec![],
+///     sends: vec![],
 /// };
 /// let text = riff::text::daemon_status(&status, 300_000);
 /// assert!(text.starts_with("The riff daemon runs: pid 42, build 1.3.1 06a0ae03be98, for 5m.\n"));
@@ -8166,6 +8180,15 @@ const LIMIT_GUESS: &str = " riff cannot read the reset: this time is the end of 
 /// });
 /// let text = riff::text::daemon_status(&status, 300_000);
 /// assert!(text.contains("GitHub: the daemon writes on acme/app as riff-acme-lead[bot].\n"), "{text}");
+/// // The sends of the facts of this host: a line only while they fail
+/// // (#1858).
+/// let failed = riff::daemon::facts::Failed { since_ms: 0, cause: "machine failed".into(), count: 3 };
+/// status.sends.push(riff::daemon::facts::Sent { repo: "o/r".into(), ok_ms: None, failed: Some(failed) });
+/// status.sends.push(riff::daemon::facts::Sent { repo: "o/s".into(), ok_ms: Some(290_000), failed: None });
+/// let text = riff::text::daemon_status(&status, 300_000);
+/// let line = "Facts: 3 sends of the facts of this host for o/r failed in 5m. The last cause: machine failed\n";
+/// assert!(text.contains(line), "{text}");
+/// assert!(!text.contains("o/s"), "{text}");
 /// ```
 pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
     let age = |since: i64| ago(u64::try_from((now_ms - since) / 1000).unwrap_or(0));
@@ -8200,6 +8223,11 @@ pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
     }
     for writes in &status.writes {
         let _ = writeln!(out, "{}", daemon_writes(&writes.repo, &writes.acts));
+    }
+    for sent in &status.sends {
+        if let Some(line) = daemon_facts_status(sent, now_ms) {
+            let _ = writeln!(out, "{line}");
+        }
     }
     if status.sessions.is_empty() {
         out.push_str("Sessions: none.\n");
@@ -9524,6 +9552,7 @@ pub const INIT_CONTAINER_DONE: &str = "Each check passed. riff changed nothing: 
 ///     no_starts: vec![],
 ///     no_tokens: vec![],
 ///     writes: vec![],
+///     sends: vec![],
 /// };
 /// let same = riff::text::init_daemon_kept(&status, "1.3.1 aaa");
 /// assert_eq!(same, "The riff daemon of this riff runs already: pid 42. riff init keeps it.");
@@ -9999,6 +10028,89 @@ pub fn daemon_serves(repo: &str, host: &str) -> String {
         "The riff daemon serves the lead of {repo}: riff daemon status --host {host}, and the \
          other commands with --host {host}, reach it."
     )
+}
+
+/// The cause of a send of the facts whose look took more than `limit`
+/// (#1858).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::daemon_look_silent(std::time::Duration::from_secs(60)),
+///     "the look at the facts of the host took more than 60 s"
+/// );
+/// ```
+pub fn daemon_look_silent(limit: std::time::Duration) -> String {
+    format!(
+        "the look at the facts of the host took more than {} s",
+        limit.as_secs()
+    )
+}
+
+/// The warning in the log of the daemon at the first send of the facts
+/// of the host for `repo` that fails, with its `cause` (#1858).
+pub fn daemon_facts_failed(repo: &str, cause: &str) -> String {
+    format!(
+        "warning: {repo}: cannot send the facts of this host: {cause}. riff tries again at each \
+         look."
+    )
+}
+
+/// The line in the log of the daemon at the first send of the facts for
+/// `repo` that goes out after `count` failed sends in `secs` (#1858).
+pub fn daemon_facts_again(repo: &str, count: u64, secs: u64) -> String {
+    let s = if count == 1 { "" } else { "s" };
+    format!(
+        "{repo}: the facts of this host go out again, after {count} failed send{s} in {}.",
+        ago(secs)
+    )
+}
+
+/// The line of `riff daemon status` for the sends of the facts of `sent`
+/// at the time `now_ms` (#1858): the cause while they fail, and the age of
+/// the last send when it is older than the age that `riff who` shows.
+/// `None` while they go out.
+///
+/// ```
+/// use riff::daemon::facts::{Failed, Sent};
+///
+/// let mut sent = Sent { repo: "o/r".into(), ok_ms: Some(0), failed: None };
+/// assert_eq!(riff::text::daemon_facts_status(&sent, 30_000), None);
+/// assert_eq!(
+///     riff::text::daemon_facts_status(&sent, 600_000).as_deref(),
+///     Some("Facts: the last facts of this host for o/r went out 10m ago. riff who shows the \
+///           facts of a host for 3m.")
+/// );
+/// sent.failed = Some(Failed { since_ms: 60_000, cause: "machine failed (500): down".into(), count: 9 });
+/// assert_eq!(
+///     riff::text::daemon_facts_status(&sent, 300_000).as_deref(),
+///     Some("Facts: 9 sends of the facts of this host for o/r failed in 4m. The last cause: \
+///           machine failed (500): down")
+/// );
+/// ```
+pub fn daemon_facts_status(sent: &crate::daemon::facts::Sent, now_ms: i64) -> Option<String> {
+    let age = |since: i64| ago(u64::try_from((now_ms - since) / 1000).unwrap_or(0));
+    let shown = riff_client::machines::NUMBERS_TTL.as_secs();
+    if let Some(failed) = &sent.failed {
+        let s = if failed.count == 1 { "" } else { "s" };
+        return Some(format!(
+            "Facts: {} send{s} of the facts of this host for {} failed in {}. The last cause: {}",
+            failed.count,
+            sent.repo,
+            age(failed.since_ms),
+            failed.cause
+        ));
+    }
+    let ok_ms = sent.ok_ms?;
+    let old = u64::try_from((now_ms - ok_ms) / 1000).unwrap_or(0) > shown;
+    old.then(|| {
+        format!(
+            "Facts: the last facts of this host for {} went out {} ago. riff who shows the facts \
+             of a host for {}.",
+            sent.repo,
+            age(ok_ms),
+            ago(shown)
+        )
+    })
 }
 
 /// The refusal of `riff daemon end` for the lead.

@@ -294,6 +294,14 @@ pub trait ServiceManager {
     fn log_command(&self) -> String {
         "journalctl --user -u riff".to_owned()
     }
+
+    /// True when the daemon keeps a log file of its own, with a size cap
+    /// ([`crate::daemon::log`], #1858): the journal of systemd can rotate
+    /// in a few hours on a busy host. The default is the journal of
+    /// systemd.
+    fn keeps_log(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]

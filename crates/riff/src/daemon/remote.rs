@@ -132,7 +132,7 @@ use riff_core::selector::Selector;
 use riff_core::wire::{Kind, SessionInfo, Status};
 use serde::{Deserialize, Serialize};
 
-use super::facts::{News, Said, Short};
+use super::facts::{News, Said, Sends, Short};
 use super::{Ask, Say};
 use crate::room::Change;
 use crate::text;
@@ -1505,10 +1505,12 @@ pub async fn state(api: &Api, me: &SessionUri, host: &str) -> Result<super::Stat
 
 /// The session of the daemon in the folder `dir` on riff-server for
 /// the repository of `served`, until the task ends. It sets its status,
-/// keeps the session alive, and answers each request. Each
-/// [`super::facts::every`] it sends the facts of the host, and the notes
-/// for the lead in `news` ([`super::facts`]).
-pub async fn serve(dir: PathBuf, served: Served, news: News) {
+/// keeps the session alive, and answers each request. Each `every`
+/// ([`super::facts::every`]) it sends the facts of the host, keeps the
+/// outcome in `sends` ([`super::facts::Sends`], #1858), and sends the
+/// notes for the lead in `news` ([`super::facts`]). A send that fails
+/// holds up no next look: the next tick sends the facts again.
+pub async fn serve(dir: PathBuf, served: Served, news: News, sends: Sends, every: Duration) {
     let repo = served.wave.repo.clone();
     let session = match Session::new(&dir, &served) {
         Ok(session) => Arc::new(session),
@@ -1521,13 +1523,14 @@ pub async fn serve(dir: PathBuf, served: Served, news: News) {
         }
     };
     println!("{}", text::daemon_serves(&repo, &served.wave.host));
+    let _forget = Forget(&sends, &repo);
     let (api, me) = (session.api.clone(), session.me.clone());
     let alive = tokio::spawn(async move {
         riff_client::api::keep_alive_of_host(&api, &me, riff_core::wire::ALIVE_EVERY).await;
     });
     let _alive = Abort(alive);
     let mut wakes = Box::pin(follow(|| session.api.watch(&session.me), STREAM_RETRY));
-    let mut refresh = tokio::time::interval(super::facts::every());
+    let mut refresh = tokio::time::interval(every);
     let mut short = Short::default();
     // The looks in a row where the repository is not in `served.json`.
     let mut gone = 0;
@@ -1559,7 +1562,11 @@ pub async fn serve(dir: PathBuf, served: Served, news: News) {
                     return;
                 }
             }
-            session.send_facts(&mut short).await;
+            let sent = session.send_facts(&mut short).await;
+            let sent = sent.map_err(|e| format!("{e:#}"));
+            if let Some(line) = sends.record(&repo, crate::run::now_ms(), sent) {
+                eprintln!("riff daemon: {line}");
+            }
             for note in news.take(&repo) {
                 session.note_lead(&note).await;
             }
@@ -1575,6 +1582,16 @@ fn is_served(dir: &Path, served: &Served) -> bool {
         all.get(&served.wave.repo)
             .is_some_and(|s| s.session == served.session)
     })
+}
+
+/// Forgets the sends of the facts for a repository when the session of
+/// the daemon for it ends.
+struct Forget<'a>(&'a Sends, &'a str);
+
+impl Drop for Forget<'_> {
+    fn drop(&mut self) {
+        self.0.forget(self.1);
+    }
 }
 
 /// Ends a task when it drops.
@@ -1610,31 +1627,31 @@ impl Session {
     /// Sends the facts of the host as the numbers of the machine of the
     /// session, and the note of a change of the sign-in of `claude` to
     /// the lead (01M57D3F50347RD8ED79KEA9V7, 01M57D3FC5PB5EQ6Y38Y5R2DBB).
-    async fn send_facts(&self, short: &mut Short) {
-        let repo = &self.served.wave.repo;
-        let facts = match super::facts::look(&self.dir, &self.served.wave, &self.api).await {
-            Ok(facts) => facts,
-            Err(e) => {
-                eprintln!("riff daemon: {repo}: cannot read the facts: {e:#}");
-                return;
-            }
-        };
-        if let Err(e) = self.api.machine(&self.me, &facts.line()).await {
-            eprintln!("riff daemon: {repo}: cannot send the facts: {e:#}");
-        }
+    /// The error is the cause of a send that failed: a look that failed or
+    /// took more than [`LOOK_WAIT`](super::facts::LOOK_WAIT), or a call to
+    /// riff-server that failed (#1858).
+    async fn send_facts(&self, short: &mut Short) -> Result<()> {
+        let wait = super::facts::LOOK_WAIT;
+        let look = super::facts::look(&self.dir, &self.served.wave, &self.api);
+        let facts = tokio::time::timeout(wait, look)
+            .await
+            .map_err(|_| anyhow!("{}", text::daemon_look_silent(wait)))?
+            .context("cannot read the facts")?;
+        self.api.machine(&self.me, &facts.line()).await?;
         let host = &self.served.wave.host;
         // With a token, the sign-in of claude does not stop a start
         // (01M58B7HCXKZF39DCF6KV84JRV).
         if facts.claude_token.set() {
-            return;
+            return Ok(());
         }
         let note = match short.look(&facts.claude) {
-            None => return,
+            None => return Ok(()),
             Some(Said::Short(minutes)) => text::daemon_claude_short(host, minutes),
             Some(Said::Back) => text::daemon_claude_back(host),
         };
         println!("riff daemon: {note}");
         self.note_lead(&note).await;
+        Ok(())
     }
 
     /// Posts `note` to the lead of the user in the repository, as a note
@@ -1652,8 +1669,12 @@ impl Session {
         }
     }
 
+    /// Sets the status of the session. A daemon that gives no answer in
+    /// [`DAEMON_WAIT`](super::facts::DAEMON_WAIT) holds up no next step
+    /// (#1858).
     async fn set_status(&self) -> Result<()> {
-        let status = super::status(&self.dir).await?;
+        let wait = super::facts::DAEMON_WAIT;
+        let status = super::status_within(&self.dir, wait).await?;
         let step = status_line(status.pid, &status.build, status.sessions.len());
         self.api.status(&self.me, &Status { step }).await
     }

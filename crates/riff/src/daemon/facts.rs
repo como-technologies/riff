@@ -40,14 +40,28 @@
 //!   holds work that is not on `origin` ([`News`],
 //!   01M57D3FEJPHD962GW0H82N8E6).
 //!
+//! Each step of a look has a time limit (#1858,
+//! 01M749XKWD72JYB3QD8RYNHKTV): the status of the daemon [`DAEMON_WAIT`],
+//! each `podman` and `gh` [`STEP_WAIT`], the whole look [`LOOK_WAIT`], and
+//! each call to riff-server its budget. A step that hangs, for example a
+//! `podman` that waits for a lock, gives no fact or a failed send: it
+//! holds up no next look. [`Sends`] keeps the outcome of each send
+//! (01M749XKZ7N13R6EDJEREZZ0F4). The first failure logs one warning line
+//! with its cause, the next failures log none, and the first send that
+//! goes out again logs one line. `riff daemon status` shows the cause
+//! while the sends fail.
+//!
 //! ```mermaid
 //! sequenceDiagram
 //!     participant D as riff daemon on thelio
 //!     participant S as riff-server
 //!     participant L as lead on pangolin
 //!     loop each 30 s
-//!         D->>D: the status, the host, the sign-ins
+//!         D->>D: the status, the host, the sign-ins, each in its time limit
 //!         D->>S: machine: "daemon facts: {...}"
+//!         opt the first send that fails, or the first one that goes out again
+//!             D->>D: one line in the log
+//!         end
 //!         opt the sign-in of claude goes under 2 hours, or comes back
 //!             D->>S: one note to the lead
 //!         end
@@ -66,9 +80,11 @@ use std::time::Duration;
 
 use riff_client::api::Api;
 use riff_client::daemons::{self, Facts, Image, Sign};
+use serde::{Deserialize, Serialize};
 
 use super::Status;
 use crate::session_image;
+use crate::text;
 use crate::wave::Wave;
 
 /// The variable that gives the time between two looks in milliseconds.
@@ -82,6 +98,19 @@ pub const EVERY_VAR: &str = "RIFF_FACTS_EVERY_MS";
 /// The most notes for one repository that wait for the session of the
 /// daemon.
 pub const NEWS_MOST: usize = 50;
+
+/// The longest wait of a look, and of the status of the session of the
+/// daemon, for the status of the daemon (#1858). The status asks podman
+/// for the digest of each new container, up to 5 s each.
+pub const DAEMON_WAIT: Duration = Duration::from_secs(20);
+
+/// The longest time of one `podman` or `gh` of a look (#1858). A step
+/// that takes longer gives no fact: riff stops it.
+pub const STEP_WAIT: Duration = Duration::from_secs(10);
+
+/// The longest time of a whole look (#1858). A look that takes longer
+/// is a failed send.
+pub const LOOK_WAIT: Duration = Duration::from_secs(60);
 
 /// The time between two looks: [`daemons::EVERY`], or the milliseconds
 /// of [`EVERY_VAR`].
@@ -199,7 +228,7 @@ pub fn of_status(status: &Status) -> Facts {
 /// name it as a repository that the host left ([`left`],
 /// 01M6WJYQJ58MHQF1XPXXZW2ET6).
 pub async fn look(dir: &Path, wave: &Wave, api: &Api) -> anyhow::Result<Facts> {
-    let mut facts = of_status(&super::status(dir).await?);
+    let mut facts = of_status(&super::status_within(dir, DAEMON_WAIT).await?);
     let (dir, main) = (dir.to_owned(), wave.main.clone());
     let (server, repo) = (wave.server.clone(), wave.repo.clone());
     let mut waves = std::mem::take(&mut facts.waves);
@@ -276,7 +305,8 @@ pub fn left(facts: &mut Facts, repo: &str) {
 
 /// The version of podman on `PATH`, or `None` with no podman.
 fn podman() -> Option<String> {
-    let out = crate::run::output("podman", Path::new("/"), &["--version"]).ok()?;
+    let out =
+        crate::run::output_within("podman", Path::new("/"), &["--version"], STEP_WAIT).ok()?;
     Some(out.rsplit(' ').next().unwrap_or(&out).to_owned())
 }
 
@@ -293,7 +323,8 @@ fn image(main: &Path, has: impl Fn(&str) -> bool) -> Option<Image> {
 
 /// True when podman has the image `image` on this host.
 fn podman_has(image: &str) -> bool {
-    crate::run::output("podman", Path::new("/"), &["image", "exists", image]).is_ok()
+    let args = ["image", "exists", image];
+    crate::run::output_within("podman", Path::new("/"), &args, STEP_WAIT).is_ok()
 }
 
 /// Gives each wave of `waves` its merged pin: the pin of the main clone
@@ -373,7 +404,7 @@ pub fn pins(dir: &Path, waves: &mut [daemons::Wave], has: impl Fn(&str) -> bool 
 /// The sign-in of `gh` in the main clone `main`: it gives a token, or
 /// not.
 fn gh(main: &Path) -> Sign {
-    match crate::run::output("gh", main, &["auth", "token"]) {
+    match crate::run::output_within("gh", main, &["auth", "token"], STEP_WAIT) {
         Ok(token) if !token.is_empty() => Sign::On,
         _ => Sign::Off,
     }
@@ -512,6 +543,117 @@ impl News {
     pub fn take(&self, repo: &str) -> Vec<String> {
         let mut all = self.0.lock().unwrap_or_else(PoisonError::into_inner);
         all.remove(repo).unwrap_or_default()
+    }
+}
+
+/// The sends of the facts for one repository (#1858): the last one that
+/// went out, and the sends that failed after it.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Sent {
+    /// The repository, `OWNER/NAME`.
+    pub repo: String,
+    /// The last send that went out, in milliseconds since the epoch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ok_ms: Option<i64>,
+    /// The sends that failed after it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failed: Option<Failed>,
+}
+
+/// The sends of the facts that failed in a row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Failed {
+    /// The first failure, in milliseconds since the epoch.
+    pub since_ms: i64,
+    /// The cause of the last failure, in one line.
+    pub cause: String,
+    /// The failures.
+    pub count: u64,
+}
+
+/// The sends of the facts of each repository that the daemon serves
+/// (#1858, 01M749XKZ7N13R6EDJEREZZ0F4). The session of the daemon for a
+/// repository keeps the outcome of each send ([`Sends::record`]), and
+/// forgets it at its end. `riff daemon status` shows them
+/// ([`super::Status::sends`]).
+///
+/// A send that fails logs one warning line with its cause. The next
+/// failures log no line, and keep the newest cause. The first send that
+/// goes out again logs one line:
+///
+/// ```
+/// use riff::daemon::facts::Sends;
+///
+/// let sends = Sends::default();
+/// assert_eq!(sends.record("o/r", 1_000, Ok(())), None);
+/// let warning = sends.record("o/r", 31_000, Err("machine failed (500): down\nnow".into()));
+/// assert_eq!(
+///     warning.as_deref(),
+///     Some("warning: o/r: cannot send the facts of this host: machine failed (500): down now. \
+///           riff tries again at each look.")
+/// );
+/// assert_eq!(sends.record("o/r", 61_000, Err("cannot reach riff-server".into())), None);
+/// let shown = sends.shown();
+/// let failed = shown[0].failed.as_ref().unwrap();
+/// assert_eq!((shown[0].ok_ms, failed.since_ms, failed.count), (Some(1_000), 31_000, 2));
+/// assert_eq!(failed.cause, "cannot reach riff-server");
+///
+/// let again = sends.record("o/r", 91_000, Ok(()));
+/// assert_eq!(
+///     again.as_deref(),
+///     Some("o/r: the facts of this host go out again, after 2 failed sends in 1m.")
+/// );
+/// assert_eq!(sends.shown()[0].failed, None);
+/// sends.forget("o/r");
+/// assert!(sends.shown().is_empty());
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct Sends(Arc<Mutex<BTreeMap<String, Sent>>>);
+
+impl Sends {
+    /// Keeps the outcome `sent` of a send of the facts for `repo` at the
+    /// time `now_ms`, and gives the line for the log, when there is one.
+    pub fn record(&self, repo: &str, now_ms: i64, sent: Result<(), String>) -> Option<String> {
+        let mut all = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let entry = all.entry(repo.to_owned()).or_insert_with(|| Sent {
+            repo: repo.to_owned(),
+            ..Sent::default()
+        });
+        match sent {
+            Ok(()) => {
+                entry.ok_ms = Some(now_ms);
+                let failed = entry.failed.take()?;
+                let secs = u64::try_from((now_ms - failed.since_ms) / 1000).unwrap_or(0);
+                Some(text::daemon_facts_again(repo, failed.count, secs))
+            }
+            Err(cause) => {
+                let cause = cause.split_whitespace().collect::<Vec<_>>().join(" ");
+                if let Some(failed) = &mut entry.failed {
+                    failed.cause = cause;
+                    failed.count += 1;
+                    return None;
+                }
+                let line = text::daemon_facts_failed(repo, &cause);
+                entry.failed = Some(Failed {
+                    since_ms: now_ms,
+                    cause,
+                    count: 1,
+                });
+                Some(line)
+            }
+        }
+    }
+
+    /// Forgets the sends for `repo`: the daemon serves it no more.
+    pub fn forget(&self, repo: &str) {
+        let mut all = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        all.remove(repo);
+    }
+
+    /// The sends of each repository, by repository.
+    pub fn shown(&self) -> Vec<Sent> {
+        let all = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        all.values().cloned().collect()
     }
 }
 

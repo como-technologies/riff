@@ -1250,6 +1250,77 @@ pub(crate) fn output(program: &str, dir: &Path, args: &[&str]) -> Result<String>
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
 }
 
+/// How often [`output_within`] looks whether its program ended.
+const WITHIN_POLL: Duration = Duration::from_millis(20);
+
+/// [`output`] with the time limit `limit` (#1858). At the end of the
+/// limit, riff stops the program and each process that it started, and
+/// the error says so. A step of the host that hangs, for example a
+/// `podman` that waits for a lock, holds up no loop of the daemon.
+pub(crate) fn output_within(
+    program: &str,
+    dir: &Path,
+    args: &[&str],
+    limit: Duration,
+) -> Result<String> {
+    use std::os::unix::process::CommandExt;
+    let end = std::time::Instant::now() + limit;
+    let mut child = std::process::Command::new(program)
+        .args(args)
+        .current_dir(dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        // A group of its own: the stop at the end of the limit also stops
+        // each process that the program started.
+        .process_group(0)
+        .spawn()
+        .with_context(|| text::no_program(program))?;
+    // The pipes go on threads: a program that writes much blocks no step
+    // of the wait.
+    let read = |pipe: Option<Box<dyn std::io::Read + Send>>| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            if let Some(mut pipe) = pipe {
+                let _ = pipe.read_to_end(&mut bytes);
+            }
+            let _ = tx.send(bytes);
+        });
+        rx
+    };
+    let stdout = read(child.stdout.take().map(|p| Box::new(p) as _));
+    let stderr = read(child.stderr.take().map(|p| Box::new(p) as _));
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if std::time::Instant::now() >= end {
+            if let Ok(group) = i32::try_from(child.id()) {
+                let _ = nix::sys::signal::killpg(
+                    nix::unistd::Pid::from_raw(group),
+                    nix::sys::signal::Signal::SIGKILL,
+                );
+            }
+            let _ = child.wait();
+            bail!(text::no_answer(program, &args.join(" "), limit));
+        }
+        std::thread::sleep(WITHIN_POLL);
+    };
+    // A process that the program left behind can hold a pipe open: the
+    // read waits for it up to the end of the limit, and not longer.
+    let text = |pipe: std::sync::mpsc::Receiver<Vec<u8>>| {
+        let left = end.saturating_duration_since(std::time::Instant::now());
+        let bytes = pipe.recv_timeout(left.max(WITHIN_POLL)).unwrap_or_default();
+        String::from_utf8_lossy(&bytes).trim().to_owned()
+    };
+    let (out, err) = (text(stdout), text(stderr));
+    if !status.success() {
+        bail!("{program} {}: {err}", args.join(" "));
+    }
+    Ok(out)
+}
+
 /// The facts of the host that `riff run` checks before the claim.
 struct Checked {
     frame: Frame,
@@ -2266,6 +2337,53 @@ async fn work(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #1858, 01M749XKWD72JYB3QD8RYNHKTV: a step of the host with a time
+    /// limit gives its output, its error, or, at the end of the limit, an
+    /// error that names it. riff stops it, and each process that it
+    /// started.
+    #[test]
+    fn a_step_of_the_host_that_hangs_ends_at_its_limit() {
+        let dir = Path::new("/");
+        let limit = Duration::from_secs(5);
+        assert_eq!(
+            output_within("sh", dir, &["-c", "echo 5.2.1"], limit).unwrap(),
+            "5.2.1"
+        );
+        let failed = output_within("sh", dir, &["-c", "echo no >&2; exit 3"], limit);
+        assert_eq!(
+            failed.unwrap_err().to_string(),
+            "sh -c echo no >&2; exit 3: no"
+        );
+
+        let short = Duration::from_millis(300);
+        let root = tempfile::tempdir().unwrap();
+        let mark = root.path().join("child");
+        let script = format!("sleep 30 & echo $! > {}; wait", mark.display());
+        let start = std::time::Instant::now();
+        let hung = output_within("sh", dir, &["-c", &script], short).unwrap_err();
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            start.elapsed()
+        );
+        assert_eq!(
+            hung.to_string(),
+            text::no_answer("sh", &format!("-c {script}"), short)
+        );
+        // The stop ends the child of the program too: it is gone, or a
+        // zombie that nobody reaped yet.
+        let child = std::fs::read_to_string(&mark).unwrap().trim().to_owned();
+        let gone = (0..100).any(|_| {
+            std::thread::sleep(Duration::from_millis(20));
+            let state = output("ps", dir, &["-o", "stat=", "-p", &child]).unwrap_or_default();
+            state.is_empty() || state.starts_with('Z')
+        });
+        assert!(gone, "the child {child} still runs");
+
+        let none = output_within("no-such-program-riff", dir, &[], limit).unwrap_err();
+        assert_eq!(none.to_string(), text::no_program("no-such-program-riff"));
+    }
 
     /// #1747, 01M6WW5WSSRMTBP882FQP3TS2Q: the frame of the body in the
     /// start text of a build has `Refs #12` for an issue with a line

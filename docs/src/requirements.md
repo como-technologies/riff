@@ -5630,6 +5630,31 @@ of this part when they merge.
   writes the file. Supersedes 01M517BTDRKDXD3X84P6AEAF7P,
   01M517BTJ9EV4ZGPYRB6HXJJC9, 01M517BTP6BAGTRBYWPX9GPVE0 and
   01M579Z9SAN24QGN1VV5C7EHM9 in part.
+- **01M749XKWD72JYB3QD8RYNHKTV** Each step of a look of the daemon at
+  its host has a time limit: 20 seconds for the status of the daemon, 10
+  seconds for each `podman` and `gh`, 60 seconds for the whole look, and
+  the budget of each call to riff-server. At the end of its limit, riff
+  stops a `podman` or a `gh`, and each process that it started. A step
+  that hangs gives no fact, or a failed send: the next look starts at
+  the next tick.
+- **01M749XKZ7N13R6EDJEREZZ0F4** The first send of the facts of a host
+  that fails logs one warning line with its cause. The next sends that
+  fail log no line. The first send that goes out again logs one line
+  with the count of the failed sends and their time. While the sends
+  fail, `riff daemon status` shows their count, their time and the last
+  cause. When the last send that went out is more than 3 minutes old,
+  `riff daemon status` shows its age.
+- **01M749XM23FTKZ95QEZCMVQ2K5** On Linux, the daemon writes each line
+  of its stdout and its stderr to `daemon.log` in its folder too, after
+  the time of the line in UTC. When the file has 10 MB or more, the next
+  line moves it to `daemon.log.1` and starts a new file. On macOS,
+  launchd writes the log of the daemon to a file, and the daemon writes
+  no file of its own.
+- **01M74C23RM3VA63DX65BY64ET6** Only the daemon that holds its socket
+  writes `daemon.log`: a second `riff daemon` that refuses to start
+  writes its error to its own stderr only. At its stop, the daemon puts
+  its stdout and its stderr of before back, and waits up to 2 seconds
+  for its last lines to reach `daemon.log`.
 
 ### riff relay
 

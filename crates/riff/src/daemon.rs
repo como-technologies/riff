@@ -511,6 +511,7 @@ use riff_client::sessions::{Live, Phase};
 
 pub mod facts;
 pub mod gh_token;
+pub mod log;
 pub mod parts;
 pub mod release_test;
 pub mod remote;
@@ -1534,6 +1535,12 @@ pub struct Status {
     /// (01M6XZJFE2ZTR5RE3AWM30R704). An old daemon gives none.
     #[serde(default)]
     pub writes: Vec<WritesShown>,
+    /// The sends of the facts of this host for each repository that the
+    /// daemon serves: the last one that went out, and the failures after
+    /// it with the last cause ([`facts::Sends`], #1858). An old daemon
+    /// gives none.
+    #[serde(default)]
+    pub sends: Vec<facts::Sent>,
 }
 
 /// A repository whose sessions get no token of a GitHub App
@@ -2442,6 +2449,9 @@ pub struct Daemon<R> {
     /// The notes for the lead of each repository that a session of
     /// [`remote::serve`] sends ([`facts::News`]).
     news: facts::News,
+    /// The sends of the facts of each session of [`remote::serve`]
+    /// ([`facts::Sends`], #1858).
+    sends: facts::Sends,
     /// The reason of the last end of each item of a wave ([`crate::ends`]).
     ends: Mutex<BTreeMap<String, String>>,
     /// The pull of the session image that failed for the wave of each
@@ -2598,6 +2608,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             again: None,
             serving: Mutex::new(BTreeMap::new()),
             news: facts::News::default(),
+            sends: facts::Sends::default(),
             ends: Mutex::new(BTreeMap::new()),
             pulls: Mutex::new(BTreeMap::new()),
             gcloud: Arc::default(),
@@ -2797,8 +2808,15 @@ impl<R: Runtime + 'static> Daemon<R> {
                 tokio::spawn(remote::end_served(self.dir.clone(), old.clone()));
             }
         }
-        let news = self.news.clone();
-        let task = tokio::spawn(remote::serve(self.dir.clone(), served.clone(), news));
+        let (news, sends) = (self.news.clone(), self.sends.clone());
+        let every = facts::every();
+        let task = tokio::spawn(remote::serve(
+            self.dir.clone(),
+            served.clone(),
+            news,
+            sends,
+            every,
+        ));
         serving.insert(served.wave.repo.clone(), (served, task));
     }
 
@@ -3696,6 +3714,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                 .writes()
                 .map(gh_token::Writes::shown)
                 .unwrap_or_default(),
+            sends: self.sends.shown(),
         }
     }
 
@@ -6096,12 +6115,33 @@ pub async fn follow_events(
 /// is the runtime of this OS ([`crate::runtime::here`]): on macOS, it
 /// starts no session (01M6Z49R87D50VD4RS0BP641MM).
 pub async fn serve_here() -> Result<()> {
-    use tokio::signal::unix::{SignalKind, signal};
     // Its working folder can be the work tree of another repository
     // (01M58AW5SBG3ZP7149ZY66VTYW).
     crate::auto_update::no_place();
     let dir = dir()?;
     let listener = listen(&dir).await?;
+    // A log file of its own, with a size cap, where the journal can
+    // rotate (#1858). Only the daemon that holds the socket writes it.
+    let tee = if crate::platform::service_manager()
+        .is_ok_and(|m| crate::service::ServiceManager::keeps_log(&m))
+    {
+        log::tee(&dir)
+            .inspect_err(|e| eprintln!("riff daemon: {e:#}"))
+            .ok()
+    } else {
+        None
+    };
+    let served = serve_on(dir, listener).await;
+    if let Some(tee) = tee {
+        tee.end();
+    }
+    served
+}
+
+/// The body of [`serve_here`]: the daemon in the folder `dir`, on
+/// `listener`, until a SIGTERM or a SIGINT.
+async fn serve_on(dir: PathBuf, listener: UnixListener) -> Result<()> {
+    use tokio::signal::unix::{SignalKind, signal};
     let mut term = signal(SignalKind::terminate())?;
     let mut int = signal(SignalKind::interrupt())?;
     let daemon = Daemon::new(crate::runtime::here(), dir.clone())?.with_again(again_here());
@@ -11365,6 +11405,8 @@ mod tests {
                 here.dir.clone(),
                 served,
                 here.daemon.news.clone(),
+                here.daemon.sends.clone(),
+                facts::every(),
             ));
             both.push(here);
         }
@@ -11839,6 +11881,125 @@ mod tests {
             assert!(start.elapsed() < Duration::from_secs(30), "timed out");
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
+    }
+
+    /// #1858, 01M749XKWD72JYB3QD8RYNHKTV, 01M749XKZ7N13R6EDJEREZZ0F4:
+    /// riff-server refuses one send of the facts of a host. The daemon
+    /// keeps the cause for `riff daemon status`, and the next look sends
+    /// the facts again. The host then stays in the part `Hosts` of `who`
+    /// while its wave runs, and the daemon keeps no failure.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_send_of_the_facts_that_fails_one_time_goes_out_at_the_next_look() {
+        use axum::extract::Request;
+        use axum::middleware::{Next, from_fn};
+        use axum::response::IntoResponse;
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+
+        let sent = Arc::new(AtomicUsize::new(0));
+        let go = Arc::new(tokio::sync::Notify::new());
+        let router = {
+            let (sent, go) = (sent.clone(), go.clone());
+            riff_server::router().layer(from_fn(move |request: Request, next: Next| {
+                let (sent, go) = (sent.clone(), go.clone());
+                async move {
+                    if request.uri().path() == "/v1/machine" {
+                        match sent.fetch_add(1, SeqCst) {
+                            0 => {
+                                let build = Build::this().to_string();
+                                let refused = axum::http::StatusCode::INTERNAL_SERVER_ERROR;
+                                let header = [(riff_core::build::HEADER, build)];
+                                return (refused, header, "the test refuses the facts")
+                                    .into_response();
+                            }
+                            // The second send waits until the test saw the
+                            // failure.
+                            1 => go.notified().await,
+                            _ => {}
+                        }
+                    }
+                    next.run(request).await
+                }
+            }))
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let server = format!("http://{addr}");
+        let api = riff_client::api::Api::new(&server);
+        let place = crate::identity::place_from_text(&format!("a/{REPO}")).unwrap();
+        let user = crate::identity::person(&place, &server).unwrap();
+        let lead = SessionUri::new(
+            riff_core::name::Who::new(user.who().user(), Some("l1")).unwrap(),
+            place,
+        );
+        api.register(&lead).await.unwrap();
+
+        // The wave of o/r runs on the host `a`: it waits for room.
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        a_wave_that_waits(&here.daemon, &here.dir).await;
+        let wave = Wave {
+            repo: REPO.into(),
+            main: here.root.path().to_owned(),
+            server,
+            host: "a".into(),
+        };
+        let served = remote::serve_in_file(&here.dir, &wave).unwrap();
+        let every = Duration::from_millis(200);
+        let serving = tokio::spawn(remote::serve(
+            here.dir.clone(),
+            served,
+            here.daemon.news.clone(),
+            here.daemon.sends.clone(),
+            every,
+        ));
+
+        // The first send failed: `riff daemon status` says why.
+        until_async(|| async {
+            let status = here.daemon.status().await;
+            status.sends.iter().any(|s| s.failed.is_some())
+        })
+        .await;
+        let status = here.daemon.status().await;
+        assert_eq!(status.sends.len(), 1, "{:?}", status.sends);
+        assert_eq!(status.sends[0].repo, REPO);
+        let failed = status.sends[0].failed.clone().unwrap();
+        assert_eq!(failed.count, 1);
+        assert!(
+            failed.cause.contains("the test refuses the facts"),
+            "{failed:?}"
+        );
+        let shown = text::daemon_status(&status, now_ms());
+        let line = format!("Facts: 1 send of the facts of this host for {REPO} failed in");
+        assert!(shown.contains(&line), "{shown}");
+
+        // The next look sends them: the host is in `Hosts`, with its wave.
+        go.notify_one();
+        let listed = || async {
+            let who = api.who(&lead, false).await.unwrap();
+            let hosts = riff_client::daemons::hosts(&who);
+            hosts.into_iter().find(|h| h.host == "a")
+        };
+        until_async(|| async { listed().await.is_some() }).await;
+        let status = here.daemon.status().await;
+        assert_eq!(status.sends[0].failed, None, "{:?}", status.sends);
+        assert!(status.sends[0].ok_ms.is_some());
+        assert!(!text::daemon_status(&status, now_ms()).contains("Facts:"));
+
+        // The host stays listed while the wave runs, look after look.
+        let before = sent.load(SeqCst);
+        for _ in 0..10 {
+            let host = listed().await.expect("the host stays in Hosts");
+            assert!(host.age_secs <= 1, "{}", host.age_secs);
+            assert!(host.facts.waves.iter().any(|w| w.repo == "o/r"), "{host:?}");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(sent.load(SeqCst) > before, "the looks go on");
+        assert_eq!(here.daemon.status().await.sends[0].failed, None);
+
+        // The end of the session forgets its sends.
+        serving.abort();
+        let _ = serving.await;
+        assert!(here.daemon.status().await.sends.is_empty());
     }
 
     /// 01M57D4FX5VHQR150QTDS6BA1C, 01M57D4G1TS8BHJF5A8PW2D79C: the lead

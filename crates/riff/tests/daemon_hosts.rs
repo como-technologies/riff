@@ -238,7 +238,17 @@ async fn riff_with(a_minutes: i64, b_minutes: i64) -> Riff {
 
 /// As [`riff_with`], with more variables for each host.
 async fn riff_env(a_minutes: i64, b_minutes: i64, extra: &[(String, String)]) -> Riff {
-    let server = start_server().await;
+    riff_on(start_server().await, (a_minutes, b_minutes), extra).await
+}
+
+/// As [`riff_env`], on `server`, with a sign-in of claude on `a` and on
+/// `b` that ends in the `minutes`.
+async fn riff_on(
+    server: crate::common::Signed,
+    minutes: (i64, i64),
+    extra: &[(String, String)],
+) -> Riff {
+    let (a_minutes, b_minutes) = minutes;
     let root = tempfile::tempdir().unwrap();
     let main = repository(root.path());
     let lead = session(&main, "mike", "a", "l1");
@@ -674,6 +684,106 @@ async fn riff_who_and_riff_top_show_the_facts_of_each_host() {
     assert!(top.contains("load 0.5/32 threads"), "{top}");
     assert!(top.contains("sessions 0/5"), "{top}");
     assert!(!top.contains("load 0.5/16 threads"), "{top}");
+}
+
+/// #1858, 01M749XKZ7N13R6EDJEREZZ0F4, 01M749XM23FTKZ95QEZCMVQ2K5: while
+/// riff-server refuses the facts of the hosts, the daemon of each host
+/// logs one warning line with the cause, also in its own log file, and
+/// `riff daemon status` says why. When riff-server takes them again, the
+/// daemon logs one line, and `riff who` lists the host.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_send_of_the_facts_is_one_warning_line_with_its_cause() {
+    use axum::extract::Request;
+    use axum::middleware::{Next, from_fn};
+    use axum::response::IntoResponse;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
+
+    let (refuse, refused) = (
+        Arc::new(AtomicBool::new(true)),
+        Arc::new(AtomicUsize::new(0)),
+    );
+    let server = {
+        let (refuse, refused) = (refuse.clone(), refused.clone());
+        crate::common::start_signed_with(move |router| {
+            router.layer(from_fn(move |request: Request, next: Next| {
+                let (refuse, refused) = (refuse.clone(), refused.clone());
+                async move {
+                    if request.uri().path() == "/v1/machine" && refuse.load(SeqCst) {
+                        refused.fetch_add(1, SeqCst);
+                        let build = riff_core::build::Build::this().to_string();
+                        let status = axum::http::StatusCode::INTERNAL_SERVER_ERROR;
+                        let header = [(riff_core::build::HEADER, build)];
+                        return (status, header, "the test refuses the facts").into_response();
+                    }
+                    next.run(request).await
+                }
+            }))
+        })
+        .await
+    };
+    let r = riff_on(server, (300, 300), &[]).await;
+    let warnings = |host: &Host| -> Vec<String> {
+        let out = host.output();
+        let lines = out.lines().filter(|l| l.contains("cannot send the facts"));
+        lines.map(str::to_owned).collect()
+    };
+    until("a warning of each host", || async {
+        let warned = !warnings(&r.a).is_empty() && !warnings(&r.b).is_empty();
+        (warned && refused.load(SeqCst) >= 10).then_some(())
+    })
+    .await;
+    // Many looks later: still one warning line.
+    tokio::time::sleep(Duration::from_millis(LOOK_MS * 5)).await;
+    let repo = r.lead.place().repo_text();
+    for host in [&r.a, &r.b] {
+        let lines = warnings(host);
+        assert_eq!(lines.len(), 1, "{}", host.output());
+        let want = riff::text::daemon_facts_failed(
+            &repo,
+            "machine failed (500 Internal Server Error): the test refuses the facts",
+        );
+        assert_eq!(lines[0], format!("riff daemon: {want}"));
+        // The log file of the daemon has the line, after its time.
+        if cfg!(target_os = "linux") {
+            let path = host.dir().join(riff::daemon::log::FILE);
+            let own = std::fs::read_to_string(&path).unwrap();
+            let line = own.lines().find(|l| l.contains("cannot send the facts"));
+            let line = line.unwrap_or_else(|| panic!("{own}"));
+            let (time, rest) = line.split_once(' ').unwrap();
+            assert!(chrono::DateTime::parse_from_rfc3339(time).is_ok(), "{line}");
+            assert_eq!(rest, lines[0]);
+        }
+    }
+    let out = r.b.run(&r.main, &["daemon", "status"], None).await;
+    let status = text(&out.stdout);
+    assert!(out.status.success(), "{out:?}");
+    assert!(
+        status.contains(&format!("of the facts of this host for {repo} failed in")),
+        "{status}"
+    );
+    assert!(
+        status.contains("The last cause: machine failed"),
+        "{status}"
+    );
+
+    refuse.store(false, SeqCst);
+    until("b in the part Hosts of riff who", || async {
+        let out = r.a.run(&r.main, &["who"], Some("l1")).await;
+        let who = text(&out.stdout);
+        let hosts = who.split_once("\nHosts:\n")?.1.to_owned();
+        hosts.contains("mike@b (").then_some(())
+    })
+    .await;
+    until("the line of the facts that go out again", || async {
+        let again = "the facts of this host go out again, after";
+        r.b.output().contains(again).then_some(())
+    })
+    .await;
+    assert_eq!(warnings(&r.b).len(), 1, "{}", r.b.output());
+    let out = r.b.run(&r.main, &["daemon", "status"], None).await;
+    let status = text(&out.stdout);
+    assert!(!status.contains("Facts:"), "{status}");
 }
 
 /// 01M57D3FC5PB5EQ6Y38Y5R2DBB: the lead gets one note when the sign-in
