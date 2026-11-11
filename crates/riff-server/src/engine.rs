@@ -176,13 +176,13 @@ use axum::Json;
 use axum::extract::{FromRef, FromRequest, Request, State as AxumState};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use riff_core::name::{SessionUri, Who};
+use riff_core::name::{SessionUri, ThreadName, Who};
 use riff_core::record::{Change, Record};
 use riff_core::wire::{
-    AliveReply, CALL_HEADER, Call, Claim, DenyOwner, End, Free, Hold, Invite, Join, Keys, Lead,
-    Leave, PassOwner, Pause, PlanChanged, PlanOff, Post, REFUSED_HEADER, REPEAT_HEADER, Register,
-    Release, ReleaseFor, Remove, Resume, Revoke, SetAdmin, SetIdle, SetNotes, SetPlan, Start,
-    Tailed, TakeOwner, Wake,
+    AliveReply, CALL_HEADER, Call, Claim, DenyOwner, End, Free, GitHubChange, Hold, Invite, Join,
+    Keys, Lead, Leave, PassOwner, Pause, PlanChanged, PlanOff, Post, REFUSED_HEADER, REPEAT_HEADER,
+    Register, Release, ReleaseFor, Remove, Resume, Revoke, SetAdmin, SetIdle, SetNotes, SetPlan,
+    Start, Tailed, TakeOwner, Wake,
 };
 use riff_state::log::Written;
 use riff_state::state::{
@@ -1174,6 +1174,19 @@ impl Engine {
         self.0.plans.subscribe()
     }
 
+    /// Sends one event of the plan of `thread` for the event `change` of
+    /// GitHub (#1655), with the position of the written log. It makes no
+    /// record.
+    pub fn plan_changed_on_github(&self, thread: ThreadName, change: GitHubChange) {
+        let position = self.read(State::written_position);
+        // A send fails only when nobody listens. That is not an error.
+        let _ = self.0.plans.send(PlanChanged {
+            thread,
+            position,
+            github: Some(change),
+        });
+    }
+
     /// Wakes the writer when an entry waits in the queue. The writer
     /// waits on it when [`Engine::take`] gives nothing.
     pub fn queued(&self) -> Arc<Notify> {
@@ -1310,7 +1323,11 @@ impl Engine {
         }
         for (thread, position) in plans {
             // A send fails only when nobody listens. That is not an error.
-            let _ = self.0.plans.send(PlanChanged { thread, position });
+            let _ = self.0.plans.send(PlanChanged {
+                thread,
+                position,
+                github: None,
+            });
         }
         let mut ended = 0;
         for record in made {

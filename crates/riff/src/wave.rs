@@ -70,7 +70,9 @@
 //! - **A change of the plan wakes each wave.** riff-server sends one
 //!   event on `GET /v1/plan/watch` of the repository thread for each
 //!   command that holds an item, frees an item, releases a claim, sets the
-//!   plan or ends it ([`riff_core::record::Record::plan_thread`]). The loop
+//!   plan or ends it ([`riff_core::record::Record::plan_thread`]), and for
+//!   a new item of a wave and a merge on GitHub
+//!   (`riff_server::hooks`, 01M74A37JNKW1R2WRXAW520WJM). The loop
 //!   of each wave follows the stream ([`World::plan_changes`],
 //!   [`follow_plan`]) and looks at once, also an idle wave. So the hosts
 //!   see a free item at the same time.
@@ -1575,8 +1577,9 @@ pub trait World: Send + Sync {
     }
 
     /// Tells `changed` at each change of the free work of the repository of
-    /// `wave` on riff-server (#1729): a hold, a free, a release, a plan. It
-    /// never ends. The default tells nothing.
+    /// `wave` on riff-server (#1729): a hold, a free, a release, a plan, a
+    /// new item of a wave or a merge on GitHub (#1655). It never ends. The
+    /// default tells nothing.
     fn plan_changes<'a>(&'a self, _wave: &'a Wave, _changed: &'a Notify) -> BoxFuture<'a, ()> {
         Box::pin(std::future::pending())
     }
@@ -5138,6 +5141,166 @@ mod tests {
             .expect("the free woke the wave");
         assert!(here.forge().branch_reads > looks);
         assert_eq!(here.forge().starts[0].0, "issue-1");
+    }
+
+    /// A real riff-server in a test whose session App has the webhook
+    /// secret `secret`, with a window of the debounce of 100 ms, and its
+    /// URL.
+    async fn riff_with_a_webhook(
+        secret: &str,
+    ) -> (riff_server::Service, String, tempfile::TempDir) {
+        use riff_server::keys::{AppKeys, Apps, At, FILE};
+        let keys = tempfile::tempdir().unwrap();
+        let apps = Apps {
+            session: Some(AppKeys::new(101, "riff-o", "o", "PEM", Some(secret))),
+            lead: None,
+        };
+        std::fs::write(keys.path().join(FILE), serde_json::to_vec(&apps).unwrap()).unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let server = format!("http://{}", listener.local_addr().unwrap());
+        let config = riff_server::auth::Config {
+            github: riff_server::github::Settings {
+                keys: At::Dir(keys.path().to_owned()),
+                debounce: Duration::from_millis(100),
+                ..riff_server::github::Settings::default()
+            },
+            ..riff_server::auth::Config::new(&server)
+        };
+        let service = riff_server::Service::new(config);
+        let router = service.router();
+        tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        (service, server, keys)
+    }
+
+    /// Sends the event `kind` of GitHub with the body `body` to the
+    /// webhook of `server`, signed with `secret`, as the delivery `id`.
+    async fn deliver(server: &str, secret: &str, kind: &str, id: &str, body: &serde_json::Value) {
+        let body = serde_json::to_vec(body).unwrap();
+        let reply = reqwest::Client::new()
+            .post(format!("{server}/hooks/github"))
+            .header("x-github-event", kind)
+            .header("x-github-delivery", id)
+            .header(
+                "x-hub-signature-256",
+                riff_server::hooks::signature(secret, &body),
+            )
+            .body(body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(reply.status(), 202);
+    }
+
+    /// 01M74A37JNKW1R2WRXAW520WJM: an issue that comes into the wave on
+    /// GitHub wakes an idle wave at once. The wave has no work, so it
+    /// waits [`IDLE_LOOK_EVERY`]. The issue comes into the wave on the
+    /// forge, and GitHub sends the event `issues`, `milestoned` to a real
+    /// riff-server. The wave follows the changes of the plan there, looks
+    /// at once, and starts the item, long before its next look at
+    /// [`LOOK_EVERY`].
+    #[tokio::test]
+    async fn a_new_item_of_the_wave_on_github_wakes_an_idle_wave_at_once() {
+        let secret = "whsec-of-the-test";
+        let (_service, server, _keys) = riff_with_a_webhook(secret).await;
+        let api = Api::new(&server);
+        let place = crate::identity::place_from_text("thelio/o/r").unwrap();
+        let who = riff_core::name::Who::new("mike", Some("lead1")).unwrap();
+        let lead = SessionUri::new(who, place);
+        api.start(&lead, StartReason::Process, false).await.unwrap();
+        let thread: ThreadName = "o/r".parse().unwrap();
+
+        let here = Here::new(&[], 2, Arc::new(AtomicU64::new(64))).await;
+        *lock(&here.world.plan) = Some((api.clone(), lead.clone(), thread.clone()));
+        here.run();
+        here.until(2, |h| h.forge().branch_reads >= 2).await;
+        // The merge of a pull request on GitHub wakes the wave too: so the
+        // wave follows the changes of the plan now.
+        let looks = here.forge().branch_reads;
+        let mut probe = 0;
+        let woken = async {
+            while here.forge().branch_reads == looks {
+                probe += 1;
+                let merged = serde_json::json!({
+                    "action": "closed",
+                    "repository": { "full_name": "o/r" },
+                    "pull_request": { "number": 90 + probe, "merged": true },
+                });
+                deliver(
+                    &server,
+                    secret,
+                    "pull_request",
+                    &format!("probe-{probe}"),
+                    &merged,
+                )
+                .await;
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+        };
+        isolated::in_time(LOOK_EVERY / 3, woken)
+            .await
+            .expect("the merge woke the wave");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let looks = here.forge().branch_reads;
+        assert!(here.forge().starts.is_empty());
+
+        // Only the event of the new item can wake the wave now.
+        here.forge().items.push(2);
+        let milestoned = serde_json::json!({
+            "action": "milestoned",
+            "repository": { "full_name": "o/r" },
+            "issue": { "number": 2 },
+            "milestone": { "title": "Wave 1", "state": "open" },
+        });
+        deliver(&server, secret, "issues", "new-item", &milestoned).await;
+        let started = async {
+            while here.forge().starts.is_empty() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        };
+        isolated::in_time(LOOK_EVERY / 3, started)
+            .await
+            .expect("the new item woke the wave");
+        assert!(here.forge().branch_reads > looks);
+        assert_eq!(here.forge().starts[0].0, "issue-2");
+    }
+
+    /// 01M74A37FPGKYMHP0W588A88RJ: [`Api::github_watch`] gives each wake of
+    /// the GitHub App of the repository: with an ID, first the wakes of the
+    /// queue after it.
+    #[tokio::test]
+    async fn the_api_follows_the_wakes_of_the_github_app() {
+        use futures::StreamExt;
+        let secret = "whsec-of-the-test";
+        let (_service, server, _keys) = riff_with_a_webhook(secret).await;
+        let api = Api::new(&server);
+        let me: SessionUri = "riff://mike@thelio/o/r".parse().unwrap();
+        let thread: ThreadName = "o/r".parse().unwrap();
+        let live = api.github_watch(&me, &thread, None).await.unwrap();
+        tokio::pin!(live);
+        let check = serde_json::json!({
+            "repository": { "full_name": "o/r" },
+            "check_run": { "pull_requests": [{ "number": 12 }] },
+        });
+        deliver(&server, secret, "check_run", "d-1", &check).await;
+        deliver(&server, secret, "check_run", "d-2", &check).await;
+        let wake = isolated::in_time(LOOK_EVERY, live.next())
+            .await
+            .expect("a wake")
+            .unwrap()
+            .unwrap();
+        assert_eq!(wake.kinds, [riff_core::wire::GitHubEvent::CheckRun]);
+        assert_eq!((wake.number, wake.events), (Some(12), 2));
+
+        let queued = api.github_watch(&me, &thread, Some(0)).await.unwrap();
+        tokio::pin!(queued);
+        let again = isolated::in_time(LOOK_EVERY, queued.next())
+            .await
+            .expect("the wake of the queue")
+            .unwrap()
+            .unwrap();
+        assert_eq!(again, wake);
     }
 
     /// 01M53S7WDPQ2GWHJWJ6SZXZ5PN: after the end of a session, the daemon

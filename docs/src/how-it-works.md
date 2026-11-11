@@ -134,9 +134,11 @@ takes a free item first:
 
 - A change of the plan wakes the wave of each host. When a lead holds or
   frees an item, or a session releases its claim, riff-server tells the
-  riff daemon of each host. Each wave looks at once, also a wave that
-  waits 5 minutes with no work. So each host sees the free item at the
-  same time.
+  riff daemon of each host. So do a new item in a wave and a merge on
+  GitHub: see
+  [How riff learns of a change on GitHub](#how-riff-learns-of-a-change-on-github).
+  Each wave looks at once, also a wave that waits 5 minutes with no
+  work. So each host sees the free item at the same time.
 - Before the claim, the daemon of a host waits a short time that grows
   with its load: 10 s × its live sessions / its limit. An empty host
   waits 0 s. A host with 3 sessions of its limit of 4 waits 7.5 s.
@@ -167,6 +169,62 @@ room, raise its limit, for example on `thelio`:
 ```sh
 riff daemon limit --sessions 8 --host thelio
 ```
+
+### How riff learns of a change on GitHub
+
+GitHub tells riff-server of each change on a repository of the riff. The
+session App of the riff has a webhook: `riff github create` sets it to
+`URL/hooks/github` of riff-server, with the events `issues`,
+`issue_comment`, `pull_request`, `check_run`, `status`, `workflow_run`
+and `merge_group`. See
+[Make the GitHub Apps of riff](start-a-team-riff.md#make-the-github-apps-of-riff).
+
+- riff-server checks the signature of each delivery with the webhook
+  secret of the App. A delivery with no signature or a bad one gets
+  status 401. A delivery that comes a second time wakes nobody.
+- An issue that comes into an open wave, and a merge of a pull request,
+  wake the wave of each host at once, as a change of the plan does. The
+  wave then looks, and finds the new free item.
+- riff-server takes the events of one issue or one pull request in 5
+  seconds into one wake: a pull request with CI sends dozens of
+  `check_run` events. The wake names the repository, the kinds of the
+  events and the number. It goes to the riff daemon of each host of the
+  repository, on a stream that the daemon opens. So a host behind a
+  firewall needs no inbound port.
+- riff-server keeps the wakes of each repository for one hour. A daemon
+  that was away gets the wakes that it missed when it comes back. A new
+  riff-server, for example after a deploy, starts with no wake.
+
+```mermaid
+sequenceDiagram
+    participant G as GitHub
+    participant S as riff-server
+    participant D as the riff daemon of each host
+    D->>S: open the streams of the repository
+    G->>S: POST /hooks/github: issue-12 comes into Wave 54
+    S->>S: check the signature, drop a repeated delivery
+    S->>D: a change of the plan, at once
+    D->>D: the wave looks, and finds issue-12
+    G->>S: 20 check_run events of pull request #41
+    S->>S: wait 5 s: one wake
+    S->>D: a wake: check_run, #41
+```
+
+#### See the last events
+
+In a clone of the repository:
+
+```sh
+riff github events
+```
+
+riff prints the last wakes of the repository, the oldest first: the
+time, the issue or the pull request, the kinds of the events and their
+count. The last line counts the deliveries since riff-server started:
+the ones that it took, the repeats that it dropped, and the ones that
+it refused with status 401. riff-server logs a warning for a refused
+delivery. Run the command in a plain terminal: it refuses in an agent
+session and in a container.
 
 ### What sessions share
 

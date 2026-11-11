@@ -5723,6 +5723,98 @@ pub fn github_checked(repo: &str, checked: &riff_core::wire::GitHubChecked) -> S
 pub const GITHUB_CHECK_NO_REPO: &str =
     "riff github check runs in a clone of a repository on GitHub: this folder has no origin";
 
+/// The refusal of `riff github events` outside a clone.
+pub const GITHUB_EVENTS_NO_REPO: &str =
+    "riff github events runs in a clone of a repository on GitHub: this folder has no origin";
+
+/// The lines of `riff github events` for the repository `repo` (#1655):
+/// the last wakes of the GitHub App, the oldest first, then the counts
+/// of the deliveries since the start of riff-server.
+///
+/// ```
+/// use riff_core::wire::{GitHubEvent, GitHubEventsReply, GitHubWake};
+///
+/// let wake = |id, kinds: Vec<GitHubEvent>, number, events| GitHubWake {
+///     id, repo: "acme/app".parse().unwrap(), kinds, number, events,
+/// };
+/// let reply = GitHubEventsReply {
+///     wakes: vec![
+///         wake(1_793_718_035_000, vec![GitHubEvent::PullRequest], Some(41), 1),
+///         wake(1_793_718_040_000, vec![GitHubEvent::CheckRun, GitHubEvent::WorkflowRun], Some(12), 20),
+///         wake(1_793_718_041_000, vec![GitHubEvent::Status], None, 2),
+///     ],
+///     taken: 23,
+///     repeated: 1,
+///     refused: 2,
+///     since_ms: 1_793_717_000_000,
+/// };
+/// assert_eq!(
+///     riff::text::github_events("acme/app", &reply),
+///     "riff github events acme/app: the last 3 wakes of the GitHub App, the oldest first:\n  \
+///      15:00:35 UTC  #41  pull_request             1 event\n  \
+///      15:00:40 UTC  #12  check_run, workflow_run  20 events\n  \
+///      15:00:41 UTC  -    status                   2 events\n\
+///      riff-server took 23 deliveries of GitHub since 14:43:20 UTC, dropped 1 repeated \
+///      delivery, and refused 2 with no good signature.\n"
+/// );
+/// let none = GitHubEventsReply { since_ms: 1_793_717_000_000, ..GitHubEventsReply::default() };
+/// assert_eq!(
+///     riff::text::github_events("acme/app", &none),
+///     "riff github events acme/app: riff-server has no wake of the GitHub App for this \
+///      repository in the last hour.\n\
+///      riff-server took 0 deliveries of GitHub since 14:43:20 UTC, dropped 0 repeated \
+///      deliveries, and refused 0 with no good signature.\n"
+/// );
+/// ```
+pub fn github_events(repo: &str, reply: &riff_core::wire::GitHubEventsReply) -> String {
+    let rows: Vec<(String, String, String, String)> = reply
+        .wakes
+        .iter()
+        .map(|wake| {
+            let at = clock_utc(i64::try_from(wake.id).unwrap_or(i64::MAX));
+            let number = wake
+                .number
+                .map_or_else(|| "-".to_owned(), |n| format!("#{n}"));
+            let kinds: Vec<&str> = wake.kinds.iter().map(|kind| kind.name()).collect();
+            let events = match wake.events {
+                1 => "1 event".to_owned(),
+                n => format!("{n} events"),
+            };
+            (at, number, kinds.join(", "), events)
+        })
+        .collect();
+    let mut text = match rows.len() {
+        0 => format!(
+            "riff github events {repo}: riff-server has no wake of the GitHub App for this \
+             repository in the last hour.\n"
+        ),
+        1 => format!("riff github events {repo}: the last wake of the GitHub App:\n"),
+        n => format!(
+            "riff github events {repo}: the last {n} wakes of the GitHub App, the oldest first:\n"
+        ),
+    };
+    let number_width = rows.iter().map(|r| r.1.len()).max().unwrap_or(0);
+    let kinds_width = rows.iter().map(|r| r.2.len()).max().unwrap_or(0);
+    for (at, number, kinds, events) in &rows {
+        text.push_str(&format!(
+            "  {at}  {number:<number_width$}  {kinds:<kinds_width$}  {events}\n"
+        ));
+    }
+    let plural = |n: u64, one: &str, more: &str| match n {
+        1 => format!("1 {one}"),
+        n => format!("{n} {more}"),
+    };
+    text.push_str(&format!(
+        "riff-server took {} of GitHub since {}, dropped {}, and refused {} with no good \
+         signature.\n",
+        plural(reply.taken, "delivery", "deliveries"),
+        clock_utc(i64::try_from(reply.since_ms).unwrap_or(i64::MAX)),
+        plural(reply.repeated, "repeated delivery", "repeated deliveries"),
+        reply.refused,
+    ));
+    text
+}
+
 /// The refusal of `riff cloud deploy` with no `RIFF_OWNER`.
 pub const CLOUD_NO_OWNER: &str = "RIFF_OWNER is not set: the cloud riff needs an owner. Run: \
 export RIFF_OWNER=YOUR_EMAIL";

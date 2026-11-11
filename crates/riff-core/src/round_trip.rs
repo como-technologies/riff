@@ -789,6 +789,22 @@ mod tests {
         c.trip(&PlanChanged {
             thread: thread(),
             position: 7,
+            github: Some(GitHubChange::NewItem {
+                number: 12,
+                wave: text("Wave 54: events"),
+            }),
+        });
+        c.trip(&PlanChanged {
+            thread: thread(),
+            position: 8,
+            github: Some(GitHubChange::Merged { number: 41 }),
+        });
+        c.trip(&GitHubWake {
+            id: 1_762_850_000_123,
+            repo: thread(),
+            kinds: GitHubEvent::ALL.to_vec(),
+            number: Some(12),
+            events: 20,
         });
         c.trip(&TokenRequest {
             grant_type: text("refresh_token"),
@@ -913,6 +929,22 @@ mod tests {
         });
         c.trip(&GitHubDaemonToken {
             repo: text("acme/app"),
+        });
+        c.trip(&GitHubEvents {
+            repo: text("acme/app"),
+        });
+        c.trip(&GitHubEventsReply {
+            wakes: vec![GitHubWake {
+                id: 1_762_850_000_124,
+                repo: thread(),
+                kinds: vec![GitHubEvent::Status],
+                number: Some(7),
+                events: 1,
+            }],
+            taken: 21,
+            repeated: 1,
+            refused: 2,
+            since_ms: 1_762_840_000_000,
         });
         c.trip(&SessionToken {
             role: GitHubRole::Worker,

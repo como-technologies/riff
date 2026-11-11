@@ -97,9 +97,10 @@ fn only_the_forge_parts_name_milestones() {
     }
     // The requirements, the page "Waves", the page
     // "Development" (check a pull request), the page "Start a Riff"
-    // (the rules of gh) and the design of the plan each have a forge
+    // (the rules of gh), the page "How It Works" (how riff learns of a
+    // change on GitHub) and the design of the plan each have a forge
     // part.
-    assert_eq!(forge, 5);
+    assert_eq!(forge, 6);
 }
 
 #[test]

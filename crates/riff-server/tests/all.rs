@@ -18,6 +18,7 @@ mod format;
 mod gcs;
 mod github;
 mod help;
+mod hooks;
 mod import;
 mod instance_change;
 mod lead_after_call;

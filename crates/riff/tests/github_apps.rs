@@ -1,4 +1,4 @@
-//! `riff github create`, `install` and `check` against a real
+//! `riff github create`, `install`, `check` and `events` against a real
 //! riff-server with a fake GitHub (01M6WG52J7WTP079W1AYEQ4W08,
 //! 01M6WG5322WRWQA79RCSCY4MSS, 01M6WG534PPE2JW8JQFRJDEK86,
 //! 01M6WG537B67VWVENY3821RV33).
@@ -7,7 +7,7 @@ use crate::common;
 #[path = "../../riff-server/tests/fake_github.rs"]
 pub(crate) mod fake_github;
 
-use fake_github::{FakeGitHub, LEAD_CODE, OWNER, REPO, SESSION_CODE, both_apps};
+use fake_github::{FakeGitHub, LEAD_CODE, OWNER, REPO, SESSION_CODE, WEBHOOK_SECRET, both_apps};
 
 use std::process::Command;
 use std::time::Duration;
@@ -184,6 +184,95 @@ async fn riff_github_check_names_each_right_that_the_lead_misses_with_the_fix() 
     assert_eq!(seen.revoked, seen.tokens);
 }
 
+/// 01M74A37NMGDEHAD01SJ0DQT9B: `riff github events` in a clone prints the
+/// last wakes of the GitHub App for the repository, and the counts of the
+/// deliveries.
+#[tokio::test]
+async fn riff_github_events_prints_the_last_wakes_and_the_counts() {
+    let fake = FakeGitHub::start().await;
+    let keys = keys_dir();
+    let (listener, url) = common::listen().await;
+    let github = Settings {
+        api: fake.url.clone(),
+        web: fake.url.clone(),
+        keys: At::Dir(keys.path().to_owned()),
+        debounce: Duration::from_millis(100),
+        ..Settings::default()
+    };
+    let server = common::start_signed_config(
+        listener,
+        &url,
+        None,
+        |router| router,
+        |config| {
+            config.github = github;
+        },
+    )
+    .await;
+    let env = Isolated::new();
+    common::sign_in(&server, &env.riff_home(), "bob");
+    let repo = clone();
+    let check = serde_json::json!({
+        "action": "completed",
+        "repository": { "full_name": REPO },
+        "check_run": { "pull_requests": [{ "number": 12 }] },
+    });
+    let body = serde_json::to_vec(&check).unwrap();
+    for (id, signed) in [("d-1", true), ("d-2", true), ("d-1", true), ("d-3", false)] {
+        let mut delivery = reqwest::Client::new()
+            .post(format!("{}/hooks/github", &*server))
+            .header("x-github-event", "check_run")
+            .header("x-github-delivery", id);
+        if signed {
+            let signature = riff_server::hooks::signature(WEBHOOK_SECRET, &body);
+            delivery = delivery.header("x-hub-signature-256", signature);
+        }
+        let reply = delivery.body(body.clone()).send().await.unwrap();
+        assert_eq!(reply.status().as_u16(), if signed { 202 } else { 401 });
+    }
+    // The delivery with no signature got 401, as it must.
+    assert_eq!(server.take_unsigned(), ["/hooks/github"]);
+    let events = || {
+        env.tokio_riff()
+            .args(["github", "events"])
+            .current_dir(repo.path())
+            .env("RIFF_SERVER", &*server)
+            // A plain terminal: the test can run under Claude Code.
+            .env_remove("CLAUDECODE")
+            .output()
+    };
+    let start = std::time::Instant::now();
+    let stdout = loop {
+        let out = events().await.unwrap();
+        let stdout = String::from_utf8(out.stdout).unwrap();
+        assert!(
+            out.status.success(),
+            "{stdout}{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        if stdout.contains("#12") || start.elapsed() > Duration::from_secs(20) {
+            break stdout;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 3, "{stdout}");
+    assert_eq!(
+        lines[0],
+        "riff github events acme/app: the last wake of the GitHub App:"
+    );
+    assert!(
+        lines[1].ends_with(" UTC  #12  check_run  2 events"),
+        "{stdout}"
+    );
+    assert!(
+        lines[2].starts_with("riff-server took 2 deliveries of GitHub since ")
+            && lines[2]
+                .ends_with("dropped 1 repeated delivery, and refused 1 with no good signature."),
+        "{stdout}"
+    );
+}
+
 /// 01M6WG534PPE2JW8JQFRJDEK86: a role that fails its check fails the
 /// command with status 1, and names the fix.
 #[tokio::test]
@@ -253,8 +342,8 @@ async fn riff_github_check_names_the_fix_for_a_repository_that_no_install_has() 
     assert!(fake.seen().tokens.is_empty());
 }
 
-/// 01M6WG537B67VWVENY3821RV33: each command refuses in an agent session
-/// and in a container, before each call.
+/// 01M6WG537B67VWVENY3821RV33, 01M74A37NMGDEHAD01SJ0DQT9B: each command
+/// refuses in an agent session and in a container, before each call.
 #[tokio::test]
 async fn each_command_refuses_in_an_agent_session_and_in_a_container() {
     let fake = FakeGitHub::start().await;
@@ -268,6 +357,7 @@ async fn each_command_refuses_in_an_agent_session_and_in_a_container() {
         ("create", &["github", "create", "--owner", OWNER][..]),
         ("install", &["github", "install", OWNER]),
         ("check", &["github", "check"]),
+        ("events", &["github", "events"]),
     ] {
         for (var, value, who) in [
             ("CLAUDECODE", "1", "a session"),
@@ -812,6 +902,50 @@ async fn riff_init_check_names_the_install_of_the_apps() {
     assert!(
         stdout.contains("  pass  the GitHub Apps of riff: on acme/app\n"),
         "{stdout}"
+    );
+}
+
+/// 01M74A37RFH2HY4YZDWAV07TQF: "How It Works" has "How riff learns of a
+/// change on GitHub", with a mermaid diagram, and the how-to "See the
+/// last events" with a copyable `sh` block of `riff github events`. "Make
+/// the GitHub Apps of riff" links to it.
+#[test]
+fn the_book_says_how_riff_learns_of_a_change_on_github() {
+    let page = crate::book::page("how-it-works.md");
+    let part = page
+        .split("\n### How riff learns of a change on GitHub\n")
+        .nth(1)
+        .expect("the part is in How It Works");
+    let part = part.split("\n### ").next().unwrap();
+    assert!(part.contains("```mermaid\nsequenceDiagram\n"), "{part}");
+    let text = part.split_whitespace().collect::<Vec<_>>().join(" ");
+    for words in [
+        "`riff github create` sets it to `URL/hooks/github` of riff-server, with the events \
+         `issues`, `issue_comment`, `pull_request`, `check_run`, `status`, `workflow_run` and \
+         `merge_group`.",
+        "A delivery with no signature or a bad one gets status 401.",
+        "A delivery that comes a second time wakes nobody.",
+        "An issue that comes into an open wave, and a merge of a pull request, wake the wave of \
+         each host at once",
+        "riff-server takes the events of one issue or one pull request in 5 seconds into one \
+         wake",
+        "The wake names the repository, the kinds of the events and the number.",
+        "So a host behind a firewall needs no inbound port.",
+        "A daemon that was away gets the wakes that it missed when it comes back.",
+    ] {
+        assert!(text.contains(words), "{words}: {part}");
+    }
+    let how = part
+        .split("\n#### See the last events\n")
+        .nth(1)
+        .expect("the how-to is in the part");
+    let commands = crate::book::commands_in(how);
+    assert_eq!(commands, ["riff github events"]);
+    crate::book::each_is_real(&commands);
+    let team = crate::book::part("start-a-team-riff.md", "Make the GitHub Apps of riff");
+    assert!(
+        team.contains("(how-it-works.md#how-riff-learns-of-a-change-on-github)"),
+        "{team}"
     );
 }
 
