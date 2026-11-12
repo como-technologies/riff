@@ -1105,7 +1105,7 @@ impl Engine {
     }
 
     /// The role of the caller of `admitted` now, as the check of a
-    /// command reads it ([`Engine::check`]).
+    /// command reads it (`Engine::check`).
     pub fn role(&self, admitted: &Admitted) -> Role {
         let core = self.core();
         self.with_role(admitted, &core.state).role()

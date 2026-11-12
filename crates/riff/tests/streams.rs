@@ -226,8 +226,10 @@ async fn a_new_watch_after_a_start_has_no_wake_for_a_message_that_a_read_of_all_
         .await
         .unwrap();
     assert_eq!(posted.woken.len(), 1, "{posted:?}");
+    // The start can post a line of riff-bot to the chat first: the search
+    // of the projects (01M76SG8NCSAP69Y5AX455BJQM). It wakes nobody here.
     match isolated::in_time(Duration::from_secs(30), wakes.next()).await {
-        Ok(Some(Ok(wake))) => assert_eq!(wake.seq, n + 1),
-        other => panic!("no wake for message {}: {other:?}", n + 1),
+        Ok(Some(Ok(wake))) => assert_eq!(wake.seq, posted.seq),
+        other => panic!("no wake for message {}: {other:?}", posted.seq),
     }
 }

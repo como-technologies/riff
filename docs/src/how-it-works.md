@@ -6089,7 +6089,7 @@ riff project remove acme/app
 ```
 
 The riff forgets the project. GitHub keeps the repository as it is:
-`riff.toml`, the rulesets and the milestones stay.
+`riff.toml`, the rulesets and the waves stay.
 
 ### The projects of a riff from before the projects
 

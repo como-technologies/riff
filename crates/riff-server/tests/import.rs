@@ -330,7 +330,10 @@ async fn a_second_start_replays_the_log_and_does_not_import_again() {
     let (first, base) = common::start_on(Arc::new(store.clone())).await;
     first.save().await.unwrap();
     let imported = store.list("log/").await.unwrap();
-    assert_eq!(imported.len(), 1, "the import is one chunk");
+    // The import is one chunk. The old riff has leads and no project, so
+    // the search of the projects writes its records and its line
+    // (01M76SG8NCSAP69Y5AX455BJQM).
+    assert_eq!(imported.len(), 3, "the import is one chunk, the search two");
     assert_eq!(store.list("checkpoint/").await.unwrap().len(), 1);
     // The first call of a person makes a record of its own.
     let before = who(&base).await;
@@ -591,7 +594,9 @@ async fn a_stop_between_the_sign_ins_and_the_log_loses_no_sign_in() {
 
     let (service, base) = common::start_signed_on(Arc::new(store.clone())).await;
     service.save().await.unwrap();
-    assert_eq!(store.list("log/").await.unwrap().len(), 1);
+    // The import, then the records and the line of the search of the
+    // projects (01M76SG8NCSAP69Y5AX455BJQM).
+    assert_eq!(store.list("log/").await.unwrap().len(), 3);
     assert_eq!(service.tokens().sign_ins(), 2);
     for user in ["mike", "brett"] {
         let token = facts["refresh"][user].as_str().unwrap();

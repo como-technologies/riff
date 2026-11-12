@@ -26,12 +26,12 @@
 //!   log line and no reply.
 //! - A riff with no sign-in takes the call with no token: each person
 //!   there is an admin of the riff, and the check on GitHub stays.
-//! - The list ([`list`]) is a query: each person and each session reads
+//! - The list (`list`) is a query: each person and each session reads
 //!   it (01M76SG8JVHTKY6N62FQG7XAE6).
 //! - At a start with no record of a project in the log, and with a
 //!   repository thread that has a lead or the notes of a lead, the
 //!   server sends the command `find_projects`, and posts one line of the
-//!   kind `riff` in the chat to the owner ([`find`],
+//!   kind `riff` in the chat to the owner (`find`,
 //!   01M76SG8NCSAP69Y5AX455BJQM).
 
 use std::time::Instant;

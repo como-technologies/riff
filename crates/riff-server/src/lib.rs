@@ -148,8 +148,9 @@
 //!   of a riff-server from before the log, and no log, is the import of
 //!   go-live (01M3Z8MRDZEKTXSKZTDTDSCZ3W): see [`import`].
 //! - A start with no record of a project in the log sends the command
-//!   `find_projects` when it serves, and tells the owner in the chat
-//!   (01M76SG8NCSAP69Y5AX455BJQM): see [`projects`].
+//!   `find_projects` after the load and before the first call, and tells
+//!   the owner in the chat (01M76SG8NCSAP69Y5AX455BJQM): see
+//!   [`projects`].
 //! - [`Service::load`] loads the newest checkpoint of a [`store::Store`],
 //!   and replays the log after it (R30). A timer writes a checkpoint, and
 //!   deletes the old checkpoints and the chunks that no kept checkpoint
@@ -1593,7 +1594,6 @@ impl Service {
         service.forget_sessions();
         service.watch_owner();
         service.read_keys();
-        service.find_projects();
         service
     }
 
@@ -1625,35 +1625,15 @@ impl Service {
         });
     }
 
-    /// The search of the projects, one time, when the server serves
+    /// The search of the projects, one time at a start, after the load
+    /// and the import, before the first call of a client
     /// (01M76SG8NCSAP69Y5AX455BJQM): only with no record of a project in
     /// the log, and a repository thread with a lead or the notes of a
-    /// lead ([`projects::find`]). A server with no async runtime starts
-    /// no task.
-    fn find_projects(&self) {
-        if !self.0.engine.read(State::projects_to_find) {
-            return;
+    /// lead ([`projects::find`]).
+    async fn find_projects(&self) {
+        if self.0.engine.read(State::projects_to_find) {
+            projects::find(&self.0).await;
         }
-        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
-            return;
-        };
-        let server = Arc::downgrade(&self.0);
-        runtime.spawn(async move {
-            let mut tick = tokio::time::interval(Duration::from_millis(100));
-            loop {
-                tick.tick().await;
-                let Some(server) = server.upgrade() else {
-                    return;
-                };
-                if server.is_stopped() {
-                    return;
-                }
-                if server.serving() {
-                    projects::find(&server).await;
-                    return;
-                }
-            }
-        });
     }
 
     /// Starts the writer: the task that writes the records of each entry
@@ -2538,6 +2518,7 @@ impl Leased {
         if let Some(old) = old {
             service.0.import(&old).await?;
         }
+        service.find_projects().await;
         Ok(service)
     }
 }

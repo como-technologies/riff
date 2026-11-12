@@ -216,7 +216,7 @@ async fn an_admin_who_is_an_admin_of_the_repository_enrolls_and_removes_a_projec
 
     // Each person reads the list.
     let listed = projects_of(&url, &bob).await;
-    assert_eq!(listed, [second.project.clone()]);
+    assert_eq!(listed, std::slice::from_ref(&second.project));
 
     let (status, _, text) =
         call(&url, &cy, "/v1/project/remove", remove(&cy.me, ADMIN_TOKEN)).await;

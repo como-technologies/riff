@@ -1043,7 +1043,7 @@ enum ProjectCommand {
     /// Forget a project of the riff
     ///
     /// riff-server forgets the project OWNER/REPO. GitHub keeps the
-    /// repository as it is: riff.toml, the rulesets and the milestones
+    /// repository as it is: riff.toml, the rulesets and the waves
     /// stay. Only an admin of the riff who is also an admin of the
     /// repository on GitHub can. It refuses in an agent session and in a
     /// container.
