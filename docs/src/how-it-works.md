@@ -1565,9 +1565,11 @@ The first lines are facts: the state of the riff, the lead of each
 project, and the build. A row `lead` names the lead of a project and
 the host where it runs. `none`, in yellow, says that the project has
 no live lead: its wave starts no session (see
-[The wave waits for its lead](#the-wave-waits-for-its-lead)). Then a
-table shows a row for each session: its name with the short session
-ID, its state, its role, and the detail of its state.
+[The wave waits for its lead](#the-wave-waits-for-its-lead)). A
+repository that is no project gets no row `lead`, also when a session
+worked in it once. Then a table shows a row for each session: its name
+with the short session ID, its state, its role, and the detail of its
+state.
 
 The rows group by project (see
 [The projects of the riff](#the-projects-of-the-riff)). A bold line
