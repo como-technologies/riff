@@ -12,7 +12,6 @@
 use isolated::Isolated;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
-use std::time::Duration;
 
 use crate::common;
 use riff_core::name::SessionUri;
@@ -371,6 +370,7 @@ async fn riff_questions_exits_with_1_when_gh_cannot_read_any_repository() {
 #[cfg(target_os = "linux")]
 #[tokio::test(flavor = "multi_thread")]
 async fn riff_questions_web_opens_one_search_over_the_repositories() {
+    use std::time::Duration;
     let server = server(&[PROJECTS, &["o/notes"]].concat(), &["o/notes"]).await;
     let dir = repo();
     let bin = bin(&[], &[], &[]);
