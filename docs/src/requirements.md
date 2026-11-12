@@ -7476,6 +7476,30 @@ of this part when they merge.
 - **01M77PTJW94PSRCHFC999MK990** When no host can run the lead of a
   project, no lead starts, and the project stays paused: its wave waits
   for a lead (01M776RSYKJK9NETFAD8G0CCVQ) until a host claims `lead`.
+- **01M77Y24FEQM5246G3CBXYWW62** A fault of a start of the lead of a
+  project on a host makes the riff daemon of that host wait before its
+  next start of a lead of the project: 10 s after the first fault of a
+  row, then 30 s, then 2 min, then 10 min after each next fault. A fault
+  is a start of a new lead by the daemon that fails, and a lead of the
+  host whose session ends because it ended less than a minute after its
+  start, or because 3 starts again failed. A lead of the host that runs
+  for a minute ends the row. In the wait, another host of the project
+  can claim the lead. `riff lead start` does not wait.
+- **01M77Y2BD66Z3VZD4A0B1Y60H1** At the first fault of a row
+  (01M77Y24FEQM5246G3CBXYWW62), the riff daemon tells riff-server the
+  fact `lead_cannot_start` with the fault: the start failed, or the lead
+  ended less than a minute after its start. riff-server posts one line
+  of riff-bot in riff chat: the lead, the fault, that the log of the
+  daemon on the host has the cause, and the waits. The row gets no other
+  line.
+- **01M77Y2BG12SEVF4ZEZ673QBFZ** One start of the lead of a project runs
+  at a time on a host. `riff lead start`, `l` in the Sessions tab, `riff
+  lead move`, the start of a new lead by the riff daemon and its start
+  again of a lead hold the lock `start.lock` in the folder of the lead.
+  Under the lock, a start that finds the lead running starts nothing:
+  `riff lead start` and `l` attach to it, `riff lead move` names it the
+  lead, and the daemon claims the lead for it. A start again that finds
+  a new lead ends the session of the old lead.
 
 ### The first run
 

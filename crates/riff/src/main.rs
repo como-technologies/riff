@@ -1834,7 +1834,10 @@ enum LeadCommand {
     /// a project of the riff: see riff project list. A project has one
     /// lead: the new lead takes the claim lead, and the riff daemon of the
     /// old lead stops it. The daemon of a host that joined starts the lead
-    /// by itself when no lead runs.
+    /// by itself when no lead runs. After a start of the lead that failed,
+    /// the daemon waits longer before each next start; this command does
+    /// not wait. While another start of the lead runs on this host, riff
+    /// waits for it, then attaches to its lead.
     Start,
     /// Stop the lead of this repository, and end its container
     ///

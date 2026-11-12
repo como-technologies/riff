@@ -1285,6 +1285,31 @@ pub enum BotFact {
     LeadStale,
     /// The lead lost its network at the restart of the daemon.
     LeadNoNetwork,
+    /// The first fault of the starts of the lead of the project on the
+    /// host of the caller, since a lead last ran there (#2032). The daemon
+    /// waits longer before each next start ([`LEAD_START_WAITS`]).
+    LeadCannotStart { fault: LeadFault },
+}
+
+/// The fault of a start of a lead ([`BotFact::LeadCannotStart`]).
+///
+/// ```
+/// use riff_core::wire::{BotFact, LeadFault};
+///
+/// let fact = BotFact::LeadCannotStart { fault: LeadFault::EndedSoon };
+/// assert_eq!(
+///     serde_json::to_string(&fact)?,
+///     r#"{"fact":"lead_cannot_start","fault":"ended_soon"}"#
+/// );
+/// # Ok::<(), serde_json::Error>(())
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LeadFault {
+    /// The start failed: the container of the lead does not run.
+    Start,
+    /// The lead ended less than a minute after its start.
+    EndedSoon,
 }
 
 /// `POST /v1/items`: what a client saw of the items of its repository
@@ -2419,6 +2444,24 @@ pub struct ReleaseFor {
 /// thread. riff-server gives it only with [`Lead`], to one session
 /// (01M77PT9QAECENTY1WS616P5E2).
 pub const LEAD_CLAIM: &str = "lead";
+
+/// The waits of the riff daemon of a host before its next start of a lead
+/// of a project, after a fault of a start there (#2032,
+/// [`BotFact::LeadCannotStart`]): the first fault waits the first, the
+/// next fault the next, and each fault after the last waits the last.
+///
+/// ```
+/// use std::time::Duration;
+///
+/// let waits = riff_core::wire::LEAD_START_WAITS.map(|w| w.as_secs());
+/// assert_eq!(waits, [10, 30, 120, 600]);
+/// ```
+pub const LEAD_START_WAITS: [std::time::Duration; 4] = [
+    std::time::Duration::from_secs(10),
+    std::time::Duration::from_secs(30),
+    std::time::Duration::from_secs(120),
+    std::time::Duration::from_secs(600),
+];
 
 /// `POST /v1/lead`: the person `me` makes the session `session` the
 /// lead of the user in the repository of `me`, and gives it the claim

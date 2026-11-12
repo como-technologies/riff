@@ -14226,16 +14226,71 @@ pub fn lead_lost(name: &str, lead: &SessionUri) -> String {
 ///
 /// assert_eq!(lead_host_did("o/r", &Did::Started), Some("o/r: no host holds the claim lead: this host starts the lead.".into()));
 /// assert_eq!(lead_host_did("o/r", &Did::Nothing), None);
+/// let failed = Did::Failed { why: "no image".into(), wait: std::time::Duration::from_secs(30) };
+/// assert_eq!(
+///     lead_host_did("o/r", &failed),
+///     Some("o/r: the start of the lead failed: no image. The next start of a lead on this host waits 30s.".into())
+/// );
+/// assert_eq!(lead_host_did("o/r", &Did::Waits(std::time::Duration::from_secs(9))), None);
 /// ```
 pub fn lead_host_did(repo: &str, did: &crate::lead_host::Did) -> Option<String> {
     use crate::lead_host::Did;
     let what = match did {
-        Did::Nothing | Did::Taken => return None,
+        Did::Nothing | Did::Taken | Did::Waits(_) => return None,
         Did::Claimed => "this host claims the lead again for the lead that runs here",
         Did::Started => "no host holds the claim lead: this host starts the lead",
         Did::Stopped => "another host holds the claim lead: this host stops its old lead",
+        Did::Failed { why, wait } => {
+            return Some(format!(
+                "{repo}: the start of the lead failed: {why}. {}",
+                lead_start_waits(*wait)
+            ));
+        }
     };
     Some(format!("{repo}: {what}."))
+}
+
+/// The log line of the daemon after a fault of a start of a lead (#2032):
+/// the wait before the next start of a lead on this host.
+///
+/// ```
+/// let text = riff::text::lead_start_waits(std::time::Duration::from_secs(120));
+/// assert_eq!(text, "The next start of a lead on this host waits 2m.");
+/// ```
+pub fn lead_start_waits(wait: std::time::Duration) -> String {
+    format!(
+        "The next start of a lead on this host waits {}.",
+        ago(wait.as_secs())
+    )
+}
+
+/// A start of the lead of `repo` waits for another start of the lead on
+/// this host (#2032, [`crate::lead::one_start`]): then it attaches to that
+/// lead, or starts one.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::lead_start_waits_lock("o/r"),
+///     "Another start of the lead of o/r runs on this host. riff waits for its end."
+/// );
+/// ```
+pub fn lead_start_waits_lock(repo: &str) -> String {
+    format!("Another start of the lead of {repo} runs on this host. riff waits for its end.")
+}
+
+/// The log line of the daemon: another start on this host made a new lead
+/// of the project of the lead `name` while the lead `name` ended, so the
+/// daemon does not start it again (#2032): its session ends.
+///
+/// ```
+/// let text = riff::text::lead_started_by_other("riff-lead-o-r");
+/// assert!(text.starts_with("Another start made a new lead in riff-lead-o-r."));
+/// ```
+pub fn lead_started_by_other(name: &str) -> String {
+    format!(
+        "Another start made a new lead in {name}. riff does not start the old lead again, and \
+         its session ends."
+    )
 }
 
 /// The daemon took up the session in the container `name`, and the

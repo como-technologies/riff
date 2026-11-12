@@ -577,6 +577,12 @@ mod tests {
             BotFact::LeadFailed,
             BotFact::LeadStale,
             BotFact::LeadNoNetwork,
+            BotFact::LeadCannotStart {
+                fault: LeadFault::Start,
+            },
+            BotFact::LeadCannotStart {
+                fault: LeadFault::EndedSoon,
+            },
         ] {
             c.trip(&BotPost { me: me(), fact });
         }

@@ -6370,7 +6370,12 @@ project, and each minute:
   reboot, starts again with `claude --resume`: the same session and the
   same conversation. A lead that ends less than a minute after its start
   does not start again: its session ends, and a host claims the lead
-  again.
+  again. A lead that fails to start makes its host wait: see
+  [When the lead fails to start](#when-the-lead-fails-to-start).
+- One start of the lead runs at a time on a host: `riff lead start`, `l`
+  in the Sessions tab, `riff lead move` and the riff daemon share a
+  lock. A start that comes while another start runs waits for it, then
+  uses the lead of that start: `riff lead start` attaches to it.
 - When the host of the lead goes, the claim ends 5 minutes after the
   last sign of life of the lead. riff-server then wakes the riff daemon
   of each host of the project, and the next host starts a new lead. The
@@ -6413,6 +6418,51 @@ riff who
 `riff lead start`, `riff lead move` and `riff lead --session` name a
 lead by hand. The new lead takes the claim, and the riff daemon of the
 old lead stops the old lead.
+
+#### When the lead fails to start
+
+A start of the lead can fail on a host, for example when its image is
+broken, or when `claude` crashes at its start. Then the riff daemon of
+that host waits before its next start of the lead, longer each time:
+
+- A fault is a start of a new lead that fails, and a lead that ends
+  less than a minute after its start. A lead that cannot start again
+  with `claude --resume` after 3 tries is a fault too.
+- After the first fault, the daemon starts no lead of the project for
+  10 s. After the next faults in a row, it waits 30 s, then 2 min, then
+  10 min after each fault.
+- In the wait, another host of the project can claim the lead.
+- A lead that runs for a minute on the host ends the row. The next
+  fault waits 10 s again.
+- At the first fault of a row, riff chat gets one line of `riff-bot`.
+  The row gets no other line:
+
+```text
+<riff-bot> riff cannot start the lead of mike in como-technologies/riff on thelio: the start failed. The log of the riff daemon on thelio has the cause. The daemon tries again after 10 s, 30 s, 2 min, then every 10 min, and says no more here until a lead runs on thelio for a minute.
+```
+
+```mermaid
+flowchart LR
+    F["a fault: the start failed,<br/>or the lead ended at once"] --> W["no start on this host for<br/>10 s, 30 s, 2 min, then 10 min"]
+    F -- "the first fault of a row" --> C["one line in riff chat"]
+    W --> S["the next start"]
+    S -- "a fault" --> F
+    S -- "the lead runs for a minute" --> E["the row ends"]
+```
+
+The log of the riff daemon on the host has the cause of each fault, and
+the wait. To find the cause, run this on the host:
+
+```sh
+journalctl --user -u riff | grep 'The next start of a lead'
+```
+
+When you fixed the cause, start the lead at once. `riff lead start`
+does not wait:
+
+```sh
+riff lead start
+```
 
 ### Name the lead
 
