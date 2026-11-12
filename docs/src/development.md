@@ -2278,6 +2278,8 @@ another host, add `--host thelio`.
 - The caps of the host: `--cpus` and `--memory`. The defaults are 8
   CPUs and 8 GB. See
   [Set the caps of a container](#set-the-caps-of-a-container).
+- The lowest CPU priority: nice 19 and the CPU weight 1. See
+  [The priority of a session](#the-priority-of-a-session).
 - The folder of its own socket of the daemon at `/run/riff`, with
   write, and `RIFF_SOCKET=/run/riff/riff.sock`.
 - Your riff binary at `/opt/riff/riff`, with no write. Its
@@ -4228,6 +4230,42 @@ riff daemon limit --cpus 12 --memory 16
 
 The values go in `limit.json` with the limit. A new session gets them
 at its start. A session that runs keeps its caps. riff refuses 0.
+
+#### The priority of a session
+
+Each process of a session container runs at the lowest CPU priority,
+so a build in a session does not slow your own programs. The daemon
+starts each worker, verify and lead with `nice -n 19`, and each process
+of the container gets nice 19. A takeover runs its command in the
+container with `nice -n 19` too. A nice value counts only inside its
+own cgroup, so each container also gets `--cgroup-conf cpu.weight=1`:
+the lowest CPU weight. The default weight of a cgroup is 100. The
+priority has no setting, and riff writes it in no file of yours.
+
+```mermaid
+flowchart LR
+    D["riff daemon"] -- "nice -n 19 podman run<br/>--cgroup-conf cpu.weight=1" --> C["a session container:<br/>each process at nice 19"]
+    C --- G["its cgroup: cpu.weight 1"]
+    Y["your programs: nice 0"] --- W["your cgroups: cpu.weight 100"]
+```
+
+To see the nice value of each process of each session container:
+
+```sh
+for name in $(podman ps --filter name=riff- --format '{{.Names}}'); do
+  podman top "$name" nice args
+done
+```
+
+The column `NI` shows `19` on each line. To see the CPU weight of one
+container, for example `riff-issue-12-21c026a1`:
+
+```sh
+podman exec riff-issue-12-21c026a1 cat /sys/fs/cgroup/cpu.weight
+```
+
+It shows `1`. A session that an older riff started keeps nice 0 and the
+weight 100 until it ends.
 
 ### Set the effort of the sessions
 

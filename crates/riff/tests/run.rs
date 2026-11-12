@@ -118,7 +118,8 @@ esac
 /// `pull` logs, and fails when `bin/no-pull` is there. `run` with
 /// `--network=none` prints the version of `claude` and `gh` in the image,
 /// and of `/usr/local/bin/gh` when `bin/own-gh` is there, else it fails as
-/// podman does for a file that is not in the image. `run` logs, and
+/// podman does for a file that is not in the image. `run` logs, with its
+/// nice value in `bin/run.nice`, and
 /// plays the container on the host: it runs the riff of the bind at
 /// `/opt/riff/riff` as the entrypoint, `riff relay`, with the socket of
 /// the bind at `/run/riff`. With `-d` (a terminal), it runs it in the
@@ -207,6 +208,7 @@ case "$1" in
   *) exit 2 ;;
 esac
 printf '%s\n' "$@" > "$dir/run.args"
+nice > "$dir/run.nice"
 printf '%s' "$GH_TOKEN" > "$dir/run.token"
 printf '%s' "$INVOCATION_ID" > "$dir/run.invocation"
 echo $$ > "$dir/run.pid"
@@ -947,6 +949,9 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         "8g",
         "--cpus",
         "8",
+        // 01M7755V17SGY2NW231WJ12WXN: the lowest CPU weight.
+        "--cgroup-conf",
+        "cpu.weight=1",
         "--mount",
         &format!("type=tmpfs,destination={h},tmpfs-mode=0700,U=true"),
         // The folders of the home: each folder above a bind, and the
@@ -1056,6 +1061,8 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
     .map(String::from)
     .to_vec();
     assert_eq!(args, want);
+    // 01M7755V17SGY2NW231WJ12WXN: podman of a worker runs at nice 19.
+    assert_eq!(machine.read("run.nice").trim(), "19");
 
     // The relay starts claude with the riff tools: the MCP server riff
     // runs riff relay mcp, with the binary of the relay.
@@ -1102,7 +1109,7 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
     assert_eq!(
         machine.read("systemd-run.log").lines().next().unwrap(),
         format!(
-            "systemd-run --user --scope --collect --quiet -- podman {}",
+            "systemd-run --user --scope --collect --quiet -- nice -n 19 podman {}",
             args.join(" ")
         )
     );
@@ -2792,9 +2799,17 @@ async fn riff_lead_start_runs_the_lead_with_a_terminal_and_attaches_to_it() {
     assert_eq!(
         machine.read("systemd-run.log").trim_end(),
         format!(
-            "systemd-run --user --scope --collect --quiet -- podman {}",
+            "systemd-run --user --scope --collect --quiet -- nice -n 19 podman {}",
             args.join(" ")
         )
+    );
+    // 01M7755V17SGY2NW231WJ12WXN: the lead runs at nice 19, with the
+    // lowest CPU weight.
+    assert_eq!(machine.read("run.nice").trim(), "19");
+    assert!(
+        args.windows(2)
+            .any(|w| w == ["--cgroup-conf", "cpu.weight=1"]),
+        "{args:?}"
     );
     let at = args.iter().position(|a| *a == "/opt/riff/riff").unwrap();
     assert_eq!(
@@ -3738,11 +3753,12 @@ async fn take_over_a_session(flags: &[&str]) {
     let reset = format!("{MOUSE_ON}{}", riff::runtime::TERMINAL_RESET);
     assert!(shown.contains(&reset), "{shown:?}");
     // 01M6VD1NSHTJQGR31VZ4689S8J: the terminal has the model of the
-    // session, opus with no model in the riff.toml.
+    // session, opus with no model in the riff.toml. It runs at nice 19 in
+    // the container (01M7755V17SGY2NW231WJ12WXN).
     assert!(
         machine.read("podman.log").contains(&format!(
-            "podman exec -it {name} /opt/riff/riff relay --terminal -- claude --resume \
-             {session} --model opus --permission-mode auto"
+            "podman exec -it {name} nice -n 19 /opt/riff/riff relay --terminal -- claude \
+             --resume {session} --model opus --permission-mode auto"
         )),
         "{}",
         machine.read("podman.log")

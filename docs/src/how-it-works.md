@@ -322,7 +322,7 @@ hold each decision of the design.
 | The ports | Each container has its own loopback. A test port of one session does not hit another. | It can reach a port that listens on the network of your machine, as each program on it can. |
 | The caches | riff sets no cache. A repository names its cache volumes in `riff.toml`. The `riff.toml` of riff names one volume for `CARGO_HOME` and one for the folder of sccache. Both are bound with write. The tools lock them themselves. The toolchain is in the image, with no write. A new clone has no `target/`: a warm sccache makes its build short. | It can write a bad file in a cache, and a later build of another session uses it. |
 | Your home | The home of the container is an empty tmpfs at the path of your home. riff binds your `~/.gitconfig` and the Claude folder of the session on top of it. Each folder above a bind belongs to the session user: see [The folders of the home above a volume](development.md#the-folders-of-the-home-above-a-volume). Each other write in that home goes when the session ends. riff writes nothing in your home outside its own folders. It does not write `~/.claude`, `~/.claude.json`, a git config or a shell file. | It reads `~/.gitconfig`. It does not see `~/.config/gh`. |
-| The CPU | Each container gets `--cpus`, 8 by default. riff sets no build jobs: a tool reads the CPUs of its container. `riff daemon limit --cpus N` sets it for the host. The daemon keeps one limit for the host: the number of live sessions, at most 3 by default. | A build of one session makes the builds of the others slower, up to its limit. |
+| The CPU | Each container gets `--cpus`, 8 by default. riff sets no build jobs: a tool reads the CPUs of its container. `riff daemon limit --cpus N` sets it for the host. The daemon keeps one limit for the host: the number of live sessions, at most 3 by default. Each process of a container runs at the lowest CPU priority: see [The priority of a session](development.md#the-priority-of-a-session). | A build of one session makes the builds of the others slower, up to its limit. |
 | The memory | Each container gets `--memory`, 8 GB by default. `riff daemon limit --memory GB` sets it for the host. A session past its limit loses its own processes, not those of another session. The daemon starts no new session while the free memory is below a floor, 8 GB by default. | It takes memory, up to its limit, that a new session needs. |
 | The network | Each session reaches the internet, as a plain `claude` does. No proxy and no filter. | It uses the same connection and reaches each service that your machine reaches. |
 | The sign-in of `gh` | The session acts on GitHub as a bot of a GitHub App of the riff, with a token for its one repository and the rights of its role: see [Who acts on GitHub for each role](#who-acts-on-github-for-each-role). The container never gets your token. Where the Apps are not on the repository, no worker and no verify starts, and the lead starts with no token on GitHub: see [Repair riff with claude on the host](#repair-riff-with-claude-on-the-host). The image has `gh` at `/usr/bin/gh`. The daemon binds the binary of riff at `/usr/local/bin/gh`: it counts each call for `riff daemon status` (see [See how the daemon uses the GitHub limit](development.md#see-how-the-daemon-uses-the-github-limit)), and runs the real `gh`. An image with its own `gh` at `/usr/local/bin/gh` gets no bind: its `gh` runs as it is, with no count. No secret goes into a log line, a message or a file of a clone. | A worker can change an issue or a comment of another session: the right `issues: write` has no smaller part. The guard puts the change back: see [Add to an issue](#add-to-an-issue). |
@@ -331,20 +331,21 @@ hold each decision of the design.
 
 ## Where the env of a session comes from
 
-riff sets in a session only what riff needs itself: the home, the user,
-the sign-ins, the git config, the Claude folder, the clone, the folder
-of the socket, and the caps `--memory` and `--cpus`. It sets no
-variable and no volume of a language or a tool. The repository gives
-them in its `riff.toml`, in the tables `[session.env]` and
-`[session.volumes]`. The key `model` in `[session]` names the model of
-each session: riff starts `claude --model MODEL`, and the default is
-`opus`. Only the merged `riff.toml` counts, as for the image (see
+riff sets in a session what riff needs itself: the home, the user, the
+sign-ins, the git config, the Claude folder, the clone, the folder of
+the socket, the caps `--memory` and `--cpus`, and the lowest CPU
+priority. It sets no variable and no volume of a language or a tool.
+The repository gives them in its `riff.toml`, in the tables
+`[session.env]` and `[session.volumes]`. The key `model` in
+`[session]` names the model of each session: riff starts `claude
+--model MODEL`, and the default is `opus`. Only the merged `riff.toml`
+counts, as for the image (see
 [Only a merged pin counts](development.md#only-a-merged-pin-counts)).
 
 ```mermaid
 flowchart LR
     R["riff.toml on the default branch:<br/>model, [session.env] and [session.volumes]"] --> S["the spec of the session"]
-    H["riff: the home, the user, the sign-ins,<br/>the clone, the socket, --cpus, --memory"] --> S
+    H["riff: the home, the user, the sign-ins,<br/>the clone, the socket, --cpus, --memory,<br/>nice 19, cpu.weight 1"] --> S
     S --> P["podman run -e NAME=VALUE -v VOLUME:PATH<br/>claude --model MODEL"]
 ```
 

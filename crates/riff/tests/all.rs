@@ -77,6 +77,8 @@ mod owner;
 mod package_sources;
 mod pause;
 mod pr;
+#[cfg(target_os = "linux")]
+mod priority;
 mod proof;
 #[cfg(target_os = "linux")]
 mod ps;
