@@ -12371,21 +12371,35 @@ fn verify_waits(open: bool) -> &'static str {
     }
 }
 
-/// The head of a verify had the status `riff/verify` success at the read
-/// before the claim, and the look of the wave did not show it yet (#1960).
+/// The head of a verify had the status `riff/verify` of `verdict` at the
+/// read before the claim, and the look of the wave did not show it yet
+/// (#1960). A failure stops the verify only with no new verify request
+/// after it (#2019).
 ///
 /// ```
+/// use riff::pr::Verdict;
+///
 /// assert_eq!(
-///     riff::text::wave_verify_passed("o/r", "verify-issue-12", "1a2b3c4d5e"),
+///     riff::text::wave_verify_done("o/r", "verify-issue-12", "1a2b3c4d5e", Verdict::Pass),
 ///     "The wave of o/r: the head 1a2b3c4 of verify-issue-12 has a riff/verify success. riff \
 ///      starts no verify of it, and the start does not count."
 /// );
+/// assert_eq!(
+///     riff::text::wave_verify_done("o/r", "verify-issue-12", "1a2b3c4d5e", Verdict::Fail),
+///     "The wave of o/r: the head 1a2b3c4 of verify-issue-12 has a riff/verify failure, and no \
+///      new verify request after it. riff starts no verify of it, and the start does not count."
+/// );
 /// ```
-pub fn wave_verify_passed(repo: &str, item: &str, commit: &str) -> String {
+pub fn wave_verify_done(repo: &str, item: &str, commit: &str, verdict: Verdict) -> String {
     let short: String = commit.chars().take(7).collect();
+    let asked = match verdict {
+        Verdict::Pass => "",
+        Verdict::Fail => ", and no new verify request after it",
+    };
     format!(
-        "The wave of {repo}: the head {short} of {item} has a riff/verify success. riff starts \
-         no verify of it, and the start does not count."
+        "The wave of {repo}: the head {short} of {item} has a riff/verify {}{asked}. riff starts \
+         no verify of it, and the start does not count.",
+        verdict.state()
     )
 }
 
