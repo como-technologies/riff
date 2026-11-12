@@ -1494,6 +1494,35 @@
   with a string literal for a webhook secret or a key: the value of a
   name with the word `secret`, or the argument for a secret or a key of
   `signature`, `signed`, `AppKeys::new` or a function of the same test.
+- **01M76SG2E9RPV4B7CYSZPGGZ3P** riff-server keeps the projects of the
+  riff: each project is a repository `OWNER/REPO` on GitHub that a
+  person enrolled. A project has who enrolled it and when, and the hosts
+  that may run its wave: an empty list is each host. The record
+  `project_enrolled` (`repo`, `hosts`) enrolls a repository, or sets the
+  hosts of a project and keeps who enrolled it and when. The record
+  `project_removed` (`repo`) forgets the project. The checkpoint keeps
+  the projects.
+- **01M76SG8GBXFYXKWMQHPCNEXBN** Only an admin of the riff who is also
+  an admin of the repository on GitHub enrolls a project, or sets its
+  hosts, with `POST /v1/project/init` (the command `enroll_project`),
+  and removes it with `POST /v1/project/remove` (the command
+  `remove_project`). Each call carries the token of `gh` of the person.
+  riff-server reads `GET /repos/OWNER/REPO` on GitHub with it one time,
+  and needs `permissions.admin`. It keeps the token in no record, no log
+  line and no reply. A member, a session, and an admin who is not an
+  admin of the repository get `not_allowed`. In a riff with no sign-in,
+  each person is an admin of the riff, and the check on GitHub stays.
+- **01M76SG8JVHTKY6N62FQG7XAE6** `POST /v1/projects` gives each project
+  of the riff to each person and each session: the repository, who
+  enrolled it and when, its hosts, and the user of each lead of its
+  thread.
+- **01M76SG8NCSAP69Y5AX455BJQM** At a start with no record of a project
+  in the log, riff-server enrolls each repository thread that has a lead
+  or the notes of a lead, with the command `find_projects` of the
+  server. It then posts one line of the kind `riff` in the chat to the
+  owner: the projects, and to review them with `riff project list`. A
+  riff with no such repository gets no record and no line. A riff with a
+  record of a project runs no such search again.
 
 ## Saved state
 
@@ -7383,6 +7412,49 @@ of this part when they merge.
   the queue and changes nothing. A repository with no `[release]` has no
   such check, and the ruleset `riff` that `riff init` makes for it has
   no merge queue. Supersedes 01M5TKPHDNHY75BHPD4XVBJRN9 in part.
+- **01M76SHAX0KR0DM9GPXAPZJRDZ** `riff project init` runs in a clone of
+  a repository on GitHub. It does each check and each step of the
+  repository that `riff init` did, with the same `--check`, `--yes` and
+  `--image`. When each check passes, it enrolls the repository as a
+  project of the riff (01M76SG8GBXFYXKWMQHPCNEXBN). With `--host HOST`,
+  one time for each host, only those hosts may run the wave of the
+  project; with no `--host`, each host may. A second run sets the hosts
+  again and changes nothing else. `--check` enrolls nothing. When a
+  check fails, riff enrolls nothing, names the fix of each failed check,
+  and exits with 1. In a folder with no remote `origin` on GitHub, it
+  stops and says so. Supersedes in part 01M5QVF5535YRN1EF3DZAB4W8G,
+  01M5QVF5C3CYJPMQ9CXNZJ8E93, 01M5QWA0E9A4ZJ8X49EM2MJM5Q,
+  01M5QWA0H5KJ2SRRP50478X3J2, 01M5R1672NF56P15VD0JEX51K4,
+  01M5R1675HZ6TJPMQ6536X37T5, 01M5RGG9KJXCKH8C94145WS8SM,
+  01M5RGGD6YR36EXZEG61XCJVRY, 01M5RGGD9AYNC12Z2CG5CDZWNA,
+  01M5RN89Z749VYS1CRYJQTKAWY, 01M5SMMP7ZW2PZNGK63WWZAC8P,
+  01M5SNTPEP41NMSP3SEKR7KVB0, 01M6WPV86SW4AAVA2NCBQNYXK3,
+  01M6WZ40YED6THKVJ2JQRXFK4N, 01M75NAPNH1SP8AC90NYFQP8SK,
+  01M6QBJHZBDQ8BB1JPT003RXW7, 01M6QCXGC42AG1RY5QNGT47GVV,
+  01M5SMNKDWBD1J6Y18ENQG87CK and 01M6Z87JTXW0Y99X08VHA2SSSR: each of
+  their rules of the repository is a rule of `riff project init`.
+- **01M76SHAZK2PSMET0HRYM0J7VN** `riff init` keeps only the checks and
+  the fixes of the machine: podman, the init of podman, `/etc/subuid`,
+  `/etc/subgid`, cgroup v2, the session image, the riff binary and the
+  wide rules, then the daemon and the session image. It reads no
+  repository on GitHub, asks riff-server nothing, and has no `--image`.
+  The fix of the session image names `riff project init`. Supersedes
+  01M6WZ410X4RPG1KMPEBVEP2DF and 01M74A8DC74TT2YGZPBBAENMWH in full, and
+  01M5SMJMR5KS1Z1Z7CEPH9JVBB in part: in a session container, `riff
+  init` checks only the session image and the riff binary.
+- **01M76SHB27S4QDV9HMRR4B6APJ** `riff project init` and `riff project
+  remove OWNER/REPO` refuse in an agent session and in a container,
+  before each call, also with `--check`. `riff project remove` asks
+  riff-server to forget the project (01M76SG8GBXFYXKWMQHPCNEXBN), and
+  keeps the repository on GitHub as it is. Each reads the token of `gh`
+  of the person with `gh auth token`, or takes `GH_TOKEN` or
+  `GITHUB_TOKEN` when the environment has one, and gives it only to
+  riff-server.
+- **01M76SHB4SAWFW3S5Y7X9KC6E4** `riff project list` prints one block
+  for each project of the riff: the repository, who enrolled it and
+  when, its hosts (`each host` when it names none) and the users of its
+  leads (`no lead` when it has none). It runs in a terminal and in a
+  session.
 
 ### The permission rules
 

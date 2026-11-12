@@ -129,12 +129,13 @@
 //! | The query of a session URI ([`SessionUri`]) | `session` of a change, `from` of a message | The URI keeps the part, and the record counts as a skipped record: a part with a new name, `lead` with a value other than `true`, a second `session`, and a `claim` with a character that is not allowed. |
 //! | The other parts of a session URI | the same | The line does not read. They never grow: `riff://USER@HOST`, then `/OWNER/REPO` or `/-`, then `#WORKTREE`, and each part holds only ASCII letters, digits, `-`, `_`, `.` and `~`. A new fact of a session is a new query part. |
 //! | The session ID of a session URI | the `session` part of the query | The line does not read when the ID is empty or has a character that is not allowed. The grammar never grows: the ID is a name with only ASCII letters, digits, `-`, `_`, `.` and `~`, and a new fact of a session is a new query part. |
-//! | A thread name ([`ThreadName`]) | `thread` | The line does not read. The grammar never grows: a text that is not empty and has no white space. Each new sort of thread name fits it, as `dm:` did. A name that starts with `dm:` reads with each character, also white space. The read does not take a name apart. |
+//! | A thread name ([`ThreadName`]) | `thread`, and the `repo` of a project | The line does not read. The grammar never grows: a text that is not empty and has no white space. Each new sort of thread name fits it, as `dm:` did. A name that starts with `dm:` reads with each character, also white space. The read does not take a name apart. |
 //! | The caller in `by` | `{"session":"USER/ID"}` | `other` ([`By`]) |
 //! | A session in `woken` ([`Who`]) | `posted` | The read checks no character. A field that the build does not know is skipped. |
 //! | The signature and the payload of a message | `sig`, `payload` | The read keeps the text, and checks nothing. A reader checks them: a text that does not check gives a message that is not verified. |
 //! | An item, an email, a user, the ID of a riff, a body, a command, the reason of a hold, the title of a wave, the name of a device, a credential ID, a public key, the text of an action | `item`, `email`, `user`, `riff_id`, `body`, `command`, `reason`, `title`, `name`, `credential`, `public_key`, `action` | Free text. `handle` of `add_key` checks the name, the credential and the key; the read does not. |
 //! | An item of a plan, a need, a done need | `items`, `needs`, `done` of `plan_set` | Free text: `handle` of `plan` checks the form `issue-N`, and the read does not. |
+//! | A host of a project | `hosts` of `project_enrolled` | Free text: `handle` of `enroll_project` checks each host as the host part of a session URI, and the read does not. |
 //! | A time, a position, a seq, a count, the number of a wave, the counter of an authenticator | `written_at_ms`, `at_ms`, `due_ms`, `position`, `seq`, `after_secs`, `per_host`, `number`, `counter` | The line does not read. A number is a whole number that is not negative, and its type never changes (the rule of a field). `per_host` is at most 65535. |
 //! | A mark | `worker`, `must_clear`, `admin` | The line does not read. A mark is `true` or `false`, and its type never changes. |
 //!
@@ -324,6 +325,13 @@ changes! {
     /// riff-server checked a proof of presence of a person for one
     /// action (01M75WKS4RF17WF85MWA4GFK0C).
     Proved(Proved) = "proved",
+    /// A repository is a project of the riff, with the hosts that may
+    /// run its wave. A record for a project that is there sets its
+    /// hosts: who enrolled it and when stay (01M76SG2E9RPV4B7CYSZPGGZ3P).
+    ProjectEnrolled(ProjectEnrolled) = "project_enrolled",
+    /// The riff forgets a project. GitHub keeps the repository
+    /// (01M76SG2E9RPV4B7CYSZPGGZ3P).
+    ProjectRemoved(ProjectRemoved) = "project_removed",
 }
 // ANCHOR_END: record
 
@@ -493,7 +501,9 @@ impl Change {
             | Change::KeyAdded(_)
             | Change::DeviceRemoved(_)
             | Change::PolicySet(_)
-            | Change::Proved(_) => None,
+            | Change::Proved(_)
+            | Change::ProjectEnrolled(_)
+            | Change::ProjectRemoved(_) => None,
         }
     }
 }
@@ -562,8 +572,9 @@ impl Record {
     /// for an audit (01M3ZWRC11R5M9V1KTF05P240W): a post, a
     /// membership, a lead, a claim or a release in that thread; a direct
     /// message from a session in that repository; the start or the end
-    /// of a session in that repository; and a pause of the riff or of
-    /// that repository. Each other record is not.
+    /// of a session in that repository; a pause of the riff or of that
+    /// repository; and the enrollment and the removal of its project
+    /// (01M76SG2E9RPV4B7CYSZPGGZ3P). Each other record is not.
     ///
     /// ```
     /// use riff_core::record::{Change, Claimed, Envelope, Line, PauseSet, Record, Scope};
@@ -613,6 +624,8 @@ impl Record {
             Change::PlanSet(set) => &set.thread == repo,
             Change::PlanEnded(ended) => &ended.thread == repo,
             Change::NotesSet(set) => &set.thread == repo,
+            Change::ProjectEnrolled(enrolled) => &enrolled.repo == repo,
+            Change::ProjectRemoved(removed) => &removed.repo == repo,
             Change::SettingChanged(_)
             | Change::RiffMade(_)
             | Change::PersonJoined(_)
@@ -1276,6 +1289,42 @@ pub struct Proved {
     pub counter: u64,
 }
 
+/// A repository that is a project of the riff, and the hosts that may
+/// run its wave (01M76SG2E9RPV4B7CYSZPGGZ3P). The envelope names who
+/// enrolled it, and when.
+///
+/// ```
+/// use riff_core::record::{Change, ProjectEnrolled};
+///
+/// let enrolled = Change::ProjectEnrolled(ProjectEnrolled {
+///     repo: "acme/app".parse()?,
+///     hosts: vec!["thelio".into()],
+/// });
+/// assert_eq!(
+///     serde_json::to_string(&enrolled).unwrap(),
+///     r#"{"project_enrolled":{"repo":"acme/app","hosts":["thelio"]}}"#
+/// );
+/// // No host: each host may run the wave.
+/// let each: ProjectEnrolled = serde_json::from_str(r#"{"repo":"acme/app"}"#).unwrap();
+/// assert!(each.hosts.is_empty());
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ProjectEnrolled {
+    /// The repository, `OWNER/REPO`: the name of its thread.
+    pub repo: ThreadName,
+    /// The hosts that may run the wave of the project, sorted. Empty:
+    /// each host may.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hosts: Vec<String>,
+}
+
+/// The riff forgot the project `repo` (01M76SG2E9RPV4B7CYSZPGGZ3P).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ProjectRemoved {
+    pub repo: ThreadName,
+}
+
 /// One line of the log, as this build reads it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Line {
@@ -1461,6 +1510,13 @@ pub fn one_of_each() -> Vec<Change> {
             name: "phone".into(),
             action: "pause the whole riff".into(),
             counter: 3,
+        }),
+        Change::ProjectEnrolled(ProjectEnrolled {
+            repo: thread(),
+            hosts: vec!["heron".into(), "thelio".into()],
+        }),
+        Change::ProjectRemoved(ProjectRemoved {
+            repo: thread(),
         }),
     ]
 }
