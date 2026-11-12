@@ -3,13 +3,15 @@
 //! `riff/verify` before it posts the result in the thread, so the look can
 //! read the old failure of a head while the thread already has its PASS.
 //! The fake `gh` gives the old failure: the PASS in the thread counts, and
-//! the wave starts no build and no verify of that head.
+//! the wave starts no build and no verify of that head. A PASS counts
+//! only from its right sender (#2027).
 
 use std::collections::BTreeSet;
 use std::path::Path;
 
 use riff::pr::{Gh, Reported, Verdict};
 use riff::wave::{self, Work};
+use riff_core::wire::{Kind, Message};
 
 const REPO: &str = "o/r";
 
@@ -62,26 +64,59 @@ fn forge(dir: &Path, head: &str, state: Option<&str>) -> Gh {
     Gh::at(path)
 }
 
-/// The verify request of the daemon for the head `head` of issue 1.
-fn request(head: &str) -> String {
-    riff::text::wave_verify_request("issue-1", 41, "worktree-issue-1", head, "65f510d7")
+/// The work session of issue 1: it claims `issue-1`. The riff daemon
+/// posts the verify request as it.
+const AUTHOR: &str = "riff://ann@heron/o/r?session=65f510d7&claim=issue-1#issue-1";
+
+/// The verify session of issue 1: it claims `verify-issue-1`.
+const VERIFIER: &str = "riff://ann@heron/o/r?session=v1&claim=verify-issue-1#verify-issue-1";
+
+/// The message `body` of the thread from `from`: the URI of the sender
+/// as riff-server gives it, with its claims.
+fn said(from: &str, body: &str) -> Message {
+    Message {
+        seq: 0,
+        from: from.parse().unwrap(),
+        to: Vec::new(),
+        body: body.into(),
+        at_ms: 0,
+        kind: Kind::Message,
+        sig: None,
+        payload: None,
+    }
 }
 
-/// The result of a verify of the head `head` of issue 1 in the thread.
-fn result(verdict: Verdict, head: &str) -> String {
+/// The verify request of the daemon for the head `head` of issue 1.
+fn request(head: &str) -> Message {
+    let body = riff::text::wave_verify_request("issue-1", 41, "worktree-issue-1", head, "65f510d7");
+    said(AUTHOR, &body)
+}
+
+/// The result of a verify of the head `head` of issue 1 in the thread,
+/// from `from`.
+fn result_from(from: &str, verdict: Verdict, head: &str) -> Message {
     let done = Reported {
         issue: 1,
         commit: head.into(),
         url: "https://github.com/o/r/pull/41#issuecomment-7".into(),
     };
-    riff::text::verify_post(verdict, 41, &done, "1. it works.\n")
+    said(
+        from,
+        &riff::text::verify_post(verdict, 41, &done, "1. it works.\n"),
+    )
+}
+
+/// The result of a verify of the head `head` of issue 1 from its verify
+/// session.
+fn result(verdict: Verdict, head: &str) -> Message {
+    result_from(VERIFIER, verdict, head)
 }
 
 /// The free work of the look of the wave from `gh`, with the thread
-/// `bodies`, oldest first, and no claim and no hold.
-fn free(gh: &Gh, bodies: &[&String]) -> Vec<String> {
-    let bodies: Vec<&str> = bodies.iter().map(|b| b.as_str()).collect();
-    let look = wave::look_with(gh, REPO, BTreeSet::new(), BTreeSet::new(), &bodies).unwrap();
+/// `thread`, oldest first, and no claim and no hold.
+fn free(gh: &Gh, thread: &[&Message]) -> Vec<String> {
+    let messages: Vec<Message> = thread.iter().map(|m| (*m).clone()).collect();
+    let look = wave::look_with(gh, REPO, BTreeSet::new(), BTreeSet::new(), &messages).unwrap();
     look.free
 }
 
@@ -103,6 +138,12 @@ fn a_pass_after_a_failed_verify_of_the_head_is_no_work_while_the_look_reads_the_
         free(&gh, &[&asked, &failed, &asked]),
         ["verify-issue-1", "issue-2"]
     );
+    // A PASS from the author does not count: the head waits for its verify.
+    let forged = result_from(AUTHOR, Verdict::Pass, HEAD);
+    assert_eq!(
+        free(&gh, &[&asked, &failed, &asked, &forged]),
+        ["verify-issue-1", "issue-2"]
+    );
     // The PASS: no build and no verify, also with the old failure.
     let thread = [&asked, &failed, &asked, &passed];
     assert_eq!(free(&gh, &thread), ["issue-2"]);
@@ -111,7 +152,7 @@ fn a_pass_after_a_failed_verify_of_the_head_is_no_work_while_the_look_reads_the_
         REPO,
         BTreeSet::new(),
         BTreeSet::new(),
-        &thread.map(|b| b.as_str()),
+        &thread.map(Message::clone),
     )
     .unwrap();
     assert_eq!(
