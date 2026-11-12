@@ -1,9 +1,10 @@
 //! The projects of the riff over HTTP, with a fake GitHub
 //! (01M76SG2E9RPV4B7CYSZPGGZ3P, 01M76SG8GBXFYXKWMQHPCNEXBN,
 //! 01M76SG8JVHTKY6N62FQG7XAE6, 01M76SG8NCSAP69Y5AX455BJQM,
-//! 01M77FVW07HC05Q69HV6971F20): the enrollment and the removal by an
-//! admin who is an admin of the repository, the refusals, the hosts
-//! over a restart, and the search of the projects at a start.
+//! 01M77FVW07HC05Q69HV6971F20, 01M77F7HPBNJY9QFG3HA6YH5F4): the
+//! enrollment and the removal by an admin who is an admin of the
+//! repository, the refusals, the hosts over a restart, the projects in
+//! the reply to `who`, and the search of the projects at a start.
 
 use crate::common;
 use crate::fake_github::{FakeGitHub, REPO};
@@ -18,6 +19,7 @@ use riff_core::record::{
 };
 use riff_core::wire::{
     Kind, ProjectFacts, ProjectInitReply, ProjectsReply, REFUSED_HEADER, ReadReply, TokenReply,
+    WhoReply,
 };
 use riff_server::Service;
 use riff_server::auth::Config;
@@ -225,6 +227,42 @@ async fn an_admin_who_is_an_admin_of_the_repository_enrolls_and_removes_a_projec
     assert!(projects_of(&url, &bob).await.is_empty());
     // riff-server sent the token only to GitHub, and in no reply.
     assert!(!text.contains(ADMIN_TOKEN));
+}
+
+/// The repositories of the projects in the reply of `person` to `who`.
+async fn who_projects(url: &str, person: &Person) -> Vec<String> {
+    let (status, _, text) = call(url, person, "/v1/who", json!({ "me": person.me })).await;
+    assert_eq!(status, 200, "{text}");
+    let who: WhoReply = serde_json::from_str(&text).unwrap();
+    who.projects.iter().map(ToString::to_string).collect()
+}
+
+/// The reply to `who` names the repository of each project, to each
+/// person and each session (01M77F7HPBNJY9QFG3HA6YH5F4).
+#[tokio::test]
+async fn the_reply_to_who_names_each_project_to_each_person_and_session() {
+    let fake = github().await;
+    let (service, url) = signed(&fake).await;
+    let cy = person(&service, "cy@acme.io").await;
+    let bob = person(&service, "bob@acme.io").await;
+    assert!(who_projects(&url, &bob).await.is_empty());
+
+    let (status, _, text) = call(
+        &url,
+        &cy,
+        "/v1/project/init",
+        init(&cy.me, &[], ADMIN_TOKEN),
+    )
+    .await;
+    assert_eq!(status, 200, "{text}");
+    assert_eq!(who_projects(&url, &bob).await, [REPO]);
+    let as_session = session(&url, &bob, "s2").await;
+    assert_eq!(who_projects(&url, &as_session).await, [REPO]);
+
+    let (status, _, text) =
+        call(&url, &cy, "/v1/project/remove", remove(&cy.me, ADMIN_TOKEN)).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(who_projects(&url, &bob).await.is_empty());
 }
 
 /// A member, a session, and an admin who is not an admin of the

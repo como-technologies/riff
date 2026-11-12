@@ -2716,6 +2716,7 @@ async fn who(
                 sessions: state.who(now, now_ms, r.all),
                 people,
                 repos: state.repos_of(&user),
+                projects: state.project_repos(),
             }
         })
         .await?;

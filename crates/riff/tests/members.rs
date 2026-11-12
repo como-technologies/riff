@@ -101,7 +101,7 @@ fn session(user: &str, id: &str) -> SessionUri {
 async fn who(api: &Api, me: &SessionUri) -> String {
     let pauses = api.pauses(me).await.unwrap();
     let who = api.roster(me, false).await.unwrap();
-    let text = riff::view::who(&pauses, &who.sessions, me, false);
+    let text = riff::view::who(&pauses, &who.sessions, &who.projects, me, false);
     anstream::adapter::strip_str(&text).to_string()
 }
 

@@ -1,9 +1,10 @@
 //! `riff questions` (01M6QBJJ3R5CNTHT4FAPZ5DDSW, 01M6QQJHV8THJG36XFT95S3Q84,
-//! 01M6QQJHXNAVYNNJ86WYY3C8EG, #1605, #1666): the open
-//! issues with the label `question` in each repository of the person at
-//! the terminal, from a real riff-server and a fake `gh`. The sessions of
-//! another person add no repository, and a repository with the notes of a
-//! lead and no session does. `--web` opens one GitHub search in the
+//! 01M6QQJHXNAVYNNJ86WYY3C8EG, 01M77F889Q3D6VCEDNNNXSWGNK, #1605, #1666,
+//! #1864): the open issues with the label `question` in each project of
+//! the person at the terminal, from a real riff-server and a fake `gh`.
+//! The sessions of another person add no repository, a repository that
+//! is no project adds none, and a project with the notes of a lead and
+//! no session adds one. `--web` opens one GitHub search in the
 //! browser, here a fake `xdg-open`. `--answered N` removes the label of
 //! the issue N, and wakes the lead of the person (#1782,
 //! 01M6XZ2T9TPZC1X36Y2ZXZ83C0).
@@ -11,13 +12,10 @@
 use isolated::Isolated;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
-use std::time::Duration;
 
 use crate::common;
 use riff_core::name::SessionUri;
-use riff_core::record::{Change, Envelope, NotesSet, Record};
-use riff_state::store::{Memory, Store};
-use std::sync::Arc;
+use riff_core::record::{Change, NotesSet};
 
 /// A git repository with a GitHub origin, so the folder is in
 /// `como-technologies/riff`.
@@ -138,42 +136,20 @@ async fn live(server: &str, uri: &str) {
     opened.await.unwrap();
 }
 
-/// A real server that loads a log with the notes of a lead of brett in
-/// each of `repos`, and no session. The session of a lead can be gone and
-/// forgotten while its notes stay.
-async fn server_with_notes(repos: &[&str]) -> common::Signed {
-    let store = Memory::default();
-    let records: Vec<Record> = repos
-        .iter()
-        .zip(1..)
-        .map(|(repo, position)| Record {
-            envelope: Envelope {
-                position,
-                written_at_ms: 1_790_812_800_000 + position * 1000,
-                by: None,
-                command: None,
-                call: None,
-            },
-            change: Change::NotesSet(NotesSet {
-                thread: repo.parse().unwrap(),
-                user: "brett".into(),
-                text: "Prefer thelio for builds.".into(),
-            }),
+/// A real server that loads a log with each of `projects` as a project
+/// of the riff, and the notes of a lead of brett in each of `notes`, with
+/// no session. The session of a lead can be gone and forgotten while its
+/// notes stay.
+async fn server(projects: &[&str], notes: &[&str]) -> common::Signed {
+    let notes = notes.iter().map(|repo| {
+        Change::NotesSet(NotesSet {
+            thread: repo.parse().unwrap(),
+            user: "brett".into(),
+            text: "Prefer thelio for builds.".into(),
         })
-        .collect();
-    riff_state::log::write(&store, &records, &Default::default(), || true)
-        .await
-        .unwrap();
-    let lease = riff_server::lease::Timing {
-        wait: Duration::from_millis(50),
-        read_every: Duration::from_millis(50),
-        valid_for: Duration::from_millis(500),
-        exit_after: Duration::from_secs(1),
-        ..Default::default()
-    };
-    let loaded = (Arc::new(store) as Arc<dyn Store>, lease);
-    let (listener, url) = common::listen().await;
-    common::start_signed_at(listener, &url, Some(loaded), |router| router).await
+    });
+    let changes = projects.iter().map(|repo| common::project(repo));
+    common::start_signed_log(changes.chain(notes).collect()).await
 }
 
 const RIFF: &str = r#"[{"number":12,"title":"Which design?","url":"https://github.com/como-technologies/riff/issues/12"},
@@ -185,14 +161,25 @@ const PALETTE: &str = r#"[{"number":5,"title":"Which libvirt?","url":"https://gi
 const MIKE: &str =
     r#"[{"number":8,"title":"Not for brett","url":"https://github.com/o/mikes/issues/8"}]"#;
 
+/// The projects of each test, also the repository of the folder.
+const PROJECTS: &[&str] = &[
+    "como-technologies/riff",
+    "o/other",
+    "o/quiet",
+    "o/mikes",
+    "o/off",
+    "o/gone",
+    "o/lost",
+];
+
 /// The list has one line for each open issue with the label of each
-/// repository of the person: the repository of the folder, and the
+/// project of the person: the repository of the folder, and the
 /// repository of a session in another repository. A repository with no
 /// question adds no line. A session of another person adds no
 /// repository: `gh` never reads it.
 #[tokio::test(flavor = "multi_thread")]
 async fn riff_questions_lists_the_issues_with_the_label_of_each_repository_of_the_person() {
-    let server = common::start_signed().await;
+    let server = server(PROJECTS, &[]).await;
     let dir = repo();
     let bin = bin(
         &[
@@ -224,11 +211,42 @@ async fn riff_questions_lists_the_issues_with_the_label_of_each_repository_of_th
     );
 }
 
-/// A repository with the notes of a lead of the person and no session
-/// is read: riff-server keeps the notes after it forgets the session.
+/// 01M77F889Q3D6VCEDNNNXSWGNK: a repository that a session of the person
+/// names, and that is no project, gives no line: `gh` never reads it.
+/// The folder of a repository that is no project adds none either.
+#[tokio::test(flavor = "multi_thread")]
+async fn riff_questions_reads_no_repository_that_is_no_project() {
+    let server = server(&["o/other"], &[]).await;
+    let dir = repo();
+    let bin = bin(
+        &[
+            ("como-technologies/riff", RIFF),
+            ("o/other", OTHER),
+            ("local/theme", MIKE),
+        ],
+        &[],
+        &[],
+    );
+    live(&server, "riff://brett@thelio/o/other?session=b2").await;
+    live(&server, "riff://brett@thelio/local/theme?session=b3").await;
+
+    let out = run(riff(&server, dir.path(), bin.path(), &[])).await;
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        "o/other  #3  Who owns it?  https://github.com/o/other/issues/3\n"
+    );
+    assert_eq!(stderr, "");
+    assert_eq!(asked(bin.path()), ["o/other"]);
+}
+
+/// A project with the notes of a lead of the person and no session is
+/// read: riff-server keeps the notes after it forgets the session.
 #[tokio::test(flavor = "multi_thread")]
 async fn riff_questions_reads_a_repository_with_the_notes_of_a_lead_and_no_session() {
-    let server = server_with_notes(&["como-technologies/palette-edge-libvirt"]).await;
+    let palette = "como-technologies/palette-edge-libvirt";
+    let server = server(&[palette, "como-technologies/riff"], &[palette]).await;
     let dir = repo();
     let bin = bin(
         &[
@@ -263,14 +281,14 @@ async fn riff_questions_reads_a_repository_with_the_notes_of_a_lead_and_no_sessi
 /// No open question: one line that says so.
 #[tokio::test(flavor = "multi_thread")]
 async fn riff_questions_says_when_no_issue_has_the_label() {
-    let server = common::start_signed().await;
+    let server = server(PROJECTS, &[]).await;
     let dir = repo();
     let bin = bin(&[], &[], &[]);
     let out = run(riff(&server, dir.path(), bin.path(), &[])).await;
     assert!(out.status.success());
     assert_eq!(
         String::from_utf8(out.stdout).unwrap(),
-        "No open question in your repositories.\n"
+        "No open question in your projects.\n"
     );
 }
 
@@ -278,7 +296,7 @@ async fn riff_questions_says_when_no_issue_has_the_label() {
 /// stderr, and the command exits with 0.
 #[tokio::test(flavor = "multi_thread")]
 async fn riff_questions_skips_a_repository_with_its_issues_off() {
-    let server = common::start_signed().await;
+    let server = server(PROJECTS, &[]).await;
     let dir = repo();
     let bin = bin(&[("como-technologies/riff", RIFF)], &[], &["o/off"]);
     live(&server, "riff://brett@thelio/o/off?session=b2").await;
@@ -300,7 +318,7 @@ async fn riff_questions_skips_a_repository_with_its_issues_off() {
 /// with 0.
 #[tokio::test(flavor = "multi_thread")]
 async fn riff_questions_names_the_repositories_that_gh_cannot_read_in_one_line() {
-    let server = common::start_signed().await;
+    let server = server(PROJECTS, &[]).await;
     let dir = repo();
     let bin = bin(
         &[("como-technologies/riff", RIFF)],
@@ -329,7 +347,7 @@ async fn riff_questions_names_the_repositories_that_gh_cannot_read_in_one_line()
 /// command names them and exits with 1.
 #[tokio::test(flavor = "multi_thread")]
 async fn riff_questions_exits_with_1_when_gh_cannot_read_any_repository() {
-    let server = common::start_signed().await;
+    let server = server(PROJECTS, &[]).await;
     let dir = repo();
     let bin = bin(&[], &["como-technologies/riff"], &[]);
 
@@ -345,18 +363,21 @@ async fn riff_questions_exits_with_1_when_gh_cannot_read_any_repository() {
 /// `--web` opens one search for all the repositories of the person, and
 /// lists nothing. The test shows the address that reaches the browser:
 /// the repository of a session of the person, the repository with the
-/// notes of a lead and no session, and none of another person.
+/// notes of a lead and no session, none of another person, and no
+/// repository that is no project.
 /// On macOS, riff opens the browser with `/usr/bin/open`, which no
 /// fake on `PATH` replaces.
 #[cfg(target_os = "linux")]
 #[tokio::test(flavor = "multi_thread")]
 async fn riff_questions_web_opens_one_search_over_the_repositories() {
-    let server = server_with_notes(&["o/notes"]).await;
+    use std::time::Duration;
+    let server = server(&[PROJECTS, &["o/notes"]].concat(), &["o/notes"]).await;
     let dir = repo();
     let bin = bin(&[], &[], &[]);
     browser(bin.path());
     live(&server, "riff://brett@thelio/o/other?session=b2").await;
     live(&server, "riff://mike@thelio/o/mikes?session=m1").await;
+    live(&server, "riff://brett@thelio/local/theme?session=b3").await;
 
     let out = run(riff(&server, dir.path(), bin.path(), &["--web"])).await;
     let stderr = String::from_utf8(out.stderr).unwrap();

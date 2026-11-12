@@ -407,6 +407,69 @@ pub async fn start_signed_project() -> Signed {
     server
 }
 
+/// The change that enrolls `repo` as a project of the riff, with no
+/// host (01M76SG2E9RPV4B7CYSZPGGZ3P), for [`start_signed_log`].
+pub fn project(repo: &str) -> riff_core::record::Change {
+    riff_core::record::Change::ProjectEnrolled(riff_core::record::ProjectEnrolled {
+        repo: repo.parse().unwrap(),
+        hosts: Vec::new(),
+    })
+}
+
+/// As [`start_signed`], for a server that loads a log of `changes`, the
+/// first at position 1: for example the [`project`] of each project of
+/// the riff, or the notes of a lead with no session.
+pub async fn start_signed_log(changes: Vec<riff_core::record::Change>) -> Signed {
+    let loaded = log_of(changes).await;
+    let (listener, url) = listen().await;
+    start_signed_at(listener, &url, Some(loaded), |router| router).await
+}
+
+/// The router of a riff-server with no sign-in at `url` that loads a log
+/// of `changes`, as [`start_signed_log`].
+pub async fn router_of_log(url: &str, changes: Vec<riff_core::record::Change>) -> axum::Router {
+    let (store, lease) = log_of(changes).await;
+    let config = riff_server::auth::Config {
+        lease,
+        ..riff_server::auth::Config::new(url)
+    };
+    riff_server::Service::load(config, store)
+        .await
+        .unwrap()
+        .router()
+}
+
+/// A store with a log of `changes`, the first at position 1, and a short
+/// lease, for a server to load.
+async fn log_of(changes: Vec<riff_core::record::Change>) -> Loaded {
+    let store = riff_state::store::Memory::default();
+    let records: Vec<riff_core::record::Record> = changes
+        .into_iter()
+        .zip(1..)
+        .map(|(change, position)| riff_core::record::Record {
+            envelope: riff_core::record::Envelope {
+                position,
+                written_at_ms: 1_790_812_800_000 + position * 1000,
+                by: None,
+                command: None,
+                call: None,
+            },
+            change,
+        })
+        .collect();
+    riff_state::log::write(&store, &records, &Default::default(), || true)
+        .await
+        .unwrap();
+    let lease = riff_server::lease::Timing {
+        wait: std::time::Duration::from_millis(50),
+        read_every: std::time::Duration::from_millis(50),
+        valid_for: std::time::Duration::from_millis(500),
+        exit_after: std::time::Duration::from_secs(1),
+        ..Default::default()
+    };
+    (Arc::new(store) as Arc<dyn riff_state::store::Store>, lease)
+}
+
 /// The store that a server loads, and the timing of its lease.
 pub type Loaded = (
     Arc<dyn riff_state::store::Store>,

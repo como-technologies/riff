@@ -10732,7 +10732,9 @@ esac
             };
             let mut tab = Waves::new(Some("o/r".into()));
             tab.read(vec![("o/r".into(), Ok(forge))], 0);
-            let look = crate::tui::Look::default();
+            // o/r, the clone, is a project of the riff.
+            let mut look = crate::tui::Look::default();
+            look.who.projects = vec!["o/r".parse().unwrap()];
             for key in [crate::tui::Key::First, crate::tui::Key::Right] {
                 let shown = rows(&tab, &look, 0);
                 tab.on_key(key, &shown, (&look, 0), 10);

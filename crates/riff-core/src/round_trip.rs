@@ -494,6 +494,7 @@ mod tests {
             sessions: sessions.clone(),
             people: vec![person(PersonRole::Admin), person(PersonRole::Member)],
             repos: vec![thread()],
+            projects: vec![thread()],
         });
         c.trip(&MeReply {
             session: Some(sessions[0].clone()),

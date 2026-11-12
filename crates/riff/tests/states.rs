@@ -105,6 +105,7 @@ fn top(sessions: &[SessionInfo]) -> String {
         issues: &Default::default(),
         holds: &Default::default(),
         repo: Some("como-technologies/riff"),
+        projects: &[],
         show: &Default::default(),
         width: 200,
         fault: None,

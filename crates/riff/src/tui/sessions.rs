@@ -1644,7 +1644,7 @@ fn summary(state: &State, layout: Layout, place: Option<String>, width: u16) -> 
         right.push(
             match state.sessions.by() {
                 By::Person => "by person",
-                By::Repo => "by repo",
+                By::Repo | By::Project => "by repo",
             }
             .to_owned(),
         );

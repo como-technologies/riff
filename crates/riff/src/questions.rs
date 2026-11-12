@@ -1,31 +1,34 @@
 //! `riff questions`: the open questions for a person, in all the
-//! repositories of the person (#1605, #1666, 01M6QQJHV8THJG36XFT95S3Q84,
-//! 01M6QQJHXNAVYNNJ86WYY3C8EG).
+//! projects of the person (#1605, #1666, #1864, 01M6QQJHV8THJG36XFT95S3Q84,
+//! 01M6QQJHXNAVYNNJ86WYY3C8EG, 01M77F889Q3D6VCEDNNNXSWGNK).
 //!
 //! # Design
 //!
 //! A lead that needs a decision of a person writes the questions in the
 //! body of the issue, and adds the label `question`
 //! ([`riff_client::waves::QUESTION`]). `riff questions` lists the open
-//! issues with that label in each repository of the person at the
+//! issues with that label in each project of the person at the
 //! terminal: not of the riff. riff-server tells which ones: each
 //! repository with a session of the person (live or gone), with a lead
-//! of the person, or with the notes of a lead of the person. The daemon
-//! of the person has a session for each repository that it serves, so
-//! these are in the first kind. The repository of the folder is the last
-//! one ([`repos`]). A session of another person adds nothing. Each line
-//! has the repository, the number, the title and the link
+//! of the person, or with the notes of a lead of the person, that is a
+//! project of the riff. The daemon of the person has a session for each
+//! repository that it serves, so these are in the first kind. The
+//! repository of the folder is the last one, when it is a project
+//! ([`repos`]). A session of another person adds nothing, and a
+//! repository that is no project adds nothing. Each line has the
+//! repository, the number, the title and the link
 //! ([`crate::text::questions_list`]).
 //!
 //! `riff questions --web` opens one GitHub search in the browser, as `gh
 //! issue view --web` does: `is:open label:question` over the same
-//! repositories ([`web_url`]).
+//! projects ([`web_url`]).
 //!
 //! ```mermaid
 //! flowchart LR
-//!     W["riff-server: who,<br/>the repos of the person"] --> R["the repositories of the person"]
+//!     W["riff-server: who,<br/>the repos of the person"] --> R["the projects of the person"]
+//!     P["riff-server: who,<br/>the projects of the riff"] --> R
 //!     F["the folder: its repository"] --> R
-//!     R -- "gh issue list --label question,<br/>one call for each repository" --> L["the lines of riff questions"]
+//!     R -- "gh issue list --label question,<br/>one call for each project" --> L["the lines of riff questions"]
 //!     R -- "--web" --> U["one search: is:open label:question<br/>repo:A repo:B"] --> B["the browser"]
 //! ```
 //!
@@ -86,28 +89,35 @@ pub struct Question {
     pub url: String,
 }
 
-/// The repositories of the person at the terminal, `OWNER/REPO`: the
-/// `repos` of the reply of riff-server to `who`, and `here`, the
-/// repository of the folder. riff-server names the repositories of the
-/// caller only: a session of another person adds none, and a repository
-/// with the notes of a lead of the person and no session is there.
+/// The projects of the person at the terminal, `OWNER/REPO`
+/// (01M77F889Q3D6VCEDNNNXSWGNK): each of the `repos` of the reply of
+/// riff-server to `who` that is one of its `projects`, and `here`, the
+/// repository of the folder, when it is a project. riff-server names the
+/// repositories of the caller only: a session of another person adds
+/// none, and a repository with the notes of a lead of the person and no
+/// session is there. A repository that is no project gives none.
 ///
 /// ```
 /// use riff::questions::repos;
 /// use riff_core::wire::WhoReply;
 ///
 /// let reply = |json: serde_json::Value| -> WhoReply { serde_json::from_value(json).unwrap() };
-/// let who = reply(serde_json::json!({ "sessions": [], "repos": ["o/r", "o/s"] }));
+/// let who = reply(serde_json::json!({
+///     "sessions": [], "repos": ["o/r", "o/s", "local/theme"], "projects": ["o/r", "o/s", "o/t"],
+/// }));
 /// assert_eq!(repos(&who, None), ["o/r".to_owned(), "o/s".to_owned()].into());
 /// assert_eq!(repos(&who, Some("o/t")).len(), 3);
 /// assert_eq!(repos(&who, Some("o/r")).len(), 2);
-/// assert!(repos(&reply(serde_json::json!({ "sessions": [] })), None).is_empty());
+/// // The folder of a repository that is no project.
+/// assert_eq!(repos(&who, Some("o/u")).len(), 2);
+/// assert!(repos(&reply(serde_json::json!({ "sessions": [], "repos": ["o/r"] })), Some("o/r")).is_empty());
 /// ```
 pub fn repos(who: &WhoReply, here: Option<&str>) -> BTreeSet<String> {
     who.repos
         .iter()
         .map(ToString::to_string)
         .chain(here.map(str::to_owned))
+        .filter(|repo| who.projects.iter().any(|p| p.to_string() == *repo))
         .collect()
 }
 

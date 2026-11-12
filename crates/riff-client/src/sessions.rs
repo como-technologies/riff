@@ -30,16 +30,25 @@
 //! and the container sessions of the daemon of its machine. It draws each
 //! entry.
 //!
-//! The model gives two shapes of the tree. The tree of `riff top` has
-//! four levels: person, host, repository, session
-//! (01M3NT4M5D36KTZ5XZMDP6QFQT, 01M42KHN33M4K13GKTX2WM6CMM,
-//! [`By::top_levels`]). [`By::Repo`] puts the repository first. [`Show`]
-//! picks a part of the riff (01M42KHNCBMBCT3TFBYWE339H5).
-//! [`Sessions::tree`] makes the rows, and [`Sessions::people`] the
-//! person of each row. The tree of the Sessions tab has three levels:
-//! repository, person, session, with the host as a column of each
-//! session row ([`By::tab_levels`]). [`By::Person`] puts the person
-//! first there.
+//! The model gives two shapes of the tree. The tree of `riff top` groups
+//! the sessions by project (01M77F8JJ8WC0TSCYP3ARJNQGS, [`By::Project`]):
+//! project, person, host, session, and last the row [`NO_PROJECT`] with
+//! the sessions in no project: person, host, repository, session.
+//! [`By::Person`] puts the person first: person, host, repository,
+//! session (01M3NT4M5D36KTZ5XZMDP6QFQT, 01M42KHN33M4K13GKTX2WM6CMM,
+//! [`By::top_levels`]). [`Show`] picks a part of the riff
+//! (01M42KHNCBMBCT3TFBYWE339H5). [`Sessions::tree`] makes the rows, and
+//! [`Sessions::people`] the person of each row. The tree of the Sessions
+//! tab has three levels: repository, person, session, with the host as a
+//! column of each session row ([`By::tab_levels`]). [`By::Person`] puts
+//! the person first there.
+//!
+//! ```mermaid
+//! flowchart TD
+//!     W["who: the sessions and the projects"] --> T{"Sessions::tree"}
+//!     T -- "a project" --> P["o/r › person › host › session"]
+//!     T -- "no project" --> N["no project › person › host › repository › session"]
+//! ```
 //!
 //! ```
 //! use riff_client::sessions::{Live, Phase, Sessions};
@@ -77,8 +86,39 @@
 use std::collections::BTreeMap;
 
 use riff_core::build::Build;
+use riff_core::name::ThreadName;
 use riff_core::wire::{Person, PersonRole, SessionInfo, SessionState};
 use serde::{Deserialize, Serialize};
+
+/// The key of the row of the sessions in no project, in the tree of
+/// `riff top` and in the table of `riff who` (01M77F8JJ8WC0TSCYP3ARJNQGS,
+/// 01M77F8JN1SE2H4DZBZH1YX7WD). No `OWNER/REPO` has a space.
+pub const NO_PROJECT: &str = "no project";
+
+/// The project of the session `s`: its repository, `OWNER/REPO`, when
+/// `projects` has it. `None` for a repository that is no project, and
+/// outside git.
+///
+/// ```
+/// use riff_client::sessions::project;
+/// use riff_core::wire::SessionInfo;
+///
+/// let info = |uri: &str| -> SessionInfo {
+///     serde_json::from_value(serde_json::json!({ "uri": uri, "live": true })).unwrap()
+/// };
+/// let projects = ["o/r".parse()?];
+/// assert_eq!(project(&info("riff://mike@thelio/o/r?session=a1"), &projects).as_deref(), Some("o/r"));
+/// assert_eq!(project(&info("riff://mike@thelio/local/theme?session=b2"), &projects), None);
+/// assert_eq!(project(&info("riff://mike@thelio?session=c3"), &projects), None);
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn project(s: &SessionInfo, projects: &[ThreadName]) -> Option<String> {
+    s.uri
+        .place()
+        .default_thread()
+        .filter(|thread| projects.contains(thread))
+        .map(|thread| thread.to_string())
+}
 
 /// What a container session does now, as `riff daemon status` shows it
 /// (01M501PADKZNRHBZD9XPMJGW06).
@@ -258,8 +298,15 @@ impl Sessions {
     /// [`Show::by`]. With [`By::Person`], each person of `people` that
     /// `show` shows gets a row, also with no session.
     ///
+    /// With [`By::Project`] (01M77F8JJ8WC0TSCYP3ARJNQGS), each project of
+    /// `projects` with a session gets a row at the top, a
+    /// [`Level::Repo`] row with its `OWNER/REPO`. The sessions in no
+    /// project come last, in the row [`NO_PROJECT`], by the levels of
+    /// [`By::Person`]. Then each person of `people` that `show` shows and
+    /// that has no session gets a row.
+    ///
     /// ```
-    /// use riff_client::sessions::{By, Level, Sessions, Show};
+    /// use riff_client::sessions::{By, Level, NO_PROJECT, Sessions, Show};
     /// use riff_core::wire::SessionInfo;
     ///
     /// let info = |uri: &str| -> SessionInfo {
@@ -276,7 +323,8 @@ impl Sessions {
     ///     vec![],
     /// );
     /// let people = sessions.people(&[]);
-    /// let tree = sessions.tree(&Show::default(), &people);
+    /// let projects = ["o/r".parse()?];
+    /// let tree = sessions.tree(&Show::default(), &people, &projects);
     /// let keys: Vec<&str> = tree.iter().map(|g| g.key.as_str()).collect();
     /// assert_eq!(keys, ["ann", "mike"]);
     /// let hosts: Vec<&str> = tree[1].kids.iter().map(|g| g.key.as_str()).collect();
@@ -284,10 +332,24 @@ impl Sessions {
     /// assert_eq!(tree[1].kids[0].kids[0].level, Level::Repo);
     ///
     /// let by_repo = Show { by: By::Repo, ..Show::default() };
-    /// let tree = sessions.tree(&by_repo, &people);
+    /// let tree = sessions.tree(&by_repo, &people, &projects);
     /// assert_eq!(tree.iter().map(|g| g.key.as_str()).collect::<Vec<_>>(), ["o/r", "o/s"]);
+    ///
+    /// // By project: o/s is no project.
+    /// let by_project = Show { by: By::Project, ..Show::default() };
+    /// let tree = sessions.tree(&by_project, &people, &projects);
+    /// assert_eq!(tree.iter().map(|g| g.key.as_str()).collect::<Vec<_>>(), ["o/r", NO_PROJECT]);
+    /// assert_eq!(tree[0].kids[0].key, "mike");
+    /// let repo = &tree[1].kids[0].kids[0].kids[0];
+    /// assert_eq!((repo.level, repo.key.as_str()), (Level::Repo, "o/s"));
+    /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
-    pub fn tree(&self, show: &Show, people: &BTreeMap<String, PersonRow>) -> Vec<Group<'_>> {
+    pub fn tree(
+        &self,
+        show: &Show,
+        people: &BTreeMap<String, PersonRow>,
+        projects: &[ThreadName],
+    ) -> Vec<Group<'_>> {
         // A person on the command line has no session, and no row.
         let agents: Vec<&SessionInfo> = self
             .on_server()
@@ -295,23 +357,44 @@ impl Sessions {
             .filter(|s| s.uri.who().session().is_some())
             .collect();
         let levels = show.by.top_levels();
+        let away = |user: &String| Group {
+            level: Level::Person,
+            key: user.clone(),
+            sessions: Vec::new(),
+            kids: Vec::new(),
+        };
         match show.by {
             By::Person => {
                 let mut tops = groups(&agents, &levels);
                 for user in people.keys().filter(|u| show.shows_person(u)) {
                     if !tops.iter().any(|g| &g.key == user) {
-                        tops.push(Group {
-                            level: Level::Person,
-                            key: user.clone(),
-                            sessions: Vec::new(),
-                            kids: Vec::new(),
-                        });
+                        tops.push(away(user));
                     }
                 }
                 tops.sort_by(|a, b| a.key.cmp(&b.key));
                 tops
             }
             By::Repo => groups(&agents, &levels),
+            By::Project => {
+                let (inside, mut outside): (Vec<&SessionInfo>, Vec<&SessionInfo>) =
+                    agents.iter().partition(|s| project(s, projects).is_some());
+                let mut tops = groups(&inside, &levels);
+                if !outside.is_empty() {
+                    in_order(&mut outside);
+                    tops.push(Group {
+                        level: Level::Repo,
+                        key: NO_PROJECT.to_owned(),
+                        kids: groups(&outside, &By::Person.top_levels()),
+                        sessions: outside,
+                    });
+                }
+                for user in people.keys().filter(|u| show.shows_person(u)) {
+                    if !agents.iter().any(|s| s.uri.who().user() == user) {
+                        tops.push(away(user));
+                    }
+                }
+                tops
+            }
         }
     }
 }
@@ -351,9 +434,10 @@ pub fn out_of_date(s: &SessionInfo, server: Option<&Build>) -> bool {
     s.binary.as_ref().is_some_and(|b| b.out_of_date(server))
 }
 
-/// The top level of a tree: of `riff top` (01M42KHNCBMBCT3TFBYWE339H5)
-/// and of the Sessions tab of the TUI. Each has its own shape of the
-/// levels: [`By::top_levels`] and [`By::tab_levels`].
+/// The top level of a tree: of `riff top` (01M42KHNCBMBCT3TFBYWE339H5,
+/// 01M77F8JJ8WC0TSCYP3ARJNQGS) and of the Sessions tab of the TUI. Each
+/// has its own shape of the levels: [`By::top_levels`] and
+/// [`By::tab_levels`].
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum By {
@@ -362,28 +446,34 @@ pub enum By {
     Person,
     /// The repository first: a look across people.
     Repo,
+    /// The project first, and last the sessions in no project
+    /// ([`Sessions::tree`]): the default of `riff top`.
+    Project,
 }
 
 impl By {
     /// The levels of the tree of `riff top` above the sessions: person,
-    /// host, repository, or repository, person, host.
+    /// host, repository, or repository, person, host. The row of a
+    /// project is a row of its repository.
     ///
     /// ```
     /// use riff_client::sessions::{By, Level};
     ///
     /// assert_eq!(By::Person.top_levels(), [Level::Person, Level::Host, Level::Repo]);
     /// assert_eq!(By::Repo.top_levels(), [Level::Repo, Level::Person, Level::Host]);
+    /// assert_eq!(By::Project.top_levels(), By::Repo.top_levels());
     /// ```
     pub fn top_levels(self) -> [Level; 3] {
         match self {
             By::Person => [Level::Person, Level::Host, Level::Repo],
-            By::Repo => [Level::Repo, Level::Person, Level::Host],
+            By::Repo | By::Project => [Level::Repo, Level::Person, Level::Host],
         }
     }
 
     /// The levels of the tree of the Sessions tab above the sessions:
     /// repository, person, or person, repository. The host is a column
-    /// of each session row, and no level.
+    /// of each session row, and no level. The tab has no row of a
+    /// project: [`By::Project`] puts the repository first there.
     ///
     /// ```
     /// use riff_client::sessions::{By, Level};
@@ -394,7 +484,7 @@ impl By {
     pub fn tab_levels(self) -> [Level; 2] {
         match self {
             By::Person => [Level::Person, Level::Repo],
-            By::Repo => [Level::Repo, Level::Person],
+            By::Repo | By::Project => [Level::Repo, Level::Person],
         }
     }
 }
@@ -481,7 +571,7 @@ pub fn groups<'a>(sessions: &[&'a SessionInfo], levels: &[Level]) -> Vec<Group<'
     }
     by.into_iter()
         .map(|(key, mut sessions)| {
-            sessions.sort_by_key(|s| (!blocked(s), s.uri.who().session().map(str::to_owned)));
+            in_order(&mut sessions);
             Group {
                 level,
                 key,
@@ -490,6 +580,12 @@ pub fn groups<'a>(sessions: &[&'a SessionInfo], levels: &[Level]) -> Vec<Group<'
             }
         })
         .collect()
+}
+
+/// Puts the sessions of a row in order: the blocked sessions first, then
+/// each session by its ID.
+fn in_order(sessions: &mut [&SessionInfo]) {
+    sessions.sort_by_key(|s| (!blocked(s), s.uri.who().session().map(str::to_owned)));
 }
 
 #[cfg(test)]
@@ -585,12 +681,77 @@ mod tests {
             vec![],
         );
         let people = sessions.people(&[]);
-        let tree = sessions.tree(&Show::default(), &people);
+        let tree = sessions.tree(&Show::default(), &people, &[]);
         let ids: Vec<&str> = tree[0]
             .sessions
             .iter()
             .filter_map(|s| s.uri.who().session())
             .collect();
         assert_eq!(ids, ["zz", "aa"]);
+    }
+
+    /// 01M77F8JJ8WC0TSCYP3ARJNQGS: by project, each project with a
+    /// session in the order of `OWNER/REPO`, then the sessions in no
+    /// project, also outside git, then each member with no session.
+    #[test]
+    fn the_tree_by_project_puts_the_sessions_in_no_project_last() {
+        let mut blocked = info("riff://mike@thelio/local/theme?session=zz");
+        blocked.state = Some(SessionState::Blocked);
+        let sessions = Sessions::new(
+            vec![
+                info("riff://mike@thelio/o/s?session=s1"),
+                info("riff://ann@heron/o/r?session=r1"),
+                info("riff://mike@thelio?session=aa"),
+                blocked,
+            ],
+            vec![],
+        );
+        let bob = Person {
+            user: "bob".into(),
+            role: PersonRole::Member,
+            live: false,
+            seen_secs: None,
+        };
+        let people = sessions.people(&[bob]);
+        let projects = ["o/s".parse().unwrap(), "o/r".parse().unwrap()];
+        let by = Show {
+            by: By::Project,
+            ..Show::default()
+        };
+        let tree = sessions.tree(&by, &people, &projects);
+        let tops: Vec<(Level, &str)> = tree.iter().map(|g| (g.level, g.key.as_str())).collect();
+        assert_eq!(
+            tops,
+            [
+                (Level::Repo, "o/r"),
+                (Level::Repo, "o/s"),
+                (Level::Repo, NO_PROJECT),
+                (Level::Person, "bob"),
+            ]
+        );
+        let none = &tree[2];
+        let ids: Vec<&str> = none
+            .sessions
+            .iter()
+            .filter_map(|s| s.uri.who().session())
+            .collect();
+        assert_eq!(ids, ["zz", "aa"], "blocked first");
+        let repos: Vec<&str> = none.kids[0].kids[0]
+            .kids
+            .iter()
+            .map(|g| g.key.as_str())
+            .collect();
+        assert_eq!(repos, ["-", "local/theme"]);
+        // A filter of a host shows no member with no session.
+        let thelio = Show {
+            host: Some("thelio".into()),
+            ..by
+        };
+        let keys: Vec<String> = sessions
+            .tree(&thelio, &people, &projects)
+            .into_iter()
+            .map(|g| g.key)
+            .collect();
+        assert_eq!(keys, ["o/s", NO_PROJECT]);
     }
 }

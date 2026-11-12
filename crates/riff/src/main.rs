@@ -70,9 +70,10 @@ enum Command {
     Whoami,
     /// List the sessions of the riff
     ///
-    /// It shows the state of the riff too. A session that ended, or
-    /// stopped for 3 minutes, is gone and not listed. In a container, the
-    /// riff daemon of the host reads riff-server for the session.
+    /// It shows the state of the riff too, and groups the sessions by
+    /// project. A session that ended, or stopped for 3 minutes, is gone
+    /// and not listed. In a container, the riff daemon of the host reads
+    /// riff-server for the session.
     Who {
         /// List gone sessions too.
         #[arg(long)]
@@ -199,10 +200,10 @@ enum Command {
     },
     /// Show a live table of each session
     ///
-    /// The tree has the levels person, host, repository and session. Each
-    /// row shows the tags, the item and the status of a session. It
-    /// draws the table again in place until Ctrl-C. It posts nothing and
-    /// wakes no session.
+    /// The tree groups the sessions by project: project, person, host and
+    /// session. Each row shows the tags, the item and the status of a
+    /// session. It draws the table again in place until Ctrl-C. It posts
+    /// nothing and wakes no session.
     Top {
         /// Print the table once and exit.
         #[arg(long)]
@@ -216,9 +217,10 @@ enum Command {
         /// Show only the sessions in this repository.
         #[arg(long, value_name = "OWNER/REPO")]
         repo: Option<String>,
-        /// The top level of the tree: person (person, host, repository,
-        /// session) or repo (repository, person, host, session).
-        #[arg(long, value_enum, default_value = "person")]
+        /// The top level of the tree: project (project, person, host,
+        /// session; the sessions in no project come last) or person
+        /// (person, host, repository, session).
+        #[arg(long, value_enum, default_value = "project")]
         by: ByArg,
     },
     /// Claim a work item
@@ -706,9 +708,10 @@ enum Command {
     ///
     /// A lead that needs an answer of you writes its questions in the body
     /// of an issue and adds the label question. This command lists each
-    /// open issue with that label, in your repositories: each one with a
-    /// session of yours (live or gone), a lead of yours or the notes of a
-    /// lead of yours, and the repository of this folder. Each line has the
+    /// open issue with that label, in your projects: each project of the
+    /// riff with a session of yours (live or gone), a lead of yours or the
+    /// notes of a lead of yours, and the project of this folder. A
+    /// repository that is no project adds nothing. Each line has the
     /// repository, the number, the title and the link. A repository with
     /// its issues turned off is skipped. One last line on stderr names the
     /// repositories that gh cannot read, and the command exits with 1 only
@@ -784,15 +787,15 @@ enum Command {
 /// The top level of the tree of `riff top`.
 #[derive(Clone, Copy, clap::ValueEnum)]
 enum ByArg {
+    Project,
     Person,
-    Repo,
 }
 
 impl From<ByArg> for riff_client::sessions::By {
     fn from(by: ByArg) -> Self {
         match by {
+            ByArg::Project => Self::Project,
             ByArg::Person => Self::Person,
-            ByArg::Repo => Self::Repo,
         }
     }
 }
@@ -2505,7 +2508,10 @@ async fn cli() -> Result<()> {
             };
             let (pauses, mut who) = (seen.pauses, seen.who);
             riff::state::fill(&mut who.sessions, pauses.state);
-            anstream::print!("{}", view::who(&pauses, &who.sessions, &me, long));
+            anstream::print!(
+                "{}",
+                view::who(&pauses, &who.sessions, &who.projects, &me, long)
+            );
         }
         // In a container, the daemon makes each call of a command of a
         // session for it (01M74A84SA5KCBVGVW7M9ETJ3A).
@@ -4663,9 +4669,9 @@ async fn draw_top(
 ) -> Result<()> {
     use std::io::{IsTerminal, Write};
     use std::time::Instant;
-    // One read of `gh` for each repository with a live session
-    // (01M42KHN80V49HDDZF953HXDT0). The calls share one token
-    // (01M54510SFK1Z9VPFYBYYSV10F).
+    // One read of `gh` for each project with a live session
+    // (01M42KHN80V49HDDZF953HXDT0, 01M77F8JFFWV6KFTPQT9DNB26M). The calls
+    // share one token (01M54510SFK1Z9VPFYBYYSV10F).
     let gh = pr::Gh::here("top").with_one_token();
     let fetch = |repos: std::collections::BTreeSet<String>| {
         let gh = gh.clone();
@@ -4730,7 +4736,8 @@ async fn draw_top(
             shows.read(Instant::now());
             // A `gh` that fails keeps the last issues of its repository
             // (01M3ZC09FA9DZPTHK31XECZ566).
-            let repos = riff_client::waves::board_repos(sessions, show, repo.as_deref());
+            let repos =
+                riff_client::waves::project_boards(sessions, show, repo.as_deref(), &who.projects);
             let read = fetch(repos).await?;
             gh_fault = read.iter().find_map(|(_, read)| {
                 let e = read.as_ref().err()?;
@@ -4772,6 +4779,7 @@ async fn draw_top(
             issues: &issues,
             holds: &holds,
             repo: repo.as_deref(),
+            projects: &who.projects,
             show,
             width: textwrap::termwidth(),
             fault: fault.as_deref(),

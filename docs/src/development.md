@@ -4225,24 +4225,28 @@ riff posts no line in `riff chat` for a question. Two places show your
 open questions: the Waves tab of the TUI (see
 [See the questions of each wave in the TUI](how-it-works.md#see-the-questions-of-each-wave-in-the-tui)),
 and `riff questions`. To see each open question for you, in all your
-repositories, run this in any folder:
+projects, run this in any folder:
 
 ```sh
 riff questions
 ```
 
-It lists the open issues with the label `question` in your repositories.
-These are the repositories that riff-server knows for you:
+It lists the open issues with the label `question` in your projects.
+riff reads only the projects of the riff (see
+[The projects of the riff](how-it-works.md#the-projects-of-the-riff)).
+Your projects are the projects in these repositories that riff-server
+knows for you:
 
 - each repository where you have a session, live or gone
 - each repository where you have a lead, or the notes of a lead
 - each repository that a daemon of yours serves
 - the repository of your folder
 
-The sessions of other people in the riff add no repository. A
-repository where you have the notes of a lead is there also when it has
-no session now. Each line has the repository, the number, the title and
-the link:
+A repository that is no project adds nothing, also when you have a
+session in it. The sessions of other people in the riff add no
+repository. A project where you have the notes of a lead is there also
+when it has no session now. Each line has the repository, the number,
+the title and the link:
 
 ```text
 como-technologies/riff  #1596  Which design for the board?  https://github.com/como-technologies/riff/issues/1596
@@ -4259,7 +4263,7 @@ riff could not read 2 repositories: A/a, B/b
 
 The command exits with 0 when it read at least one repository. It exits
 with 1 when `gh` failed for each repository. To see the same issues in
-the browser, in one GitHub search over the same repositories:
+the browser, in one GitHub search over the same projects:
 
 ```sh
 riff questions --web
@@ -4269,8 +4273,10 @@ riff questions --web
 flowchart LR
     S["riff-server: your sessions,<br/>leads and notes"] --> R["your repositories"]
     F["your folder"] --> R
-    R -- "gh issue list --label question" --> L["the lines"]
-    R -- "--web" --> B["one search in the browser"]
+    P["riff-server: the projects"] --> Y["your projects"]
+    R --> Y
+    Y -- "gh issue list --label question" --> L["the lines"]
+    Y -- "--web" --> B["one search in the browser"]
 ```
 
 #### Mark the questions of an issue as answered
@@ -5993,7 +5999,8 @@ riff
   `]`, and when you press `r`, never on a timer. The note line shows
   the age of the read.
 - The report is of the repository of your folder. Outside a clone, it
-  is of the first repository with a live session.
+  is of the first of your projects, in the order of `OWNER/REPO`: the
+  projects of the Waves tab.
 - `←` and `→` show the other reports: the audit (see
   [Audit a wave in the TUI](#audit-a-wave-in-the-tui)) and the log of a
   session (see

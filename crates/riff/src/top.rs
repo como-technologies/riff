@@ -22,8 +22,9 @@
 //! draws the lines.
 //!
 //! The titles of the issues and the current wave come from one
-//! `gh issue list` of the open issues ([`Issues`]) of each repository
-//! with a live session, and of the working directory ([`board_repos`],
+//! `gh issue list` of the open issues ([`Issues`]) of each project
+//! with a live session, and of the working directory when it is a project
+//! ([`project_boards`], 01M77F8JFFWV6KFTPQT9DNB26M,
 //! 01M42KHN80V49HDDZF953HXDT0).
 //! riff keeps them for [`ISSUES_TTL`], then reads them again. A wake of
 //! the GitHub App of an issue or a pull request of the repository of the
@@ -52,9 +53,13 @@
 //! not in `free` (01M58ATZ1F42DWNNB24C2HJPEY). A read that fails keeps
 //! the last holds.
 //!
-//! The rows are a tree with four levels: person, host, repository,
-//! session (01M3NT4M5D36KTZ5XZMDP6QFQT, 01M42KHN33M4K13GKTX2WM6CMM).
-//! `riff top --by repo` puts the repository first. A row with one row
+//! The rows are a tree that groups the sessions by project
+//! (01M77F8JJ8WC0TSCYP3ARJNQGS): project, person, host, session. The
+//! sessions in no project come last, under the row `no project`: person,
+//! host, repository, session. Then each member with no session gets a
+//! row. `riff top --by person` puts the person first: person, host,
+//! repository, session (01M3NT4M5D36KTZ5XZMDP6QFQT,
+//! 01M42KHN33M4K13GKTX2WM6CMM). A row with one row
 //! under it stays on one line with it, so a small riff stays short. Each
 //! row above the sessions has the counts of its sessions. `--user`,
 //! `--host` and `--repo` show a part ([`Show`],
@@ -159,10 +164,12 @@ use std::fmt::Write;
 use std::time::Duration;
 
 use riff_client::machines::{Host, HostStatus};
-use riff_client::sessions::{Group, Level, PersonRow, Sessions, Show, blocked, out_of_date};
-use riff_client::waves::{Board, Issue, Issues, board_repos};
+use riff_client::sessions::{
+    Group, Level, NO_PROJECT, PersonRow, Sessions, Show, blocked, out_of_date,
+};
+use riff_client::waves::{Board, Issue, Issues, project_boards};
 use riff_core::build::Build;
-use riff_core::name::Repo;
+use riff_core::name::{Repo, ThreadName};
 use riff_core::wire::{HoldInfo, Person, PersonRole, RiffReply, SessionInfo, SessionState};
 use serde::Deserialize;
 
@@ -374,6 +381,10 @@ pub struct Top<'a> {
     /// The repository of the working directory, `OWNER/REPO`, for its
     /// pause. `None` outside git.
     pub repo: Option<&'a str>,
+    /// The repository of each project of the riff, from `who`
+    /// (01M77F7HPBNJY9QFG3HA6YH5F4): only a project gets a board, and the
+    /// tree groups the sessions by project.
+    pub projects: &'a [ThreadName],
     /// The part of the riff to show.
     pub show: &'a Show,
     /// The width of the terminal in columns: no line is wider.
@@ -708,16 +719,18 @@ fn counts(sessions: &[&SessionInfo], kinds: bool, server: Option<&Build>) -> Str
 }
 
 impl Top<'_> {
-    /// The header, the blocked sessions, a board for each repository,
+    /// The header, the blocked sessions, a board for each project,
     /// then the tree (01M3NT4M5D36KTZ5XZMDP6QFQT,
-    /// 01M42KHN33M4K13GKTX2WM6CMM). The tree grows down, not across: no
-    /// line is wider than [`Top::width`]. riff cuts a wider line with `…`
-    /// (01M3QA8EZHX5B8C9CKF8Q3154X). No line has a column heading.
+    /// 01M42KHN33M4K13GKTX2WM6CMM, 01M77F8JJ8WC0TSCYP3ARJNQGS). The tree
+    /// grows down, not across: no line is wider than [`Top::width`]. riff
+    /// cuts a wider line with `…` (01M3QA8EZHX5B8C9CKF8Q3154X). No line
+    /// has a column heading.
     ///
     /// - The header: the facts `riff` and `build`, as in `riff who`.
-    /// - A board for each repository of a live session, and of
-    ///   [`Top::repo`], that has issues ([`board_repos`],
-    ///   01M42KHN80V49HDDZF953HXDT0): the current wave
+    /// - A board for each project of [`Top::projects`] with a live
+    ///   session, and for [`Top::repo`] when it is a project, that has
+    ///   issues ([`project_boards`], 01M42KHN80V49HDDZF953HXDT0,
+    ///   01M77F8JFFWV6KFTPQT9DNB26M): the current wave
     ///   with its repository, then one line for each group of its open
     ///   items: `free`, `held` with the reason of each hold
     ///   (01M58ATZ1F42DWNNB24C2HJPEY), `claimed`, and `verify` for an item with a
@@ -729,10 +742,13 @@ impl Top<'_> {
     ///   group `free` (01M588G5K0B58QXD35AA5MTZ6E). Else, when the wave
     ///   waits for a lead ([`view::waits_for_lead`]), the wave line ends
     ///   with [`text::wave_no_lead`] (01M776RSYKJK9NETFAD8G0CCVQ).
-    /// - The tree has four levels: person, host, repository, session.
-    ///   With [`By::Repo`](riff_client::sessions::By::Repo) the
-    ///   repository comes first: repository, person, host, session.
-    ///   Each person, host and repository line
+    /// - The tree ([`Sessions::tree`]): with
+    ///   [`By::Project`](riff_client::sessions::By::Project), project,
+    ///   person, host, session, then the row [`NO_PROJECT`] with the
+    ///   sessions in no project, and the members with no session. With
+    ///   [`By::Person`](riff_client::sessions::By::Person): person, host,
+    ///   repository, session. Each project, person, host and repository
+    ///   line
     ///   has the counts of its sessions: the sessions, then the busy,
     ///   idle and blocked ones and the claims. A line with a host also
     ///   counts each kind of session ([`SessionKind`]) before the
@@ -744,9 +760,9 @@ impl Top<'_> {
     ///   and [`state::person`]. Each member of `who` gets a
     ///   line, also when away, when [`Top::show`] has no filter of a
     ///   host or a repository.
-    /// - A repository line: its short name when the repositories of the
-    ///   sessions have one owner, else `OWNER/REPO`
-    ///   (01M3WNHCD659FH3Z5VYYH69WWR).
+    /// - A repository or project line: its short name when the
+    ///   repositories of the sessions have one owner, else `OWNER/REPO`
+    ///   (01M3WNHCD659FH3Z5VYYH69WWR). The line [`NO_PROJECT`] is muted.
     /// - A session: the first line has the short session ID, the mark
     ///   [`OUT_OF_DATE`] when it is [`out_of_date`], its
     ///   worktree `#WORKTREE`, the [`crate::text::tags`], and the
@@ -846,6 +862,8 @@ impl Top<'_> {
     /// let holds = BTreeMap::from([("o/r".to_owned(), BTreeMap::from([("issue-16".to_owned(), hold)]))]);
     /// let running = RiffState::Running.into();
     /// let all = Show::default();
+    /// // o/s is no project.
+    /// let projects = ["o/r".parse().unwrap()];
     /// let sessions = Sessions::new(sessions.to_vec(), vec![]);
     /// let mut top = Top {
     ///     pauses: &running,
@@ -855,6 +873,7 @@ impl Top<'_> {
     ///     issues: &issues,
     ///     holds: &holds,
     ///     repo: Some("o/r"),
+    ///     projects: &projects,
     ///     show: &all,
     ///     width: 80,
     ///     fault: None,
@@ -866,7 +885,7 @@ impl Top<'_> {
     ///     text.contains("\n\nblocked  dddd4444 verify-issue-13, 25m, the lead gave no answer: waits for the…\n"),
     ///     "{text}"
     /// );
-    /// // o/s has no issues: no board, and no error line.
+    /// // o/s is no project: no board, and no error line.
     /// assert!(text.contains("\n\nWave 3 (o/r)\n  free: #14\n  held: #16 (a reading at 19:40 UTC)\n  claimed: #12\n  verify: #13 #15\n\n"), "{text}");
     /// assert!(!text.contains("o/s"), "{text}");
     /// let tree: Vec<&str> = text.rsplit("\n\n").next().unwrap().lines().collect();
@@ -898,23 +917,22 @@ impl Top<'_> {
     ///     "        2m ago: merge",
     /// ], "{text}");
     ///
-    /// // `--by repo`: the repository comes first.
-    /// let by_repo = Show { by: By::Repo, ..Show::default() };
-    /// top.show = &by_repo;
+    /// // `--by project`, the default of `riff top`: the project comes
+    /// // first, then the sessions in no project, then each member with no
+    /// // session (01M77F8JJ8WC0TSCYP3ARJNQGS).
+    /// let by_project = Show { by: By::Project, ..Show::default() };
+    /// top.show = &by_project;
     /// let text = anstream::adapter::strip_str(&top.view()).to_string();
-    /// let rows: Vec<&str> = text
-    ///     .rsplit("\n\n")
-    ///     .next()
-    ///     .unwrap()
-    ///     .lines()
-    ///     .filter(|l| l.contains(" session"))
-    ///     .collect();
+    /// let tree = text.rsplit("\n\n").next().unwrap();
+    /// let rows: Vec<&str> = tree.lines().filter(|l| l.contains(" session")).collect();
     /// assert_eq!(rows, [
     ///     "r  › mike  admin  online  4 sessions: 1 busy, 1 idle, 1 blocked, 2 claims",
     ///     "├─ pangolin  1 session: 1 worker; 1 blocked, 1 claim",
     ///     "└─ thelio  3 sessions: 1 lead, 1 worker; 1 busy, 1 idle, 1 claim",
-    ///     "s  › mike  admin  online  › pangolin  1 session: 1 lead; 1 busy, 1 claim",
+    ///     // 80 columns cut the line.
+    ///     "no project  › mike  admin  online  › pangolin  › s  1 session: 1 lead; 1 busy,…",
     /// ], "{text}");
+    /// assert!(tree.ends_with("\nann  admin  offline  seen 1h ago\n"), "{text}");
     /// top.show = &all;
     ///
     /// // A narrow terminal cuts the wide line with `…`.
@@ -955,7 +973,7 @@ impl Top<'_> {
             lines.push(Line::new("", vec![(block_line(s), ERROR)]));
         }
         let no_holds = BTreeMap::new();
-        for repo in board_repos(self.sessions, self.show, self.repo) {
+        for repo in project_boards(self.sessions, self.show, self.repo, self.projects) {
             let Some(board) = self.issues.get(&repo).and_then(|i| {
                 Board::of(
                     &repo,
@@ -983,7 +1001,7 @@ impl Top<'_> {
         }
         lines.push(Line::new("", vec![]));
         let people = self.sessions.people(self.people);
-        let tops = self.sessions.tree(self.show, &people);
+        let tops = self.sessions.tree(self.show, &people, self.projects);
         for group in &tops {
             self.draw(group, "", "", &people, &mut lines);
         }
@@ -1081,7 +1099,8 @@ impl Top<'_> {
     }
 
     /// The parts of the line of a row: a person ([`person_parts`]), a
-    /// host, or a repository ([`Top::repo_name`]).
+    /// host, a repository or a project ([`Top::repo_name`]), or the row
+    /// [`NO_PROJECT`], muted.
     fn label(
         &self,
         row: &Group,
@@ -1097,6 +1116,7 @@ impl Top<'_> {
                 person_parts(&row.key, people.get(&row.key).unwrap_or(&away))
             }
             Level::Host => vec![(safe(&row.key), anstyle::Style::new())],
+            Level::Repo if row.key == NO_PROJECT => vec![(NO_PROJECT.to_owned(), MUTED)],
             Level::Repo => {
                 let name = row.sessions.first().map(|s| self.repo_name(s));
                 vec![(
@@ -1282,7 +1302,8 @@ mod tests {
         shown_held(sessions, issues, show, machines, pauses, &BTreeMap::new())
     }
 
-    /// [`shown_paused`] with the holds `holds`.
+    /// [`shown_paused`] with the holds `holds`. Each repository of
+    /// `issues` is a project.
     fn shown_held(
         sessions: &[SessionInfo],
         issues: &BTreeMap<String, Issues>,
@@ -1292,6 +1313,7 @@ mod tests {
         holds: &BTreeMap<String, BTreeMap<String, HoldInfo>>,
     ) -> String {
         let sessions = &Sessions::new(sessions.to_vec(), Vec::new());
+        let projects: Vec<ThreadName> = issues.keys().filter_map(|r| r.parse().ok()).collect();
         let top = Top {
             pauses,
             server: None,
@@ -1300,6 +1322,7 @@ mod tests {
             issues,
             holds,
             repo: None,
+            projects: &projects,
             show,
             width: 100,
             fault: None,
@@ -1517,9 +1540,9 @@ mod tests {
         ]
     }
 
-    /// The tree has four levels with the counts on each person, host
-    /// and repository line. A person with one host and one repository
-    /// gets the short form (01M42KHN33M4K13GKTX2WM6CMM).
+    /// The tree by person has four levels with the counts on each person,
+    /// host and repository line. A person with one host and one
+    /// repository gets the short form (01M42KHN33M4K13GKTX2WM6CMM).
     #[test]
     fn two_people_three_hosts_and_two_repositories_give_the_four_level_tree() {
         let text = shown(&riff_of_two(), &BTreeMap::new(), &Show::default());
@@ -1761,15 +1784,28 @@ mod tests {
             ids(&show(Some("mike"), Some("pangolin"), Some("o/strata"))),
             ["m3"]
         );
-        let repos: Vec<String> =
-            board_repos(&model, &show(None, Some("thelio"), None), Some("o/here"))
-                .into_iter()
-                .collect();
+        let projects: Vec<ThreadName> = ["o/riff", "o/strata", "o/here"]
+            .iter()
+            .map(|r| r.parse().unwrap())
+            .collect();
+        let thelio = show(None, Some("thelio"), None);
+        let repos: Vec<String> = project_boards(&model, &thelio, Some("o/here"), &projects)
+            .into_iter()
+            .collect();
         assert_eq!(repos, ["o/riff"]);
+        // A repository that is no project gets no board
+        // (01M77F8JFFWV6KFTPQT9DNB26M).
+        assert!(project_boards(&model, &thelio, None, &projects[1..]).is_empty());
         // The repository of the working directory gets a board too,
         // with no `--user` and no `--host`, when `--repo` matches it.
-        let here = |show: &Show| board_repos(&model, show, Some("o/here")).contains("o/here");
+        let here = |show: &Show| {
+            project_boards(&model, show, Some("o/here"), &projects).contains("o/here")
+        };
         assert!(here(&Show::default()));
+        assert!(
+            !project_boards(&model, &Show::default(), Some("o/here"), &projects[..2])
+                .contains("o/here")
+        );
         assert!(!here(&show(None, None, Some("o/riff"))));
         assert!(!here(&show(Some("mike"), None, None)));
         // A person with no session shows only with no filter of a host

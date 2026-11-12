@@ -177,8 +177,11 @@ async fn who_is_a_table_and_long_shows_the_uri() {
         lines[3], "SESSION                        STATE   ROLE      DETAIL",
         "{out}"
     );
+    // The riff has no project: the rows group under `no project`
+    // (01M77F8JN1SE2H4DZBZH1YX7WD).
+    assert_eq!(lines[4], "no project", "{out}");
     assert_eq!(
-        lines[4], "mike@pangolin:riff (a6cf2205)  paused  you lead  stopped at: write the tests",
+        lines[5], "mike@pangolin:riff (a6cf2205)  paused  you lead  stopped at: write the tests",
         "{out}"
     );
     assert!(!out.contains("riff://"), "{out}");

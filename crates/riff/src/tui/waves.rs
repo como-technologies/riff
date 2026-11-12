@@ -4,9 +4,11 @@
 //!
 //! # Design
 //!
-//! The tab shows a board for each repository of a live session, and for
-//! the repository of the working folder ([`board_repos`],
-//! 01M6VFG882T794B1CTHK5AKPDG). A board is the model of `riff top`
+//! The tab shows a board for each project of the person: the projects
+//! that `riff questions` reads ([`Waves::repos`],
+//! [`crate::questions::repos`], 01M6VFG882T794B1CTHK5AKPDG,
+//! 01M77F7R7RERVQH7XS39GWJJKF). A repository of a session that is no
+//! project gets no board. A board is the model of `riff top`
 //! ([`Board`]): the items of the current wave, from the facts of the
 //! forge ([`super::forge`]), the claims of `who` and the holds of
 //! riff-server. The look of the TUI reads the holds of each board while
@@ -104,8 +106,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use riff_client::sessions::{Sessions, Show};
-use riff_client::waves::{Board, Issues, board_repos, wave_number};
+use riff_client::sessions::Sessions;
+use riff_client::waves::{Board, Issues, wave_number};
 use riff_core::name::ThreadName;
 use riff_core::wire::{HoldInfo, RiffState, SessionInfo};
 
@@ -114,12 +116,9 @@ use super::view::Layout;
 use super::{Action, Effect, Key, Look, Mark, NOTHING_CHANGED, Question, State};
 use crate::text;
 
-/// The body of the tab when no repository has a board: two lines that
-/// fit the narrow layout.
-pub const NO_BOARD: [&str; 2] = [
-    "No repository has a live session,",
-    "and this folder is no clone of one.",
-];
+/// The body of the tab when the person has no project, so no board: two
+/// lines that fit the narrow layout (01M77F7R7RERVQH7XS39GWJJKF).
+pub const NO_BOARD: [&str; 2] = ["None of your repositories", "is a project of the riff."];
 
 /// The style of a stuck item and of a broken `main`.
 const ERROR: Style = Style::new().fg(Color::Red);
@@ -463,11 +462,26 @@ impl Waves {
         self.here.as_deref()
     }
 
-    /// The repositories that get a board, from the look `look`
-    /// (01M6VFG882T794B1CTHK5AKPDG).
+    /// The repositories that get a board, from the look `look`: the
+    /// projects of the person, as `riff questions` reads them
+    /// ([`crate::questions::repos`], 01M77F7R7RERVQH7XS39GWJJKF).
+    ///
+    /// ```
+    /// use riff::tui::Look;
+    /// use riff::tui::waves::Waves;
+    ///
+    /// let mut look = Look::default();
+    /// look.who = serde_json::from_value(serde_json::json!({
+    ///     "sessions": [{ "uri": "riff://mike@thelio/local/theme?session=a1", "live": true }],
+    ///     "repos": ["local/theme", "o/r"],
+    ///     "projects": ["o/r", "o/s"],
+    /// }))?;
+    /// assert_eq!(Waves::new(None).repos(&look), ["o/r"]);
+    /// assert_eq!(Waves::new(Some("o/s".into())).repos(&look), ["o/r", "o/s"]);
+    /// # Ok::<(), serde_json::Error>(())
+    /// ```
     pub fn repos(&self, look: &Look) -> Vec<String> {
-        let sessions = Sessions::new(look.who.sessions.clone(), Vec::new());
-        board_repos(&sessions, &Show::default(), self.here.as_deref())
+        crate::questions::repos(&look.who, self.here.as_deref())
             .into_iter()
             .collect()
     }
@@ -920,11 +934,12 @@ fn counts(items: &[ItemRow]) -> Vec<(usize, ItemState)> {
 }
 
 /// The rows of the Waves tab of `waves` with the look `look` at `look_ms`
-/// (01M6VFG882T794B1CTHK5AKPDG, 01M6VFGJWVB3WEEYBCNSZ2FJT0,
-/// 01M6VFGJZF7XGNGVWTECKAH429, 01M6VFGK22ZC1D7WF6PP853TP9).
+/// (01M6VFG882T794B1CTHK5AKPDG, 01M77F7R7RERVQH7XS39GWJJKF,
+/// 01M6VFGJWVB3WEEYBCNSZ2FJT0, 01M6VFGJZF7XGNGVWTECKAH429,
+/// 01M6VFGK22ZC1D7WF6PP853TP9).
 pub fn rows(waves: &Waves, look: &Look, look_ms: i64) -> Vec<Row> {
     let sessions = Sessions::new(look.who.sessions.clone(), Vec::new());
-    let repos = board_repos(&sessions, &Show::default(), waves.here.as_deref());
+    let repos = waves.repos(look);
     if repos.is_empty() {
         return NO_BOARD.map(|line| Row::Text(line.into())).to_vec();
     }
@@ -1555,6 +1570,18 @@ mod tests {
                 serde_json::json!({}),
             ),
         ];
+        // riff-server names the repositories of mike, and each is a
+        // project (01M77F7R7RERVQH7XS39GWJJKF).
+        let repos: Vec<ThreadName> = [
+            RIFF,
+            "como-technologies/strata",
+            "como-technologies/kadomony",
+        ]
+        .iter()
+        .map(|repo| repo.parse().unwrap())
+        .collect();
+        look.who.repos.clone_from(&repos);
+        look.who.projects = repos;
         let hold = HoldInfo {
             reason: "waits for mike".into(),
             by: None,
@@ -2240,16 +2267,53 @@ mod tests {
         assert_eq!(rows[22], " The boards come from gh: the first read runs.");
         assert_eq!(state.on_key(Key::Char('h')), None);
         assert_eq!(state.on_key(Key::Down), None);
-        // The clone of o/r gets a board, before its first read.
+        // The clone of o/r, a project, gets a board, before its first read.
         let mut state = State::new(build("10df8a4c0ffe"), "riff://mike@thelio".parse().unwrap())
             .in_clone(Some("o/r".into()));
-        state.looked(Look::default(), NOW);
+        let mut look = Look::default();
+        look.who.projects = vec!["o/r".parse().unwrap()];
+        state.looked(look, NOW);
         state.on_key(Key::Open(Tab::Waves));
         assert_eq!(state.boards(), ["o/r"]);
         assert_eq!(drawn(&state, 80, 24)[2], " ▶ o/r · not read yet");
         // Another tab reads no board.
         state.on_key(Key::Open(Tab::Sessions));
         assert!(state.boards().is_empty());
+    }
+
+    /// 01M77F7R7RERVQH7XS39GWJJKF: a repository that a live session of
+    /// the person names, and that is no project, gets no board. With no
+    /// project of the person, the tab says so.
+    #[test]
+    fn a_repository_that_is_no_project_gets_no_board() {
+        let mut state = State::new(build("10df8a4c0ffe"), "riff://mike@thelio".parse().unwrap());
+        let mut look = Look::default();
+        look.who.sessions = vec![
+            session(
+                "1a2b3c4d00",
+                "local/theme",
+                "",
+                "idle",
+                serde_json::json!({}),
+            ),
+            session("5e6f7a8b00", "o/r", "", "idle", serde_json::json!({})),
+        ];
+        look.who.repos = vec!["local/theme".parse().unwrap(), "o/r".parse().unwrap()];
+        look.who.projects = vec!["o/r".parse().unwrap()];
+        state.looked(look.clone(), NOW);
+        state.on_key(Key::Open(Tab::Waves));
+        assert_eq!(state.boards(), ["o/r"]);
+        let rows = drawn(&state, 80, 24);
+        assert_eq!(rows[2], " ▶ o/r · not read yet", "{rows:#?}");
+        assert!(!rows.iter().any(|r| r.contains("theme")), "{rows:#?}");
+        // o/r is no project any more: no board at all.
+        look.who.projects.clear();
+        state.looked(look, NOW);
+        assert!(state.boards().is_empty());
+        assert_eq!(
+            drawn(&state, 80, 24)[2..4],
+            NO_BOARD.map(|line| format!(" {line}"))
+        );
     }
 
     /// A short terminal shows the lines around the selection.
