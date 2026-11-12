@@ -802,7 +802,8 @@ pub fn build_line(server: Option<&Build>) -> String {
 /// repository `repository` or of the whole riff, the sessions that
 /// woke, the leads that it told (a lead of a repository with a pause of
 /// its own, 01M6FYGVTCBKC9C8AXMFD7WMW2), and each pause that still stops
-/// work (01M3XAHZSJ5914BRQBZ2G4ZBSA).
+/// work (01M3XAHZSJ5914BRQBZ2G4ZBSA). A resume of a repository whose wave
+/// waits for a lead says so (01M776RT1GW3N4MJDMPXZ8JAJE).
 ///
 /// ```
 /// use riff_core::wire::{PauseInfo, Posted, RepositoryPause, RiffReply, RiffState};
@@ -829,6 +830,14 @@ pub fn build_line(server: Option<&Build>) -> String {
 ///     riff::text::riff_set(Some(&riff), RiffState::Running, &reply, &[]),
 ///     "The repository como-technologies/riff is running now. No other session woke. The \
 ///      whole riff is still paused: the owner or an admin resumes it with `riff resume --riff`."
+/// );
+/// // A resume of a repository with no live lead: its wave still waits.
+/// let no_lead = RiffReply { no_lead: vec![riff.clone()], ..RiffReply { changed: true, ..RiffState::Running.into() } };
+/// assert_eq!(
+///     riff::text::riff_set(Some(&riff), RiffState::Running, &no_lead, &[]),
+///     "The repository como-technologies/riff is running now. No other session woke. No lead \
+///      of como-technologies/riff runs, so its wave starts no session: run riff lead start in a \
+///      clone of como-technologies/riff."
 /// );
 /// // A resume of the whole riff while a repository has a pause of its own:
 /// // its lead hears it, and no worker of it wakes.
@@ -883,6 +892,15 @@ pub fn riff_set(
             out.push_str(
                 " The whole riff is still paused: the owner or an admin resumes it with `riff \
                  resume --riff`.",
+            );
+        }
+        // A resume does not end the wait for a lead (01M776RT1GW3N4MJDMPXZ8JAJE).
+        if let Some(repository) = repository.filter(|r| reply.waits_for_lead(r)) {
+            let repo = safe(&repository.to_string());
+            let _ = write!(
+                out,
+                " No lead of {repo} runs, so its wave starts no session: run riff lead start in a \
+                 clone of {repo}."
             );
         }
         if repository.is_none() && !reply.repositories.is_empty() {
@@ -1471,7 +1489,9 @@ pub fn setup_check(path: &std::path::Path, left: &Rules) -> String {
 /// closed items (01M509TJRBE2J7HYKKHRJ1ZFR0). The current wave, the
 /// first wave, has the mark `current`, and the hosts of its loop. With
 /// the `items` of riff-server, the groups of the board of each wave
-/// follow its line (01M58ATZ408RBCX0PM0D0ZCY4B).
+/// follow its line (01M58ATZ408RBCX0PM0D0ZCY4B). A wave that waits for a
+/// lead has [`wave_no_lead`] first under the line of the current wave
+/// (01M776RSYKJK9NETFAD8G0CCVQ).
 ///
 /// ```
 /// use riff::waves::Items;
@@ -1507,6 +1527,7 @@ pub fn setup_check(path: &std::path::Path, left: &Rules) -> String {
 ///         board("Wave 28", vec![30], vec![], vec![]),
 ///     ],
 ///     hosts: vec!["thelio".into()],
+///     no_lead: None,
 /// };
 /// assert_eq!(
 ///     riff::text::waves_list(&milestones, Some(&items)),
@@ -1517,6 +1538,15 @@ pub fn setup_check(path: &std::path::Path, left: &Rules) -> String {
 ///      \x20 free: #30\n\
 ///      Backlog  61 open, 4 closed"
 /// );
+/// // The wave waits for a lead.
+/// let waits = Items { no_lead: Some("o/r".into()), ..items };
+/// let text = riff::text::waves_list(&milestones, Some(&waits));
+/// assert!(text.starts_with(
+///     "Wave 27: Cloud  current  runs on thelio  3 open, 20 closed\n\
+///      \x20 waits for a lead: run riff lead start in a clone of o/r\n\
+///      \x20 held: #7"
+/// ));
+/// assert!(text.contains("Wave 28  1 open, 0 closed\n  free: #30\n"), "{text}");
 /// assert_eq!(riff::text::waves_list(&[], None), "The repository has no open wave.");
 /// ```
 pub fn waves_list(
@@ -1532,7 +1562,8 @@ pub fn waves_list(
     let mut lines = Vec::new();
     for m in milestones {
         let mut line = m.title.clone();
-        if current.is_some_and(|c| std::ptr::eq(c, m)) {
+        let is_current = current.is_some_and(|c| std::ptr::eq(c, m));
+        if is_current {
             line.push_str("  current");
             if let Some(items) = items.filter(|i| !i.hosts.is_empty()) {
                 let _ = write!(line, "  runs on {}", safe(&items.hosts.join(", ")));
@@ -1540,6 +1571,12 @@ pub fn waves_list(
         }
         let _ = write!(line, "  {} open, {} closed", m.open_issues, m.closed_issues);
         lines.push(line);
+        if let Some(repo) = items
+            .and_then(|i| i.no_lead.as_deref())
+            .filter(|_| is_current)
+        {
+            lines.push(format!("  {}", wave_no_lead(repo)));
+        }
         let board = items.and_then(|i| i.boards.iter().find(|b| b.wave == m.title));
         for group in board.map(|b| b.groups(false)).unwrap_or_default() {
             lines.push(format!("  {}", safe(&group)));
@@ -11762,6 +11799,26 @@ pub fn wave_full(full: crate::room::Full) -> String {
 /// The word of a wave while the riff or the repository is paused.
 pub const WAVE_PAUSED: &str = "paused: starts nothing";
 
+/// The start of [`wave_no_lead`]: the views say it in a few words.
+pub const WAITS_FOR_LEAD: &str = "waits for a lead";
+
+/// Why the wave of the repository `repo` starts no session: it has no
+/// live lead (01M776RSYKJK9NETFAD8G0CCVQ). The word of the wave in `riff
+/// daemon status`, and the line of `riff wave list` and `riff top`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::wave_no_lead("o/r"),
+///     "waits for a lead: run riff lead start in a clone of o/r"
+/// );
+/// ```
+pub fn wave_no_lead(repo: &str) -> String {
+    format!(
+        "{WAITS_FOR_LEAD}: run riff lead start in a clone of {}",
+        safe(repo)
+    )
+}
+
 /// The word of a wave with no free work.
 pub const WAVE_NO_WORK: &str = "no free work now";
 
@@ -14180,6 +14237,74 @@ pub fn lead_no_redraw(error: &str) -> String {
 
 /// The Sessions tab of the TUI: no lead runs on this machine.
 pub const NO_LEAD_HERE: &str = "No lead runs on this machine. Start it in a clone: riff lead start";
+
+/// The word of the group of a repository in the Sessions tab of the TUI
+/// whose wave waits for a lead: why, and the key that starts the lead
+/// (01M776RTACYY4JTVQ4FNT81Q0T).
+pub const GROUP_NO_LEAD: &str = "waits for a lead · l starts it";
+
+/// The line in the detail of the group of the repository `repo` whose
+/// wave waits for a lead (01M776RTACYY4JTVQ4FNT81Q0T).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::group_no_lead("o/r"),
+///     "The wave of o/r waits for a lead. Press l to start it, or run riff lead start in a clone of o/r."
+/// );
+/// ```
+pub fn group_no_lead(repo: &str) -> String {
+    let repo = safe(repo);
+    format!(
+        "The wave of {repo} waits for a lead. Press l to start it, or run riff lead start in a \
+         clone of {repo}."
+    )
+}
+
+/// The question of `l` in the Sessions tab of the TUI on a repository
+/// whose wave waits for a lead, on a host that runs that wave
+/// (01M776RTACYY4JTVQ4FNT81Q0T). The note line adds `y/N`.
+///
+/// ```
+/// assert_eq!(riff::text::ask_start_lead("o/r", "thelio"), "Start the lead of o/r on thelio?");
+/// ```
+pub fn ask_start_lead(repo: &str, host: &str) -> String {
+    format!("Start the lead of {} on {}?", safe(repo), safe(host))
+}
+
+/// The note of `l` in the Sessions tab of the TUI on a repository whose
+/// wave waits for a lead, on a host that runs no wave of it
+/// (01M776RTACYY4JTVQ4FNT81Q0T).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::lead_start_in_clone("o/r", "pangolin"),
+///     "pangolin runs no wave of o/r. Start its lead in a clone of o/r: riff lead start"
+/// );
+/// ```
+pub fn lead_start_in_clone(repo: &str, host: &str) -> String {
+    let repo = safe(repo);
+    format!(
+        "{} runs no wave of {repo}. Start its lead in a clone of {repo}: riff lead start",
+        safe(host)
+    )
+}
+
+/// The error of the start of a lead from the TUI when the daemon of this
+/// machine runs no wave of `repo` (01M776RTACYY4JTVQ4FNT81Q0T).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::lead_no_wave_here("o/r"),
+///     "The riff daemon of this machine runs no wave of o/r. Start the lead in a clone of o/r: riff lead start"
+/// );
+/// ```
+pub fn lead_no_wave_here(repo: &str) -> String {
+    let repo = safe(repo);
+    format!(
+        "The riff daemon of this machine runs no wave of {repo}. Start the lead in a clone of \
+         {repo}: riff lead start"
+    )
+}
 
 /// The Sessions tab of the TUI: no riff daemon answers on this machine.
 /// The tab shows the sessions of riff-server.

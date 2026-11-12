@@ -2455,6 +2455,9 @@ update, until you run `riff leave` (see
 no wave for you on a host that never joined: see
 [Let the rollout of the lead run the wave](#let-the-rollout-of-the-lead-run-the-wave).
 
+The wave starts no session while the repository has no live lead: see
+[The wave waits for its lead](how-it-works.md#the-wave-waits-for-its-lead).
+
 To run the wave on another host of yours too, with no login there:
 
 ```sh
@@ -4831,7 +4834,7 @@ These keys act on the containers of this machine:
 
 | Key | Does |
 |---|---|
-| `l` | Attach to the lead of the repository of the row, else to the first lead. Ctrl-P Ctrl-Q, or the end of the lead, comes back to the tab. |
+| `l` | Attach to the lead of the repository of the row, else to the first lead. Ctrl-P Ctrl-Q, or the end of the lead, comes back to the tab. On a repository whose wave waits for a lead, start the lead after `y` (see [The wave waits for its lead](how-it-works.md#the-wave-waits-for-its-lead)). |
 | `Enter` on a lead | Attach to that lead. |
 | `t` | Stop the turn of the selected session, and take it over, after `y` (see [Take over a session](#take-over-a-session)). |
 | `x` | End the selected session, and free its item, after `y`, as `riff daemon end` does. |

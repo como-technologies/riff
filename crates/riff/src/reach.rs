@@ -394,6 +394,19 @@ impl Reach {
         }
     }
 
+    /// The pauses of the riff for the place of the caller, with each
+    /// repository with no live lead (01M776RSYKJK9NETFAD8G0CCVQ): straight,
+    /// or through the socket of the session, as `riff whoami` reads them.
+    pub async fn pauses(&self) -> Result<RiffReply> {
+        match self {
+            Reach::Direct(server) => {
+                let (api, me) = signed(server)?;
+                api.pauses(&me).await
+            }
+            Reach::Daemon(_) => self.whoami().await?.state.map_err(anyhow::Error::msg),
+        }
+    }
+
     /// What `riff whoami` reads, through the socket of the session. On a
     /// host, `riff whoami` reads straight with [`WhoamiFacts::read`].
     pub async fn whoami(&self) -> Result<WhoamiFacts> {

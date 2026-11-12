@@ -2971,19 +2971,31 @@ async fn read_threads(
 
 /// Reads the pauses of the riff, as the caller sees them: a query
 /// (01M3WRD9BSBKS9TN66H29TGTBV, 01M3XAHZJAF6YVDJ7WX74X8RBX). The
-/// commands `pause` and `resume` change them.
+/// commands `pause` and `resume` change them. The reply also names each
+/// repository with no live lead (01M776RSYKJK9NETFAD8G0CCVQ).
 async fn riff(
     AxumState(s): AxumState<Shared>,
     proof: Proof,
     Json(r): Json<RiffQuery>,
 ) -> Reply<RiffReply> {
     let caller = admit(&s, &proof, &r.me)?;
-    let me = r.me.clone();
-    let reply = s
-        .engine
-        .query(&caller, move |state| state.pauses_at(&me))
-        .await?;
-    Ok(Json(reply))
+    Ok(Json(pauses_at(&s, &caller, &r.me, Instant::now()).await?))
+}
+
+/// The reply of [`riff`] to `caller` as `me` at `now`. A lead with no
+/// sign of life for [`state::GONE`] is gone at `now`
+/// (01M776RT7JGCDZD1VNHFEDB1K2): a test gives a later `now`, as a fake
+/// clock.
+async fn pauses_at(
+    s: &Server,
+    caller: &Admitted,
+    me: &SessionUri,
+    now: Instant,
+) -> Result<RiffReply, Failed> {
+    let me = me.clone();
+    s.engine
+        .query(caller, move |state| state.pauses_at(&me, now))
+        .await
 }
 
 /// A look saw the plan of the server at `position`: a signal
@@ -4011,6 +4023,72 @@ mod tests {
         let reply = task.await.unwrap().unwrap();
         assert_eq!(reply.holder.claims(), ["issue-7"]);
         assert_eq!(claims(&service, &brett()).await, ["issue-7"]);
+    }
+
+    /// The reply of `/v1/riff` to the person of mike at `now`.
+    async fn no_lead_at(service: &Service, now: Instant) -> Vec<String> {
+        let person = named(&mike()).me;
+        let caller = admit(&service.0, &Proof::none(), &person).unwrap();
+        let reply = pauses_at(&service.0, &caller, &person, now).await.unwrap();
+        reply.no_lead.iter().map(ToString::to_string).collect()
+    }
+
+    /// 01M776RSYKJK9NETFAD8G0CCVQ, 01M776RT1GW3N4MJDMPXZ8JAJE,
+    /// 01M776RT7JGCDZD1VNHFEDB1K2: the reply of `/v1/riff` names the
+    /// repository when its last live lead ended, and when it had no sign of
+    /// life for `GONE`, with a fake clock. The lead of another person
+    /// counts. A claim still works, a resume takes effect and the wait
+    /// stays, and a new lead ends the wait.
+    #[tokio::test(start_paused = true)]
+    async fn a_repository_whose_lead_ends_or_goes_waits_for_a_lead() {
+        let store = Arc::new(Gated::default());
+        let service = running(store.clone()).await;
+        let riff = vec!["como-technologies/riff".to_owned()];
+        assert!(no_lead_at(&service, Instant::now()).await.is_empty());
+        let worker: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=w"
+            .parse()
+            .unwrap();
+        let register = Register {
+            me: worker.clone(),
+            worker: true,
+        };
+        send(&service, register).await.unwrap();
+        send(&service, claim_of(&worker, "issue-7")).await.unwrap();
+
+        // The lead of brett ends: the lead of mike counts.
+        send(&service, End { me: brett() }).await.unwrap();
+        assert!(no_lead_at(&service, Instant::now()).await.is_empty());
+        // The lead of mike ends too: the repository waits for a lead.
+        send(&service, End { me: mike() }).await.unwrap();
+        assert_eq!(no_lead_at(&service, Instant::now()).await, riff);
+
+        // The wait stops no session: the worker claims, and holds its claims.
+        let claimed = send(&service, claim_of(&worker, "issue-8")).await.unwrap();
+        assert_eq!(claimed.holder.claims(), ["issue-7", "issue-8"]);
+        // It is no pause: a resume takes effect, and the wait stays.
+        let person = named(&mike()).me;
+        send(&service, Pause::here(person.clone())).await.unwrap();
+        let resumed = send(&service, Resume::here(person)).await.unwrap();
+        assert_eq!(resumed.state, riff_core::wire::RiffState::Running);
+        assert!(resumed.changed);
+        assert_eq!(resumed.no_lead, [mike().default_thread().unwrap()]);
+
+        // A new lead ends the wait.
+        let lead: SessionUri = "riff://mike@thelio/como-technologies/riff?session=c"
+            .parse()
+            .unwrap();
+        let register = Register {
+            me: lead.clone(),
+            worker: false,
+        };
+        send(&service, register).await.unwrap();
+        send(&service, named(&lead)).await.unwrap();
+        assert!(no_lead_at(&service, Instant::now()).await.is_empty());
+        // The fake clock: with no sign of life for GONE, the lead is gone.
+        let soon = Instant::now() + state::GONE - Duration::from_secs(1);
+        assert!(no_lead_at(&service, soon).await.is_empty());
+        let later = Instant::now() + state::GONE;
+        assert_eq!(no_lead_at(&service, later).await, riff);
     }
 
     #[tokio::test(start_paused = true)]

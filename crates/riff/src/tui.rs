@@ -194,9 +194,9 @@
 //! first in the note line ([`Question`], 01M6VFD0S90SB8M8WV952NT4Y1,
 //! 01M6VFGK9XXWCA8X7CE8EZNSJV, 01M6VMACJGF4A0ZXC6YK13KNCH):
 //! `Set the limit of thelio to 4 sessions? y/N`. `y` gives the action to
-//! the loop. The attach asks nothing. The attach and the takeover leave
-//! the screen of the TUI, as `riff lead start` and `riff takeover` do in
-//! a terminal, and the TUI draws again at their end
+//! the loop. The attach asks nothing. The attach, the start of a lead and
+//! the takeover leave the screen of the TUI, as `riff lead start` and
+//! `riff takeover` do in a terminal, and the TUI draws again at their end
 //! (01M6VGHC59FJS10FJEYH6K4CAQ). The limit, a request to the daemon of a
 //! host and each [`Effect`] run in a task of their own. The result of an
 //! action goes to the note line, and the TUI looks again at once.
@@ -204,6 +204,7 @@
 //! | Action | The code of |
 //! |---|---|
 //! | [`Action::Attach`] | `riff lead start`: [`crate::lead::attach`] |
+//! | [`Action::StartLead`] | `riff lead start` from the main clone of the wave: [`crate::lead::start_of_wave`], then [`crate::lead::attach`] |
 //! | [`Action::Takeover`] | `riff takeover NAME`: [`crate::takeover::takeover`] |
 //! | [`Action::End`] | `riff daemon end NAME`: [`crate::daemon::ask_end`] |
 //! | [`Action::Host`] | `riff daemon end NAME --host HOST`, `riff leave --host HOST`: [`sessions::ask_host`] |
@@ -581,6 +582,10 @@ pub enum Action {
     /// Attach to the lead in this container of this machine
     /// ([`crate::lead::attach`]).
     Attach(String),
+    /// Start the lead of this repository on this machine, from the main
+    /// clone of its wave, and attach to it ([`crate::lead::start_of_wave`],
+    /// 01M776RTACYY4JTVQ4FNT81Q0T).
+    StartLead(String),
     /// Take over the session in this container of this machine
     /// ([`crate::takeover::takeover`]).
     Takeover(String),
@@ -2353,6 +2358,16 @@ async fn frames(
                 state.took_over(&name, &taken);
                 (tasks.next, tasks.next_ask) = (Instant::now(), Instant::now());
             }
+            Action::StartLead(repo) => {
+                leave(mouse);
+                let started = start_lead(dir.as_deref(), &repo).await;
+                *terminal = enter(mouse)?;
+                match started {
+                    Ok((name, left)) => state.attached(&name, &left),
+                    Err(e) => state.done(Err(e)),
+                }
+                (tasks.next, tasks.next_ask) = (Instant::now(), Instant::now());
+            }
             Action::End(_) | Action::Limit { .. } | Action::Host { .. } | Action::Do(_)
                 if tasks.acting.is_some() =>
             {
@@ -2525,6 +2540,22 @@ async fn attach(name: &str) -> Result<crate::lead::Left> {
         let _ = name;
         anyhow::bail!(text::RUN_LINUX_ONLY)
     }
+}
+
+/// The start of the lead of the repository `repo` of `l`, after `y`
+/// (01M776RTACYY4JTVQ4FNT81Q0T): the code of `riff lead start`
+/// ([`crate::lead::start_of_wave`]), from the main clone of the wave of
+/// `repo` that the daemon in the folder `dir` runs, then the attach. It
+/// gives the name of the container and the end of the attach. The TUI
+/// has left its screen, so the lines of the start show.
+async fn start_lead(
+    dir: Option<&std::path::Path>,
+    repo: &str,
+) -> Result<(String, Result<crate::lead::Left>)> {
+    let dir = dir.ok_or_else(|| anyhow::anyhow!(text::NO_DAEMON_HERE))?;
+    let name = crate::lead::start_of_wave(dir, repo).await?;
+    let left = attach(&name).await;
+    Ok((name, left))
 }
 
 /// The takeover of `t` of the session `name`: the code of

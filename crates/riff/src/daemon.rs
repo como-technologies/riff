@@ -411,7 +411,10 @@
 //! It takes up each session whose container runs, or when podman cannot
 //! say: it binds the socket of the session again in the same folder, and
 //! the relay connects again. It removes the record of each other one
-//! (01M4ZHT01HH88KPA8628M7VBEY).
+//! (01M4ZHT01HH88KPA8628M7VBEY). For a lead with no container, for example
+//! after a reboot, it also ends the session of the lead on riff-server, as
+//! at the end of the container of a lead: the wave of the repository waits
+//! for a lead (01M776RT4CM1BVP3NNC7GVQ557, [`crate::wave`]).
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -5289,8 +5292,10 @@ impl<R: Runtime + 'static> Daemon<R> {
             failed: failed || stopped || !exited,
         };
         println!("{}", text::daemon_session_ends(&owned.name, code));
-        // A lead that the daemon starts again on a new riff keeps its
-        // session on riff-server: the next container is the same lead.
+        // The end of the lead ends its session on riff-server at once, so
+        // its wave waits for a lead (01M776RT4CM1BVP3NNC7GVQ557). A lead that
+        // the daemon starts again on a new riff keeps its session on
+        // riff-server: the next container is the same lead.
         let lead_ends =
             record.terminal && !owned.renewing.load(std::sync::atomic::Ordering::SeqCst);
         if lead_ends {
@@ -5977,6 +5982,9 @@ impl<R: Runtime + 'static> Daemon<R> {
                     self.revoke_github(&name, &record, token);
                 }
                 gh_token::remove(&record.folder);
+                // A lead with no container, for example after a reboot:
+                // its session on riff-server ends, so its wave waits for a
+                // lead (01M776RT4CM1BVP3NNC7GVQ557).
                 if record.terminal {
                     self.lead_part(&record, false);
                     let (world, record) = (self.world.clone(), record.clone());
@@ -6870,9 +6878,12 @@ mod tests {
             }
         }
 
-        /// Stops the daemon, and starts a new one in the same folder.
+        /// Stops the daemon, when it runs, and starts a new one in the same
+        /// folder.
         async fn restart(&mut self) {
-            self.stop().await;
+            if self.stop.is_some() {
+                self.stop().await;
+            }
             let times = (self.quiet, self.keep_end, self.grace);
             let (daemon, stop, served) = serve_in(
                 &self.fake,
@@ -8967,6 +8978,9 @@ mod tests {
         /// Each follow of the renews of [`World::github_renews`]: its
         /// riff-server, and where the renews go.
         renews: Mutex<Vec<(String, mpsc::UnboundedSender<riff_core::wire::GitHubRenew>)>>,
+        /// A real riff-server: [`World::leave`] ends the session of the lead
+        /// there too ([`Server::with_riff`]).
+        riff: Option<riff_client::api::Api>,
     }
 
     /// The answer of a fake riff-server to the ask `n` of a token.
@@ -9006,6 +9020,15 @@ mod tests {
     }
 
     impl Server {
+        /// The fake whose [`World::leave`] also ends the session of the lead
+        /// on the real riff-server of `riff`, as the live world does.
+        fn with_riff(riff: riff_client::api::Api) -> Server {
+            Server {
+                riff: Some(riff),
+                ..Server::default()
+            }
+        }
+
         /// The forge with the fate of each issue of `fates`.
         pub(super) fn with_fates(fates: &[(u64, sweep::Fate)]) -> Server {
             Server {
@@ -9381,7 +9404,12 @@ mod tests {
         }
 
         fn leave<'a>(&'a self, record: &'a Record) -> crate::wave::BoxFuture<'a, ()> {
-            Box::pin(async move { self.note(format!("leave {}", record.live.session)) })
+            Box::pin(async move {
+                if let Some(api) = &self.riff {
+                    api.end(&record.me).await.unwrap();
+                }
+                self.note(format!("leave {}", record.live.session));
+            })
         }
 
         /// The start of the lead as the real world makes it ([`crate::lead::again`]):
@@ -10088,6 +10116,108 @@ mod tests {
         update_riff(&here);
         assert!(here.daemon.leads_again().await.is_empty());
         assert_eq!(here.fake.calls(), [format!("start {name}")]);
+    }
+
+    /// A riff-server in this process, in a running riff, where the session
+    /// of the lead of [`started_lead`] is the lead of its person. Gives the
+    /// API and the person.
+    async fn riff_of_the_lead() -> (riff_client::api::Api, SessionUri) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, riff_server::router()).await.unwrap();
+        });
+        let api = riff_client::api::Api::new(&format!("http://{addr}"));
+        let lead = me(LEAD);
+        let user = riff_core::name::Who::new(lead.who().user(), None).unwrap();
+        let person = SessionUri::new(user, lead.place().clone());
+        let reason = riff_core::wire::StartReason::Process;
+        api.start(&lead, reason, false).await.unwrap();
+        api.lead(&person, lead.who().session().unwrap())
+            .await
+            .unwrap();
+        let running = riff_core::wire::RiffState::Running;
+        api.set_riff(&person, running).await.unwrap();
+        (api, person)
+    }
+
+    /// True when the riff-server of `api` names the repository of `person`
+    /// with no live lead: its wave waits for a lead.
+    async fn waits_for_lead(api: &riff_client::api::Api, person: &SessionUri) -> bool {
+        let thread = person.default_thread().unwrap();
+        api.pauses(person).await.unwrap().waits_for_lead(&thread)
+    }
+
+    /// The daemon of a riff whose fake world ends the session of the lead on
+    /// the real riff-server of `api` too, and its world.
+    async fn here_with_riff(api: &riff_client::api::Api) -> (Here, Arc<Server>) {
+        let server = Arc::new(Server::with_riff(api.clone()));
+        let world: Arc<dyn World> = server.clone();
+        let fake = Fake::default().with_image(IMAGE);
+        (
+            Here::with_world(fake, QUIET_LIMIT, Some(world)).await,
+            server,
+        )
+    }
+
+    /// 01M776RT4CM1BVP3NNC7GVQ557, 01M776RSYKJK9NETFAD8G0CCVQ: the end of
+    /// the container of the lead (`/exit`, a crash) ends its session on
+    /// riff-server at once, so the wave of the repository waits for a lead.
+    /// A new lead ends the wait.
+    #[tokio::test]
+    async fn the_end_of_the_container_of_the_lead_makes_its_wave_wait_for_a_lead() {
+        let (api, person) = riff_of_the_lead().await;
+        let (here, server) = here_with_riff(&api).await;
+        started_lead(&here).await;
+        assert!(!waits_for_lead(&api, &person).await);
+
+        here.fake.stop(LEAD).await.unwrap();
+        until(|| !said_of(&server, "leave").is_empty()).await;
+        assert!(waits_for_lead(&api, &person).await);
+
+        // A new lead of the repository ends the wait.
+        let new = me("riff-lead-new");
+        let reason = riff_core::wire::StartReason::Process;
+        api.start(&new, reason, false).await.unwrap();
+        api.lead(&person, new.who().session().unwrap())
+            .await
+            .unwrap();
+        assert!(!waits_for_lead(&api, &person).await);
+    }
+
+    /// 01M776RT4CM1BVP3NNC7GVQ557: a reboot ends the container of the lead
+    /// while no daemon runs, and riff-server still counts the lead. The new
+    /// daemon finds the record of the lead with no container, and ends its
+    /// session on riff-server: the wave waits for a lead.
+    #[tokio::test]
+    async fn a_lead_record_with_no_container_at_the_start_of_the_daemon_makes_its_wave_wait() {
+        let (api, person) = riff_of_the_lead().await;
+        let (mut here, server) = here_with_riff(&api).await;
+        started_lead(&here).await;
+        here.stop().await;
+        here.fake.stop(LEAD).await.unwrap();
+        assert!(!waits_for_lead(&api, &person).await);
+
+        here.restart().await;
+        here.daemon.recover().await;
+        until(|| !said_of(&server, "leave").is_empty()).await;
+        assert!(waits_for_lead(&api, &person).await);
+    }
+
+    /// 01M776RT4CM1BVP3NNC7GVQ557: the daemon starts the lead again on a new
+    /// riff with the same session on riff-server. That is no end: the wave
+    /// does not wait for a lead.
+    #[tokio::test]
+    async fn a_start_again_of_the_lead_for_an_update_makes_no_wave_wait() {
+        let (api, person) = riff_of_the_lead().await;
+        let (here, server) = here_with_riff(&api).await;
+        let record = started_lead(&here).await;
+        transcript_of(&record, 600);
+        update_riff(&here);
+        let line = text::lead_started_again(LEAD);
+        assert_eq!(here.daemon.leads_again().await, [line]);
+        assert!(said_of(&server, "leave").is_empty());
+        assert!(!waits_for_lead(&api, &person).await);
     }
 
     #[tokio::test]

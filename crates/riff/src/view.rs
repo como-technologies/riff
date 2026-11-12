@@ -203,6 +203,43 @@ pub(crate) fn build_facts(server: Option<&Build>) -> Vec<(&'static str, String)>
     rows
 }
 
+/// True when the wave of the repository `repo` (`OWNER/REPO`) waits for a
+/// lead (01M776RSYKJK9NETFAD8G0CCVQ): riff-server names it with no live
+/// lead in `pauses`, and the daemon of a host in the facts of `sessions`
+/// runs its loop ([`riff_client::daemons::hosts`]). `riff top` and the TUI
+/// show it.
+///
+/// ```
+/// use riff_client::daemons::{Facts, Wave};
+/// use riff_core::wire::{MachineInfo, RiffReply, RiffState, SessionInfo};
+///
+/// let facts = Facts {
+///     waves: vec![Wave { repo: "o/r".into(), word: String::new(), image: None, waits: Default::default() }],
+///     ..Facts::default()
+/// };
+/// let mut daemon: SessionInfo = serde_json::from_value(serde_json::json!({
+///     "uri": "riff://mike@thelio/o/r?session=d1", "live": true,
+/// })).unwrap();
+/// daemon.machine = Some(MachineInfo { numbers: facts.line(), age_secs: 5 });
+/// let pauses = RiffReply { no_lead: vec!["o/r".parse()?, "o/s".parse()?], ..RiffState::Running.into() };
+/// assert!(riff::view::waits_for_lead(&pauses, [&daemon], "o/r"));
+/// // No host runs the wave of o/s.
+/// assert!(!riff::view::waits_for_lead(&pauses, [&daemon], "o/s"));
+/// assert!(!riff::view::waits_for_lead(&RiffState::Running.into(), [&daemon], "o/r"));
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn waits_for_lead<'a>(
+    pauses: &RiffReply,
+    sessions: impl IntoIterator<Item = &'a SessionInfo>,
+    repo: &str,
+) -> bool {
+    repo.parse::<ThreadName>()
+        .is_ok_and(|thread| pauses.waits_for_lead(&thread))
+        && riff_client::daemons::hosts(sessions)
+            .iter()
+            .any(|host| host.facts.waves.iter().any(|wave| wave.repo == repo))
+}
+
 /// Who set a pause, for example ` by the person mike`. Empty when it is
 /// not known.
 fn pause_by(pause: &PauseInfo) -> String {

@@ -75,7 +75,7 @@ use anyhow::{Result, bail};
 use riff_client::sessions::Sessions;
 use riff_client::waves::{Board, Issues, Milestone, QUESTION, TRACKER};
 use riff_core::name::ThreadName;
-use riff_core::wire::{HoldInfo, SessionInfo};
+use riff_core::wire::{HoldInfo, RiffReply, SessionInfo};
 use serde::Deserialize;
 
 use crate::pr::Gh;
@@ -580,6 +580,10 @@ pub struct Items {
     pub boards: Vec<Board>,
     /// Each host whose daemon runs the loop, by name.
     pub hosts: Vec<String>,
+    /// The repository, when a host runs its loop and riff-server names it
+    /// with no live lead: the wave waits for a lead
+    /// (01M776RSYKJK9NETFAD8G0CCVQ, [`Items::with_pauses`]).
+    pub no_lead: Option<String>,
 }
 
 impl Items {
@@ -653,6 +657,34 @@ impl Items {
         Items {
             boards: Board::each(repo, &issues, &sessions, holds),
             hosts,
+            no_lead: None,
+        }
+    }
+
+    /// The items with the wait for a lead of `repo` from the `pauses` of
+    /// riff-server (01M776RSYKJK9NETFAD8G0CCVQ): only a wave whose loop
+    /// runs on a host waits.
+    ///
+    /// ```
+    /// use riff::waves::Items;
+    /// use riff_core::wire::{RiffReply, RiffState};
+    ///
+    /// let pauses = RiffReply { no_lead: vec!["o/r".parse()?], ..RiffState::Running.into() };
+    /// let runs = Items { hosts: vec!["thelio".into()], ..Items::default() };
+    /// assert_eq!(runs.clone().with_pauses("o/r", &pauses).no_lead.as_deref(), Some("o/r"));
+    /// assert_eq!(runs.with_pauses("o/s", &pauses).no_lead, None);
+    /// // No host runs the loop: nothing waits.
+    /// assert_eq!(Items::default().with_pauses("o/r", &pauses).no_lead, None);
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn with_pauses(self, repo: &str, pauses: &RiffReply) -> Items {
+        let waits = !self.hosts.is_empty()
+            && repo
+                .parse::<ThreadName>()
+                .is_ok_and(|thread| pauses.waits_for_lead(&thread));
+        Items {
+            no_lead: waits.then(|| repo.to_owned()),
+            ..self
         }
     }
 }
@@ -663,7 +695,8 @@ impl Items {
 /// sessions and holds from riff-server, by the way `reach`. It fails with
 /// the error of `gh` when `gh` failed ([`crate::top::issues_from_gh`]), and
 /// with `gh gave no open issues` only when `gh` read the issues and gave
-/// none (01M6GX4HYR3755G6EJW1XHEFVE).
+/// none (01M6GX4HYR3755G6EJW1XHEFVE). A failed read of the pauses shows
+/// no wait for a lead.
 pub async fn items(
     reach: &Reach,
     thread: Option<ThreadName>,
@@ -679,7 +712,11 @@ pub async fn items(
     if issues.titles.is_empty() {
         bail!(text::waves_no_issues(&repo));
     }
-    Ok(Items::of(&repo, &issues, who, &holds))
+    let items = Items::of(&repo, &issues, who, &holds);
+    Ok(match reach.pauses().await {
+        Ok(pauses) => items.with_pauses(&repo, &pauses),
+        Err(_) => items,
+    })
 }
 
 #[cfg(test)]

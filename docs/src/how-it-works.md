@@ -2047,7 +2047,7 @@ riff
 | `PgUp` `PgDn` `g` `G` | Move a page, or to the first or the last row. |
 | `←` `→` `Space` | Fold or open a group. `←` on a session selects its group. |
 | `Enter` | A group: fold or open it. A lead: attach to it. A worker in a container of a daemon of yours: its events in the Reports tab, see [See the events in the TUI](development.md#see-the-events-in-the-tui). In a smaller terminal, the detail on the whole screen first. Another session: its detail on the whole screen. |
-| `l` | Attach to the lead of the repository of the row, else to the first lead of this machine. On the lead of another host: a note with the step there. |
+| `l` | Attach to the lead of the repository of the row, else to the first lead of this machine. On the lead of another host: a note with the step there. On a repository whose wave waits for a lead: start the lead on this machine, after `y`, and attach. See [The wave waits for its lead](#the-wave-waits-for-its-lead). |
 | `t` | Take over the selected session, as `riff takeover` does. On another host: a note with the step there. |
 | `x` | End the selected session of the daemon, and free its item, as `riff daemon end` does, also on another host. On the row of a daemon: the host stops taking work for the repository, as `riff leave --host HOST` does. |
 | `p`, `P` | Pause or resume the repository of the row, or the whole riff. |
@@ -6257,6 +6257,79 @@ is a worker, you have no lead there. This is what you see:
 To get a lead, start one with `riff lead start`, or name a session
 that is not a worker with `riff lead --session ID`. See
 [Name the lead](#name-the-lead).
+
+### The wave waits for its lead
+
+The riff daemon starts no session of the wave of a repository while no
+lead of that repository runs. A lead of any person of the riff counts.
+This holds for each repository of the riff. riff-server names each
+repository with no live lead, and its wave waits. The wait starts no
+session and stops none: the sessions that run go on to the end of their
+item.
+
+A lead ends in these cases:
+
+- Its container ends: `/exit`, a crash, or `riff lead stop`. Its riff
+  daemon tells riff-server at once.
+- A reboot ends its container. At its start, the riff daemon finds the
+  lead with no container, and tells riff-server.
+- riff-server gets no sign of life of the lead for 3 minutes: its host
+  or its riff daemon is down.
+
+A start again of the lead on a new riff keeps its session, so the wave
+does not wait (see
+[The lead starts again on the new riff](#the-lead-starts-again-on-the-new-riff)).
+The riff daemon starts no lead by itself.
+
+```mermaid
+sequenceDiagram
+    participant L as the container of the lead
+    participant D as riff daemon
+    participant S as riff-server
+    participant W as the wave
+    L->>D: the container ends
+    D->>S: end the session of the lead
+    W->>S: a look: the pauses
+    S-->>W: no lead in OWNER/REPO
+    W->>W: start no session
+    Note over W: the sessions that run go on
+    D->>S: riff lead start: a new lead
+    S-->>W: a change of the plan
+    W->>W: look now, start the free work
+```
+
+`riff daemon status` gives the word of the wave, `riff wave list` shows
+it under the current wave, and `riff top` on the line of the wave:
+
+```text
+Wave 56: the projects  current  runs on thelio  7 open, 2 closed
+  waits for a lead: run riff lead start in a clone of como-technologies/riff
+  free: #1993 #1994
+```
+
+The Waves tab of the TUI says `waits for a lead` on the line of the
+repository. The Sessions tab says `waits for a lead · l starts it` on
+the group of the repository.
+
+Start the lead in a clone of the repository:
+
+```sh
+riff lead start
+```
+
+Or press `l` on a row of the repository in the Sessions tab, on a host
+that runs the wave of the repository. The TUI asks
+`Start the lead of OWNER/REPO on HOST? y/N`. Press `y`: the TUI starts
+the lead on this machine from the main clone of the wave, as
+`riff lead start` does, and attaches. On another host, the row before
+the last says to run `riff lead start` in a clone.
+
+The new lead ends the wait, and the wave looks at once. The wait is no
+pause: `riff resume` works, and its answer says that no lead runs:
+
+```text
+The repository como-technologies/riff is running now. No other session woke. No lead of como-technologies/riff runs, so its wave starts no session: run riff lead start in a clone of como-technologies/riff.
+```
 
 ### Ask the lead
 

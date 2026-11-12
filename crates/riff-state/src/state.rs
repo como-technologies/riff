@@ -2355,10 +2355,11 @@ impl State {
             && riff.plans().plan(thread).map(|plan| plan.position) == Some(position)
     }
 
-    /// The pauses as a caller at the place of `me` sees them
+    /// The pauses as a caller at the place of `me` sees them at `now`
     /// (01M3XAHZJAF6YVDJ7WX74X8RBX): for a session that the state
     /// knows, the place in the state; for each other caller, the place
-    /// of `me`.
+    /// of `me`. The reply also names each repository of the riff with no
+    /// live lead (01M776RSYKJK9NETFAD8G0CCVQ).
     ///
     /// ```
     /// use std::time::Instant;
@@ -2375,24 +2376,28 @@ impl State {
     /// state.register(&brett, now);
     /// state.lead(&lead, now).unwrap();
     /// state.riff(&lead, Some(RiffState::Running), now).unwrap();
+    /// assert_eq!(state.pauses_at(&lead, now).no_lead[0].to_string(), "como-technologies/strata");
     /// state.lead(&brett, now).unwrap();
     /// state.pause_repository(&brett, RiffState::Paused, now).unwrap();
     ///
     /// // The session of the other repository goes on.
-    /// assert_eq!(state.pauses_at(&lead).state, RiffState::Running);
-    /// let seen = state.pauses_at(&brett);
+    /// assert_eq!(state.pauses_at(&lead, now).state, RiffState::Running);
+    /// let seen = state.pauses_at(&brett, now);
     /// assert_eq!(seen.state, RiffState::Paused);
     /// assert!(seen.riff.is_none());
     /// assert_eq!(seen.repositories[0].repository.to_string(), "como-technologies/strata");
+    /// // Each repository has a live lead.
+    /// assert!(seen.no_lead.is_empty());
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
-    pub fn pauses_at(&self, me: &SessionUri) -> RiffReply {
+    pub fn pauses_at(&self, me: &SessionUri, now: Instant) -> RiffReply {
         let place = match self.presence.sessions.get(me.who()) {
             Some(session) if me.who().session().is_some() => &session.place,
             _ => me.place(),
         };
         RiffReply {
             proof: self.policy(),
+            no_lead: self.written_view().no_lead(now),
             ..self.pauses().reply(place.default_thread().as_ref(), false)
         }
     }
@@ -2452,7 +2457,7 @@ impl State {
         let reply = match set {
             None => {
                 self.arrive(me, now);
-                return Ok(self.pauses_at(me));
+                return Ok(self.pauses_at(me, now));
             }
             Some(RiffState::Paused) => self.ask(me, &Pause::whole(me.clone()), now),
             Some(RiffState::Running) => self.ask(me, &Resume::whole(me.clone()), now),
@@ -3866,6 +3871,30 @@ mod tests {
         assert!(!state.claim(&docs(), &repo(), "issue-12", soon).unwrap().0);
         let late = now + CLAIM_GRACE;
         assert!(state.claim(&docs(), &repo(), "issue-12", late).unwrap().0);
+    }
+
+    /// 01M776RT7JGCDZD1VNHFEDB1K2, 01M776RSYKJK9NETFAD8G0CCVQ: a lead
+    /// with no sign of life for [`GONE`] is gone, and its repository waits
+    /// for a lead. A keep-alive brings it back. After a replay, a lead with
+    /// no sign of life since then counts until [`GONE`] after the replay.
+    #[test]
+    fn a_lead_with_no_sign_of_life_for_gone_leaves_its_repository_waiting() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let waits = |state: &State, at| state.pauses_at(&person_of(&api()), at).no_lead;
+        assert!(waits(&state, now).is_empty());
+        assert!(waits(&state, now + GONE - Duration::from_secs(1)).is_empty());
+        let gone = now + GONE;
+        assert_eq!(waits(&state, gone), [repo()]);
+        // A keep-alive of the lead of brett: the repository has a live lead.
+        state.alive(&tests(), gone);
+        assert!(waits(&state, gone).is_empty());
+
+        // A start of riff-server: no session has a sign of life since.
+        let start = gone + MINUTE;
+        let replayed = State::replay(state.take_queue(), start, 0);
+        assert!(waits(&replayed, start + GONE - Duration::from_secs(1)).is_empty());
+        assert_eq!(waits(&replayed, start + GONE), [repo()]);
     }
 
     #[test]
@@ -5875,7 +5904,7 @@ mod tests {
         // The other repository goes on.
         state.claim(&docs(), &repo(), "issue-12", now).unwrap();
         assert_eq!(info(&state, &docs(), now).state, Some(SessionState::Busy));
-        assert_eq!(state.pauses_at(&docs()).state, RiffState::Running);
+        assert_eq!(state.pauses_at(&docs(), now).state, RiffState::Running);
 
         // A second pause changes nothing. A resume ends the pause.
         let again = state

@@ -2706,6 +2706,11 @@ pub struct RiffReply {
     /// The policy of the proof of presence of the riff (01M75WKSYCMMJFGAM3W4ASGN85).
     #[serde(default, skip_serializing_if = "crate::proof::Policy::is_off")]
     pub proof: crate::proof::Policy,
+    /// Each repository of the riff with no live lead, in the order of
+    /// the names: its wave waits for a lead, and starts no session
+    /// (01M776RSYKJK9NETFAD8G0CCVQ). It is no pause.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub no_lead: Vec<ThreadName>,
 }
 
 /// The pauses of a riff with no pause of a repository: `paused` is a
@@ -2726,6 +2731,7 @@ impl From<RiffState> for RiffReply {
             riff: (state == RiffState::Paused).then(PauseInfo::default),
             repositories: Vec::new(),
             proof: crate::proof::Policy::Off,
+            no_lead: Vec::new(),
         }
     }
 }
@@ -2737,6 +2743,24 @@ impl RiffReply {
             .iter()
             .find(|r| &r.repository == thread)
             .map(|r| &r.pause)
+    }
+
+    /// True when the repository `thread` has no live lead: its wave waits
+    /// for a lead (01M776RSYKJK9NETFAD8G0CCVQ). The reply of a server
+    /// from before the wait names no repository.
+    ///
+    /// ```
+    /// use riff_core::wire::{RiffReply, RiffState};
+    ///
+    /// let reply = RiffReply { no_lead: vec!["acme/app".parse()?], ..RiffState::Running.into() };
+    /// assert!(reply.waits_for_lead(&"acme/app".parse()?));
+    /// assert!(!reply.waits_for_lead(&"acme/lib".parse()?));
+    /// let old: RiffReply = serde_json::from_str(r#"{"state":"running"}"#).unwrap();
+    /// assert!(!old.waits_for_lead(&"acme/app".parse()?));
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn waits_for_lead(&self, thread: &ThreadName) -> bool {
+        self.no_lead.contains(thread)
     }
 }
 
