@@ -13,6 +13,7 @@
 //! | the riff | [`super::the_riff`] | [`MakeRiff`](super::MakeRiff), [`Pause`](riff_core::wire::Pause), [`Resume`](riff_core::wire::Resume), [`SetIdle`](riff_core::wire::SetIdle), [`Forget`](super::Forget), [`Import`](super::Import), [`SetPolicy`](riff_core::wire::SetPolicy), [`Approve`](riff_core::wire::Approve) |
 //! | plan | [`super::plan`] | [`Hold`](riff_core::wire::Hold), [`Free`](riff_core::wire::Free), [`SetPlan`](riff_core::wire::SetPlan), [`PlanOff`](riff_core::wire::PlanOff) |
 //! | notes | [`super::notes`] | [`SetNotes`](riff_core::wire::SetNotes) |
+//! | projects | [`super::projects`] | [`EnrollProject`](super::EnrollProject), [`RemoveProject`](super::RemoveProject), [`FindProjects`](super::FindProjects) |
 //! | devices | [`super::devices`] | [`AddKey`](super::AddKey), [`RemoveDevice`](riff_core::wire::RemoveDevice), [`Prove`](super::Prove) |
 //! | people | [`super::people`] | [`Admit`](super::Admit), [`Invite`](riff_core::wire::Invite), [`Remove`](riff_core::wire::Remove), [`SetAdmin`](riff_core::wire::SetAdmin), [`PassOwner`](riff_core::wire::PassOwner), [`TakeOwner`](riff_core::wire::TakeOwner), [`DenyOwner`](riff_core::wire::DenyOwner), [`GrantOwner`](super::GrantOwner), [`EndOwner`](super::EndOwner), [`NameOwner`](super::NameOwner), [`Revoke`](riff_core::wire::Revoke) |
 //!
@@ -401,6 +402,9 @@ command_kinds! {
     SetPolicy = "set_policy",
     Prove = "prove",
     Approve = "approve",
+    EnrollProject = "enroll_project",
+    RemoveProject = "remove_project",
+    FindProjects = "find_projects",
 }
 
 impl CommandKind {
@@ -424,7 +428,12 @@ impl CommandKind {
         // policy of the proof (01M75WKS7H066EXQPGF003B4SC).
         match self {
             CommandKind::SetPolicy | CommandKind::Prove => true,
-            CommandKind::Approve => false,
+            // A riff with no sign-in has projects: each person there is an
+            // admin (01M76SG8GBXFYXKWMQHPCNEXBN).
+            CommandKind::Approve
+            | CommandKind::EnrollProject
+            | CommandKind::RemoveProject
+            | CommandKind::FindProjects => false,
             CommandKind::Admit
             | CommandKind::Invite
             | CommandKind::Remove
@@ -518,7 +527,10 @@ impl CommandKind {
             | CommandKind::Import
             | CommandKind::GrantOwner
             | CommandKind::EndOwner
-            | CommandKind::NameOwner => false,
+            | CommandKind::NameOwner
+            | CommandKind::EnrollProject
+            | CommandKind::RemoveProject
+            | CommandKind::FindProjects => false,
         }
     }
 }
@@ -763,6 +775,11 @@ pub fn permits(kind: CommandKind, caller: &Caller, needs: Role) -> Result<(), Re
         // A session never gives a proof (01M75WKC8RCPHQW3NADHRA31SG). Only a person sets
         // the policy and approves a deploy (01M6WZ40SFVZ6CRQ1H4Z27CWP4).
         CommandKind::Prove | CommandKind::SetPolicy | CommandKind::Approve => (&[Person], Can),
+        // A person enrolls and removes a project, after the check of
+        // riff-server on GitHub (01M76SG8GBXFYXKWMQHPCNEXBN). The server
+        // looks for the projects at a start (01M76SG8NCSAP69Y5AX455BJQM).
+        CommandKind::EnrollProject | CommandKind::RemoveProject => (&[Person], Can),
+        CommandKind::FindProjects => (&[Server], Can),
         CommandKind::Admit => (&[SignIn], Can),
         CommandKind::MakeRiff
         | CommandKind::Announce
@@ -806,6 +823,8 @@ pub fn permits(kind: CommandKind, caller: &Caller, needs: Role) -> Result<(), Re
             (CommandKind::SetAdmin, _) => owner("adds or removes an admin"),
             (CommandKind::PassOwner, _) => owner("passes the owner role"),
             (CommandKind::DenyOwner, _) => owner("denies the owner role"),
+            (CommandKind::EnrollProject, _) => admin("enrolls a project"),
+            (CommandKind::RemoveProject, _) => admin("removes a project"),
             (_, Role::Owner) => format!("{user} is not the owner; the command {kind} needs it"),
             _ => format!("{user} is not an admin; the command {kind} needs an admin"),
         };
@@ -998,6 +1017,9 @@ mod tests {
         row(CommandKind::SetPolicy,  P,  true,  true,  false),
         row(CommandKind::Prove,      P,  true,  true,  false),
         row(CommandKind::Approve,    P,  true,  false, true),
+        row(CommandKind::EnrollProject, P, true, false, false),
+        row(CommandKind::RemoveProject, P, true, false, false),
+        row(CommandKind::FindProjects, &[Class::Server], true, false, false),
     ];
 
     /// The row of `kind` in [`TABLE`].
@@ -1260,6 +1282,22 @@ mod tests {
                     kind,
                 )
             }
+            CommandKind::EnrollProject => {
+                let enroll = crate::state::EnrollProject {
+                    repo: thread,
+                    hosts: Vec::new(),
+                    github: Ok(()),
+                };
+                of.of(enroll, kind)
+            }
+            CommandKind::RemoveProject => {
+                let remove = crate::state::RemoveProject {
+                    repo: thread,
+                    github: Ok(()),
+                };
+                of.of(remove, kind)
+            }
+            CommandKind::FindProjects => of.of(crate::state::FindProjects, kind),
             CommandKind::Revoke => {
                 let own = caller.who().user().to_uppercase();
                 return [None, Some(own), Some("bob".to_owned())]
@@ -1311,7 +1349,7 @@ mod tests {
             }
         }
         // Each kind has one case, and `revoke` has 3.
-        assert_eq!(tried, (38 + 2) * 4 * 2 * 3);
+        assert_eq!(tried, (41 + 2) * 4 * 2 * 3);
     }
 
     #[test]

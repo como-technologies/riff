@@ -2048,6 +2048,20 @@ page [Requirements](requirements.md) holds the rules of today.
   ended before the takeover. The view reads the keys of the person in
   a blocking task of tokio, not in its async loop. Superseded by
   01M6VGHPP3ZT5TTMSGAXV3ZK7W.
+- **01M74A8DC74TT2YGZPBBAENMWH** In a container, riff init reads the
+  GitHub Apps of the riff through the socket of the session for its
+  checks of the guard and of the lead App: the daemon reads them with
+  the sign-in of the person on the host (#1733).
+  Superseded by 01M76SHAZK2PSMET0HRYM0J7VN.
+
+### The first run
+
+- **01M6WZ410X4RPG1KMPEBVEP2DF** In a session container, `riff init` and
+  `riff init --yes` only check, as `riff init --check` does: they ask no
+  question and do no step of the repository, and one line says that a
+  person does the steps in a terminal. Supersedes
+  01M5SMJMR5KS1Z1Z7CEPH9JVBB in part.
+  Superseded by 01M76SHAZK2PSMET0HRYM0J7VN.
 
 ### The permission rules
 

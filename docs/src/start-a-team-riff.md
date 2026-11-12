@@ -292,8 +292,8 @@ event of new rights of an install. See
 [New rights of a GitHub App](how-it-works.md#new-rights-of-a-github-app).
 
 The lead App pushes the release tag of a repository with the release
-cycle. After you make the Apps, run `riff init` in that repository: it
-adds the lead App to the ruleset `releases`. See
+cycle. After you make the Apps, run `riff project init` in that
+repository: it adds the lead App to the ruleset `releases`. See
 [Let the lead push the release tag](start-a-riff.md#let-the-lead-push-the-release-tag).
 
 ### Check the tokens of each role

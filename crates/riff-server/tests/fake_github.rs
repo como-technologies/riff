@@ -1,8 +1,9 @@
 //! A fake GitHub for the tests of the GitHub Apps of the riff: the swap
 //! of the code of a manifest, the bot users, the rights of each App, the
-//! installations with their rights, the tokens and their revoke. It checks the JWT of each call of an App
-//! with the public key of the test key. The tests of `riff` include this
-//! file too.
+//! installations with their rights, the tokens and their revoke, and the
+//! rights of the token of a person on a repository. It checks the JWT of
+//! each call of an App with the public key of the test key. The tests of
+//! `riff` include this file too.
 
 #![allow(dead_code)]
 
@@ -89,6 +90,20 @@ pub struct Seen {
     /// True: each token ends one hour after now, as on GitHub. Else it
     /// ends at a time of the tests.
     pub hour: bool,
+    /// The rights of the token of a person on a repository: true for an
+    /// admin. A token that is in no key gets 401, and a repository that
+    /// the token does not see 404.
+    pub admins: BTreeMap<(String, String), bool>,
+    /// The token of each read of `GET /repos/OWNER/REPO`, in order.
+    pub repo_reads: Vec<String>,
+}
+
+impl Seen {
+    /// The token `token` of a person sees `repo`, as an admin or not.
+    pub fn person(&mut self, token: &str, repo: &str, admin: bool) {
+        self.admins
+            .insert((token.to_owned(), repo.to_owned()), admin);
+    }
 }
 
 impl Seen {
@@ -121,6 +136,7 @@ impl FakeGitHub {
         let router = Router::new()
             .route("/app-manifests/{code}/conversions", post(convert))
             .route("/users/{login}", get(user))
+            .route("/repos/{owner}/{repo}", get(repository))
             .route("/repos/{owner}/{repo}/installation", get(installation))
             .route("/app", get(app))
             .route("/app/installations", get(installations))
@@ -366,4 +382,35 @@ pub fn both_apps() -> riff_server::keys::Apps {
         session: Some(keys(SESSION_CODE, Some(webhook_secret()))),
         lead: Some(keys(LEAD_CODE, Some(lead_webhook_secret()))),
     }
+}
+
+/// `GET /repos/OWNER/REPO` with the token of a person: the repository,
+/// with the rights of that token in `permissions`.
+async fn repository(
+    State(seen): State<Shared>,
+    headers: HeaderMap,
+    Path((owner, repo)): Path<(String, String)>,
+) -> Response {
+    let Some(token) = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(str::to_owned)
+    else {
+        return bad_credentials();
+    };
+    let repo = format!("{owner}/{repo}");
+    let mut seen = seen.lock().unwrap();
+    seen.repo_reads.push(token.clone());
+    if !seen.admins.keys().any(|(known, _)| *known == token) {
+        return bad_credentials();
+    }
+    let Some(admin) = seen.admins.get(&(token, repo.clone())).copied() else {
+        return (StatusCode::NOT_FOUND, Json(json!({"message": "Not Found"}))).into_response();
+    };
+    Json(json!({
+        "full_name": repo,
+        "permissions": { "admin": admin, "maintain": admin, "push": true, "triage": true, "pull": true },
+    }))
+    .into_response()
 }

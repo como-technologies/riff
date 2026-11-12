@@ -220,7 +220,7 @@ fn make_question_label(gh: &Gh) {
     );
 }
 
-/// The title of the first wave of a repository: `riff init` makes it
+/// The title of the first wave of a repository: `riff project init` makes it
 /// (01M5R1672NF56P15VD0JEX51K4).
 pub const FIRST_WAVE: &str = "Wave 1";
 

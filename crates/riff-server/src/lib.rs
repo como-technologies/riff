@@ -147,6 +147,10 @@
 //!   (01M3WRD99M99PNGP8ME50KC6WS). A start on a store with the objects
 //!   of a riff-server from before the log, and no log, is the import of
 //!   go-live (01M3Z8MRDZEKTXSKZTDTDSCZ3W): see [`import`].
+//! - A start with no record of a project in the log sends the command
+//!   `find_projects` after the load and before the first call, and tells
+//!   the owner in the chat (01M76SG8NCSAP69Y5AX455BJQM): see
+//!   [`projects`].
 //! - [`Service::load`] loads the newest checkpoint of a [`store::Store`],
 //!   and replays the log after it (R30). A timer writes a checkpoint, and
 //!   deletes the old checkpoints and the chunks that no kept checkpoint
@@ -263,6 +267,7 @@ pub mod lease;
 pub mod listen;
 pub mod logline;
 pub mod oidc;
+pub mod projects;
 pub mod proofs;
 pub mod renew;
 pub mod token;
@@ -306,6 +311,7 @@ use riff_core::wire::{
 };
 use riff_core::wire::{BotPost, Names, NamesReply, SetMachine};
 use riff_core::wire::{Devices, KeyReply, KeyStart, KeyTicket, KeyWait, RemoveDevice};
+use riff_core::wire::{ProjectInit, ProjectRemove, ProjectsQuery};
 use riff_state::owner::{Check, Checks};
 use riff_state::state::{
     Announce, Code, OwnerChange, Refused, Role, Settings, Signal, Snapshot, State, may_read,
@@ -1619,6 +1625,17 @@ impl Service {
         });
     }
 
+    /// The search of the projects, one time at a start, after the load
+    /// and the import, before the first call of a client
+    /// (01M76SG8NCSAP69Y5AX455BJQM): only with no record of a project in
+    /// the log, and a repository thread with a lead or the notes of a
+    /// lead ([`projects::find`]).
+    async fn find_projects(&self) {
+        if self.0.engine.read(State::projects_to_find) {
+            projects::find(&self.0).await;
+        }
+    }
+
     /// Starts the writer: the task that writes the records of each entry
     /// in the queue of the engine as a chunk of the log (see [`log`]).
     /// After each chunk, the engine finishes each command of the chunk
@@ -2027,6 +2044,10 @@ impl Service {
             .route(PlanSeen::PATH, post(plan_seen))
             .route(PlanShow::PATH, post(plan_show))
             .route(NotesShow::PATH, post(notes_show))
+            // The projects of the riff (01M76SG8GBXFYXKWMQHPCNEXBN, 01M76SG8JVHTKY6N62FQG7XAE6).
+            .route(ProjectInit::PATH, post(projects::init))
+            .route(ProjectRemove::PATH, post(projects::remove))
+            .route(ProjectsQuery::PATH, post(projects::list))
             // A step that riff-server does not do itself (01M75WKSNREGG95CK40W2A5JPQ).
             .route(UseProof::PATH, post(proofs::use_proof))
             .route("/v1/me", get(me))
@@ -2497,6 +2518,7 @@ impl Leased {
         if let Some(old) = old {
             service.0.import(&old).await?;
         }
+        service.find_projects().await;
         Ok(service)
     }
 }
@@ -3922,6 +3944,10 @@ mod tests {
             send(&service, named(&me)).await.unwrap();
         }
         send(&service, Resume::whole(mike())).await.unwrap();
+        // The repository of the leads is a project, as in a riff of this
+        // build: a later start looks for no project
+        // (01M76SG8NCSAP69Y5AX455BJQM).
+        service.0.engine.find_projects().await.unwrap();
         service
     }
 

@@ -134,6 +134,9 @@ use riff_core::wire::{BotFact, BotPost, ReadThreads, SetMachine};
 use riff_core::wire::{
     DeviceInfo, Devices, DevicesReply, KeyStart, KeyStarted, KeyState, KeyWait, RemoveDevice,
 };
+use riff_core::wire::{
+    ProjectFacts, ProjectInit, ProjectInitReply, ProjectRemove, ProjectsQuery, ProjectsReply,
+};
 use serde::de::DeserializeOwned;
 use tokio::sync::Mutex;
 
@@ -1766,6 +1769,47 @@ impl Api {
             history,
         };
         self.call(&show).await
+    }
+
+    /// Enrolls `repo` as a project of the riff, or sets the hosts of the
+    /// project (01M76SG8GBXFYXKWMQHPCNEXBN). `github_token` is the token
+    /// of `gh` of the person: riff-server reads the repository on GitHub
+    /// with it one time. `me` is the person.
+    pub async fn project_init(
+        &self,
+        me: &SessionUri,
+        repo: &ThreadName,
+        hosts: &[String],
+        github_token: &str,
+    ) -> Result<ProjectInitReply> {
+        let init = ProjectInit {
+            me: me.clone(),
+            repo: repo.clone(),
+            hosts: hosts.to_vec(),
+            github_token: github_token.to_owned(),
+        };
+        self.call(&init).await
+    }
+
+    /// The riff forgets the project `repo` (01M76SG8GBXFYXKWMQHPCNEXBN).
+    /// Gives the project that went.
+    pub async fn project_remove(
+        &self,
+        me: &SessionUri,
+        repo: &ThreadName,
+        github_token: &str,
+    ) -> Result<ProjectFacts> {
+        let remove = ProjectRemove {
+            me: me.clone(),
+            repo: repo.clone(),
+            github_token: github_token.to_owned(),
+        };
+        self.call(&remove).await
+    }
+
+    /// Each project of the riff (01M76SG8JVHTKY6N62FQG7XAE6).
+    pub async fn projects(&self, me: &SessionUri) -> Result<ProjectsReply> {
+        self.call(&ProjectsQuery { me: me.clone() }).await
     }
 
     /// Holds `item` of the repository thread `thread` with `reason`, so

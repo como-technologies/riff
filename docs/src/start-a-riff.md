@@ -50,9 +50,10 @@ flowchart TD
    riff-server
    ```
 
-3. In a second terminal, go to your project. Get ready for riff, and
-   start your lead. You do not sign in: riff uses the name that you
-   log in with on this machine. See
+3. In a second terminal, go to your project. Set up your project, get
+   this machine ready, and start your lead. You do not sign in: riff
+   uses the name that you log in with on this machine. See
+   [Set up your project](#set-up-your-project),
    [Get this machine ready](#get-this-machine-ready) and
    [Let the lead start the work](#let-the-lead-start-the-work).
 
@@ -306,6 +307,24 @@ You also give the other human gate: a rollback. See
 [Who tags and who approves a release](how-it-works.md#who-tags-and-who-approves-a-release)
 and [The release cycle](development.md#the-release-cycle).
 
+## Set up your project
+
+riff works on projects. A project is a repository on GitHub that a
+person enrolled in the riff. In your clone of the project, run:
+
+```sh
+riff project init
+```
+
+`riff project init` checks the repository on GitHub, and sets it up for
+riff after one question. When each check passes, it enrolls the
+repository as a project of the riff. You must be an admin of the
+repository on GitHub, and an admin of the riff. For each check and each
+step, see
+[Add another repository to the riff](#add-another-repository-to-the-riff).
+For the projects, see
+[The projects of the riff](how-it-works.md#the-projects-of-the-riff).
+
 ## Get this machine ready
 
 riff runs each work item in a container of its own on your machine:
@@ -325,14 +344,12 @@ riff init
 ```mermaid
 flowchart LR
     C["check this machine"] --> R["ask to remove<br/>wide rules"]
-    R --> S["ask to set up the<br/>repository on GitHub"]
-    S -- "each check passes" --> D["install and start<br/>the riff daemon"]
-    S -- "a check fails" --> F["print the fix"]
+    R -- "each check passes" --> D["install and start<br/>the riff daemon"]
+    R -- "a check fails" --> F["print the fix"]
     D --> I["get the session image<br/>of the project"]
 ```
 
-`riff init` prints one line for each check, with `pass`, `step` or
-`fail`:
+`riff init` prints one line for each check, with `pass` or `fail`:
 
 | Check | It must be true |
 |---|---|
@@ -340,16 +357,15 @@ flowchart LR
 | The init of podman | `catatonit` is in a folder of podman, for example `/usr/libexec/podman`. Each session runs it as its first process. |
 | `/etc/subuid`, `/etc/subgid` | Each gives you 65536 IDs or more. The fix adds a free range: it starts after the end of each range in the file, and at 100000 or more. |
 | cgroup v2 | Your user gets `cpu` and `memory`. |
-| The session image | `riff.toml` of the project pins it. |
+| The session image | `riff.toml` of the project pins it. When the project has no `riff.toml`, run `riff project init`: see [Set up your project](#set-up-your-project). |
 | The riff binary | It is static, so `riff relay` starts in each session image. |
-| The repository on GitHub | In a clone of a repository on GitHub: `riff.toml` is on the default branch, auto-merge and squash merge are on, a ruleset of the default branch requires `riff/verify`, the Backlog and a wave are there, a pull request runs a CI check, and the default branch has the guard of the bot of the session App. With `[release]` in `riff.toml`, the ruleset `releases` lets the lead App push a release tag. `riff init` checks no `CLAUDE.md` or `AGENTS.md`: such a file is the choice of the repository. `riff init` does the first five, the guard and the ruleset `releases` itself, after one question. See [Add another repository to the riff](#add-another-repository-to-the-riff). |
 
-A line with `fail` also gives the fix. A line with `step` is a check of
-your repository on GitHub that `riff init` fixes itself, after one
-question. Do each fix, then run `riff init` again. When each check
-passes, `riff init` installs and starts the riff daemon, and the daemon
-gets the session image. A riff daemon that runs already stays. Then do
-one item: see
+`riff init` checks only this machine. It reads no repository on GitHub,
+and asks riff-server nothing. A line with `fail` also gives the fix. Do
+each fix, then run `riff init` again. When each check passes,
+`riff init` installs and starts the riff daemon, and the daemon gets the
+session image. A riff daemon that runs already stays. Then do one item:
+see
 [Run one item in a container](development.md#run-one-item-in-a-container).
 
 ### Let the lead start the work
@@ -610,9 +626,7 @@ A rule of another tool, for example `Read`, is never wide.
 
 ### Run riff init with no question
 
-This command asks no question. It sets up the repository on GitHub: see
-[Add another repository to the
-riff](#add-another-repository-to-the-riff). It removes no wide rule:
+This command asks no question. It removes no wide rule:
 
 ```sh
 riff init --yes
@@ -628,21 +642,45 @@ status 1 when a check fails:
 riff init --check
 ```
 
+### Run riff init in the container of the lead
+
+A lead can run `riff init --check` in its container. A container runs
+no podman, and the host runs the checks of the machine. So in a
+container `riff init` skips them, says so in one line, and checks only
+the session image and the riff binary:
+
+```sh
+riff init --check
+```
+
+```text
+riff checks this machine:
+  skip  the checks of the machine: the host runs them
+  ...
+Each check passed. riff changed nothing: the host has the daemon and the session image.
+```
+
+In a container, `riff init` only checks, also with `--yes`. It installs
+no daemon and pulls no image: the host has them. `riff project init`
+refuses in a container: you run it in a plain terminal, in your clone of
+the repository.
+
 ## Add another repository to the riff
 
 riff works on other projects too. In a clone of the repository, run
-`riff init`. On a repository that is not set up for riff, it shows
-each step and asks one question. Answer `y`. You must be an admin of
-the repository:
+`riff project init`. On a repository that is not set up for riff, it
+shows each step and asks one question. Answer `y`. You must be an admin
+of the repository on GitHub, and an admin of the riff. Run it in a plain
+terminal: it refuses in an agent session and in a container:
 
 ```sh
-riff init
+riff project init
 ```
 
-`riff init` sets up the repository with `gh`, in this order. It skips
-each step that is done already:
+`riff project init` sets up the repository with `gh`, in this order. It
+skips each step that is done already:
 
-| Step | What `riff init` does |
+| Step | What `riff project init` does |
 |---|---|
 | Merge settings | It allows auto-merge and squash merge. |
 | `riff.toml` and the guard | When the default branch has no `riff.toml`, or no guard of the bot of the session App, it makes the branch `riff-setup` with each file that is missing, opens the pull request "Set up riff", and squash-merges it. `riff.toml` pins `riff-base`, the image of riff with `claude`, `git` and `gh` and no language. The guard is `.github/workflows/riff-guard.yml`: see [Add the guard](#add-the-guard). |
@@ -654,45 +692,52 @@ each step that is done already:
 
 ```mermaid
 flowchart LR
-    I["riff init<br/>in a clone"] --> C["checks the<br/>repository"]
+    I["riff project init<br/>in a clone"] --> C["checks the<br/>repository"]
     C -- "a step to do" --> Q["one question<br/>y, or --yes"]
     Q --> S["the steps, with gh"]
-    S --> D["the daemon and<br/>the session image"]
-    C -- "all done" --> D
+    S --> E["enrolls the repository<br/>as a project of the riff"]
+    C -- "all done" --> E
 ```
 
-`riff init` makes `riff.toml` on the default branch of `origin`. When
-your clone is on the default branch, has no change, and lacks only
-commits of `origin`, it runs `git pull --ff-only` there. Else it says
-why it did not, and you run `git pull` in your clone. A second run of
-`riff init` changes nothing on GitHub and asks nothing. See
+`riff project init` makes `riff.toml` on the default branch of
+`origin`. When your clone is on the default branch, has no change, and
+lacks only commits of `origin`, it runs `git pull --ff-only` there. Else
+it says why it did not, and you run `git pull` in your clone. When each
+check passes, it enrolls the repository as a project of the riff: see
+[The projects of the riff](how-it-works.md#the-projects-of-the-riff). A
+second run of `riff project init` changes nothing on GitHub and asks
+nothing. See
 [Read the output for a repository on GitHub](#read-the-output-for-a-repository-on-github).
+Then run `riff init` in the clone, so that the riff daemon of this
+machine gets the session image of the project: see
+[Get this machine ready](#get-this-machine-ready).
 
 One part is your own work: the CI. The full check of a pull request, its
 CI, is the gate of a change: riff waits for it before it starts a
 verify, and the ruleset lets no change merge without it. riff needs no
 CI, though. A repository with no CI has no check but `riff/verify`, and
-`riff init` says so in a note. See
+`riff project init` says so in a note. See
 [Use the checks that you have](#use-the-checks-that-you-have) and
 [A repository with no CI](#a-repository-with-no-ci).
 
 A `CLAUDE.md` or an `AGENTS.md` is the choice of the repository. riff
-needs neither, and `riff init` checks neither: it prints no line for
-them, and a repository with none passes. A session reads the rules of
-the repository for agents when it has them. See
+needs neither, and `riff project init` checks neither: it prints no line
+for them, and a repository with none passes. A session reads the rules
+of the repository for agents when it has them. See
 [Write a CLAUDE.md, when you want one](#write-a-claudemd-when-you-want-one).
 
 The wave starts a session only for an issue with a `Done when:` line
-or a `## Done when` heading. `riff init` names the open issues that lack
-both, in a note that fails no check. See
+or a `## Done when` heading. `riff project init` names the open issues
+that lack both, in a note that fails no check. See
 [Find the issues with no Done when line](development.md#find-the-issues-with-no-done-when-line).
 The names that riff uses on the forge are in
 [The names riff uses on the forge](waves.md#the-names-riff-uses-on-the-forge).
 
-To do the steps with no question, run `riff init --yes`. To see the
-steps and change nothing, run `riff init --check`. A person who is not
-an admin of the repository gets the fix of each check, and riff changes
-nothing: ask an admin to run `riff init`.
+To do the steps with no question, run `riff project init --yes`. To see
+the steps and change nothing, run `riff project init --check`: it
+enrolls nothing. A person who is not an admin of the repository gets the
+fix of each check, and riff changes nothing: ask an admin to run
+`riff project init`.
 
 ### Install the GitHub Apps of riff on the account
 
@@ -741,41 +786,14 @@ name the repository:
 riff github install OWNER --repo OWNER/NAME
 ```
 
-### Run the checks in the container of the lead
-
-A lead can run `riff init --check` in its container. A container runs
-no podman, and the host runs the checks of the machine. So in a
-container `riff init` skips them, says so in one line, and runs the
-checks of the repository:
-
-```sh
-riff init --check
-```
-
-```text
-riff checks this machine:
-  skip  the checks of the machine: the host runs them
-  skip  the steps of the repository: a person runs riff init in a terminal for them
-  ...
-```
-
-In a container, `riff init` only checks, also with `--yes`. It does no
-step of the repository: the lead has no right to change the settings or
-the rulesets of the repository. It installs no daemon and pulls no
-image: the host has them. To do the steps, you run `riff init` in a
-plain terminal, in your clone of the repository.
-
 ### Read the output for a repository on GitHub
 
-This is the output of `riff init` in a clone of `acme/app` that is not
-set up for riff. The answer to the question is `y`. A line with `...`
-stands for lines that this page leaves out:
+This is the output of `riff project init` in a clone of `acme/app` that
+is not set up for riff. The answer to the question is `y`. A line with
+`...` stands for lines that this page leaves out:
 
 ```text
-riff checks this machine:
-  ...
-  step  the session image: cannot read the riff config /home/mike/app/riff.toml: No such file or directory (os error 2). Step: make riff.toml on main with a pull request
-  ...
+riff checks the repository of this clone on GitHub:
   step  riff.toml on main: main of acme/app has no riff.toml, so riff lead start stops. Step: make riff.toml on main with a pull request
   step  auto-merge and squash merge: acme/app allows no auto-merge. Step: allow auto-merge and squash merge
   step  the ruleset of main: no ruleset of main requires the check riff/verify, so a merge does not wait for the verify. Step: make the ruleset riff on main
@@ -792,12 +810,12 @@ riff can set up acme/app for riff. These steps change GitHub:
 Do them? [y/N] y
   done  allow auto-merge and squash merge: allowed both
   done  make riff.toml on main with a pull request: opened https://github.com/acme/app/pull/7 and merged it
+  ...
   done  make the milestone Backlog: made Backlog
   done  make the milestone Wave 1: made Wave 1
   done  make the ruleset riff on main: requires checks / lint and checks / test and riff/verify
 riff.toml is on main now. riff ran git pull --ff-only in this clone, so the clone has it.
-riff checks this machine again:
-  ...
+riff checks the repository again:
   pass  riff.toml on main: main of acme/app has it
   pass  auto-merge and squash merge: acme/app allows both
   pass  the ruleset of main: it requires the check riff/verify
@@ -805,61 +823,63 @@ riff checks this machine again:
   pass  the first wave: acme/app has the open wave Wave 1
   pass  the checks of a pull request: the full check is checks / lint and checks / test
   ...
-This machine is ready. Run one item in a container: riff run ITEM
+riff enrolled acme/app as a project of the riff. Hosts that may run its wave: each host.
 ```
 
-- A line with `step` is a check that fails, and that `riff init` fixes
-  with a step. No fact that a step fixes shows as `fail`. A line with
-  `fail` is your work: it gives the fix.
+- A line with `step` is a check that fails, and that
+  `riff project init` fixes with a step. No fact that a step fixes
+  shows as `fail`. A line with `fail` is your work: it gives the fix.
 - After the steps, riff checks again. A check passes when its step
   worked.
-- `riff init` makes `riff.toml` on `origin`. Then it runs
+- `riff project init` makes `riff.toml` on `origin`. Then it runs
   `git pull --ff-only` in your clone when your clone is on the default
   branch, has no change, and lacks only commits of `origin`. Else it
   says why it did not, and you run `git pull` yourself.
+- The last line says that riff enrolled the repository.
 
 When a check still fails, the end of the output names each one with its
-fix. riff installs nothing then, and exits with 1. For example, when the
+fix. riff enrolls nothing then, and exits with 1. For example, when the
 pull requests ran a check of your CI and no rule requires it, the check
 of a pull request fails until you add that check to the ruleset:
 
 ```text
-riff checks this machine:
+riff checks the repository of this clone on GitHub:
   ...
-  fail  the checks of a pull request: pull requests of acme/app ran checks / lint, and no rule requires them, so a merge does not wait for them. Fix: add them to the ruleset of main. See "Use the checks that you have" in the book. Then run riff init again
+  fail  the checks of a pull request: pull requests of acme/app ran checks / lint, and no rule requires them, so a merge does not wait for them. Fix: add them to the ruleset of main. See "Use the checks that you have" in the book. Then run riff project init again
   ...
-1 check failed. riff installed no daemon and pulled no image. Do each fix, then run riff init again:
-  the checks of a pull request: add them to the ruleset of main. See "Use the checks that you have" in the book. Then run riff init again
+1 check failed. riff enrolled no project. Do each fix, then run riff project init again:
+  the checks of a pull request: add them to the ruleset of main. See "Use the checks that you have" in the book. Then run riff project init again
 ```
 
 ### A repository with no CI
 
 riff needs no CI. A repository with no CI has no check but
-`riff/verify`. `riff init` makes the ruleset with that check alone, and
-it says so in a note:
+`riff/verify`. `riff project init` makes the ruleset with that check
+alone, and it says so in a note:
 
 ```text
-riff checks this machine again:
+riff checks the repository again:
   ...
   pass  the checks of a pull request: acme/app has no CI: no pull request ran a check, so riff/verify is the only check
   ...
-This machine is ready. Run one item in a container: riff run ITEM
+riff enrolled acme/app as a project of the riff. Hosts that may run its wave: each host.
 ```
 
 The wave starts the verify of a pull request at once, as no check must
 end first. The verifier runs the tests that the criteria name, as no
 check ran them. GitHub merges the pull request when `riff/verify`
 passes. riff never invents a check for you. When you add a CI later, run
-`riff init` again: it names the checks to add to the ruleset, and
-[Use the checks that you have](#use-the-checks-that-you-have) shows how.
+`riff project init` again: it names the checks to add to the ruleset,
+and [Use the checks that you have](#use-the-checks-that-you-have) shows
+how.
 
 ### Do the steps by hand
 
-You can do each step yourself. `riff init --check` names the step of
-each check that fails:
+You can do each step yourself. `riff project init --check` names the
+step of each check that fails, and enrolls nothing:
 
 ```sh
-riff init --check
+riff project init --check
 ```
 
 ```mermaid
@@ -871,7 +891,7 @@ flowchart LR
     R --> M["GitHub squash-merges"]
 ```
 
-| Check of `riff init` | Step |
+| Check of `riff project init` | Step |
 |---|---|
 | `riff.toml` on the default branch | [Add riff.toml](#add-rifftoml) |
 | auto-merge and squash merge | [Allow auto-merge and squash merge](#allow-auto-merge-and-squash-merge) |
@@ -881,6 +901,7 @@ flowchart LR
 | the guard | [Add the guard](#add-the-guard) |
 | the ruleset `releases` | [Let the lead push the release tag](#let-the-lead-push-the-release-tag) |
 | the merge queue | [Turn the merge queue on or off](development.md#turn-the-merge-queue-on-or-off) |
+| the GitHub Apps of riff | [Install the GitHub Apps of riff on the account](#install-the-github-apps-of-riff-on-the-account) |
 
 The checks of a pull request are your own work. Your repository may
 have a CI already: see
@@ -923,12 +944,12 @@ git push
 The guard is the workflow `.github/workflows/riff-guard.yml`. It puts
 back a change of the bot of the session App to the body, the title or
 a comment of an issue: see
-[Add to an issue](how-it-works.md#add-to-an-issue). `riff init` asks
-riff-server for the bot, and checks the guard of that bot on the
+[Add to an issue](how-it-works.md#add-to-an-issue). `riff project init`
+asks riff-server for the bot, and checks the guard of that bot on the
 default branch. A riff with no session App needs no guard, and the
 check passes. When riff cannot ask riff-server, the check fails with no
 step: start riff-server, or sign in with `riff login`, and run
-`riff init` again.
+`riff project init` again.
 
 To write the guard yourself, take the guard of the repository of riff,
 and put the bot of your session App in it. `riff github check` names
@@ -1295,11 +1316,11 @@ image:
 riff init
 ```
 
-For a repository that has no `riff.toml` yet, `riff init --image` pins
-the image in the first pull request:
+For a repository that has no `riff.toml` yet, `riff project init
+--image` pins the image in the first pull request:
 
 ```sh
-riff init --yes --image "$IMAGE@$DIGEST"
+riff project init --yes --image "$IMAGE@$DIGEST"
 ```
 
 ### Check that each host can pull the image

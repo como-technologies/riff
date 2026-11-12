@@ -1,15 +1,15 @@
 //! The setup of a repository on GitHub that riff needs: the checks of
-//! `riff init` and the steps that do them (01M5QVF5535YRN1EF3DZAB4W8G,
+//! `riff project init` and the steps that do them (01M5QVF5535YRN1EF3DZAB4W8G,
 //! 01M5R1672NF56P15VD0JEX51K4).
 //!
 //! # Design
 //!
-//! `riff init` checks seven facts of the repository of the current
+//! `riff project init` checks seven facts of the repository of the current
 //! folder, and two more in a repository with the release cycle of riff.
 //! Each fact that fails carries its fix for a person, and for eight of
 //! them its [`Step`]: the code that does the fix. A person does
 //! the fix, for example from the how-to "Add another repository to the
-//! riff" in the book. Or `riff init` does the steps after one question,
+//! riff" in the book. Or `riff project init` does the steps after one question,
 //! or with `--yes` ([`setup`]). The step and the how-to make the same
 //! change: the ruleset of the how-to is [`RULESET`]
 //! (01M5QWA0E9A4ZJ8X49EM2MJM5Q).
@@ -31,7 +31,7 @@
 //!     P --> C
 //!     G --> C
 //!     T --> C
-//!     C --> L["pass or fail lines of riff init"]
+//!     C --> L["pass or fail lines of riff project init"]
 //!     C -- "a step, one question or --yes" --> S["the steps, in order"]
 //! ```
 //!
@@ -50,7 +50,7 @@
 //! The fix of the ruleset names the check [`VERIFY_CONTEXT`] and the checks
 //! of the CI.
 //!
-//! `riff init` reads no file of rules for agents, such as `CLAUDE.md` or
+//! `riff project init` reads no file of rules for agents, such as `CLAUDE.md` or
 //! `AGENTS.md`: the CI of the repository is the gate of a change, and a
 //! `CLAUDE.md` is the choice of the repository (01M5RN89Z749VYS1CRYJQTKAWY).
 //!
@@ -79,7 +79,7 @@
 //!   that bot. One pull request holds both.
 //! - `riff.toml` pins the `riff-base` of the release of riff that runs
 //!   ([`crate::session_image::base`], 01M5SNTPEP41NMSP3SEKR7KVB0), or the
-//!   image that `riff init --image` gives ([`Forge::image`]). The step reuses an open pull
+//!   image that `riff project init --image` gives ([`Forge::image`]). The step reuses an open pull
 //!   request from the branch [`SETUP_BRANCH`], and it resets that branch
 //!   to the default branch, so a step that failed half way can run again.
 //!   GitHub may need a moment to say that the pull request can merge, so
@@ -235,7 +235,7 @@ pub const SETUP_TITLE: &str = "Set up riff";
 /// };
 /// assert_eq!(
 ///     setup_body(&github),
-///     "riff init made this pull request. It adds riff.toml, which pins the session image of \
+///     "riff project init made this pull request. It adds riff.toml, which pins the session image of \
 ///      each session of this repository. It writes the guard .github/workflows/riff-guard.yml \
 ///      of riff-acme[bot]: it puts back a change of that bot to an issue."
 /// );
@@ -243,7 +243,7 @@ pub const SETUP_TITLE: &str = "Set up riff";
 /// assert!(!setup_body(&github).contains("guard"));
 /// ```
 pub fn setup_body(github: &Github) -> String {
-    let mut body = "riff init made this pull request.".to_owned();
+    let mut body = "riff project init made this pull request.".to_owned();
     if !github.has(CONFIG) {
         body.push_str(
             " It adds riff.toml, which pins the session image of each session of this repository.",
@@ -303,17 +303,17 @@ pub struct Forge {
     pub gh: Gh,
     /// What riff waits for.
     pub waits: Waits,
-    /// The session image that [`Step::Config`] pins (`riff init --image`).
+    /// The session image that [`Step::Config`] pins (`riff project init --image`).
     /// With `None`, it pins the base of the release ([`session_image::base`]).
     pub image: Option<session_image::Image>,
 }
 
 impl Default for Forge {
     /// A forge with the `gh` of the machine and no repository: the repository
-    /// of the current folder. Its calls are counted as `init`.
+    /// of the current folder. Its calls are counted as `project init`.
     fn default() -> Self {
         Forge {
-            gh: Gh::here("init"),
+            gh: Gh::here("project init"),
             waits: Waits::default(),
             image: None,
         }
@@ -322,10 +322,10 @@ impl Default for Forge {
 
 impl Forge {
     /// The forge of the repository `repo` (`OWNER/REPO`), with the `gh`
-    /// of the machine. Its calls are counted as `init`.
+    /// of the machine. Its calls are counted as `project init`.
     pub fn of(repo: &str) -> Forge {
         Forge {
-            gh: Gh::here("init")
+            gh: Gh::here("project init")
                 .with_repo(repo)
                 .with_shared_reads()
                 .with_limit(LIMIT),
@@ -335,7 +335,7 @@ impl Forge {
     }
 
     /// The image that [`Step::Config`] pins in `riff.toml`: the image of
-    /// `riff init --image`, else the base of the release.
+    /// `riff project init --image`, else the base of the release.
     pub fn pin(&self) -> session_image::Image {
         self.image.clone().unwrap_or_else(session_image::base)
     }
@@ -1191,8 +1191,7 @@ pub async fn lead_app(api: &Api) -> Result<Option<LeadApp>, String> {
 }
 
 /// The lead App of `apps`, the reply of riff-server to the read of its
-/// GitHub Apps ([`lead_app`]). `riff init` in a container gets the reply
-/// through the riff daemon (#1733).
+/// GitHub Apps ([`lead_app`]).
 pub fn lead_app_of(apps: &riff_core::wire::GitHubAppsReply) -> Option<LeadApp> {
     apps.apps
         .iter()
@@ -1670,7 +1669,7 @@ pub fn checks(github: &Github) -> Vec<Check> {
 ///     "fail  the merge queue: acme/app has the release cycle of riff and no merge queue on main, \
 ///      so a merge can put a tree on main that no Gate tested. Fix: add a merge queue with the \
 ///      method squash to the ruleset of main. See \"Turn the merge queue on or off\" in the \
-///      book. Then run riff init again"
+///      book. Then run riff project init again"
 /// );
 /// assert_eq!(Step::Queue.title(&github), "add the merge queue to the ruleset of main");
 /// github.queue = Some(true);
@@ -1730,7 +1729,7 @@ fn queue_check(github: &Github) -> Option<Check> {
 ///     "fail  the ruleset releases: acme/app has the release cycle of riff and no ruleset \
 ///      releases, so each session can push a tag v*. Fix: make the ruleset releases on the tags \
 ///      v*, with the admin role and riff-acme-lead as bypass actors. See \"Let the lead push \
-///      the release tag\" in the book. Then run riff init again"
+///      the release tag\" in the book. Then run riff project init again"
 /// );
 /// github.releases = Some(TagRules { there: true, apps: Some(vec![7]) });
 /// assert_eq!(
@@ -1803,7 +1802,7 @@ fn releases_check(github: &Github) -> Option<Check> {
 ///     line(&github),
 ///     "fail  the guard: main of acme/app has no .github/workflows/riff-guard.yml, and riff \
 ///      cannot ask riff-server. Fix: start riff-server, or sign in with riff login. Then run \
-///      riff init again"
+///      riff project init again"
 /// );
 /// github.bot = Ok(None);
 /// assert_eq!(line(&github), "pass  the guard: the riff has no session App, so riff writes no guard");
@@ -1903,12 +1902,12 @@ mod tests {
         checks(github).iter().map(Check::line).collect()
     }
 
-    /// #1597: the calls of `riff init` are in the tally of the daemon, as
-    /// the caller `init`, also when the folder has no repository yet.
+    /// #1597: the calls of `riff project init` are in the tally of the daemon, as
+    /// the caller `project init`, also when the folder has no repository yet.
     #[test]
-    fn the_forge_of_riff_init_counts_its_calls_as_init() {
-        assert_eq!(Forge::of("acme/app").gh.caller(), "init");
-        assert_eq!(Forge::default().gh.caller(), "init");
+    fn the_forge_of_riff_project_init_counts_its_calls_as_project_init() {
+        assert_eq!(Forge::of("acme/app").gh.caller(), "project init");
+        assert_eq!(Forge::default().gh.caller(), "project init");
     }
 
     #[test]
@@ -2013,7 +2012,7 @@ mod tests {
             "fail  the checks of a pull request: pull requests of acme/app ran checks / lint, \
              and no rule requires them, so a merge does not wait for them. Fix: add them to \
              the ruleset of main. See \"Use the checks that you have\" in the book. Then run \
-             riff init again"
+             riff project init again"
         );
     }
 
@@ -2200,7 +2199,7 @@ mod tests {
         assert_eq!(required, ["Gate", "riff/verify"]);
     }
 
-    /// The fake forge of the tests of `riff init`: a fake `gh` for the
+    /// The fake forge of the tests of `riff project init`: a fake `gh` for the
     /// repository `acme/app` that keeps its state in files
     /// (`tests/fake/forge`).
     const FORGE: &str = include_str!("../tests/fake/forge");
@@ -2560,7 +2559,7 @@ mod tests {
         assert!(ci.line().contains("has no CI"), "{}", ci.line());
     }
 
-    /// 01M5SMNKDWBD1J6Y18ENQG87CK: the steps of `riff init --yes` in a
+    /// 01M5SMNKDWBD1J6Y18ENQG87CK: the steps of `riff project init --yes` in a
     /// repository with no CI make the ruleset with the verify alone, and
     /// each check passes after them.
     #[test]
@@ -2715,7 +2714,7 @@ mod tests {
         assert!(
             why.starts_with(
                 "riff opened https://github.com/acme/app/pull/7, but GitHub did not merge it. \
-                 Merge it yourself, then run riff init again: "
+                 Merge it yourself, then run riff project init again: "
             ),
             "{why}"
         );
@@ -2965,7 +2964,10 @@ esac
             missing.starts_with("fail  the guard: main of acme/app has no "),
             "{missing}"
         );
-        assert!(missing.ends_with("Then run riff init again"), "{missing}");
+        assert!(
+            missing.ends_with("Then run riff project init again"),
+            "{missing}"
+        );
         assert_eq!(step, None);
         // The fix of a person names the bot and the book.
         let github = Github {
@@ -3177,7 +3179,7 @@ esac
                 Step::Queue,
                 Err(
                     "no ruleset of main requires the check riff/verify, so riff has no ruleset \
-                     for the merge queue. Make the ruleset first, then run riff init again"
+                     for the merge queue. Make the ruleset first, then run riff project init again"
                         .into()
                 )
             )]
@@ -3273,7 +3275,7 @@ esac
             "fail  the ruleset releases: the ruleset releases of acme/app has no bypass of \
              riff-acme-lead, so riff release cut of the lead cannot push a tag v*. Fix: make the \
              ruleset releases on the tags v*, with the admin role and riff-acme-lead as bypass \
-             actors. See \"Let the lead push the release tag\" in the book. Then run riff init again"
+             actors. See \"Let the lead push the release tag\" in the book. Then run riff project init again"
         );
         let person = with_the_release_cycle(&[("releases", old), ("not_admin", "")]);
         let github = person.github();
@@ -3312,7 +3314,7 @@ esac
         assert_eq!(
             check.line(),
             "fail  the ruleset releases: acme/app has no ruleset releases, and riff cannot ask \
-             riff-server. Fix: start riff-server, or sign in with riff login. Then run riff init \
+             riff-server. Fix: start riff-server, or sign in with riff login. Then run riff project init \
              again"
         );
         github.releases = Some(TagRules {

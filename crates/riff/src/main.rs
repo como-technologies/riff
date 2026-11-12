@@ -609,60 +609,44 @@ enum Command {
     /// The first run of riff on a machine. It checks rootless podman:
     /// podman runs and riff does not run as root, podman has its init
     /// (catatonit), /etc/subuid and /etc/subgid give you 65536 IDs or more,
-    /// and cgroup v2 gives cpu and memory to your user. It checks
-    /// that riff.toml of the repository of this folder pins the session
-    /// image. When the remote origin is on GitHub, it also reads the
-    /// repository with gh and checks that it has riff.toml on the default
-    /// branch, allows auto-merge and squash merges, has a ruleset of the
-    /// default branch that requires riff/verify, has the milestone Backlog
-    /// and an open wave, and has a CI check that a pull request runs. It
-    /// asks riff-server for the bot of the session App of the riff, and
-    /// checks that the default branch has the guard of that bot:
-    /// .github/workflows/riff-guard.yml puts back a change of that bot to
-    /// the body, the title or a comment of an issue. When riff.toml on the
-    /// default branch has [release], it asks riff-server for the lead App,
-    /// and checks that the ruleset releases on the tags v* lets the lead
-    /// App push a tag, and that the default branch merges through a merge
-    /// queue with the method squash. It
-    /// reads no CLAUDE.md or AGENTS.md: that file is the choice of the
-    /// repository. It names the open issues with no "Done when:" line and no
-    /// "## Done when" heading in a note: the wave starts no session for
-    /// them. It names the fix of each check that fails. For the first five
-    /// checks, riff init does the fix itself: it asks one question, and then it
-    /// makes riff.toml with a pull request that it merges, allows auto-merge
-    /// and squash merges, makes the Backlog and Wave 1,
-    /// and makes the ruleset riff. The same pull request adds the guard. It
-    /// puts the merge queue in the ruleset that requires riff/verify, and
-    /// makes the ruleset releases too. It needs the rights of an admin of the
-    /// repository, and a second run changes nothing. The riff.toml that it
-    /// makes pins riff-base: claude, git and gh, with no language. --image
-    /// pins another image. It writes no rule into
-    /// your user settings of Claude Code. It names each allow rule of your
-    /// user, project and local settings of Claude Code that is wider than
-    /// the steps of riff, and asks one question before it removes them. It
-    /// prints the fix of each check that still fails, and stops. When each
-    /// check passes, it installs and starts the riff daemon, as riff daemon
-    /// install does, and the daemon pulls the session image. A daemon that
-    /// answers stays: riff init does not start it again. In a session
-    /// container (RIFF_SOCKET is set), for example the container of a lead,
-    /// riff init skips the checks of the machine, says so in one line, and
-    /// runs the checks of the repository: the host runs the machine, the
-    /// daemon and the image. There it only checks, also with --yes: a
-    /// person runs riff init in a terminal for the steps of the repository.
+    /// and cgroup v2 gives cpu and memory to your user. It checks that
+    /// riff.toml of the repository of this folder pins the session image,
+    /// and that the riff binary is static. It reads no repository on
+    /// GitHub and asks riff-server nothing: riff project init sets up a
+    /// repository. It writes no rule into your user settings of Claude
+    /// Code. It names each allow rule of your user, project and local
+    /// settings of Claude Code that is wider than the steps of riff, and
+    /// asks one question before it removes them. It prints the fix of each
+    /// check that fails, and stops. When each check passes, it installs and
+    /// starts the riff daemon, as riff daemon install does, and the daemon
+    /// pulls the session image. A daemon that answers stays: riff init
+    /// does not start it again. In a session container (RIFF_SOCKET is
+    /// set), for example the container of a lead, riff init skips the
+    /// checks of the machine, says so in one line, and checks only the
+    /// session image and the riff binary: the host runs the machine, the
+    /// daemon and the image. There it only checks, also with --yes.
     Init {
         /// Change nothing. Print the fix of each check that fails, and
         /// each wide allow rule. Exit with status 1 when a check fails.
         #[arg(long, conflicts_with = "yes")]
         check: bool,
-        /// Ask no question. It sets up the repository on GitHub, and it
-        /// removes no wide rule. In a session container it only checks.
+        /// Ask no question. It removes no wide rule.
         #[arg(long)]
         yes: bool,
-        /// The session image that riff.toml pins, as HOST/PATH@sha256:DIGEST.
-        /// The default is riff-base, the image of riff with claude, git and
-        /// gh and no language. riff refuses a tag.
-        #[arg(long, value_name = "REF")]
-        image: Option<String>,
+    },
+    /// Set up, enroll, list and remove the projects of the riff
+    ///
+    /// A project is a repository OWNER/REPO on GitHub that a person
+    /// enrolled in the riff. riff-server keeps who enrolled it and when,
+    /// and the hosts that may run its wave. riff project list shows each
+    /// project. Only an admin of the riff who is also an admin of the
+    /// repository on GitHub runs riff project init and riff project
+    /// remove, in a plain terminal: both refuse in an agent session and
+    /// in a container. riff-server reads the repository on GitHub one
+    /// time with the token of your gh, and keeps the token nowhere.
+    Project {
+        #[command(subcommand)]
+        command: ProjectCommand,
     },
     /// Run one work item in a rootless podman container
     ///
@@ -991,6 +975,81 @@ enum CloudCommand {
         /// type it.
         #[arg(long, value_name = "NAME")]
         confirm: Option<String>,
+    },
+}
+
+/// The subcommands of `riff project` (01M76SG2E9RPV4B7CYSZPGGZ3P).
+#[derive(Subcommand)]
+enum ProjectCommand {
+    /// Set up the repository of this clone for riff, and enroll it
+    ///
+    /// It runs in a clone of a repository on GitHub, and reads the
+    /// repository with the gh of this machine. It checks that the
+    /// repository has riff.toml on the default branch, allows auto-merge
+    /// and squash merges, has a ruleset of the default branch that
+    /// requires riff/verify, has the milestone Backlog and an open wave,
+    /// and has a CI check that a pull request runs. It asks riff-server for
+    /// the bot of the session App of the riff, and checks that the default
+    /// branch has the guard of that bot: .github/workflows/riff-guard.yml
+    /// puts back a change of that bot to the body, the title or a comment
+    /// of an issue. When riff.toml on the default branch has [release], it
+    /// asks riff-server for the lead App, and checks that the ruleset
+    /// releases on the tags v* lets the lead App push a tag, and that the
+    /// default branch merges through a merge queue with the method squash.
+    /// It checks that the GitHub Apps of riff are on the repository. It
+    /// reads no CLAUDE.md or AGENTS.md: that file is the choice of the
+    /// repository. It names the open issues with no "Done when:" line and
+    /// no "## Done when" heading in a note: the wave starts no session for
+    /// them. It names the fix of each check that fails. For the first five
+    /// checks, riff project init does the fix itself: it asks one question,
+    /// and then it makes riff.toml with a pull request that it merges,
+    /// allows auto-merge and squash merges, makes the Backlog and Wave 1,
+    /// and makes the ruleset riff. The same pull request adds the guard. It
+    /// puts the merge queue in the ruleset that requires riff/verify, and
+    /// makes the ruleset releases too. It needs the rights of an admin of
+    /// the repository. The riff.toml that it makes pins riff-base: claude,
+    /// git and gh, with no language. --image pins another image. When each
+    /// check passes, it enrolls the repository as a project of the riff.
+    /// riff-server reads the repository on GitHub one time with the token
+    /// of your gh, and enrolls it only for an admin of the riff who is an
+    /// admin of the repository. A second run changes nothing on GitHub,
+    /// sets the hosts again, and changes nothing else. It refuses in an
+    /// agent session and in a container.
+    Init {
+        /// Change nothing and enroll nothing. Print the fix of each check
+        /// that fails. Exit with status 1 when a check fails.
+        #[arg(long, conflicts_with = "yes")]
+        check: bool,
+        /// Ask no question: set up the repository on GitHub.
+        #[arg(long)]
+        yes: bool,
+        /// The session image that a new riff.toml pins, as
+        /// HOST/PATH@sha256:DIGEST. The default is riff-base, the image of
+        /// riff with claude, git and gh and no language. riff refuses a
+        /// tag.
+        #[arg(long, value_name = "REF")]
+        image: Option<String>,
+        /// Only HOST may run the wave of the project. Give it one time for
+        /// each host. With no --host, each host may.
+        #[arg(long = "host", value_name = "HOST")]
+        hosts: Vec<String>,
+    },
+    /// List the projects of the riff
+    ///
+    /// For each project: the repository, who enrolled it and when, in UTC,
+    /// the hosts that may run its wave, and the users of its leads. It
+    /// runs in a terminal and in a session.
+    List,
+    /// Forget a project of the riff
+    ///
+    /// riff-server forgets the project OWNER/REPO. GitHub keeps the
+    /// repository as it is: riff.toml, the rulesets and the waves
+    /// stay. Only an admin of the riff who is also an admin of the
+    /// repository on GitHub can. It refuses in an agent session and in a
+    /// container.
+    Remove {
+        /// The repository, OWNER/REPO, as riff project list shows it.
+        repo: String,
     },
 }
 
@@ -1955,19 +2014,10 @@ async fn cli() -> Result<()> {
     if let Command::Ps = command {
         return ps_command().await;
     }
-    if let Command::Init { check, yes, image } = command {
-        use riff::first_run::Mode;
-        let image = image
-            .map(|text| text.parse::<riff::session_image::Image>())
-            .transpose()?;
-        let mode = match (check, yes) {
-            (true, _) => Mode::Check,
-            (false, true) => Mode::Yes,
-            (false, false) => Mode::Ask,
-        };
-        let (server, source) = server_of(cli.server.as_deref())?;
-        let reach = Reach::of(&server, source, riff::session_relay::socket_here().ok());
-        let code = riff::first_run::init(mode, image, &reach).await?;
+    if let Command::Init { check, yes } = command {
+        // The checks of the machine only: no riff-server, no GitHub
+        // (01M76SHAZK2PSMET0HRYM0J7VN).
+        let code = riff::first_run::init(mode_of(check, yes)).await?;
         if code != 0 {
             std::process::exit(code);
         }
@@ -2081,6 +2131,9 @@ async fn cli() -> Result<()> {
     }
     if let Command::Device { command } = &command {
         return device_command(command, &server).await;
+    }
+    if let Command::Project { command } = &command {
+        return project_command(command, &server, &reach).await;
     }
     if let Command::Release {
         cycle: Some(command),
@@ -2751,6 +2804,7 @@ async fn cli() -> Result<()> {
         | Command::Cloud { .. }
         | Command::Github { .. }
         | Command::Device { .. }
+        | Command::Project { .. }
         | Command::ClaudeToken
         | Command::Release { .. }
         | Command::Image { .. }
@@ -2794,8 +2848,9 @@ async fn cli() -> Result<()> {
 /// The words of `command` when it needs the host
 /// ([`riff::reach::Way::Host`], 01M74A8CXVRD352VRJ9FH54HJ1): the sign-in
 /// of a person, a claim, or a program of the host. In a container session
-/// it refuses at once. `riff github`, `riff device`, `riff leave` and
-/// `riff lead stop` with no `--host` refuse there with words of their own.
+/// it refuses at once. `riff github`, `riff device`, `riff project init`, `riff project remove`,
+/// `riff leave` and `riff lead stop` with no `--host` refuse there with
+/// words of their own.
 fn needs_the_host(command: &Command) -> Option<&'static str> {
     Some(match command {
         Command::Login => "riff login",
@@ -2930,6 +2985,57 @@ async fn device_command(command: &DeviceCommand, server: &str) -> Result<()> {
         DeviceCommand::Test => {
             let proved = proof::prove(&api, &Action::Test, &Asker::terminal()).await?;
             println!("{}", text::proof_tested(&proved.name));
+        }
+    }
+    Ok(())
+}
+
+/// The mode of `riff init` and `riff project init` for `--check` and
+/// `--yes`.
+fn mode_of(check: bool, yes: bool) -> riff::first_run::Mode {
+    use riff::first_run::Mode;
+    match (check, yes) {
+        (true, _) => Mode::Check,
+        (false, true) => Mode::Yes,
+        (false, false) => Mode::Ask,
+    }
+}
+
+/// `riff project init`, `list` and `remove` (01M76SG2E9RPV4B7CYSZPGGZ3P).
+/// `init` and `remove` refuse in an agent session and in a container,
+/// before each call, also with `--check` (01M76SHB27S4QDV9HMRR4B6APJ).
+/// `list` runs in a terminal and in a session, through the socket in a
+/// container (01M76SHB4SAWFW3S5Y7X9KC6E4).
+async fn project_command(command: &ProjectCommand, server: &str, reach: &Reach) -> Result<()> {
+    let refused = match command {
+        ProjectCommand::Init { .. } => riff::project::refusal("init"),
+        ProjectCommand::Remove { .. } => riff::project::refusal("remove"),
+        ProjectCommand::List => None,
+    };
+    if let Some(refused) = refused {
+        eprintln!("{refused}");
+        std::process::exit(1);
+    }
+    match command {
+        ProjectCommand::Init {
+            check,
+            yes,
+            image,
+            hosts,
+        } => {
+            let image = image
+                .as_deref()
+                .map(str::parse::<riff::session_image::Image>)
+                .transpose()?;
+            let mode = mode_of(*check, *yes);
+            let code = riff::project::init(mode, image, hosts, server).await?;
+            if code != 0 {
+                std::process::exit(code);
+            }
+        }
+        ProjectCommand::List => print!("{}", text::project_list(&reach.projects().await?)),
+        ProjectCommand::Remove { repo } => {
+            println!("{}", riff::project::remove(server, repo).await?);
         }
     }
     Ok(())
@@ -4788,7 +4894,13 @@ mod tests {
         use clap::Parser;
         use riff::reach::Way;
         // These refuse in a container with words of their own.
-        let own: [&[&str]; 4] = [&["github"], &["device"], &["leave"], &["lead", "stop"]];
+        let own: [&[&str]; 5] = [
+            &["github"],
+            &["device"],
+            &["project"],
+            &["leave"],
+            &["lead", "stop"],
+        ];
         for row in riff::reach::COMMANDS {
             let words = std::iter::once("riff").chain(row.args.iter().copied());
             let command = Cli::try_parse_from(words).unwrap().command.unwrap();

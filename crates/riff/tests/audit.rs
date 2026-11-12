@@ -610,7 +610,19 @@ async fn the_log_has_only_the_records_of_the_repository_and_no_body() {
     let url = server(records).await;
     let api = url.api("mike", None);
     let log = api.log(&thread()).await.unwrap();
-    assert_eq!(log.records.len(), good().len());
+    // The log has a lead and no project, so the start enrolled the
+    // repository (01M76SG8NCSAP69Y5AX455BJQM): its record is a record of
+    // the repository too.
+    assert_eq!(log.records.len(), good().len() + 1);
+    let enrolled: Vec<&ThreadName> = log
+        .records
+        .iter()
+        .filter_map(|r| match &r.change {
+            Change::ProjectEnrolled(p) => Some(&p.repo),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(enrolled, [&thread()]);
     let bodies: Vec<&str> = log
         .records
         .iter()

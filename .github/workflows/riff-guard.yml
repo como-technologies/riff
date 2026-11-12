@@ -1,5 +1,5 @@
-# The guard of riff. riff init writes this file with the bot of the
-# session App of the riff. Each worker and each verifier of riff acts
+# The guard of riff. riff project init writes this file with the bot of
+# the session App of the riff. Each worker and each verifier of riff acts
 # on GitHub as that bot. When the bot changes the body or the title of
 # an issue, or changes or deletes a comment of another account, the
 # guard puts back the old text with GITHUB_TOKEN. See "Add to an

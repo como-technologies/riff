@@ -274,6 +274,18 @@ impl Plans {
         })
     }
 
+    /// Each thread where a user has notes now: the text now is not empty
+    /// (01M76SG8NCSAP69Y5AX455BJQM).
+    pub(super) fn noted(&self) -> impl Iterator<Item = &ThreadName> {
+        self.plans.iter().filter_map(|(thread, part)| {
+            let noted = part
+                .notes
+                .values()
+                .any(|texts| texts.last().is_some_and(|now| !now.text.is_empty()));
+            noted.then_some(thread)
+        })
+    }
+
     /// Each text of the notes of `user` in `thread` before the text now,
     /// the oldest first.
     pub fn notes_before(&self, thread: &ThreadName, user: &str) -> &[NotesVersion] {

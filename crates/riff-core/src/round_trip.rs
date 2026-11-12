@@ -791,6 +791,33 @@ mod tests {
                 at_ms: 5,
             }],
         });
+        let project = || ProjectFacts {
+            repo: thread(),
+            by: Some(By::Person(text("ann"))),
+            at_ms: 5,
+            hosts: vec![text("heron")],
+            leads: vec![text("ann")],
+        };
+        c.trip(&ProjectInit {
+            me: me(),
+            repo: thread(),
+            hosts: vec![text("heron")],
+            github_token: text("gho_abcd"),
+        });
+        c.trip(&ProjectInitReply {
+            project: project(),
+            enrolled: true,
+            hosts_changed: true,
+        });
+        c.trip(&ProjectRemove {
+            me: me(),
+            repo: thread(),
+            github_token: text("gho_abcd"),
+        });
+        c.trip(&ProjectsQuery { me: me() });
+        c.trip(&ProjectsReply {
+            projects: vec![project()],
+        });
         c.trip(&Release {
             me: me(),
             thread: thread(),

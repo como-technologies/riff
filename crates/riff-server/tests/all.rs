@@ -31,6 +31,7 @@ mod members;
 mod names;
 mod notes;
 mod plan;
+mod projects;
 mod proofs;
 mod read_threads;
 mod revoke;

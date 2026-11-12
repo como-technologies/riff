@@ -18,8 +18,9 @@ use riff_client::api::{Claimed, Inbox, Told};
 use riff_client::threads::{Line, Names, RIFF_BOT, Thread};
 use riff_core::wire::{
     AdminSet, DeviceInfo, DevicesReply, FreeReply, GitHubRole, HoldReply, Invited, Kind, LeadReply,
-    OwnerAsked, OwnerDenied, OwnerPassed, PauseInfo, Posted, ReleaseReply, Removed, Revoked,
-    RiffOwner, RiffReply, RiffState, SessionInfo, StepChange, ThreadInfo, Wake,
+    OwnerAsked, OwnerDenied, OwnerPassed, PauseInfo, Posted, ProjectInitReply, ProjectsReply,
+    ReleaseReply, Removed, Revoked, RiffOwner, RiffReply, RiffState, SessionInfo, StepChange,
+    ThreadInfo, Wake,
 };
 
 /// Tells the reader how to act on a message (R10). The start hook and
@@ -9534,14 +9535,12 @@ pub const INIT_CHECKS: &str = "riff checks this machine:";
 /// the machine: the host runs them (01M5SMJMR5KS1Z1Z7CEPH9JVBB).
 pub const INIT_MACHINE_SKIPPED: &str = "skip  the checks of the machine: the host runs them";
 
-/// The line of `riff init` in a session container, also with `--yes`: it
-/// only checks, and a person does the steps (01M6WZ410X4RPG1KMPEBVEP2DF).
-pub const INIT_STEPS_SKIPPED: &str =
-    "skip  the steps of the repository: a person runs riff init in a terminal for them";
+/// The first line of `riff project init` (01M76SHAX0KR0DM9GPXAPZJRDZ).
+pub const PROJECT_CHECKS: &str = "riff checks the repository of this clone on GitHub:";
 
-/// The line before the second list of `riff init`, after the steps of the
-/// setup (01M5RGGD6YR36EXZEG61XCJVRY).
-pub const INIT_CHECKS_AGAIN: &str = "riff checks this machine again:";
+/// The line before the second list of `riff project init`, after the
+/// steps of the setup (01M5RGGD6YR36EXZEG61XCJVRY).
+pub const PROJECT_CHECKS_AGAIN: &str = "riff checks the repository again:";
 
 /// `text` on one line, with no cut: each run of white space is one
 /// space.
@@ -9682,11 +9681,12 @@ pub const INIT_FIX_DELEGATE: &str = "let systemd give them to your user: sudo mk
      pids\\n' | sudo tee /etc/systemd/system/user@.service.d/delegate.conf && sudo systemctl \
      daemon-reload, then log out and in again";
 
-/// The fix when the repository pins no session image.
+/// The fix when the repository pins no session image
+/// (01M76SHAZK2PSMET0HRYM0J7VN).
 pub const INIT_FIX_IMAGE: &str = "run riff init in a clone of a repository whose riff.toml pins \
-     the session image. When the default branch has the file, pull it. When it has none, riff \
-     init makes it: answer y, or run riff init --yes. See \"Add another repository to the \
-     riff\" in the book";
+     the session image. When the default branch has the file, pull it. When it has none, run \
+     riff project init in the clone: it makes the file. Then run riff init again. See \"Add \
+     another repository to the riff\" in the book";
 
 /// The name of the check of the riff binary (01M510NW68CTZBHHW7ZYFV7Q3X).
 pub const INIT_RIFF: &str = "the riff binary";
@@ -9945,8 +9945,8 @@ pub fn init_ci_no(repo: &str, verify: &str) -> String {
 }
 
 /// No pull request of the repository `repo` ran a check yet. The pull
-/// request of `riff.toml`, which `riff init` makes, may run the first
-/// one, and then the ruleset that `riff init` makes requires it
+/// request of `riff.toml`, which `riff project init` makes, may run the first
+/// one, and then the ruleset that `riff project init` makes requires it
 /// (01M5RGG9KJXCKH8C94145WS8SM).
 ///
 /// ```
@@ -9956,11 +9956,11 @@ pub fn init_ci_none(repo: &str) -> String {
     format!("no pull request of {repo} ran a check yet")
 }
 
-/// The fix when no pull request ran a check yet, and `riff init` cannot
+/// The fix when no pull request ran a check yet, and `riff project init` cannot
 /// do the step of the ruleset: a person with a CI opens a pull request. A
 /// repository with no CI needs no fix.
 pub const INIT_FIX_CI_NONE: &str = "when the repository has a CI, open a pull request so that it \
-     runs, then run riff init again. With no CI, riff/verify is the only check: no fix is needed";
+     runs, then run riff project init again. With no CI, riff/verify is the only check: no fix is needed";
 
 /// The ruleset of the repository `repo` requires the verify and no check
 /// of the CI, and the pull requests ran `checks`: a merge does not wait for
@@ -9991,12 +9991,12 @@ pub fn init_ci_open(repo: &str, checks: &[String]) -> String {
 pub fn init_fix_ci(branch: &str) -> String {
     format!(
         "add them to the ruleset of {branch}. See \"Use the checks that you have\" in the book. \
-         Then run riff init again"
+         Then run riff project init again"
     )
 }
 
 /// No rule requires a check yet, and the pull requests ran `checks`: the
-/// ruleset that `riff init` makes requires them.
+/// ruleset that `riff project init` makes requires them.
 ///
 /// ```
 /// assert_eq!(
@@ -10090,7 +10090,7 @@ pub fn init_fix_guard(branch: &str, bot: &str) -> String {
 /// The fix of a missing guard when riff cannot ask riff-server for the
 /// bot.
 pub const INIT_FIX_GUARD_UNKNOWN: &str =
-    "start riff-server, or sign in with riff login. Then run riff init again";
+    "start riff-server, or sign in with riff login. Then run riff project init again";
 
 /// riff cannot ask the riff-server at `server` for the bot of the
 /// session App: `why`.
@@ -10219,13 +10219,13 @@ pub fn init_releases_unknown(repo: &str, why: &str) -> String {
 /// assert_eq!(
 ///     riff::text::init_fix_releases("riff-o-lead"),
 ///     "make the ruleset releases on the tags v*, with the admin role and riff-o-lead as bypass \
-///      actors. See \"Let the lead push the release tag\" in the book. Then run riff init again"
+///      actors. See \"Let the lead push the release tag\" in the book. Then run riff project init again"
 /// );
 /// ```
 pub fn init_fix_releases(slug: &str) -> String {
     format!(
         "make the ruleset releases on the tags v*, with the admin role and {slug} as bypass \
-         actors. See \"Let the lead push the release tag\" in the book. Then run riff init again"
+         actors. See \"Let the lead push the release tag\" in the book. Then run riff project init again"
     )
 }
 
@@ -10280,13 +10280,13 @@ pub fn init_queue_off(repo: &str, branch: &str) -> String {
 /// assert_eq!(
 ///     riff::text::init_fix_queue("main"),
 ///     "add a merge queue with the method squash to the ruleset of main. See \"Turn the merge \
-///      queue on or off\" in the book. Then run riff init again"
+///      queue on or off\" in the book. Then run riff project init again"
 /// );
 /// ```
 pub fn init_fix_queue(branch: &str) -> String {
     format!(
         "add a merge queue with the method squash to the ruleset of {branch}. See \"Turn the \
-         merge queue on or off\" in the book. Then run riff init again"
+         merge queue on or off\" in the book. Then run riff project init again"
     )
 }
 
@@ -10309,13 +10309,13 @@ pub fn init_queue_done(name: &str) -> String {
 /// assert_eq!(
 ///     riff::text::init_queue_no_ruleset("main", "riff/verify"),
 ///     "no ruleset of main requires the check riff/verify, so riff has no ruleset for the merge \
-///      queue. Make the ruleset first, then run riff init again"
+///      queue. Make the ruleset first, then run riff project init again"
 /// );
 /// ```
 pub fn init_queue_no_ruleset(branch: &str, verify: &str) -> String {
     format!(
         "no ruleset of {branch} requires the check {verify}, so riff has no ruleset for the merge \
-         queue. Make the ruleset first, then run riff init again"
+         queue. Make the ruleset first, then run riff project init again"
     )
 }
 
@@ -10335,16 +10335,16 @@ pub fn lead_unasked(server: &str, why: &str) -> String {
 ///
 /// ```
 /// let said = riff::text::init_pull_not_merged("https://github.com/o/r/pull/7");
-/// assert_eq!(said, "riff opened https://github.com/o/r/pull/7, but GitHub did not merge it. Merge it yourself, then run riff init again");
+/// assert_eq!(said, "riff opened https://github.com/o/r/pull/7, but GitHub did not merge it. Merge it yourself, then run riff project init again");
 /// ```
 pub fn init_pull_not_merged(url: &str) -> String {
     format!(
-        "riff opened {url}, but GitHub did not merge it. Merge it yourself, then run riff init \
-         again"
+        "riff opened {url}, but GitHub did not merge it. Merge it yourself, then run riff \
+         project init again"
     )
 }
 
-/// The steps that `riff init` can do in the repository `repo`, one for
+/// The steps that `riff project init` can do in the repository `repo`, one for
 /// each line.
 ///
 /// ```
@@ -10365,14 +10365,14 @@ pub fn init_setup(repo: &str, steps: &[String]) -> String {
     )
 }
 
-/// The question of `riff init` about the steps (01M5R1672NF56P15VD0JEX51K4).
+/// The question of `riff project init` about the steps (01M5R1672NF56P15VD0JEX51K4).
 pub const INIT_ASK_SETUP: &str = "Do them? [y/N] ";
 
-/// `riff init` did no step: no `y`, or no terminal.
-pub const INIT_SETUP_KEPT: &str = "riff did no step. To do them, run riff init in a terminal and \
-     answer y, or run riff init --yes.";
+/// `riff project init` did no step: no `y`, or no terminal.
+pub const INIT_SETUP_KEPT: &str = "riff did no step. To do them, run riff project init in a \
+     terminal and answer y, or run riff project init --yes.";
 
-/// `riff init` made `riff.toml` on the default branch `branch`, and ran
+/// `riff project init` made `riff.toml` on the default branch `branch`, and ran
 /// `git pull --ff-only` in this clone (01M5RGGD9AYNC12Z2CG5CDZWNA).
 ///
 /// ```
@@ -10388,7 +10388,7 @@ pub fn init_pulled(branch: &str) -> String {
     )
 }
 
-/// `riff init` made `riff.toml` on the default branch `branch`, and ran
+/// `riff project init` made `riff.toml` on the default branch `branch`, and ran
 /// no `git pull` in this clone: `why`.
 ///
 /// ```
@@ -10406,7 +10406,7 @@ pub fn init_not_pulled(branch: &str, why: &str) -> String {
     )
 }
 
-/// The clone is on the branch `on`, and `riff init` pulls only into the
+/// The clone is on the branch `on`, and `riff project init` pulls only into the
 /// default branch `branch`. `on` is empty when the clone is on no branch.
 ///
 /// ```
@@ -10418,7 +10418,7 @@ pub fn init_clone_branch(on: &str, branch: &str) -> String {
     format!("the clone is on {on}, not on {branch}")
 }
 
-/// The clone has a change, and `riff init` pulls only into a clone with
+/// The clone has a change, and `riff project init` pulls only into a clone with
 /// none.
 pub const INIT_CLONE_CHANGED: &str = "the clone has a change";
 
@@ -10432,11 +10432,11 @@ pub const INIT_CLONE_CHANGED: &str = "the clone has a change";
 pub fn init_not_admin(repo: &str) -> String {
     format!(
         "You are not an admin of {repo}, so riff changes nothing there. Ask an admin to run riff \
-         init, or do the fix of each failed check."
+         project init, or do the fix of each failed check."
     )
 }
 
-/// `riff init` made `riff.toml` with `base`, the image of riff with no
+/// `riff project init` made `riff.toml` with `base`, the image of riff with no
 /// language: the project adds its toolchain in an image of its own
 /// (01M5SNTPEP41NMSP3SEKR7KVB0).
 ///
@@ -10455,7 +10455,7 @@ pub fn init_toolchain(base: &crate::session_image::Image) -> String {
     )
 }
 
-/// A step of `riff init` is done: `what` says what riff did.
+/// A step of `riff project init` is done: `what` says what riff did.
 ///
 /// ```
 /// assert_eq!(riff::text::init_step_done("make the milestone Backlog", "made it"), "done  make the milestone Backlog: made it");
@@ -10464,7 +10464,7 @@ pub fn init_step_done(step: &str, what: &str) -> String {
     format!("done  {step}: {what}")
 }
 
-/// A step of `riff init` failed: `why` is the error.
+/// A step of `riff project init` failed: `why` is the error.
 ///
 /// ```
 /// assert_eq!(
@@ -10537,7 +10537,7 @@ pub const INIT_WIDE_KEPT: &str =
 /// The most issues that [`init_no_done_when`] names.
 pub const INIT_ISSUES_SHOWN: usize = 20;
 
-/// The note of `riff init` for the open issues of `repo` that have no
+/// The note of `riff project init` for the open issues of `repo` that have no
 /// "Done when" line, and no heading of `Done when`
 /// (01M5SMMP7ZW2PZNGK63WWZAC8P, 01M6QCXGC42AG1RY5QNGT47GVV): their
 /// `numbers`, at most [`INIT_ISSUES_SHOWN`] of them.
@@ -10580,7 +10580,7 @@ pub fn init_no_done_when(repo: &str, numbers: &[u64]) -> String {
     )
 }
 
-/// The note of `riff init` when `gh` cannot list the open issues of
+/// The note of `riff project init` when `gh` cannot list the open issues of
 /// `repo` (01M5SMMP7ZW2PZNGK63WWZAC8P).
 ///
 /// ```
@@ -10612,10 +10612,34 @@ pub fn init_issues_unread(repo: &str, why: &str) -> String {
 /// assert!(two.ends_with("\n  podman: install it\n  cgroup v2: enable it"), "{two}");
 /// ```
 pub fn init_failed(failed: &[(&str, &str)]) -> String {
+    checks_failed(
+        failed,
+        "riff installed no daemon and pulled no image",
+        "riff init",
+    )
+}
+
+/// Some checks of `riff project init` failed: `failed` has the name and
+/// the fix of each one (01M76SHAX0KR0DM9GPXAPZJRDZ).
+///
+/// ```
+/// let one = riff::text::project_failed(&[("the first wave", "make it")]);
+/// assert_eq!(
+///     one,
+///     "1 check failed. riff enrolled no project. Do each fix, then run riff project init again:\n  the first wave: make it"
+/// );
+/// ```
+pub fn project_failed(failed: &[(&str, &str)]) -> String {
+    checks_failed(failed, "riff enrolled no project", "riff project init")
+}
+
+/// The count of the checks of `failed`, what riff did not do, and the
+/// name and the fix of each failed check, so a person need not search
+/// the lists above. The person runs `command` again after the fixes.
+fn checks_failed(failed: &[(&str, &str)], not_done: &str, command: &str) -> String {
     let checks = if failed.len() == 1 { "check" } else { "checks" };
     let mut out = format!(
-        "{} {checks} failed. riff installed no daemon and pulled no image. Do each fix, then run \
-         riff init again:",
+        "{} {checks} failed. {not_done}. Do each fix, then run {command} again:",
         failed.len()
     );
     for (name, fix) in failed {
@@ -10624,13 +10648,208 @@ pub fn init_failed(failed: &[(&str, &str)]) -> String {
     out
 }
 
+/// Each check of `riff project init --check` passed: riff enrolls
+/// nothing (01M76SHAX0KR0DM9GPXAPZJRDZ).
+pub const PROJECT_CHECKED: &str =
+    "Each check passed. riff changed nothing and enrolled no project: --check.";
+
+/// `riff project init` in a folder with no remote `origin` on GitHub
+/// (01M76SHAX0KR0DM9GPXAPZJRDZ).
+pub const PROJECT_NO_ORIGIN: &str = "riff: riff project init runs in a clone of a repository on \
+     GitHub, and this folder has no remote origin on GitHub. riff changed nothing. next: go to \
+     your clone of the repository, and run riff project init there";
+
+/// riff cannot read the token of `gh` of the person
+/// (01M76SHB27S4QDV9HMRR4B6APJ).
+pub const PROJECT_NO_TOKEN: &str = "riff cannot read the token of your gh, and riff-server needs \
+     it to check that you are an admin of the repository on GitHub. Fix: gh auth login";
+
+/// The refusal of `riff project COMMAND` in an agent session or in a
+/// container (01M76SHB27S4QDV9HMRR4B6APJ).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::project_refused("init", false),
+///     "riff: a session never runs riff project init. riff project init changed nothing. \
+///      next: a person runs riff project init in a plain terminal, outside Claude Code"
+/// );
+/// assert!(riff::text::project_refused("remove", true).starts_with("riff: a container never runs"));
+/// ```
+pub fn project_refused(command: &str, container: bool) -> String {
+    let step = format!("riff project {command}");
+    let who = if container {
+        "a container"
+    } else {
+        "a session"
+    };
+    format!(
+        "riff: {who} never runs {step}. {step} changed nothing. \
+         next: a person runs {step} in a plain terminal, outside Claude Code"
+    )
+}
+
+/// `REPO` of `riff project remove REPO` is no repository `OWNER/REPO`.
+///
+/// ```
+/// let text = riff::text::project_bad_repo("acme");
+/// assert!(text.contains("acme is no repository OWNER/REPO"), "{text}");
+/// ```
+pub fn project_bad_repo(repo: &str) -> String {
+    format!(
+        "riff: {repo} is no repository OWNER/REPO. riff changed nothing. next: riff project list \
+         names each project"
+    )
+}
+
+/// Who may run the wave of a project with the hosts `hosts`: each host
+/// when it names none (01M76SG2E9RPV4B7CYSZPGGZ3P).
+fn project_hosts(hosts: &[String]) -> String {
+    match hosts {
+        [] => "each host".to_owned(),
+        hosts => hosts.join(", "),
+    }
+}
+
+/// The line of `riff project init` after the enrollment
+/// (01M76SHAX0KR0DM9GPXAPZJRDZ): a new project, new hosts, or no change.
+///
+/// ```
+/// use riff_core::wire::{ProjectFacts, ProjectInitReply};
+///
+/// let project = ProjectFacts {
+///     repo: "acme/app".parse()?,
+///     by: None,
+///     at_ms: 0,
+///     hosts: vec![],
+///     leads: vec![],
+/// };
+/// let new = ProjectInitReply { project: project.clone(), enrolled: true, hosts_changed: false };
+/// assert_eq!(
+///     riff::text::project_enrolled(&new),
+///     "riff enrolled acme/app as a project of the riff. Hosts that may run its wave: each host."
+/// );
+/// let hosts = ProjectFacts { hosts: vec!["heron".into(), "thelio".into()], ..project.clone() };
+/// let set = ProjectInitReply { project: hosts, enrolled: false, hosts_changed: true };
+/// assert_eq!(
+///     riff::text::project_enrolled(&set),
+///     "acme/app is a project of the riff already. riff set its hosts. Hosts that may run its \
+///      wave: heron, thelio."
+/// );
+/// let same = ProjectInitReply { project, enrolled: false, hosts_changed: false };
+/// assert_eq!(
+///     riff::text::project_enrolled(&same),
+///     "acme/app is a project of the riff already, with the same hosts. riff changed nothing. \
+///      Hosts that may run its wave: each host."
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn project_enrolled(reply: &ProjectInitReply) -> String {
+    let project = &reply.project;
+    let repo = &project.repo;
+    let said = match (reply.enrolled, reply.hosts_changed) {
+        (true, _) => format!("riff enrolled {repo} as a project of the riff."),
+        (false, true) => format!("{repo} is a project of the riff already. riff set its hosts."),
+        (false, false) => format!(
+            "{repo} is a project of the riff already, with the same hosts. riff changed nothing."
+        ),
+    };
+    format!(
+        "{said} Hosts that may run its wave: {}.",
+        project_hosts(&project.hosts)
+    )
+}
+
+/// The line of `riff project remove` (01M76SHB27S4QDV9HMRR4B6APJ).
+///
+/// ```
+/// let repo = "acme/app".parse()?;
+/// assert_eq!(
+///     riff::text::project_removed(&repo),
+///     "riff forgot the project acme/app. GitHub keeps the repository as it is."
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn project_removed(repo: &ThreadName) -> String {
+    format!("riff forgot the project {repo}. GitHub keeps the repository as it is.")
+}
+
+/// The blocks of `riff project list` (01M76SHB4SAWFW3S5Y7X9KC6E4): for
+/// each project, the repository, who enrolled it and when in UTC, its
+/// hosts and the users of its leads.
+///
+/// ```
+/// use riff_core::record::By;
+/// use riff_core::wire::{ProjectFacts, ProjectsReply};
+///
+/// let none = riff::text::project_list(&ProjectsReply::default());
+/// assert!(none.contains("riff project init"), "{none}");
+/// let reply = ProjectsReply {
+///     projects: vec![
+///         ProjectFacts {
+///             repo: "acme/app".parse()?,
+///             by: Some(By::Person("mike".into())),
+///             at_ms: 1_794_450_015_000,
+///             hosts: vec!["thelio".into()],
+///             leads: vec!["mike".into()],
+///         },
+///         ProjectFacts {
+///             repo: "acme/web".parse()?,
+///             by: Some(By::Server),
+///             at_ms: 1_794_450_075_000,
+///             hosts: vec![],
+///             leads: vec![],
+///         },
+///     ],
+/// };
+/// assert_eq!(
+///     riff::text::project_list(&reply),
+///     "acme/app\n  enrolled by the person mike, 2026-11-12 02:20 UTC\n  hosts: thelio\n  leads: mike\n\
+///      \n\
+///      acme/web\n  enrolled by the server, 2026-11-12 02:21 UTC\n  hosts: each host\n  leads: no lead\n"
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn project_list(reply: &ProjectsReply) -> String {
+    if reply.projects.is_empty() {
+        return "The riff has no project. In a clone of a repository on GitHub, run: riff project \
+                init\n"
+            .into();
+    }
+    let blocks: Vec<String> = reply
+        .projects
+        .iter()
+        .map(|project| {
+            let at =
+                DateTime::from_timestamp_millis(i64::try_from(project.at_ms).unwrap_or(i64::MAX))
+                    .map_or_else(
+                        || "an unknown time".to_owned(),
+                        |at| at.format("%Y-%m-%d %H:%M UTC").to_string(),
+                    );
+            let by = project
+                .by
+                .as_ref()
+                .map_or_else(String::new, |by| format!(" by {}", safe(&by.to_string())));
+            let leads = match project.leads.as_slice() {
+                [] => "no lead".to_owned(),
+                leads => leads.join(", "),
+            };
+            format!(
+                "{}\n  enrolled{by}, {at}\n  hosts: {}\n  leads: {leads}\n",
+                project.repo,
+                project_hosts(&project.hosts)
+            )
+        })
+        .collect();
+    blocks.join("\n")
+}
+
 /// Each check of `riff init --check` passed.
 pub const INIT_CHECKED: &str = "Each check passed. riff changed nothing: --check.";
 
 /// Each check passed in a session container, and `riff init` stops there
-/// (01M5SMJMR5KS1Z1Z7CEPH9JVBB, 01M6WZ410X4RPG1KMPEBVEP2DF).
-pub const INIT_CONTAINER_DONE: &str = "Each check passed. riff changed nothing: the host has the daemon, and a person does the \
-     steps of the repository in a terminal.";
+/// (01M5SMJMR5KS1Z1Z7CEPH9JVBB).
+pub const INIT_CONTAINER_DONE: &str =
+    "Each check passed. riff changed nothing: the host has the daemon and the session image.";
 
 /// A daemon answers, and `riff init` keeps it (01M4ZJN6Z1DGD43CKZ19QPN2NK).
 ///
@@ -14354,7 +14573,7 @@ mod tests {
     /// #1617 (01M6QCXGC42AG1RY5QNGT47GVV): the start text of a worker
     /// names both forms of a "Done when" line, so a session of an issue
     /// with a heading `## Done when` does not read the line as missing.
-    /// The note of `riff init` names both forms too.
+    /// The note of `riff project init` names both forms too.
     #[test]
     fn the_start_text_of_a_worker_names_the_heading_of_done_when() {
         let frame = "Closes #12\n\nSUMMARY\n\nIssue: #12\nMilestone: Wave 3\n";
