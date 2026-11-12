@@ -1998,6 +1998,14 @@ page [Requirements](requirements.md) holds the rules of today.
   the daemon of HOST for its status each 3 seconds. Enter and `t` work
   only on HOST: in the view of another host they show a note.
   Superseded by 01M6VGHPP3ZT5TTMSGAXV3ZK7W.
+- **01M776RT4CM1BVP3NNC7GVQ557** The daemon of a lead ends the session
+  of the lead on riff-server at once when the lead ends: when its
+  container ends (`/exit`, a crash, `riff lead stop`), and when the
+  daemon finds at its start a record of the lead with no container (a
+  reboot). A start again of the lead for an update keeps its session,
+  and is no end. The daemon starts no lead by itself.
+  Superseded by 01M77PT9TNP97MA89SYZPBJ6QY and
+  01M77PTJN73R68Z2SRQP0F6V9T.
 
 ### riff relay
 

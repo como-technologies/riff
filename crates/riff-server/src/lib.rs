@@ -343,6 +343,10 @@ pub const BUSY_WINDOW_MOST: u32 = 32;
 /// ([`state::State::forget_expired`]).
 pub const FORGET_EVERY: Duration = Duration::from_secs(60 * 60);
 
+/// The server looks for an ended claim `lead` this often
+/// ([`Engine::lead_claims_ended`]).
+pub const LEAD_CLAIMS_EVERY: Duration = Duration::from_secs(10);
+
 type Shared = Arc<Server>;
 type Reply<T> = Result<Json<T>, (StatusCode, String)>;
 
@@ -1592,6 +1596,7 @@ impl Service {
         service.write_log();
         service.keep_checkpoints();
         service.forget_sessions();
+        service.watch_lead_claims();
         service.watch_owner();
         service.read_keys();
         service
@@ -1767,6 +1772,36 @@ impl Service {
                         Err(failed) => {
                             tracing::warn!("the sessions were not forgotten: {}", failed.text());
                         }
+                    }
+                }
+            }
+        });
+    }
+
+    /// Starts the task that wakes the riff daemons of a project when its
+    /// claim `lead` ended with no record, each [`LEAD_CLAIMS_EVERY`]
+    /// ([`Engine::lead_claims_ended`]). A server with no async runtime
+    /// starts no task. The task ends when the service ends.
+    fn watch_lead_claims(&self) {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let server = Arc::downgrade(&self.0);
+        runtime.spawn(async move {
+            let mut told = std::collections::BTreeSet::new();
+            let mut tick = tokio::time::interval(LEAD_CLAIMS_EVERY);
+            tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+            loop {
+                tick.tick().await;
+                let Some(s) = server.upgrade() else {
+                    break;
+                };
+                if s.is_stopped() {
+                    break;
+                }
+                if s.serving() {
+                    for thread in s.engine.lead_claims_ended(&mut told, Instant::now()) {
+                        tracing::info!(%thread, "the claim lead ended: the daemons look");
                     }
                 }
             }
@@ -3888,6 +3923,7 @@ mod tests {
         Lead {
             me: SessionUri::new(Who::new(me.who().user(), None).unwrap(), me.place().clone()),
             session: me.who().session().unwrap().into(),
+            if_free: false,
         }
     }
 
@@ -4089,6 +4125,46 @@ mod tests {
         assert!(no_lead_at(&service, soon).await.is_empty());
         let later = Instant::now() + state::GONE;
         assert_eq!(no_lead_at(&service, later).await, riff);
+    }
+
+    /// The claim lead of a project ends 5 minutes after the last sign of
+    /// life of its holder, with no record. riff-server then sends one event
+    /// of the plan of the thread, with a fake clock: the daemons of the
+    /// project look at once, and the next host claims the lead.
+    #[tokio::test(start_paused = true)]
+    async fn the_end_of_a_claim_lead_wakes_the_daemons_of_the_project_one_time() {
+        let store = Arc::new(Gated::default());
+        let service = running(store.clone()).await;
+        let lead: SessionUri = "riff://mike@thelio/acme/app?session=c".parse().unwrap();
+        let thread = lead.default_thread().unwrap();
+        let register = Register {
+            me: lead.clone(),
+            worker: false,
+        };
+        send(&service, register).await.unwrap();
+        let mut plans = service.0.engine.plans();
+        let claim = Lead {
+            if_free: true,
+            ..named(&lead)
+        };
+        let reply = send(&service, claim).await.unwrap();
+        assert!(reply.lead.lead());
+        assert_eq!(plans.recv().await.unwrap().thread, thread);
+
+        let engine = &service.0.engine;
+        let mut told = std::collections::BTreeSet::new();
+        let soon = Instant::now() + state::CLAIM_GRACE - Duration::from_secs(1);
+        assert!(engine.lead_claims_ended(&mut told, soon).is_empty());
+        // The leads of mike and brett in como-technologies/riff go too.
+        let later = Instant::now() + state::CLAIM_GRACE;
+        let riff = mike().default_thread().unwrap();
+        let both = [thread.clone(), riff.clone()];
+        assert_eq!(engine.lead_claims_ended(&mut told, later), both);
+        assert_eq!(plans.try_recv().unwrap().thread, thread);
+        assert_eq!(plans.try_recv().unwrap().thread, riff);
+        // One time for each end.
+        assert!(engine.lead_claims_ended(&mut told, later).is_empty());
+        assert!(plans.try_recv().is_err());
     }
 
     #[tokio::test(start_paused = true)]
@@ -5192,12 +5268,14 @@ mod tests {
         let itself = Lead {
             me: other.clone(),
             session: "c3".into(),
+            if_free: false,
         };
         let reason = not_allowed(send(&service, itself).await.unwrap_err());
         assert_eq!(reason, state::LEAD_BY_PERSON);
         let lead = Lead {
             me: mike(),
             session: "c3".into(),
+            if_free: false,
         };
         let reason = not_allowed(send(&service, lead).await.unwrap_err());
         assert_eq!(reason, state::LEAD_BY_PERSON, "the lead cannot name one");
@@ -5732,6 +5810,7 @@ mod tests {
             of(Lead {
                 me: me(),
                 session: "a2".into(),
+                if_free: false,
             }),
             of(Pause::here(me())),
             of(SetIdle {
@@ -5959,6 +6038,7 @@ mod tests {
         let lead = Lead {
             me: mike(),
             session: "a".into(),
+            if_free: false,
         };
         let body = serde_json::to_string(&lead).unwrap();
         let proof = || Proof {
@@ -6033,6 +6113,7 @@ mod tests {
         let lead = Lead {
             me: mike(),
             session: "a".into(),
+            if_free: false,
         };
         let body = serde_json::to_string(&lead).unwrap();
         for _ in 0..1000 {
@@ -6122,6 +6203,7 @@ mod tests {
         let lead = Lead {
             me: mike(),
             session: "a".into(),
+            if_free: false,
         };
         let body = serde_json::to_string(&lead).unwrap();
         let request = Request::builder()

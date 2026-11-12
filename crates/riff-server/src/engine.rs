@@ -169,7 +169,7 @@
 //! let register = Register { me: me.clone(), worker: false };
 //! engine.dispatch(engine.authenticate(None, register).unwrap()).await.unwrap();
 //! let person = "riff://mike@pangolin/como-technologies/riff".parse().unwrap();
-//! let lead = Lead { me: person, session: "a6cf".into() };
+//! let lead = Lead { me: person, session: "a6cf".into(), if_free: false };
 //! engine.dispatch(engine.authenticate(None, lead).unwrap()).await.unwrap();
 //! let call = engine.authenticate(None, Resume::whole(me)).unwrap();
 //! assert!(engine.dispatch(call).await.unwrap().changed);
@@ -177,7 +177,7 @@
 //! ```
 
 use std::any::Any;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -1413,6 +1413,36 @@ impl Engine {
             position,
             github: Some(change),
         });
+    }
+
+    /// Sends one event of the plan of each repository thread whose claim
+    /// `lead` ended with no record ([`State::lead_claims_ended`]): its
+    /// holder had no sign of life for 5 minutes. So the riff daemon of
+    /// each host of the project looks at once, and the next host claims
+    /// the lead. `told` keeps each ended claim that it told, so each goes
+    /// out one time (01M77PT9XXCBBP1Z73F30RYCNH). It gives the threads of
+    /// the events of this call.
+    pub fn lead_claims_ended(
+        &self,
+        told: &mut BTreeSet<(ThreadName, Who)>,
+        now: Instant,
+    ) -> Vec<ThreadName> {
+        let (ended, position) =
+            self.read(|state| (state.lead_claims_ended(now), state.written_position()));
+        told.retain(|claim| ended.contains(claim));
+        let mut woke = Vec::new();
+        for claim in ended {
+            if told.insert(claim.clone()) {
+                // A send fails only when nobody listens. That is not an error.
+                let _ = self.0.plans.send(PlanChanged {
+                    thread: claim.0.clone(),
+                    position,
+                    github: None,
+                });
+                woke.push(claim.0);
+            }
+        }
+        woke
     }
 
     /// Wakes the writer when an entry waits in the queue. The writer

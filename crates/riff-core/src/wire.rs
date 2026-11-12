@@ -2383,6 +2383,15 @@ pub struct PlanReply {
     /// in the plan.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub holds: BTreeMap<String, HoldInfo>,
+    /// The session that holds the claim [`LEAD_CLAIM`] of the project now:
+    /// the one lead of the project. `None` when the claim is free: no
+    /// session holds it, or its holder had no sign of life for 5 minutes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lead: Option<SessionUri>,
+    /// The host of the last lead of the project, while the claim is free:
+    /// that host claims first on a tie.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_lead: Option<String>,
 }
 
 /// The plan of one repository thread on the server, with its age.
@@ -2448,15 +2457,34 @@ pub struct ReleaseFor {
     pub session: String,
 }
 
+/// The claim of the one lead of a project: an item of the repository
+/// thread. riff-server gives it only with [`Lead`], to one session
+/// (01M77PT9QAECENTY1WS616P5E2).
+pub const LEAD_CLAIM: &str = "lead";
+
 /// `POST /v1/lead`: the person `me` makes the session `session` the
-/// lead of the user in the repository of `me`. It replaces the old
-/// lead. A session cannot send it.
+/// lead of the user in the repository of `me`, and gives it the claim
+/// [`LEAD_CLAIM`] of the project. It replaces the old lead. A session
+/// cannot send it.
+///
+/// ```
+/// use riff_core::wire::Lead;
+///
+/// // A call from before `if_free` takes the claim from its holder.
+/// let lead: Lead = serde_json::from_str(r#"{"me":"riff://mike@pangolin/o/r","session":"a1b2"}"#).unwrap();
+/// assert!(!lead.if_free);
+/// ```
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Lead {
     pub me: SessionUri,
     /// The session ID of the new lead, or its start: at least 4
     /// characters.
     pub session: String,
+    /// Only when the claim [`LEAD_CLAIM`] is free: a live session that
+    /// holds it gets the refusal `held`. The riff daemon of a host asks
+    /// so. With `false`, the new lead takes the claim from its holder.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub if_free: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]

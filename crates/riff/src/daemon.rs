@@ -411,10 +411,10 @@
 //! It takes up each session whose container runs, or when podman cannot
 //! say: it binds the socket of the session again in the same folder, and
 //! the relay connects again. It removes the record of each other one
-//! (01M4ZHT01HH88KPA8628M7VBEY). For a lead with no container, for example
-//! after a reboot, it also ends the session of the lead on riff-server, as
-//! at the end of the container of a lead: the wave of the repository waits
-//! for a lead (01M776RT4CM1BVP3NNC7GVQ557, [`crate::wave`]).
+//! (01M4ZHT01HH88KPA8628M7VBEY). A lead with no container, for example
+//! after a reboot, starts again as the same session while it holds the
+//! claim lead of its project, or nobody holds it (`Daemon::lead_back`,
+//! 01M77PTJN73R68Z2SRQP0F6V9T, [`crate::lead_host`]).
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -552,6 +552,11 @@ const LEAD_STARTS: u32 = 3;
 /// The wait between two of those tries: podman removes the old container
 /// a moment after its end.
 const LEAD_START_WAIT: Duration = Duration::from_secs(1);
+
+/// A lead that ends sooner than this after its start does not start
+/// again: its session ends, and a host of the project starts a new lead
+/// (`Daemon::lead_back`, #1791).
+pub const LEAD_SHORT: Duration = Duration::from_secs(60);
 
 /// The time between two looks of the daemon at the riff of each lead
 /// ([`Daemon::leads_again`]).
@@ -2630,6 +2635,10 @@ pub struct Daemon<R> {
     /// The session of each lead whose start again on the new riff waits, and
     /// the person heard of it in riff chat ([`Daemon::leads_again`]).
     again_told: Mutex<std::collections::BTreeSet<String>>,
+    /// The session of the lead of each repository that starts again with
+    /// no container now ([`Daemon::lead_back`]): it is the lead of this
+    /// host ([`Daemon::lead_session`]).
+    backs: Mutex<BTreeMap<String, String>>,
     /// The session of each lead that lost its network at the restart of the
     /// daemon: the person heard of it in riff chat, and `riff daemon status`
     /// shows it ([`Daemon::recover`]).
@@ -2716,6 +2725,9 @@ struct Running {
     task: JoinHandle<()>,
     /// The task of its look ([`crate::wave::watch`]).
     look: JoinHandle<()>,
+    /// The task of its lead loop ([`crate::lead_host`]), when the world runs
+    /// one.
+    lead: Option<JoinHandle<()>>,
     /// The items of its jobs that the daemon does not own yet.
     taken: Arc<Mutex<std::collections::BTreeSet<String>>>,
     /// The starts of each item in this run of the wave.
@@ -2727,10 +2739,14 @@ struct Running {
 }
 
 impl Running {
-    /// Ends its loop and its look. Its jobs go on.
+    /// Ends its loop, its look and its lead loop. Its jobs go on, and so
+    /// does its lead.
     fn abort(&self) {
         self.task.abort();
         self.look.abort();
+        if let Some(lead) = &self.lead {
+            lead.abort();
+        }
     }
 }
 
@@ -2786,6 +2802,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             stale: Mutex::default(),
             lead_idle: lead_idle(),
             again_told: Mutex::default(),
+            backs: Mutex::default(),
             lost: Mutex::default(),
             looked: Mutex::default(),
             own_gh: Mutex::default(),
@@ -3176,6 +3193,16 @@ impl<R: Runtime + 'static> Daemon<R> {
             .collect()
     }
 
+    /// The session ID of the lead of `repo` (`OWNER/REPO`) that this daemon
+    /// runs, while its container runs or starts again ([`crate::lead_host::Ground::mine`]).
+    pub fn lead_session(&self, repo: &str) -> Option<String> {
+        self.records()
+            .into_iter()
+            .find(|r| r.terminal && r.me.place().repo_text() == repo)
+            .map(|r| r.live.session)
+            .or_else(|| self.backs_lock().get(repo).cloned())
+    }
+
     /// Tells the person in riff chat, once for each lead, that the
     /// sign-in of `claude` in the lead is stale
     /// (01M5NJ87YEHHGJBANM7CRYV56Z): the lead holds the sign-in file of
@@ -3240,6 +3267,9 @@ impl<R: Runtime + 'static> Daemon<R> {
         }
         let mut lines = Vec::new();
         for record in self.records().into_iter().filter(|r| r.terminal) {
+            if self.lead_lost(&record, &mut lines).await {
+                continue;
+            }
             if crate::lead::old(&self.runtime, &record.live.name).await
                 && crate::lead::idle(&record, self.lead_idle)
                 && let Some(line) = self.lead_again(record).await
@@ -3248,6 +3278,32 @@ impl<R: Runtime + 'static> Daemon<R> {
             }
         }
         lines
+    }
+
+    /// The claim lead of the project of the lead of `record` (#1791,
+    /// 01M77PTJRNASXZ2SWD8HMSV681): when
+    /// another session holds it, the daemon stops this lead, and it is
+    /// true. When nobody holds it, the lead takes it again, as the person
+    /// ([`World::lead_claim`]): a lead from before the claim, or a lead of
+    /// a host that runs no wave. It puts a line for each step in `lines`.
+    async fn lead_lost(&self, record: &Record, lines: &mut Vec<String>) -> bool {
+        match self.world.lead_holder(record).await {
+            Ok(Some(lead)) if lead.who().session() != Some(record.live.session.as_str()) => {
+                lines.push(text::lead_lost(&record.live.name, &lead));
+                match self.stop_lead(&record.me.place().repo_text()).await {
+                    Ok(stopped) => lines.extend(stopped),
+                    Err(e) => lines.push(format!("{e:#}")),
+                }
+                true
+            }
+            Ok(None) => {
+                if let Err(e) = self.world.lead_claim(record).await {
+                    lines.push(format!("{}: {e:#}", record.live.name));
+                }
+                false
+            }
+            _ => false,
+        }
     }
 
     /// Looks at the riff of each lead each [`AGAIN_EVERY`], and
@@ -3413,6 +3469,86 @@ impl<R: Runtime + 'static> Daemon<R> {
                 None => return Err(text::DAEMON_GONE.to_owned()),
             }
         }
+    }
+
+    /// The lead of `record` has no container (#1791,
+    /// 01M77PTJN73R68Z2SRQP0F6V9T): it ended by itself,
+    /// for example with `/exit` or a crash, or a reboot ended it. A lead
+    /// starts again with `claude --resume`, as the same session, so it
+    /// stays the lead of its project, while its session holds the claim
+    /// lead or nobody holds it ([`World::lead_holder`]). Its session ends
+    /// instead, and the host loses the part lead, when another session
+    /// holds the claim, when the lead ended `short` after its start
+    /// ([`LEAD_SHORT`]), or when the start fails [`LEAD_STARTS`] times. Then
+    /// a host of the project starts a new lead ([`crate::lead_host`]). It
+    /// gives the line of the log.
+    ///
+    /// ```mermaid
+    /// flowchart TD
+    ///     E["the lead has no container"] --> H{"the claim lead"}
+    ///     H -- "another session" --> L["its session ends"]
+    ///     H -- "this lead, or free" --> S{"ended less than a minute<br/>after its start?"}
+    ///     S -- yes --> L
+    ///     S -- no --> A["claude --resume, the same session"]
+    ///     A -- "3 starts fail" --> L
+    ///     L --> N["a host of the project<br/>starts a new lead"]
+    /// ```
+    ///
+    /// The future has a type of its own: the start again runs [`Daemon::watch`],
+    /// which can call it again.
+    fn lead_back(
+        self: &Arc<Self>,
+        record: Record,
+        short: bool,
+    ) -> crate::wave::BoxFuture<'static, String> {
+        let daemon = self.clone();
+        let repo = record.me.place().repo_text();
+        self.backs_lock()
+            .insert(repo.clone(), record.live.session.clone());
+        Box::pin(async move {
+            let line = daemon.lead_back_now(record, short).await;
+            daemon.backs_lock().remove(&repo);
+            line
+        })
+    }
+
+    /// [`Daemon::lead_back`] itself.
+    async fn lead_back_now(self: &Arc<Self>, record: Record, short: bool) -> String {
+        let name = record.live.name.clone();
+        let other = match self.world.lead_holder(&record).await {
+            Ok(Some(lead)) if lead.who().session() != Some(record.live.session.as_str()) => {
+                Some(lead)
+            }
+            _ => None,
+        };
+        let why = if let Some(lead) = other {
+            text::lead_lost(&name, &lead)
+        } else if short {
+            text::lead_ended_soon(&name)
+        } else {
+            match self.lead_start(&record).await {
+                Ok(start) => {
+                    let mut why = String::new();
+                    for attempt in 0..LEAD_STARTS {
+                        if attempt > 0 {
+                            tokio::time::sleep(LEAD_START_WAIT).await;
+                        }
+                        match self.lead_launch(start.clone()).await {
+                            Ok(()) => return text::lead_back(&name),
+                            Err(e) => why = e,
+                        }
+                    }
+                    text::lead_back_failed(&name, &why)
+                }
+                Err(e) => text::lead_back_failed(&name, &format!("{e:#}")),
+            }
+        };
+        self.world.leave(&record).await;
+        self.lead_part(&record, false);
+        for line in self.retire(&record.me.place().repo_text()) {
+            println!("{line}");
+        }
+        why
     }
 
     /// The lead of `record` cannot start again now, for `why`: it runs the
@@ -3702,6 +3838,10 @@ impl<R: Runtime + 'static> Daemon<R> {
         self.no_tokens
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn backs_lock(&self) -> MutexGuard<'_, BTreeMap<String, String>> {
+        self.backs.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Renews the token of the session `owned` on GitHub
@@ -4273,12 +4413,17 @@ impl<R: Runtime + 'static> Daemon<R> {
             waits.clone(),
         ));
         let look = tokio::spawn(crate::wave::watch(self.clone(), wave.clone()));
+        let lead = self
+            .world
+            .leads()
+            .then(|| tokio::spawn(crate::lead_host::follow(self.clone(), wave.clone())));
         running.insert(
             wave.repo.clone(),
             Running {
                 wave,
                 task,
                 look,
+                lead,
                 taken,
                 starts,
                 word,
@@ -5292,13 +5437,17 @@ impl<R: Runtime + 'static> Daemon<R> {
             failed: failed || stopped || !exited,
         };
         println!("{}", text::daemon_session_ends(&owned.name, code));
-        // The end of the lead ends its session on riff-server at once, so
-        // its wave waits for a lead (01M776RT4CM1BVP3NNC7GVQ557). A lead that
-        // the daemon starts again on a new riff keeps its session on
-        // riff-server: the next container is the same lead.
+        // A stop of the lead by the daemon, for example `riff lead stop`,
+        // ends its session on riff-server at once, so the claim lead of its
+        // project is free. A lead that ends by itself starts again with
+        // `claude --resume`, as the same session (#1791,
+        // [`Daemon::lead_back`]). A lead that the daemon starts again on a
+        // new riff keeps its session on riff-server: the next container is
+        // the same lead.
         let lead_ends =
             record.terminal && !owned.renewing.load(std::sync::atomic::Ordering::SeqCst);
-        if lead_ends {
+        let back = lead_ends && !stopped;
+        if lead_ends && !back {
             let (world, record) = (self.world.clone(), record.clone());
             tokio::spawn(async move { world.leave(&record).await });
         } else if !record.terminal {
@@ -5307,6 +5456,13 @@ impl<R: Runtime + 'static> Daemon<R> {
         let followers = self.close(&owned, ended);
         for out in followers {
             out.say(Say::Ended(ended));
+        }
+        if back {
+            let ran = now_ms().saturating_sub(record.live.since_ms);
+            let short = u128::try_from(ran).unwrap_or(0) < LEAD_SHORT.as_millis();
+            let daemon = self.clone();
+            tokio::spawn(async move { println!("{}", daemon.lead_back(record, short).await) });
+            return;
         }
         // The lead gave up its part (#1643). A host with no part in the
         // repository stops serving it after its last session.
@@ -5982,13 +6138,15 @@ impl<R: Runtime + 'static> Daemon<R> {
                     self.revoke_github(&name, &record, token);
                 }
                 gh_token::remove(&record.folder);
-                // A lead with no container, for example after a reboot:
-                // its session on riff-server ends, so its wave waits for a
-                // lead (01M776RT4CM1BVP3NNC7GVQ557).
+                // A lead with no container, for example after a reboot,
+                // starts again as the same session while it holds the claim
+                // lead of its project, or nobody holds it (#1791).
                 if record.terminal {
-                    self.lead_part(&record, false);
-                    let (world, record) = (self.world.clone(), record.clone());
-                    tokio::spawn(async move { world.leave(&record).await });
+                    let daemon = self.clone();
+                    let record = record.clone();
+                    tokio::spawn(
+                        async move { println!("{}", daemon.lead_back(record, false).await) },
+                    );
                 }
                 // The job of a wave does its steps after the end now:
                 // the session ended while no daemon ran. The sweep keeps
@@ -6724,6 +6882,13 @@ mod tests {
         format!("riff://mike@thelio/como-technologies/riff?session={name}-session#issue-1")
             .parse()
             .unwrap()
+    }
+
+    /// The person of the session `me`: its user in its place, with no
+    /// session ID.
+    fn person_of(me: &SessionUri) -> SessionUri {
+        let user = riff_core::name::Who::new(me.who().user(), None).unwrap();
+        SessionUri::new(user, me.place().clone())
     }
 
     fn spec(name: &str, clone: &Path) -> SessionSpec {
@@ -9419,6 +9584,39 @@ mod tests {
             })
         }
 
+        /// The holder of the claim lead on the real riff-server of
+        /// [`Server::with_riff`], as the live world reads it. With none,
+        /// nobody holds it.
+        fn lead_holder<'a>(
+            &'a self,
+            record: &'a Record,
+        ) -> crate::wave::BoxFuture<'a, Result<Option<SessionUri>>> {
+            Box::pin(async move {
+                let Some(api) = &self.riff else {
+                    return Ok(None);
+                };
+                let person = person_of(&record.me);
+                let thread = record.me.default_thread().unwrap();
+                Ok(api.plan_show(&person, &thread).await?.lead)
+            })
+        }
+
+        /// The claim lead for the lead of `record` on the real riff-server
+        /// of [`Server::with_riff`], as the live world asks for it.
+        fn lead_claim<'a>(
+            &'a self,
+            record: &'a Record,
+        ) -> crate::wave::BoxFuture<'a, Result<bool>> {
+            Box::pin(async move {
+                self.note(format!("claim lead {}", record.live.session));
+                let Some(api) = &self.riff else {
+                    return Ok(false);
+                };
+                let person = person_of(&record.me);
+                Ok(api.claim_lead(&person, &record.live.session).await?.is_ok())
+            })
+        }
+
         /// The start of the lead as the real world makes it ([`crate::lead::again`]):
         /// the spec of `claude --resume`, with a value for each variable of the host.
         fn lead_again<'a>(
@@ -10167,20 +10365,57 @@ mod tests {
         )
     }
 
-    /// 01M776RT4CM1BVP3NNC7GVQ557, 01M776RSYKJK9NETFAD8G0CCVQ: the end of
-    /// the container of the lead (`/exit`, a crash) ends its session on
-    /// riff-server at once, so the wave of the repository waits for a lead.
-    /// A new lead ends the wait.
+    /// The count of the starts of the container of the lead [`LEAD`] with a
+    /// terminal on the fake runtime of `here`.
+    fn lead_starts(here: &Here) -> usize {
+        let start = format!("terminal {LEAD}");
+        here.fake.calls().iter().filter(|c| **c == start).count()
+    }
+
+    /// #1791: the container of the lead ends by itself (`/exit`, a crash)
+    /// long after its start. The daemon starts the lead again with `claude
+    /// --resume`, as the same session: it keeps the claim lead, and the
+    /// wave of the repository does not wait for a lead.
     #[tokio::test]
-    async fn the_end_of_the_container_of_the_lead_makes_its_wave_wait_for_a_lead() {
+    async fn a_lead_that_ends_by_itself_starts_again_as_the_same_session() {
         let (api, person) = riff_of_the_lead().await;
         let (here, server) = here_with_riff(&api).await;
-        started_lead(&here).await;
+        let record = started_lead(&here).await;
+        here.fake.stop(LEAD).await.unwrap();
+        until(|| lead_starts(&here) == 2).await;
+        until(|| here.daemon.lead_session("como-technologies/riff").is_some()).await;
+
+        let spec = here.fake.spec(LEAD).unwrap();
+        let session = record.live.session.as_str();
+        assert!(
+            spec.command.windows(2).any(|w| w == ["--resume", session]),
+            "{spec:?}"
+        );
+        assert!(said_of(&server, "leave").is_empty());
+        let holder = server.lead_holder(&record).await.unwrap().unwrap();
+        assert_eq!(holder.who(), record.me.who());
+        assert!(!waits_for_lead(&api, &person).await);
+    }
+
+    /// #1791, 01M776RSYKJK9NETFAD8G0CCVQ: a lead that ends less than a
+    /// minute after its start does not start again. Its session ends on
+    /// riff-server at once, so the claim lead is free, and the wave of the
+    /// repository waits for a lead. A new lead ends the wait.
+    #[tokio::test]
+    async fn a_lead_that_ends_soon_after_its_start_ends_its_session_and_its_wave_waits() {
+        let (api, person) = riff_of_the_lead().await;
+        let (here, server) = here_with_riff(&api).await;
+        let record = started_lead(&here).await;
+        let owned = here.daemon.lock().get(LEAD).cloned().unwrap();
+        owned.lock().record.live.since_ms = now_ms();
+        drop(owned);
         assert!(!waits_for_lead(&api, &person).await);
 
         here.fake.stop(LEAD).await.unwrap();
         until(|| !said_of(&server, "leave").is_empty()).await;
+        assert_eq!(lead_starts(&here), 1);
         assert!(waits_for_lead(&api, &person).await);
+        assert_eq!(server.lead_holder(&record).await.unwrap(), None);
 
         // A new lead of the repository ends the wait.
         let new = me("riff-lead-new");
@@ -10192,26 +10427,98 @@ mod tests {
         assert!(!waits_for_lead(&api, &person).await);
     }
 
-    /// 01M776RT4CM1BVP3NNC7GVQ557: a reboot ends the container of the lead
-    /// while no daemon runs, and riff-server still counts the lead. The new
-    /// daemon finds the record of the lead with no container, and ends its
-    /// session on riff-server: the wave waits for a lead.
+    /// #1791: a reboot ends the container of the lead while no daemon runs,
+    /// and the lead still holds the claim lead. The new daemon finds the
+    /// record of the lead with no container, and starts the lead again as
+    /// the same session: the wave does not wait for a lead.
     #[tokio::test]
-    async fn a_lead_record_with_no_container_at_the_start_of_the_daemon_makes_its_wave_wait() {
+    async fn a_lead_record_with_no_container_at_the_start_of_the_daemon_starts_again() {
         let (api, person) = riff_of_the_lead().await;
         let (mut here, server) = here_with_riff(&api).await;
-        started_lead(&here).await;
+        let record = started_lead(&here).await;
         here.stop().await;
         here.fake.stop(LEAD).await.unwrap();
+
+        here.restart().await;
+        here.daemon.recover().await;
+        until(|| lead_starts(&here) == 2).await;
+        until(|| here.daemon.lead_session("como-technologies/riff").is_some()).await;
+        let session = here.daemon.lead_session("como-technologies/riff");
+        assert_eq!(session.as_deref(), Some(record.live.session.as_str()));
+        assert!(said_of(&server, "leave").is_empty());
         assert!(!waits_for_lead(&api, &person).await);
+    }
+
+    /// #1791: while the host of the lead was away, another session took the
+    /// claim lead. The host comes back: the daemon does not start its old
+    /// lead again, and ends its session.
+    #[tokio::test]
+    async fn a_lead_record_whose_claim_another_lead_took_does_not_start_again() {
+        let (api, person) = riff_of_the_lead().await;
+        let (mut here, server) = here_with_riff(&api).await;
+        let record = started_lead(&here).await;
+        here.stop().await;
+        here.fake.stop(LEAD).await.unwrap();
+        let other = me("riff-lead-other");
+        let reason = riff_core::wire::StartReason::Process;
+        api.start(&other, reason, false).await.unwrap();
+        api.lead(&person, other.who().session().unwrap())
+            .await
+            .unwrap();
 
         here.restart().await;
         here.daemon.recover().await;
         until(|| !said_of(&server, "leave").is_empty()).await;
-        assert!(waits_for_lead(&api, &person).await);
+        assert_eq!(
+            said_of(&server, "leave"),
+            [format!("leave {}", record.live.session)]
+        );
+        assert_eq!(lead_starts(&here), 1);
+        assert!(here.daemon.lead_session("como-technologies/riff").is_none());
     }
 
-    /// 01M776RT4CM1BVP3NNC7GVQ557: the daemon starts the lead again on a new
+    /// #1791: a lead that runs while another session holds the claim lead,
+    /// for example after a cut of the network of its host, stops at the next
+    /// look of the daemon at its leads. A lead with no claim takes it.
+    #[tokio::test]
+    async fn a_lead_that_lost_the_claim_stops_and_a_lead_with_no_claim_takes_it() {
+        let (api, person) = riff_of_the_lead().await;
+        let (here, server) = here_with_riff(&api).await;
+        let record = started_lead(&here).await;
+        assert!(here.daemon.leads_again().await.is_empty());
+        assert_eq!(said_of(&server, "claim lead"), Vec::<String>::new());
+
+        let other = me("riff-lead-other");
+        let reason = riff_core::wire::StartReason::Process;
+        api.start(&other, reason, false).await.unwrap();
+        api.lead(&person, other.who().session().unwrap())
+            .await
+            .unwrap();
+        let lines = here.daemon.leads_again().await;
+        let holder = server.lead_holder(&record).await.unwrap().unwrap();
+        assert_eq!(lines[0], text::lead_lost(LEAD, &holder));
+        assert_eq!(
+            said_of(&server, "leave"),
+            [format!("leave {}", record.live.session)]
+        );
+        assert!(here.daemon.lead_session("como-technologies/riff").is_none());
+
+        // The other lead ends: the next lead has no claim, and takes it. Its
+        // session is live on riff-server, as the keep-alive of the daemon
+        // makes it.
+        api.end(&other).await.unwrap();
+        api.start(&record.me, reason, false).await.unwrap();
+        let record = started_lead(&here).await;
+        assert!(here.daemon.leads_again().await.is_empty());
+        assert_eq!(
+            said_of(&server, "claim lead"),
+            [format!("claim lead {}", record.live.session)]
+        );
+        let holder = server.lead_holder(&record).await.unwrap().unwrap();
+        assert_eq!(holder.who(), record.me.who());
+    }
+
+    /// 01M77PTJN73R68Z2SRQP0F6V9T: the daemon starts the lead again on a new
     /// riff with the same session on riff-server. That is no end: the wave
     /// does not wait for a lead.
     #[tokio::test]

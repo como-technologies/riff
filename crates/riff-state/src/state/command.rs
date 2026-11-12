@@ -1180,6 +1180,7 @@ mod tests {
                 Lead {
                     me,
                     session: "a2".into(),
+                    if_free: false,
                 },
                 kind,
             ),

@@ -99,6 +99,7 @@ pub mod kept;
 ))]
 pub mod keyring_store;
 pub mod lead;
+pub mod lead_host;
 pub mod leave;
 pub mod lifecycle;
 pub mod local;

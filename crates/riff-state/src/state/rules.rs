@@ -277,6 +277,21 @@ impl Ask for Lead {
         wire::Lead {
             me: me.clone(),
             session: self.0.into(),
+            if_free: false,
+        }
+    }
+}
+
+/// A `lead` of the daemon of a host: only when the claim lead is free.
+struct LeadIfFree(&'static str);
+
+impl Ask for LeadIfFree {
+    type Command = wire::Lead;
+    fn of(self, me: &SessionUri) -> wire::Lead {
+        wire::Lead {
+            me: me.clone(),
+            session: self.0.into(),
+            if_free: true,
         }
     }
 }
@@ -1092,8 +1107,8 @@ fn a_person_makes_a_session_the_lead_and_tells_the_old_lead() {
     given(&team())
         .live(&[ann(), ann2()])
         .when(&person_here(), Lead("a2"))
-        .then(&[lead_set(&ann2()), join, told]);
-    given(&team())
+        .then(&[claimed(&ann2(), LEAD_CLAIM), lead_set(&ann2()), join, told]);
+    given(&[team(), vec![claimed(&ann(), LEAD_CLAIM)]].concat())
         .live(&[ann()])
         .when(&person_here(), Lead("a1"))
         .then(&[]);
@@ -1105,7 +1120,86 @@ fn a_person_makes_a_lead_with_no_live_lead() {
     given(&[joined(&ann(), &repo())])
         .live(&[ann()])
         .when(&person_here(), Lead("a1"))
-        .then(&[lead_set(&ann())]);
+        .then(&[claimed(&ann(), LEAD_CLAIM), lead_set(&ann())]);
+}
+
+/// A lead of a project that the daemon of a host asks for, `if_free`:
+/// the lead with the claim lead, in one chunk. A live holder of the claim
+/// on another host refuses it with `held`, and names the host.
+#[test]
+fn a_claim_lead_if_free_gives_the_one_lead_of_the_project() {
+    let thelio: SessionUri = "riff://ann@thelio/acme/app?session=t1".parse().unwrap();
+    given(&[joined(&ann(), &repo())])
+        .live(&[ann()])
+        .when(&person_here(), LeadIfFree("a1"))
+        .then(&[claimed(&ann(), LEAD_CLAIM), lead_set(&ann())]);
+    let led = [
+        joined(&ann(), &repo()),
+        joined(&thelio, &repo()),
+        claimed(&thelio, LEAD_CLAIM),
+        lead_set(&thelio),
+    ];
+    given(&led)
+        .live(&[ann(), thelio.clone()])
+        .when(&person_here(), LeadIfFree("a1"))
+        .then_refused_as(Code::Held, "the lead of acme/app runs on thelio");
+    // The holder had no sign of life for 5 minutes: the claim is free.
+    given(&led)
+        .live(std::slice::from_ref(&thelio))
+        .after(CLAIM_GRACE)
+        .live(&[ann()])
+        .when(&person_here(), LeadIfFree("a1"))
+        .then(&[
+            released(&thelio, LEAD_CLAIM),
+            claimed(&ann(), LEAD_CLAIM),
+            lead_set(&ann()),
+        ]);
+}
+
+/// A person who names the lead takes the claim lead from a live holder,
+/// for example `riff lead move`: a `released` record for the old holder,
+/// then the `claimed` record.
+#[test]
+fn a_person_moves_the_claim_lead_to_the_lead_that_it_names() {
+    let thelio: SessionUri = "riff://ann@thelio/acme/app?session=t1".parse().unwrap();
+    let [join, told] = told_not_lead(&ann(), &thelio);
+    given(&[
+        joined(&ann(), &repo()),
+        claimed(&ann(), LEAD_CLAIM),
+        lead_set(&ann()),
+        joined(&thelio, &repo()),
+    ])
+    .live(&[ann(), thelio.clone()])
+    .when(&person_here(), Lead("t1"))
+    .then(&[
+        released(&ann(), LEAD_CLAIM),
+        claimed(&thelio, LEAD_CLAIM),
+        lead_set(&thelio),
+        join,
+        told,
+    ]);
+}
+
+/// No session claims lead with `claim`: only a lead gets it.
+#[test]
+fn no_session_claims_lead() {
+    given(&[joined(&ann(), &repo()), riff_set(RiffState::Running)])
+        .when(&ann(), claim(LEAD_CLAIM))
+        .then_refused_as(Code::NotAllowed, LEAD_CLAIM_BY_LEAD);
+}
+
+/// A new start of the lead keeps its claim lead, and frees each other
+/// claim: a lead that starts again with `claude --resume` stays the lead
+/// of the project.
+#[test]
+fn a_start_keeps_the_claim_lead() {
+    given(&[
+        joined(&ann(), &repo()),
+        claimed(&ann(), LEAD_CLAIM),
+        lead_set(&ann()),
+    ])
+    .when(&ann(), Start(StartReason::Resume, false))
+    .then(&[started(&ann(), StartReason::Resume, false)]);
 }
 
 /// A session cannot take the lead role, also not for itself

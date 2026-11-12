@@ -56,7 +56,7 @@ use std::collections::BTreeMap;
 
 use riff_core::name::{SessionUri, Who};
 use riff_core::record::{By, Change, Member, Record, Released, SessionStarted};
-use riff_core::wire::{End, Freed, Register, Start, StartReason, Started};
+use riff_core::wire::{End, Freed, LEAD_CLAIM, Register, Start, StartReason, Started};
 use serde::{Deserialize, Serialize};
 
 use super::command::{Caller, Command, CommandKind, Done, Now, Refused};
@@ -454,8 +454,8 @@ fn freed_by<'a>(changes: impl IntoIterator<Item = &'a Change>) -> Vec<Freed> {
         .collect()
 }
 
-/// A new start of the session: each of its claims is free. The reply
-/// names them. It makes one `released` record for each claim, then the
+/// A new start of the session: each of its claims is free, but the claim
+/// `lead`: a start keeps it, as it keeps the lead. The reply names them. It makes one `released` record for each claim, then the
 /// `session_started` record with the reason and the worker mark of the
 /// call (01M3X9X9M079WGFPJZHNXH9VEP). A start with a fresh context ends
 /// MustClear. The session never becomes the lead
@@ -507,7 +507,13 @@ impl Command for Start {
             return Err("a start needs the reason process, resume or clear".into());
         }
         let who = caller.who();
-        let mut changes = view.released_all(who);
+        // A start keeps the claim lead, as it keeps the lead: a lead that
+        // starts again with `claude --resume` stays the lead of its project.
+        let mut changes: Vec<Change> = view
+            .released_all(who)
+            .into_iter()
+            .filter(|c| !matches!(c, Change::Released(r) if r.item == LEAD_CLAIM))
+            .collect();
         let freed = freed_by(&changes);
         changes.push(Change::SessionStarted(SessionStarted {
             session: view.plain(who),

@@ -113,6 +113,7 @@ fn named() -> Lead {
             .parse()
             .unwrap(),
         session: "lead".into(),
+        if_free: false,
     }
 }
 
@@ -270,7 +271,8 @@ async fn a_refused_call_keeps_no_key_and_a_second_try_runs_handle() {
         .unwrap();
     let second = w.run(w.call(claim(&lead), "c1")).await.unwrap();
     assert!(!second.repeat);
-    assert_eq!(w.count("claimed"), 1);
+    // The claim lead of the new lead, and the claim of the second try.
+    assert_eq!(w.count("claimed"), 2);
 }
 
 /// The reply to a repeated `release` of a state that the log gives.

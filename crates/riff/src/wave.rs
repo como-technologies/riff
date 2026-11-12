@@ -1835,6 +1835,27 @@ pub trait World: Send + Sync {
     /// keep-alive: the end of the lead.
     fn leave<'a>(&'a self, record: &'a Record) -> BoxFuture<'a, ()>;
 
+    /// True when the daemon runs the lead loop of each wave
+    /// ([`crate::lead_host`], #1791): the daemon of a host claims the lead
+    /// of the project. The default runs none.
+    fn leads(&self) -> bool {
+        false
+    }
+
+    /// The session that holds the claim lead of the project of the lead
+    /// of `record` on riff-server now ([`riff_core::wire::PlanReply::lead`],
+    /// #1791). `None` when the claim is free. The default holds none.
+    fn lead_holder<'a>(&'a self, _record: &'a Record) -> BoxFuture<'a, Result<Option<SessionUri>>> {
+        Box::pin(async { Ok(None) })
+    }
+
+    /// Gives the claim lead of the project of the lead of `record` to that
+    /// lead, as the person, only when it is free (#1791). False when
+    /// another session holds it. The default gives none.
+    fn lead_claim<'a>(&'a self, _record: &'a Record) -> BoxFuture<'a, Result<bool>> {
+        Box::pin(async { Ok(false) })
+    }
+
     /// The [`Start`] of the lead of `record` for a start again on the riff of
     /// this daemon: the same session and folder, `claude --resume`
     /// (`wave` is the wave of the repository, when the daemon runs one: it gives
@@ -4342,6 +4363,30 @@ impl World for Live {
                 }
                 Err(e) => eprintln!("riff daemon: {}: {e:#}", record.live.name),
             }
+        })
+    }
+
+    fn leads(&self) -> bool {
+        true
+    }
+
+    fn lead_holder<'a>(&'a self, record: &'a Record) -> BoxFuture<'a, Result<Option<SessionUri>>> {
+        Box::pin(async move {
+            let place = record.me.place();
+            let thread = place
+                .default_thread()
+                .ok_or_else(|| anyhow!("{}", text::RUN_NO_REPO))?;
+            let person = identity::person(place, &record.server)?;
+            let api = Api::new(&record.server).signed_in(None)?;
+            Ok(api.plan_show(&person, &thread).await?.lead)
+        })
+    }
+
+    fn lead_claim<'a>(&'a self, record: &'a Record) -> BoxFuture<'a, Result<bool>> {
+        Box::pin(async move {
+            let person = identity::person(record.me.place(), &record.server)?;
+            let api = Api::new(&record.server).signed_in(None)?;
+            Ok(api.claim_lead(&person, &record.live.session).await?.is_ok())
         })
     }
 

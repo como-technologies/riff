@@ -19,8 +19,8 @@ use riff_core::name::{SessionUri, ThreadName, Who, check};
 use riff_core::record::{Change, Claimed, Member, Released, Scope};
 use riff_core::selector::Selector;
 use riff_core::wire::{
-    Claim, ClaimReply, Freed, Kind, Lead, LeadReply, Message, Release, ReleaseFor, ReleaseReply,
-    StartReason,
+    Claim, ClaimReply, Freed, Kind, LEAD_CLAIM, Lead, LeadReply, Message, Release, ReleaseFor,
+    ReleaseReply, StartReason,
 };
 use serde::{Deserialize, Serialize};
 
@@ -99,11 +99,12 @@ impl Work {
             .map(|(_, thread)| thread)
     }
 
-    /// Each item that `who` holds.
+    /// Each work item that `who` holds: not the claim [`LEAD_CLAIM`], which
+    /// the mark `lead=true` of the URI shows.
     pub(super) fn items_of(&self, who: &Who) -> Vec<String> {
         self.claims
             .iter()
-            .filter(|(_, holder)| *holder == who)
+            .filter(|((_, item), holder)| *holder == who && item != LEAD_CLAIM)
             .map(|((_, item), _)| item.clone())
             .collect()
     }
@@ -326,6 +327,9 @@ impl Command for Claim {
             return Err(Refused::new(Code::MustClear, MUST_CLEAR));
         }
         check("claim", item).map_err(|e| e.to_string())?;
+        if item == LEAD_CLAIM {
+            return Err(Refused::new(Code::NotAllowed, LEAD_CLAIM_BY_LEAD));
+        }
         if let Some((scope, pause)) = view.riff.the_riff().pauses.check(thread) {
             let by = pause
                 .by
@@ -394,6 +398,33 @@ impl Command for Claim {
             warning,
         }
     }
+}
+
+/// The reason of a claim of the item [`LEAD_CLAIM`] with `claim`: only the
+/// lead of the project holds it, and only [`Lead`] gives it.
+pub const LEAD_CLAIM_BY_LEAD: &str = "nobody claims lead: riff-server gives the claim lead to \
+     the one lead of the project. Run riff lead start in a clone.";
+
+/// The refusal of a claim [`LEAD_CLAIM`] `if_free` of `thread`: the live
+/// session `holder` holds it.
+///
+/// ```
+/// use riff_core::name::SessionUri;
+/// use riff_state::state::lead_held;
+///
+/// let holder: SessionUri = "riff://mike@thelio/acme/app?session=b2c3d4e5-ffff".parse()?;
+/// assert_eq!(
+///     lead_held(&"acme/app".parse()?, &holder),
+///     "the lead of acme/app runs on thelio: mike@thelio:app (b2c3d4e5) holds the claim lead."
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn lead_held(thread: &ThreadName, holder: &SessionUri) -> String {
+    format!(
+        "the lead of {thread} runs on {}: {} holds the claim {LEAD_CLAIM}.",
+        holder.place().host(),
+        label(holder)
+    )
 }
 
 /// The reason of a claim that is refused with the code `must_clear`
@@ -558,6 +589,12 @@ impl Command for ReleaseFor {
 /// and tells it (01M5NJAYMYF50B9WXH5RF9W737). The note is the old lead,
 /// if another session was the lead. [`permits`](super::permits)
 /// refuses a session, and `handle` refuses a worker.
+///
+/// The new lead gets the claim [`LEAD_CLAIM`] of the project, in the same
+/// chunk: the one lead of the project (01M77PT9QAECENTY1WS616P5E2). With `if_free`, a live holder of
+/// the claim gets the refusal `held`, which names it. Else the new lead
+/// takes the claim: a `released` record for the old holder, then the
+/// `claimed` record.
 impl Command for Lead {
     const KIND: CommandKind = CommandKind::Lead;
     type Reply = LeadReply;
@@ -575,10 +612,10 @@ impl Command for Lead {
             .default_thread()
             .ok_or("the lead needs a git repository. Run it in a repository.")?;
         let who = view.new_lead(caller.who().user(), &thread, &self.session)?;
+        let mut changes = view.lead_claim(&who, &thread, self.if_free, now)?;
         let key = (who.user().to_owned(), thread.clone());
         let lead = view.lead_of(&key, now.at);
         let old = lead.filter(|old| **old != who).cloned();
-        let mut changes = Vec::new();
         if lead != Some(&who) {
             changes.push(Change::LeadSet(Member {
                 session: view.plain(&who),
@@ -612,6 +649,65 @@ impl Command for Lead {
 }
 
 impl View<'_> {
+    /// The records that give the claim [`LEAD_CLAIM`] of `thread` to the
+    /// new lead `who`. None when it holds the claim. A live holder refuses
+    /// a claim `if_free` with the code `held`; else the claim moves to
+    /// `who`, with a `released` record for the old holder first.
+    fn lead_claim(
+        &self,
+        who: &Who,
+        thread: &ThreadName,
+        if_free: bool,
+        now: Now,
+    ) -> Result<Vec<Change>, Refused> {
+        let claim = |holder: &Who| Claimed {
+            session: self.plain(holder),
+            thread: thread.clone(),
+            item: LEAD_CLAIM.to_owned(),
+        };
+        match self.riff.work().holder(thread, LEAD_CLAIM) {
+            Some(holder) if holder == who => Ok(Vec::new()),
+            Some(holder) if if_free && self.holds(holder, now.at) => Err(Refused::new(
+                Code::Held,
+                lead_held(thread, &self.uri(holder, now.at)),
+            )),
+            Some(holder) => Ok(vec![
+                Change::Released(Released::of(claim(holder))),
+                Change::Claimed(claim(who)),
+            ]),
+            None => Ok(vec![Change::Claimed(claim(who))]),
+        }
+    }
+
+    /// The session that holds the claim [`LEAD_CLAIM`] of `thread` now:
+    /// the one lead of the project. `None` when the claim is free, also
+    /// when its holder had no sign of life for
+    /// [`CLAIM_GRACE`](super::CLAIM_GRACE).
+    pub(super) fn project_lead(&self, thread: &ThreadName, now: Instant) -> Option<&Who> {
+        self.riff
+            .work()
+            .holder(thread, LEAD_CLAIM)
+            .filter(|holder| self.holds(holder, now))
+    }
+
+    /// The host of the last lead of `thread`, while its claim
+    /// [`LEAD_CLAIM`] is free: the host of its last holder, else of the
+    /// last lead of a user there. That host claims first on a tie.
+    pub(super) fn last_lead_host(&self, thread: &ThreadName, now: Instant) -> Option<String> {
+        if self.project_lead(thread, now).is_some() {
+            return None;
+        }
+        let work = self.riff.work();
+        let last = work.holder(thread, LEAD_CLAIM).or_else(|| {
+            work.leads
+                .iter()
+                .find(|((_, lead), _)| lead == thread)
+                .map(|(_, who)| who)
+        })?;
+        let session = self.presence.sessions.get(last)?;
+        Some(session.place.host().to_owned())
+    }
+
     /// The session of `user` in `thread` that the session ID `id`, or
     /// its start, names: the new lead of a [`Lead`]. A worker cannot be
     /// the lead.
