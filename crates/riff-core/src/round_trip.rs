@@ -767,6 +767,8 @@ mod tests {
                     at_ms: 5,
                 },
             )]),
+            lead: Some(me()),
+            last_lead: Some(text("thelio")),
         });
         c.trip(&SetNotes {
             me: me(),
@@ -833,6 +835,7 @@ mod tests {
         c.trip(&Lead {
             me: me(),
             session: text("s2"),
+            if_free: true,
         });
         c.trip(&LeadReply {
             lead: me(),

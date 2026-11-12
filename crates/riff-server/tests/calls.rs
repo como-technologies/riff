@@ -113,6 +113,7 @@ fn named() -> Lead {
             .parse()
             .unwrap(),
         session: "lead".into(),
+        if_free: false,
     }
 }
 

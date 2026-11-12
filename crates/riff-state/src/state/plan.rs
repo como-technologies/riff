@@ -410,7 +410,14 @@ impl View<'_> {
             .holds(thread)
             .map(|(item, hold)| (item.to_owned(), hold.clone()))
             .collect();
-        PlanReply { plan, holds }
+        PlanReply {
+            plan,
+            holds,
+            lead: self
+                .project_lead(thread, now.at)
+                .map(|lead| self.uri(lead, now.at)),
+            last_lead: self.last_lead_host(thread, now.at),
+        }
     }
 }
 

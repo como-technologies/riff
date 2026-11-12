@@ -269,7 +269,9 @@ use riff_core::wire::{
     SetStep, Start, StartReason, Status, StatusInfo, StepChange, StepInfo, Tailed, ThreadInfo,
     Waits, Wake,
 };
-use riff_core::wire::{ChatName, MachineInfo, NotesReply, ProjectsReply, SetMachine, ThreadPage};
+use riff_core::wire::{
+    ChatName, LEAD_CLAIM, MachineInfo, NotesReply, ProjectsReply, SetMachine, ThreadPage,
+};
 
 /// A blocked session that the look of the lead found, with its reason
 /// ([`State::look_blocks`]).
@@ -310,7 +312,9 @@ pub use snapshot::Snapshot;
 pub use the_riff::{Forget, Import, MakeRiff, Pauses};
 pub use threads::{Announce, may_read};
 pub use view::{Settings, View};
-pub use work::{Dropped, MUST_CLEAR, dropped, not_lead, released_for};
+pub use work::{
+    Dropped, LEAD_CLAIM_BY_LEAD, MUST_CLEAR, dropped, lead_held, not_lead, released_for,
+};
 
 use presence::{Block, LongStep, Session, SetStatus};
 use sessions::Known;
@@ -2163,6 +2167,7 @@ impl State {
     /// reply names `session` and the old lead, if another session was
     /// the lead. No session becomes the lead by itself
     /// (01M5NJAY3FTR005TDJJY1TMGNX), and a session cannot name the lead.
+    /// The new lead takes the claim `lead` of the project from its holder.
     ///
     /// ```
     /// use std::time::Instant;
@@ -2189,7 +2194,7 @@ impl State {
     /// assert!(state.missed(first.who()).is_some());
     ///
     /// // A session cannot make itself the lead.
-    /// let take = Lead { me: first.clone(), session: "a1".into() };
+    /// let take = Lead { me: first.clone(), session: "a1".into(), if_free: false };
     /// let refused = state.run(&Caller::of(&first), &take, now).unwrap_err();
     /// assert_eq!(refused.reason, LEAD_BY_PERSON);
     /// # Ok::<(), riff_core::name::NameError>(())
@@ -2230,17 +2235,98 @@ impl State {
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     pub fn lead(&mut self, session: &SessionUri, now: Instant) -> Result<LeadReply, String> {
+        self.lead_as(session, false, now).map_err(|r| r.reason)
+    }
+
+    /// The claim [`LEAD_CLAIM`](riff_core::wire::LEAD_CLAIM) of the
+    /// project of `session`, as the riff daemon of its host asks it: the
+    /// person makes `session` the lead only when no live session holds
+    /// the claim. Gives whether it is granted. A holder with no sign of
+    /// life for [`CLAIM_GRACE`] holds it no more.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::name::SessionUri;
+    /// use riff_state::state::{CLAIM_GRACE, State};
+    ///
+    /// let a: SessionUri = "riff://mike@pangolin/acme/app?session=a1".parse()?;
+    /// let b: SessionUri = "riff://mike@thelio/acme/app?session=b2".parse()?;
+    /// let thread = a.default_thread().unwrap();
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// state.register(&a, now);
+    /// state.register(&b, now);
+    /// assert_eq!(state.claim_lead(&a, now), Ok(true));
+    /// // One lead for the project: the claim of b waits for the end of a.
+    /// assert_eq!(state.claim_lead(&b, now), Ok(false));
+    /// assert_eq!(state.plan(&thread, now, 0).lead.as_ref().map(|l| l.who()), Some(a.who()));
+    /// // a stops with no end: 5 minutes later, b takes the claim.
+    /// let later = now + CLAIM_GRACE;
+    /// state.alive(&b, later);
+    /// assert_eq!(state.claim_lead(&b, later), Ok(true));
+    /// assert_eq!(state.plan(&thread, later, 0).lead.as_ref().map(|l| l.who()), Some(b.who()));
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn claim_lead(&mut self, session: &SessionUri, now: Instant) -> Result<bool, String> {
+        match self.lead_as(session, true, now) {
+            Ok(_) => Ok(true),
+            Err(refused) if refused.code == Code::Held => Ok(false),
+            Err(refused) => Err(refused.reason),
+        }
+    }
+
+    /// The person of `session` makes it the lead, with the claim of the
+    /// project only `if_free`.
+    fn lead_as(
+        &mut self,
+        session: &SessionUri,
+        if_free: bool,
+        now: Instant,
+    ) -> Result<LeadReply, Refused> {
         let id = session
             .who()
             .session()
-            .ok_or("only a session can be the lead")?;
+            .ok_or_else(|| Refused::from("only a session can be the lead"))?;
         let person = Who::new(session.who().user(), None).map_err(|e| e.to_string())?;
         let me = SessionUri::new(person, session.place().clone());
         let lead = Lead {
             me: me.clone(),
             session: id.to_owned(),
+            if_free,
         };
-        self.ask(&me, &lead, now).map_err(|r| r.reason)
+        self.ask(&me, &lead, now)
+    }
+
+    /// Each repository thread whose claim
+    /// [`LEAD_CLAIM`](riff_core::wire::LEAD_CLAIM) ended with no record:
+    /// its holder had no sign of life for [`CLAIM_GRACE`], and no session
+    /// took the claim yet. With the holder. riff-server wakes the daemons
+    /// of the project for each one, so the next host claims it.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::name::SessionUri;
+    /// use riff_state::state::{CLAIM_GRACE, State};
+    ///
+    /// let a: SessionUri = "riff://mike@pangolin/acme/app?session=a1".parse()?;
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// state.register(&a, now);
+    /// state.claim_lead(&a, now).unwrap();
+    /// assert!(state.lead_claims_ended(now).is_empty());
+    /// let ended = state.lead_claims_ended(now + CLAIM_GRACE);
+    /// assert_eq!(ended, [(a.default_thread().unwrap(), a.who().clone())]);
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn lead_claims_ended(&self, now: Instant) -> Vec<(ThreadName, Who)> {
+        let view = self.written_view();
+        self.written
+            .work()
+            .claims
+            .iter()
+            .filter(|((_, item), holder)| item == LEAD_CLAIM && !view.holds(holder, now))
+            .map(|((thread, _), holder)| (thread.clone(), holder.clone()))
+            .collect()
     }
 
     /// The pauses of the written copy: the pause of the whole riff, and

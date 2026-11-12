@@ -1892,8 +1892,34 @@ impl Api {
         let lead = Lead {
             me: me.clone(),
             session: session.to_owned(),
+            if_free: false,
         };
         self.call(&lead).await
+    }
+
+    /// The person `me` gives the claim `lead` of the project of `me` to
+    /// the session `session`, and makes it the lead, only when no live
+    /// session holds the claim: the claim of the riff daemon of a host.
+    /// A live holder is no error here: the inner answer is the text of
+    /// the refusal `held`, which names the holder.
+    pub async fn claim_lead(
+        &self,
+        me: &SessionUri,
+        session: &str,
+    ) -> Result<std::result::Result<LeadReply, String>> {
+        let lead = Lead {
+            me: me.clone(),
+            session: session.to_owned(),
+            if_free: true,
+        };
+        match self.call(&lead).await {
+            Ok(reply) => Ok(Ok(reply)),
+            Err(error) => match error.downcast::<Refusal>() {
+                Ok(refusal) if refusal.code.as_deref() == Some("held") => Ok(Err(refusal.text)),
+                Ok(refusal) => Err(refusal.into()),
+                Err(error) => Err(error),
+            },
+        }
     }
 
     /// The state of the riff for the place of `me`: paused when the
