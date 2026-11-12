@@ -6826,6 +6826,12 @@ of this part when they merge.
   request merged or closed, gives the lead a note, not a message. The
   note says that the pull request is not open, so no verify waits.
   Supersedes 01M4ZV3B6R4WSEJXYT7QPRWT6X in part.
+- **01M777N148MY8NR5RNDKXE9EVJ** Before the wave of the daemon tells the
+  lead that auto-merge is off (01M5QW2M1M5QZJXSP0BY6XG118), it asks
+  GitHub again for the pull request with one GraphQL call. It sends no
+  message when the pull request merged, is in the merge queue, has
+  auto-merge on or has another head commit, or when the call fails. The
+  next look asks again.
 
 ### The lead, the view and the takeover
 

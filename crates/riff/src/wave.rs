@@ -155,6 +155,10 @@
 //! 01M6FZY6NABXGXVRYF6W1509XE). A notice about one host has no key: each
 //! host tells it.
 //!
+//! Before a notice of auto-merge off, the loop asks the forge again
+//! ([`World::merge_off`], 01M777N148MY8NR5RNDKXE9EVJ): a pull request that
+//! the queue merged between the two reads of the look gets no notice.
+//!
 //! | Notice | Key | The lead gets it |
 //! |---|---|---|
 //! | An issue with no `Done when:` line ([`text::wave_no_done_when`]) | [`no_done_when_key`] | one time |
@@ -1655,6 +1659,16 @@ pub trait World: Send + Sync {
         Box::pin(async { false })
     }
 
+    /// True when the forge says now that the pull request `pull` of `wave`
+    /// is open, out of the merge queue, at the head commit `head`, and with
+    /// auto-merge off ([`rollout::merge_off`], 01M777N148MY8NR5RNDKXE9EVJ).
+    /// The loop asks it before it tells the lead of
+    /// [`rollout::Stuck::AutoMergeOff`]. A fault of the read is false: the
+    /// next look asks again. The default is true.
+    fn merge_off<'a>(&'a self, _wave: &'a Wave, _pull: u64, _head: &'a str) -> BoxFuture<'a, bool> {
+        Box::pin(async { true })
+    }
+
     /// The steps before the start: the checks, the claim, the clone and
     /// the start text. `None` when another session holds the item, or
     /// the item is held. Each other refusal of the claim, for example
@@ -2157,17 +2171,27 @@ pub(crate) async fn run<R: Runtime + 'static>(
                     }
                 }
                 for notice in &look.fixes.notices {
-                    if noticed.insert(notice.key()) {
-                        let body = text::wave_stuck(
-                            &wave.repo,
-                            notice.pull,
-                            &notice.branch,
-                            &look.branch,
-                            &notice.commit,
-                            &notice.stuck,
-                        );
-                        world.tell(&wave, &body, Some(&notice.post_key())).await;
+                    if noticed.contains(&notice.key()) {
+                        continue;
                     }
+                    // A merge through the queue between two reads of the
+                    // look looks like auto-merge off: the forge tells it
+                    // again first (01M777N148MY8NR5RNDKXE9EVJ).
+                    if notice.stuck == rollout::Stuck::AutoMergeOff
+                        && !world.merge_off(&wave, notice.pull, &notice.commit).await
+                    {
+                        continue;
+                    }
+                    noticed.insert(notice.key());
+                    let body = text::wave_stuck(
+                        &wave.repo,
+                        notice.pull,
+                        &notice.branch,
+                        &look.branch,
+                        &notice.commit,
+                        &notice.stuck,
+                    );
+                    world.tell(&wave, &body, Some(&notice.post_key())).await;
                 }
                 let next = pick(&look, &running(&daemon, &wave, &taken), &lock(&starts));
                 *lock(&ordered) = order(&look, &running(&daemon, &wave, &taken), &lock(&starts));
@@ -4034,6 +4058,15 @@ impl World for Live {
         })
     }
 
+    fn merge_off<'a>(&'a self, wave: &'a Wave, pull: u64, head: &'a str) -> BoxFuture<'a, bool> {
+        let (repo, head) = (wave.repo.clone(), head.to_owned());
+        Box::pin(async move {
+            blocking(move || Ok(rollout::merge_off(&forge(&repo), &repo, pull, &head)))
+                .await
+                .unwrap_or(false)
+        })
+    }
+
     fn begin<'a>(
         &'a self,
         wave: &'a Wave,
@@ -4976,6 +5009,21 @@ mod tests {
             Box::pin(async move { passed })
         }
 
+        /// The ask of the real loop to the fake `gh` of `reads`
+        /// ([`rollout::merge_off`]). Else the forge in memory, as the look
+        /// shows it.
+        fn merge_off<'a>(&'a self, _: &'a Wave, pull: u64, head: &'a str) -> BoxFuture<'a, bool> {
+            let (reads, head) = (lock(&self.reads).clone(), head.to_owned());
+            Box::pin(async move {
+                let Some(gh) = reads else {
+                    return true;
+                };
+                blocking(move || Ok(rollout::merge_off(&gh, "o/r", pull, &head)))
+                    .await
+                    .unwrap_or(false)
+            })
+        }
+
         fn begin<'a>(
             &'a self,
             _: &'a Wave,
@@ -5878,7 +5926,8 @@ mod tests {
 
     /// A fake `gh` for a look that reads the forge as the real look does
     /// (#1656): the lists and the items come from the files of its folder,
-    /// and each call goes in `gh.log`.
+    /// and each call goes in `gh.log`. The queue is empty, and the ask for
+    /// one pull request ([`rollout::merge_off`]) gives the file `ask`.
     const READ_GH: &str = r#"#!/bin/sh
 dir=$(dirname "$0")
 printf '%s\n' "$*" >> "$dir/gh.log"
@@ -5887,7 +5936,11 @@ case "$1 $2" in
   "api repos/o/r") echo main ;;
   "api repos/o/r/milestones"*) echo '[{"title":"Wave 1"}]' ;;
   "api repos/o/r/commits/"*) echo 'a commit' ;;
-  "api graphql") echo '{}' ;;
+  "api graphql")
+    case "$*" in
+      *"pullRequest(number"*) show ask ;;
+      *) echo '{}' ;;
+    esac ;;
   "pr list")
     case "$*" in
       *"--state merged"*) show merged ;;
@@ -6103,6 +6156,67 @@ esac
         let started: Vec<&str> = forge.starts.iter().map(|(i, _)| i.as_str()).collect();
         assert_eq!(started, ["issue-2"], "no build of the merged item");
         assert!(forge.merged_ins.is_empty(), "{:?}", forge.merged_ins);
+    }
+
+    /// The reply of GitHub to the ask for #41 ([`rollout::merge_off`]):
+    /// the state `state`, out of the queue, at the head `c1`, and with
+    /// auto-merge off.
+    fn ask_41(state: &str) -> serde_json::Value {
+        serde_json::json!({ "data": { "repository": { "pullRequest": {
+            "state": state,
+            "isInMergeQueue": false,
+            "headRefOid": "c1",
+            "autoMergeRequest": null,
+        } } } })
+    }
+
+    /// The asks for one pull request in the log of [`READ_GH`] in `bin`.
+    fn merge_asks(bin: &Path) -> usize {
+        std::fs::read_to_string(bin.join("gh.log"))
+            .unwrap_or_default()
+            .lines()
+            .filter(|c| c.contains("pullRequest(number"))
+            .count()
+    }
+
+    /// 01M777N148MY8NR5RNDKXE9EVJ (#2003): a wave with a fake forge. The
+    /// list of the open pull requests has #41 with a passed verify and no
+    /// auto-merge, as GitHub gives it in the merge queue, and the read of
+    /// the queue after it names no #41: the queue merged it between the
+    /// two reads. The wave asks GitHub again, GitHub says `MERGED`, and the
+    /// lead gets no message. Then GitHub says that #41 is open with
+    /// auto-merge off: the lead gets one message, and the next looks do
+    /// not ask again.
+    #[tokio::test]
+    async fn a_merge_between_the_two_reads_of_the_look_tells_the_lead_nothing() {
+        let bin = tempfile::tempdir().unwrap();
+        let put = |name: &str, value: serde_json::Value| {
+            std::fs::write(bin.path().join(name), value.to_string()).unwrap();
+        };
+        let mut pull = pull_41();
+        pull["autoMergeRequest"] = serde_json::Value::Null;
+        put("issues", serde_json::json!([open_issue(1)]));
+        put("pulls", serde_json::json!([pull]));
+        put("ask", ask_41("MERGED"));
+        let (here, _told) = reading(bin.path()).await;
+        here.run();
+        here.until(0, |_| merge_asks(bin.path()) >= 2).await;
+        assert!(here.forge().told.is_empty(), "{:?}", here.forge().told);
+        let log = std::fs::read_to_string(bin.path().join("gh.log")).unwrap();
+        let ask = log
+            .lines()
+            .find(|c| c.contains("pullRequest(number"))
+            .unwrap();
+        assert!(ask.contains("-f owner=o -f name=r -F number=41"), "{ask}");
+
+        // Auto-merge is off now.
+        put("ask", ask_41("OPEN"));
+        here.until(0, |h| !h.forge().told.is_empty()).await;
+        let asks = merge_asks(bin.path());
+        here.idle(0).await;
+        let forge = here.forge();
+        assert_eq!(forge.told, [stuck("c1", rollout::Stuck::AutoMergeOff)]);
+        assert_eq!(merge_asks(bin.path()), asks, "one ask after the message");
     }
 
     /// 01M74N3544C338R6BV06DQ1DH0: `riff daemon status` shows the line of

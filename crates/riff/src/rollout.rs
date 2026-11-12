@@ -1330,7 +1330,8 @@ pub enum Stuck {
     /// verify and no merge, so [`Pull::stuck`] never gives it, and no
     /// session fixes it: the lead hears of it.
     Optional(OtherCheck),
-    /// The verify passed, and auto-merge is off: nothing merges it.
+    /// The verify passed, and auto-merge is off: nothing merges it. The
+    /// wave asks GitHub again before it tells the lead ([`merge_off`]).
     AutoMergeOff,
     /// The verify passed, and the merge queue removed the pull request,
     /// with this reason of GitHub ([`Queue::Removed`]). Nothing queues it
@@ -2218,6 +2219,78 @@ pub(crate) fn queue_args(repo: &str) -> Option<[String; 8]> {
         "-f".to_owned(),
         format!("name={name}"),
     ])
+}
+
+/// The GraphQL query of [`merge_off`]: the state of one pull request, its
+/// place in the merge queue, its head commit and its auto-merge. As
+/// [`QUEUE_QUERY`], it also asks for `rateLimit`.
+pub const PULL_QUERY: &str = "query($owner: String!, $name: String!, $number: Int!) { \
+    rateLimit { cost limit remaining resetAt } \
+    repository(owner: $owner, name: $name) { \
+    pullRequest(number: $number) { state isInMergeQueue headRefOid \
+    autoMergeRequest { enabledAt } } } }";
+
+/// True when the reply `reply` of [`PULL_QUERY`] says that the pull
+/// request is open, out of the merge queue, at the head commit `head`,
+/// and with auto-merge off. Each other reply, and a reply that is no
+/// JSON, gives false.
+///
+/// ```
+/// use riff::rollout::merge_off_in;
+///
+/// let reply = |state: &str, queued: bool, head: &str, auto: &str| {
+///     format!(r#"{{"data":{{"repository":{{"pullRequest":{{"state":"{state}","isInMergeQueue":{queued},"headRefOid":"{head}","autoMergeRequest":{auto}}}}}}}}}"#)
+/// };
+/// let on = r#"{"enabledAt":"2026-11-12T06:17:20Z"}"#;
+/// assert!(merge_off_in(&reply("OPEN", false, "1a2b", "null"), "1a2b"));
+/// // The queue merged it.
+/// assert!(!merge_off_in(&reply("MERGED", false, "1a2b", "null"), "1a2b"));
+/// // In the queue, GitHub gives no auto-merge.
+/// assert!(!merge_off_in(&reply("OPEN", true, "1a2b", "null"), "1a2b"));
+/// assert!(!merge_off_in(&reply("OPEN", false, "1a2b", on), "1a2b"));
+/// // A push came after the look: the next look reads the new head.
+/// assert!(!merge_off_in(&reply("OPEN", false, "5e6f", "null"), "1a2b"));
+/// assert!(!merge_off_in(r#"{"data":{"repository":{"pullRequest":null}}}"#, "1a2b"));
+/// assert!(!merge_off_in("not json", "1a2b"));
+/// ```
+pub fn merge_off_in(reply: &str, head: &str) -> bool {
+    let Ok(reply) = serde_json::from_str::<serde_json::Value>(reply) else {
+        return false;
+    };
+    let pull = &reply["data"]["repository"]["pullRequest"];
+    pull["state"] == "OPEN"
+        && pull["isInMergeQueue"].as_bool() == Some(false)
+        && pull["headRefOid"] == head
+        && pull["autoMergeRequest"].is_null()
+}
+
+/// True when GitHub says now that the pull request `number` of `repo`
+/// (`OWNER/REPO`) is open, out of the merge queue, at the head commit
+/// `head`, and with auto-merge off ([`merge_off_in`]). It makes one call
+/// of `gh api graphql` with [`PULL_QUERY`], and takes no kept reply.
+///
+/// The wave asks it before it tells the lead that auto-merge is off
+/// ([`Stuck::AutoMergeOff`], 01M777N148MY8NR5RNDKXE9EVJ). In the merge
+/// queue GitHub gives no auto-merge, and the look reads the open pull
+/// requests before the queue ([`pulls`]). So a pull request that the
+/// queue merged between the two reads looks open, out of the queue, and
+/// with auto-merge off. A fault of `gh` gives false: the next look asks
+/// again.
+pub fn merge_off(gh: &Gh, repo: &str, number: u64, head: &str) -> bool {
+    let Some((owner, name)) = repo.split_once('/') else {
+        return false;
+    };
+    let (query, owner, name) = (
+        format!("query={PULL_QUERY}"),
+        format!("owner={owner}"),
+        format!("name={name}"),
+    );
+    let number = format!("number={number}");
+    let args = [
+        "api", "graphql", "-f", &query, "-f", &owner, "-f", &name, "-F", &number,
+    ];
+    gh.run(&args, None)
+        .is_ok_and(|reply| merge_off_in(&reply, head))
 }
 
 /// Makes the kept replies of the open pull requests, the open issues and
