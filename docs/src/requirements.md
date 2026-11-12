@@ -1551,6 +1551,21 @@
   the order of `OWNER/REPO`, to each person and each session. `riff
   questions`, the TUI, `riff top` and `riff who` read the projects
   there.
+- **01M77HHYZWY1WWK1T6W6KX2SHV** Each command of a test environment of
+  `isolated` has the variable `ISOLATED_DIR` with the temp dir of the
+  environment, and each child of the command inherits it. Before its
+  temp dir goes, the drop of the environment ends each process with that
+  `ISOLATED_DIR` with a SIGKILL, also a child whose parent ended. So no
+  test leaves a `riff daemon`, a `riff relay` or another child after it
+  ends. A test that starts a process that can outlive the test uses an
+  environment of its own, not `Isolated::shared`. On an OS other than
+  Linux, the drop ends no process.
+- **01M77HHZ2FP07ES4ZYG5KYVZ7E** A guard test of the test binary `all`
+  runs a sample of the tests that start a `riff daemon`, a `riff relay`
+  or a fake program that waits, with `isolated::left_after`. Each
+  process of the run gets the variable `ISOLATED_RUN` with a value of
+  that run. The guard fails on each process with that value after the
+  end of the run, and ends it.
 
 ## Saved state
 

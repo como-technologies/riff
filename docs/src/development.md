@@ -773,6 +773,35 @@ To see it, run the test with its output:
 cargo test -p riff --test all hosts:: -- --nocapture 2>&1 | grep 'slow under load'
 ```
 
+### End each process of a test
+
+A test can start a process that outlives it: a fake `systemctl`
+starts a `riff daemon` in the background, a fake `podman` starts a
+`riff relay`, and a fake `gh` can wait. Each command of an `Isolated`
+environment has the variable `ISOLATED_DIR`, and each child gets it
+too. When the environment drops at the end of the test, it ends each
+process with its `ISOLATED_DIR`. The shared environment never drops.
+So a test that starts such a process uses an environment of its own,
+`Isolated::new()`, not `Isolated::shared()`:
+
+```mermaid
+flowchart LR
+    T[the test] --> R["riff, with ISOLATED_DIR"]
+    R --> S[a fake systemctl]
+    S --> D["riff daemon"]
+    T -- "the end of the test:<br/>the environment drops" --> K["a SIGKILL to each process<br/>with that ISOLATED_DIR"]
+    K --> D
+```
+
+A guard test of the binary `all` runs a sample of such tests, and fails
+on each process that they left. It names each process with its
+command. Add a new test of that kind to the sample in
+`crates/riff/tests/leftovers.rs`, and run the guard:
+
+```sh
+cargo test -p riff --test all leftovers::
+```
+
 ## Run the tests of one file
 
 The integration tests of a crate are one test binary, `all`. Each file

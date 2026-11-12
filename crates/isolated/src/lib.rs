@@ -24,10 +24,12 @@
 //! | `DBUS_SESSION_BUS_ADDRESS` | a bus that does not exist, so each call to the OS keyring fails |
 //! | `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM` | `/dev/null` and `1`: git reads no config of the machine |
 //! | `GIT_ALLOW_PROTOCOL` | `file`: git reaches no remote on the network (01M3WG82ZMQYG1TGHE4ET0BDDW) |
+//! | [`MARK`] (`ISOLATED_DIR`) | the temp dir of the environment: the drop ends each process with it (see [`processes`]) |
 //!
 //! Each dir is in one temp dir, which goes when the [`Isolated`] value
-//! drops. A test sets its own variables after the helper, so its
-//! values win.
+//! drops. Before the dir goes, the drop ends each process of the
+//! environment, also a child whose parent ended. A test sets its own
+//! variables after the helper, so its values win.
 //!
 //! The `TMPDIR` of a worker is under the home of the person, and a home
 //! can be a git repository. A plain temp dir then is in that repository,
@@ -93,11 +95,13 @@ use std::sync::LazyLock;
 use tempfile::TempDir;
 
 pub mod in_src;
+pub mod processes;
 pub mod program;
 pub mod secret;
 pub mod time;
 
 pub use in_src::{test_code, test_modules, unit_tests};
+pub use processes::{MARK, Marked, RUN, end_marked, left_after, marked};
 pub use program::{
     copy_program, file_name, names_a_program, program_writers, program_writes, write_program,
     write_whole, writes_a_program,
@@ -140,6 +144,30 @@ pub struct Isolated {
 impl Default for Isolated {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Drop for Isolated {
+    /// Ends each process of the environment, before its temp dir goes
+    /// (01M77HHYZWY1WWK1T6W6KX2SHV).
+    ///
+    /// ```
+    /// use std::os::unix::process::ExitStatusExt;
+    ///
+    /// let env = isolated::Isolated::new();
+    /// let mut sleep = env.command("sleep").arg("60").spawn()?;
+    /// drop(env);
+    /// if cfg!(target_os = "linux") {
+    ///     // The drop ended it with a SIGKILL.
+    ///     assert_eq!(sleep.wait()?.signal(), Some(9));
+    /// } else {
+    ///     sleep.kill()?;
+    ///     sleep.wait()?;
+    /// }
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    fn drop(&mut self) {
+        end_marked(MARK, self.path());
     }
 }
 
@@ -261,6 +289,7 @@ impl Isolated {
             ("GIT_CONFIG_GLOBAL".into(), Some("/dev/null".into())),
             ("GIT_CONFIG_NOSYSTEM".into(), Some("1".into())),
             ("GIT_ALLOW_PROTOCOL".into(), Some("file".into())),
+            (MARK.into(), path(self.path().to_owned())),
         ]);
         vars
     }

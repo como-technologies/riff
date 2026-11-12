@@ -20,13 +20,15 @@ const MACHINES_KEYS: &str =
     " ↑↓ select  Enter sessions of the host  l limit  r read again  ? help  q quit";
 
 /// A running `riff` in a pseudo-terminal of 80 x 24, its screen, and
-/// each byte that it wrote.
+/// each byte that it wrote. Its environment is its own: when it drops,
+/// it ends each child of `riff`, also a fake `gh` that still waits.
 struct Tty {
     child: Child,
     master: std::fs::File,
     screen: Arc<Mutex<vt100::Parser>>,
     written: Arc<Mutex<Vec<u8>>>,
     dir: tempfile::TempDir,
+    _env: Isolated,
 }
 
 impl Tty {
@@ -93,9 +95,10 @@ echo '[{"number": 12, "title": "Show the wave", "milestone": null}]'
             crate::common::sign_in(url, dir.path(), user);
         }
         let slave = std::fs::File::from(pty.slave);
+        let env = Isolated::new();
         let mut command = tokio::process::Command::new(riff);
         command
-            .isolate(Isolated::shared())
+            .isolate(&env)
             .current_dir(dir.path())
             .env("RIFF_SERVER", url)
             .env("RIFF_USER", user)
@@ -129,6 +132,7 @@ echo '[{"number": 12, "title": "Show the wave", "milestone": null}]'
             screen,
             written,
             dir,
+            _env: env,
         }
     }
 
