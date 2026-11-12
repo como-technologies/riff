@@ -33,6 +33,28 @@
 //! `crates/*/tests`, and in the test code of each file under
 //! `crates/*/src` (see [`in_src`](crate::in_src)). A test of this crate
 //! fails on each one.
+//!
+//! # The answer of a fake program
+//!
+//! A fake program often reads its answer from a file, and the test
+//! changes the file while riff runs the program, for example a fake
+//! `gh` that a watch of the daemon calls each 200 ms. `fs::write` makes
+//! the file empty first, and then writes the text: a program that reads
+//! the file between the two steps reads nothing. So the test changes the
+//! file with [`write_whole`] (01M779MKDQFY6982B7D533G8K2): it writes a
+//! new file in the same folder, and renames it to the path. The program
+//! reads the old text or the new text, never a part of it.
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant T as test thread
+//!     participant F as the folder
+//!     participant P as fake program
+//!     T->>F: write the new text to a new file
+//!     P->>F: read the path: the old text
+//!     T->>F: rename the new file to the path
+//!     P->>F: read the path: the new text
+//! ```
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -102,6 +124,57 @@ pub fn copy_program(from: impl AsRef<Path>, to: impl AsRef<Path>) -> PathBuf {
         String::from_utf8_lossy(&out.stderr)
     );
     to.to_owned()
+}
+
+/// Writes `text` to the file `path` in one step (see "The answer of a fake
+/// program" above): a new file in the folder of `path` gets the text, and
+/// a rename puts it in the place of `path`. A program that reads `path`
+/// at the same time reads the old text or the new text, never an empty
+/// file. Returns `path`.
+///
+/// ```
+/// let dir = tempfile::tempdir()?;
+/// let state = isolated::write_whole(dir.path().join("state"), "waiting");
+/// assert_eq!(std::fs::read_to_string(&state)?, "waiting");
+/// isolated::write_whole(&state, "success");
+/// assert_eq!(std::fs::read_to_string(&state)?, "success");
+/// // The folder has no other file.
+/// assert_eq!(std::fs::read_dir(dir.path())?.count(), 1);
+///
+/// // Another thread reads the file while the test changes it: each read
+/// // gets one whole text.
+/// let reader = {
+///     let state = state.clone();
+///     std::thread::spawn(move || {
+///         (0..2000).all(|_| {
+///             let text = std::fs::read_to_string(&state).unwrap();
+///             text == "running" || text == "success"
+///         })
+///     })
+/// };
+/// for n in 0..2000 {
+///     isolated::write_whole(&state, if n % 2 == 0 { "running" } else { "success" });
+/// }
+/// assert!(reader.join().unwrap(), "a read got a part of a text");
+/// # Ok::<(), std::io::Error>(())
+/// ```
+///
+/// # Panics
+///
+/// When the new file cannot be written, or the rename fails.
+pub fn write_whole(path: impl AsRef<Path>, text: impl AsRef<[u8]>) -> PathBuf {
+    let path = path.as_ref();
+    let dir = match path.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => dir,
+        _ => Path::new("."),
+    };
+    let mut new = tempfile::NamedTempFile::new_in(dir)
+        .unwrap_or_else(|e| panic!("cannot make a new file in {}: {e}", dir.display()));
+    new.write_all(text.as_ref())
+        .unwrap_or_else(|e| panic!("cannot write the new text of {}: {e}", path.display()));
+    new.persist(path)
+        .unwrap_or_else(|e| panic!("cannot rename the new file to {}: {e}", path.display()));
+    path.to_owned()
 }
 
 /// Each line of a test under `root/crates/*` that writes a program in
@@ -350,4 +423,24 @@ pub fn names_a_program(name: &str) -> bool {
     Path::new(name)
         .extension()
         .is_none_or(|extension| extension == "sh")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[should_panic(expected = "cannot make a new file in")]
+    fn write_whole_in_a_missing_folder_panics() {
+        let dir = tempfile::tempdir().unwrap();
+        write_whole(dir.path().join("missing").join("state"), "running");
+    }
+
+    #[test]
+    fn write_whole_of_a_shorter_text_keeps_nothing_of_the_old_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = write_whole(dir.path().join("state"), "running");
+        write_whole(&state, "ok");
+        assert_eq!(std::fs::read_to_string(&state).unwrap(), "ok");
+    }
 }

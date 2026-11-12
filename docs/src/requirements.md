@@ -1524,6 +1524,18 @@
   owner: the projects, and to review them with `riff project list`. A
   riff with no such repository gets no record and no line. A riff with a
   record of a project runs no such search again.
+- **01M779MKDQFY6982B7D533G8K2** A test changes a file that a fake
+  program reads while riff runs, for example the state of a CI run that
+  the fake `gh` of a watch of the daemon gives, with
+  `isolated::write_whole`: a new file in the same folder gets the text,
+  and a rename puts it at the path. So the program reads the old text or
+  the new text, and never an empty file.
+- **01M77JVF8ZTX2MN30QVY4170XG** A test that registers a watch of the
+  daemon again, for example the watch of a deploy after the end of the
+  last one, tries again until `Watches::register` gives
+  `Registered::New`. At the end of a watch, the daemon posts its
+  messages first and removes the watch after, and a register in that
+  time keeps the old watch and adds none.
 
 ## Saved state
 

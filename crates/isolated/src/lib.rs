@@ -61,7 +61,9 @@
 //! logic is slow, not when the machine is busy. See [`time`].
 //!
 //! A test writes a fake program with [`write_program`]: a child process
-//! writes it, so its run cannot fail with `ETXTBSY`. See [`program`].
+//! writes it, so its run cannot fail with `ETXTBSY`. A test changes the
+//! answer of a fake program with [`write_whole`], so the program never
+//! reads an empty file. See [`program`].
 //!
 //! A test takes each webhook secret and each key from [`fake_secret`]:
 //! a new value at each call, so the code scanning of GitHub finds no
@@ -98,7 +100,7 @@ pub mod time;
 pub use in_src::{test_code, test_modules, unit_tests};
 pub use program::{
     copy_program, file_name, names_a_program, program_writers, program_writes, write_program,
-    writes_a_program,
+    write_whole, writes_a_program,
 };
 pub use secret::{
     Example, GITHUB_EXAMPLE, TAKERS, fake_secret, hard_coded_keys, hard_coded_lines, is_secret_name,

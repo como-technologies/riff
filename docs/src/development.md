@@ -668,6 +668,41 @@ by its name:
 cargo test -p isolated --test check no_test_writes_a_program_in_the_test_process
 ```
 
+### Change the answer of a fake program
+
+A fake program often reads its answer from a file, for example the
+state of a CI run for a fake `gh`. When riff can run the program while
+the test changes the file, write the file with `isolated::write_whole`,
+not with `std::fs::write`. `std::fs::write` makes the file empty first:
+a program that reads it at that time gets no answer. For the fake `gh`
+of the watch of a deploy, an empty state is a run that failed.
+`isolated::write_whole` writes a new file in the same folder, and
+renames it to the path. So the program reads the old text or the new
+text:
+
+```rust,ignore
+let state = isolated::write_whole(tmp.join("state"), "running");
+isolated::write_whole(&state, "success");
+```
+
+### Register a watch again in a test
+
+At the end of a watch, the daemon posts its messages first, and
+removes the watch after. A test that sees the message and registers the
+same watch again at once can do it before the removal. Then
+`Watches::register` keeps the old watch, adds none, and gives
+`Registered::Kept`, and the removal leaves no watch. So the test tries
+again until it gets `Registered::New`, as `watch_deploy` in
+`crates/riff/tests/daemon_hosts.rs` does:
+
+```rust,ignore
+until("a new watch of the deploy", || async {
+    let registered = Watches::new(dir).register(repo, op(), now_ms()).unwrap();
+    (registered == Registered::New).then_some(())
+})
+.await;
+```
+
 ### Time a step in a test
 
 A test that runs slow on a busy machine has not failed. So a test does
