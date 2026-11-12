@@ -1875,6 +1875,25 @@ fn fake_deploy(dir: &Path) -> Vec<(String, String)> {
     vec![("PATH".into(), path)]
 }
 
+/// Registers a new watch of the deploy of `TAG` of `repo` in the daemon
+/// folder `dir`. At the end of a watch, the daemon posts its messages
+/// first and removes the watch after. A register in that time keeps the
+/// old watch and adds none ([`riff::watches::Registered::Kept`]), so this
+/// tries again until it gets a new watch (01M77JVF8ZTX2MN30QVY4170XG).
+async fn watch_deploy(dir: &Path, repo: &str) {
+    until("a new watch of the deploy", || async {
+        let op = riff::watches::Op::Deploy {
+            tag: TAG.to_owned(),
+            stale: None,
+        };
+        let registered = riff::watches::Watches::new(dir)
+            .register(repo, op, riff::daemon::now_ms())
+            .unwrap();
+        (registered == riff::watches::Registered::New).then_some(())
+    })
+    .await;
+}
+
 /// 01M5SNV75DRFHR26BT2M8243VV: the watch of the daemon gives the lead of
 /// another repository one note when the job `Deploy` waits, one when it
 /// passes and one when it fails, with a real riff-server. The lead of the
@@ -1929,19 +1948,10 @@ async fn the_watch_of_a_deploy_gives_the_other_lead_one_note_for_each_step() {
     };
     let expect =
         |step: riff::hold::Step| riff::text::release_note(step, TAG, &riff::hold::by(&repo));
-    let watch = || {
-        let op = riff::watches::Op::Deploy {
-            tag: TAG.to_owned(),
-            stale: None,
-        };
-        riff::watches::Watches::new(&dir)
-            .register(&repo, op, riff::daemon::now_ms())
-            .unwrap();
-    };
 
     // The job waits: the lead and the other lead hear it once.
     isolated::write_whole(&state, "waiting");
-    watch();
+    watch_deploy(&dir, &repo).await;
     until("the note of the wait", || async {
         (heard().await.len() == 1).then_some(())
     })
@@ -1976,7 +1986,7 @@ async fn the_watch_of_a_deploy_gives_the_other_lead_one_note_for_each_step() {
 
     // Another deploy fails: one more note.
     isolated::write_whole(&state, "failure");
-    watch();
+    watch_deploy(&dir, &repo).await;
     until("the note of the failure", || async {
         (heard().await.len() == 3).then_some(())
     })
@@ -2036,15 +2046,6 @@ async fn the_watch_of_a_deploy_gives_the_step_of_the_check_only_after_the_job_ch
         }
     };
     let passed = format!("The deploy of {TAG} passed: https://github.com/o/r/actions/runs/9.");
-    let watch = || {
-        let op = riff::watches::Op::Deploy {
-            tag: TAG.to_owned(),
-            stale: None,
-        };
-        riff::watches::Watches::new(&dir)
-            .register(&repo, op, riff::daemon::now_ms())
-            .unwrap();
-    };
     // The messages of the pass, when the last one has `reason` and the
     // step of the check.
     let (riff, passed) = (&r, passed.as_str());
@@ -2069,7 +2070,7 @@ async fn the_watch_of_a_deploy_gives_the_step_of_the_check_only_after_the_job_ch
         .unwrap();
     set("state", "success");
     set("check", "running");
-    watch();
+    watch_deploy(&dir, &repo).await;
     until("the step of the release in who", || async {
         let out = r.a.run(&r.main, &["who"], None).await;
         text(&out.stdout)
@@ -2094,7 +2095,7 @@ async fn the_watch_of_a_deploy_gives_the_step_of_the_check_only_after_the_job_ch
 
     // A status error: the reason of the job.
     std::fs::remove_file(tmp.path().join("status")).unwrap();
-    watch();
+    watch_deploy(&dir, &repo).await;
     tokio::time::sleep(Duration::from_millis(LOOK_MS * 10)).await;
     assert_eq!(r.messages(passed).await.len(), 1);
     let why = "The job Check the deploy failed before it read the log.";
@@ -2109,7 +2110,7 @@ async fn the_watch_of_a_deploy_gives_the_step_of_the_check_only_after_the_job_ch
     // A job that failed with no status: its end.
     std::fs::remove_file(tmp.path().join("status")).unwrap();
     set("check", "running");
-    watch();
+    watch_deploy(&dir, &repo).await;
     tokio::time::sleep(Duration::from_millis(LOOK_MS * 10)).await;
     assert_eq!(r.messages(passed).await.len(), 2);
     set("check", "cancelled");
@@ -2158,13 +2159,7 @@ async fn riff_who_says_the_state_of_an_open_release_at_each_step() {
 
     shows(None).await;
     set("state", "waiting");
-    let op = riff::watches::Op::Deploy {
-        tag: TAG.to_owned(),
-        stale: None,
-    };
-    riff::watches::Watches::new(&dir)
-        .register(&repo, op, riff::daemon::now_ms())
-        .unwrap();
+    watch_deploy(&dir, &repo).await;
     shows(Some(format!(
         "{TAG}: the deploy waits for a person (riff release approve {TAG})"
     )))
