@@ -4424,8 +4424,11 @@ So riff sets each of them:
   the CPU weight 1, the lowest. The default weight is 100. So when
   your programs and the sessions all want the CPU, your programs get
   100 parts and the sessions 1.
+- conmon, the monitor of podman that holds the container, runs in
+  `riff.slice` too, in a scope of its own. It is so when the daemon
+  starts the container, and when riff starts it from your terminal.
 - Each container also gets `--cgroup-conf cpu.weight=1`: in the slice,
-  it yields to podman and its network.
+  it yields to podman, conmon and the network.
 
 The priority has no setting. riff writes it in no file of yours:
 systemd keeps the weight of the slice in the runtime folder of your
@@ -4436,6 +4439,7 @@ flowchart TD
     M["user@UID.service:<br/>the systemd manager of your user"] --> A["app.slice: weight 100<br/>your programs"]
     M --> R["riff.slice: weight 1"]
     R --> C["each session container:<br/>cpu.weight 1, each process at nice 19"]
+    R --> O["libpod-conmon-ID.scope:<br/>the conmon of each container"]
 ```
 
 To see the CPU weight of `riff.slice` and of each slice next to it:
@@ -4473,6 +4477,29 @@ podman exec riff-issue-12-21c026a1 cat /sys/fs/cgroup/cpu.weight
 
 It shows `1`. A session that an older riff started keeps its old
 priority and its old slice until it ends.
+
+##### See where the conmon of a container runs
+
+To see the cgroup of the conmon of one container, for example
+`riff-issue-12-21c026a1`:
+
+```sh
+cat /proc/$(podman container inspect --format '{{.State.ConmonPid}}' riff-issue-12-21c026a1)/cgroup
+```
+
+It shows one line that ends with
+`/user@UID.service/riff.slice/libpod-conmon-ID.scope`, with your user
+ID and the ID of the container.
+
+To check the priority of the sessions on your machine, run the live
+test of riff in a clone of riff. It starts a worker and a lead in two
+ways: as the daemon starts them, and as from your terminal. On a
+machine with no rootless podman or no session image, each test says
+`skip:` and why:
+
+```sh
+cargo test -p riff --test all priority:: -- --nocapture
+```
 
 ### Set the effort of the sessions
 
