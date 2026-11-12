@@ -341,10 +341,16 @@ sequenceDiagram
   the old owner come before `owner_set`, in the same chunk. `apply` of
   `owner_set` stores only the owner. `set_admin` for a person who is
   not a member gives `member_invited`, then `admin_set`.
-- `take_owner`, `deny_owner`, `grant_owner` and `end_owner` put their
-  notes in their chunk as `posted` records. `pass_owner` posts no note
-  of the server: `riff` posts it. The warning to the owner is an
-  `announce`: it is no change of the people.
+- Each change of the people puts one line of the server in the chat,
+  as a `posted` record in the chunk of its command
+  (01M76S6128EZRZS2D5CE2QCC05): `invite`, `remove`, `set_admin`,
+  `pass_owner`, `take_owner`, `deny_owner`, `grant_owner` and
+  `end_owner`. A command that changes nothing puts no line. A request,
+  a deny and a gone owner also put a direct message to each live lead
+  of the person that must act. No record goes to the thread of a
+  repository, and `riff` posts no line and no note. The warning to the
+  owner is an `announce`: it is no change of the people, and its line
+  goes to the chat too.
 
 ## The trace of a command
 
