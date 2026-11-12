@@ -6,8 +6,8 @@
 //! is no project adds none, and a project with the notes of a lead and
 //! no session adds one. `--web` opens one GitHub search in the
 //! browser, here a fake `xdg-open`. `--answered N` removes the label of
-//! the issue N, and wakes the lead of the person (#1782,
-//! 01M6XZ2T9TPZC1X36Y2ZXZ83C0).
+//! the issue N, and wakes the lead of the project (#1782,
+//! 01M6XZ2T9TPZC1X36Y2ZXZ83C0, 01M78A9FSHE9XEPGC3SJAB7PMX).
 
 use isolated::Isolated;
 use std::path::Path;
@@ -562,7 +562,7 @@ async fn riff_questions_answered_takes_the_repository_of_repo() {
 
 /// #1782: `y` on the question of `a` in the Waves tab runs the effect
 /// `Answered`, and it does the same as `riff questions --answered`: the
-/// label goes, and the lead of the person gets the message.
+/// label goes, and the lead of the project gets the message.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_key_of_the_waves_tab_does_the_same_as_answered() {
     let server = common::start_signed().await;

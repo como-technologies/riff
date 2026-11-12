@@ -510,9 +510,9 @@ impl Presence {
         self.items.get(thread)?.get(item)
     }
 
-    /// The look of the lead `lead` at the blocks of the sessions of its
-    /// user in `thread` (01M41FZQ545HQ9Q75CSKX8HF8H,
-    /// 01M41FZQCHWY1YVGAZ60ZHJK21). A block with no answer for `after`
+    /// The look of the lead `lead` at the blocks of the sessions of each
+    /// person in `thread` (01M41FZQ545HQ9Q75CSKX8HF8H,
+    /// 01M41FZQCHWY1YVGAZ60ZHJK21, 01M78A9FSHE9XEPGC3SJAB7PMX). A block with no answer for `after`
     /// gets a second wake of the lead: it is in the first list. A block
     /// with no answer for `after` after the second wake is unanswered:
     /// it is in the second list, one time. A session that is gone gets
@@ -526,8 +526,7 @@ impl Presence {
     ) -> (Vec<Found>, Vec<Found>) {
         let (mut again, mut unanswered) = (Vec::new(), Vec::new());
         for (who, session) in &mut self.sessions {
-            if who.user() != lead.user()
-                || who == lead
+            if who == lead
                 || session.place.default_thread().as_ref() != Some(thread)
                 || session.gone(now)
             {

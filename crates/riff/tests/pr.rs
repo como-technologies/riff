@@ -601,7 +601,7 @@ async fn a_verify_result_wakes_the_lead_when_no_session_holds_the_item() {
 
 /// A person in a terminal has no repository in the URI, in any folder
 /// (01M6FYW8NG0E9HYPWTG2RV5EAM). The thread of the pull request gives
-/// the repository: with no holder, the lead of the user wakes in it.
+/// the repository: with no holder, the lead of the project wakes in it.
 /// With a holder in the repository, only the holder wakes. The person
 /// runs in a folder of its own, not in the clone of a session.
 #[tokio::test]

@@ -169,15 +169,17 @@
 //!   (01M3JPMQE6S7YM4HPEVGXWK7ET).
 //! - In a thread, a selector with `lead=true` that matches no live
 //!   session matches each live session with no claim that its other
-//!   fields match. So a verify request to the lead of the author reaches
-//!   a free session when the lead is gone (01M3JY1TBPQHH6WPPBTF42T64H).
+//!   fields match. So a verify request to the lead of the project
+//!   reaches a free session of any person when the lead is gone
+//!   (01M3JY1TBPQHH6WPPBTF42T64H, 01M78A9FSHE9XEPGC3SJAB7PMX).
 //! - A claim is free, or held. A held claim goes back to free when its
-//!   holder releases it or ends, when the lead of its user releases it
-//!   ([`State::release_for`], 01M3WG243BW7P6E1ME0DFNQF8C), or when the
+//!   holder releases it or ends, when the lead of the project releases
+//!   it ([`State::release_for`], 01M3WG243BW7P6E1ME0DFNQF8C), or when the
 //!   last sign of life of the holder is more than [`CLAIM_GRACE`] ago.
 //!   A claim of a free item succeeds.
-//! - Each user has at most one lead in each repository thread. Its URI
-//!   has `lead=true` (R175).
+//! - Each project has one lead: the holder of the claim `lead` of its
+//!   repository thread. Its URI has `lead=true` (R175,
+//!   01M77XMS645VZNTP22DTCB7RXE).
 //! - No session becomes the lead by itself (01M5NJAY3FTR005TDJJY1TMGNX).
 //!   A person names the lead, and a session cannot: [`State::lead`]. It
 //!   replaces the old lead, and tells it (01M5NJAXTQ0YKN7Q7XN0A7ZMPF).
@@ -1938,9 +1940,9 @@ impl State {
         Ok(())
     }
 
-    /// The look of the lead `lead` at the blocks of the sessions of its
-    /// user in its repository (01M41FZQ545HQ9Q75CSKX8HF8H,
-    /// 01M41FZQCHWY1YVGAZ60ZHJK21). It gives each block that gets a
+    /// The look of the lead `lead` at the blocks of the sessions of each
+    /// person in its repository (01M41FZQ545HQ9Q75CSKX8HF8H,
+    /// 01M41FZQCHWY1YVGAZ60ZHJK21, 01M78A9FSHE9XEPGC3SJAB7PMX). It gives each block that gets a
     /// second wake of the lead now, and each block that is unanswered
     /// now, each with the session URI and the reason. It refuses a
     /// caller that is not the lead.
@@ -2131,9 +2133,9 @@ impl State {
         self.written_view().uri(who, now)
     }
 
-    /// The person of `session` makes `session` the lead of its user in
+    /// The person of `session` makes `session` the lead of the project of
     /// its repository (01M5NJAXTQ0YKN7Q7XN0A7ZMPF). It replaces the old
-    /// lead, and tells the old lead (01M5NJAYMYF50B9WXH5RF9W737). The
+    /// lead, of any person, and tells the old lead (01M5NJAYMYF50B9WXH5RF9W737). The
     /// reply names `session` and the old lead, if another session was
     /// the lead. No session becomes the lead by itself
     /// (01M5NJAY3FTR005TDJJY1TMGNX), and a session cannot name the lead.
@@ -2311,20 +2313,10 @@ impl State {
         self.written.plans()
     }
 
-    /// The notes of the lead of `user` in `thread`, as the query `notes`
-    /// gives them (01M59258NTXPMWV18TKRKWNTYN). `user` is the user of
-    /// the caller when it is `None`. Only that user and each admin can
-    /// read them (01M77671TQ92487GSM24RJG82Z).
-    pub fn notes(
-        &self,
-        caller: &Caller,
-        thread: &ThreadName,
-        user: Option<&str>,
-        history: bool,
-    ) -> Result<NotesReply, Refused> {
-        let user = user.unwrap_or_else(|| caller.who().user());
-        notes::may_read(caller, user)?;
-        Ok(notes::reply(self.written.plans(), thread, user, history))
+    /// The notes of the project of `thread`, as the query `notes` gives
+    /// them: each member reads them (01M77XMZBJ6DRGJTGEEE0EDECP).
+    pub fn notes(&self, thread: &ThreadName, history: bool) -> NotesReply {
+        notes::reply(self.written.plans(), thread, history)
     }
 
     /// Each project of the riff, as the query `projects` gives them
@@ -2752,11 +2744,11 @@ impl State {
         self.written_view().live_leads(user, now)
     }
 
-    /// The names of the chat for the caller `me`, sorted by name, with
+    /// The names of the chat, sorted by name, with
     /// the kind of each name and whether its role is online: the list
     /// for the type-ahead of `@` ([`names`]).
-    pub fn names(&self, me: &Who, now: Instant) -> Vec<ChatName> {
-        self.written_view().names(me, now)
+    pub fn names(&self, now: Instant) -> Vec<ChatName> {
+        self.written_view().names(now)
     }
 
     /// The thread of each repository of the riff, sorted: the repository
@@ -3057,9 +3049,9 @@ impl State {
     }
 
     /// Frees the claim of `holder` for it: the session with this session
-    /// ID, or this start of it. Only the lead of the user of the holder
-    /// in the repository of the holder can
-    /// (01M3WG243BW7P6E1ME0DFNQF8C). The holder can be live, gone or
+    /// ID, or this start of it. Only the lead of the project of the
+    /// holder can, for a holder of any person (01M3WG243BW7P6E1ME0DFNQF8C,
+    /// 01M78A9FSHE9XEPGC3SJAB7PMX). The holder can be live, gone or
     /// ended. The server posts a note to the thread of the claim. It
     /// gives the holder.
     ///
@@ -3231,8 +3223,8 @@ mod tests {
         uri("riff://mike@pangolin/como-technologies/riff?session=c3#docs")
     }
 
-    /// The URI as the lead. In [`setup`], `api` and `tests` are the leads
-    /// of their users: the person of each names it.
+    /// The URI as the lead. In [`setup`], `api` is the one lead of the
+    /// project: the person of mike names it.
     fn lead(u: SessionUri) -> SessionUri {
         u.with_lead(true)
     }
@@ -3248,7 +3240,6 @@ mod tests {
             state.register(&n, now);
         }
         state.lead(&api(), now).unwrap();
-        state.lead(&tests(), now).unwrap();
         state.riff(&api(), Some(RiffState::Running), now).unwrap();
         state
     }
@@ -3784,10 +3775,10 @@ mod tests {
                 .map(|s| s.uri)
                 .collect()
         };
-        assert_eq!(live(&state), [lead(tests()), lead(api())]);
+        assert_eq!(live(&state), [lead(api())]);
         // Each other session needs a watch.
         state.watch_started(&docs(), now);
-        assert_eq!(live(&state), [lead(tests()), lead(api()), docs()]);
+        assert_eq!(live(&state), [lead(api()), docs()]);
     }
 
     #[test]
@@ -3800,7 +3791,7 @@ mod tests {
         state.register(&api(), day2 - Duration::from_secs(90));
         let shown = state.who(day2, T0, false);
         let uris: Vec<SessionUri> = shown.iter().map(|s| s.uri.clone()).collect();
-        assert_eq!(uris, [lead(tests()), lead(api())]);
+        assert_eq!(uris, [tests(), lead(api())]);
         assert_eq!(shown[0].idle_secs, 0);
         assert_eq!(shown[1].idle_secs, 90);
         assert_eq!(state.who(day2, T0, true).len(), 3);
@@ -3919,8 +3910,8 @@ mod tests {
         assert!(waits(&state, now + GONE - Duration::from_secs(1)).is_empty());
         let gone = now + GONE;
         assert_eq!(waits(&state, gone), [repo()]);
-        // A keep-alive of the lead of brett: the repository has a live lead.
-        state.alive(&tests(), gone);
+        // A keep-alive of the lead: the repository has a live lead.
+        state.alive(&api(), gone);
         assert!(waits(&state, gone).is_empty());
 
         // A start of riff-server: no session has a sign of life since.
@@ -4970,22 +4961,32 @@ mod tests {
     }
 
     fn mike_lead() -> Vec<Selector> {
-        vec![Selector::lead("mike", "como-technologies/riff")]
+        vec![Selector {
+            user: Some("mike".into()),
+            ..Selector::lead("como-technologies/riff")
+        }]
     }
 
+    /// The project has one lead (01M77XMS645VZNTP22DTCB7RXE): the session
+    /// that the person named. A lead that another person names takes the
+    /// lead mark of the project.
     #[test]
-    fn the_first_session_of_a_user_in_a_repository_is_the_lead() {
+    fn the_project_has_one_lead() {
         let now = Instant::now();
-        let state = setup(now);
+        let mut state = setup(now);
         assert!(is_lead(&state, &api(), now));
-        assert!(is_lead(&state, &tests(), now));
+        assert!(!is_lead(&state, &tests(), now));
         assert!(!is_lead(&state, &docs(), now));
-        let leads: Vec<Who> = listed(&state)
-            .into_iter()
-            .filter(|s| s.uri.lead())
-            .map(|s| s.uri.who().clone())
-            .collect();
-        assert_eq!(leads, [tests().who().clone(), api().who().clone()]);
+        let leads = |state: &State| -> Vec<Who> {
+            listed(state)
+                .into_iter()
+                .filter(|s| s.uri.lead())
+                .map(|s| s.uri.who().clone())
+                .collect()
+        };
+        assert_eq!(leads(&state), [api().who().clone()]);
+        state.lead(&tests(), now).unwrap();
+        assert_eq!(leads(&state), [tests().who().clone()]);
     }
 
     #[test]
@@ -5200,10 +5201,7 @@ mod tests {
         assert_eq!(reply.lead, lead(docs()));
         assert_eq!(reply.replaced, Some(api()));
         assert!(!is_lead(&state, &api(), now));
-        assert!(
-            is_lead(&state, &tests(), now),
-            "another user keeps its lead"
-        );
+        assert!(!is_lead(&state, &tests(), now));
         assert_eq!(state.lead(&docs(), now).unwrap().replaced, None);
     }
 
@@ -5297,15 +5295,13 @@ mod tests {
         assert!(woken(&d).is_empty());
         let person = Who::new("mike", None).unwrap();
         assert_eq!(d.tailed.thread, ThreadName::direct(api().who(), &person));
-        let error = state
-            .post(
-                Post::new(&docs(), None, to(&["lead=true"]), "which?"),
-                now,
-                0,
-            )
-            .err()
+        // A session of another person reaches the one lead of the project
+        // (01M77XMS645VZNTP22DTCB7RXE).
+        let to_lead = vec![Selector::lead("como-technologies/riff")];
+        let d = state
+            .post(Post::new(&tests(), None, to_lead, "may I?"), now, 0)
             .unwrap();
-        assert!(error.contains("2 sessions match"), "{error}");
+        assert_eq!(woken(&d), [api().who().clone()]);
     }
 
     #[test]
@@ -5639,12 +5635,6 @@ mod tests {
         assert!(block.answered && !block.unanswered);
         assert_eq!(look(&mut state, 2000), (0, 0));
 
-        // A block of a session of another user is not for this lead.
-        state
-            .set_blocked(&tests(), "which API?".into(), t(0), T0)
-            .unwrap();
-        assert_eq!(look(&mut state, 2400), (0, 0));
-
         // An answer: no second wake.
         state
             .set_blocked(&docs(), "which design?".into(), t(2400), T0)
@@ -5657,6 +5647,30 @@ mod tests {
 
         // Only the lead looks.
         assert!(state.look_blocks(&docs(), after, t(4800)).is_err());
+    }
+
+    /// The lead of the project looks at the blocks of the sessions of
+    /// each person in its repository (01M78A9FSHE9XEPGC3SJAB7PMX): a
+    /// block of a session of brett wakes the lead of mike again.
+    #[test]
+    fn the_lead_looks_at_the_blocks_of_the_sessions_of_each_person() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let t = |secs| now + Duration::from_secs(secs);
+        let after = Duration::from_secs(600);
+        state
+            .set_blocked(&tests(), "which API?".into(), t(0), T0)
+            .unwrap();
+        for me in [api(), tests()] {
+            state.alive(&me, t(600));
+        }
+        let (again, unanswered) = state.look_blocks(&lead(api()), after, t(600)).unwrap();
+        let again: Vec<(Who, String)> = again
+            .into_iter()
+            .map(|(uri, reason)| (uri.who().clone(), reason))
+            .collect();
+        assert_eq!(again, [(tests().who().clone(), "which API?".to_owned())]);
+        assert!(unanswered.is_empty());
     }
 
     /// The author waits for the verify and the merge. The verifier works
@@ -5771,7 +5785,6 @@ mod tests {
             state.register(&n, now);
         }
         state.lead(&api(), now).unwrap();
-        state.lead(&tests(), now).unwrap();
         state.riff(&api(), Some(RiffState::Running), now).unwrap();
         let w1 = uri("riff://mike@pangolin/como-technologies/riff?session=w1#issue-12");
         state.worker(&w1, true, now);

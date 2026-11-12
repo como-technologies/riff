@@ -865,7 +865,7 @@ pub struct Facts {
     pub waiting: bool,
     /// The session holds a claim.
     pub claims: bool,
-    /// The session is the lead of its user.
+    /// The session is the lead of its project.
     pub lead: bool,
     /// The hooks saw a turn that runs.
     pub turn: bool,
@@ -2108,11 +2108,11 @@ pub struct PlanShow {
     pub thread: ThreadName,
 }
 
-/// `POST /v1/notes/set`: the lead of a user writes the notes of its
+/// `POST /v1/notes/set`: the lead writes the notes of the project of a
 /// repository thread (01M59258K3TYR09HC4AWHWZPEX). The text replaces
-/// the old text, and the old text stays in the history. Only a session
-/// of the user that is not a worker, and the person of the user, can
-/// write them (01M59258NTXPMWV18TKRKWNTYN). The text has at most
+/// the old text, and the old text stays in the history. Only the lead of
+/// the project and an admin can write them
+/// (01M77XMZBJ6DRGJTGEEE0EDECP). The text has at most
 /// [`NOTES_MAX`](crate::notes::NOTES_MAX) bytes, and it looks like no
 /// token (01M59258RJ3CG498Z8AVQ5TV5Q).
 ///
@@ -2145,9 +2145,9 @@ pub struct SetNotesReply {
     pub changed: bool,
 }
 
-/// `POST /v1/notes`: the query for the notes of a lead
-/// (01M59258NTXPMWV18TKRKWNTYN). The user of the lead can read them,
-/// and each admin of the riff. Another member cannot.
+/// `POST /v1/notes`: the query for the notes of the project of a
+/// repository thread. Each member can read them
+/// (01M77XMZBJ6DRGJTGEEE0EDECP).
 ///
 /// ```
 /// use riff_core::wire::{Call, NotesShow};
@@ -2155,7 +2155,7 @@ pub struct SetNotesReply {
 /// let show: NotesShow = serde_json::from_str(
 ///     r#"{"me":"riff://mike@pangolin/como-technologies/riff?session=a1","thread":"como-technologies/riff"}"#,
 /// ).unwrap();
-/// assert_eq!(show.user, None);
+/// assert_eq!(show.thread.to_string(), "como-technologies/riff");
 /// assert!(!show.history);
 /// assert_eq!(NotesShow::PATH, "/v1/notes");
 /// ```
@@ -2163,10 +2163,6 @@ pub struct SetNotesReply {
 pub struct NotesShow {
     pub me: SessionUri,
     pub thread: ThreadName,
-    /// The user of the lead. Leave it out to read the notes of the
-    /// caller. Only an admin can name another user.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub user: Option<String>,
     /// True asks also for the old texts.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub history: bool,
@@ -2184,17 +2180,16 @@ pub struct NotesVersion {
 }
 
 /// The reply to [`NotesShow`]: the notes now, and with `history` the old
-/// texts, the oldest first. A lead with no notes has an empty text.
+/// texts of the project, the oldest first. A project with no notes has an
+/// empty text.
 ///
 /// ```
 /// use riff_core::wire::NotesReply;
 ///
-/// assert_eq!(serde_json::to_string(&NotesReply::default()).unwrap(), r#"{"user":"","text":""}"#);
+/// assert_eq!(serde_json::to_string(&NotesReply::default()).unwrap(), r#"{"text":""}"#);
 /// ```
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct NotesReply {
-    /// The user of the lead.
-    pub user: String,
     pub text: String,
     /// Who wrote the text, and when. `None` when there are no notes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2427,9 +2422,10 @@ pub struct ReleaseReply {
     pub must_clear: bool,
 }
 
-/// `POST /v1/release/for`: the lead of a user frees the claim of
-/// another session of that user (01M3WG243BW7P6E1ME0DFNQF8C). The
-/// server posts a note to the thread of the claim.
+/// `POST /v1/release/for`: the lead of the project frees the claim of
+/// another session of its repository, of any person
+/// (01M3WG243BW7P6E1ME0DFNQF8C, 01M78A9FSHE9XEPGC3SJAB7PMX). The server
+/// posts a note to the thread of the claim.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ReleaseFor {
     pub me: SessionUri,
@@ -2464,9 +2460,9 @@ pub const LEAD_START_WAITS: [std::time::Duration; 4] = [
 ];
 
 /// `POST /v1/lead`: the person `me` makes the session `session` the
-/// lead of the user in the repository of `me`, and gives it the claim
-/// [`LEAD_CLAIM`] of the project. It replaces the old lead. A session
-/// cannot send it.
+/// lead of the project of the repository of `me`, and gives it the
+/// claim [`LEAD_CLAIM`]. It replaces the old lead, of any person. A
+/// session cannot send it.
 ///
 /// ```
 /// use riff_core::wire::Lead;
@@ -4329,17 +4325,28 @@ mod tests {
     }
 
     #[test]
-    fn a_direct_message_to_the_lead_must_reach_a_session_of_that_user() {
+    fn a_direct_message_to_the_lead_of_the_project_reaches_a_session_of_any_user() {
         let key = Key::generate();
         let mike = uri(MIKE);
+        let keys = keys("mike", &key);
         let lead = Who::new("mike", Some("1ead")).unwrap();
-        let to = vec![Selector::lead("mike", "como-technologies/riff")];
+        let brett = Who::new("brett", Some("77e0")).unwrap();
+        let to = vec![Selector::lead("como-technologies/riff")];
         let mut post = Post::new(&mike, None, to, "may I?");
         post.sign(&key, 5);
         let message = stored(&post, mike.clone());
-        let keys = keys("mike", &key);
         assert!(message.verified(&ThreadName::direct(mike.who(), &lead), &keys));
-        let brett = Who::new("brett", Some("77e0")).unwrap();
+        assert!(message.verified(&ThreadName::direct(mike.who(), &brett), &keys));
+
+        // A selector with a user must reach a session of that user.
+        let to = vec![Selector {
+            user: Some("mike".into()),
+            ..Selector::lead("como-technologies/riff")
+        }];
+        let mut post = Post::new(&mike, None, to, "may I?");
+        post.sign(&key, 5);
+        let message = stored(&post, mike.clone());
+        assert!(message.verified(&ThreadName::direct(mike.who(), &lead), &keys));
         assert!(!message.verified(&ThreadName::direct(mike.who(), &brett), &keys));
     }
 

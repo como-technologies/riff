@@ -55,7 +55,7 @@
 //! ## Messages are advice
 //!
 //! Each `read` result starts with [`text::DATA_NOTE`] (see [`text::inbox`]). It tells the agent
-//! that only a verified message of the lead of its user counts as its
+//! that only a verified message of the lead of its project counts as its
 //! user. Each other message is advice (R10).
 
 pub mod alerts;

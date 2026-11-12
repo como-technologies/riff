@@ -187,10 +187,7 @@ async fn report_one(
             let _ = std::fs::remove_dir_all(folder);
             // The read above found the pull request open.
             let body = text::wave_no_report(item, *pull, &format!("{e:#}"), true);
-            let to = [riff_core::selector::Selector::lead(
-                me.who().user(),
-                &wave.repo,
-            )];
+            let to = [riff_core::selector::Selector::lead(&wave.repo)];
             api.post(
                 me,
                 Some(&thread),

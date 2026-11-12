@@ -565,11 +565,11 @@ fn the_log_of_the_notes_gives_its_checkpoint_at_each_position() {
     let full = State::replay(records.clone(), now, 0);
     assert_eq!(written(&full, &expected), bytes_of(NOTES, "replayed.json"));
     let app = "acme/app".parse().unwrap();
-    let notes = full.plans().notes(&app, "ann").unwrap();
+    let notes = full.plans().notes(&app).unwrap();
     assert_eq!(notes.text, "Wave 37 runs. Prefer thelio.");
-    assert_eq!(full.plans().notes_before(&app, "ann").len(), 1);
+    assert_eq!(full.plans().notes_before(&app).len(), 1);
     let lib = "acme/lib".parse().unwrap();
-    assert_eq!(full.plans().notes(&lib, "bob").unwrap().by, None);
+    assert_eq!(full.plans().notes(&lib).unwrap().by, None);
 
     for at in 0..=records.len() {
         let (before, after) = records.split_at(at);

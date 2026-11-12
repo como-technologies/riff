@@ -116,7 +116,7 @@ enum Command {
     },
     /// Say that you cannot go on, and wake your lead
     ///
-    /// riff shows you as blocked, and tells the lead of your user the
+    /// riff shows you as blocked, and tells the lead of your project the
     /// reason. The block of a worker ends at its next work after an
     /// answer. The lead itself shows as waiting for its user, and tells
     /// nobody. The next prompt of the person ends the block of the lead.
@@ -130,7 +130,7 @@ enum Command {
     /// A long step runs longer than one tool call, for example a live
     /// window of two hours. riff who and riff top show it with its age
     /// until it is done. A failed step shows its reason, and wakes the
-    /// lead of your user.
+    /// lead of your project.
     Step {
         #[command(subcommand)]
         change: StepCommand,
@@ -141,7 +141,7 @@ enum Command {
     Tell {
         /// The session: its session ID or the start of it, as `riff read`
         /// shows it, its full riff:// URI from `riff who`, or `lead` for
-        /// the lead of your user in this repository.
+        /// the lead of the project of this repository, of any person.
         session: String,
         /// The message.
         #[arg(required = true)]
@@ -306,17 +306,16 @@ enum Command {
         #[command(subcommand)]
         command: SessionCommand,
     },
-    /// Name the lead of your user: riff lead --session ID
+    /// Name the lead of the project: riff lead --session ID
     ///
-    /// Each person has one lead in each repository. The other sessions of
-    /// your user send their questions to the lead. `riff lead --session
-    /// ID` makes the session ID the lead of your user in the repository
-    /// of this directory. It replaces the old lead, and riff tells the old
+    /// A project has one lead, for each person of the project. The other
+    /// sessions of the project send their questions to the lead. `riff
+    /// lead --session ID` makes the session ID the lead of the project of
+    /// this directory. It replaces the old lead, and riff tells the old
     /// lead. Run it in a terminal with no session, not in an agent
     /// session: a session cannot name the lead, also not itself. `riff
-    /// lead start` names its new lead too. A project has one lead: the new
-    /// lead takes the claim lead, and the riff daemon of the old lead
-    /// stops it.
+    /// lead start` names its new lead too. The new lead takes the claim
+    /// lead, and the riff daemon of the old lead stops it.
     #[command(args_conflicts_with_subcommands = true)]
     Lead {
         /// The session ID of the new lead, or its start: at least 4
@@ -1878,12 +1877,12 @@ enum LeadCommand {
     },
     /// Show or edit the notes of the lead
     ///
-    /// The notes are text that riff-server keeps for your user and the
-    /// repository: the running state of the lead, what waits for you, and
-    /// your choices. A lead on any host reads them at its start. The lead
-    /// writes them with its notes tool. riff refuses a text over 64 KiB and
-    /// a text that looks like a token. Only you and each admin can read
-    /// them.
+    /// The notes are one text that riff-server keeps for each project:
+    /// the running state of the lead, what waits for the people, and their
+    /// choices. A lead on any host reads them at its start. The lead
+    /// writes them with its notes tool. Each member reads them. Only the
+    /// lead and an admin write them. riff refuses a text over 64 KiB and a
+    /// text that looks like a token.
     Notes {
         #[command(subcommand)]
         command: Option<NotesCommand>,
@@ -1893,10 +1892,6 @@ enum LeadCommand {
         /// Show also each old text, the newest first.
         #[arg(long)]
         history: bool,
-        /// Show the notes of this user. Only an admin can show the notes
-        /// of another user.
-        #[arg(long)]
-        user: Option<String>,
     },
 }
 
@@ -2439,7 +2434,6 @@ async fn cli() -> Result<()> {
                 command,
                 thread,
                 history,
-                user,
             }),
         ..
     } = &command
@@ -2450,7 +2444,7 @@ async fn cli() -> Result<()> {
         let file = command
             .as_ref()
             .map(|NotesCommand::Edit { file }| file.as_deref());
-        return riff::lead::notes(&api, &me, &thread, user.as_deref(), *history, file).await;
+        return riff::lead::notes(&api, &me, &thread, *history, file).await;
     }
     if let Command::Lead {
         command: Some(LeadCommand::Stop { host }),
@@ -2752,7 +2746,7 @@ async fn cli() -> Result<()> {
             reach.fact(&api, &me, reported.issue, number, state).await;
             let posted = async {
                 let sessions = reach.sessions(&api, &me).await?;
-                let to = pr::result_to(reported.issue, &me, &thread, &sessions);
+                let to = pr::result_to(reported.issue, &thread, &sessions);
                 let body = text::verify_post(verdict, number, &reported, &result);
                 reach
                     .post(&api, &me, &thread, &to, &body, Kind::Message)
@@ -3643,13 +3637,13 @@ async fn lead_only(server: &str, refusals: &text::LeadOnly) -> Option<String> {
     }
 }
 
-/// True when the agent session `id` is the lead of its user, as
-/// riff-server sees it.
+/// True when the agent session `id` is the lead of the project, as
+/// riff-server sees it (01M78A9FSHE9XEPGC3SJAB7PMX).
 async fn is_lead(server: &str, id: &str) -> Result<bool> {
     Ok(lead_and_role(server, Some(id)).await?.0)
 }
 
-/// Whether the agent session `id` is the lead of its user, and the role
+/// Whether the agent session `id` is the lead of the project, and the role
 /// of its user in the riff. With no `id`: the role of the person on this
 /// machine. The role is `None` in a riff with no sign-in, which has no
 /// people (01M58B0JSQMWNCMSNX19536XT8). A user with no row is a member.

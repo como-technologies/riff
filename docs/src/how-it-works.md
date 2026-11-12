@@ -1590,7 +1590,7 @@ session.
 
 `you` marks your own row. A tag shows the role of a session:
 
-- `lead`: the lead of its user in the repository (see
+- `lead`: the one lead of the project of the repository (see
   [The lead](#the-lead)).
 - `worker`: a session that registered as a worker. It tells the server,
   so each machine shows the same tag.
@@ -2855,8 +2855,9 @@ session goes on from the earlier work, and does not start again.
 
 A session can hold an item and not work on it: its process died and
 the server did not see it yet, or it does not answer. Then no other
-session can claim the item. The lead of your user frees the claim for
-that session. Find the session ID in `riff who --all`:
+session can claim the item. The lead of the project frees the claim
+for that session, also for a session of another person. Find the
+session ID in `riff who --all`:
 
 ```sh
 riff who --all
@@ -3062,7 +3063,7 @@ sequenceDiagram
     participant G as GitHub
     A->>A: commit, checks pass, push the branch
     A->>G: riff pr open: the pull request, auto-merge on
-    A->>E: post to [lead of mike] "verify request: issue-6, PR #40, commit"
+    A->>E: post to [lead of the project] "verify request: issue-6, PR #40, commit"
     E->>L: wake
     L->>E: tell V "request: claim verify-issue-6"
     E->>V: wake
@@ -3098,14 +3099,14 @@ request, then checks out the commit again. When the base commit cannot
 show the fault, the verifier uses a test of the guard on a sample, the
 control of the author, or a read.
 
-A verify request wakes only the lead of the author's user. The lead
-gives it to a session with no claim, or starts a worker for it. The
-author never gets the verify, also after a `/clear` (see "No verify for
-the author" in
+A verify request wakes only the lead of the project, a session of any
+person. The lead gives it to a session with no claim, or starts a
+worker for it. The author never gets the verify, also after a `/clear`
+(see "No verify for the author" in
 [riff starts the work by itself](#riff-starts-the-work-by-itself)).
-When the user has no live lead, the request wakes each free session of
-the user in the repository: each live session with no claim. Each other
-session sees it at its next read. A verify request is free work: a
+When the project has no live lead, the request wakes each free session
+in the repository, of any person: each live session with no claim. Each
+other session sees it at its next read. A verify request is free work: a
 session picks it like any other item.
 
 ### Who may send a verify request and a result
@@ -3747,7 +3748,7 @@ riff verify pass 40 --file result.md --commit 1a2b3c4
 
 riff takes the repository of the pull request from the folder. A
 person in a terminal has no repository of their own. So the result
-finds the holder of the issue, and the lead of your user, in the
+finds the holder of the issue, and the lead of the project, in the
 repository of the pull request.
 
 ### Keep a live security fault out of public text
@@ -3768,11 +3769,11 @@ riff tell lead "a live security fault: WHAT AND WHERE"
 ### Ask for a verify by hand
 
 A person can ask the sessions to verify a pushed branch. Name the
-issue, the branch and the commit. The post wakes your lead, which
-gives it to a free session:
+issue, the branch and the commit. The post wakes the lead of the
+project, which gives it to a free session:
 
 ```sh
-riff post --to user=mike,repo=como-technologies/riff,lead=true "verify request: issue-6, branch issue-6, commit 1a2b3c4"
+riff post --to repo=como-technologies/riff,lead=true "verify request: issue-6, branch issue-6, commit 1a2b3c4"
 ```
 
 ## The local folder
@@ -3844,7 +3845,7 @@ sequenceDiagram
 | `[{claim: "issue-6"}]` | the holder of issue-6 |
 | `[{user: "mike", host: "pangolin"}]` | each session of mike on pangolin |
 | `[{user: "mike", host: "pangolin", person: true}]` | the terminals of mike on pangolin, and no agent session |
-| `[{user: "mike", repo: "como-technologies/riff", lead: true}]` | the lead of mike in the repository |
+| `[{repo: "como-technologies/riff", lead: true}]` | the one lead of the project, a session of any person |
 
 In a thread, a selector with `lead: true` that matches no live session
 wakes each live session with no claim that its other fields match. So
@@ -4141,8 +4142,8 @@ see "Who a line of riff-bot names". The log of the riff daemon on the
 host has the cause of a fault. A line that a person types with the
 words of `riff-bot` shows as that person.
 
-The lead of each person in a project shows with the same name, and the
-name wakes your own lead there (see "Wake a person or a project by
+The lead of a project shows with the name of the project, and the name
+wakes that lead, for each person (see "Wake a person or a project by
 name"). When two projects have the same name, each of their leads shows
 as `OWNER/REPO`, for example `<como-technologies/strata>`. Each one
 reads the names when it starts, and `riff chat` and the Chat tab read
@@ -4301,13 +4302,14 @@ stateDiagram-v2
 
 ### Ask a lead in the chat
 
-A chat line wakes only the names that it holds. `@riff` wakes your
-lead in the project riff: the name of a project is its repository
-after the slash. `@brett` wakes the person brett: the terminals of
-brett, and no agent session of brett. A line can hold more than one
-name. A line with no name wakes no one: it stays in the chat for each
-member who reads it. A line that names a person, with `@USER` or with
-`USER:` at the start, is also a highlight on the terminal of that person
+A chat line wakes only the names that it holds. `@riff` wakes the lead
+of the project riff, also when the lead is a session of another person:
+the name of a project is its repository after the slash. `@brett`
+wakes the person brett: the terminals of brett, and no agent session of
+brett. A line can hold more than one name.
+A line with no name wakes no one: it stays in the chat for each member
+who reads it. A line that names a person, with `@USER` or with `USER:`
+at the start, is also a highlight on the terminal of that person
 (see "Get a highlight in the chat"). The lead answers in the chat. Type
 the lines in `riff chat`, not in a shell:
 
@@ -4322,7 +4324,7 @@ sequenceDiagram
     participant M as riff chat (mike)
     participant S as riff-server
     participant B as riff chat (brett)
-    participant L as lead of mike in riff
+    participant L as the lead of riff
     M->>S: @brett @riff is the release out?
     S-->>B: the line: a highlight for brett
     S-->>L: wake
@@ -4343,13 +4345,13 @@ each one has the name `OWNER/REPO`:
 
 ### Answer a person in the chat only
 
-Your lead reads each line of the chat at its next read. It answers
-only a line of yours that names its project: `@riff`, or
+The lead of a project reads each line of the chat at its next read. It
+answers each line that names its project, of each person: `@riff`, or
 `@como-technologies/riff`. Each other line asks it nothing. The answer
 starts with the name of the person who asked, and goes to the chat
 with the selector `name=USER`. So it wakes the terminals of that person
 (`riff chat`, `riff tail`, the phone), and no agent session: no
-daemon, no worker, no verify. Ask your lead in `riff chat`:
+daemon, no worker, no verify. Ask the lead in `riff chat`:
 
 ```text
 14:02 <mike> @riff is #12 merged?
@@ -4360,7 +4362,7 @@ daemon, no worker, no verify. Ask your lead in `riff chat`:
 sequenceDiagram
     participant M as riff chat (mike)
     participant S as riff-server
-    participant L as the lead of mike in riff
+    participant L as the lead of riff
     M->>S: @riff is #12 merged?
     S-->>L: wake
     L->>S: read the chat
@@ -4391,7 +4393,7 @@ A name has one of two kinds:
 | Kind | The name | Example | It wakes |
 |---|---|---|---|
 | person | the user | `brett` | the terminals of the person |
-| project | the repository after the slash | `riff` for `como-technologies/riff` | your lead in the project |
+| project | the repository after the slash | `riff` for `como-technologies/riff` | the lead of the project |
 
 Each name is unique. When two projects have the same name, or a
 project has the name of a person, each of those projects has the name
@@ -4399,7 +4401,7 @@ project has the name of a person, each of those projects has the name
 `OWNER/REPO` also names a project with no clash. The case of a letter
 does not matter. riff-server gives the list of the names, with the kind
 of each name and whether it is online: a person that `riff who` shows
-as live, or a project where your lead runs.
+as live, or a project whose lead runs.
 
 ### Wake a person or a project by name
 
@@ -4416,7 +4418,7 @@ riff post --thread chat --to name=brett "can you look at #12?"
 Posted message 42 to chat. Woke brett@heron.
 ```
 
-To wake your lead in `como-technologies/riff`, use the name of the
+To wake the lead of `como-technologies/riff`, use the name of the
 project:
 
 ```sh
@@ -4428,9 +4430,9 @@ Posted message 43 to chat. Woke mike@thelio:riff (a6cf2205).
 ```
 
 A name that is no person and no project wakes no one, and the line
-still goes to the chat. When your lead in the project does not run,
-the name wakes no one too: the line waits in the chat. No other session
-of yours wakes in the place of the lead:
+still goes to the chat. When the lead of the project does not run, the
+name wakes no one too: the line waits in the chat. No other session
+wakes in the place of the lead:
 
 ```text
 Posted message 44 to chat. No session matches name=riff.
@@ -4440,9 +4442,9 @@ Posted message 44 to chat. No session matches name=riff.
 flowchart LR
     P["riff post --to name=NAME"] --> S{"riff-server:<br/>NAME is"}
     S -- "a person" --> T["the terminals of the person"]
-    S -- "a project" --> L["your lead in the project"]
+    S -- "a project" --> L["the lead of the project"]
     S -- "no person, no project" --> N["no one: the line goes"]
-    L -- "your lead does not run" --> W["no one: the line waits in the chat"]
+    L -- "the lead does not run" --> W["no one: the line waits in the chat"]
 ```
 
 ### Pick a name with @
@@ -4645,7 +4647,7 @@ Each chat, and `riff tail chat`, shows it with no `<NAME>`:
 ```
 
 An older riff shows the line as `/me waves`. A name in an action wakes
-as in any line: `/me asks @riff to look` wakes your lead in riff. The
+as in any line: `/me asks @riff to look` wakes the lead of riff. The
 chat knows only `/me` and `/quit`. It sends no line with another
 command. To send a line that starts with `/`, start it with `//`.
 
@@ -5098,8 +5100,8 @@ These posts wake:
 | Post | Wakes |
 |---|---|
 | A board, "started", "done", other news | nobody: a note |
-| A verify request | the lead of the author's user, or its free sessions when no lead is live |
-| A verify result | the holder of the item: `claim=ITEM`. With no holder, also the lead of the verifier |
+| A verify request | the lead of the project, or the free sessions of the repository when no lead is live |
+| A verify result | the holder of the item: `claim=ITEM`. With no holder, also the lead of the project |
 | A question or a request | the one session: `tell` |
 | A status request | the sessions that it selects |
 
@@ -5907,7 +5909,7 @@ goes on from its first start.
 
 A session is blocked when it cannot go on with no decision of a
 person. One command says so. It shows the session as `blocked`, and
-the message `blocked: REASON` wakes the lead of its user. A session
+the message `blocked: REASON` wakes the lead of its project. A session
 calls the `blocked` tool. From a terminal:
 
 ```sh
@@ -5943,8 +5945,9 @@ sequenceDiagram
     Note over P: riff top: the lead gave no answer
 ```
 
-The `riff relay mcp` of the lead looks each minute. The notification
-holds the session, its item and the reason, and no text of a message. It
+The `riff relay mcp` of the lead looks each minute at the blocks of
+the sessions of each person in its repository. The notification holds
+the session, its item and the reason, and no text of a message. It
 needs a desktop: a display and `notify-send`, as on GNOME. A machine
 with no desktop gets no notification, and nothing fails. The keys
 `lead.wake` (minutes, 15 by default) and `lead.notify` (true by
@@ -5987,23 +5990,30 @@ sets it.
 
 ## The notes of the lead
 
-The notes of the lead are text that riff-server keeps for you in each
-repository: the running state of the lead, what waits for you, your
-choices and the choices of a host. A lead on any host reads them at its
-start. So a new lead, or a lead after a crash, needs no Claude memory of
-one host. The lead keeps the state in its notes and on GitHub.
+The notes of the lead are one text that riff-server keeps for each
+project: the running state of the lead, what waits for the people, the
+choices of the people and the choices of a host. A lead on any host
+reads them at its start. So a new lead, or a lead after a crash, needs
+no Claude memory of one host. The lead keeps the state in its notes and
+on GitHub.
 
 ```mermaid
 flowchart LR
-    L[the lead] -->|notes tool| S[(riff-server)]
-    P[you] -->|riff lead notes edit| S
-    S -->|riff lead notes| P
+    L[the lead] -->|notes tool| S[(riff-server: one text for each project)]
+    A[an admin] -->|riff lead notes edit| S
+    S -->|riff lead notes| P[each member]
     S -->|the notes tool, at each start| L2[the lead on a new host]
 ```
 
-Only you and the admins of the riff can read your notes. A secret never
+Each member of the riff reads the notes of each project. Only the lead
+of the project and an admin write them. A worker cannot. A secret never
 goes in them: riff refuses a text that looks like a token. The limit is
 64 KiB.
+
+The notes of a project are the newest text of the project. A project
+whose people each kept notes of their own before keeps all of them: the
+notes start from the newest text, and the older texts are in the
+history.
 
 ### Show the notes of the lead
 
@@ -6026,20 +6036,16 @@ text. To take the text from a file:
 riff lead notes edit --file notes.md
 ```
 
+When you are no admin, riff refuses the edit: `only the lead of
+OWNER/REPO and an admin write the notes of the project. Tell the lead.`
+Tell the lead what to write.
+
 ### See the old texts of the notes
 
 riff keeps each old text.
 
 ```sh
 riff lead notes --history
-```
-
-### Show the notes of another user
-
-Only an admin can. Put the user in place of `NAME`:
-
-```sh
-riff lead notes --user NAME
 ```
 
 ## Move the lead to another host
@@ -6273,69 +6279,71 @@ work on.
 
 ## The lead
 
-A person often runs many sessions at once. The person works in one of
-them: the lead. The other sessions of the person are workers. The
-workers send their questions to the lead, and the lead gives them
-work. The person answers there. No question waits at a terminal that
-the person does not watch.
+A project has one lead: one session that serves each person of the
+project. The riff daemon of a host of the project runs it, and each
+person talks to it. The other sessions of the project are workers, of
+each person and on each host. The workers send their questions to the
+lead, and the lead gives them work. The people answer there. No
+question waits at a terminal that nobody watches.
 
-This graph shows two people in one repository. mike has a lead on
-pangolin, and workers on pangolin and thelio. brett has a lead and a
-worker on thelio.
+This graph shows two people in one project. The lead runs on pangolin.
+It conducts the workers of mike on pangolin and on thelio, and the
+worker of brett on thelio. mike and brett talk to the same lead.
 
 ```mermaid
 flowchart TB
-    M((mike)) <-->|questions, answers| ML
-    B((brett)) <-->|questions, answers| BL
+    M((mike)) <-->|questions, answers| L
+    B((brett)) <-->|questions, answers| L
     subgraph pangolin
-        ML[mike: lead]
+        L[the lead of the project]
         MA[mike: issue-6]
     end
     subgraph thelio
         MB[mike: issue-7]
-        BL[brett: lead]
         BA[brett: issue-9]
     end
-    MA -->|questions, reports| ML
-    MB -->|questions, reports| ML
-    ML -->|answers, requests| MA
-    ML -->|answers, requests| MB
-    BA -->|questions, reports| BL
-    BL -->|answers, requests| BA
-    ML <-.->|repository thread| BL
+    MA -->|questions, reports| L
+    MB -->|questions, reports| L
+    BA -->|questions, reports| L
+    L -->|answers, requests| MA
+    L -->|answers, requests| MB
+    L -->|answers, requests| BA
 ```
 
-- Each person has at most one lead in each repository, on all
-  machines together. A project has one lead: see
-  [Where the lead runs](#where-the-lead-runs).
+- There is one lead for each project, on all machines together, for
+  all people: see [Where the lead runs](#where-the-lead-runs).
 - No session becomes the lead by itself, also the first. The riff
-  daemon of a host of the project starts the lead, or you name it: see
-  [Name the lead](#name-the-lead). A session cannot make itself the
-  lead. A worker is never the lead: see [When you have no
+  daemon of a host of the project starts the lead, or a person names
+  it: see [Name the lead](#name-the-lead). A session cannot make itself
+  the lead. A worker is never the lead: see [When you have no
   lead](#when-you-have-no-lead).
-- The URI of the lead has `lead=true`. `riff who` shows it.
+- The URI of the lead has `lead=true`. `riff who` shows it. While the
+  lead holds the claim `lead`, no other session has `lead=true`, also
+  not an older lead of another person.
 - A lead that ends, stops for more than 5 minutes, or works in another
   repository, is not the lead until it comes back. A lead that leaves
   the thread is not the lead any more. With no lead, each session asks
   its own user.
-- A lead talks only to the sessions of its own person. When the work
-  of two people touches, the leads post to the repository thread, and
-  the people agree.
+- The lead serves each person of the project. When the people do not
+  agree, it writes their views in the issue, and the issue waits: see
+  [When the people disagree](#when-the-people-disagree).
 
 What the lead does:
 
-- It shows the questions of the workers to its person, and sends the
+- It shows the questions of the workers to the people, and sends the
   answers back. See [Ask the lead](#ask-the-lead).
-- It gives each worker an item. See
+- It gives each worker an item, of each person and on each host. See
   [The lead conducts your sessions](#the-lead-conducts-your-sessions).
 - It plans the waves. See [Waves](waves.md).
+- It keeps the notes of the project. See
+  [The notes of the lead](#the-notes-of-the-lead).
 - It takes no claims: no work item and no verify. So it is free for
   you at all times. A verify request waits for a free worker. See
   [Verify finished work](#verify-finished-work).
 
 ```mermaid
 sequenceDiagram
-    participant P as person
+    participant P as a person
     participant L as lead (main)
     participant E as riff-server
     participant S as session (issue-6)
@@ -6466,12 +6474,12 @@ riff lead start
 
 ### Name the lead
 
-Only you, or the riff daemon of a host of the project (see
-[Where the lead runs](#where-the-lead-runs)), name your lead.
-`riff lead start` starts a lead in a container and names it the lead:
-see [Start the lead](development.md#start-the-lead). To name another
-session the lead, for example a session on the host when the lead
-container ended, find its session ID:
+Only a person, or the riff daemon of a host of the project (see
+[Where the lead runs](#where-the-lead-runs)), names the lead of the
+project. `riff lead start` starts a lead in a container and names it
+the lead: see [Start the lead](development.md#start-the-lead). To name
+another session the lead, for example a session on the host when the
+lead container ended, find its session ID:
 
 ```sh
 riff who --long
@@ -6535,15 +6543,17 @@ riff read --all
 
 ### When you have no lead
 
-When you name no lead in a repository, or each of your sessions there
-is a worker, you have no lead there. This is what you see:
+When no session is the lead of the project, for example when no host
+of the project runs one and no person names one, the project has no
+lead. This is what you see:
 
-- `riff who` shows no session of you with the tag `lead`.
+- `riff who` shows no session of the project with the tag `lead`.
 - A `tell` to `lead` fails, and says to ask your own user. So a
   session asks you in its own terminal.
-- A verify request goes to each of your live sessions with no claim.
-- No session of you can pause or resume the riff. You can, from a
-  terminal.
+- A verify request goes to each live session of the project with no
+  claim.
+- No session of the project can pause or resume the riff. You can,
+  from a terminal.
 
 To get a lead, start one with `riff lead start`, or name a session
 that is not a worker with `riff lead --session ID`. See
@@ -6628,34 +6638,36 @@ The repository como-technologies/riff is running now. No other session woke. No 
 ### Ask the lead
 
 A session asks the lead with `tell` and the session `lead`. It does
-not need the session ID of the lead. A person can do the same from a
-terminal in the repository:
+not need the session ID of the lead. `lead` is the lead of the project
+of the session, also when the lead is a session of another person. A
+person can do the same from a terminal in the repository:
 
 ```sh
 riff tell lead "Merge issue-6 now?"
 ```
 
-When the person has no lead, the `tell` fails and says to ask your own
-user. A session never asks the lead of another person.
+When the project has no lead, the `tell` fails and says to ask your
+own user.
 
-You look only at your lead. So a session that is not the lead never
-asks you in its own terminal. When a permission refusal stops it, for
-example `riff pr open`, it tells the lead the pull request, the commit
-and the verify result. You decide. No session pushes to `main` (see
-[Merge by pull request on
+The people look only at the lead. So a session that is not the lead
+never asks you in its own terminal. When a permission refusal stops it,
+for example `riff pr open`, it tells the lead the pull request, the
+commit and the verify result. A person decides. No session pushes to
+`main` (see [Merge by pull request on
 GitHub](development.md#merge-by-pull-request-on-github)).
 
 ### The lead conducts your sessions
 
-The lead splits the work among the other sessions of its person. It
-sends each free session one item, and the session reports back. The
-lead never sends work to the sessions of another person.
+The lead splits the work among the workers of the project: the
+workers of each person, on each host. It sends each free worker one
+item, and the worker reports back. A worker of brett tells the same
+lead as a worker of mike.
 
 ```mermaid
 sequenceDiagram
-    participant L as lead
-    participant A as session a1
-    participant B as session b2
+    participant L as the lead of the project
+    participant A as mike: session a1 on pangolin
+    participant B as brett: session b2 on thelio
     L->>A: tell "request: claim issue-12"
     L->>B: tell "request: claim issue-7"
     A->>L: tell lead "started issue-12"
@@ -6664,11 +6676,11 @@ sequenceDiagram
     A->>L: tell lead "issue-12: the verify request is sent, and I released the item"
 ```
 
-To see what each of your sessions holds and does, run this in the
-repository. Use your own user and repository:
+To see what each session of the project holds and does, run this in
+the repository. Use your repository:
 
 ```sh
-riff post --kind status --to user=mike,repo=como-technologies/riff
+riff post --kind status --to repo=como-technologies/riff
 riff who
 ```
 
@@ -6679,8 +6691,8 @@ To give a session an item by hand, use its full session ID from the
 riff tell 77e0a1b2-3c4d-4e5f-8a9b-0c1d2e3f4a5b "request: claim issue-12"
 ```
 
-You can also ask your lead: *"Split the free items of the wave among my
-sessions."*
+You can also ask the lead: *"Split the free items of the wave among
+the workers."*
 
 #### Give a session a task with no item
 
@@ -6704,14 +6716,16 @@ A worker takes a message from the lead as a decision of its person
 only when both are true:
 
 - The message is verified. See [A signed message](#a-signed-message).
-- Its sender has `lead=true`, and is the lead of the same person.
+- Its sender has `lead=true`, and is the lead of the project of the
+  worker. The lead can be a session of another person: a verified
+  request of the lead counts for each person of the project.
 
-Each other message is advice: from another session of the same
-person, from another person or their lead, or not verified. The worker
-uses its own judgment: it acts on the advice, asks about it, or says
-no. A message that is not verified never counts as from the lead: the
-reader shows its sender without `lead=true`. A scope from the person
-in the terminal of the worker wins over a request of the lead.
+Each other message is advice: from another session, from a person who
+is not the lead, or not verified. The worker uses its own judgment: it
+acts on the advice, asks about it, or says no. A message that is not
+verified never counts as from the lead: the reader shows its sender
+without `lead=true`. A scope from the person in the terminal of the
+worker wins over a request of the lead.
 
 `riff-server` refuses a copy of a signed message. So a worker gets
 each request of the lead once.
@@ -6723,6 +6737,31 @@ edit the same files.
 On a riff with no sign-in, each message is verified. So each program
 that can reach the riff can send a message as your lead. See
 [A riff with no sign-in](#a-riff-with-no-sign-in).
+
+### When the people disagree
+
+The lead serves each person of the project. When two people want
+different things for an issue, the lead does not pick one. It writes
+the view of each person as a decision in the body of the issue, with
+the name of the person, and adds the label `question`. The wave starts
+no work on the issue while it has the label. When the people agree,
+the lead records the decision that they agree on, and removes the
+label.
+
+```mermaid
+flowchart LR
+    A[mike: do X] --> L[the lead]
+    B[brett: do Y] --> L
+    L --> I["the body of the issue: the decisions D1 of mike and D2 of brett, and the label question"]
+    I --> W[the issue waits]
+    W -->|the people agree| R[the lead records the decision and removes the label]
+```
+
+To see each issue that waits for the people, run:
+
+```sh
+riff questions
+```
 
 ## A restart
 

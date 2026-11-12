@@ -1,5 +1,6 @@
-//! The lead (R175-R180, R200, R228-R232) is in one place in the book:
-//! "The lead" in `how-it-works.md`. The other pages link to it.
+//! The lead (R175-R180, R200, R229-R231, 01M77XMS645VZNTP22DTCB7RXE) is
+//! in one place in the book: "The lead" in `how-it-works.md`. The other
+//! pages link to it.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -24,7 +25,7 @@ fn section(page: &str, heading: &str) -> String {
 }
 
 #[test]
-fn the_lead_has_a_graph_of_two_people_on_two_machines() {
+fn the_lead_has_a_graph_of_two_people_and_one_lead_on_two_machines() {
     let lead = section("how-it-works.md", "The lead");
     let graph = lead
         .split("```mermaid\nflowchart")
@@ -34,8 +35,10 @@ fn the_lead_has_a_graph_of_two_people_on_two_machines() {
     for part in [
         "subgraph pangolin",
         "subgraph thelio",
-        "mike: lead",
-        "brett: lead",
+        "the lead of the project",
+        "M((mike)) <-->|questions, answers| L",
+        "B((brett)) <-->|questions, answers| L",
+        "BA -->|questions, reports| L",
     ] {
         assert!(graph.contains(part), "the graph has no {part:?}");
     }
@@ -45,7 +48,10 @@ fn the_lead_has_a_graph_of_two_people_on_two_machines() {
 fn the_lead_names_each_part() {
     let lead = section("how-it-works.md", "The lead");
     for part in [
-        "at most one lead in each repository",
+        "one lead for each project",
+        "(#when-the-people-disagree)",
+        "### When the people disagree",
+        "```sh\nriff questions\n```",
         "(#ask-the-lead)",
         "(#the-lead-conducts-your-sessions)",
         "(waves.md)",
@@ -75,7 +81,7 @@ fn start_a_riff_links_the_lead() {
 #[test]
 fn no_other_page_repeats_the_rules_of_the_lead() {
     let rules = [
-        "at most one lead",
+        "one lead for each project",
         "becomes the lead",
         "takes an answer of the lead",
         "takes an answer of your lead",

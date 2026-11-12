@@ -18,25 +18,25 @@
 //!
 //! A post carries the names of its line as selectors with the field
 //! `name` only ([`Selector::name`]). `View::named` resolves each one
-//! when the message is posted (01M6XZ280AMTAMPD6R4212YC2T):
+//! when the message is posted (01M6XZ280AMTAMPD6R4212YC2T,
+//! 01M77XW0X8Z4M3EXGRDEXV6S2B):
 //!
 //! | The name is | It wakes | As the selector |
 //! |---|---|---|
 //! | a person | the terminals of the person | `user=USER,person=true` |
-//! | a project | the lead of the sender in the project | `user=SENDER,repo=OWNER/REPO,lead=true` |
+//! | a project | the one lead of the project, of any person | `repo=OWNER/REPO,lead=true` |
 //! | neither | no session: the line still goes | none |
 //!
-//! A project with no live lead of the sender wakes no session: the line
-//! waits in the log. A name never wakes a free session in the place of
-//! a lead, as a `lead=true` selector of a thread does
-//! (01M3JY1TBPQHH6WPPBTF42T64H). A post with no selector wakes no
-//! session.
+//! A project with no live lead wakes no session: the line waits in the
+//! log. A name never wakes a free session in the place of a lead, as a
+//! `lead=true` selector of a thread does (01M3JY1TBPQHH6WPPBTF42T64H). A
+//! post with no selector wakes no session.
 //!
 //! ```mermaid
 //! flowchart LR
 //!     P["a post: to name=N"] --> R{"N is"}
 //!     R -- "a person" --> T["the terminals of the person"]
-//!     R -- "a project" --> L["the lead of the sender there"]
+//!     R -- "a project" --> L["the lead of the project"]
 //!     R -- "neither" --> N["no session: the line goes"]
 //!     L -- "no live lead" --> W["no session: the line waits in the log"]
 //! ```
@@ -44,7 +44,7 @@
 //! [`State::names`](super::State::names) gives the list for the
 //! type-ahead of `@`, with the kind of each name and whether its role is
 //! online: a person that `who` shows as live, or a project with a live
-//! lead of the caller.
+//! lead.
 //!
 //! ```
 //! use std::time::Instant;
@@ -64,14 +64,14 @@
 //! state.lead(&lead, now).unwrap();
 //!
 //! let names: Vec<(String, NameKind)> =
-//!     state.names(mike.who(), now).into_iter().map(|n| (n.name, n.kind)).collect();
+//!     state.names(now).into_iter().map(|n| (n.name, n.kind)).collect();
 //! assert_eq!(names, [
 //!     ("brett".into(), NameKind::Person),
 //!     ("mike".into(), NameKind::Person),
 //!     ("riff".into(), NameKind::Project),
 //! ]);
 //!
-//! // @brett @riff wakes the terminals of brett and the lead of mike in riff.
+//! // @brett @riff wakes the terminals of brett and the lead of riff.
 //! let to = vec![Selector::name("brett"), Selector::name("riff")];
 //! let chat = Some("chat".parse()?);
 //! let delivery = state.post(Post::new(&mike, chat, to, "@brett @riff is #12 done?"), now, 0).unwrap();
@@ -143,8 +143,9 @@ impl View<'_> {
     /// The names of the chat for the caller `me`, sorted by name: the
     /// list for the type-ahead of `@`. A person is online when `who`
     /// shows it as live: a session of the person has an open watch. A
-    /// project is online when `me` has a live lead there.
-    pub(super) fn names(&self, me: &Who, now: Instant) -> Vec<ChatName> {
+    /// project is online when it has a live lead, of any person
+    /// (01M77XW0X8Z4M3EXGRDEXV6S2B).
+    pub(super) fn names(&self, now: Instant) -> Vec<ChatName> {
         self.name_table()
             .into_iter()
             .map(|(name, named)| {
@@ -158,8 +159,12 @@ impl View<'_> {
                     ),
                     Named::Project(repo) => (
                         NameKind::Project,
-                        self.lead_of(&(me.user().to_owned(), repo.clone()), now)
-                            .is_some_and(|lead| !self.gone(lead, now)),
+                        self.riff.work().leads.keys().any(|key| {
+                            &key.1 == repo
+                                && self
+                                    .lead_of(key, now)
+                                    .is_some_and(|lead| !self.gone(lead, now))
+                        }),
                     ),
                 };
                 ChatName { name, kind, online }
@@ -167,10 +172,11 @@ impl View<'_> {
             .collect()
     }
 
-    /// The selector that the name `name` in a post of `from` stands for:
-    /// the terminals of a person, or the lead of `from` in a project.
-    /// `None` for a name that is no person and no project.
-    pub(super) fn named(&self, from: &Who, name: &str) -> Option<Selector> {
+    /// The selector that the name `name` in a post stands for: the
+    /// terminals of a person, or the lead of a project, of any person
+    /// (01M77XW0X8Z4M3EXGRDEXV6S2B). `None` for a name that is no person
+    /// and no project.
+    pub(super) fn named(&self, name: &str) -> Option<Selector> {
         let (_, named) = self.name_table().into_iter().find(|(known, named)| {
             known.eq_ignore_ascii_case(name)
                 || matches!(named, Named::Project(repo) if repo.to_string().eq_ignore_ascii_case(name))
@@ -181,7 +187,7 @@ impl View<'_> {
                 person: Some(true),
                 ..Selector::default()
             },
-            Named::Project(repo) => Selector::lead(from.user(), &repo.to_string()),
+            Named::Project(repo) => Selector::lead(&repo.to_string()),
         })
     }
 
@@ -190,7 +196,7 @@ impl View<'_> {
     /// A name with no live session wakes none: no free session takes the
     /// place of a lead.
     pub(super) fn woken_by_name(&self, from: &Who, name: &str, now: Instant) -> (Vec<Who>, bool) {
-        let Some(target) = self.named(from, name) else {
+        let Some(target) = self.named(name) else {
             return (Vec::new(), false);
         };
         let woken = self
@@ -219,10 +225,10 @@ mod tests {
         text.parse().unwrap()
     }
 
-    /// The names of `state` for `me`: the name, the kind and online.
-    fn names(state: &State, me: &SessionUri, now: Instant) -> Vec<(String, NameKind, bool)> {
+    /// The names of `state`: the name, the kind and online.
+    fn names(state: &State, now: Instant) -> Vec<(String, NameKind, bool)> {
         state
-            .names(me.who(), now)
+            .names(now)
             .into_iter()
             .map(|n| (n.name, n.kind, n.online))
             .collect()
@@ -244,8 +250,7 @@ mod tests {
         ] {
             state.register(&uri(text), now);
         }
-        let me = uri("riff://mike@thelio");
-        let listed: Vec<(String, NameKind)> = names(&state, &me, now)
+        let listed: Vec<(String, NameKind)> = names(&state, now)
             .into_iter()
             .map(|(name, kind, _)| (name, kind))
             .collect();
@@ -262,28 +267,47 @@ mod tests {
         assert_eq!(listed, expected);
     }
 
-    /// A project is online while the caller has a live lead there.
+    /// A project is online while it has a live lead, of any person
+    /// (01M77XW0X8Z4M3EXGRDEXV6S2B).
     #[test]
-    fn a_project_is_online_with_a_live_lead_of_the_caller() {
+    fn a_project_is_online_with_a_live_lead_of_any_person() {
         let now = Instant::now();
         let mut state = State::default();
         let mike = uri("riff://mike@thelio");
         let lead = uri("riff://mike@thelio/como-technologies/riff?session=m1");
         let brett = uri("riff://brett@heron/como-technologies/strata?session=b1");
-        for uri in [&mike, &lead, &brett] {
+        let docs = uri("riff://brett@heron/como-technologies/docs?session=b2");
+        for uri in [&mike, &lead, &brett, &docs] {
             state.register(uri, now);
         }
         state.lead(&lead, now).unwrap();
         state.lead(&brett, now).unwrap();
         let online = |state: &State, at| {
-            names(state, &mike, at)
+            names(state, at)
                 .into_iter()
                 .filter(|(_, kind, online)| *kind == NameKind::Project && *online)
                 .map(|(name, _, _)| name)
                 .collect::<Vec<_>>()
         };
-        assert_eq!(online(&state, now), ["riff"], "brett's lead is not mike's");
-        assert!(online(&state, now + GONE).is_empty(), "the lead is gone");
+        assert_eq!(online(&state, now), ["riff", "strata"]);
+        assert!(online(&state, now + GONE).is_empty(), "the leads are gone");
+    }
+
+    /// A person names a project whose lead is a session of another
+    /// person: the line wakes that lead (01M77XW0X8Z4M3EXGRDEXV6S2B).
+    #[test]
+    fn a_name_of_a_project_wakes_its_lead_of_another_person() {
+        let now = Instant::now();
+        let mut state = State::default();
+        let brett = uri("riff://brett@heron");
+        let lead = uri("riff://mike@thelio/como-technologies/riff?session=m1");
+        state.register(&brett, now);
+        state.register(&lead, now);
+        state.lead(&lead, now).unwrap();
+        let chat = Some("chat".parse().unwrap());
+        let post = Post::new(&brett, chat, vec![Selector::name("riff")], "is #12 done?");
+        let delivery = state.post(post, now, 0).unwrap();
+        assert_eq!(delivery.woken, [lead.who().clone()]);
     }
 
     /// `OWNER/REPO` and a name in another case resolve too. A name with

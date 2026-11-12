@@ -627,6 +627,13 @@ page [Requirements](requirements.md) holds the rules of today.
   tool shows the owner line `The owner is USER (EMAIL).` or
   `The riff has no owner.`, plain.
   Superseded by 01M7767T8EFVR79NSHKTK53G7B.
+- **R228** The lead conducts the other sessions of its person in its
+  repository. It never sends a request to a session of another person.
+  The people of a repository agree among themselves: riff picks no
+  lead for all people. Superseded by 01M77XMS645VZNTP22DTCB7RXE.
+- **R232** A session asks only the lead of its own person for a
+  decision. `tell lead` picks the lead of the person of the sender.
+  Superseded by 01M77XMS645VZNTP22DTCB7RXE.
 
 ## Threads
 
@@ -3252,3 +3259,12 @@ Backlog (01M53NGWN190T2MYB1EZAD36VB).
   wakes, `wakes` and `resolve`, are in `riff-client`. `riff chat` and
   the Chat tab of the TUI share them. Superseded by
   01M6Y1A5PTCVZ6GRJ0FXMART2T.
+
+## The notes of the lead
+
+- **01M59258NTXPMWV18TKRKWNTYN** The user of the lead and each admin of
+  the riff read the notes (`POST /v1/notes`, with the history when
+  asked). Another member gets `not_allowed`. The person of the user and
+  a session of the user that is not a worker write the notes of the
+  user. A worker gets `not_allowed`.
+  Superseded by 01M77XMZBJ6DRGJTGEEE0EDECP.

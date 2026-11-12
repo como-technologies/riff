@@ -404,9 +404,10 @@ detach or the end of the lead, riff turns off each mode that a program
 in the container can leave on in your terminal, for example the mouse
 reports. So your terminal is whole again.
 
-When another session of you is the lead, `riff lead start` makes the
-new session the lead, and the riff daemon of the old lead stops it. It
-prints which session was the lead before. In the lead container,
+When another session is the lead of the project, of you or of another
+person, `riff lead start` makes the new session the lead, and the riff
+daemon of the old lead stops it. It prints which session was the lead
+before. In the lead container,
 `whoami` says in its first line when the session is not the lead. To
 see which session is the lead:
 
@@ -427,7 +428,7 @@ A second machine takes work when it joined too: see
 
 A host has two parts in a repository. It gives workers: its riff daemon
 runs the wave, which is the work items and the verifies. It runs the
-lead of a person. `riff host join` gives this host the part workers.
+lead of the project. `riff host join` gives this host the part workers.
 Run it in your clone of the project:
 
 ```sh

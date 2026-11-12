@@ -186,10 +186,11 @@ flowchart TD
   each part, so its arm calls each part. The rustdoc of the module
   `state` says where each part lives.
 - The wire type of each routed command is its command type.
-- The lead of a user frees the claim of another session of that user
-  with `release_for`, a command of the group work with the path
-  `/v1/release/for` (01M3WRD9MGSC3FTBAANT4ZSMKY). Its note of the
-  server is a `posted` record in the chunk of the command.
+- The lead of the project frees the claim of another session of its
+  repository, of any person, with `release_for`, a command of the group
+  work with the path `/v1/release/for` (01M3WRD9MGSC3FTBAANT4ZSMKY).
+  Its note of the server is a `posted` record in the chunk of the
+  command.
 
 ### Who can send a command
 

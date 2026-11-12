@@ -566,18 +566,19 @@ async fn a_new_lead_reads_only_what_the_lead_before_it_did_not_read() {
     assert_eq!(out, "No unread messages.\n");
 }
 
-/// The lead frees the claim of another session of its user, and the
-/// next session claims the item. A note of the server in the thread
-/// names the lead, the item and the holder. A session that is not the
-/// lead is refused, and so is the lead of another user
-/// (01M3WG243BW7P6E1ME0DFNQF8C).
+/// The lead frees the claim of another session, and the next session
+/// claims the item. A note of the server in the thread names the lead,
+/// the item and the holder. A session that is not the lead is refused,
+/// also a session of another user. The lead of the project frees the
+/// claim of a session of another user too (01M3WG243BW7P6E1ME0DFNQF8C,
+/// 01M77XMS645VZNTP22DTCB7RXE).
 #[tokio::test]
 async fn the_lead_releases_the_claim_of_another_session() {
     let server = start_server().await;
     let dir = repo();
     let dir = dir.path();
     lead(&server, dir, "mike", "lead1").await;
-    lead(&server, dir, "brett", "b1").await;
+    agent(&server, dir, "brett", "b1", &["read"]).await;
     resume(&server, dir).await;
     let (out, code) = agent(&server, dir, "mike", "work1", &["claim", "issue-12"]).await;
     assert_eq!(code, 0, "{out}");
@@ -586,7 +587,7 @@ async fn the_lead_releases_the_claim_of_another_session() {
     let (out, code) = agent(&server, dir, "mike", "work2", &free).await;
     assert_ne!(code, 0, "a session that is not the lead: {out}");
     let (out, code) = agent(&server, dir, "brett", "b1", &free).await;
-    assert_ne!(code, 0, "the lead of another user: {out}");
+    assert_ne!(code, 0, "a session of another user: {out}");
     let (out, code) = riff(&server, dir, "mike", &free).await;
     assert_ne!(code, 0, "a person is not the lead: {out}");
     let other = ["release", "issue-12", "--session", "work2"];
@@ -621,6 +622,14 @@ async fn the_lead_releases_the_claim_of_another_session() {
         ),
         "{out}"
     );
+
+    // The lead of the project frees the claim of a session of brett.
+    let (out, code) = agent(&server, dir, "brett", "b1", &["claim", "issue-13"]).await;
+    assert_eq!(code, 0, "{out}");
+    let brett = ["release", "issue-13", "--session", "b1"];
+    let (out, code) = agent(&server, dir, "mike", "lead1", &brett).await;
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("for the session b1"), "{out}");
 }
 
 #[tokio::test]

@@ -902,9 +902,10 @@ pub struct PlanEnded {
     pub thread: ThreadName,
 }
 
-/// The notes of the lead of one user in one repository thread
-/// (01M59258K3TYR09HC4AWHWZPEX). The text is the whole text: it replaces
-/// the old text. The envelope names who wrote it, and when.
+/// The notes of the project of one repository thread
+/// (01M59258K3TYR09HC4AWHWZPEX, 01M77XMZBJ6DRGJTGEEE0EDECP). The text is
+/// the whole text: it replaces the old text. The envelope names who wrote
+/// it, and when.
 ///
 /// ```
 /// use riff_core::record::{Change, NotesSet};
@@ -923,7 +924,7 @@ pub struct PlanEnded {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct NotesSet {
     pub thread: ThreadName,
-    /// The user of the lead.
+    /// The user of the writer.
     pub user: String,
     pub text: String,
 }

@@ -2563,7 +2563,7 @@ async fn look_blocks(
         let Some(thread) = session.default_thread() else {
             continue;
         };
-        let lead = Selector::lead(session.who().user(), &thread.to_string());
+        let lead = Selector::lead(&thread.to_string());
         posts.push(Server::news(Some(thread), vec![lead], &news, Kind::Message));
     }
     s.announce_each(posts).await;
@@ -2792,7 +2792,7 @@ async fn names(
     let caller = admit(&s, &proof, &r.me)?;
     let names = s
         .engine
-        .query(&caller, |state| state.names(r.me.who(), Instant::now()))
+        .query(&caller, |state| state.names(Instant::now()))
         .await?;
     Ok(Json(NamesReply { names }))
 }
@@ -2947,8 +2947,8 @@ async fn plan_show(
     Ok(Json(reply))
 }
 
-/// Reads the notes of a lead: a query (01M59258NTXPMWV18TKRKWNTYN). Only
-/// the user of the lead and each admin can (01M77671TQ92487GSM24RJG82Z).
+/// Reads the notes of the project of a thread: a query. Each member can
+/// (01M77XMZBJ6DRGJTGEEE0EDECP).
 async fn notes_show(
     AxumState(s): AxumState<Shared>,
     proof: Proof,
@@ -2957,11 +2957,8 @@ async fn notes_show(
     let caller = admit(&s, &proof, &r.me)?;
     let reply = s
         .engine
-        .query_as(&caller, |state, who| {
-            state.notes(who, &r.thread, r.user.as_deref(), r.history)
-        })
-        .await?
-        .map_err(Failed::Refused)?;
+        .query(&caller, |state| state.notes(&r.thread, r.history))
+        .await?;
     Ok(Json(reply))
 }
 
@@ -3844,7 +3841,8 @@ mod tests {
     }
 
     /// A server with `config` on `store`, with mike and brett in a
-    /// running riff.
+    /// running riff. mike is the one lead of the project
+    /// (01M77XMS645VZNTP22DTCB7RXE).
     async fn running_with(config: Config, store: Arc<Gated>) -> Service {
         let service = Service::load(config, store).await.unwrap();
         for me in [mike(), brett()] {
@@ -3853,8 +3851,8 @@ mod tests {
                 worker: false,
             };
             send(&service, register).await.unwrap();
-            send(&service, named(&me)).await.unwrap();
         }
+        send(&service, named(&mike())).await.unwrap();
         send(&service, Resume::whole(mike())).await.unwrap();
         // The repository of the leads is a project, as in a riff of this
         // build: a later start looks for no project

@@ -76,7 +76,7 @@ async fn me_gives_the_state_claims_and_status_of_the_caller_only() {
         session.blocked.expect("A is blocked").reason,
         "which design?"
     );
-    // A is the lead of its user: it is live with no watch, and its
+    // A is the lead: it is live with no watch, and its
     // block shows as a wait for its person (01M48VDGQ5KETKPM4G6TKTC2MB,
     // 01M48VDSB4CHQS9P6XVDJ6FMKS).
     assert_eq!(session.state, Some(SessionState::Waiting));

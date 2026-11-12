@@ -44,7 +44,8 @@
 //! ([`crate::tui::Effect::Answered`]) mark the questions of the issue N
 //! as answered ([`answered`], #1782, 01M6XZ2T9TPZC1X36Y2ZXZ83C0,
 //! 01M6XZ2TCBVN69GTJYV9X8GBW5): riff removes the label `question`, and a
-//! message wakes the lead of the person in the repository. The lead
+//! message wakes the lead of the project, a session of any person
+//! (01M78A9FSHE9XEPGC3SJAB7PMX). The lead
 //! records each answer in the body of the issue. An issue with no label
 //! `question` gets a note, and riff changes nothing.
 //!
@@ -57,7 +58,7 @@
 //!     P->>G: issue view N --json labels
 //!     G-->>P: the label question
 //!     P->>G: issue edit N --remove-label question
-//!     P->>S: post to the repository thread,<br/>user=PERSON,repo=REPO,lead=true
+//!     P->>S: post to the repository thread,<br/>repo=REPO,lead=true
 //!     S->>L: wake: the person answered #N
 //! ```
 
@@ -298,8 +299,8 @@ pub fn asked(gh: &Gh, repo: &str, number: u64) -> Result<bool> {
 /// Marks the questions of the issue `number` of `repo` as answered, as
 /// the person `me` at `api` (#1782): riff removes the label `question`
 /// with `gh`, and posts a message to the thread of `repo` with the
-/// selector of the lead of the person there. The message wakes the lead,
-/// and asks it to record each answer in the body. An issue with no label
+/// selector of the lead of the project there. The message wakes the
+/// lead, and asks it to record each answer in the body. An issue with no label
 /// `question` gets a note, and riff changes nothing. It gives the line
 /// of the result ([`text::questions_answered`],
 /// [`text::questions_not_asked`]). The calls of `gh` run on a thread of
@@ -341,7 +342,7 @@ pub async fn answered(
     })
     .await??;
     let user = me.who().user();
-    let to = [Selector::lead(user, &name)];
+    let to = [Selector::lead(&name)];
     let body = text::questions_answered_message(user, &name, number);
     let posted = api.post(me, Some(repo), &to, &body, Kind::Message).await?;
     Ok(text::questions_answered(&name, number, &posted))

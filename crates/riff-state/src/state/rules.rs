@@ -966,9 +966,8 @@ fn release_for(holder: &str) -> ReleaseFor {
     }
 }
 
-/// The lead of a user frees the claim of another session of that user,
-/// live or gone (01M3WG243BW7P6E1ME0DFNQF8C). The record names the
-/// holder.
+/// The lead frees the claim of another session of its user, live or
+/// gone (01M3WG243BW7P6E1ME0DFNQF8C). The record names the holder.
 #[test]
 fn the_lead_releases_the_claim_of_a_session_of_its_user() {
     let mut records = team();
@@ -1026,6 +1025,30 @@ fn a_lead_that_frees_its_own_claim_gets_no_message() {
         .then(&[released(&ann(), "issue-7"), posted(&repo(), note, &[])]);
 }
 
+/// The lead of the project frees the claim of a session of another user
+/// in its repository (01M77XMS645VZNTP22DTCB7RXE).
+#[test]
+fn the_lead_of_the_project_releases_the_claim_of_a_session_of_another_user() {
+    let mut records = team();
+    records.push(claimed(&bob(), LEAD_CLAIM));
+    records.push(claimed(&ann2(), "issue-7"));
+    let note = Message {
+        kind: Kind::Note,
+        at_ms: 0,
+        ..message(
+            riff_core::name::SessionUri::server(),
+            1,
+            &[],
+            "claims: the lead bob@kite:app (b1) released issue-7 for the session \
+             ann@heron:app#api (a2). issue-7 is free.",
+        )
+    };
+    given(&records)
+        .live(&[bob()])
+        .when(&bob(), release_for("a2"))
+        .then(&[released(&ann2(), "issue-7"), posted(&repo(), note, &[])]);
+}
+
 #[test]
 fn a_session_that_is_not_the_lead_releases_no_claim_of_another_session() {
     let third: SessionUri = "riff://ann@heron/acme/app?session=a3".parse().unwrap();
@@ -1034,11 +1057,20 @@ fn a_session_that_is_not_the_lead_releases_no_claim_of_another_session() {
     records.push(claimed(&ann2(), "issue-7"));
     given(&records)
         .when(&third, release_for("a2"))
-        .then_refused_as(Code::NotAllowed, "Only the lead of your user");
-    // The lead of another user is refused too.
+        .then_refused_as(Code::NotAllowed, "Only the lead of the project");
+    // The lead of another user that does not hold the claim lead, while
+    // a live session holds it, is refused too.
+    records.push(claimed(&ann(), LEAD_CLAIM));
     given(&records)
+        .live(&[ann()])
         .when(&bob(), release_for("a2"))
-        .then_refused_as(Code::NotAllowed, "Only the lead of its user");
+        .then_refused_as(Code::NotAllowed, "Only the lead of the project");
+    // A session in another repository.
+    let other: SessionUri = "riff://ann@heron/acme/web?session=a4".parse().unwrap();
+    given(&records)
+        .live(std::slice::from_ref(&other))
+        .when(&other, release_for("a2"))
+        .then_refused_as(Code::NotAllowed, "Only the lead of its repository");
     // A person is no lead: `permits` refuses it.
     given(&records)
         .when(&person(), release_for("a2"))
@@ -1107,6 +1139,29 @@ fn a_person_makes_a_session_the_lead_and_tells_the_old_lead() {
         .live(&[ann()])
         .when(&person_here(), Lead("a1"))
         .then(&[]);
+}
+
+/// A person takes the lead of the project from the lead of another user:
+/// that lead gets the message, and is not the lead any more
+/// (01M77XMS645VZNTP22DTCB7RXE).
+#[test]
+fn a_person_takes_the_lead_of_the_project_from_the_lead_of_another_user() {
+    let led = [team(), vec![claimed(&bob(), LEAD_CLAIM)]].concat();
+    let [join, told] = told_not_lead(&bob(), &ann());
+    given(&led)
+        .live(&[ann(), bob()])
+        .when(&person_here(), Lead("a1"))
+        .then(&[
+            released(&bob(), LEAD_CLAIM),
+            claimed(&ann(), LEAD_CLAIM),
+            lead_set(&ann()),
+            join,
+            told,
+        ]);
+    // While bob holds the claim, only bob has the lead mark.
+    let state = given(&led).live(&[ann(), bob()]);
+    assert!(state.state.uri(bob().who(), state.now).lead());
+    assert!(!state.state.uri(ann().who(), state.now).lead());
 }
 
 /// A gone old lead gets no message.

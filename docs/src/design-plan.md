@@ -263,8 +263,8 @@ rest, because "the lead of this thread" needs the state:
 - `hold` needs a reason of 1 to 200 characters. Else `bad_request`.
 - `free` of an item with no hold changes nothing: a log line, no
   record.
-- The lead of each person in the repository can hold and free each
-  item. The record names who did it.
+- The lead of the project can hold and free each item. The record
+  names who did it.
 
 ### The checks of a claim
 

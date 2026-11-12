@@ -3112,8 +3112,8 @@ async fn the_cut_and_the_approval_give_the_other_lead_one_note_each() {
 }
 
 /// 01M5SNV75DRFHR26BT2M8243VV: a note wakes each other lead, and not the
-/// lead of the user and the repository that runs the step, also when a
-/// person runs it.
+/// lead of the repository that runs the step, also when a person runs
+/// it.
 #[tokio::test]
 async fn a_note_wakes_each_other_lead_and_not_the_lead_that_runs_the_step() {
     let machine = Machine::new().await;

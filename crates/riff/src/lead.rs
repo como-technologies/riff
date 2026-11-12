@@ -1339,11 +1339,11 @@ async fn await_notes(
     ask: &str,
     (wait, no_notes): (std::time::Duration, fn(std::time::Duration) -> String),
 ) -> Result<()> {
-    let before = api.notes_show(me, thread, None, false).await?;
+    let before = api.notes_show(me, thread, false).await?;
     api.tell(me, lead, ask).await?;
     let start = tokio::time::Instant::now();
     loop {
-        let now = api.notes_show(me, thread, None, false).await?;
+        let now = api.notes_show(me, thread, false).await?;
         if now.at_ms != before.at_ms || now.text != before.text {
             return Ok(());
         }
@@ -1447,8 +1447,9 @@ pub(crate) async fn ask_start(dir: &Path, start: daemon::Start) -> Result<()> {
     }
 }
 
-/// `riff lead notes`: shows the notes of the lead, and with `edit`
-/// changes them (01M59258NTXPMWV18TKRKWNTYN, 01M59258K3TYR09HC4AWHWZPEX).
+/// `riff lead notes`: shows the notes of the project of `thread`, and
+/// with `edit` changes them (01M77XMZBJ6DRGJTGEEE0EDECP,
+/// 01M59258K3TYR09HC4AWHWZPEX).
 ///
 /// `edit` is `None` to show. `Some(None)` opens the editor, and
 /// `Some(Some(path))` takes the new text from the file `path` (`-` is the
@@ -1457,16 +1458,15 @@ pub async fn notes(
     api: &Api,
     me: &SessionUri,
     thread: &riff_core::name::ThreadName,
-    user: Option<&str>,
     history: bool,
     edit: Option<Option<&Path>>,
 ) -> Result<()> {
     let Some(file) = edit else {
-        let reply = api.notes_show(me, thread, user, history).await?;
+        let reply = api.notes_show(me, thread, history).await?;
         print!("{}", text::notes_shown(&reply, thread));
         return Ok(());
     };
-    let old = api.notes_show(me, thread, None, false).await?.text;
+    let old = api.notes_show(me, thread, false).await?.text;
     let new = match file {
         Some(path) if path == Path::new("-") => {
             let mut text = String::new();
@@ -1503,8 +1503,8 @@ fn in_editor(old: &str) -> Result<String> {
     Ok(std::fs::read_to_string(&path)?)
 }
 
-/// Sends `body` to the lead of the person in the repository of
-/// `place`, else of this directory, as the person.
+/// Sends `body` to the lead of the project of `place`, else of this
+/// directory, as the person (01M78A9FSHE9XEPGC3SJAB7PMX).
 pub(crate) async fn tell_lead(place: Option<&Place>, server: &str, body: &str) -> Result<()> {
     let place = identity::here(place)?;
     let me = identity::person(&place, server)?;

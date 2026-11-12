@@ -39,7 +39,7 @@
 //! | 4 | No claim while the riff or the repository was paused. | each claim |
 //! | 5 | No claim of an item of a later wave, and no claim of an item with an open need. | each `issue-N` claim |
 //! | 6 | The lead held no claim of a work item. | each claim of `issue-N` or `verify-issue-N` |
-//! | 7 | Each request came from the lead of the user of its sender, to a session of that user. | each post with the mark `request` |
+//! | 7 | Each request came from the lead of the user of its sender. It can go to a session of each user: the lead of the project conducts the workers of each person (01M77XMS645VZNTP22DTCB7RXE). | each post with the mark `request` |
 //!
 //! A rule with nothing to check in the span is "not checked", with the
 //! reason. So is a record that the facts cannot prove, for example a
@@ -869,14 +869,6 @@ fn check_request(rule: &mut Rule, state: &Replay, record: &Record, posted: &Post
         None if pruned => {}
         None => why.push(format!("{} had no lead", from.user())),
     }
-    if let Some(to) = posted.thread.peer(from)
-        && to.user() != from.user()
-    {
-        why.push(format!(
-            "it went to {}, a session of another user",
-            name(&to)
-        ));
-    }
     let no_lead = !state.leads.contains_key(from.user());
     if !why.is_empty() {
         rule.add(Verdict::Fail, format!("{request}: {}.", why.join("; ")));
@@ -1519,6 +1511,22 @@ mod tests {
             fails(&records, 7),
             ["request at record 38 from ann/w1: the lead of ann was ann/l1."]
         );
+    }
+
+    /// 01M77XMS645VZNTP22DTCB7RXE: the lead of the project conducts the
+    /// workers of each person. A request of the lead to a session of
+    /// another user passes rule 7.
+    #[test]
+    fn rule_7_passes_a_request_of_the_lead_to_a_session_of_another_user() {
+        let mut records = good();
+        let mut request = post(38, "l1", "w1", "request");
+        if let Change::Posted(posted) = &mut request.change {
+            let bob: riff_core::name::SessionUri =
+                "riff://bob@kite/acme/app?session=b1".parse().unwrap();
+            posted.thread = ThreadName::direct(posted.message.from.who(), bob.who());
+        }
+        records.push(request);
+        assert!(fails(&records, 7).is_empty(), "{:?}", fails(&records, 7));
     }
 
     #[test]

@@ -1,6 +1,6 @@
-//! `riff lead notes` (01M59258NTXPMWV18TKRKWNTYN,
-//! 01M59258K3TYR09HC4AWHWZPEX, 01M59258RJ3CG498Z8AVQ5TV5Q): the person
-//! shows and edits the notes of the lead, through the `riff` binary
+//! `riff lead notes` (01M77XMZBJ6DRGJTGEEE0EDECP,
+//! 01M59258K3TYR09HC4AWHWZPEX, 01M59258RJ3CG498Z8AVQ5TV5Q): a person
+//! shows and edits the notes of the project, through the `riff` binary
 //! against a real server.
 
 use std::path::Path;
@@ -52,9 +52,10 @@ fn text(out: &[u8]) -> String {
     String::from_utf8_lossy(out).into_owned()
 }
 
-/// The person shows the notes, edits them with an editor and from a
-/// file, and sees the history. A secret and a text over the limit are
-/// refused. Another user cannot show the notes.
+/// An admin shows the notes, edits them with an editor and from a file,
+/// and sees the history. A secret and a text over the limit are refused.
+/// Each member reads the notes of the project, and a member who is no
+/// admin cannot write them.
 #[tokio::test]
 async fn the_person_shows_and_edits_the_notes_of_the_lead() {
     let server = common::start_signed().await;
@@ -63,7 +64,7 @@ async fn the_person_shows_and_edits_the_notes_of_the_lead() {
 
     let none = riff(&server, dir, "mike", "true", &["lead", "notes"]).await;
     assert!(none.status.success(), "{}", text(&none.stderr));
-    assert!(text(&none.stdout).contains("mike has no notes for como-technologies/riff yet"));
+    assert!(text(&none.stdout).contains("como-technologies/riff has no notes yet"));
 
     // The editor is a script that writes the text.
     let script = "#!/bin/sh\necho 'Wave 36 runs.' > \"$1\"\n";
@@ -154,31 +155,30 @@ async fn the_person_shows_and_edits_the_notes_of_the_lead() {
         text(&long.stderr)
     );
 
-    // A member reads no notes of mike (01M77671TQ92487GSM24RJG82Z).
-    let other = riff(
+    // Each member reads the one text of the project (01M77XMZBJ6DRGJTGEEE0EDECP).
+    for user in ["brett", "bob"] {
+        let read = riff(&server, dir, user, "true", &["lead", "notes"]).await;
+        assert!(read.status.success(), "{}", text(&read.stderr));
+        let read = text(&read.stdout);
+        assert!(
+            read.contains("Wave 37 runs.\nPrefer thelio."),
+            "{user}: {read}"
+        );
+    }
+    // A member who is no admin and not the lead writes no notes.
+    std::fs::write(&file, "Prefer kite.\n").unwrap();
+    let member = riff(
         &server,
         dir,
         "bob",
         "true",
-        &["lead", "notes", "--user", "mike"],
+        &["lead", "notes", "edit", "--file", path],
     )
     .await;
-    assert!(!other.status.success());
+    assert!(!member.status.success());
     assert!(
-        text(&other.stderr).contains("only mike and an admin"),
+        text(&member.stderr).contains("only the lead of como-technologies/riff and an admin"),
         "{}",
-        text(&other.stderr)
+        text(&member.stderr)
     );
-    // The admin brett reads them.
-    let admin = riff(
-        &server,
-        dir,
-        "brett",
-        "true",
-        &["lead", "notes", "--user", "mike"],
-    )
-    .await;
-    assert!(admin.status.success(), "{}", text(&admin.stderr));
-    let own = riff(&server, dir, "brett", "true", &["lead", "notes"]).await;
-    assert!(text(&own.stdout).contains("brett has no notes"));
 }

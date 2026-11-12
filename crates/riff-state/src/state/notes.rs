@@ -1,25 +1,33 @@
 //! The group "notes": the command [`SetNotes`], and the notes of the
-//! lead of each user in each repository thread
-//! (01M59258K3TYR09HC4AWHWZPEX). The storage is a part of
-//! [`Plans`](super::plan::Plans): the notes are in the part of the
-//! repository thread, and in its part of the checkpoint.
+//! lead: one text for each project (01M77XMZBJ6DRGJTGEEE0EDECP). The
+//! storage is a part of [`Plans`](super::plan::Plans): the notes are in
+//! the part of the repository thread, and in its part of the checkpoint.
 //!
-//! | Who | Writes | Reads (01M59258NTXPMWV18TKRKWNTYN) |
+//! | Who | Writes | Reads |
 //! |---|---|---|
-//! | the person of the user, and a session of the user that is no worker | the notes of the user | the notes of the user |
-//! | each admin | no | the notes of each user |
-//! | each other member | no | no |
+//! | the lead of the project | yes | yes |
+//! | an admin, as a person or as a session that is no worker | yes | yes |
+//! | a worker | no | yes |
+//! | each other member | no | yes |
 //!
-//! [`permits`](super::permits) refuses a worker. `handle` refuses a text
-//! over the limit and a text that looks like a token
-//! ([`riff_core::notes::check`]). The same text makes no record. Each
-//! text stays: the history is the old texts of the part.
+//! [`permits`](super::permits) refuses a worker, and `handle` each other
+//! caller that is not the lead or an admin. `handle` refuses a text over
+//! the limit and a text that looks like a token
+//! ([`riff_core::notes::check`]). The same text as the text now makes no
+//! record. Each text stays: the history is the old texts of the project.
+//!
+//! The part keeps the texts by the user of the writer, as the checkpoint
+//! did before one text for each project. The text now is the newest text
+//! of all users. So the notes of a project with the texts of two users
+//! start from the newest, and the older text is in the history.
 //!
 //! ```mermaid
 //! flowchart LR
-//!     W[notes set TEXT] --> C{check: size, token}
+//!     W[notes set TEXT] --> L{the lead or an admin?}
+//!     L -->|no| A[not_allowed]
+//!     L -->|yes| C{check: size, token}
 //!     C -->|refused| X[bad_request]
-//!     C -->|good| S{same text?}
+//!     C -->|good| S{same text as now?}
 //!     S -->|yes| N[no record]
 //!     S -->|no| R[(notes_set)]
 //!     R --> H[the old text goes to the history]
@@ -29,13 +37,14 @@ use riff_core::notes;
 use riff_core::record::{Change, NotesSet};
 use riff_core::wire::{NotesReply, SetNotes, SetNotesReply};
 
-use super::command::{Caller, Code, Command, CommandKind, Done, Now, Refused, Role};
+use super::command::{Caller, Class, Code, Command, CommandKind, Done, Now, Refused, Role};
 use super::plan::repository;
 use super::view::View;
 
-/// Writes the notes of the lead of the caller in a repository thread
-/// (01M59258K3TYR09HC4AWHWZPEX). The user of the notes is the user of
-/// the caller. The same text as the text now makes no record.
+/// Writes the notes of the project of a repository thread
+/// (01M77XMZBJ6DRGJTGEEE0EDECP). Only the lead of the project and an
+/// admin write them. The record names the user of the caller. The same
+/// text as the text now makes no record.
 impl Command for SetNotes {
     const KIND: CommandKind = CommandKind::Notes;
     type Reply = SetNotesReply;
@@ -45,7 +54,7 @@ impl Command for SetNotes {
         &self,
         caller: &Caller,
         view: &View<'_>,
-        _: Now,
+        now: Now,
     ) -> Result<(Vec<Change>, ()), Refused> {
         let SetNotes {
             me: _,
@@ -53,18 +62,29 @@ impl Command for SetNotes {
             text,
         } = self;
         repository(thread)?;
+        let who = caller.who();
+        let lead = caller.class() == Class::Session
+            && view.lead_of(&(who.user().to_owned(), thread.clone()), now.at) == Some(who);
+        if !lead && caller.role() < Role::Admin {
+            return Err(Refused::new(
+                Code::NotAllowed,
+                format!(
+                    "only the lead of {thread} and an admin write the notes of the project. \
+                     Tell the lead."
+                ),
+            ));
+        }
         notes::check(text).map_err(|reason| Refused::new(Code::BadRequest, reason))?;
-        let user = caller.who().user();
-        let now = view
+        let then = view
             .riff
             .plans()
-            .notes(thread, user)
+            .notes(thread)
             .map_or("", |version| version.text.as_str());
         let mut changes = Vec::new();
-        if now != text {
+        if then != text {
             changes.push(Change::NotesSet(NotesSet {
                 thread: thread.clone(),
-                user: user.to_owned(),
+                user: who.user().to_owned(),
                 text: text.clone(),
             }));
         }
@@ -78,35 +98,22 @@ impl Command for SetNotes {
     }
 }
 
-/// Says who reads the notes of `user`: the user of the caller, and each
-/// admin (01M59258NTXPMWV18TKRKWNTYN, 01M77671TQ92487GSM24RJG82Z).
-pub fn may_read(caller: &Caller, user: &str) -> Result<(), Refused> {
-    if caller.who().user() == user || caller.role() >= Role::Admin {
-        Ok(())
-    } else {
-        Err(Refused::new(
-            Code::NotAllowed,
-            format!("only {user} and an admin can read the notes of the lead of {user}"),
-        ))
-    }
-}
-
-/// The reply of the query `notes`: the text now and with `history` the
-/// old texts. A lead with no notes has an empty text.
+/// The reply of the query `notes`: the text now of the project of
+/// `thread`, and with `history` the old texts. Each member reads them
+/// (01M77XMZBJ6DRGJTGEEE0EDECP). A project with no notes has an empty
+/// text.
 pub fn reply(
     plans: &super::plan::Plans,
     thread: &riff_core::name::ThreadName,
-    user: &str,
     history: bool,
 ) -> NotesReply {
-    let now = plans.notes(thread, user);
+    let now = plans.notes(thread);
     NotesReply {
-        user: user.to_owned(),
         text: now.map(|v| v.text.clone()).unwrap_or_default(),
         by: now.and_then(|v| v.by.clone()),
         at_ms: now.map(|v| v.at_ms),
         history: if history {
-            plans.notes_before(thread, user).to_vec()
+            plans.notes_before(thread)
         } else {
             Vec::new()
         },

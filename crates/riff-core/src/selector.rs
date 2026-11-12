@@ -17,7 +17,7 @@
 //! | `repo` | `OWNER/REPO`, or `-` outside git. |
 //! | `worktree` | The worktree. The main worktree has none. |
 //! | `claim` | One of the claims that the session holds. |
-//! | `lead` | `true`: the lead of its user in its repository. `false`: each other session. |
+//! | `lead` | `true`: the one lead of the project of its repository, of any person. `false`: each other session. |
 //! | `person` | `true`: the terminals of a person (`riff chat`, `riff tail`, the phone), which have no session ID. `false`: each agent session. |
 //! | `name` | A name of the chat: a person or a project. riff-server resolves it when the message is posted. |
 //!
@@ -137,8 +137,8 @@ pub struct Selector {
     /// A claimed work item, for example `issue-6`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claim: Option<String>,
-    /// True picks the lead of its user in its repository. Use it with
-    /// `user` and `repo`.
+    /// True picks the one lead of the project of its repository, of any
+    /// person. Use it with `repo` ([`Selector::lead`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lead: Option<bool>,
     /// True picks the terminals of a person: they have no session ID.
@@ -203,10 +203,10 @@ impl Selector {
         }
     }
 
-    /// A selector for the lead of `user` in the repository `repo`.
-    pub fn lead(user: &str, repo: &str) -> Self {
+    /// A selector for the one lead of the project `repo`: a session of
+    /// any person.
+    pub fn lead(repo: &str) -> Self {
         Self {
-            user: Some(user.to_owned()),
             repo: Some(repo.to_owned()),
             lead: Some(true),
             ..Self::default()
@@ -397,15 +397,15 @@ mod tests {
         assert!(!sel("lead=true").matches(&u));
         assert!(sel("lead=false").matches(&u));
         assert!(!sel("lead=false").matches(&lead));
-        let s = Selector::lead("mike", "como-technologies/riff");
-        assert_eq!(
-            s.to_string(),
-            "user=mike,repo=como-technologies/riff,lead=true"
-        );
+        let s = Selector::lead("como-technologies/riff");
+        assert_eq!(s.to_string(), "repo=como-technologies/riff,lead=true");
         assert!(s.matches(&lead));
+        let brett = uri("riff://brett@thelio/como-technologies/riff?session=b2");
+        assert!(s.matches(&brett.with_lead(true)), "the lead of any person");
+        assert!(!s.matches(&u));
         assert_eq!(
             serde_json::to_string(&s).unwrap(),
-            r#"{"user":"mike","repo":"como-technologies/riff","lead":true}"#
+            r#"{"repo":"como-technologies/riff","lead":true}"#
         );
     }
 

@@ -770,11 +770,9 @@ mod tests {
         c.trip(&NotesShow {
             me: me(),
             thread: thread(),
-            user: Some(text("ann")),
             history: true,
         });
         c.trip(&NotesReply {
-            user: text("ann"),
             text: text("Wave 36 runs."),
             by: Some(By::Session(who())),
             at_ms: Some(7),

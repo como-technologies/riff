@@ -370,7 +370,7 @@
 //! `claude --resume` gives it the conversation back. Its first prompt
 //! ([`text::lead_again`]) tells the lead to start its Monitor again: the
 //! old one ended with the old container. The session of the lead on
-//! riff-server stays, and so does its place as the lead of the person.
+//! riff-server stays, and so does its place as the lead of the project.
 //!
 //! # A takeover
 //!
@@ -10425,7 +10425,7 @@ mod tests {
     }
 
     /// A riff-server in this process, in a running riff, where the session
-    /// of the lead of [`started_lead`] is the lead of its person. Gives the
+    /// of the lead of [`started_lead`] is the lead of the project. Gives the
     /// API and the person.
     async fn riff_of_the_lead() -> (riff_client::api::Api, SessionUri) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

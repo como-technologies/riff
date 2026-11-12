@@ -18,7 +18,7 @@
 //! | host | where | The machine name, without its domain. |
 //! | owner/repo | where | The `origin` remote of the git repository. |
 //! | worktree | where | The directory name of a linked worktree. The main worktree has none. |
-//! | lead | what | `lead=true` when the session is the lead of its user in its repository. |
+//! | lead | what | `lead=true` when the session is the one lead of the project of its repository. |
 //! | claim | what | One part for each claim that the session holds. |
 //!
 //! *Who* ([`Who`]) never changes. *Where* ([`Place`]) changes when the
@@ -339,7 +339,8 @@ impl SessionUri {
         self
     }
 
-    /// True when the session is the lead of its user in its repository.
+    /// True when the session is the one lead of the project of its
+    /// repository (01M77XMS645VZNTP22DTCB7RXE).
     pub fn lead(&self) -> bool {
         self.lead
     }

@@ -6,9 +6,10 @@
 //! the wakes, and still wakes for its verify result, and for the
 //! question and the request to it.
 //!
-//! A verify request to the lead of the author reaches a free session
-//! when that lead is gone (01M3JY1TBPQHH6WPPBTF42T64H), but not when the
-//! lead itself posts (01M58AQX46RH9KFP91QAFS43N7).
+//! A verify request to the lead of the project reaches a free session
+//! of any person when that lead is gone (01M3JY1TBPQHH6WPPBTF42T64H,
+//! 01M78A9FSHE9XEPGC3SJAB7PMX), but not when the lead itself posts
+//! (01M58AQX46RH9KFP91QAFS43N7).
 
 use riff_client::api::Api;
 use riff_core::name::{SessionUri, ThreadName};
@@ -170,7 +171,7 @@ async fn replay(riff: &Riff, skill: bool) -> Vec<&'static str> {
     for &(from, body, to) in WAVE_2 {
         let me = riff.from(from);
         let everyone = [selector("repo=como-technologies/riff")];
-        let lead = [selector("user=mike,repo=como-technologies/riff,lead=true")];
+        let lead = [Selector::lead("como-technologies/riff")];
         let worker = [selector("session=w3")];
         let claim;
         let (thread, to, kind) = match (skill, to) {
@@ -235,10 +236,10 @@ async fn the_worker_reads_each_note() {
     }
 }
 
-/// Posts a verify request from `a` to the lead of mike, as the skill
-/// does, and returns the sessions that woke.
+/// Posts a verify request from `a` to the lead of the project, as
+/// `riff run` does, and returns the sessions that woke.
 async fn verify_request(riff: &Riff) -> Vec<SessionUri> {
-    let lead = [selector("user=mike,repo=como-technologies/riff,lead=true")];
+    let lead = [Selector::lead("como-technologies/riff")];
     riff.api(&riff.a)
         .post(
             &riff.a,
@@ -260,15 +261,25 @@ async fn a_verify_request_wakes_only_a_live_lead() {
     assert_eq!(woken, [riff.lead.who()]);
 }
 
+/// With no live lead, the verify request wakes each free session of
+/// the repository, of any person (01M78A9FSHE9XEPGC3SJAB7PMX).
 #[tokio::test]
 async fn a_verify_request_with_no_live_lead_wakes_a_free_session() {
     let riff = riff().await;
     let free = uri("riff://mike@thelio/como-technologies/riff?session=f4");
-    riff.api(&free).register(&free).await.unwrap();
+    let brett = uri("riff://brett@heron/como-technologies/riff?session=g5");
+    for me in [&free, &brett] {
+        riff.api(me).register(me).await.unwrap();
+    }
     riff.api(&riff.lead).end(&riff.lead).await.unwrap();
     let woken = verify_request(&riff).await;
-    let woken: Vec<_> = woken.iter().map(SessionUri::who).collect();
-    assert_eq!(woken, [free.who()], "only the session with no claim wakes");
+    let mut woken: Vec<_> = woken.iter().map(SessionUri::who).collect();
+    woken.sort();
+    assert_eq!(
+        woken,
+        [brett.who(), free.who()],
+        "only the sessions with no claim wake"
+    );
 }
 
 /// 01M58AQX46RH9KFP91QAFS43N7: the sender counts as the live lead.

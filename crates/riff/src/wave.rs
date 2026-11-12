@@ -1927,7 +1927,7 @@ pub trait World: Send + Sync {
     }
 
     /// Posts `body` of `kind` as the person of the wave: to the session
-    /// that claims `item`, or to the lead of the person when `item` is
+    /// that claims `item`, or to the lead of the project when `item` is
     /// `None`. The error is a post that did not go out. A post with a
     /// `key` is dropped by riff-server when a kept message of the person
     /// has the key in the thread of the wave (01M5TKG2K1AYK1KE7C2AA2W9DS).
@@ -2943,8 +2943,9 @@ pub struct Live {
 }
 
 /// Posts `body` of `kind` as the person of `wave`: to the session that
-/// claims `item`, or to the lead of the person. The post has `key`, when
-/// there is one (01M5TKG2K1AYK1KE7C2AA2W9DS).
+/// claims `item`, or to the lead of the project
+/// (01M78A9FSHE9XEPGC3SJAB7PMX). The post has `key`, when there is one
+/// (01M5TKG2K1AYK1KE7C2AA2W9DS).
 pub(crate) async fn post_as_person(
     wave: &Wave,
     item: Option<&str>,
@@ -2956,7 +2957,7 @@ pub(crate) async fn post_as_person(
     let api = Api::new(&wave.server).signed_in(None)?;
     let to = match item {
         Some(item) => format!("claim={item},repo={}", wave.repo).parse()?,
-        None => riff_core::selector::Selector::lead(person.who().user(), &wave.repo),
+        None => riff_core::selector::Selector::lead(&wave.repo),
     };
     api.post_keyed(&person, Some(&wave.thread()?), &[to], body, kind, key)
         .await?;
@@ -3064,10 +3065,7 @@ async fn after_build(
     })
     .await?;
     let me = &record.me;
-    let to = [riff_core::selector::Selector::lead(
-        me.who().user(),
-        &wave.repo,
-    )];
+    let to = [riff_core::selector::Selector::lead(&wave.repo)];
     let thread = wave.thread()?;
     let item = &record.live.item;
     let pull = match read {
@@ -3251,10 +3249,7 @@ async fn after_verify(
 ) -> Result<Finish> {
     let me = &record.me;
     let thread = wave.thread()?;
-    let lead = [riff_core::selector::Selector::lead(
-        me.who().user(),
-        &wave.repo,
-    )];
+    let lead = [riff_core::selector::Selector::lead(&wave.repo)];
     let item = &record.live.item;
     let found = last_result(&record.folder.join(crate::daemon::EVENTS));
     let Some((verdict, result)) = found.as_deref().and_then(verdict) else {
@@ -3363,7 +3358,7 @@ pub(crate) async fn post_report(
         Verdict::Fail => PullState::Failed,
     };
     look::tell_fact(api, me, reported.issue, pull, state).await;
-    let to = pr::result_to(reported.issue, me, thread, &api.who(me, false).await?);
+    let to = pr::result_to(reported.issue, thread, &api.who(me, false).await?);
     let body = text::verify_post(verdict, pull, reported, result);
     api.post(me, Some(thread), &to, &body, Kind::Message)
         .await?;

@@ -302,8 +302,8 @@ fn start(dir: &Path, tag: &str, url: &str) -> Result<()> {
 
 /// The update in the background (01M3N7JJH0SXXQYYBAHWPCNQGX): takes
 /// the update lock, records the try of `tag` ([`mark`]), runs
-/// [`lifecycle::update`], tells the lead of the user in the repository
-/// of `place`, or with no `place` in each repository that the daemon
+/// [`lifecycle::update`], tells the lead of the project of `place`, or
+/// with no `place` the lead in each repository that the daemon
 /// serves ([`lead_places`]), the result (01M3N7JJKBME6VSNTHD8VPN3K9),
 /// and then runs [`lifecycle::daemon_after_update`]. It
 /// stops at once when another update holds the lock, or when `tag` was

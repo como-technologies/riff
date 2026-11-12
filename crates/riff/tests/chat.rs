@@ -187,31 +187,29 @@ async fn quiet<S: futures::Stream + Unpin>(wakes: &mut S) -> bool {
         .is_err()
 }
 
+/// `@riff` wakes the one lead of the project, also for a person whose
+/// lead it is not (01M77XW0X8Z4M3EXGRDEXV6S2B): mike names the project,
+/// and the lead of brett wakes. Its answer shows in each client.
 #[tokio::test]
-async fn at_a_project_wakes_the_lead_of_the_sender_and_its_answer_shows_in_each_client() {
+async fn at_a_project_wakes_the_lead_of_the_project_and_its_answer_shows_in_each_client() {
     let server = crate::common::start_signed().await;
-    let (mike_lead, brett_lead) = (lead_of("mike"), lead_of("brett"));
-    // The person of each user names its lead. A client of one process
-    // has one sign-in per server, so each call has its own client.
+    let lead = lead_of("brett");
+    // The person of brett names the lead. A client of one process has
+    // one sign-in per server, so each call has its own client.
     let common = |user| crate::common::api(&server, user, None);
     let session = |lead| crate::common::api_of(&server, lead);
-    session(&mike_lead).register(&mike_lead).await.unwrap();
-    crate::common::name_lead(&common("mike"), &mike_lead).await;
-    let mike_api = session(&mike_lead);
-    let mut mike_wakes = Box::pin(mike_api.watch(&mike_lead).await.unwrap());
-    session(&brett_lead).register(&brett_lead).await.unwrap();
-    crate::common::name_lead(&common("brett"), &brett_lead).await;
-    let brett_api = session(&brett_lead);
-    let mut brett_wakes = Box::pin(brett_api.watch(&brett_lead).await.unwrap());
+    session(&lead).register(&lead).await.unwrap();
+    crate::common::name_lead(&common("brett"), &lead).await;
+    let lead_api = session(&lead);
+    let mut wakes = Box::pin(lead_api.watch(&lead).await.unwrap());
     let mut mike = Client::start(&server, "mike", "thelio", &[]).await;
     let mut brett = Client::start(&server, "brett", "heron", &[]).await;
 
-    // @riff wakes the lead of the sender in riff, and not the lead of
-    // brett there.
+    // @riff of mike wakes the lead of the project, a session of brett.
     mike.say("@riff is #12 done?").await;
-    let wake = in_time(WAIT, mike_wakes.next())
+    let wake = in_time(WAIT, wakes.next())
         .await
-        .expect("the lead of mike wakes")
+        .expect("the lead of the project wakes")
         .unwrap()
         .unwrap();
     assert_eq!(wake.thread, riff::chat::thread());
@@ -220,25 +218,25 @@ async fn at_a_project_wakes_the_lead_of_the_sender_and_its_answer_shows_in_each_
     // @mike names the person mike: it wakes no lead.
     brett.say("@mike: can I take #14?").await;
     brett.shows("can I take #14?").await;
-    assert!(quiet(&mut mike_wakes).await, "the lead of mike woke");
+    assert!(quiet(&mut wakes).await, "the lead woke");
 
     // Each line posts with its names, and with no selector of riff.
-    let to = |body| to_of(&mike_api, &mike_lead, body);
+    let to = |body| to_of(&lead_api, &lead, body);
     assert_eq!(to("@riff is #12 done?").await, ["name=riff"]);
     assert_eq!(to("@mike: can I take #14?").await, ["name=mike"]);
 
     // The lead reads the lines, and answers in the chat.
-    let read = session(&mike_lead)
-        .read(&mike_lead, &riff::chat::thread(), true)
+    let read = session(&lead)
+        .read(&lead, &riff::chat::thread(), true)
         .await
         .unwrap();
     assert!(
         read.iter()
             .any(|c| c.message.body == "@mike: can I take #14?")
     );
-    session(&mike_lead)
+    session(&lead)
         .post(
-            &mike_lead,
+            &lead,
             Some(&riff::chat::thread()),
             &[],
             "yes, take #14",
@@ -252,9 +250,6 @@ async fn at_a_project_wakes_the_lead_of_the_sender_and_its_answer_shows_in_each_
         let line = client.shows("yes, take #14").await;
         assert!(is_shown(&line, "<riff> yes, take #14"), "{line:?}");
     }
-
-    // No line woke the lead of brett.
-    assert!(quiet(&mut brett_wakes).await, "the lead of brett woke");
 }
 
 /// The lead of `user` in the repository `repo`, on one host.
