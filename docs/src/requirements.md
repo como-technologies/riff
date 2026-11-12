@@ -7907,8 +7907,7 @@ of this part when they merge.
   `riff release` subcommand but `hold`, `riff build` and the
   real-session test refuse with one line, "this repository has no
   release cycle of riff: riff.toml has no [release]", and touch nothing
-  on the forge. Then `riff wave end N` has no release gate, and the
-  verify start text has no part for a release pull request. The probe
+  on the forge. Then `riff wave end N` has no release gate. The probe
   for `deploy/release-check.sh` does not decide it. The `riff.toml` of
   riff has `[release]`. Supersedes 01M58KMMCZCE7HDNVT9PVHVZX2 in part.
 - **01M5TKEH5E2ZQ22PAN9FTT27VW** The daemon of a host decides the
@@ -8020,17 +8019,18 @@ of this part when they merge.
   01M3N73EGY4NQDQQP8Y185E9VZ in part.
 - **01M76SBEV64SNKCS1AE1KXWNFM** `riff release` has no `verify`, and no
   pull request gets the label `release`: only a release issue has it.
-  Hygiene, CI and `.github/release.yml` have no rule of the label. Before
-  it opens the pull request of the next version, `riff release cut` sets
-  the status `riff/verify` of its one commit: riff wrote that commit, and
-  it changes only the version in `Cargo.toml` and `Cargo.lock`. The Gate
-  decides the merge, as for each other pull request. riff finds the pull
-  request of the next version by its title. The notes of the cut and
-  `riff wave end` leave it out. The generated notes of GitHub list it.
-  Supersedes 01M58B0HZYMAK1B2AJMWKHCXG0, 01M5ND0ZNFFAPT1AWD3DP1Y77N and
-  01M5R13DK401K3TZ91E2QK2DYM in full, and 01M7641T2JH2K6SYBCWQGM56FY,
-  01M58KMKR33P1FSCFDQRZ56A8P, 01M5R13DE5XRWB13E0BQ17C80F,
-  01M5RGM8HBVQMY25H5PYESK17J and 01M3NB3EWE2V9PCTMNTZAKEXMA in part.
+  Hygiene, CI and `.github/release.yml` have no rule of the label.
+  Before it opens the pull request of the next version, `riff release
+  cut` sets the status `riff/verify` of its one commit: riff wrote that
+  commit, and it changes only the version in `Cargo.toml` and
+  `Cargo.lock`. The Gate decides the merge, as for each other pull
+  request. riff finds the pull request of the next version by its title.
+  The notes of the cut and `riff wave end` leave it out. The generated
+  notes of GitHub list it. Supersedes 01M58B0HZYMAK1B2AJMWKHCXG0,
+  01M5ND0ZNFFAPT1AWD3DP1Y77N and 01M5R13DK401K3TZ91E2QK2DYM in full, and
+  01M7641T2JH2K6SYBCWQGM56FY, 01M58KMKR33P1FSCFDQRZ56A8P,
+  01M5R13DE5XRWB13E0BQ17C80F, 01M5RGM8HBVQMY25H5PYESK17J,
+  01M3NB3EWE2V9PCTMNTZAKEXMA and 01M5SMPX8NM75P8E38DGQ17W7B in part.
 - **01M76SBPDSGS0SATQV9RA1FRG1** The release issue has the line "Done
   when" and the list of the steps of the release: the real-session test
   of the last commit of `main`, the tag and the GitHub release, the

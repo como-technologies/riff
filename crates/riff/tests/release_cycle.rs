@@ -2574,10 +2574,12 @@ fn hygiene_and_ci_have_no_rule_of_the_label_release_and_riff_release_has_no_veri
     let help = text(&help.stdout);
     assert!(help.contains("\n  cut "), "{help}");
     assert!(!help.contains("verify"), "{help}");
+    // With no subcommand verify, clap reads `verify` as the ITEM of a
+    // claim, and refuses the word after it.
     let verify = riff(&["release", "verify", "1141"]);
-    assert!(!verify.status.success());
+    assert_eq!(verify.status.code(), Some(2), "{verify:?}");
     assert!(
-        text(&verify.stderr).contains("unrecognized subcommand 'verify'"),
+        text(&verify.stderr).contains("the subcommand '1141' cannot be used with '<ITEM>'"),
         "{}",
         text(&verify.stderr)
     );
