@@ -123,6 +123,20 @@ fn check_lints_for_a_mac_with_the_clippy_of_test_macos() {
     // The command of the missing target is a line of just init.
     let add = MISSING.rsplit_once(": ").unwrap().1.trim_end();
     assert!(body("init").contains(&add.into()), "{:?}", body("init"));
+    // The how-to of the book has the commands and the line of the script.
+    let book = std::fs::read_to_string(top().join("docs/src/development.md")).unwrap();
+    let how_to = book
+        .split_once("\n### Lint for a Mac on Linux\n")
+        .expect("the book has the how-to")
+        .1;
+    let how_to = &how_to[..how_to.find("\n## ").unwrap()];
+    for part in [
+        format!("```sh\n{add}\n```"),
+        "```sh\njust lint-macos\n```".into(),
+        format!("```text\n{MISSING}```"),
+    ] {
+        assert!(how_to.contains(&part), "{part:?} is not in:\n{how_to}");
+    }
 }
 
 #[test]
