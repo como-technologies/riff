@@ -66,7 +66,7 @@
 //! |---|---|
 //! | post, tell, read, status, blocked, step | each session, as with its riff tools |
 //! | pause and resume, the fact of a pull request, the thread denials | the lead (01M74A8D1GV6TCPXV2XEPVA53A) |
-//! | the projects of the riff, for `riff project list` | each session (01M76SHB4SAWFW3S5Y7X9KC6E4) |
+//! | the projects of the riff, for `riff project list` | each session (01M776HMKPTH3S6MYJZ8RJGWXV) |
 //!
 //! ```mermaid
 //! flowchart LR
@@ -860,8 +860,9 @@ impl Reach {
     }
 
     /// Each project of the riff, for `riff project list`
-    /// (01M76SHB4SAWFW3S5Y7X9KC6E4). Each person and each session may
-    /// read them.
+    /// (01M76SHB4SAWFW3S5Y7X9KC6E4): straight, or in a container through
+    /// the socket of the session (01M776HMKPTH3S6MYJZ8RJGWXV). Each person
+    /// and each session may read them.
     pub async fn projects(&self) -> Result<riff_core::wire::ProjectsReply> {
         match self {
             Reach::Direct(server) => {

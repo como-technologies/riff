@@ -410,8 +410,8 @@ gh api 'repos/{owner}/{repo}/milestones?state=all' --jq '.[].title'
 gh label list
 ```
 
-`riff init` makes the milestone `Backlog`, and `Wave 1` when the
-repository has no open wave. With `Wave 1` it makes the label
+`riff project init` makes the milestone `Backlog`, and `Wave 1` when
+the repository has no open wave. With `Wave 1` it makes the label
 `question`, when the repository has none. It also counts the open
 issues with no `Done when:` line: see
 [Find the issues with no Done when line](development.md#find-the-issues-with-no-done-when-line).

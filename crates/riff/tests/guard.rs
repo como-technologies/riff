@@ -287,7 +287,7 @@ fn a_change_of_a_comment_of_the_bot_itself_stays() {
 }
 
 /// The workflow of this repository is the guard of the session App of
-/// como-technologies, as `riff init` writes it.
+/// como-technologies, as `riff project init` writes it.
 #[test]
 fn this_repository_has_the_guard_of_its_session_app() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))

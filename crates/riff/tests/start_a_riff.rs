@@ -397,7 +397,7 @@ fn the_page_has_the_how_to_add_another_repository_to_the_riff() {
     let how_to = part(PAGE, HOW_TO);
     let commands = book::commands_in(&how_to);
     assert!(
-        commands.contains(&"riff init --check".to_owned()),
+        commands.contains(&"riff project init --check".to_owned()),
         "{commands:?}"
     );
     for step in [
@@ -423,7 +423,7 @@ fn the_page_has_the_how_to_add_another_repository_to_the_riff() {
         "riff wave make \"Wave 1\"",
         "gh api -X POST repos/{owner}/{repo}/milestones -f title=Backlog",
         "printf '[session]\\nimage = \"%s@%s\"\\n' \"$IMAGE\" \"$DIGEST\" > riff.toml",
-        "riff init --yes --image \"$IMAGE@$DIGEST\"",
+        "riff project init --yes --image \"$IMAGE@$DIGEST\"",
         "sed -i \"s|^FROM .*|FROM $BASE|\" deploy/session/Dockerfile",
     ] {
         assert!(
@@ -524,7 +524,8 @@ fn the_how_to_leaves_claude_md_to_the_repository_and_writes_one_on_request() {
     let intro = how_to.split("### Read the output").next().unwrap();
     let intro = intro.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(intro.contains(
-        "`riff init` checks neither: it prints no line for them, and a repository with none passes."
+        "`riff project init` checks neither: it prints no line for them, and a repository with none \
+         passes."
     ));
     assert!(intro.contains("The full check of a pull request, its CI, is the gate of a change"));
     assert!(
@@ -533,19 +534,19 @@ fn the_how_to_leaves_claude_md_to_the_repository_and_writes_one_on_request() {
     );
 }
 
-/// 01M5R1672NF56P15VD0JEX51K4: the how-to starts with `riff init` in a
+/// 01M5R1672NF56P15VD0JEX51K4: the how-to starts with `riff project init` in a
 /// copyable `sh` block, lists what it sets up in the order of the steps
 /// (`riff::repo_setup::Step`), and names `--yes` and `--check`.
 #[test]
-fn the_how_to_starts_with_riff_init_and_lists_what_it_sets_up() {
+fn the_how_to_starts_with_riff_project_init_and_lists_what_it_sets_up() {
     let how_to = part(PAGE, HOW_TO);
     let commands = book::commands_in(&how_to);
-    assert_eq!(commands[0], "riff init");
+    assert_eq!(commands[0], "riff project init");
     // Nothing but prose comes before the first block.
     let before = how_to.split("```").next().unwrap();
     assert!(!before.contains("###"), "{before}");
     let table = how_to
-        .split("| Step | What `riff init` does |")
+        .split("| Step | What `riff project init` does |")
         .nth(1)
         .expect("the table");
     let table = table.split("\n\n").next().unwrap();
@@ -586,8 +587,8 @@ fn the_how_to_starts_with_riff_init_and_lists_what_it_sets_up() {
         "{table}"
     );
     for word in [
-        "`riff init --yes`",
-        "`riff init --check`",
+        "`riff project init --yes`",
+        "`riff project init --check`",
         "`CLAUDE.md`",
         "`git pull`",
     ] {
@@ -636,7 +637,7 @@ fn the_how_to_lists_the_checks_that_riff_waits_for() {
 
 /// 01M5SMNKDWBD1J6Y18ENQG87CK: the how-to says what riff does with no CI,
 /// and it names no job `Gate` for another repository: neither does a text
-/// of `riff init`.
+/// of `riff project init`.
 #[test]
 fn the_how_to_says_what_riff_does_with_no_ci_and_names_no_job_gate() {
     let how_to = part(PAGE, HOW_TO);
@@ -663,7 +664,7 @@ fn the_how_to_says_what_riff_does_with_no_ci_and_names_no_job_gate() {
     }
 }
 
-/// The ruleset of the how-to is the ruleset that the step of `riff init`
+/// The ruleset of the how-to is the ruleset that the step of `riff project init`
 /// makes (01M5QWA0E9A4ZJ8X49EM2MJM5Q), and it requires the checks that
 /// riff reads: the verify alone, for a repository with no CI.
 #[test]
@@ -691,7 +692,7 @@ fn the_ruleset_of_the_how_to_is_the_ruleset_of_the_step() {
 
 /// 01M6WZ40YED6THKVJ2JQRXFK4N, 01M6WZ40PZNBHW2BZHMQX80WJ8: the how-to
 /// "Let the lead push the release tag" makes the ruleset `releases` that
-/// the step of `riff init` makes, with the App ID of the lead App from
+/// the step of `riff project init` makes, with the App ID of the lead App from
 /// `gh api apps/SLUG`. The fix of the check names the how-to.
 #[test]
 fn the_ruleset_releases_of_the_how_to_is_the_ruleset_of_the_step() {
@@ -808,7 +809,7 @@ fn the_riff_toml_of_the_how_to_is_a_file_that_riff_reads() {
     }
 
     // "Pin the image of the project": the pin riff reads, and the pin that
-    // `riff init --image` takes.
+    // `riff project init --image` takes.
     let digest = format!("sha256:{}", "ab".repeat(32));
     let pin_new = "printf '[session]\\nimage = \"%s@%s\"\\n' \"$IMAGE\" \"$DIGEST\" > riff.toml";
     assert!(commands.contains(&pin_new.to_owned()));

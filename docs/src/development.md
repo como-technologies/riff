@@ -2618,10 +2618,10 @@ for a day shows `no wake for 1d`: its wave reads GitHub as with no
 events, with the two cheap reads before each full read.
 
 The daemon is not the only caller. The token of your account also pays
-for `riff top`, `riff pr wait`, `riff verify`, `riff run`, `riff init`,
-the release commands, and each `gh` that a session runs in its
-container. Each of them counts its calls too, and
-the daemon adds them to its own. Each `gh` call of riff has a caller
+for `riff top`, `riff pr wait`, `riff verify`, `riff run`,
+`riff project init`, the release commands, and each `gh` that a session
+runs in its container. Each of them counts its calls too, and the
+daemon adds them to its own. Each `gh` call of riff has a caller
 name, and a test fails on a `gh` with none. A command on the host writes
 its calls to the folder `gh-calls` in the folder of the daemon. A
 session in a container sends them to the daemon on its socket. In a
@@ -2680,9 +2680,9 @@ the daemon starts to serve), `release test` (the real-session test of a
 release), `token` (the token of a session on GitHub: the push right of
 the person and the revoke), or the command of `riff` that made the
 call: `top`, `pr open`, `pr wait`, `verify`, `release`, `waves` (`riff
-wave ...`), `audit`, `questions`, `run`, `init`, `claim` (the pull
-request line of a claim), `github` (`riff github create` and `install`
-read the account), `tui` (the Waves tab of the TUI, see
+wave ...`), `audit`, `questions`, `run`, `project init`, `claim` (the
+pull request line of a claim), `github` (`riff github create` and
+`install` read the account), `tui` (the Waves tab of the TUI, see
 [See the open items of a wave](waves.md#see-the-open-items-of-a-wave)),
 or `chat` (the list of `#` of `riff chat`, see
 [Pick an issue with #](how-it-works.md#pick-an-issue-with)).
@@ -2969,21 +2969,21 @@ it since, the wave acts one time for the head commit:
 
 ### Turn the merge queue on or off
 
-`riff init` turns the queue on in a repository with `[release]` in
-`riff.toml`, as this one. `just github` turns it on too: see
+`riff project init` turns the queue on in a repository with `[release]`
+in `riff.toml`, as this one. `just github` turns it on too: see
 [Set up the repository](#set-up-the-repository). You need the rights of
 an admin of the repository. In a plain terminal, not in a container, in
 your clone of `como-technologies/riff`:
 
 ```sh
-riff init
+riff project init
 ```
 
-`riff init` puts the rule `merge_queue` in the ruleset that requires
-`riff/verify`, here `main`, and changes no other rule. A second run
-finds the queue and changes nothing. The queue merges with the method
-`squash`, builds up to 5 merge groups at the same time, and waits 60
-minutes for the checks of a group. The checks `Gate`, `Hygiene` and
+`riff project init` puts the rule `merge_queue` in the ruleset that
+requires `riff/verify`, here `main`, and changes no other rule. A second
+run finds the queue and changes nothing. The queue merges with the
+method `squash`, builds up to 5 merge groups at the same time, and waits
+60 minutes for the checks of a group. The checks `Gate`, `Hygiene` and
 `riff/verify` of the ruleset run on each merge group.
 
 To turn the queue off for a time, run the script. It changes no other
@@ -3010,8 +3010,8 @@ Turn the queue on only when the `main` of the repository has the event
 never start, and it removes each pull request after 60 minutes. The
 workflows of this repository have it: the Gate and Hygiene run on the
 merge group, and the job `Verify of the merge group` sets `riff/verify`
-on it. So `riff init` puts no merge queue in a repository with no
-`[release]`.
+on it. So `riff project init` puts no merge queue in a repository with
+no `[release]`.
 
 ### Add a host to the wave
 
@@ -3677,15 +3677,15 @@ warns when an item has no line (see
 
 ### Find the issues with no Done when line
 
-`riff init` counts the open issues that have no line that starts with
-`Done when:` and no heading `## Done when`, and names them in a note. A
-heading `## Done when` counts, with or without the colon, as it does for
-the wave. A tracker and a release issue are not in the note: no session
-does them. Run it in a clone of the repository. `--check` changes
-nothing:
+`riff project init` counts the open issues that have no line that
+starts with `Done when:` and no heading `## Done when`, and names them
+in a note. A heading `## Done when` counts, with or without the colon,
+as it does for the wave. A tracker and a release issue are not in the
+note: no session does them. Run it in a clone of the repository.
+`--check` changes nothing and enrolls nothing:
 
 ```sh
-riff init --check
+riff project init --check
 ```
 
 The note comes after the list of the checks. It fails no check, and it
@@ -3698,7 +3698,7 @@ For example:
 
 ```mermaid
 flowchart LR
-    I["riff init"] --> L["gh issue list:<br/>the open issues"]
+    I["riff project init"] --> L["gh issue list:<br/>the open issues"]
     L --> T{"a tracker, a release issue,<br/>a Done when: line,<br/>or a ## Done when heading?"}
     T -- yes --> O["not in the note"]
     T -- no --> N["named in the note"]
@@ -4089,8 +4089,8 @@ gh issue edit 1596 --remove-label question
 ```
 
 One open question keeps the label on. The wave takes the issue at its
-next look after the label goes. `riff init` makes the label in a new
-repository, when it is not there.
+next look after the label goes. `riff project init` makes the label in
+a new repository, when it is not there.
 
 ```mermaid
 flowchart LR
@@ -5620,7 +5620,7 @@ two rulesets:
   `Hygiene` and `riff/verify`. A merge queue with the method `squash`
   merges each pull request: see
   [Turn the merge queue on or off](#turn-the-merge-queue-on-or-off).
-  `riff init` sets the same queue.
+  `riff project init` sets the same queue.
 - `releases` on the tags `v*`: only the repository admin role and the
   lead App of the riff can create, move or delete a release tag. So the
   lead pushes the tag of a release from its container, and a worker

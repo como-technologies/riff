@@ -12187,8 +12187,8 @@ mod tests {
     /// 01M74A8D1GV6TCPXV2XEPVA53A: through the socket of its session,
     /// each session posts, reads, sets its status, starts a long step and
     /// says that it is blocked. Only the lead pauses and resumes, tells the
-    /// state of a pull request and reads the thread denials. A riff with no
-    /// sign-in has no GitHub Apps (01M74A8DC74TT2YGZPBBAENMWH).
+    /// state of a pull request and reads the thread denials. Each session
+    /// reads the projects of the riff (01M776HMKPTH3S6MYJZ8RJGWXV).
     #[tokio::test(flavor = "multi_thread")]
     async fn a_session_talks_through_its_socket_and_only_the_lead_pauses() {
         use crate::reach::Reach;

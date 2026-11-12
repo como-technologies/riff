@@ -757,7 +757,7 @@ flowchart LR
 | Push the tag `vX.Y.Z` | the lead in its container, with the token of the lead App, or an admin of the repository in a terminal | The ruleset `releases` lets only the admin role of the repository and the lead App push a tag `v*`. `riff release cut` checks no role: when GitHub refuses the push, riff names the ruleset and deletes the tag on its machine. |
 | Approve the deploy | you, the owner or an admin of the riff, in a plain terminal | `riff release approve` refuses each session, also the lead, also when you say approve in riff chat. Only a person is a reviewer of the environment `production`. |
 
-`just github` and `riff init` make the ruleset `releases`: see
+`just github` and `riff project init` make the ruleset `releases`: see
 [Let the lead push the release tag](start-a-riff.md#let-the-lead-push-the-release-tag).
 To see who can push a release tag, read the bypass actors of the
 ruleset. Only an admin of the repository sees them:
@@ -6009,6 +6009,96 @@ To attach to the new lead, run this on thelio:
 riff lead start
 ```
 
+## The projects of the riff
+
+A project is a repository `OWNER/REPO` on GitHub that a person enrolled
+in the riff. riff-server keeps each project in its log: the repository,
+who enrolled it and when, and the hosts that may run its wave. A project
+with no host names each host.
+
+```mermaid
+flowchart LR
+    P["riff project init<br/>in a clone"] --> C["the checks and the<br/>steps of the repository"]
+    C -- "each check passes" --> E["riff-server reads the<br/>repository on GitHub<br/>with the token of your gh"]
+    E -- "you are an admin<br/>of the repository" --> R["the project,<br/>in the log"]
+    R --> L["riff project list"]
+    R -- "riff project remove" --> G["the riff forgets it,<br/>GitHub keeps the repository"]
+```
+
+| Command | Who runs it | What it does |
+|---|---|---|
+| `riff project init` | an admin of the riff who is an admin of the repository on GitHub, in a plain terminal | Sets up the repository of the clone for riff, and enrolls it. A second run sets the hosts again. |
+| `riff project list` | each person and each session | Shows each project: who enrolled it and when, its hosts and its leads. |
+| `riff project remove OWNER/REPO` | an admin of the riff who is an admin of the repository on GitHub, in a plain terminal | The riff forgets the project. |
+
+riff-server reads the repository on GitHub one time with the token of
+your `gh`: it takes `GH_TOKEN` or `GITHUB_TOKEN` when your environment
+has one, else `gh auth token`. It keeps the token in no record, no log
+line and no reply. A member, a session, and an admin who is not an admin
+of the repository get a refusal. `riff project init` and
+`riff project remove` refuse in an agent session and in a container,
+before each call.
+
+### Enroll a project
+
+Run this in a clone of the repository:
+
+```sh
+riff project init
+```
+
+For its checks and its steps, see
+[Add another repository to the riff](start-a-riff.md#add-another-repository-to-the-riff).
+
+### Choose the hosts of a project
+
+Give `--host` one time for each host that may run the wave of the
+project. A second run sets the hosts again, and changes nothing else:
+
+```sh
+riff project init --host thelio --host heron
+```
+
+With no `--host`, the project names each host.
+
+### List the projects
+
+Each person and each session can list the projects of the riff. In a
+container, the list comes through the socket of the session:
+
+```sh
+riff project list
+```
+
+```text
+acme/app
+  enrolled by the person mike, 2026-11-12 02:20 UTC
+  hosts: heron, thelio
+  leads: mike
+
+acme/web
+  enrolled by the server, 2026-11-12 02:21 UTC
+  hosts: each host
+  leads: no lead
+```
+
+### Remove a project
+
+```sh
+riff project remove acme/app
+```
+
+The riff forgets the project. GitHub keeps the repository as it is:
+`riff.toml`, the rulesets and the milestones stay.
+
+### The projects of a riff from before the projects
+
+A riff-server whose log has no record of a project enrolls, at its
+start, each repository that has a lead or the notes of a lead. Then
+riff-bot tells the owner in one line of the chat. Review the list with
+`riff project list`, and remove each project that the riff does not
+work on.
+
 ## The lead
 
 A person often runs many sessions at once. The person works in one of
@@ -6730,7 +6820,8 @@ These commands work in the container:
 | `riff audit`, `riff questions`, `riff session why`, `riff denials` | Only the lead: find out about a wave. |
 | `riff release test`, `cut`, `verify`, `status`, `hold`, `check`, `retry` and `rollback` | Only the lead: the release cycle. |
 | `riff daemon status`, `riff daemon events`, `riff ps`, and each command with `--host`, for example `riff build --host` | Only the lead: the daemons of your hosts. |
-| `riff init --check` | The checks of the repository. |
+| `riff project list` | Read the projects of the riff. |
+| `riff init --check` | The checks of the session image and the riff binary. |
 | `riff`, the TUI | The tabs of the riff. |
 
 For example, in the terminal of the lead:
@@ -6763,9 +6854,9 @@ riff claim issue-12
 riff: riff claim does not run in a container session. It needs the host: the sign-in of a person, the claims of the riff daemon, or a program of the host. Run it in a terminal on the host. The commands of a session work here, for example riff read and riff post: the riff daemon of the host makes their calls.
 ```
 
-`riff github`, `riff device`, `riff leave` and `riff lead stop` with
-no `--host` refuse in the container with words of their own: each
-names the step on the host.
+`riff github`, `riff device`, `riff project init`, `riff project
+remove`, `riff leave` and `riff lead stop` with no `--host` refuse in
+the container with words of their own: each names the step on the host.
 
 ### Watch the riff on another machine
 
@@ -7011,8 +7102,8 @@ The right `issues: write` of GitHub has no smaller part, so the token of
 a worker can change the body or the title of an issue, and change or
 delete a comment of another account. So each repository of the riff
 has a guard: the workflow `.github/workflows/riff-guard.yml`.
-`riff init` writes it with the bot of the session App, in the pull
-request "Set up riff": see
+`riff project init` writes it with the bot of the session App, in the
+pull request "Set up riff": see
 [Add the guard](start-a-riff.md#add-the-guard).
 
 ```mermaid
@@ -7170,10 +7261,10 @@ GitHub: the daemon writes on acme/web as riff-acme-lead[bot].
 
 Do the fix: see
 [Repair riff with claude on the host](#repair-riff-with-claude-on-the-host).
-`riff init --check` names the same fix. The daemon asks riff-server
-again 10 minutes after an answer with no token. So at the latest 10
-minutes after the fix, its writes show the bot, the wave starts its
-items again, and the lead gets its token.
+`riff project init --check` names the same fix. The daemon asks
+riff-server again 10 minutes after an answer with no token. So at the
+latest 10 minutes after the fix, its writes show the bot, the wave
+starts its items again, and the lead gets its token.
 
 #### New rights of a GitHub App
 

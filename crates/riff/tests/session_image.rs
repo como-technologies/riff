@@ -140,7 +140,7 @@ fn the_images_have_the_toolchain_of_the_repository() {
 }
 
 /// 01M5SNT57ANM99NQS5SNB8XPWV: `riff-rust` builds `FROM` a digest of
-/// `riff-base`, and it is the base that `riff init` pins.
+/// `riff-base`, and it is the base that `riff project init` pins.
 #[test]
 fn the_rust_image_builds_from_a_digest_of_the_base_image() {
     let base = riff::session_image::base();

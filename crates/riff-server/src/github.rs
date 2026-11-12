@@ -1679,7 +1679,8 @@ pub(crate) async fn created(
 /// `POST /v1/github/apps`: each App of the riff, whether it is installed
 /// on the account of the query, with the ID of the install, and whether
 /// it is installed on the repository of the query. Each person asks with
-/// neither, for example `riff init` for the bot of the guard. Only the
+/// neither, for example `riff project init` for the bot of the
+/// guard. Only the
 /// owner or an admin asks with an account or a repository
 /// (01M6WPV8473EBABR1ZMEPZMTQQ, 01M6Z7DMYAW52X62TN1DEX9NCG). With an
 /// account, riff-server also reads the rights of each App and of its
