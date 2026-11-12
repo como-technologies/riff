@@ -886,12 +886,13 @@ pub struct Pull {
     /// one. Else the issue of its line `Closes #N`. riff keeps only the number, not the text of the body.
     #[serde(rename = "body", default, deserialize_with = "trailer")]
     pub trailer: Option<u64>,
-    /// True when a verify request for the head came after the last
-    /// verify result for it ([`crate::wave::reasked`]): the failed
-    /// verify of the head is answered, so the pull request waits for
-    /// a verify again ([`Pull::verify`]). The wave sets it.
+    /// What the thread of the repository says of the verify of the head:
+    /// its last verify request or verify result ([`crate::wave::said`]).
+    /// riff posts a result after it sets the status, so the look can
+    /// read an older status than the thread (#2014). [`Pull::verify`]
+    /// takes it with the status. The wave sets it.
     #[serde(skip)]
-    pub reasked: bool,
+    pub said: Option<Verify>,
     /// The place of the pull request in the merge queue. `gh pr list`
     /// does not tell it: [`pulls`] reads it one time for all pull
     /// requests ([`queue_of`]).
@@ -941,6 +942,12 @@ pub fn head_wip(gh: &Gh, repo: &str, sha: &str) -> bool {
     // The message of a commit never changes: the daemon reads it one time.
     gh.read_within(&["api", &path, "--jq", ".commit.message"], Gh::LONG)
         .is_ok_and(|message| wip(&message))
+}
+
+/// True when the status `check` failed: its state is `FAILURE` or
+/// `ERROR`. [`Check::failed`] counts no status `riff/verify`; this does.
+fn failure(check: &Check) -> bool {
+    matches!(check.state.as_deref(), Some("FAILURE" | "ERROR"))
 }
 
 /// True for a value that is not `null`.
@@ -1306,8 +1313,9 @@ pub enum Verify {
     /// The verify passed: the pull request waits for the merge.
     Passed,
     /// The verify failed: the item is free, with its earlier work. A
-    /// new verify request for the same head ([`Pull::reasked`]) makes
-    /// it [`Verify::Asked`] again.
+    /// new verify request for the same head ([`Pull::said`]) makes it
+    /// [`Verify::Asked`] again, and a PASS for it makes it
+    /// [`Verify::Passed`].
     Failed,
 }
 
@@ -1436,6 +1444,21 @@ impl Pull {
     /// ([`Pull::issue`]): a pull request that a person opened by hand is
     /// no work.
     ///
+    /// It comes from the status `riff/verify` of the head and from what
+    /// the thread says of the head ([`Pull::said`],
+    /// 01M77JWXEGDDMB7TW97APGKW9W, #2014). riff sets the
+    /// status before it posts the result, so the status that the look
+    /// reads can be older than the thread:
+    ///
+    /// | status | the thread says | state |
+    /// |---|---|---|
+    /// | none | PASS or FAIL | that result |
+    /// | none | a request, or nothing | [`Verify::Asked`] |
+    /// | failure | PASS | [`Verify::Passed`] |
+    /// | failure | a request | [`Verify::Asked`] |
+    /// | failure | FAIL, or nothing | [`Verify::Failed`] |
+    /// | success | anything | [`Verify::Passed`] |
+    ///
     /// ```
     /// use riff::rollout::{Check, Pull, Verify};
     ///
@@ -1445,9 +1468,16 @@ impl Pull {
     /// assert_eq!(pull(vec![Check::verify("SUCCESS")]).verify(), Some(Verify::Passed));
     /// assert_eq!(pull(vec![Check::verify("FAILURE")]).verify(), Some(Verify::Failed));
     /// assert_eq!(pull(vec![Check::verify("ERROR")]).verify(), Some(Verify::Failed));
+    /// let said = |checks, said| Pull { said: Some(said), ..pull(checks) };
     /// // A new verify request for the failed head: it waits for a verify again.
-    /// let again = Pull { reasked: true, ..pull(vec![Check::verify("FAILURE")]) };
-    /// assert_eq!(again.verify(), Some(Verify::Asked));
+    /// assert_eq!(said(vec![Check::verify("FAILURE")], Verify::Asked).verify(), Some(Verify::Asked));
+    /// // The thread has a PASS of the head, and the look still reads the old failure.
+    /// assert_eq!(said(vec![Check::verify("FAILURE")], Verify::Passed).verify(), Some(Verify::Passed));
+    /// // The thread has a result, and the look reads no status yet.
+    /// assert_eq!(said(vec![], Verify::Failed).verify(), Some(Verify::Failed));
+    /// assert_eq!(said(vec![], Verify::Passed).verify(), Some(Verify::Passed));
+    /// // A success counts over the thread.
+    /// assert_eq!(said(vec![Check::verify("SUCCESS")], Verify::Failed).verify(), Some(Verify::Passed));
     /// assert_eq!(Pull { draft: true, ..pull(vec![]) }.verify(), None);
     /// assert_eq!(Pull { branch: "main".into(), ..pull(vec![]) }.verify(), None);
     /// ```
@@ -1457,13 +1487,12 @@ impl Pull {
             return None;
         }
         self.issue()?;
-        Some(match self.verify_status() {
-            None => Verify::Asked,
-            Some(check) => match check.state.as_deref() {
-                Some("FAILURE" | "ERROR") if self.reasked => Verify::Asked,
-                Some("FAILURE" | "ERROR") => Verify::Failed,
-                _ => Verify::Passed,
-            },
+        Some(match (self.verify_status(), self.said) {
+            (None, Some(result @ (Verify::Passed | Verify::Failed))) => result,
+            (None, _) => Verify::Asked,
+            (Some(check), Some(said @ (Verify::Passed | Verify::Asked))) if failure(check) => said,
+            (Some(check), _) if failure(check) => Verify::Failed,
+            (Some(_), _) => Verify::Passed,
         })
     }
 
@@ -1741,10 +1770,13 @@ impl Pull {
     /// request ([`pulls`]). Only the newest run of a check counts, as for
     /// [`Pull::failed_checks`] (01M6G0BFAJJV9YNQZT502P1KGJ). A failed
     /// check that the ruleset does not require blocks no merge
-    /// (01M74MGTCR650HNX4E1THAAG69).
+    /// (01M74MGTCR650HNX4E1THAAG69). The status `riff/verify` in the rollup
+    /// must be the pass too: a PASS of the thread over an old failure
+    /// ([`Pull::verify`], #2014) leaves that old failure, and it explains
+    /// the block.
     ///
     /// ```
-    /// use riff::rollout::{Check, Pull};
+    /// use riff::rollout::{Check, Pull, Verify};
     ///
     /// let pull = |checks| Pull {
     ///     number: 40,
@@ -1753,6 +1785,12 @@ impl Pull {
     ///     merge_state: Some("BLOCKED".into()),
     ///     ..Pull::default()
     /// };
+    /// // #2014: the thread has the PASS, and the rollup the old failure.
+    /// let old = Pull { said: Some(Verify::Passed), ..pull(vec![Check::verify("FAILURE"), Check::run("Gate", "SUCCESS")]) };
+    /// assert_eq!(old.verify(), Some(Verify::Passed));
+    /// assert!(!old.settled());
+    /// let none = Pull { said: Some(Verify::Passed), ..pull(vec![Check::run("Gate", "SUCCESS")]) };
+    /// assert!(!none.settled(), "no status in the rollup yet");
     /// assert!(pull(vec![Check::verify("SUCCESS"), Check::run("Gate", "SUCCESS")]).settled());
     /// assert!(!pull(vec![Check::verify("SUCCESS"), Check::run("Gate", "")]).settled(), "a check goes");
     /// assert!(!pull(vec![Check::verify("SUCCESS"), Check::run("Gate", "FAILURE")]).settled());
@@ -1776,6 +1814,7 @@ impl Pull {
     /// ```
     pub fn settled(&self) -> bool {
         self.verify() == Some(Verify::Passed)
+            && self.verify_status().is_some_and(|c| !failure(c))
             && self.queue == Queue::Out
             && self.merge_state.as_deref() == Some("BLOCKED")
             && self.mergeable.as_deref() != Some("CONFLICTING")
