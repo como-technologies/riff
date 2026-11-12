@@ -26,8 +26,9 @@ use std::time::{Duration, Instant};
 
 use keyring_core::api::CredentialStoreApi;
 use riff::claude_token;
+use riff::daemon::facts::gh_sign;
 use riff::keyring_store::{self, SECRETS};
-use riff_client::daemons::Token;
+use riff_client::daemons::{Sign, Token};
 use riff_client::device;
 use riff_client::login::{self, SignIn};
 use riff_client::secrets::{self, SERVICE};
@@ -97,9 +98,10 @@ fn the_reads_of_a_process_work_again_after_a_restart_of_a_locked_keyring() {
 /// asks for no unlock prompt. A login with a security key leaves the
 /// keyring locked: the reads of the daemon are a locked keyring at once,
 /// with no `Unlock` call, and the daemon runs no `gh` that would read the
-/// locked token of `gh`. The person unlocks the same keyring at the
-/// desktop, with no restart of a service. Then the same process reads
-/// its secrets, and runs `gh`.
+/// locked token of `gh`: no call of a wave, and no `gh auth token` of the
+/// facts of the host. The person unlocks the same keyring at the desktop,
+/// with no restart of a service. Then the same process reads its secrets,
+/// and runs `gh`.
 #[test]
 fn the_daemon_asks_for_no_unlock_prompt_and_works_after_an_unlock_at_the_desktop() {
     on_a_private_keyring("no-prompt");
@@ -424,9 +426,13 @@ fn no_prompt(keyring: &Keyring) {
     write(riff::pr::GH_KEYRING, "", "gho_not_real");
     assert_eq!(claude_token::state(dir.path()), Token::Set);
     let log = dir.path().join("gh.log");
-    let script = format!("#!/bin/sh\necho \"$*\" >> {}\n", log.display());
+    let script = format!(
+        "#!/bin/sh\necho \"$*\" >> {}\nif [ \"$1 $2\" = 'auth token' ]; then echo gho_not_real; fi\n",
+        log.display()
+    );
     let gh = riff::pr::Gh::at(isolated::write_program(dir.path().join("gh"), &script));
     gh.run(&["api", "user"], None).unwrap();
+    assert_eq!(gh_sign(&gh), Sign::On);
 
     // A login with a security key leaves the keyring locked. A prompt
     // would get no answer.
@@ -447,8 +453,13 @@ fn no_prompt(keyring: &Keyring) {
         format!("{error:#}").starts_with("riff did not run gh pr list: the OS keyring of "),
         "{error:#}"
     );
+    // The facts of the host cannot say whether `gh` has a sign-in.
+    assert_eq!(gh_sign(&gh), Sign::Unknown);
     assert!(start.elapsed() < secrets::KEYRING_WAIT);
-    assert_eq!(std::fs::read_to_string(&log).unwrap(), "api user\n");
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap(),
+        "api user\nauth token\n"
+    );
 
     // The person unlocks the keyring at the desktop, with no restart of
     // a service. The same process reads it, and runs `gh`.
@@ -456,9 +467,10 @@ fn no_prompt(keyring: &Keyring) {
     assert_eq!(claude_token::state(dir.path()), Token::Set);
     assert_eq!(login::user(server).unwrap().as_deref(), Some("mike"));
     gh.run(&["pr", "list"], None).unwrap();
+    assert_eq!(gh_sign(&gh), Sign::On);
     assert_eq!(
         std::fs::read_to_string(&log).unwrap(),
-        "api user\npr list\n"
+        "api user\nauth token\npr list\nauth token\n"
     );
     assert_eq!(unlocks.calls(), 0, "riff asked for an unlock");
     drop(prompter);
