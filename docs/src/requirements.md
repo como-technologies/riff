@@ -4954,6 +4954,15 @@
   and the `justfile` of `main`. Supersedes 01M75TT13241HC22M0KBJ6HW96,
   01M6QQ1P37XW7N465MQGPHCXZM, 01M75NAF7VV5S7343P9Q7H7F60 and
   01M75NAFBH6M49GMSV8VG857EP in part.
+- **01M77NFYCGDD3GKCE4RXDPKRNE** `just check` runs `lint-macos` after
+  `lint`. `just lint-macos` runs `deploy/lint-macos.sh` with the crates
+  and the flags of the clippy of `just test-macos`. The script runs
+  `cargo clippy --target aarch64-apple-darwin` with them on each host,
+  and links nothing. In place of the build script of each `aws-lc-sys`
+  of `Cargo.lock`, it gives a links override with the cfg
+  `universal_prefixed`. When the Rust target `aarch64-apple-darwin` is
+  missing, the script runs no cargo, names `rustup target add
+  aarch64-apple-darwin`, and exits with 1. `just init` adds the target.
 
 ## The phone app
 
@@ -5502,9 +5511,7 @@ of this part when they merge.
 - **01M5SNTDW9WVEXZW5D0TKGBA8Z** The images of this repository come from
   three folders, each `FROM` the one before it by digest: `deploy/base/`
   (`riff-base`), `deploy/rust/` (`riff-rust`) and `deploy/session/`
-  (`riff-session`). `riff-session` adds only what riff needs: `just`,
-  `mdbook`, `sccache`, `rust-analyzer`, D-Bus and the keyring of the
-  tests. The Rust channel of `deploy/rust/` is the channel of
+  (`riff-session`). The Rust channel of `deploy/rust/` is the channel of
   `rust-toolchain.toml`, and the components of `deploy/rust/` and
   `deploy/session/` together are its components. A test checks that they
   agree. Supersedes 01M4Z7SP5TGJ3DMWFGE5SN68N1 in part.
@@ -5674,6 +5681,11 @@ of this part when they merge.
   bash and the tools of a Mac, with no `timeout` of GNU, so the tests of
   `riff` run it on a Mac too. The test gives riff a new `RIFF_HOME`, so
   riff opens no OS keyring, also on a Mac.
+- **01M77NG25CVVSD5MCN753C4BDW** `riff-session` adds only what riff
+  needs: `just`, `mdbook`, `sccache`, `rust-analyzer`, the Rust target
+  `aarch64-apple-darwin` of `just lint-macos`
+  (01M77NFYCGDD3GKCE4RXDPKRNE), D-Bus and the keyring of the tests.
+  Supersedes 01M5SNTDW9WVEXZW5D0TKGBA8Z in part.
 
 ### Sessions
 

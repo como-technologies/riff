@@ -29,11 +29,13 @@
 //! The Gate on GitHub runs each check of `just ci-full`: the one full
 //! run of each pushed commit (01M49HAZ5BZYGAR9PGC089RM3F). Before a
 //! push, an author runs `just check` (01M49HAZA5K08XW2JQ11TG87JP): the fast
-//! checks (`fmt-check`, `lint`, `doc`, `book`, `reqs`, `wrap`, `versions`)
-//! and the tests of the crates that the diff touches. `hygiene crates
-//! [BASE]` prints the arguments of `cargo test` for these crates
-//! ([`tests`]), and one line for the person to stderr. A text file needs
-//! a test here: the tests read the book, `CLAUDE.md` and the requirements.
+//! checks (`fmt-check`, `lint`, `lint-macos`, `doc`, `book`, `reqs`,
+//! `wrap`, `versions`) and the tests of the crates that the diff touches.
+//! `lint-macos` is the clippy of the job `macOS` for a Mac, on each host
+//! (01M77NFYCGDD3GKCE4RXDPKRNE). `hygiene crates [BASE]` prints the
+//! arguments of `cargo test` for these crates ([`tests`]), and one line
+//! for the person to stderr. A text file needs a test here: the tests
+//! read the book, `CLAUDE.md` and the requirements.
 //!
 //! ```mermaid
 //! flowchart LR

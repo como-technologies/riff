@@ -11,6 +11,7 @@ mod ci_test;
 mod cli;
 mod dependabot;
 mod gate;
+mod lint_macos;
 mod merge_queue;
 mod part;
 mod stress;

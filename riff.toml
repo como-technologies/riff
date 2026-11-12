@@ -4,7 +4,7 @@
 # The session image, pinned by digest. The workflow "Session image"
 # builds it from deploy/session/. See "Change the session image" in
 # docs/src/development.md.
-image = "ghcr.io/como-technologies/riff-session@sha256:ce4cef5058d7720bb5c573146653dc1a429b08636db06f0362e0ac965b81ec82"
+image = "ghcr.io/como-technologies/riff-session@sha256:ea3446edbea045c06c18b2a6a5147d4eff57f5431155cdbcc0ecb08c4ff57a4a"
 
 # The model of each session: the lead, each work item and each verify
 # start with claude --model MODEL. With no key, riff uses opus. See "Set

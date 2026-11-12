@@ -746,9 +746,10 @@ fn the_gate_runs_the_tests_in_the_session_image() {
     );
 }
 
-/// 01M5SNTDW9WVEXZW5D0TKGBA8Z: the session image of this repository
-/// builds `FROM` a digest of `riff-rust`, and adds only what riff needs:
-/// it installs no `claude`, no `gh` and no Rust.
+/// 01M5SNTDW9WVEXZW5D0TKGBA8Z, 01M77NG25CVVSD5MCN753C4BDW: the session
+/// image of this repository builds `FROM` a digest of `riff-rust`, and
+/// adds only what riff needs: it installs no `claude`, no `gh` and no
+/// Rust, and it adds the Rust target of `just lint-macos`.
 #[test]
 fn the_session_image_builds_from_a_digest_of_the_rust_image_and_adds_only_what_riff_needs() {
     let dockerfile = read("deploy/session/Dockerfile");
@@ -777,4 +778,12 @@ fn the_session_image_builds_from_a_digest_of_the_rust_image_and_adds_only_what_r
             "deploy/session/Dockerfile has {part:?}: riff-base and riff-rust have it"
         );
     }
+    assert!(
+        dockerfile.contains("\n && rustup target add aarch64-apple-darwin \\\n"),
+        "{dockerfile}"
+    );
+    assert!(
+        read("deploy/lint-macos.sh").contains("\ntarget=aarch64-apple-darwin\n"),
+        "deploy/lint-macos.sh lints for another target"
+    );
 }

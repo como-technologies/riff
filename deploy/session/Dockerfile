@@ -1,8 +1,9 @@
 # The session image of this repository (01M5SNTDW9WVEXZW5D0TKGBA8Z).
 # It is riff-rust, which is riff-base with Rust, and it adds what only
-# riff needs: rust-analyzer, the tools of `just check`, and a D-Bus with
-# GNOME Keyring for the tests. riff-base has claude, git, gh, CA
-# certificates and a POSIX shell. The image holds no riff and no secret.
+# riff needs: rust-analyzer, the Rust target of a Mac, the tools of `just
+# check`, and a D-Bus with GNOME Keyring for the tests. riff-base has
+# claude, git, gh, CA certificates and a POSIX shell. The image holds no
+# riff and no secret.
 #
 # The workflow "Session image" builds it on each change of this folder,
 # checks that the FROM below pins the riff-rust of deploy/rust/, and
@@ -24,9 +25,11 @@ RUN apt-get update \
       dbus-bin dbus-daemon gnome-keyring \
  && rm -rf /var/lib/apt/lists/*
 
-# The component of rust-toolchain.toml that riff-rust does not have. The
+# The component of rust-toolchain.toml that riff-rust does not have, and
+# the Rust target of `just lint-macos` (01M77NG25CVVSD5MCN753C4BDW). The
 # toolchain stays in the image, with no write for the session.
 RUN rustup component add rust-analyzer \
+ && rustup target add aarch64-apple-darwin \
  && chmod -R a+rX "$RUSTUP_HOME" "$CARGO_HOME"
 
 # The tools of `just check`, from their releases.
