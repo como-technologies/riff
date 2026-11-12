@@ -1494,6 +1494,12 @@
   with a string literal for a webhook secret or a key: the value of a
   name with the word `secret`, or the argument for a secret or a key of
   `signature`, `signed`, `AppKeys::new` or a function of the same test.
+- **01M779MKDQFY6982B7D533G8K2** A test changes a file that a fake
+  program reads while riff runs, for example the state of a CI run that
+  the fake `gh` of a watch of the daemon gives, with
+  `isolated::write_whole`: a new file in the same folder gets the text,
+  and a rename puts it at the path. So the program reads the old text or
+  the new text, and never an empty file.
 
 ## Saved state
 

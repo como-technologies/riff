@@ -1639,8 +1639,8 @@ async fn two_daemons_of_one_wave_give_the_lead_each_notice_one_time() {
         gh_calls(tmp.path(), "b", milestone),
     ];
     let forge = tmp.path().join("forge");
-    std::fs::write(forge.join("issues"), "[]").unwrap();
-    std::fs::write(forge.join("pulls"), "[]").unwrap();
+    isolated::write_whole(forge.join("issues"), "[]");
+    isolated::write_whole(forge.join("pulls"), "[]");
     until("both watches look at the closed wave", || async {
         let (a, b) = (
             gh_calls(tmp.path(), "a", milestone),
@@ -1831,7 +1831,9 @@ async fn leave_with_host_stops_serving_and_removes_the_clone_that_the_daemon_mad
 /// `waiting` (the job `Deploy` waits for a person), `running`, `success`
 /// or `failure`. The list of the release issues is the file `dir/issues`,
 /// or empty. Every other call answers with an empty list. Gives the
-/// variables for a host.
+/// variables for a host. An empty `state` is a run that failed, so a test
+/// changes the files with [`isolated::write_whole`]
+/// (01M779MKDQFY6982B7D533G8K2).
 fn fake_deploy(dir: &Path) -> Vec<(String, String)> {
     let bin = dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
@@ -1924,7 +1926,7 @@ async fn the_watch_of_a_deploy_gives_the_other_lead_one_note_for_each_step() {
     };
 
     // The job waits: the lead and the other lead hear it once.
-    std::fs::write(&state, "waiting").unwrap();
+    isolated::write_whole(&state, "waiting");
     watch();
     until("the note of the wait", || async {
         (heard().await.len() == 1).then_some(())
@@ -1937,7 +1939,7 @@ async fn the_watch_of_a_deploy_gives_the_other_lead_one_note_for_each_step() {
     .await;
 
     // The job passes: one more note, and the watch goes.
-    std::fs::write(&state, "success").unwrap();
+    isolated::write_whole(&state, "success");
     until("the note of the pass", || async {
         (heard().await.len() == 2).then_some(())
     })
@@ -1955,7 +1957,7 @@ async fn the_watch_of_a_deploy_gives_the_other_lead_one_note_for_each_step() {
     .await;
 
     // Another deploy fails: one more note.
-    std::fs::write(&state, "failure").unwrap();
+    isolated::write_whole(&state, "failure");
     watch();
     until("the note of the failure", || async {
         (heard().await.len() == 3).then_some(())
@@ -2001,7 +2003,7 @@ async fn riff_who_says_the_state_of_an_open_release_at_each_step() {
         let what = format!("riff who: {want:?}");
         until(&what, || async { (release().await == want).then_some(()) }).await;
     };
-    let set = |name: &str, text: &str| std::fs::write(tmp.path().join(name), text).unwrap();
+    let set = |name: &str, text: &str| isolated::write_whole(tmp.path().join(name), text);
     let lead = r.api(&r.lead);
     let issue = |open: bool, result: &str| {
         let body = format!("{}\\n\\n- a check: x", riff::cycle::check_mark(TAG, result));
@@ -2104,7 +2106,7 @@ fn fake_wave(dir: &Path) -> Vec<(String, String)> {
 async fn riff_who_says_that_a_complete_wave_waits_for_its_cut() {
     let tmp = tempfile::tempdir().unwrap();
     let extra = fake_wave(tmp.path());
-    let set = |name: &str, text: &str| std::fs::write(tmp.path().join(name), text).unwrap();
+    let set = |name: &str, text: &str| isolated::write_whole(tmp.path().join(name), text);
     let runs = |status: &str, conclusion: &str| {
         format!(
             r#"{{"check_runs":[{{"status":"{status}","conclusion":{conclusion},"head_sha":"abc"}}]}}"#
