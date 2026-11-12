@@ -3,7 +3,7 @@
 //! real server with short times (01M3N7K3ZAZFGABN7032AYJWEM,
 //! 01M3N7K41N03P26BEFFNX5617K, 01M3Q5460YESBSQHTV3M15PE53,
 //! 01M3Q546335NBTKG5BHQ27QC93, 01M3Q63NNC6SC03BFCG80M7B4D,
-//! 01M3N7K4BC1RPZKQ1XNDTBRPGF, 01M3N7K4DVHSF7AQ402F14J26Z,
+//! 01M3N7K4BC1RPZKQ1XNDTBRPGF, 01M76S6128EZRZS2D5CE2QCC05,
 //! 01M6FYH5XZAZYJFPFQVAFQSSVT). The sign-in
 //! is in the mock store of `keyring-core`, so the tests run in process.
 //!
@@ -64,16 +64,23 @@ async fn start(timing: Timing) -> (Service, Api, Vec<TokenReply>) {
     (service, api, pairs)
 }
 
+/// The lines in the chat of [`people`]: ada makes bob and carol admins
+/// (01M76S6128EZRZS2D5CE2QCC05).
+const SETUP: [&str; 2] = [
+    "members: ada made bob@gmail.com an admin.",
+    "members: ada made carol@gmail.com an admin.",
+];
+
 /// The people of each test: ada signs in first, so ada is the owner.
 /// As the owner, ada makes bob and carol admins. Then each of them
-/// signs in, and each gets a live lead session in the repository. The
-/// riff has no repository before, so the changes post no note.
+/// signs in, and each gets a live lead session in the repository. Each
+/// change posts its line in the chat: [`SETUP`].
 async fn people(service: &Service, api: &Api) -> Vec<TokenReply> {
     let admins = ["bob@gmail.com", "carol@gmail.com"];
     let mut pairs = vec![sign_in(service, api, "ada@gmail.com").await];
     let ada = api.clone().signed_in(None).unwrap();
     for admin in admins {
-        ada.set_admin(&person("ada"), admin, true).await.unwrap();
+        ada.set_admin(admin, true).await.unwrap();
     }
     for admin in admins {
         pairs.push(sign_in(service, api, admin).await);
@@ -112,7 +119,7 @@ async fn as_person(service: &Service, api: &Api, email: &str) -> Api {
 /// The owner ada invites `email`, through the route.
 async fn invite(service: &Service, api: &Api, email: &str) {
     let ada = as_person(service, api, "ada@gmail.com").await;
-    ada.invite(&person("ada"), email).await.unwrap();
+    ada.invite(email).await.unwrap();
 }
 
 /// The email of the owner, or `None` when the riff has no owner.
@@ -125,7 +132,7 @@ fn admins(service: &Service) -> Vec<String> {
     service.members().admins
 }
 
-/// The person `user` on this host: it posts the note of a pass.
+/// The person `user` on this host.
 fn person(user: &str) -> SessionUri {
     format!("riff://{user}@pangolin").parse().unwrap()
 }
@@ -177,8 +184,7 @@ async fn an_admin_asks_and_the_owner_passes() {
     assert_eq!(
         text::owner_asked(&asked),
         "You asked ada@gmail.com for the owner role. The owner has 60 minutes to answer. \
-         With no answer, you are the owner. The riff posts each step to the thread of each \
-         repository."
+         With no answer, you are the owner. The riff posts each step in the chat."
     );
     // The riff tells the owner at once, in a direct message to its lead.
     let to_ada = told(&api, "ada").await;
@@ -189,9 +195,7 @@ async fn an_admin_asks_and_the_owner_passes() {
     assert_eq!(service.asks().as_deref(), Some("bob@gmail.com"));
 
     let ada = as_person(&service, &api, "ada@gmail.com").await;
-    ada.pass_owner(&person("ada"), "bob@gmail.com")
-        .await
-        .unwrap();
+    ada.pass_owner("bob@gmail.com").await.unwrap();
     assert_eq!(owner(&service).as_deref(), Some("bob@gmail.com"));
     // The old owner stays an admin.
     assert_eq!(admins(&service), ["ada@gmail.com", "carol@gmail.com"]);
@@ -310,9 +314,10 @@ async fn the_owner_is_the_owner_already() {
     assert_eq!(owner(&service).as_deref(), Some("ada@gmail.com"));
     assert_eq!(service.asks(), None, "no request waits");
     assert_eq!(admins(&service), ["bob@gmail.com", "carol@gmail.com"]);
-    // The riff posts no note, and tells no lead.
+    // The riff posts no line and no note, and tells no lead.
     let notes = ada.read(&lead("ada"), &repo(), true).await.unwrap();
     assert!(notes.is_empty(), "{notes:?}");
+    assert_eq!(chat_of(&api, "ada").await.len(), SETUP.len());
     for user in ["ada", "bob", "carol"] {
         assert_eq!(told(&api, user).await, [""; 0], "{user}");
     }
@@ -409,12 +414,8 @@ async fn with_no_volunteer_the_riff_has_no_owner() {
     // Each action of the owner is refused, and names riff owner --take.
     let ada = as_person(&service, &api, "ada@gmail.com").await;
     let refusals = [
-        ada.set_admin(&person("ada"), "dan@gmail.com", true)
-            .await
-            .unwrap_err(),
-        ada.pass_owner(&person("ada"), "bob@gmail.com")
-            .await
-            .unwrap_err(),
+        ada.set_admin("dan@gmail.com", true).await.unwrap_err(),
+        ada.pass_owner("bob@gmail.com").await.unwrap_err(),
         ada.deny_owner().await.unwrap_err(),
     ];
     for error in refusals {
@@ -453,9 +454,9 @@ async fn another_live_session_keeps_the_owner() {
     wait_for("ada is gone", || owner(&service).is_none()).await;
 }
 
-/// The server warns the owner one check before the drop: a note to the
-/// owner in the thread of each repository, and one line in the chat
-/// (01M3Q546335NBTKG5BHQ27QC93).
+/// The server warns the owner one check before the drop: one line in
+/// the chat, and no note in the thread of a repository
+/// (01M3Q546335NBTKG5BHQ27QC93, 01M76S6128EZRZS2D5CE2QCC05).
 #[tokio::test]
 async fn the_owner_gets_a_warning_one_check_before_the_drop() {
     let every = Duration::from_millis(100);
@@ -467,8 +468,10 @@ async fn the_owner_gets_a_warning_one_check_before_the_drop() {
     wait_for("ada is gone", || owner(&service).is_none()).await;
     let bob = Api::new(api.base());
     let notes = bob.read(&lead("bob"), &repo(), true).await.unwrap();
-    let [warning, gone] = &notes[..] else {
-        panic!("{notes:#?}");
+    assert!(notes.is_empty(), "{notes:#?}");
+    let chat = chat_of(&api, "bob").await;
+    let [warning, gone] = &chat[SETUP.len()..] else {
+        panic!("{chat:#?}");
     };
     assert_eq!(
         warning.message.body,
@@ -476,9 +479,6 @@ async fn the_owner_gets_a_warning_one_check_before_the_drop() {
          minute apart. At the next check, in less than a minute, the riff has no owner. To \
          stay the owner, run a riff command, for example: riff who."
     );
-    assert_eq!(warning.message.kind, Kind::Note);
-    assert_eq!(warning.message.to.len(), 1);
-    assert_eq!(warning.message.to[0].user.as_deref(), Some("ada"));
     assert!(
         gone.message.body.contains("is gone"),
         "{}",
@@ -487,18 +487,6 @@ async fn the_owner_gets_a_warning_one_check_before_the_drop() {
     // One check lies between the warning and the drop.
     let gap = gone.message.at_ms - warning.message.at_ms;
     assert!(gap + 20 >= 100, "{gap} ms");
-
-    let chat = bob
-        .read(&lead("bob"), &ThreadName::chat(), true)
-        .await
-        .unwrap();
-    // The line of the warning, and the line of the gone owner
-    // (01M6FYH5XZAZYJFPFQVAFQSSVT).
-    let bodies: Vec<&str> = chat.iter().map(|m| m.message.body.as_str()).collect();
-    assert_eq!(
-        bodies,
-        [warning.message.body.as_str(), gone.message.body.as_str()]
-    );
     // Each is a line of riff-server itself (01M6Y4ZCTSTVM971BDC1F7GJPK).
     let server = |m: &riff_client::api::Checked| {
         m.message.from == SessionUri::server() && m.message.kind == Kind::Riff
@@ -535,19 +523,28 @@ async fn the_setting_changes_the_window() {
     wait_for("ada is gone", || owner(&long).is_none()).await;
 }
 
-/// Each step posts one note to the thread of each repository. The notes
-/// of the server come from `riff@server`, wake no session and hold no
-/// token (01M3N7K4DVHSF7AQ402F14J26Z).
+/// The lines of the chat, as the lead of `user` reads them.
+async fn chat_of(api: &Api, user: &str) -> Vec<riff_client::api::Checked> {
+    Api::new(api.base())
+        .read(&lead(user), &ThreadName::chat(), true)
+        .await
+        .unwrap()
+}
+
+/// Each step of the owner role posts one line in the chat, and no note
+/// to the thread of a repository: a request, a pass, a deny, a grant
+/// after N minutes, the warning, a gone owner, and a take on a riff with
+/// no owner. The lines come from `riff@server`, have no `to`, wake no
+/// session and hold no token (01M6FYH5XZAZYJFPFQVAFQSSVT,
+/// 01M76S6128EZRZS2D5CE2QCC05).
 #[tokio::test]
-async fn each_step_posts_one_note() {
+async fn each_step_posts_one_line_in_the_chat() {
     let answer = Duration::from_millis(1500);
     let (service, api, pairs) = start(timing(answer, Duration::from_millis(50), 2)).await;
     let bob = as_person(&service, &api, "bob@gmail.com").await;
     bob.take_owner().await.unwrap(); // the request
     let ada = as_person(&service, &api, "ada@gmail.com").await;
-    ada.pass_owner(&person("ada"), "bob@gmail.com")
-        .await
-        .unwrap(); // the pass
+    ada.pass_owner("bob@gmail.com").await.unwrap(); // the pass
     let carol = as_person(&service, &api, "carol@gmail.com").await;
     carol.take_owner().await.unwrap(); // the request
     let bob = as_person(&service, &api, "bob@gmail.com").await;
@@ -567,8 +564,10 @@ async fn each_step_posts_one_note() {
         .read(&lead("ada"), &repo(), true)
         .await
         .unwrap();
-    let bodies: Vec<&str> = notes.iter().map(|n| n.message.body.as_str()).collect();
-    let starts = [
+    assert!(notes.is_empty(), "no note in the repository: {notes:#?}");
+    let chat = chat_of(&api, "ada").await;
+    let bodies: Vec<&str> = chat.iter().map(|m| m.message.body.as_str()).collect();
+    let steps = [
         "members: bob asks for the owner role. The owner ada@gmail.com has less than a minute",
         "members: ada passed the owner role to bob@gmail.com.",
         "members: carol asks for the owner role. The owner bob@gmail.com",
@@ -580,6 +579,7 @@ async fn each_step_posts_one_note() {
         "members: the owner carol@gmail.com is gone: not seen at 3 checks in a row",
         "members: ada took the owner role. The riff had no owner.",
     ];
+    let starts: Vec<&str> = SETUP.into_iter().chain(steps).collect();
     assert_eq!(bodies.len(), starts.len(), "{bodies:#?}");
     for (body, start) in bodies.iter().zip(starts) {
         assert!(
@@ -587,120 +587,14 @@ async fn each_step_posts_one_note() {
             "{body}\nshould start with\n{start}"
         );
     }
-    for note in &notes {
-        assert_eq!(note.message.kind, Kind::Note);
-        for pair in &pairs {
-            assert!(!note.message.body.contains(&pair.access_token));
-            assert!(!note.message.body.contains(&pair.refresh_token));
-        }
-    }
-    // Each note but the pass comes from the server.
-    let from_server = notes
-        .iter()
-        .filter(|n| n.message.from == SessionUri::server())
-        .count();
-    assert_eq!(from_server, starts.len() - 1);
-}
-
-/// The lines of the chat, as the lead of `user` reads them.
-async fn chat_of(api: &Api, user: &str) -> Vec<riff_client::api::Checked> {
-    let read = Api::new(api.base())
-        .read(&lead(user), &ThreadName::chat(), true)
-        .await;
-    match read {
-        Ok(lines) => lines,
-        // Nobody posted in the chat yet: the thread does not exist.
-        Err(error) => {
-            assert!(
-                error.to_string().contains("no thread named chat"),
-                "{error}"
-            );
-            Vec::new()
-        }
-    }
-}
-
-/// A request and a deny change no owner: they post no line in the chat
-/// (01M6FYH5XZAZYJFPFQVAFQSSVT).
-#[tokio::test]
-async fn a_request_and_a_deny_post_no_line_in_the_chat() {
-    let (service, api, _) = start(timing(LONG, LONG, 3)).await;
-    as_person(&service, &api, "bob@gmail.com")
-        .await
-        .take_owner()
-        .await
-        .unwrap();
-    as_person(&service, &api, "ada@gmail.com")
-        .await
-        .deny_owner()
-        .await
-        .unwrap();
-    let chat = chat_of(&api, "ada").await;
-    assert!(chat.is_empty(), "{chat:#?}");
-    // The notes are still there: a request and a deny.
-    let notes = Api::new(api.base())
-        .read(&lead("ada"), &repo(), true)
-        .await
-        .unwrap();
-    assert_eq!(notes.len(), 2, "{notes:#?}");
-}
-
-/// A pass, a grant after N minutes, a gone owner and a take on a riff
-/// with no owner each post one line in the chat, with the text of the
-/// note. A request and a deny post none. The lines come from the
-/// server, have no `to`, and wake no session (01M6FYH5XZAZYJFPFQVAFQSSVT).
-#[tokio::test]
-async fn each_change_of_who_the_owner_is_posts_one_line_in_the_chat() {
-    let answer = Duration::from_millis(1500);
-    let (service, api, _) = start(timing(answer, Duration::from_millis(50), 2)).await;
-    let bob = as_person(&service, &api, "bob@gmail.com").await;
-    bob.take_owner().await.unwrap(); // the request: no line
-    let ada = as_person(&service, &api, "ada@gmail.com").await;
-    ada.pass_owner(&person("ada"), "bob@gmail.com")
-        .await
-        .unwrap(); // the pass: a line
-    let carol = as_person(&service, &api, "carol@gmail.com").await;
-    carol.take_owner().await.unwrap(); // the request: no line
-    let bob = as_person(&service, &api, "bob@gmail.com").await;
-    bob.deny_owner().await.unwrap(); // the deny: no line
-    let carol = as_person(&service, &api, "carol@gmail.com").await;
-    carol.take_owner().await.unwrap(); // the request: no line
-    wait_for("the grant", || {
-        owner(&service).as_deref() == Some("carol@gmail.com")
-    })
-    .await; // the grant: a line
-    Api::new(api.base()).end(&lead("carol")).await.unwrap();
-    wait_for("carol is gone", || owner(&service).is_none()).await; // gone: a line
-    let ada = as_person(&service, &api, "ada@gmail.com").await;
-    ada.take_owner().await.unwrap(); // the volunteer: a line
-
-    let notes = Api::new(api.base())
-        .read(&lead("ada"), &repo(), true)
-        .await
-        .unwrap();
-    let note = |start: &str| {
-        let found = notes.iter().find(|n| n.message.body.starts_with(start));
-        found
-            .unwrap_or_else(|| panic!("no note starts with {start}"))
-            .message
-            .body
-            .clone()
-    };
-    // The warning to the owner is a line in the chat too: it stays.
-    let expected = [
-        note("members: ada passed the owner role to bob@gmail.com."),
-        note("members: the owner bob@gmail.com did not answer"),
-        note("members: the owner carol@gmail.com was not seen at 2 checks"),
-        note("members: the owner carol@gmail.com is gone"),
-        note("members: ada took the owner role. The riff had no owner."),
-    ];
-    let chat = chat_of(&api, "ada").await;
-    let bodies: Vec<&str> = chat.iter().map(|m| m.message.body.as_str()).collect();
-    assert_eq!(bodies, expected);
     for line in &chat {
         assert_eq!(line.message.from, SessionUri::server());
         assert_eq!(line.message.kind, Kind::Riff);
         assert!(line.message.to.is_empty(), "{line:?}");
+        for pair in &pairs {
+            assert!(!line.message.body.contains(&pair.access_token));
+            assert!(!line.message.body.contains(&pair.refresh_token));
+        }
     }
 }
 
@@ -730,18 +624,16 @@ async fn a_gone_owner_gives_the_role_to_the_admin_that_asked() {
     assert_eq!(owner(&service).as_deref(), Some("bob@gmail.com"));
     assert_eq!(admins(&service), ["ada@gmail.com", "carol@gmail.com"]);
     assert_eq!(service.asks(), None, "the request ended");
-    // The riff posts the note of the change.
+    // The riff posts the line of the change in the chat, also with a new
+    // owner (01M6FYH5XZAZYJFPFQVAFQSSVT).
     let span = isolated::Span::start();
     let last = loop {
-        let notes = Api::new(api.base())
-            .read(&lead("bob"), &repo(), true)
-            .await
-            .unwrap();
-        let last = notes.last().map(|n| n.message.body.clone());
+        let chat = chat_of(&api, "bob").await;
+        let last = chat.last().map(|n| n.message.body.clone());
         if let Some(last) = last.filter(|body| body.contains("is gone")) {
             break last;
         }
-        assert!(span.within(Duration::from_secs(10)), "timed out: the note");
+        assert!(span.within(Duration::from_secs(10)), "timed out: the line");
         tokio::time::sleep(Duration::from_millis(20)).await;
     };
     assert!(
@@ -755,11 +647,6 @@ async fn a_gone_owner_gives_the_role_to_the_admin_that_asked() {
         ),
         "{last}"
     );
-    // The chat has the same line, also with a new owner
-    // (01M6FYH5XZAZYJFPFQVAFQSSVT).
-    let chat = chat_of(&api, "bob").await;
-    let line = chat.last().map(|m| m.message.body.as_str());
-    assert_eq!(line, Some(last.as_str()));
 }
 
 /// A pass of the owner role to another person ends the request that
@@ -776,9 +663,7 @@ async fn a_pass_to_another_person_ends_the_request_that_waits() {
 
     // When the owner passes the role to carol, not to bob.
     let ada = as_person(&service, &api, "ada@gmail.com").await;
-    ada.pass_owner(&person("ada"), "carol@gmail.com")
-        .await
-        .unwrap();
+    ada.pass_owner("carol@gmail.com").await.unwrap();
 
     // Then carol is the owner, and no request waits: the new owner has
     // none to deny.
@@ -850,10 +735,7 @@ async fn a_riff_with_no_owner_keeps_none_after_a_restart() {
     // A sign-in makes no owner.
     let ada = as_person(&new, &api, "ada@gmail.com").await;
     assert_eq!(owner(&new), None);
-    let error = ada
-        .pass_owner(&person("ada"), "bob@gmail.com")
-        .await
-        .unwrap_err();
+    let error = ada.pass_owner("bob@gmail.com").await.unwrap_err();
     assert!(error.to_string().contains("riff owner --take"), "{error}");
 
     // The first admin that asks is the owner at once.

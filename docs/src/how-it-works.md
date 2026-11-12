@@ -4057,7 +4057,10 @@ Only riff-server writes as `riff-bot`. riff-server refuses such a line
 from a person and from a session. Each line that riff writes for you is
 a line of `riff-bot` too. These are the lines of `riff-bot`:
 
-- the line that a person passed the owner role,
+- the line of each change of the people: `riff invite`, `riff remove`,
+  `riff admin add`, `riff admin remove`, and each step of the owner
+  role (see
+  [See each change of the members](start-a-team-riff.md#see-each-change-of-the-members)),
 - the line of `riff release cut`,
 - the ask while a deploy waits for your approval, and its reminder,
 - the lines of the riff daemon about your lead, for example "riff

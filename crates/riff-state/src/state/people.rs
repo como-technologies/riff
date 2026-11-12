@@ -70,8 +70,20 @@
 //!   of the old owner before the `owner_set` record.
 //! - [`Revoke`] ends each sign-in of one person. It leaves the USER of
 //!   the person: only that email signs in as that USER again.
+//! - Each change of the people posts one line of the server in the chat,
+//!   in the chunk of its command, and no note to the thread of a
+//!   repository (01M6FYH5XZAZYJFPFQVAFQSSVT, 01M76S6128EZRZS2D5CE2QCC05):
+//!   an [`Invite`], a [`Remove`], a [`SetAdmin`] and each step of the
+//!   owner role. A command that changes nothing posts no line.
 //!
-//! See [`crate::owner`] for the times and the notes of the owner role.
+//! ```mermaid
+//! flowchart LR
+//!     C[a change of the people] --> L[one line of riff-bot in the chat]
+//!     C -- a person must act --> D[a direct message to each live lead of the person]
+//!     C -. no note .-> R[the thread of a repository]
+//! ```
+//!
+//! See [`crate::owner`] for the times and the lines of the owner role.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -587,8 +599,7 @@ impl View<'_> {
     }
 
     /// The thread of each repository of the riff, sorted: the
-    /// repository of each known session, also a gone one
-    /// (01M3MN14ZCTRVD3T455P6TFK1B).
+    /// repository of each known session, also a gone one.
     pub(super) fn repositories(&self) -> Vec<ThreadName> {
         let threads: BTreeSet<ThreadName> = self
             .presence
@@ -614,23 +625,14 @@ impl View<'_> {
         leads.into_iter().collect()
     }
 
-    /// The `posted` records of a note of the server about the people
-    /// (01M3N7K4DVHSF7AQ402F14J26Z): one note in the thread of each
-    /// repository of the riff, which wakes no session. Each live lead
-    /// of `tell` gets the same text as a direct message. With `chat`,
-    /// the last record is [`View::chat`]. The records go in the chunk of
-    /// the command that causes the note.
-    fn news(&self, body: &str, tell: &[String], chat: bool, now: Now) -> Vec<Change> {
+    /// The `posted` records of a change of the people that a person must
+    /// act on (01M76S6128EZRZS2D5CE2QCC05): each live lead of `tell` gets
+    /// the text as a direct message, and the last record is
+    /// [`View::chat`]. No record goes to the thread of a repository. The
+    /// records go in the chunk of the command that causes them.
+    fn news(&self, body: &str, tell: &[String], now: Now) -> Vec<Change> {
         let server = SessionUri::server();
         let mut changes = Vec::new();
-        for thread in self.repositories() {
-            let to = vec![Selector {
-                repo: Some(thread.to_string()),
-                ..Selector::default()
-            }];
-            let note = server_message(to, body.to_owned(), Kind::Note, now);
-            changes.append(&mut self.put(server.who(), thread, note, None, now.at).0);
-        }
         let direct = owner::to_lead(body);
         for lead in tell.iter().flat_map(|user| self.live_leads(user, now.at)) {
             let Some(id) = lead.session() else {
@@ -641,17 +643,16 @@ impl View<'_> {
             let told = server_message(to, direct.clone(), Kind::Message, now);
             changes.append(&mut self.put(server.who(), thread, told, None, now.at).0);
         }
-        if chat {
-            changes.append(&mut self.chat(body, now));
-        }
+        changes.append(&mut self.chat(body, now));
         changes
     }
 
-    /// The `posted` record of one line of the server in the chat
-    /// (01M6FYH5XZAZYJFPFQVAFQSSVT), for a change that changes who the
-    /// owner is. The line has no `to`: it wakes no session, and a person
-    /// sees it in `riff chat`. It has the kind `riff`, so the chat shows
-    /// it as `<riff-bot>` (01M6Y4ZCTSTVM971BDC1F7GJPK).
+    /// The `posted` record of one line of the server in the chat, for a
+    /// change of the people (01M6FYH5XZAZYJFPFQVAFQSSVT,
+    /// 01M76S6128EZRZS2D5CE2QCC05). The line has no `to`: it wakes no
+    /// session, and a person sees it in `riff chat`. It has the kind
+    /// `riff`, so the chat shows it as `<riff-bot>`
+    /// (01M6Y4ZCTSTVM971BDC1F7GJPK).
     fn chat(&self, body: &str, now: Now) -> Vec<Change> {
         let server = SessionUri::server();
         let line = server_message(Vec::new(), body.to_owned(), Kind::Riff, now);
@@ -704,6 +705,54 @@ fn server_message(to: Vec<Selector>, body: String, kind: Kind, now: Now) -> Mess
         kind,
         sig: None,
         payload: None,
+    }
+}
+
+/// The line in the chat of an invite (01M76S6128EZRZS2D5CE2QCC05).
+/// `user` made the change.
+///
+/// ```
+/// assert_eq!(
+///     riff_state::state::people::invited_news("ada", "bob@gmail.com"),
+///     "members: ada invited bob@gmail.com. bob@gmail.com is a member now."
+/// );
+/// ```
+pub fn invited_news(user: &str, email: &str) -> String {
+    format!("members: {user} invited {email}. {email} is a member now.")
+}
+
+/// The line in the chat of a removal (01M76S6128EZRZS2D5CE2QCC05).
+///
+/// ```
+/// assert_eq!(
+///     riff_state::state::people::removed_news("ada", "bob@gmail.com"),
+///     "members: ada removed bob@gmail.com. bob@gmail.com is not a member now."
+/// );
+/// ```
+pub fn removed_news(user: &str, email: &str) -> String {
+    format!("members: {user} removed {email}. {email} is not a member now.")
+}
+
+/// The line in the chat of `riff admin add` and `riff admin remove`
+/// (01M76S6128EZRZS2D5CE2QCC05).
+///
+/// ```
+/// use riff_state::state::people::admin_news;
+///
+/// assert_eq!(
+///     admin_news("ada", "bob@gmail.com", true),
+///     "members: ada made bob@gmail.com an admin."
+/// );
+/// assert_eq!(
+///     admin_news("ada", "bob@gmail.com", false),
+///     "members: ada made bob@gmail.com a member again, not an admin."
+/// );
+/// ```
+pub fn admin_news(user: &str, email: &str, admin: bool) -> String {
+    if admin {
+        format!("members: {user} made {email} an admin.")
+    } else {
+        format!("members: {user} made {email} a member again, not an admin.")
     }
 }
 
@@ -805,7 +854,8 @@ impl Command for Admit {
     }
 }
 
-/// Adds a member, by verified email. It needs an admin.
+/// Adds a member, by verified email. It needs an admin. The chunk holds
+/// one line in the chat (01M76S6128EZRZS2D5CE2QCC05).
 impl Command for Invite {
     const KIND: CommandKind = CommandKind::Invite;
     type Reply = Invited;
@@ -821,14 +871,16 @@ impl Command for Invite {
 
     fn handle(
         &self,
-        _caller: &Caller,
+        caller: &Caller,
         view: &View<'_>,
-        _now: Now,
+        now: Now,
     ) -> Result<(Vec<Change>, String), Refused> {
         let email = valid(&self.email)?;
         let mut changes = Vec::new();
         if !view.people().members.contains(&email) {
             changes.push(invited(&email));
+            let news = invited_news(caller.who().user(), &email);
+            changes.append(&mut view.chat(&news, now));
         }
         Ok((changes, email))
     }
@@ -844,7 +896,8 @@ impl Command for Invite {
 /// Removes a member, by verified email, and ends each sign-in of that
 /// person (R20): the writer ends them after the write of the record. A
 /// person of an allowed domain can still sign in. The owner cannot go.
-/// It needs an admin.
+/// It needs an admin. The chunk holds one line in the chat
+/// (01M76S6128EZRZS2D5CE2QCC05).
 impl Command for Remove {
     const KIND: CommandKind = CommandKind::Remove;
     type Reply = Removed;
@@ -860,9 +913,9 @@ impl Command for Remove {
 
     fn handle(
         &self,
-        _caller: &Caller,
+        caller: &Caller,
         view: &View<'_>,
-        _now: Now,
+        now: Now,
     ) -> Result<(Vec<Change>, String), Refused> {
         let people = view.people();
         let email = email(&self.email);
@@ -883,6 +936,8 @@ impl Command for Remove {
             changes.push(Change::MemberRemoved(Email {
                 email: email.clone(),
             }));
+            let news = removed_news(caller.who().user(), &email);
+            changes.append(&mut view.chat(&news, now));
         }
         Ok((changes, email))
     }
@@ -898,7 +953,8 @@ impl Command for Remove {
 /// Makes a person an admin, or an admin a member again
 /// (01M3JY7T109BR860EQBSKEFDHY). A new admin is also a member, so the
 /// person stays a member after the role goes. The owner stays an admin.
-/// It needs the owner.
+/// It needs the owner. The chunk holds one line in the chat
+/// (01M76S6128EZRZS2D5CE2QCC05).
 impl Command for SetAdmin {
     const KIND: CommandKind = CommandKind::SetAdmin;
     type Reply = AdminSet;
@@ -914,11 +970,12 @@ impl Command for SetAdmin {
 
     fn handle(
         &self,
-        _caller: &Caller,
+        caller: &Caller,
         view: &View<'_>,
-        _now: Now,
+        now: Now,
     ) -> Result<(Vec<Change>, String), Refused> {
         let people = view.people();
+        let user = caller.who().user();
         let mut changes = Vec::new();
         if self.admin {
             let email = valid(&self.email)?;
@@ -927,6 +984,7 @@ impl Command for SetAdmin {
             }
             if !people.admins.contains(&email) {
                 changes.push(admin_set(&email, true));
+                changes.append(&mut view.chat(&admin_news(user, &email, true), now));
             }
             return Ok((changes, email));
         }
@@ -944,6 +1002,7 @@ impl Command for SetAdmin {
             ));
         }
         changes.push(admin_set(&email, false));
+        changes.append(&mut view.chat(&admin_news(user, &email, false), now));
         Ok((changes, email))
     }
 
@@ -960,9 +1019,8 @@ impl Command for SetAdmin {
 /// member. It ends a request for the owner role that waits. It needs
 /// the owner.
 ///
-/// The client posts the note of a pass in the repository threads
-/// (01M3MN14ZCTRVD3T455P6TFK1B). The chunk of the command holds the
-/// line in the chat (01M6FYH5XZAZYJFPFQVAFQSSVT).
+/// The chunk of the command holds the line in the chat
+/// (01M6FYH5XZAZYJFPFQVAFQSSVT).
 impl Command for PassOwner {
     const KIND: CommandKind = CommandKind::PassOwner;
     type Reply = OwnerPassed;
@@ -1026,13 +1084,12 @@ impl Command for PassOwner {
 /// answers with [`PassOwner`] or [`DenyOwner`], and [`GrantOwner`]
 /// grants it when its time ends (01M3Q5460YESBSQHTV3M15PE53). One
 /// request waits at a time. The owner is the owner already: the command
-/// changes nothing, and posts no note (01M3WRJAFS6W3J2ZRJ6XSW3SB5).
+/// changes nothing, and posts no line (01M3WRJAFS6W3J2ZRJ6XSW3SB5).
 ///
-/// The note of the server goes in the chunk of the command, and each
-/// live lead of the owner gets it as a direct message. On a riff with
-/// no owner, the chunk also holds one line in the chat
-/// (01M6FYH5XZAZYJFPFQVAFQSSVT). A request that waits posts none: it
-/// changes no owner.
+/// The chunk of the command holds one line in the chat
+/// (01M6FYH5XZAZYJFPFQVAFQSSVT). For a request that waits, each live
+/// lead of the owner also gets the text as a direct message
+/// (01M76S6128EZRZS2D5CE2QCC05).
 impl Command for TakeOwner {
     const KIND: CommandKind = CommandKind::TakeOwner;
     type Reply = OwnerAsked;
@@ -1062,7 +1119,7 @@ impl Command for TakeOwner {
         };
         let Some(owner) = people.owner().map(str::to_owned) else {
             let mut changes = vec![owner_set(Some(&admin))];
-            changes.append(&mut view.news(&owner::took_news(user, &admin), &[], true, now));
+            changes.append(&mut view.chat(&owner::took_news(user, &admin), now));
             let asked = OwnerAsked {
                 admin,
                 owner: None,
@@ -1096,7 +1153,7 @@ impl Command for TakeOwner {
             .map(str::to_owned)
             .into_iter()
             .collect();
-        changes.append(&mut view.news(&news, &tell, false, now));
+        changes.append(&mut view.news(&news, &tell, now));
         let asked = OwnerAsked {
             admin,
             owner: Some(owner),
@@ -1111,10 +1168,9 @@ impl Command for TakeOwner {
 }
 
 /// The owner keeps the owner role that an admin asks for
-/// (01M3N7K41N03P26BEFFNX5617K). The note of the server goes in the
-/// chunk of the command, and each live lead of the admin gets it as a
-/// direct message. It posts no line in the chat: the owner stays the
-/// owner (01M6FYH5XZAZYJFPFQVAFQSSVT). It needs the owner.
+/// (01M3N7K41N03P26BEFFNX5617K). The chunk of the command holds one line
+/// in the chat, and each live lead of the admin gets the text as a
+/// direct message (01M76S6128EZRZS2D5CE2QCC05). It needs the owner.
 impl Command for DenyOwner {
     const KIND: CommandKind = CommandKind::DenyOwner;
     type Reply = OwnerDenied;
@@ -1149,7 +1205,7 @@ impl Command for DenyOwner {
             .map(str::to_owned)
             .into_iter()
             .collect();
-        changes.append(&mut view.news(&news, &tell, false, now));
+        changes.append(&mut view.news(&news, &tell, now));
         Ok((changes, OwnerDenied { owner, admin }))
     }
 
@@ -1211,7 +1267,7 @@ impl Command for GrantOwner {
         let mut changes = view.keeps(old);
         changes.push(owner_set(Some(owner)));
         let news = owner::change_news(&change, view.settings.owner_role());
-        changes.append(&mut view.news(&news, &[], true, now));
+        changes.append(&mut view.chat(&news, now));
         Ok((changes, Some(change)))
     }
 
@@ -1230,7 +1286,7 @@ impl Command for GrantOwner {
 /// The timer of the server ends the role of an owner who is gone
 /// (01M3Q546335NBTKG5BHQ27QC93). The old owner stays an admin. The
 /// admin of a request that waits is the owner at once. With no request,
-/// the riff has no owner (01M3Q63NNC6SC03BFCG80M7B4D): the note then
+/// the riff has no owner (01M3Q63NNC6SC03BFCG80M7B4D): the text then
 /// also goes to each live lead of each admin, to ask for a volunteer.
 /// It changes nothing in a riff with no owner. The reply is the change
 /// that it made. The chunk also holds one line in the chat, with or
@@ -1271,7 +1327,7 @@ impl Command for EndOwner {
         let mut changes = view.keeps(old);
         changes.push(owner_set(owner));
         let news = owner::change_news(&change, view.settings.owner_role());
-        changes.append(&mut view.news(&news, &tell, true, now));
+        changes.append(&mut view.news(&news, &tell, now));
         Ok((changes, Some(change)))
     }
 

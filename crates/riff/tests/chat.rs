@@ -349,10 +349,9 @@ async fn each_line_shows_its_sender_by_the_name_to_type() {
     let line = brett.shows("v9.9.9").await;
     assert!(is_line(&line, "mike", typed), "{line:?}");
     // brett, the owner, passes the role: riff-server posts the line.
-    let owner: SessionUri = "riff://brett@heron".parse().unwrap();
     let mike_email = "mike@comotechnologies.io";
     let pass = server.api("brett", None);
-    pass.pass_owner(&owner, mike_email).await.unwrap();
+    pass.pass_owner(mike_email).await.unwrap();
     let passed = riff_state::owner::passed_news("brett", mike_email, "brett@comotechnologies.io");
     for client in [&mut mike, &mut brett] {
         let line = client.shows("passed the owner role").await;

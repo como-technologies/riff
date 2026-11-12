@@ -2160,29 +2160,23 @@ async fn cli() -> Result<()> {
             return Ok(());
         }
         Command::Invite { email } => {
-            let me = person(&api)?;
             let api = api.signed_in(None)?;
             let action = Action::invite(email);
-            let changed = proof::act(&api, &action, &Asker::terminal(), |api| {
-                let me = me.clone();
-                async move { api.invite(&me, email).await }
+            let done = proof::act(&api, &action, &Asker::terminal(), |api| async move {
+                api.invite(email).await
             })
             .await?;
-            println!("{}", text::invited(&changed.done));
-            print_members_news(&changed.news);
+            println!("{}", text::invited(&done));
             return Ok(());
         }
         Command::Remove { email } => {
-            let me = person(&api)?;
             let api = api.signed_in(None)?;
             let action = Action::remove(email);
-            let changed = proof::act(&api, &action, &Asker::terminal(), |api| {
-                let me = me.clone();
-                async move { api.remove(&me, email).await }
+            let done = proof::act(&api, &action, &Asker::terminal(), |api| async move {
+                api.remove(email).await
             })
             .await?;
-            println!("{}", text::removed(&changed.done));
-            print_members_news(&changed.news);
+            println!("{}", text::removed(&done));
             return Ok(());
         }
         Command::Chat { after, draft } => {
@@ -2285,31 +2279,25 @@ async fn cli() -> Result<()> {
                 Admin::Remove { email } => (email, false),
                 Admin::Proof { .. } => unreachable!("the arm above takes the policy"),
             };
-            let me = person(&api)?;
             let api = api.signed_in(None)?;
             let action = Action::admin(email, admin);
-            let changed = proof::act(&api, &action, &Asker::terminal(), |api| {
-                let me = me.clone();
-                async move { api.set_admin(&me, email, admin).await }
+            let done = proof::act(&api, &action, &Asker::terminal(), |api| async move {
+                api.set_admin(email, admin).await
             })
             .await?;
-            println!("{}", text::admin_set(&changed.done));
-            print_members_news(&changed.news);
+            println!("{}", text::admin_set(&done));
             return Ok(());
         }
         Command::Owner {
             email: Some(email), ..
         } => {
-            let me = person(&api)?;
             let api = api.signed_in(None)?;
             let action = Action::pass_owner(email);
-            let changed = proof::act(&api, &action, &Asker::terminal(), |api| {
-                let me = me.clone();
-                async move { api.pass_owner(&me, email).await }
+            let done = proof::act(&api, &action, &Asker::terminal(), |api| async move {
+                api.pass_owner(email).await
             })
             .await?;
-            println!("{}", text::owner_passed(&changed.done));
-            print_members_news(&changed.news);
+            println!("{}", text::owner_passed(&done));
             return Ok(());
         }
         Command::Owner { take: true, .. } => {
@@ -2833,20 +2821,10 @@ fn needs_the_host(command: &Command) -> Option<&'static str> {
     })
 }
 
-/// The person on this host, with no session and no repository. It posts
-/// the note of a change of the members (01M3MN14ZCTRVD3T455P6TFK1B).
+/// The person on this host, with no session and no repository.
 fn person(api: &Api) -> Result<SessionUri> {
     let here = identity::place(&identity::working_dir()?)?;
     identity::person(&Place::host_only(here.host())?, api.base())
-}
-
-/// Prints where the note of a change of the members went, or the error
-/// of its post on stderr (01M3MN1537Z0K3BRK6H2BZKZT0).
-fn print_members_news(news: &Result<Vec<riff_core::wire::Posted>>) {
-    match news {
-        Ok(_) => println!("{}", text::members_news(news)),
-        Err(_) => anstream::eprintln!("{}", text::members_news(news)),
-    }
 }
 
 /// `riff github create`, `install`, `check` and `events`

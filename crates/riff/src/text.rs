@@ -2283,8 +2283,8 @@ pub fn owner_passed(done: &OwnerPassed) -> String {
 /// assert_eq!(
 ///     riff::text::owner_asked(&asked),
 ///     "You asked ada@gmail.com for the owner role. The owner has 10 minutes to \
-///      answer. With no answer, you are the owner. The riff posts each step to the \
-///      thread of each repository."
+///      answer. With no answer, you are the owner. The riff posts each step in the \
+///      chat."
 /// );
 /// let took = OwnerAsked { owner: None, answer_secs: 0, ..asked };
 /// assert_eq!(
@@ -2312,7 +2312,7 @@ pub fn owner_asked(asked: &OwnerAsked) -> String {
     };
     format!(
         "You asked {owner} for the owner role. The owner has {minutes} to answer. With no \
-         answer, you are the owner. The riff posts each step to the thread of each repository."
+         answer, you are the owner. The riff posts each step in the chat."
     )
 }
 
@@ -2332,44 +2332,6 @@ pub fn owner_denied(denied: &OwnerDenied) -> String {
         "{} stays the owner. The riff tells {}.",
         denied.owner, denied.admin
     )
-}
-
-/// The line after a change of the members: where its note went, or why
-/// it did not go (01M3MN1537Z0K3BRK6H2BZKZT0).
-///
-/// ```
-/// use riff_core::wire::Posted;
-///
-/// let posted = vec![Posted {
-///     thread: "como-technologies/riff".parse().unwrap(),
-///     seq: 4,
-///     woken: vec![],
-///     unmatched: vec![],
-/// }];
-/// assert_eq!(
-///     riff::text::members_news(&Ok(posted)),
-///     "Posted a note of the change to como-technologies/riff."
-/// );
-/// assert_eq!(
-///     riff::text::members_news(&Ok(vec![])),
-///     "Posted no note of the change: no session is in a repository."
-/// );
-/// assert_eq!(
-///     riff::text::members_news(&Err(anyhow::anyhow!("403"))),
-///     "riff: the change is done, but riff cannot post a note of it: 403"
-/// );
-/// ```
-pub fn members_news(news: &anyhow::Result<Vec<Posted>>) -> String {
-    match news {
-        Ok(posted) if posted.is_empty() => {
-            "Posted no note of the change: no session is in a repository.".into()
-        }
-        Ok(posted) => {
-            let threads: Vec<String> = posted.iter().map(|p| p.thread.to_string()).collect();
-            format!("Posted a note of the change to {}.", threads.join(", "))
-        }
-        Err(e) => format!("riff: the change is done, but riff cannot post a note of it: {e:#}"),
-    }
 }
 
 /// The line of `riff members` for a riff with no owner

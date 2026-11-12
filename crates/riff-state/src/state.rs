@@ -2701,7 +2701,7 @@ impl State {
     }
 
     /// The thread of each repository of the riff, sorted: the repository
-    /// of each known session, also a gone one (01M3MN14ZCTRVD3T455P6TFK1B).
+    /// of each known session, also a gone one.
     pub fn repositories(&self) -> Vec<ThreadName> {
         self.written_view().repositories()
     }

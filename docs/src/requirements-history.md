@@ -700,6 +700,25 @@ page [Requirements](requirements.md) holds the rules of today.
   (01M53TZ0RBSJQ9ZZRXKMBM5R3E), and each `riff hook` event that does
   not talk to riff-server, make no call to the OS keyring.
   Superseded by 4.0 (#1173).
+- **01M3MN14ZCTRVD3T455P6TFK1B** After `riff-server` makes a change of
+  the members, `riff invite`, `riff remove`, `riff admin add`,
+  `riff admin remove` and `riff owner` post a note of the change to the
+  thread of each repository of the riff. The note names the user that
+  made the change, the email and the change. It wakes no session. The
+  client signs it. A repository of the riff is the repository of a
+  session in `riff who --all`.
+  Superseded by 01M76S6128EZRZS2D5CE2QCC05.
+- **01M3MN1537Z0K3BRK6H2BZKZT0** A note of a change of the members
+  holds no secret and no token. When the post of the note fails, the
+  command still prints the change, and prints the error of the post.
+  Superseded by 01M76S6128EZRZS2D5CE2QCC05.
+- **01M3N7K4DVHSF7AQ402F14J26Z** Each change of the owner role posts one
+  note to the thread of each repository of the riff: a request, a pass,
+  a deny, a grant after N minutes, a gone owner, and a take on a riff
+  with no owner. The note wakes no session and holds no token. The
+  server posts each of these notes, except the note of a pass
+  (01M3MN14ZCTRVD3T455P6TFK1B).
+  Superseded by 01M76S6128EZRZS2D5CE2QCC05.
 
 ## Terminal
 

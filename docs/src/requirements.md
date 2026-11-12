@@ -4001,30 +4001,20 @@
 - **01M3JYX8QSEZDB5RZJ3Y57DR4Y** `riff-server` keeps a passed owner role
   in its state. It stays after a restart with a bucket, also when
   `--owner` names the old owner.
-- **01M3MN14ZCTRVD3T455P6TFK1B** After `riff-server` makes a change of
-  the members, `riff invite`, `riff remove`, `riff admin add`,
-  `riff admin remove` and `riff owner` post a note of the change to the
-  thread of each repository of the riff. The note names the user that
-  made the change, the email and the change. It wakes no session. The
-  client signs it. A repository of the riff is the repository of a
-  session in `riff who --all`.
-- **01M3MN1537Z0K3BRK6H2BZKZT0** A note of a change of the members
-  holds no secret and no token. When the post of the note fails, the
-  command still prints the change, and prints the error of the post.
 - **01M3N7K3ZAZFGABN7032AYJWEM** `riff owner --take`: an admin asks for
   the owner role. Only an admin can. `riff-server` tells the owner at
-  once: a direct message to each live lead of the owner, and a note. One
-  request waits at a time. A second request is refused, and the refusal
-  names the admin that asked first.
+  once: a direct message to each live lead of the owner. One request
+  waits at a time. A second request is refused, and the refusal names
+  the admin that asked first.
 - **01M3WRJAFS6W3J2ZRJ6XSW3SB5** `riff owner --take` by the owner is not
   an error. It says that the user is the owner already, and exits with
   0. It changes nothing: no request, no note and no message.
 - **01M3N7K41N03P26BEFFNX5617K** The owner answers a request in N
   minutes. `riff owner EMAIL` passes the role and ends the request.
   `riff owner --deny` keeps the role: the riff tells the admin with a
-  direct message to each live lead of the admin, and a note. With no
-  answer in N minutes, the admin that asked is the owner. The old owner
-  stays an admin.
+  direct message to each live lead of the admin. With no answer in N
+  minutes, the admin that asked is the owner. The old owner stays an
+  admin.
 - **01M3Q5460YESBSQHTV3M15PE53** `riff-server` has three settings of the
   owner role, each 1 or more: N is `--owner-take-minutes`
   (`RIFF_OWNER_TAKE_MINUTES`, default 10). M is `--owner-ping-minutes`
@@ -4035,12 +4025,10 @@
   owner. A check misses when no session of the owner is live, and the
   owner made no call since the last check, also as a person. A check
   wakes no session. After P misses in a row, the server warns the owner:
-  a note to the sessions of the owner in the thread of each repository,
-  and one line in the chat. When the next check misses too, the owner is
+  one line in the chat. When the next check misses too, the owner is
   gone, and stays an admin. The admin of a request that waits is the
   owner at once. With no request, the riff has no owner, and asks for a
-  volunteer: a direct message to each live lead of each admin, and a
-  note.
+  volunteer: a direct message to each live lead of each admin.
 - **01M3Q63NNC6SC03BFCG80M7B4D** On a riff with no owner, `riff owner
   --take` of an admin makes that admin the owner at once. `riff members`
   shows the owner `none` and ends with the line that says that the riff
@@ -4051,12 +4039,6 @@
   messages as `riff://riff@server`. The USER `riff` belongs to the
   server: no person signs in with it. A post of the server has no
   signature. The server is not a session: `who` does not show it.
-- **01M3N7K4DVHSF7AQ402F14J26Z** Each change of the owner role posts one
-  note to the thread of each repository of the riff: a request, a pass,
-  a deny, a grant after N minutes, a gone owner, and a take on a riff
-  with no owner. The note wakes no session and holds no token. The
-  server posts each of these notes, except the note of a pass
-  (01M3MN14ZCTRVD3T455P6TFK1B).
 - **01M3N7K4GAKJ621V5AWJRQVF3M** `riff-server` keeps a request that
   waits, and a riff with no owner, with the tokens in its state. They
   stay after a restart with a bucket. A request whose time ended while
@@ -4252,15 +4234,25 @@
   token in the `Authorization` header.
 - **R47** Each session connects through `riff`. Direct connections from
   an agent tool are not supported for now.
-- **01M6FYH5XZAZYJFPFQVAFQSSVT** Each change of the owner role that
-  changes who the owner is also posts one line in the chat, as
-  `riff://riff@server`, with the same text as its note: a pass, a grant
-  after N minutes, a gone owner with or without a new owner, and a take
-  on a riff with no owner. A request and a deny change no owner: they
-  post no line. The line has no `to`: it wakes no session. A person sees
-  it in `riff chat`. The server posts the line in the chunk of the
-  command that makes the change, so a replay of the log has it.
-  Supersedes 01M3N7K4DVHSF7AQ402F14J26Z in part.
+- **01M6FYH5XZAZYJFPFQVAFQSSVT** Each change of the owner role posts
+  one line in the chat, as `riff://riff@server`. The line has no `to`:
+  it wakes no session. A person sees it in `riff chat`. The server posts
+  the line in the chunk of the command that makes the change, so a
+  replay of the log has it.
+- **01M76S6128EZRZS2D5CE2QCC05** riff-server posts a change of the
+  members in the chat too, as 01M6FYH5XZAZYJFPFQVAFQSSVT says for the
+  owner role: `riff invite`, `riff remove`, `riff admin add` and `riff
+  admin remove` each post one line. The steps of the owner role that
+  post a line are a request, a pass, a deny, a grant after N minutes,
+  the warning to the owner, a gone owner, and a take on a riff with no
+  owner. The line of a command of a person names its user, the email and
+  the change. A line holds no secret and no token. No change of the
+  people posts a note to the thread of a repository: neither riff-server
+  nor `riff` posts one. The direct message to each live lead stays
+  (#313). Supersedes 01M3N7K4DVHSF7AQ402F14J26Z,
+  01M3MN14ZCTRVD3T455P6TFK1B and 01M3MN1537Z0K3BRK6H2BZKZT0 in full, and
+  01M6FYH5XZAZYJFPFQVAFQSSVT, 01M3N7K3ZAZFGABN7032AYJWEM,
+  01M3N7K41N03P26BEFFNX5617K and 01M3Q546335NBTKG5BHQ27QC93 in part.
 
 ## Terminal
 

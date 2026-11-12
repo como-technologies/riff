@@ -16,8 +16,8 @@
 //! request that waits and whether the riff has no owner: they are state
 //! of the log. This module holds the times
 //! ([`Timing`], 01M3Q5460YESBSQHTV3M15PE53), the check of the owner
-//! ([`Checks`], 01M3Q546335NBTKG5BHQ27QC93), and the text of each note
-//! (01M3N7K4DVHSF7AQ402F14J26Z).
+//! ([`Checks`], 01M3Q546335NBTKG5BHQ27QC93), and the text of each line
+//! (01M76S6128EZRZS2D5CE2QCC05).
 //!
 //! # Rules
 //!
@@ -29,9 +29,8 @@
 //!   [`crate::state::State::present`]. A check wakes no session: a live
 //!   session has an open watch or a keep-alive.
 //! - After [`Timing::misses`] misses in a row, the server warns the
-//!   owner ([`warn_news`]): a note to each session of the owner, and one
-//!   line in the chat. When the next check misses too, the owner is
-//!   gone.
+//!   owner ([`warn_news`]): one line in the chat. When the next check
+//!   misses too, the owner is gone.
 //!
 //! ```mermaid
 //! stateDiagram-v2
@@ -42,21 +41,20 @@
 //!     Missed --> Seen: a sign of the owner
 //!     Warned --> Seen: a sign of the owner
 //! ```
-//! - The server posts each note as
+//! - The server posts each line and message as
 //!   [`SessionUri::server`](riff_core::name::SessionUri::server): the
 //!   USER [`SERVER_USER`](riff_core::name::SERVER_USER), which no person
-//!   can sign in as
-//!   (01M3N7K4BC1RPZKQ1XNDTBRPGF). A note has no signature.
-//! - Each change posts one note to the thread of each repository of the
-//!   riff. It wakes no session. A change that changes who the owner is
-//!   also posts one line in the chat, with the same text
-//!   (01M6FYH5XZAZYJFPFQVAFQSSVT): a pass, a grant, a gone owner, and a
-//!   take on a riff with no owner. A request and a deny post none. The
-//!   line has no `to`, so it wakes no session. It has the kind `riff`, so
-//!   the chat shows it as `<riff-bot>`. A change that needs a
-//!   person also sends the same text to each live lead of that person,
-//!   as a direct message: the owner for a request, the admin for a deny,
-//!   each admin when the owner is gone.
+//!   can sign in as (01M3N7K4BC1RPZKQ1XNDTBRPGF). A post of the server
+//!   has no signature.
+//! - Each step posts one line in the chat (01M6FYH5XZAZYJFPFQVAFQSSVT,
+//!   01M76S6128EZRZS2D5CE2QCC05): a request, a pass, a deny, a grant,
+//!   the warning, a gone owner, and a take on a riff with no owner. No
+//!   step posts a note to the thread of a repository. The line has no
+//!   `to`, so it wakes no session. It has the kind `riff`, so the chat
+//!   shows it as `<riff-bot>`. A step that needs a person also sends the
+//!   same text to each live lead of that person, as a direct message:
+//!   the owner for a request, the admin for a deny, each admin when the
+//!   owner is gone.
 //!
 //! The module does no I/O and reads no clock. The caller passes `now`.
 
@@ -234,7 +232,7 @@ pub fn minutes(time: Duration) -> String {
     }
 }
 
-/// The note of a request that waits for the owner.
+/// The line of a request that waits for the owner.
 ///
 /// ```
 /// use std::time::Duration;
@@ -255,7 +253,7 @@ pub fn asked_news(user: &str, admin: &str, owner: &str, answer: Duration) -> Str
     )
 }
 
-/// The note of a request on a riff with no owner: the admin is the
+/// The line of a request on a riff with no owner: the admin is the
 /// owner at once.
 ///
 /// ```
@@ -268,8 +266,7 @@ pub fn took_news(user: &str, admin: &str) -> String {
     format!("members: {user} took the owner role. The riff had no owner. {admin} is the owner now.")
 }
 
-/// The line of a pass in the chat (01M6FYH5XZAZYJFPFQVAFQSSVT). It has the
-/// text of the note that `riff owner EMAIL` posts in the repository threads.
+/// The line of a pass in the chat (01M6FYH5XZAZYJFPFQVAFQSSVT).
 ///
 /// ```
 /// assert_eq!(
@@ -281,7 +278,7 @@ pub fn passed_news(user: &str, owner: &str, old: &str) -> String {
     format!("members: {user} passed the owner role to {owner}. {old} stays an admin.")
 }
 
-/// The note of a deny.
+/// The line of a deny.
 ///
 /// ```
 /// assert_eq!(
@@ -316,7 +313,7 @@ pub fn warn_news(owner: &str, timing: &Timing) -> String {
     )
 }
 
-/// The note of a change that no person made.
+/// The line of a change that no person made.
 ///
 /// ```
 /// use std::time::Duration;
@@ -365,7 +362,7 @@ pub fn change_news(change: &OwnerChange, timing: &Timing) -> String {
     }
 }
 
-/// The text of a direct message to a lead: the note, and what the lead
+/// The text of a direct message to a lead: the line, and what the lead
 /// does with it.
 ///
 /// ```
