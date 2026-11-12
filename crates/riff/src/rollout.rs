@@ -120,7 +120,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use riff_core::name::SessionUri;
 use riff_core::selector::Selector;
 use riff_core::wire::{Kind, RiffState, SessionInfo};
@@ -128,7 +128,7 @@ use serde::Deserialize;
 
 use crate::identity;
 use crate::pr::Gh;
-use crate::{text, usage};
+use crate::{text, usage, workflow};
 use riff_client::api::Api;
 
 /// The time between two looks of the rollout.
@@ -912,6 +912,14 @@ pub struct Pull {
     /// check counts as required ([`Pull::failed_checks`]).
     #[serde(skip)]
     pub required: Option<Vec<String>>,
+    /// The failed runs of GitHub Actions of the head that the ruleset does
+    /// not name, but that a required check needs: a job that the job of
+    /// the required check needs in their workflow, as the Gate needs
+    /// `macOS` (01M78TQ943A6KJQ8JD9PAWEYDW, [`crate::workflow`]). Each
+    /// counts as required. [`Pull::set_required`] reads them with the
+    /// rules.
+    #[serde(skip)]
+    pub parts: Vec<String>,
 }
 
 /// True when the first line of the commit message `message` starts with
@@ -1118,6 +1126,25 @@ impl Check {
             .as_deref()
             .or(self.url.as_deref())
             .filter(|l| !l.is_empty())
+    }
+
+    /// The ID of the run of GitHub Actions of a check run: the number
+    /// after `/actions/runs/` in its link.
+    ///
+    /// ```
+    /// use riff::rollout::Check;
+    ///
+    /// let link = "https://github.com/o/r/actions/runs/9/job/1";
+    /// assert_eq!(Check::other("macOS", "FAILURE", link).run_id(), Some(9));
+    /// assert_eq!(Check::other("ci", "FAILURE", "https://app.circleci.com/workflow/9").run_id(), None);
+    /// assert_eq!(Check::run("Gate", "FAILURE").run_id(), None, "no link");
+    /// ```
+    pub fn run_id(&self) -> Option<u64> {
+        let (_, rest) = self.details.as_deref()?.split_once("/actions/runs/")?;
+        let end = rest
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(rest.len());
+        rest[..end].parse().ok()
     }
 
     /// The app of the check: the host of its link, for example
@@ -1334,9 +1361,11 @@ pub enum Stuck {
     /// it.
     Other(OtherCheck),
     /// This check of the head failed, but the ruleset of the default
-    /// branch does not require it ([`Pull::failed_optional`]). It holds no
-    /// verify and no merge, so [`Pull::stuck`] never gives it, and no
-    /// session fixes it: the lead hears of it.
+    /// branch does not require it, and no required check needs it
+    /// ([`Pull::failed_optional`]). It holds no verify and no merge, so
+    /// [`Pull::stuck`] never gives it, and no session fixes it: the lead
+    /// hears of it. A failed job that the Gate needs, as `macOS`, is
+    /// [`Stuck::Checks`] (01M78TQ943A6KJQ8JD9PAWEYDW).
     Optional(OtherCheck),
     /// The verify passed, and auto-merge is off: nothing merges it. The
     /// wave asks GitHub again before it tells the lead ([`merge_off`]).
@@ -1592,13 +1621,85 @@ impl Pull {
     }
 
     /// True when the ruleset of the default branch requires `check`
-    /// ([`Pull::required`]). With no read of the rules, each check counts.
+    /// ([`Pull::required`]), or a required check needs it
+    /// ([`Pull::parts`]). With no read of the rules, each check counts.
     fn requires(&self, check: &Check) -> bool {
         self.required.as_ref().is_none_or(|names| {
             check
                 .title()
-                .is_some_and(|title| names.iter().any(|n| n == title))
+                .is_some_and(|title| names.iter().chain(&self.parts).any(|n| n == title))
         })
+    }
+
+    /// Sets the checks that the ruleset of the default branch requires
+    /// ([`Pull::required`]), and reads the failed runs of the head that
+    /// one of them needs ([`Pull::parts`], 01M78TQ943A6KJQ8JD9PAWEYDW):
+    /// for each run of GitHub Actions with a failed check that the
+    /// ruleset does not name, its workflow at the head ([`workflow::read`]).
+    /// It fails when `gh` cannot read a workflow, as the look fails when
+    /// it cannot read the rules (01M5QYDHN27RC5SRHAB56PFKK0).
+    ///
+    /// ```
+    /// use riff::pr::Gh;
+    /// use riff::rollout::{Check, Pull};
+    ///
+    /// let dir = tempfile::tempdir()?;
+    /// let script = "#!/bin/sh\ncase \"$*\" in\n\
+    ///     *'actions/runs/9 --jq .path') echo .github/workflows/ci.yml ;;\n\
+    ///     *'contents/.github/workflows/ci.yml?ref=c16') printf 'jobs:\\n  macos:\\n    name: macOS\\n  \
+    ///       gate:\\n    name: Gate\\n    needs: [macos]\\n  audit:\\n    name: Crate audit\\n' ;;\n\
+    ///     *) echo 'gh: Not Found (HTTP 404)' >&2; exit 1 ;;\nesac\n";
+    /// let gh = Gh::at(isolated::write_program(dir.path().join("gh"), script));
+    /// let run = |name, run| Check {
+    ///     details: Some(format!("https://github.com/o/r/actions/runs/{run}/job/1")),
+    ///     ..Check::run(name, "FAILURE")
+    /// };
+    /// let mut pull = Pull {
+    ///     head: "c16".into(),
+    ///     checks: vec![Check::run("Gate", ""), run("macOS", 9), run("Crate audit", 9), run("Lint", 8)],
+    ///     ..Pull::default()
+    /// };
+    /// pull.set_required(&gh, "o/r", vec!["Gate".into()])?;
+    /// assert_eq!(pull.parts, ["macOS"]);
+    /// assert_eq!(pull.failed_checks(), ["macOS"]);
+    /// let names: Vec<String> = pull.failed_optional().into_iter().map(|c| c.name).collect();
+    /// assert_eq!(names, ["Crate audit", "Lint"], "the run 8 has no workflow");
+    ///
+    /// // A fault of `gh` is no answer.
+    /// let gh = Gh::at(isolated::write_program(dir.path().join("down"), "#!/bin/sh\nexit 1\n"));
+    /// assert!(pull.set_required(&gh, "o/r", vec!["Gate".into()]).is_err());
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn set_required(&mut self, gh: &Gh, repo: &str, required: Vec<String>) -> Result<()> {
+        self.parts.clear();
+        self.required = Some(required);
+        let mut runs: BTreeMap<u64, Vec<String>> = BTreeMap::new();
+        for check in self
+            .newest_checks()
+            .filter(|c| c.failed() && c.actions() && !self.requires(c))
+        {
+            if let (Some(run), Some(name)) = (check.run_id(), check.title()) {
+                runs.entry(run).or_default().push(name.to_owned());
+            }
+        }
+        let required = self.required.as_deref().unwrap_or_default();
+        let mut parts: Vec<String> = Vec::new();
+        for (run, names) in runs {
+            let jobs = workflow::read(gh, repo, run, &self.head).with_context(|| {
+                format!(
+                    "riff cannot read the workflow of the run {run} of the pull request #{} of {repo}",
+                    self.number
+                )
+            })?;
+            let needed = workflow::needed(&jobs, required);
+            for name in names {
+                if needed.iter().any(|job| job.runs(&name)) && !parts.contains(&name) {
+                    parts.push(name);
+                }
+            }
+        }
+        self.parts = parts;
+        Ok(())
     }
 
     /// The names of the checks of the head that failed ([`Check::failed`])
@@ -1705,9 +1806,10 @@ impl Pull {
     }
 
     /// The failed checks that the ruleset of the default branch does not
-    /// require ([`Pull::required`]), of any app, each name one time, in
-    /// order, with the app and the link of each. Such a check holds no
-    /// verify and no merge, and no session fixes it: the lead hears of it
+    /// require ([`Pull::required`]), and that no required check needs
+    /// ([`Pull::parts`]), of any app, each name one time, in order, with
+    /// the app and the link of each. Such a check holds no verify and no
+    /// merge, and no session fixes it: the lead hears of it
     /// ([`Stuck::Optional`]). With no read of the rules, there is none.
     ///
     /// ```
@@ -1731,6 +1833,11 @@ impl Pull {
     /// };
     /// assert_eq!(ruled.failed_optional(), [knurl]);
     /// assert!(ruled.failed_checks().is_empty());
+    /// // The Gate needs the job of the run (#2022): it is a required check.
+    /// let part = Pull { parts: vec!["knurl adapter".into()], ..ruled };
+    /// assert!(part.failed_optional().is_empty());
+    /// assert_eq!(part.failed_checks(), ["knurl adapter"]);
+    /// assert_eq!(part.failed_runs(), ["knurl adapter"]);
     /// ```
     pub fn failed_optional(&self) -> Vec<OtherCheck> {
         self.failed_where(|c| !self.requires(c))
@@ -1827,9 +1934,10 @@ impl Pull {
     /// (#279). A draft, a WIP head, a failed verify, and a pull request in
     /// the merge queue ([`Pull::queued`]) are none: a failed verify is free
     /// work as a build already. Only a failed check that the ruleset of
-    /// the default branch requires counts ([`Pull::failed_checks`]): a
-    /// failed check that it does not require holds no merge
-    /// ([`Pull::failed_optional`]). In this order:
+    /// the default branch requires, or that a required check needs
+    /// ([`Pull::parts`]), counts ([`Pull::failed_checks`]): another
+    /// failed check holds no merge ([`Pull::failed_optional`]). In this
+    /// order:
     ///
     /// 1. A release with a failed required check: [`Stuck::Checks`], with
     ///    its verify in any state (01M5QW2M4WX53N29SHRV0S32WM,
@@ -1970,6 +2078,16 @@ impl Pull {
     /// assert_eq!(release.stuck(true), Some(Stuck::Checks(vec!["Gate".into()])));
     /// let held = ruled(blocked(vec![passed(), gate("SUCCESS"), knurl()]));
     /// assert_eq!(held.stuck(false), Some(Stuck::Review(Review::Blocked)));
+    ///
+    /// // #2022: the Gate needs `macOS`, so a failed `macOS` holds the merge, also while the Gate goes.
+    /// let macos = |checks| Pull { parts: vec!["macOS".into()], ..ruled(pull(checks, "MERGEABLE", true)) };
+    /// let mac = || Check::run("macOS", "FAILURE");
+    /// assert_eq!(macos(vec![passed(), gate(""), mac()]).stuck(false), Some(Stuck::Checks(vec!["macOS".into()])));
+    /// assert_eq!(macos(vec![mac(), gate("")]).stuck(false), Some(Stuck::Checks(vec!["macOS".into()])));
+    /// assert_eq!(
+    ///     macos(vec![mac(), gate("FAILURE"), knurl()]).stuck(false),
+    ///     Some(Stuck::Checks(vec!["macOS".into(), "Gate".into()]))
+    /// );
     /// ```
     pub fn stuck(&self, release: bool) -> Option<Stuck> {
         if self.draft || self.queued() {
@@ -2388,7 +2506,10 @@ pub fn open_in_kept(gh: &Gh, repo: &str, branch: &str, age: std::time::Duration)
 /// only ([`Pull::settled`], [`runs_waiting`], 01M6FZ144M0BTEDWNB9V4MGWDD).
 /// The checks that the ruleset of the default branch requires are read
 /// one time, and only when a head has a failed check ([`Pull::required`],
-/// [`crate::repo_setup::full_check`]). It fails when they do not read: a
+/// [`crate::repo_setup::full_check`]). Then the workflow of each failed
+/// run of a head that the ruleset does not name is read too, for the
+/// jobs that a required check needs ([`Pull::set_required`],
+/// 01M78TQ943A6KJQ8JD9PAWEYDW). It fails when they do not read: a
 /// look that does not know them fails, and says why
 /// (01M5QYDHN27RC5SRHAB56PFKK0). Each read is a [`Gh::read`]: a `gh` that
 /// accepts an older reply takes the reply of the look that just ran.
@@ -2400,7 +2521,9 @@ pub fn pulls(gh: &Gh, repo: &str) -> Result<Vec<Pull>> {
         false => None,
     };
     for pull in &mut pulls {
-        pull.required = required.clone();
+        if let Some(required) = &required {
+            pull.set_required(gh, repo, required.clone())?;
+        }
         pull.wip = pull.verify() == Some(Verify::Asked) && head_wip(gh, repo, &pull.head);
         pull.queue = queue.get(&pull.number).cloned().unwrap_or_default();
         if pull.settled() {

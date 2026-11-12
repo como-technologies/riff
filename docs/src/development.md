@@ -2656,14 +2656,17 @@ job `Gate` has no run until the other jobs end. A failed check next to
 a check with no run is not done either.
 
 Only a failed check that the ruleset of `main` requires holds the
-verify. It gets its fix before the verify, because the verify of a head
+verify, or a failed job that such a check needs, as the Gate needs
+`macOS` (see
+[See a failed job that the Gate needs](#see-a-failed-job-that-the-gate-needs)).
+It gets its fix before the verify, because the verify of a head
 with a failed required check can only fail. The wave starts no verify
 of that head. It starts a session that fixes the failed checks (see
 [See a pull request that cannot merge](#see-a-pull-request-that-cannot-merge)).
 After its push, the new head gets a new full check, and then its verify.
 
-A failed check that the ruleset does not require holds no verify:
-`riff verify pass` needs only the required checks. The verify goes on,
+Another failed check holds no verify: `riff verify pass` needs only
+the required checks. The verify goes on,
 and your lead gets one message for the check (see
 [See a failed check that no rule requires](#see-a-failed-check-that-no-rule-requires)).
 
@@ -3287,7 +3290,7 @@ flowchart TD
 | The pull request | What the wave does | In `riff top` |
 |---|---|---|
 | A conflict, auto-merge on | A session rebases it at its turn (see [Run the wave](#run-the-wave)) | `stuck: #12 (conflict)` |
-| The verify passed or waits, a required run of GitHub Actions failed | A session fixes the check. The wave starts no verify of this commit (see [See why a verify waits](#see-why-a-verify-waits)) | `stuck: #12 (checks)` |
+| The verify passed or waits, a required run of GitHub Actions failed, or a job that a required check needs | A session fixes the check. The wave starts no verify of this commit (see [See why a verify waits](#see-why-a-verify-waits) and [See a failed job that the Gate needs](#see-a-failed-job-that-the-gate-needs)) | `stuck: #12 (checks)` |
 | The verify passed or waits, a required check of another app failed | Your lead gets one message for the check. No session starts (see [Fix a failed check of another app](#fix-a-failed-check-of-another-app)) | `stuck: #12 (checks)` |
 | The verify passed or waits, a check that the ruleset does not require failed | Your lead gets one message for the check. The verify goes on, and no session starts (see [See a failed check that no rule requires](#see-a-failed-check-that-no-rule-requires)) | not stuck |
 | The verify passed, auto-merge off | Your lead gets one message. No session starts | `stuck: #12 (auto-merge off)` |
@@ -3540,9 +3543,43 @@ gh api -X PATCH repos/OWNER/REPO/code-scanning/alerts/128 -f state=dismissed -f 
 The next scan still finds the flow of a dismissed alert, but GitHub
 keeps the alert dismissed and opens no new alert for it.
 
+#### See a failed job that the Gate needs
+
+The ruleset of `main` requires the Gate, not `macOS`. But the Gate needs
+`macOS`, and fails when `macOS` fails. So the wave counts a failed job
+that a required check needs as a failed required check. The look reads
+the workflow of the run at the head commit, and follows `needs:` from
+the job of each required check, also through other jobs.
+
+A failed `macOS` holds the verify, and a session fixes it, as for a
+failed Gate. That starts at once, also while the Gate waits for the
+tests. `riff top` shows `stuck: #12 (checks)`. A failed job that no
+required check needs, for example `Crate audit`, keeps the message of
+[See a failed check that no rule requires](#see-a-failed-check-that-no-rule-requires).
+
+```mermaid
+flowchart LR
+    M["macOS failed"] --> N{"does a required check<br/>need its job?"}
+    N -- "yes: the Gate needs macOS" --> F["a session fixes it:<br/>no verify of this head"]
+    N -- "no: Crate audit" --> L["a message to your lead:<br/>the verify goes on"]
+```
+
+To see the jobs that the Gate needs, and the checks of the pull request
+40:
+
+```sh
+grep -n "needs:" .github/workflows/ci.yml
+gh pr checks 40
+```
+
+When the look cannot read the workflow, it fails, and says why. The
+wave starts no work at that look, and reads again at the next one.
+
 #### See a failed check that no rule requires
 
-A check that the ruleset of `main` does not require blocks no merge.
+A check that the ruleset of `main` does not require, and that no
+required check needs, blocks no merge (see
+[See a failed job that the Gate needs](#see-a-failed-job-that-the-gate-needs)).
 An example is a new workflow whose secret is not there yet. Its failure
 holds no verify, and no session fixes it. The verify goes on, and the
 pull request merges when its required checks and its verify pass. Your

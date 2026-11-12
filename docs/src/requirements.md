@@ -6961,18 +6961,12 @@ of this part when they merge.
   the token of a session (01M6WPMNXN1BSBEH74TG5DDRTF), the check of the
   push right and the revoke, under the caller `token` of DAEMON
   (01M6QCDH3VXFFEFEWJT1H2HQT0).
-- **01M749P62T24VDPX20D40KRJEK** Only a failed check that the ruleset of
-  the default branch requires (01M5QYDE41FVFX26EC8K5QGYH4) starts the
-  fix of the failed checks and holds the verify. A pull request whose
-  head has such a check gets the fix also when its verify waits: the
-  wave starts no verify of that head, and the verify comes after the
-  fix. For a failed check that the ruleset does not require, of any app,
-  the verify goes on and no session starts. The lead gets one message
-  for each such check and head commit, with the name of the check and
-  its link, and riff top and riff wave list do not show the pull request
-  as stuck. The look reads the ruleset when a head has a failed check.
-  When a session of a wave for failed checks ends with the same head
-  commit, only the required runs of Actions count as failed. Supersedes
+- **01M749P62T24VDPX20D40KRJEK** A failed check that the ruleset of the
+  default branch requires (01M5QYDE41FVFX26EC8K5QGYH4) starts the fix of
+  the failed checks and holds the verify. A pull request whose head has
+  such a check gets the fix also when its verify waits: the wave starts
+  no verify of that head, and the verify comes after the fix. The look
+  reads the ruleset when a head has a failed check. Supersedes
   01M5SN0PY23JDWND8DGGAF9XMB and 01M6JEQEQ45YMNR1WTX2RRTQ5B in part.
 - **01M74BJ5Y03F5DGT44N8EENFBG** A call that fails on a limit of GitHub
   less than one minute after the end of the last wait of its resource is
@@ -7127,6 +7121,24 @@ of this part when they merge.
   reads nothing with "gh", posts no message, and files no fix item of a
   broken `main`. When the project allows the host again, it looks again
   at its next look.
+- **01M78TQ943A6KJQ8JD9PAWEYDW** A failed run of GitHub Actions counts
+  as a failed required check (01M749P62T24VDPX20D40KRJEK) when a check
+  that the ruleset of the default branch requires needs it: in the
+  workflow of the run, at the head commit of the pull request, the job
+  of the required check needs the job of the run, also through other
+  jobs. An example is the job macOS, which the Gate needs. Such a run
+  starts the fix of the failed checks and holds the verify, also while
+  the required check waits for the other jobs. For each other failed
+  check that the ruleset does not require, of any app, the verify goes
+  on and no session starts. The lead gets one message for each such
+  check and head commit, with the name of the check and its link, and
+  riff top and riff wave list do not show the pull request as stuck.
+  When a session of a wave for failed checks ends with the same head
+  commit, only the runs of Actions that count as required count as
+  failed. The look reads the workflow when a head has a failed run of
+  Actions that the ruleset does not name. A look that cannot read the
+  workflow fails, and says why. Supersedes 01M749P62T24VDPX20D40KRJEK in
+  part.
 
 ### The lead, the view and the takeover
 

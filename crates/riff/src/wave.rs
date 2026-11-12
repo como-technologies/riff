@@ -533,9 +533,17 @@
 //!   [`rollout::Pull::failed_checks`]): an old failed run does not count
 //!   when a newer run of the same check passed. A check that was
 //!   cancelled or skipped did not fail.
+//! - **A failed job that a required check needs**
+//!   (01M78TQ943A6KJQ8JD9PAWEYDW). The Gate needs `macOS`, and fails
+//!   when `macOS` fails, so a failed `macOS` blocks the merge although
+//!   the ruleset does not name it. The look reads the workflow of such a
+//!   run at the head ([`crate::workflow`], [`rollout::Pull::parts`]).
+//!   The run counts as a failed required check: it holds the verify, and
+//!   a session fixes it, also while the Gate waits for the tests.
 //! - **A failed check that no rule requires**
-//!   (01M749P62T24VDPX20D40KRJEK). A check that the ruleset of the default
-//!   branch does not require blocks no merge, and `riff verify pass` does
+//!   (01M749P62T24VDPX20D40KRJEK, 01M78TQ943A6KJQ8JD9PAWEYDW). A check
+//!   that the ruleset of the default branch does not require, and that no
+//!   required check needs, blocks no merge, and `riff verify pass` does
 //!   not read it. So it holds no verify, and no session fixes it
 //!   ([`rollout::Pull::failed_optional`]). The lead gets one message for
 //!   each such check and head commit, with its name and its link
@@ -3041,17 +3049,19 @@ impl Fix<'_> {
 }
 
 /// The names of the checks of pull request `number` of `repo` that failed
-/// now, that the ruleset of the default branch requires, and that are
-/// runs of GitHub Actions, with `gh`: the session fixed no other
-/// ([`rollout::Pull::failed_runs`]). The rules are read only when a run
-/// failed ([`repo_setup::full_check`]).
+/// now, that the ruleset of the default branch requires or that a
+/// required check needs, and that are runs of GitHub Actions, with `gh`:
+/// the session fixed no other ([`rollout::Pull::failed_runs`]). The rules
+/// and the workflows are read only when a run failed
+/// ([`repo_setup::full_check`], [`rollout::Pull::set_required`]).
 async fn still_failed(gh: pr::Gh, repo: String, number: u64) -> Result<Vec<String>> {
     blocking(move || {
         let n = number.to_string();
         let mut pull: rollout::Pull =
             gh.json(&["pr", "view", &n, "--json", rollout::PULL_FIELDS])?;
         if !pull.failed_runs().is_empty() {
-            pull.required = Some(repo_setup::full_check(&gh, &repo)?);
+            let required = repo_setup::full_check(&gh, &repo)?;
+            pull.set_required(&gh, &repo, required)?;
         }
         Ok(pull.failed_runs())
     })

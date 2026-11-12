@@ -5,6 +5,8 @@
 //! them is done on its head. The repository has no check run `Gate`. A
 //! head with a failed check gets the fix of the check, not a verify
 //! (#1575). A held verify does not start when the checks passed (#1816).
+//! A failed job that a required check needs counts as a required check
+//! (#2022).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -19,7 +21,10 @@ const REPO: &str = "o/r";
 /// checks and `riff/verify`. It logs each call to the file `calls`. The
 /// file `docs` holds the check runs of `checks / docs`, the file `hygiene`
 /// those of `Hygiene`, and the file `rules` the rules of `main`. The three
-/// other checks passed, and the head has no check run `Gate`.
+/// other checks passed, and the head has no check run `Gate`. The file
+/// `run` holds the path of the workflow of the run 9, and the file
+/// `workflow` its text at the head: with no file `run`, GitHub does not
+/// find the run.
 const FAKE_GH: &str = r#"#!/bin/sh
 dir=$(dirname "$0")
 echo "$*" >> "$dir/calls"
@@ -27,6 +32,14 @@ case "$1 $2" in
   api*)
     case "$2" in
       repos/o/r) echo '{"default_branch":"main"}' ;;
+      repos/o/r/actions/runs/9)
+        [ -f "$dir/run" ] || { echo 'gh: Not Found (HTTP 404)' >&2; exit 1; }
+        cat "$dir/run" ;;
+      -H)
+        case "$4" in
+          repos/o/r/contents/.github/workflows/ci.yml?ref=eeee555) cat "$dir/workflow" ;;
+          *) exit 1 ;;
+        esac ;;
       */rules/branches/main*) cat "$dir/rules" ;;
       */milestones*) echo '[{"title":"Backlog"},{"title":"Wave 1"}]' ;;
       *check_name=Gate) echo '{"total_count":0,"check_runs":[]}' ;;
@@ -455,4 +468,159 @@ fn a_failed_run_that_the_ruleset_does_not_require_holds_no_verify() {
     );
     let book = crate::book::page("development.md");
     assert!(book.contains(&format!("\n{message}\n")), "{message}");
+}
+
+/// The workflow `CI` of the run 9, as in this repository: the Gate needs
+/// `Plan` and `macOS`, and no job needs `Crate audit`.
+const CI: &str = r#"name: CI
+on: [pull_request]
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+  macos:
+    # The tests on a Mac.
+    name: macOS
+    needs: [plan]
+    runs-on: macos-latest
+  gate:
+    name: Gate
+    needs: [plan, macos]
+    if: always()
+    steps:
+      - run: echo "each part passed"
+  audit:
+    name: Crate audit
+    runs-on: ubuntu-latest
+"#;
+
+/// #2022, PR #2021: the job `macOS` failed on the head, and the Gate,
+/// which needs it, still waits. The ruleset of `main` requires the Gate
+/// only. The look reads the workflow of the run at the head, and a failed
+/// `macOS` counts as a failed required check (01M78TQ943A6KJQ8JD9PAWEYDW):
+/// it gets the fix and no verify, as a failed Gate does, and the lead
+/// hears no "the merge goes on" for it. The failed `Crate audit` of the
+/// same run is outside the Gate: it keeps its notice. A workflow that does
+/// not read fails the look, and says why.
+#[test]
+fn a_failed_job_that_the_gate_needs_gets_the_fix_and_a_job_outside_it_keeps_its_notice() {
+    let dir = tempfile::tempdir().unwrap();
+    let gh = forge(dir.path());
+    let none = BTreeSet::new();
+    let starts = BTreeMap::new();
+    std::fs::write(
+        dir.path().join("rules"),
+        r#"[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Gate"},{"context":"riff/verify"}]}}]"#,
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("run"), ".github/workflows/ci.yml\n").unwrap();
+    std::fs::write(dir.path().join("workflow"), CI).unwrap();
+    let link = "https://github.com/o/r/actions/runs/9/job/1";
+    let audit = Notice {
+        pull: 45,
+        branch: "worktree-issue-5".into(),
+        commit: "eeee555".into(),
+        stuck: Stuck::Optional(OtherCheck {
+            name: "Crate audit".into(),
+            app: Some("github.com".into()),
+            link: Some(link.into()),
+        }),
+    };
+    let fix = |checks: &[&str]| Work::Checks {
+        issue: 5,
+        pull: 45,
+        commit: "eeee555".into(),
+        checks: checks.iter().map(|c| (*c).into()).collect(),
+    };
+
+    pull_with_runs(
+        dir.path(),
+        &[
+            ("Plan", "SUCCESS"),
+            ("macOS", "FAILURE"),
+            ("Gate", ""),
+            ("Crate audit", "FAILURE"),
+        ],
+    );
+    let first = look(&gh).unwrap();
+    assert_eq!(first.free, ["issue-5"]);
+    assert_eq!(
+        first.fixes.failed[&5],
+        Failed {
+            pull: 45,
+            commit: "eeee555".into(),
+            checks: vec!["macOS".into()],
+        }
+    );
+    assert_eq!(wave::pick(&first, &none, &starts), Some(fix(&["macOS"])));
+    assert_eq!(first.fixes.notices, std::slice::from_ref(&audit));
+    let calls = calls(dir.path());
+    assert!(
+        calls
+            .iter()
+            .any(|c| c == "api repos/o/r/actions/runs/9 --jq .path"),
+        "{calls:?}"
+    );
+    assert!(
+        calls
+            .iter()
+            .any(|c| c.ends_with("repos/o/r/contents/.github/workflows/ci.yml?ref=eeee555")),
+        "the look reads the workflow at the head: {calls:?}"
+    );
+    // `riff top` shows the pull request as stuck on its checks.
+    let pulls = riff::rollout::pulls(&gh, REPO).unwrap();
+    assert_eq!(
+        pulls[0].stuck(false),
+        Some(Stuck::Checks(vec!["macOS".into()]))
+    );
+    assert_eq!(pulls[0].parts, ["macOS"]);
+
+    // The Crate audit keeps the message of a check that no rule requires.
+    let message = riff::text::wave_stuck(
+        REPO,
+        45,
+        "worktree-issue-5",
+        "main",
+        "eeee555",
+        &audit.stuck,
+    );
+    assert!(
+        message
+            .contains("The ruleset of main does not require it, so the verify and the merge go on"),
+        "{message}"
+    );
+
+    // The Gate failed too: one fix of both.
+    pull_with_runs(
+        dir.path(),
+        &[
+            ("Plan", "SUCCESS"),
+            ("macOS", "FAILURE"),
+            ("Gate", "FAILURE"),
+            ("Crate audit", "FAILURE"),
+        ],
+    );
+    let both = look(&gh).unwrap();
+    assert_eq!(
+        wave::pick(&both, &none, &starts),
+        Some(fix(&["macOS", "Gate"]))
+    );
+    assert_eq!(both.fixes.notices, [audit]);
+
+    // The workflow does not read: the look fails, and says why.
+    std::fs::remove_file(dir.path().join("workflow")).unwrap();
+    let why = format!("{:#}", look(&gh).unwrap_err());
+    assert!(
+        why.contains("riff cannot read the workflow of the run 9 of the pull request #45 of o/r"),
+        "{why}"
+    );
+
+    // The book tells it, with the jobs that the Gate needs.
+    let book = crate::book::page("development.md");
+    let start = book
+        .find("\n#### See a failed job that the Gate needs\n")
+        .expect("the how-to");
+    let how_to = &book[start..];
+    assert!(how_to.contains("grep -n \"needs:\" .github/workflows/ci.yml"));
+    assert!(how_to.contains("`Crate audit`, keeps the message"));
 }
