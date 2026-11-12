@@ -6028,7 +6028,7 @@ esac
     async fn a_merge_reads_that_pull_request_only_and_the_safety_look_finds_a_dropped_event() {
         let bin = tempfile::tempdir().unwrap();
         let put = |name: &str, value: serde_json::Value| {
-            std::fs::write(bin.path().join(name), value.to_string()).unwrap();
+            isolated::write_whole(bin.path().join(name), value.to_string());
         };
         put("issues", serde_json::json!([open_issue(1)]));
         put("pulls", serde_json::json!([pull_41()]));
@@ -6099,7 +6099,7 @@ esac
     async fn a_merge_with_closes_starts_no_build_of_its_issue_before_the_close() {
         let bin = tempfile::tempdir().unwrap();
         let put = |name: &str, value: serde_json::Value| {
-            std::fs::write(bin.path().join(name), value.to_string()).unwrap();
+            isolated::write_whole(bin.path().join(name), value.to_string());
         };
         let mut pull = pull_41();
         pull["body"] = "Closes #1\n\nThe summary.\n\nIssue: #1\n".into();
@@ -6191,7 +6191,7 @@ esac
     async fn a_merge_between_the_two_reads_of_the_look_tells_the_lead_nothing() {
         let bin = tempfile::tempdir().unwrap();
         let put = |name: &str, value: serde_json::Value| {
-            std::fs::write(bin.path().join(name), value.to_string()).unwrap();
+            isolated::write_whole(bin.path().join(name), value.to_string());
         };
         let mut pull = pull_41();
         pull["autoMergeRequest"] = serde_json::Value::Null;
@@ -8502,9 +8502,10 @@ esac
             here
         }
 
-        /// Sets the file `name` of the fake forge.
+        /// Sets the file `name` of the fake forge in one step: the looks read
+        /// it while the wave runs (01M779MKDQFY6982B7D533G8K2).
         fn put(&self, name: &str, text: &str) {
-            std::fs::write(self.world.root.join("bin").join(name), text).unwrap();
+            isolated::write_whole(self.world.root.join("bin").join(name), text);
         }
 
         /// The calls of the fake `gh` that contain `call`.

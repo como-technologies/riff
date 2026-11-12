@@ -424,3 +424,23 @@ pub fn names_a_program(name: &str) -> bool {
         .extension()
         .is_none_or(|extension| extension == "sh")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[should_panic(expected = "cannot make a new file in")]
+    fn write_whole_in_a_missing_folder_panics() {
+        let dir = tempfile::tempdir().unwrap();
+        write_whole(dir.path().join("missing").join("state"), "running");
+    }
+
+    #[test]
+    fn write_whole_of_a_shorter_text_keeps_nothing_of_the_old_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = write_whole(dir.path().join("state"), "running");
+        write_whole(&state, "ok");
+        assert_eq!(std::fs::read_to_string(&state).unwrap(), "ok");
+    }
+}

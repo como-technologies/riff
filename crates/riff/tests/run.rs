@@ -2139,7 +2139,7 @@ async fn a_new_daemon_starts_the_idle_lead_again_on_the_new_riff_with_claude_res
         "{claude}"
     );
     // The new container binds the new riff: the daemon looks no more.
-    std::fs::write(machine.bin.path().join("links"), "1\n").unwrap();
+    isolated::write_whole(machine.bin.path().join("links"), "1\n");
     let status = machine.ok(None, &["daemon", "status"]).await;
     assert!(status.contains(name), "{status}");
 
@@ -2866,7 +2866,7 @@ async fn riff_lead_start_runs_the_lead_with_a_terminal_and_attaches_to_it() {
     assert!(status.contains(name), "{status}");
     // 01M5NJ87YEHHGJBANM7CRYV56Z: the host replaced the sign-in file that
     // the lead holds: the attach says so first.
-    std::fs::write(machine.bin.path().join("links"), "0\n").unwrap();
+    isolated::write_whole(machine.bin.path().join("links"), "0\n");
     let again = machine.ok(None, &["lead", "start"]).await;
     assert!(
         again.contains(&riff::text::lead_runs("como-technologies/riff", name)),
@@ -4066,7 +4066,7 @@ async fn a_new_daemon_starts_the_lead_again_on_a_host_with_the_part_lead_and_no_
     // workers.
     assert!(riff::wave::read_waves(&dir).unwrap().is_empty());
     assert_eq!(riff::daemon::parts::of(&dir, repo).word(), "lead");
-    std::fs::write(machine.bin.path().join("links"), "1\n").unwrap();
+    isolated::write_whole(machine.bin.path().join("links"), "1\n");
     let status = machine.ok(None, &["daemon", "status"]).await;
     assert!(status.contains(name), "{status}");
     assert!(!status.contains("riff-issue-"), "{status}");
