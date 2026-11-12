@@ -1800,6 +1800,108 @@ pub fn release_check_unwritten(tag: &str, issue: u64) -> String {
     )
 }
 
+/// Why `riff release check` could not do a check of the log: the job
+/// `Check the deploy` of the run `url` set no status
+/// `riff/deploy-check` for this deploy yet. It ends at `end`
+/// (01M76SSFTGW41RHHV445ZM5RHY).
+///
+/// ```
+/// let why = riff::text::deploy_check_missing("v3.3.0", "https://x/runs/9", "20:09 UTC");
+/// assert_eq!(
+///     why,
+///     "the job Check the deploy of https://x/runs/9 did not set the status riff/deploy-check \
+///      for this deploy yet. It ends at about 20:09 UTC. Then run: riff release check v3.3.0"
+/// );
+/// ```
+pub fn deploy_check_missing(tag: &str, url: &str, end: &str) -> String {
+    format!(
+        "the job Check the deploy of {url} did not set the status riff/deploy-check for this \
+         deploy yet. It ends at about {end}. Then run: riff release check {tag}"
+    )
+}
+
+/// Why `riff release check` could not do a check of the log after a run
+/// by hand: that run has no job `Check the deploy`. A person on a host
+/// checks the log from `since`, and sets the status of `commit`
+/// (01M76SSFTGW41RHHV445ZM5RHY).
+///
+/// ```
+/// let why = riff::text::deploy_check_by_hand("v3.2.0", "2026-10-18T20:00:00Z", "c1");
+/// assert!(why.contains("A person on a host runs: riff cloud check shared --since 2026-10-18T20:00:00Z --commit c1."), "{why}");
+/// ```
+pub fn deploy_check_by_hand(tag: &str, since: &str, commit: &str) -> String {
+    format!(
+        "a run by hand, as of riff release rollback, has no job Check the deploy. A person on a \
+         host runs: riff cloud check shared --since {since} --commit {commit}. Then run: riff \
+         release check {tag}"
+    )
+}
+
+/// Why `riff release check` could not do a check of the log: the status
+/// `riff/deploy-check` of `tag` has a `description` of another form.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::deploy_check_unread("v3.3.0", "odd"),
+///     "riff cannot read the status riff/deploy-check of v3.3.0: odd"
+/// );
+/// ```
+pub fn deploy_check_unread(tag: &str, description: &str) -> String {
+    format!("riff cannot read the status riff/deploy-check of {tag}: {description}")
+}
+
+/// Why `riff release check` could not do a check of the log: the job
+/// `Check the deploy` set the status `riff/deploy-check` of `tag` to an
+/// error, with the reason `description`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::deploy_check_error("v3.3.0", "riff could not read the Cloud Run log: denied"),
+///     "the status riff/deploy-check of v3.3.0 says: riff could not read the Cloud Run log: denied"
+/// );
+/// ```
+pub fn deploy_check_error(tag: &str, description: &str) -> String {
+    format!("the status riff/deploy-check of {tag} says: {description}")
+}
+
+/// Why `riff cloud check` could not read the Cloud Run log
+/// (01M76SSFZG959CQ1JHQTVTZCRA).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::cloud_log_unread("gcloud is not on PATH"),
+///     "riff could not read the Cloud Run log: gcloud is not on PATH"
+/// );
+/// ```
+pub fn cloud_log_unread(why: &str) -> String {
+    format!("riff could not read the Cloud Run log: {why}")
+}
+
+/// The refusal of a `--since` of `riff cloud check` that is no time.
+///
+/// ```
+/// assert!(riff::text::cloud_check_bad_since("now").starts_with("riff cloud check: \"now\" is not"));
+/// ```
+pub fn cloud_check_bad_since(text: &str) -> String {
+    format!(
+        "riff cloud check: \"{text}\" is not a time of RFC 3339. Give --since TIME, for example \
+         --since 2026-10-18T20:00:00Z"
+    )
+}
+
+/// The line of `riff cloud check --commit` after it set the status
+/// `riff/deploy-check` of `commit` (01M76SSFZG959CQ1JHQTVTZCRA).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::deploy_check_set("abc", "success", "503 run: 0 s"),
+///     "The status riff/deploy-check of abc is success: 503 run: 0 s"
+/// );
+/// ```
+pub fn deploy_check_set(commit: &str, state: &str, description: &str) -> String {
+    format!("The status riff/deploy-check of {commit} is {state}: {description}")
+}
+
 /// The error when the call `what` of `gh` fails with the stderr `why`
 /// (01M6GX4HYR3755G6EJW1XHEFVE). The stderr is a text of the forge
 /// ([`forge`]). A `gh` that says nothing gets the reason `no reason`.
@@ -8076,11 +8178,6 @@ pub const DAEMON_RESUME_ONLY_LEAD: &str =
 pub const DAEMON_HOST_ONLY_LEAD: &str =
     "Only the lead can send a --host request through the riff daemon.";
 
-/// A session that is not the lead asks the daemon to read the Cloud Run
-/// log.
-pub const DAEMON_LOG_ONLY_LEAD: &str =
-    "Only the lead can read the Cloud Run log through the riff daemon.";
-
 /// A session that is not the lead asks the daemon for the log of the
 /// repository, for `riff audit` (#1338).
 pub const DAEMON_AUDIT_ONLY_LEAD: &str =
@@ -8186,13 +8283,6 @@ pub const DAEMON_EVENTS_ONLY_LEAD: &str =
 /// that this riff cannot read: it runs another riff.
 pub const DAEMON_NO_PAGE_HERE: &str = "riff: this riff cannot read the reply of the riff daemon: it \
      runs another riff. Update riff on the host of the lead, then run riff daemon restart there.";
-
-/// The daemon runs on a host with no `gcloud`. [`crate::reach::DaemonLog`]
-/// knows the text.
-pub const DAEMON_NO_GCLOUD: &str = "gcloud does not run on the host of the riff daemon";
-
-/// The note to the lead when the sign-in of `gcloud` on the host ended.
-pub const DAEMON_GCLOUD_SIGNIN: &str = "The sign-in of gcloud on the host ended, so riff cannot read the Cloud Run log. A person on the host runs: gcloud auth login. Then run riff release check again.";
 
 /// A first line that is not a hello of the protocol.
 pub const DAEMON_NO_HELLO: &str =

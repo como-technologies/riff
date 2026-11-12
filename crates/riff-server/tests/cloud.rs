@@ -295,6 +295,76 @@ fn a_release_tag_deploys_only_after_its_static_binaries() {
     assert!(deploys(&dispatch("refs/heads/main", "v0.5.0", "success")));
 }
 
+/// 01M76SS6T89DPNV7S4SWY1R7F3, 01M76SSFX0QGPA4MTXV39JV5P3: the job Check
+/// the deploy runs after a pass of the job Deploy in the run of a tag, and
+/// in no other run. It signs in as the check account `riff-check`, not as
+/// the deploy account, with no key and in no GitHub environment. It reads
+/// the log from the time that the job Deploy keeps before its step
+/// Deploy, and sets the status of the tagged commit.
+#[test]
+fn the_job_of_a_tag_signs_in_as_riff_check_after_the_deploy() {
+    let job = ci_job("deploy_check");
+    assert!(job.contains("\n    name: Check the deploy\n"), "{job}");
+    assert!(job.contains("\n    needs: [deploy]\n"), "{job}");
+    for part in [
+        "id-token: write",
+        "statuses: write",
+        "google-github-actions/auth@",
+        "workload_identity_provider:",
+        "service_account: ${{ env.CLOUD_CHECK_ACCOUNT }}@${{ env.CLOUD_PROJECT }}.iam.gserviceaccount.com",
+        "AT: ${{ needs.deploy.outputs.at }}",
+        "run: dist/riff-x86_64-unknown-linux-musl cloud check shared --since \"$AT\" --commit \"$GITHUB_SHA\"",
+    ] {
+        assert!(job.contains(part), "{part} is not in the job:\n{job}");
+    }
+    for part in [
+        "CLOUD_DEPLOY_ACCOUNT",
+        "credentials_json",
+        "environment:",
+        "cargo",
+    ] {
+        assert!(!job.contains(part), "{part} is in the job:\n{job}");
+    }
+    let shared = fs::read_to_string(deploy().join("cloud/shared.env")).unwrap();
+    assert!(
+        shared.contains("\nCLOUD_CHECK_ACCOUNT=riff-check\n"),
+        "{shared}"
+    );
+
+    let deploy_job = ci_job("deploy");
+    assert!(
+        deploy_job.contains("\n    outputs:\n      at: ${{ steps.at.outputs.at }}\n"),
+        "{deploy_job}"
+    );
+    let at = deploy_job.find("        id: at\n").unwrap();
+    assert!(at < deploy_job.find("      - name: Deploy\n").unwrap());
+
+    let tag = |deploy: &'static str| -> Ctx {
+        vec![
+            ("github.event_name", "push"),
+            ("github.ref", "refs/tags/v0.6.0"),
+            ("needs.deploy.result", deploy),
+        ]
+    };
+    assert!(runs("deploy_check", &tag("success")));
+    for result in ["failure", "skipped", "cancelled"] {
+        assert!(!runs("deploy_check", &tag(result)), "{result}");
+    }
+    let by_hand: Ctx = vec![
+        ("github.event_name", "workflow_dispatch"),
+        ("github.ref", "refs/heads/main"),
+        ("inputs.tag", "v0.5.0"),
+        ("needs.deploy.result", "success"),
+    ];
+    assert!(!runs("deploy_check", &by_hand));
+    let main: Ctx = vec![
+        ("github.event_name", "push"),
+        ("github.ref", "refs/heads/main"),
+        ("needs.deploy.result", "success"),
+    ];
+    assert!(!runs("deploy_check", &main));
+}
+
 /// 01M496K1KN392S11YEH33JGK9N: the deploy of a release runs in the
 /// GitHub environment production, so it waits for the approval of its
 /// reviewer. The stage job needs no approval: it runs in the

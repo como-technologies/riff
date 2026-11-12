@@ -33,6 +33,7 @@ anyhow = "1.0.104"
 keyring = "4.2.0"
 keyring-core = "1.0.0"
 secret-service = { version = "5.2.0", features = ["rt-async-io-crypto-rust"] }
+zbus = { version = "5.19.0", default-features = false, features = ["async-io", "blocking-api"] }
 zbus-secret-service-keyring-store = { version = "1.0.1", features = ["crypto-rust"] }
 base64 = "0.23.1"
 getrandom = "0.4.3"

@@ -1487,7 +1487,8 @@ async fn wave_run_with_host_makes_the_main_clone_on_a_host_that_does_not_serve_t
 /// `issues` and `pulls` in `tmp/forge`, and a `podman` that has each image.
 /// It logs `HOST CALL` for each call in `tmp/gh.log`. The wave 7 has the
 /// issue 1, with no `Done when:` line, and the issue 2, whose pull request
-/// has a passed verify and auto-merge off. Gives the variables for a host.
+/// has a passed verify and auto-merge off, also when the wave asks GitHub
+/// again ([`riff::rollout::merge_off`]). Gives the variables for a host.
 fn fake_wave_forge(tmp: &Path) -> Vec<(String, String)> {
     let bin = tmp.join("forge-bin");
     let forge = tmp.join("forge");
@@ -1519,6 +1520,7 @@ fn fake_wave_forge(tmp: &Path) -> Vec<(String, String)> {
          \"repo clone\") exec git clone -q {origins}/\"${{3#local/}}\" \"$4\" ;;\n\
          api*)\n\
            case \"$2\" in\n\
+             graphql) case \"$*\" in *'pullRequest(number'*) echo '{{\"data\":{{\"repository\":{{\"pullRequest\":{{\"state\":\"OPEN\",\"isInMergeQueue\":false,\"headRefOid\":\"1a2b3c4\",\"autoMergeRequest\":null}}}}}}}}' ;; *) exit 1 ;; esac ;;\n\
              repos/local/other) case \"$*\" in *--jq*) echo main ;; *) echo '{{\"default_branch\":\"main\"}}' ;; esac ;;\n\
              */rules/branches/main*) echo '[]' ;;\n\
              */milestones*) cat {forge}/milestones ;;\n\

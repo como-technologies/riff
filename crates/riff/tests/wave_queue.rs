@@ -4,7 +4,9 @@
 //! `gh`. A pull request in the queue gets no rebase and no message. A
 //! pull request that the queue removed gets a rebase when it has a
 //! conflict, else one message for the lead. A `gh` that cannot read the
-//! queue leaves the wave as it was.
+//! queue leaves the wave as it was. A pull request that the queue merged
+//! between the two reads of the look gets no message of auto-merge off:
+//! the wave asks GitHub again first (01M777N148MY8NR5RNDKXE9EVJ).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -16,13 +18,18 @@ use riff::wave::{self, Conflict, Work};
 const REPO: &str = "o/r";
 
 /// A fake `gh`: the file `pulls` for `pr list`, the file `issues` for
-/// `issue list`, and the file `queue` for the GraphQL call of the queue.
-/// With no file `queue`, that call fails.
+/// `issue list`, the file `queue` for the GraphQL call of the queue, and
+/// the file `ask` for the GraphQL call of one pull request. With no file,
+/// the call fails.
 const FAKE_GH: &str = r#"#!/bin/sh
 dir=$(dirname "$0")
 echo "$*" >> "$dir/calls"
 case "$1 $2" in
-  "api graphql") cat "$dir/queue" ;;
+  "api graphql")
+    case "$*" in
+      *"pullRequest(number"*) cat "$dir/ask" ;;
+      *) cat "$dir/queue" ;;
+    esac ;;
   api*)
     case "$2" in
       repos/o/r) echo '{"default_branch":"main"}' ;;
@@ -239,4 +246,62 @@ fn a_fault_of_the_queue_call_leaves_the_wave_as_it_was() {
     let queue = riff::rollout::queue_of(&gh, REPO);
     assert!(queue.is_empty());
     assert_eq!(queue.get(&41).cloned().unwrap_or_default(), Queue::Out);
+}
+
+/// The reply of GitHub to the ask for one pull request: its state, in the
+/// queue or not, its head, and its auto-merge.
+fn ask(dir: &Path, state: &str, in_queue: bool, head: &str, auto: &str) {
+    let reply = format!(
+        r#"{{"data":{{"rateLimit":{{"cost":1}},"repository":{{"pullRequest":{{"state":"{state}","isInMergeQueue":{in_queue},"headRefOid":"{head}","autoMergeRequest":{auto}}}}}}}}}"#
+    );
+    std::fs::write(dir.join("ask"), reply).unwrap();
+}
+
+/// #2003: the queue merged 43 between the two reads of the look. The list
+/// of the open pull requests has 43 with no auto-merge, as GitHub gives
+/// it in the queue, and the read of the queue after it names no 43. So
+/// the look sees auto-merge off. The ask of the wave before the message
+/// gets `MERGED`: no message. In the queue, with auto-merge on, with a new
+/// head, and with a fault of `gh`, the ask says no message too. Only a
+/// pull request that is open, out of the queue, at the same head and with
+/// auto-merge off gets the message.
+#[test]
+fn a_merge_between_the_two_reads_of_the_look_is_no_auto_merge_off() {
+    let dir = tempfile::tempdir().unwrap();
+    let gh = forge(
+        dir.path(),
+        &[pull(3, "cccc333", "MERGEABLE", false)],
+        Some(&[]),
+    );
+    let look = look(&gh);
+    assert_eq!(look.fixes.notices.len(), 1, "{:?}", look.fixes.notices);
+    let notice = &look.fixes.notices[0];
+    assert_eq!((notice.pull, &notice.stuck), (43, &Stuck::AutoMergeOff));
+    let off = || riff::rollout::merge_off(&gh, REPO, notice.pull, &notice.commit);
+
+    ask(dir.path(), "MERGED", false, "cccc333", "null");
+    assert!(!off(), "the queue merged it");
+    ask(dir.path(), "OPEN", true, "cccc333", "null");
+    assert!(!off(), "in the queue");
+    let on = r#"{"enabledAt":"2026-11-12T06:17:20Z"}"#;
+    ask(dir.path(), "OPEN", false, "cccc333", on);
+    assert!(!off(), "auto-merge on");
+    ask(dir.path(), "OPEN", false, "dddd444", "null");
+    assert!(!off(), "a new head");
+    ask(dir.path(), "OPEN", false, "cccc333", "null");
+    assert!(off(), "auto-merge off");
+    std::fs::remove_file(dir.path().join("ask")).unwrap();
+    assert!(!off(), "a fault of gh");
+
+    let calls = std::fs::read_to_string(dir.path().join("calls")).unwrap();
+    let asks: Vec<&str> = calls
+        .lines()
+        .filter(|c| c.contains("pullRequest(number"))
+        .collect();
+    assert_eq!(asks.len(), 6, "{calls}");
+    assert!(
+        asks[0].ends_with("-f owner=o -f name=r -F number=43"),
+        "{}",
+        asks[0]
+    );
 }

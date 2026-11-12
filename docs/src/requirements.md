@@ -2394,6 +2394,24 @@
   each role that the run account needs on it and does not have, or fine.
   A missing secret or a missing role names the fix `riff cloud create
   NAME`. This supersedes 01M6WG52ZEVRSQ463FTDS94M54 in part.
+- **01M76SSFX0QGPA4MTXV39JV5P3** The job `Check the deploy` signs in to
+  Google Cloud as the check account of the instance,
+  `CLOUD_CHECK_ACCOUNT`: `riff-check` for the shared riff. It signs in
+  with the OIDC token of GitHub, and no key exists. The account has only
+  the role `roles/logging.viewer` on the project. Only a job of a tag
+  `v*` of the repository signs in as it: its binding names the attribute
+  `ref_type` with the value `tag`, and the identity provider lets in
+  only `main` and the tags `v*`. The job runs in no GitHub environment,
+  so it waits for no approval. `riff cloud create` makes the account,
+  its role and its binding. With no check account in the settings, it
+  makes none.
+- **01M76SSFZG959CQ1JHQTVTZCRA** `riff cloud check NAME` reads the Cloud
+  Run log of the instance with `gcloud logging read` from the time
+  `--since`, by default 1 hour ago. It prints the result of each of the
+  four checks of the log. With `--commit SHA`, it also sets the status
+  `riff/deploy-check` of that commit. It exits with 1 when a check
+  failed or when it could not read the log. It changes no instance, so
+  it is not a write of `riff cloud`.
 
 ## One instance
 
@@ -4218,11 +4236,11 @@
 - **01M4385CCATXC0B8HV1XD6EFWG** When the OS keyring is locked or does
   not answer, the error of `riff` names the host, says to unlock the
   keyring at the desktop, and says that `gh` stops too.
-- **01M54510PS9FDKQKJB0RAH3XG3** A `riff` process opens the OS keyring
-  at most one time, and reads each secret at most one time. It keeps
-  the value for its later calls, and a write or a delete of the process
-  changes the kept value. Only the refresh of the sign-in reads it
-  again, under the refresh lock (R107).
+- **01M54510PS9FDKQKJB0RAH3XG3** A `riff` process reads each secret at
+  most one time. It keeps the value for its later calls, and a write or
+  a delete of the process changes the kept value. Only the refresh of
+  the sign-in reads it again, under the refresh lock (R107). Superseded
+  in part by 01M775GYAC3TYEJ2B504F8REE2.
 - **01M556QPPRSQ91HDED128G2X7G** On Linux and BSD, `riff` opens each
   session of the Secret Service as a plain session, as `gh` does, not
   as a DH session. It keeps each secret as the store of the `keyring`
@@ -4272,6 +4290,15 @@
   01M3MN14ZCTRVD3T455P6TFK1B and 01M3MN1537Z0K3BRK6H2BZKZT0 in full, and
   01M6FYH5XZAZYJFPFQVAFQSSVT, 01M3N7K3ZAZFGABN7032AYJWEM,
   01M3N7K41N03P26BEFFNX5617K and 01M3Q546335NBTKG5BHQ27QC93 in part.
+- **01M775GYAC3TYEJ2B504F8REE2** A `riff` process opens the OS keyring
+  one time. On Linux and BSD, it asks the bus for the owner of
+  `org.freedesktop.secrets` before each call to the keyring. When
+  another process owns that name, or none, for example after a restart
+  of `gnome-keyring-daemon`, riff closes its old D-Bus connection and
+  opens a new connection with a new plain session. So a riff daemon
+  reads its secrets again after a restart of the keyring, with no
+  restart of `riff.service`. Supersedes 01M54510PS9FDKQKJB0RAH3XG3 in
+  part.
 
 ## Terminal
 
@@ -6823,6 +6850,12 @@ of this part when they merge.
   request merged or closed, gives the lead a note, not a message. The
   note says that the pull request is not open, so no verify waits.
   Supersedes 01M4ZV3B6R4WSEJXYT7QPRWT6X in part.
+- **01M777N148MY8NR5RNDKXE9EVJ** Before the wave of the daemon tells the
+  lead that auto-merge is off (01M5QW2M1M5QZJXSP0BY6XG118), it asks
+  GitHub again for the pull request with one GraphQL call. It sends no
+  message when the pull request merged, is in the merge queue, has
+  auto-merge on or has another head commit, or when the call fails. The
+  next look asks again.
 
 ### The lead, the view and the takeover
 
@@ -8080,15 +8113,12 @@ of this part when they merge.
   `riff release cut` refuses, and the riff is not paused.
 - **01M58KMM5ZPAQ289S2YJVQ5WW6** `riff release check vX.Y.Z` refuses
   while the job `Deploy` of the newest CI run of the tag did not end.
-  After a pass of the job, it checks: `riff server` shows the build; the
-  Cloud Run log after the start of the job has no run of 503 longer
-  than 20 s, no 500 of riff-server, no 401 or 429 of the token store,
-  and no line "riff-server serves" of an older revision after the new
-  one; each host of the part `Hosts` of `riff who` has the build. It
-  writes the result on the release issue. When each check passes, it
-  closes the release issue and resumes the whole riff. After a failed
-  job, it files an issue with the failed jobs and the run in the
-  current wave, writes it on the release issue, and resumes the riff.
+  After a pass of the job, it checks: `riff server` shows the build;
+  each host of the part `Hosts` of `riff who` has the build. It writes
+  the result on the release issue. When each check passes, it closes
+  the release issue and resumes the whole riff. After a failed job, it
+  files an issue with the failed jobs and the run in the current wave,
+  writes it on the release issue, and resumes the riff.
 - **01M58KMM8CV9731AWGVZQBB80D** `riff release retry vX.Y.Z` runs the
   failed jobs of the newest CI run of the tag again. It refuses a run
   that did not fail.
@@ -8110,9 +8140,8 @@ of this part when they merge.
   `rollback`, and no rule that names `approve`. `check`, `retry` and
   `rollback` refuse a worker, a container session, an agent session that
   is not the lead, and a member.
-- **01M58KMMP9FKRFYX58ESVRSZQX** When riff cannot read the Cloud Run
-  log or ask the shared riff, `riff release check` names each check
-  that it could not do, says `gcloud auth login` for the log, and
+- **01M58KMMP9FKRFYX58ESVRSZQX** When riff cannot ask the shared riff,
+  `riff release check` names each check that it could not do, and
   changes nothing but the comment on the release issue.
 - **01M58Q03ZBVVXAQ2WZ8EJ5FWS4** The order in a wave: merge each item,
   make a release, deploy the release to the shared server, stop the
@@ -8124,23 +8153,12 @@ of this part when they merge.
   one that has the build when the version of the build of its daemon is
   the version of the release. The commit and the time of the build do
   not count.
-- **01M5GVPND32X3R9MYXYB5SV83W** When the container of the lead has no
-  `gcloud`, each check of `riff release check` that reads the Cloud Run
-  log names the step for a person on the host: `riff release check
-  vX.Y.Z` in a terminal.
 - **01M5MQHDMBYG187T0Q622XWBMN** The check "no 500 of riff-server" of
   riff release check counts only the 500 replies of the newest revision:
   the revision of the last line "riff-server serves" after the deploy.
   An instance of an older revision that starts in the switch to the new
   one stops before it serves, and its 500 replies do not count. With no
   line "riff-server serves", each 500 reply counts.
-- **01M5ND5B14MXGGK0RJ7R2BREW6** In the container of the lead, riff
-  release check reads the Cloud Run log through the riff daemon of the
-  host, with the gcloud and the sign-in of the person on the host. The
-  container gets no Google credential. The daemon refuses a worker. When
-  the sign-in of gcloud ended, each check of the log says that a person
-  on the host runs gcloud auth login, and the daemon tells the lead in
-  chat.
 - **01M5RGCW5NCKQYA61RM63914TX** Each async operation that a riff
   command starts has a watch that wakes the lead at its end, with its
   result and the next step. The command that starts the operation
@@ -8312,6 +8330,31 @@ of this part when they merge.
   follows, from a read of its stage. Supersedes
   01M6QBEJYHKS8G26CM46P4P077 in full, and 01M5RGCW5NCKQYA61RM63914TX in
   part.
+- **01M76SS6T89DPNV7S4SWY1R7F3** The CI job `Check the deploy` runs
+  after a pass of the job `Deploy` in the CI run of the push of a
+  release tag, and in no other run. It waits 5 minutes. Then `riff cloud
+  check shared` of the release reads the Cloud Run log from the time
+  before the step `Deploy`, and sets the commit status
+  `riff/deploy-check` of the tagged commit. The four checks of the log
+  are: no run of 503 longer than 20 s, no 500 of riff-server, no 401 or
+  429 of the token store, and no line "riff-server serves" of an older
+  revision after the new one. The state is `success` when each check
+  passed, `failure` when one failed, and `error` when the job could not
+  read the log. The description holds the measures of the four checks.
+  The job compiles nothing.
+- **01M76SSFTGW41RHHV445ZM5RHY** `riff release check vX.Y.Z` takes the
+  four checks of the Cloud Run log from the status `riff/deploy-check`
+  of the commit of the tag, and runs no `gcloud`. A status that is
+  missing, or older than the start of the job `Deploy`, makes each of
+  the four checks unknown. Then riff names the CI run and the time when
+  the job `Check the deploy` ends: 6 minutes after the end of the job
+  `Deploy`. For a run by hand, which has no such job, riff names `riff
+  cloud check shared --since TIME --commit SHA` for a person on a host.
+  A status `error` makes each of the four checks unknown, with its
+  description. An unknown check changes nothing but the comment on the
+  release issue. This supersedes 01M58KMM5ZPAQ289S2YJVQ5WW6 and
+  01M58KMMP9FKRFYX58ESVRSZQX in part, and 01M5GVPND32X3R9MYXYB5SV83W and
+  01M5ND5B14MXGGK0RJ7R2BREW6 in full.
 
 ### The real-session test
 
