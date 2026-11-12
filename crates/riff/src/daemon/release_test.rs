@@ -220,11 +220,9 @@ fn prepare(dir: &Path, served: &Served, gh: &Gh, commit: &str) -> Result<PathBuf
     }
     let origin = run(&served.wave.main, "git", &["remote", "get-url", "origin"])?;
     let clone_text = clone.to_string_lossy().into_owned();
-    run(
-        &folder,
-        "git",
-        &["clone", "-q", "--no-checkout", &origin, &clone_text],
-    )?;
+    let args = ["clone", "-q", "--no-checkout", &origin, &clone_text];
+    crate::git_credential::keyring_open(&folder, &origin, &args)?;
+    run(&folder, "git", &args)?;
     run(&clone, "git", &["checkout", "-q", "--detach", commit])?;
     let host = &served.wave.host;
     set_status(

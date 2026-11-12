@@ -4426,6 +4426,18 @@
   the keyring does not answer, the daemon runs no such `gh`: the call
   fails with the line of a locked keyring. The daemon waits for an open
   keyring: the next look of each wave tries again.
+- **01M78TSH2VNHA75RR1HXC5Z27G** Before each `git` of the riff daemon
+  that talks to a remote, for example a fetch, a clone or a push, the
+  daemon reads the credential helpers that git starts for the URL of
+  that remote. When one of them is `gh`, for example `gh auth
+  git-credential` of `gh auth setup-git`, and `GH_TOKEN` and
+  `GITHUB_TOKEN` are empty, the daemon looks at the item of `gh` in the
+  keyring, as before a `gh` call (01M77AB7XZV8KG8RRZ8C6R5A8X). While
+  that item is locked, or the keyring does not answer, the daemon runs
+  no such `git`: the call fails with the line of a locked keyring. The
+  daemon waits for an open keyring: the next try of the step runs the
+  `git`. A remote over SSH, a path and a `file://` URL use no helper, so
+  their `git` runs.
 
 ## Terminal
 

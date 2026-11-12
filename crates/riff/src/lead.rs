@@ -67,7 +67,7 @@ use riff_core::wire::{SessionInfo, StartReason};
 use crate::daemon::{self, Ask, Say, Status};
 use crate::run::{self, Facts};
 use crate::runtime::{Runtime, SessionSpec};
-use crate::{identity, session_image, text};
+use crate::{git_credential, identity, session_image, text};
 use riff_client::api::Api;
 
 /// The work item of the lead in the daemon.
@@ -297,9 +297,9 @@ pub fn fresh_clone(main: &Path, clone: &Path) -> Result<Fresh> {
         let remote = run::output("git", main, &["remote", "get-url", "origin"])?;
         let top = main.to_string_lossy();
         let path = clone.to_string_lossy();
-        run::output(
-            "git",
+        git_credential::run(
             main,
+            &remote,
             &["clone", "-q", "--reference", &top, "--", &remote, &path],
         )?;
         return Ok(Fresh::Made);
@@ -311,7 +311,7 @@ pub fn fresh_clone(main: &Path, clone: &Path) -> Result<Fresh> {
     if git(&["rev-parse", "-q", "--verify", "@{upstream}"]).is_err() {
         return Ok(Fresh::Kept(text::LEAD_CLONE_NO_UPSTREAM.into()));
     }
-    if let Err(e) = git(&["fetch", "-q", "origin"]) {
+    if let Err(e) = git_credential::run(clone, "origin", &["fetch", "-q", "origin"]) {
         return Ok(Fresh::Kept(format!("{e:#}")));
     }
     if git(&["rev-list", "--count", "@{upstream}..HEAD"])? != "0" {

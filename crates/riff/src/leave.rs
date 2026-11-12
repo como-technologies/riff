@@ -136,7 +136,7 @@ pub fn wip(dir: &Path) -> Result<String> {
             ],
         )?;
     }
-    git(dir, &["push", "--quiet", "-u", "origin", "HEAD"])?;
+    remote_git(dir, &["push", "--quiet", "-u", "origin", "HEAD"])?;
     Ok(branch)
 }
 
@@ -150,7 +150,7 @@ pub fn wip(dir: &Path) -> Result<String> {
 /// assert!(riff::leave::save(dir.path(), "worktree-issue-1").is_err());
 /// ```
 pub fn save(dir: &Path, branch: &str) -> Result<Option<(String, String)>> {
-    if !git(dir, &["ls-remote", "--heads", "origin", branch])?.is_empty() {
+    if !remote_git(dir, &["ls-remote", "--heads", "origin", branch])?.is_empty() {
         return Ok(None);
     }
     let base = git(
@@ -164,6 +164,14 @@ pub fn save(dir: &Path, branch: &str) -> Result<Option<(String, String)>> {
     }
     let pushed = wip(dir)?;
     Ok(Some((pushed, git(dir, &["rev-parse", "--short", "HEAD"])?)))
+}
+
+/// [`git`] of a `git` that talks to `origin`. In the daemon, a `git`
+/// that would ask a locked `gh` for a credential does not run
+/// (01M78TSH2VNHA75RR1HXC5Z27G).
+fn remote_git(dir: &Path, args: &[&str]) -> Result<String> {
+    crate::git_credential::keyring_open(dir, "origin", args)?;
+    git(dir, args)
 }
 
 /// Runs git in `dir`, and gives its output with no space at the ends.

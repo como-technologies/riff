@@ -328,7 +328,10 @@ pub fn merged_config(main: &Path, mut say: impl FnMut(&str)) -> Result<Merged> {
     )
     .map_err(|_| anyhow!("{}", text::image_no_origin_head(main)))?;
     let branch = head.strip_prefix("origin/").unwrap_or(&head);
-    if let Err(e) = git(main, &["fetch", "--quiet", "origin", branch]) {
+    let fetch = ["fetch", "--quiet", "origin", branch];
+    let fetched = crate::git_credential::keyring_open(main, "origin", &fetch)
+        .and_then(|()| git(main, &fetch));
+    if let Err(e) = fetched {
         say(&text::image_no_fetch(&head, &format!("{e:#}")));
     }
     let config = match git(main, &["show", &format!("{head}:{FILE}")]) {

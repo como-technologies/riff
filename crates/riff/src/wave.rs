@@ -721,8 +721,8 @@ use crate::run::{self, Facts};
 use crate::runtime::Runtime;
 use crate::session_setup::Setup;
 use crate::{
-    changes, ghcalls, hooks, identity, kept, look, order, pr, project, repo_setup, rollout,
-    session_image, text, usage,
+    changes, ghcalls, git_credential, hooks, identity, kept, look, order, pr, project, repo_setup,
+    rollout, session_image, text, usage,
 };
 use riff_client::api::{self, Api};
 use riff_client::link::STREAM_RETRY;
@@ -3552,14 +3552,14 @@ fn clone_at(main: &Path, clone: &Path, pull: u64, commit: &str) -> Result<()> {
     let remote = run::output("git", main, &["remote", "get-url", "origin"])?;
     let top = main.to_string_lossy();
     let path = clone.to_string_lossy();
-    run::output(
-        "git",
+    git_credential::run(
         main,
+        &remote,
         &["clone", "-q", "--reference", &top, "--", &remote, &path],
     )?;
-    run::output(
-        "git",
+    git_credential::run(
         clone,
+        "origin",
         &["fetch", "-q", "origin", &format!("refs/pull/{pull}/head")],
     )?;
     run::output(

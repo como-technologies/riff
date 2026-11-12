@@ -407,6 +407,14 @@ const LIMIT_POLL: Duration = Duration::from_millis(20);
 /// its token in the OS keyring under this service, with an empty user.
 pub const GH_KEYRING: &str = "gh:github.com";
 
+/// True when the environment gives `gh` a token in `GH_TOKEN` or
+/// `GITHUB_TOKEN`: then `gh` reads no keyring.
+pub fn token_given() -> bool {
+    TOKEN_VARS
+        .iter()
+        .any(|var| std::env::var_os(var).is_some_and(|v| !v.is_empty()))
+}
+
 /// Fails with the error of a locked keyring when the call `gh ARGS`
 /// would read its token from a locked OS keyring, in a process that asks
 /// for no prompt: the riff daemon (01M77AB7XZV8KG8RRZ8C6R5A8X). Such a
@@ -451,10 +459,7 @@ pub const GH_KEYRING: &str = "gh:github.com";
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 fn keyring_open(args: &[&str]) -> Result<()> {
-    let given = TOKEN_VARS
-        .iter()
-        .any(|var| std::env::var_os(var).is_some_and(|v| !v.is_empty()));
-    if given || !riff_client::secrets::holds_locked(GH_KEYRING, "") {
+    if token_given() || !riff_client::secrets::holds_locked(GH_KEYRING, "") {
         return Ok(());
     }
     Err(anyhow::Error::msg(riff_client::secrets::Locked::here())
@@ -883,10 +888,7 @@ impl Gh {
     /// One read of the token with `gh auth token`, or `None` when the
     /// environment gives `gh` a token, or when the read fails.
     fn read_token(&self) -> Option<Zeroizing<String>> {
-        if TOKEN_VARS
-            .iter()
-            .any(|var| std::env::var_os(var).is_some_and(|v| !v.is_empty()))
-        {
+        if token_given() {
             return None;
         }
         let plain = Gh {

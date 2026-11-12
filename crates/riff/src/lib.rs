@@ -81,6 +81,7 @@ pub mod ends;
 pub mod first_run;
 pub mod gh_wrapper;
 pub mod ghcalls;
+pub mod git_credential;
 pub mod github;
 pub mod guard;
 pub mod help;
