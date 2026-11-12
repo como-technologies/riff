@@ -555,7 +555,7 @@ const LEAD_START_WAIT: Duration = Duration::from_secs(1);
 
 /// A lead that ends sooner than this after its start does not start
 /// again: its session ends, and a host of the project starts a new lead
-/// ([`Daemon::lead_back`], #1791).
+/// (`Daemon::lead_back`, #1791).
 pub const LEAD_SHORT: Duration = Duration::from_secs(60);
 
 /// The time between two looks of the daemon at the riff of each lead

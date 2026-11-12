@@ -2238,7 +2238,7 @@ impl State {
         self.lead_as(session, false, now).map_err(|r| r.reason)
     }
 
-    /// The claim [`LEAD_CLAIM`](riff_core::wire::LEAD_CLAIM) of the
+    /// The claim [`LEAD_CLAIM`] of the
     /// project of `session`, as the riff daemon of its host asks it: the
     /// person makes `session` the lead only when no live session holds
     /// the claim. Gives whether it is granted. A holder with no sign of
@@ -2298,7 +2298,7 @@ impl State {
     }
 
     /// Each repository thread whose claim
-    /// [`LEAD_CLAIM`](riff_core::wire::LEAD_CLAIM) ended with no record:
+    /// [`LEAD_CLAIM`] ended with no record:
     /// its holder had no sign of life for [`CLAIM_GRACE`], and no session
     /// took the claim yet. With the holder. riff-server wakes the daemons
     /// of the project for each one, so the next host claims it.

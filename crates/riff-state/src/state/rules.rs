@@ -1145,7 +1145,7 @@ fn a_claim_lead_if_free_gives_the_one_lead_of_the_project() {
         .then_refused_as(Code::Held, "the lead of acme/app runs on thelio");
     // The holder had no sign of life for 5 minutes: the claim is free.
     given(&led)
-        .live(&[thelio.clone()])
+        .live(std::slice::from_ref(&thelio))
         .after(CLAIM_GRACE)
         .live(&[ann()])
         .when(&person_here(), LeadIfFree("a1"))
