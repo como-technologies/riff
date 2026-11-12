@@ -28,6 +28,7 @@
 use std::fmt::Write;
 use std::path::Path;
 
+use riff_client::sessions::NO_PROJECT;
 use riff_core::build::{Build, Mismatch};
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::wire::{MembersReply, PauseInfo, RiffReply, SessionInfo};
@@ -432,6 +433,12 @@ pub fn whoami(
 ///   in bold and the [`text::tags`]) and DETAIL (the
 ///   [`crate::state::detail`]). With `long`, the column URI takes the
 ///   place of SESSION.
+/// - The rows group by project (01M77F8JN1SE2H4DZBZH1YX7WD): a bold line
+///   with the repository of each project of `projects` with a session
+///   comes before the rows of its sessions, in the order of
+///   `OWNER/REPO`. The rows of the sessions in no project come last,
+///   after the dim line [`NO_PROJECT`]. In a group, the rows keep the
+///   order of `sessions`.
 /// - The actions come last: resume a paused riff.
 ///
 /// Each text from the server is [`safe`].
@@ -488,16 +495,18 @@ pub fn whoami(
 ///     },
 /// ];
 /// let running = RiffState::Running.into();
-/// let text = riff::view::who(&running, &list, &list[0].uri, false);
+/// let projects = ["como-technologies/riff".parse()?];
+/// let text = riff::view::who(&running, &list, &projects, &list[0].uri, false);
 /// let plain = anstream::adapter::strip_str(&text).to_string();
 /// let lines: Vec<&str> = plain.lines().collect();
 /// assert_eq!(lines[0], "riff   running");
 /// assert!(lines[1].starts_with("build  v"));
 /// assert_eq!(lines[2], "");
 /// assert_eq!(lines[3], "SESSION                            STATE    ROLE      DETAIL");
-/// assert_eq!(lines[4], "mike@pangolin:riff#issue-6 (a6cf)  busy     you lead  working on #6");
+/// assert_eq!(lines[4], "como-technologies/riff");
+/// assert_eq!(lines[5], "mike@pangolin:riff#issue-6 (a6cf)  busy     you lead  working on #6");
 /// assert_eq!(
-///     lines[5],
+///     lines[6],
 ///     "brett@heron:riff (77e0)            blocked            which design? (1m ago)"
 /// );
 /// assert!(!plain.contains("owner"), "{plain}");
@@ -506,14 +515,24 @@ pub fn whoami(
 /// assert!(text.contains(&format!("{red}which design? (1m ago){red:#}")));
 ///
 /// // --long shows the URI in place of the name.
-/// let long = riff::view::who(&running, &list, &list[0].uri, true);
+/// let long = riff::view::who(&running, &list, &projects, &list[0].uri, true);
 /// let plain = anstream::adapter::strip_str(&long).to_string();
 /// assert!(plain.contains("\nURI "), "{plain}");
 /// assert!(plain.contains("\nriff://brett@heron/como-technologies/riff?session=77e0 "), "{plain}");
 ///
+/// // With no project, each row is in the group `no project`.
+/// let text = riff::view::who(&running, &list, &[], &list[0].uri, false);
+/// let plain = anstream::adapter::strip_str(&text).to_string();
+/// assert!(plain.contains("DETAIL\nno project\nmike@pangolin:riff#issue-6 (a6cf) "), "{plain}");
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
-pub fn who(pauses: &RiffReply, sessions: &[SessionInfo], me: &SessionUri, long: bool) -> String {
+pub fn who(
+    pauses: &RiffReply,
+    sessions: &[SessionInfo],
+    projects: &[ThreadName],
+    me: &SessionUri,
+    long: bool,
+) -> String {
     let (mut rows, paused) = state_facts(pauses, me.default_thread().as_ref());
     if let Some(line) = release(pauses, sessions) {
         rows.insert(1, ("release", styled(WARNING, &line)));
@@ -531,8 +550,10 @@ pub fn who(pauses: &RiffReply, sessions: &[SessionInfo], me: &SessionUri, long: 
             "ROLE",
             "DETAIL",
         ];
-        let rows: Vec<Vec<String>> = sessions
+        let groups = by_project(sessions, projects);
+        let rows: Vec<Vec<String>> = groups
             .iter()
+            .flat_map(|(_, list)| list.iter())
             .map(|s| {
                 let mut role: Vec<String> = Vec::new();
                 if s.uri.who() == me.who() {
@@ -547,11 +568,52 @@ pub fn who(pauses: &RiffReply, sessions: &[SessionInfo], me: &SessionUri, long: 
                 vec![name, state_cell(s), role.join(" "), detail_cell(s)]
             })
             .collect();
-        out.push_str(&table(&head, &rows));
+        // One table for all the rows, so each group has the same columns.
+        let table = table(&head, &rows);
+        let mut lines = table.lines();
+        if let Some(line) = lines.next() {
+            let _ = writeln!(out, "{line}");
+        }
+        for (project, list) in &groups {
+            let heading = match project {
+                Some(repo) => styled(BOLD, &safe(repo)),
+                None => styled(DIM, NO_PROJECT),
+            };
+            let _ = writeln!(out, "{heading}");
+            for line in lines.by_ref().take(list.len()) {
+                let _ = writeln!(out, "{line}");
+            }
+        }
     }
     out.push_str(&hosts(sessions, long));
     for action in actions {
         let _ = writeln!(out, "{action}");
+    }
+    out
+}
+
+/// The sessions of `sessions` by project (01M77F8JN1SE2H4DZBZH1YX7WD):
+/// each project of `projects` with a session, in the order of
+/// `OWNER/REPO`, then `None` with the sessions in no project. In a group,
+/// the sessions keep their order.
+fn by_project<'a>(
+    sessions: &'a [SessionInfo],
+    projects: &[ThreadName],
+) -> Vec<(Option<String>, Vec<&'a SessionInfo>)> {
+    let mut groups: std::collections::BTreeMap<String, Vec<&SessionInfo>> = Default::default();
+    let mut none = Vec::new();
+    for s in sessions {
+        match riff_client::sessions::project(s, projects) {
+            Some(repo) => groups.entry(repo).or_default().push(s),
+            None => none.push(s),
+        }
+    }
+    let mut out: Vec<(Option<String>, Vec<&SessionInfo>)> = groups
+        .into_iter()
+        .map(|(repo, list)| (Some(repo), list))
+        .collect();
+    if !none.is_empty() {
+        out.push((None, none));
     }
     out
 }
@@ -618,7 +680,7 @@ pub fn who(pauses: &RiffReply, sessions: &[SessionInfo], me: &SessionUri, long: 
 ///
 /// // `riff who` shows the line in the row `release`, under the state of the riff.
 /// let me = "riff://mike@thelio/o/r".parse()?;
-/// let text = riff::view::who(&paused, &[daemon(ReleaseStep::Passed)], &me, false);
+/// let text = riff::view::who(&paused, &[daemon(ReleaseStep::Passed)], &[], &me, false);
 /// let plain = anstream::adapter::strip_str(&text).to_string();
 /// assert!(
 ///     plain.starts_with(

@@ -833,6 +833,7 @@ impl Default for Look {
                 sessions: Vec::new(),
                 people: Vec::new(),
                 repos: Vec::new(),
+                projects: Vec::new(),
             },
             server: None,
             call: None,

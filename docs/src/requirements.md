@@ -574,15 +574,14 @@
   heading `## Done when`. The start routine in the MCP instructions of a
   session names both forms too. Supersedes 01M4ZV3B6R4WSEJXYT7QPRWT6X in
   part.
-- **01M6QQJHV8THJG36XFT95S3Q84** `riff questions` reads the repositories
-  of the person at the terminal, not of the riff: each repository where
-  riff-server has a session of the person (live or gone), a lead of the
-  person or the notes of a lead of the person, each repository that a
-  daemon of the person serves, and the repository of the folder.
-  riff-server names them in the reply to `who`, in the field `repos`: a
-  session of another person adds none, and a repository with the notes
-  of a lead and no session is in it. `riff questions --web` searches the
-  same repositories. Supersedes 01M6QBJJ3R5CNTHT4FAPZ5DDSW in part.
+- **01M6QQJHV8THJG36XFT95S3Q84** The repositories of the person at the
+  terminal for `riff questions` are not the repositories of the riff:
+  each repository where riff-server has a session of the person (live or
+  gone), a lead of the person or the notes of a lead of the person, and
+  each repository that a daemon of the person serves. riff-server names
+  them in the reply to `who`, in the field `repos`: a session of another
+  person adds none, and a repository with the notes of a lead and no
+  session is in it. Supersedes 01M6QBJJ3R5CNTHT4FAPZ5DDSW in part.
 - **01M6QQJHXNAVYNNJ86WYY3C8EG** `riff questions` skips a repository
   with its issues turned off, with no line. A repository that `gh`
   cannot read gets no line of its own: one last line on stderr, `riff
@@ -736,6 +735,13 @@
   Such a merge gets no comment `Merged in #PR`. The newest merged pull
   request of an issue decides. After the hour, an issue that a person
   opened again is free work.
+- **01M77F889Q3D6VCEDNNNXSWGNK** `riff questions` reads only the
+  projects of the person at the terminal: each repository of the field
+  `repos` of the reply to `who` that is a project of the riff
+  (01M77F7HPBNJY9QFG3HA6YH5F4), and the repository of the folder when it
+  is a project. A repository that a session names and that is no project
+  gives no line. `riff questions --web` searches the same projects.
+  Supersedes 01M6QQJHV8THJG36XFT95S3Q84 in part.
 
 ## Issue hygiene on GitHub
 
@@ -1540,6 +1546,11 @@
   of the projects at a start goes in the chat to each admin: one
   selector `user=USER` for each admin with a USER. With no such admin,
   the line has no `to`. Supersedes 01M76SG8NCSAP69Y5AX455BJQM in part.
+- **01M77F7HPBNJY9QFG3HA6YH5F4** The reply of riff-server to `who` names
+  the repository of each project of the riff in the field `projects`, in
+  the order of `OWNER/REPO`, to each person and each session. `riff
+  questions`, the TUI, `riff top` and `riff who` read the projects
+  there.
 
 ## Saved state
 
@@ -2816,12 +2827,11 @@
   `Wave N (OWNER/REPO)`. Only a claim in that repository is on its
   board, and a session shows the title of an issue of its own
   repository.
-- **01M42KHN33M4K13GKTX2WM6CMM** The tree of `riff top` has four
-  levels: person, host, repository, session. A person, host or
-  repository line ends with its counts: the sessions, then the busy,
-  idle and blocked sessions and the claims, each that is more than 0.
-  A line with only one line under it, other than a session, takes that
-  line after a `›`, so a small riff stays short.
+- **01M42KHN33M4K13GKTX2WM6CMM** A person, host or repository line of
+  the tree of `riff top` ends with its counts: the sessions, then the
+  busy, idle and blocked sessions and the claims, each that is more than
+  0. A line with only one line under it, other than a session, takes
+  that line after a `›`, so a small riff stays short.
 - **01M510MG5J92PYDWZSDQS8HMWK** The line of a host in `riff top` also
   counts each kind of session, after the sessions and before the states:
   leads, containers, workers, hosts and daemons
@@ -2837,21 +2847,16 @@
 - **01M514C16VG9PD70A8424J173B** The line of a host in `riff top`
   counts the sessions that are out of date, after the kinds and before
   the states: `2 to update`. A count of 0 is not shown.
-- **01M42KHN80V49HDDZF953HXDT0** `riff top` shows a board for each
-  repository with a live session, and for the repository of the
-  working directory when no `--user` and no `--host` is set and
-  `--repo` matches it, in the order of `OWNER/REPO`. It
-  reads the issues and the pull requests of each one with `gh`, each
-  minute. A read that fails keeps the last issues of its repository. A
-  repository with no `gh` read shows its sessions, no board and no
-  error line.
+- **01M42KHN80V49HDDZF953HXDT0** `riff top` shows its boards in the
+  order of `OWNER/REPO`. It reads the issues and the pull requests of
+  each one with `gh`, each minute. A read that fails keeps the last
+  issues of its repository. A repository with no `gh` read shows its
+  sessions, no board and no error line.
 - **01M42KHNCBMBCT3TFBYWE339H5** `riff top --user USER`, `--host HOST`
   and `--repo OWNER/REPO` show only the sessions that match each flag
   that is set, and only the boards and the blocked lines of these
   sessions. A person with no session shows only with no `--host` and
-  no `--repo`. `riff top --by repo` puts the repository at the top of
-  the tree: repository, person, host, session. `--by person` is the
-  default.
+  no `--repo`.
 - **01M3QA8EZHX5B8C9CKF8Q3154X** `riff top` grows down, not across. No
   line is wider than the terminal: the real width when riff knows it,
   else 80 columns. riff cuts a wider line with `…`. A session with no
@@ -3281,6 +3286,28 @@
   01M3Q63MVZ74WPNBA3QJYQGHFG, 01M3NT4M159EHN5W8JRTQ417N4,
   01M3NT4M3A4E3K5S2NM7MS6PQD, 01M3NT4M5D36KTZ5XZMDP6QFQT,
   01M3NB54P1RBHTA5TKXP8BMY3K and 01M6VAZK4RQSZ0MG2DHWQC598Q in part.
+- **01M77F8JFFWV6KFTPQT9DNB26M** `riff top` reads with `gh` and shows a
+  board only for a project of the riff (01M77F7HPBNJY9QFG3HA6YH5F4):
+  each project with a live session, and the repository of the working
+  directory when it is a project, no `--user` and no `--host` is set,
+  and `--repo` matches it. A repository that is no project gets no
+  board. Supersedes 01M42KHN80V49HDDZF953HXDT0 in part.
+- **01M77F8JJ8WC0TSCYP3ARJNQGS** The tree of `riff top` groups its rows
+  by project. `--by project`, the default, puts the project at the top:
+  project, person, host, session. Each project with a session gets a
+  line with its repository and the counts of its sessions, in the order
+  of `OWNER/REPO`. The sessions in a repository that is no project, or
+  in no repository, come last, under the line `no project`: person,
+  host, repository, session. Each member with no session gets a line
+  after them. `--by person` puts the person at the top: person, host,
+  repository, session. Supersedes 01M42KHNCBMBCT3TFBYWE339H5 and
+  01M42KHN33M4K13GKTX2WM6CMM in part.
+- **01M77F8JN1SE2H4DZBZH1YX7WD** `riff who` groups the rows of its table
+  by project. A line with the repository of each project with a session
+  comes before the rows of its sessions, in the order of `OWNER/REPO`.
+  The rows of the sessions in a repository that is no project, or in no
+  repository, come last, under the line `no project`. In a group, the
+  rows keep the order of `who`. The MCP `who` tool stays one plain list.
 
 ## Threads
 
@@ -9094,10 +9121,9 @@ that builds it merges.
   new line while another tab shows adds one to `Chat•N`. A line from
   before the start of the TUI is no news. While the stream is down, the
   row under the header of the Chat tab says `(reconnecting…)`.
-- **01M6VFG882T794B1CTHK5AKPDG** The Waves tab of the TUI shows a board
-  for each repository of a live session and for the repository of the
-  working folder: its current wave as `Wave N`, its items, their claims
-  and their pull requests. The repositories with a stuck, held or free
+- **01M6VFG882T794B1CTHK5AKPDG** A board of the Waves tab of the TUI
+  shows its current wave as `Wave N`, its items, their claims and their
+  pull requests. The repositories with a stuck, held or free
   item come first, and their boards are open. Each other repository is
   one folded line with its counts. `Enter`, `←`, `→` and `Space` on
   the line of a repository fold or unfold its board.
@@ -9531,6 +9557,12 @@ that builds it merges.
   machine as `riff lead start` does, from the main clone of the wave,
   and attaches. On another host, the note says to run `riff lead start`
   in a clone of the repository.
+- **01M77F7R7RERVQH7XS39GWJJKF** The Waves tab of the TUI shows a board
+  for each project of the person: the projects that `riff questions`
+  reads (01M77F889Q3D6VCEDNNNXSWGNK). A repository of a session that is
+  no project gets no board.
+  With no such project, the tab says that none of your repositories is a
+  project of the riff. Supersedes 01M6VFG882T794B1CTHK5AKPDG in part.
 
 ## The notes of the lead
 

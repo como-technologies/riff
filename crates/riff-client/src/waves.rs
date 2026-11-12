@@ -63,7 +63,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use riff_core::name::Repo;
+use riff_core::name::{Repo, ThreadName};
 use riff_core::wire::HoldInfo;
 use serde::{Deserialize, Serialize};
 
@@ -375,6 +375,37 @@ pub fn board_repos(sessions: &Sessions, show: &Show, here: Option<&str>) -> BTre
         repos.insert(here.to_owned());
     }
     repos
+}
+
+/// The repositories of [`board_repos`] that are a project of `projects`:
+/// `riff top` reads and shows a board only for these
+/// (01M77F8JFFWV6KFTPQT9DNB26M).
+///
+/// ```
+/// use riff_client::sessions::{Sessions, Show};
+/// use riff_client::waves::project_boards;
+/// use riff_core::wire::SessionInfo;
+///
+/// let s: SessionInfo = serde_json::from_value(serde_json::json!({
+///     "uri": "riff://mike@thelio/o/r?session=a1", "live": true,
+/// }))?;
+/// let sessions = Sessions::new(vec![s], vec![]);
+/// let all = Show::default();
+/// let projects = ["o/s".parse().unwrap()];
+/// assert_eq!(project_boards(&sessions, &all, Some("o/s"), &projects), ["o/s".to_owned()].into());
+/// assert!(project_boards(&sessions, &all, Some("o/t"), &projects).is_empty());
+/// # Ok::<(), serde_json::Error>(())
+/// ```
+pub fn project_boards(
+    sessions: &Sessions,
+    show: &Show,
+    here: Option<&str>,
+    projects: &[ThreadName],
+) -> BTreeSet<String> {
+    board_repos(sessions, show, here)
+        .into_iter()
+        .filter(|repo| projects.iter().any(|p| p.to_string() == *repo))
+        .collect()
 }
 
 /// The board of a wave of a repository: each open item of the wave in

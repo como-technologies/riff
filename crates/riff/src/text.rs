@@ -1649,12 +1649,12 @@ pub fn waves_no_repo() -> String {
 /// );
 /// assert_eq!(
 ///     riff::text::questions_list(&[]),
-///     "No open question in your repositories."
+///     "No open question in your projects."
 /// );
 /// ```
 pub fn questions_list(questions: &[crate::questions::Question]) -> String {
     if questions.is_empty() {
-        return "No open question in your repositories.".into();
+        return "No open question in your projects.".into();
     }
     let lines: Vec<String> = questions
         .iter()

@@ -1650,7 +1650,8 @@ esac
 /// after `y`.
 #[tokio::test]
 async fn the_waves_tab_shows_the_board_and_holds_frees_and_pauses() {
-    let server = crate::common::start_signed().await;
+    // acme/app is a project of the riff (01M77F7R7RERVQH7XS39GWJJKF).
+    let server = crate::common::start_signed_log(vec![crate::common::project("acme/app")]).await;
     let bin = tempfile::tempdir().unwrap();
     isolated::write_program(bin.path().join("gh"), FAKE_GH);
     let mut tty = Tty::start_in(

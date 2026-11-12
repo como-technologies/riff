@@ -53,15 +53,18 @@ struct Gate {
 }
 
 impl Gate {
-    /// A real riff-server with no sign-in, and an open gate to it. It
-    /// is not common::start_signed: the proof of each token call names
-    /// the URL of the server, and the gate has its own URL, while the
-    /// tests call the server direct when the gate is closed.
+    /// A real riff-server with no sign-in, where como-technologies/riff
+    /// is a project, and an open gate to it. It is not
+    /// common::start_signed: the proof of each token call names the URL
+    /// of the server, and the gate has its own URL, while the tests call
+    /// the server direct when the gate is closed.
     async fn start() -> Gate {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let server = listener.local_addr().unwrap();
+        let project = crate::common::project("como-technologies/riff");
+        let router = crate::common::router_of_log(&format!("http://{server}"), vec![project]).await;
         tokio::spawn(async move {
-            axum::serve(listener, riff_server::router()).await.unwrap();
+            axum::serve(listener, router).await.unwrap();
         });
         let mut gate = Gate {
             addr: "127.0.0.1:0".parse().unwrap(),

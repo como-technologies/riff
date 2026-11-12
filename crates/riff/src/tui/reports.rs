@@ -43,7 +43,7 @@
 //!
 //! A report reads no source on a timer (01M6VT3JFEKD2FEQGNGGKHC8X5).
 //! The usage and the audit are of one repository: the repository of the
-//! working folder, else the first repository with a live session
+//! working folder, else the first project of the person
 //! ([`State::reports_repo`]). They start with the current wave: the
 //! open wave with the lowest number ([`crate::waves::current`]). `[` and
 //! `]` show the wave before or after.
@@ -533,7 +533,8 @@ impl State {
     }
 
     /// The repository of the usage and the audit: the repository of the
-    /// working folder, else the first repository with a live session.
+    /// working folder, else the first project of the person
+    /// ([`super::waves::Waves::repos`]).
     pub fn reports_repo(&self) -> Option<String> {
         self.waves.here().map(str::to_owned).or_else(|| {
             let (look, _) = self.last_look()?;

@@ -15,8 +15,18 @@ use riff_core::wire::{RiffBinary, StartReason};
 /// The path of each call that the server gets.
 type Calls = Arc<Mutex<Vec<String>>>;
 
+/// The projects of the riff of each test (01M77F7HPBNJY9QFG3HA6YH5F4).
+const PROJECTS: &[&str] = &[
+    "como-technologies/riff",
+    "como-technologies/strata",
+    "acme/strata",
+];
+
+/// A signed riff-server with the [`PROJECTS`], and the path of each
+/// call that it gets.
 async fn start_server() -> (common::Signed, Calls) {
-    let server = common::start_signed().await;
+    let projects = PROJECTS.iter().map(|repo| common::project(repo));
+    let server = common::start_signed_log(projects.collect()).await;
     let calls = server.calls();
     (server, calls)
 }
@@ -310,7 +320,7 @@ async fn top_once_prints_a_row_for_each_session_blocked_first() {
         dir,
         Some("a1"),
         bin.path(),
-        &["top", "--once"],
+        &["top", "--once", "--by", "person"],
     ))
     .await;
     assert!(top.starts_with("riff   running\n"), "{top}");
@@ -337,6 +347,86 @@ async fn top_once_prints_a_row_for_each_session_blocked_first() {
             "        Ns ago: tests",
         ],
         "a local pane is no worker; blocked comes first: {top}"
+    );
+}
+
+/// `riff top --once` groups the rows by project
+/// (01M77F8JJ8WC0TSCYP3ARJNQGS): each project with a session, in the
+/// order of `OWNER/REPO`, then the line `no project` with a session in a
+/// repository that is no project. That repository gets no board, also
+/// when `gh` has its issues (01M77F8JFFWV6KFTPQT9DNB26M).
+#[tokio::test(flavor = "multi_thread")]
+async fn top_once_groups_the_rows_by_project() {
+    let (server, _) = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    let bin = bin(true);
+    session_at(&server, "local/theme", "c3", None).await;
+    session_of(
+        &server,
+        "brett@kadomony",
+        "como-technologies/strata",
+        "b2",
+        None,
+    )
+    .await;
+    session_at(&server, "como-technologies/riff", "a1", None).await;
+
+    let top = output(riff(&server, dir, None, bin.path(), &["top", "--once"])).await;
+    assert!(top.contains("\n\nWave 3 (como-technologies/riff)"), "{top}");
+    assert!(top.contains("\nWave 3 (como-technologies/strata)"), "{top}");
+    assert!(!top.contains("(local/theme)"), "no board: {top}");
+    let first = heads(&top);
+    assert_eq!(
+        first[..6],
+        [
+            "como-technologies/riff",
+            "a1",
+            "como-technologies/strata",
+            "b2",
+            "no",
+            "c3"
+        ],
+        "{top}"
+    );
+    let lines = rows(&top);
+    for start in [
+        "como-technologies/riff  › mike  online  › pangolin  1 session",
+        "como-technologies/strata  › brett  online  › kadomony  1 session",
+        "no project  › mike  online  › pangolin  › local/theme  1 session",
+    ] {
+        assert!(lines.iter().any(|r| r.starts_with(start)), "{start}: {top}");
+    }
+
+    // `--by person` puts the person at the top, with no line `no project`.
+    let by_person = ["top", "--once", "--by", "person"];
+    let top = output(riff(&server, dir, None, bin.path(), &by_person)).await;
+    assert!(!top.contains("no project"), "{top}");
+    assert_eq!(heads(&top)[..2], ["brett", "b2"], "{top}");
+
+    // `riff who` groups its rows by project too (01M77F8JN1SE2H4DZBZH1YX7WD).
+    let who = ["who", "--color", "never"];
+    let who = output(riff(&server, dir, None, bin.path(), &who)).await;
+    let table: Vec<&str> = who
+        .lines()
+        .skip_while(|l| !l.starts_with("SESSION "))
+        .skip(1)
+        .take_while(|l| !l.is_empty() && !l.starts_with("The riff is paused"))
+        .map(|l| l.split("  ").next().unwrap())
+        .collect();
+    assert_eq!(
+        table,
+        [
+            "como-technologies/riff",
+            "mike@pangolin:riff (a1)",
+            "como-technologies/strata",
+            "brett@kadomony:strata (b2)",
+            "no project",
+            // The person on the command line is in no repository.
+            "brett@pangolin",
+            "mike@pangolin:theme (c3)",
+        ],
+        "{who}"
     );
 }
 
@@ -382,7 +472,7 @@ async fn top_shows_no_session_of_another_daemon() {
         dir,
         Some("a1"),
         bin.path(),
-        &["top", "--once"],
+        &["top", "--once", "--by", "person"],
     ))
     .await;
     assert!(
@@ -405,7 +495,7 @@ async fn a_worker_of_another_host_shows_worker() {
     let bin = bin(true);
     three_sessions(&server, dir, bin.path()).await;
 
-    let top = ["top", "--once"];
+    let top = ["top", "--once", "--by", "person"];
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
     assert!(session(&top, "b2")[0].contains("  worker  "), "{top}");
 
@@ -497,7 +587,7 @@ async fn each_kind_of_session_has_its_tag_and_the_host_line_counts_them() {
         .await
         .unwrap();
 
-    let top = ["top", "--once"];
+    let top = ["top", "--once", "--by", "person"];
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
     let lead_line = "├─ pangolin  › riff  1 session: 1 lead; 1 idle";
     assert!(rows(&top).iter().any(|r| r == lead_line), "{top}");
@@ -548,7 +638,7 @@ async fn each_kind_of_session_has_its_tag_and_the_host_line_counts_them() {
 
     // The daemon ends the session at the end of its container: gone.
     api(&c1).end(&c1).await.unwrap();
-    let top = ["top", "--once"];
+    let top = ["top", "--once", "--by", "person"];
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
     assert!(!top.contains("─ c1  "), "{top}");
     let host_line = "└─ thelio  › riff  3 sessions: 1 worker, 1 host, 1 daemon; 3 idle";
@@ -602,7 +692,7 @@ async fn a_session_that_runs_an_old_riff_has_the_mark_and_the_host_line_counts_i
         };
     }
 
-    let top = ["top", "--once"];
+    let top = ["top", "--once", "--by", "person"];
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
     for (id, head) in [
         ("w1", "   ├─ w1  ↑  worker  idle"),
@@ -633,7 +723,7 @@ async fn top_never_prints_color_to_a_pipe() {
         dir,
         Some("a1"),
         bin.path(),
-        &["top", "--once"],
+        &["top", "--once", "--by", "person"],
     ))
     .await;
     assert!(!pipe.contains('\x1b'), "{pipe:?}");
@@ -642,12 +732,12 @@ async fn top_never_prints_color_to_a_pipe() {
         dir,
         Some("a1"),
         bin.path(),
-        &["top", "--once", "--color", "never"],
+        &["top", "--once", "--by", "person", "--color", "never"],
     );
     never.env("CLICOLOR_FORCE", "1");
     let never = output(never).await;
     assert!(!never.contains('\x1b'), "{never:?}");
-    let always = ["top", "--once", "--color", "always"];
+    let always = ["top", "--once", "--by", "person", "--color", "always"];
     let always = output(riff(&server, dir, Some("a1"), bin.path(), &always)).await;
     let red = riff::style::ERROR;
     assert!(
@@ -704,7 +794,7 @@ async fn an_item_with_no_claim_and_an_open_pull_request_is_in_verify() {
     ))
     .await;
 
-    let top = ["top", "--once"];
+    let top = ["top", "--once", "--by", "person"];
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
     assert!(
         top.contains("\n\nWave 3 (como-technologies/riff)\n  free: #14 #15\n  verify: #12 #13\n\n"),
@@ -760,7 +850,7 @@ async fn an_item_whose_pull_request_cannot_merge_by_itself_is_in_stuck() {
     ))
     .await;
 
-    let top = ["top", "--once"];
+    let top = ["top", "--once", "--by", "person"];
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
     assert!(
         top.contains(
@@ -804,7 +894,7 @@ async fn an_item_with_the_label_question_is_in_the_group_question() {
         output(riff(&server, dir, Some("a1"), bin.path(), args)).await;
     }
 
-    let top = ["top", "--once"];
+    let top = ["top", "--once", "--by", "person"];
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
     assert!(
         top.contains(
@@ -824,7 +914,7 @@ async fn an_item_with_the_label_question_is_in_the_group_question() {
 
     // A pause hides the group `free`, and keeps `question`.
     output(riff(&server, dir, Some("a1"), bin.path(), &["pause"])).await;
-    let top = ["top", "--once"];
+    let top = ["top", "--once", "--by", "person"];
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
     assert!(
         top.contains(
@@ -864,7 +954,7 @@ async fn the_board_of_a_paused_repository_has_no_free_items() {
         output(riff(&server, dir, Some("a1"), bin.path(), args)).await;
     }
 
-    let top = ["top", "--once"];
+    let top = ["top", "--once", "--by", "person"];
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
     assert!(
         top.contains("\n\nWave 3 (como-technologies/riff)  paused\n  claimed: #12\n\n"),
@@ -1085,7 +1175,7 @@ async fn riff_top_names_the_error_of_gh_when_gh_fails() {
     failing_gh(bin.path(), "GraphQL: API rate limit already exceeded");
     live(&server, "pangolin", "a1").await;
 
-    let top = ["top", "--once"];
+    let top = ["top", "--once", "--by", "person"];
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
     assert_eq!(
         top.lines().next().unwrap(),
@@ -1308,7 +1398,7 @@ async fn the_gh_calls_of_top_share_the_token_of_one_read() {
     );
     live(&server, "pangolin", "a1").await;
 
-    let top = ["top", "--once"];
+    let top = ["top", "--once", "--by", "person"];
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
     assert!(top.contains("Wave 3 (como-technologies/riff)"), "{top}");
     let calls = std::fs::read_to_string(&log).unwrap();
@@ -1331,7 +1421,7 @@ async fn with_no_gh_the_row_still_prints() {
         dir,
         Some("a1"),
         bin.path(),
-        &["top", "--once"],
+        &["top", "--once", "--by", "person"],
     ))
     .await;
     assert!(!top.contains("Wave 3"), "{top}");
@@ -1352,13 +1442,20 @@ async fn top_makes_only_read_calls() {
     calls.lock().unwrap().clear();
 
     // As the person and as an agent session, once and live.
-    output(riff(&server, dir, None, bin.path(), &["top", "--once"])).await;
+    output(riff(
+        &server,
+        dir,
+        None,
+        bin.path(),
+        &["top", "--once", "--by", "person"],
+    ))
+    .await;
     output(riff(
         &server,
         dir,
         Some("a1"),
         bin.path(),
-        &["top", "--once"],
+        &["top", "--once", "--by", "person"],
     ))
     .await;
     let mut live = riff(&server, dir, None, bin.path(), &["top"])
@@ -1414,7 +1511,7 @@ fn the_book_shows_real_top_commands() {
         "riff top --user brett",
         "riff top --host pangolin",
         "riff top --repo como-technologies/strata",
-        "riff top --by repo",
+        "riff top --by person",
     ] {
         assert!(commands.iter().any(|c| c == want), "{want}: {commands:?}");
     }
@@ -1429,14 +1526,15 @@ fn the_book_shows_real_top_commands() {
 }
 
 /// The example table of "See what each session does" in How It Works
-/// has the form of the output: a board for each repository, the four
-/// levels of the tree, the short form, the counts, and the worktree on
-/// each session line, and the mark of a session that runs an old riff
-/// with its count (01M3WNHCD659FH3Z5VYYH69WWR,
+/// has the form of the output: a board for each project, the tree by
+/// project with the line `no project` last, the short form, the counts,
+/// and the worktree on each session line, and the mark of a session that
+/// runs an old riff with its count (01M3WNHCD659FH3Z5VYYH69WWR,
 /// 01M42KHN33M4K13GKTX2WM6CMM, 01M42KHN80V49HDDZF953HXDT0,
-/// 01M514C142K5BM2746F1D9Y448, 01M514C16VG9PD70A8424J173B).
+/// 01M514C142K5BM2746F1D9Y448, 01M514C16VG9PD70A8424J173B,
+/// 01M77F8JJ8WC0TSCYP3ARJNQGS).
 #[test]
-fn the_book_example_has_the_four_level_tree() {
+fn the_book_example_has_the_tree_by_project() {
     let page = std::fs::read_to_string(
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/src/how-it-works.md"),
     )
@@ -1474,17 +1572,19 @@ fn the_book_example_has_the_four_level_tree() {
     }
     assert_eq!(
         worktrees,
-        ["#issue-88", "#issue-7", "#issue-9", "#issue-8"],
+        ["#issue-7", "#issue-9", "#issue-8", "#issue-88"],
         "{example}"
     );
     for row in [
-        "\nbrett  online  › kadomony  › strata  1 session: 1 worker; 1 busy, 1 claim\n",
-        "\n├─ pangolin  › riff  2 sessions: 1 container, 1 worker; 2 busy, 2 claims\n",
+        "\n\nriff  › mike  admin  online  5 sessions: 2 busy, 1 idle, 1 blocked, 3 claims\n",
+        "\n├─ pangolin  2 sessions: 1 container, 1 worker; 2 busy, 2 claims\n",
         "\n│  └─ 9c0d1e2f  #issue-9  container  busy\n",
-        "\n└─ thelio  4 sessions: 2 leads; 1 to update; 3 idle, 1 blocked, 1 claim\n",
-        "\n   ├─ riff  4 sessions: 2 idle, 1 blocked, 1 claim\n",
-        "\n   │  ├─ 4e54d4e5  ↑  lead  idle\n",
-        "\n   └─ strata  1 session: 1 idle\n",
+        "\n└─ thelio  3 sessions: 1 lead; 1 to update; 1 idle, 1 blocked, 1 claim\n",
+        "\n   ├─ 4e54d4e5  ↑  lead  idle\n",
+        "\nstrata  2 sessions: 1 busy, 1 idle, 1 claim\n",
+        "\n├─ brett  online  › kadomony  1 session: 1 worker; 1 busy, 1 claim\n",
+        "\nno project  › mike  admin  online  › thelio  › website  1 session: 1 idle\n",
+        "\nann  admin  offline  seen 1h ago\n",
     ] {
         assert!(example.contains(row), "{row}: {example}");
     }
@@ -1501,7 +1601,7 @@ async fn a_pause_shows_paused_and_the_step() {
     three_sessions(&server, dir, bin.path()).await;
     output(riff(&server, dir, Some("a1"), bin.path(), &["pause"])).await;
 
-    let top = ["top", "--once"];
+    let top = ["top", "--once", "--by", "person"];
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
     for id in ["a1", "b2", "c3"] {
         assert!(session(&top, id)[0].ends_with("  paused"), "{top}");
@@ -1545,7 +1645,7 @@ async fn a_worker_with_no_claim_shows_must_clear_then_idle_not_its_old_step() {
         "{released}"
     );
 
-    let top = ["top", "--once"];
+    let top = ["top", "--once", "--by", "person"];
     let before = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
     let head = &session(&before, "b2")[0];
     assert!(head.ends_with("  worker  must clear"), "{before}");
@@ -1605,7 +1705,7 @@ async fn sessions_of_two_repositories_show_their_repository_and_worktree() {
     .await;
     session_at(&server, "como-technologies/riff#issue-12", "f6", None).await;
 
-    let top = ["top", "--once", "--color", "never"];
+    let top = ["top", "--once", "--by", "person", "--color", "never"];
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
     assert!(!top.contains('\x1b'), "{top:?}");
     for line in top.lines() {
@@ -1653,10 +1753,10 @@ async fn sessions_of_two_repositories_show_their_repository_and_worktree() {
     }
 }
 
-/// `riff top --user`, `--host`, `--repo` and `--by repo` each show only
+/// `riff top --user`, `--host`, `--repo` and `--by person` each show only
 /// the matching rows, in the order of the tree, and only the boards of
 /// their repositories (01M42KHNCBMBCT3TFBYWE339H5,
-/// 01M42KHN33M4K13GKTX2WM6CMM).
+/// 01M42KHN33M4K13GKTX2WM6CMM, 01M77F8JJ8WC0TSCYP3ARJNQGS).
 #[tokio::test(flavor = "multi_thread")]
 async fn the_flags_of_top_show_only_the_matching_rows() {
     let (server, _) = start_server().await;
@@ -1692,7 +1792,7 @@ esac"#,
         "{all}"
     );
 
-    let brett = top(&["--user", "brett"]).await;
+    let brett = top(&["--by", "person", "--user", "brett"]).await;
     assert_eq!(heads(&brett), ["brett", "g7", "h8"], "{brett}");
     assert!(
         rows(&brett)[0].starts_with("brett  online  › kadomony  › strata  2 sessions: "),
@@ -1704,28 +1804,29 @@ esac"#,
     );
     assert!(!brett.contains("blocked  c3"), "{brett}");
 
-    let pangolin = top(&["--host", "pangolin"]).await;
+    let pangolin = top(&["--by", "person", "--host", "pangolin"]).await;
     let want = ["mike", "riff", "c3", "a1", "strata", "d4"];
     assert_eq!(heads(&pangolin), want, "{pangolin}");
 
-    let repo = top(&["--repo", strata]).await;
+    let repo = top(&["--by", "person", "--repo", strata]).await;
     assert_eq!(heads(&repo), ["brett", "g7", "h8", "mike", "d4"], "{repo}");
     assert!(
         repo.contains(strata_board) && !repo.contains(riff_board),
         "{repo}"
     );
 
-    let both = top(&["--user", "mike", "--repo", strata]).await;
+    let both = top(&["--by", "person", "--user", "mike", "--repo", strata]).await;
     assert_eq!(heads(&both), ["mike", "d4"], "{both}");
 
-    let by_repo = top(&["--by", "repo"]).await;
+    // The default: the project at the top. Each repository here is a
+    // project.
     let want = [
         "riff", "pangolin", "c3", "a1", "thelio", "b2", "strata", "brett", "g7", "h8", "mike", "d4",
     ];
-    assert_eq!(heads(&by_repo), want, "{by_repo}");
+    assert_eq!(heads(&all), want, "{all}");
     assert!(
-        rows(&by_repo)[0].starts_with("riff  › mike  online  3 sessions: "),
-        "{by_repo}"
+        rows(&all)[0].starts_with("riff  › mike  online  3 sessions: "),
+        "{all}"
     );
 }
 
@@ -1744,7 +1845,7 @@ async fn two_owners_show_the_owner_of_each_repository() {
         .unwrap();
     crate::common::name_lead(&common::api(&server, "mike", None), &d4).await;
 
-    let top = ["top", "--once"];
+    let top = ["top", "--once", "--by", "person"];
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
     let rows = rows(&top);
     for row in [
@@ -1768,7 +1869,7 @@ async fn a_session_with_no_status_is_idle() {
     let bin = bin(true);
     three_sessions(&server, dir, bin.path()).await;
 
-    let top = ["top", "--once"];
+    let top = ["top", "--once", "--by", "person"];
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
     assert_eq!(detail(&top, "a1"), ["monitoring work for Ns"], "{top}");
     let who = ["who", "--color", "never"];
@@ -1780,7 +1881,7 @@ async fn a_session_with_no_status_is_idle() {
     let release = ["release", "issue-12"];
     output(riff(&server, dir, Some("b2"), bin.path(), &release)).await;
     clear_b2(&server).await;
-    let top = ["top", "--once"];
+    let top = ["top", "--once", "--by", "person"];
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
     let ready = ["ready for work for Ns", "fresh start Ns ago"];
     assert_eq!(detail(&top, "b2"), ready, "{top}");
@@ -1804,7 +1905,14 @@ async fn a_lead_on_the_command_line_has_a_row() {
         output(riff(&server, dir, Some("a1"), bin.path(), args)).await;
     }
 
-    let top = output(riff(&server, dir, None, bin.path(), &["top", "--once"])).await;
+    let top = output(riff(
+        &server,
+        dir,
+        None,
+        bin.path(),
+        &["top", "--once", "--by", "person"],
+    ))
+    .await;
     assert!(
         session(&top, "a1")[0].ends_with("─ a1  lead  idle"),
         "{top}"
@@ -1842,7 +1950,16 @@ async fn top_shows_the_state_of_a_lead_and_its_long_step() {
         .unwrap();
     live_at(&server, a1.clone()).await;
     let api = |me: &SessionUri| common::api_of(&server, me);
-    let top = || async { output(riff(&server, dir, None, bin.path(), &["top", "--once"])).await };
+    let top = || async {
+        output(riff(
+            &server,
+            dir,
+            None,
+            bin.path(),
+            &["top", "--once", "--by", "person"],
+        ))
+        .await
+    };
     let state = |top: &str| {
         session(top, "a1")[0]
             .rsplit("  ")
@@ -1957,7 +2074,7 @@ async fn twelve_sessions_fit_in_80_columns() {
         output(riff(&server, dir, Some(&id), bin.path(), args)).await;
     }
 
-    let top = ["top", "--once"];
+    let top = ["top", "--once", "--by", "person"];
     let top = output(riff(&server, dir, Some("s00"), bin.path(), &top)).await;
     for line in top.lines() {
         assert!(line.chars().count() <= 80, "{line:?} in\n{top}");
@@ -2143,7 +2260,7 @@ async fn top_adds_its_calls_of_gh_to_the_tally_of_the_daemon() {
         dir,
         Some("a1"),
         bin.path(),
-        &["top", "--once"],
+        &["top", "--once", "--by", "person"],
     ))
     .await;
     let calls = riff::ghcalls::Tally::in_folder(&folder).read(riff::daemon::now_ms());

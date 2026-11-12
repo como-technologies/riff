@@ -85,6 +85,11 @@ impl Projects {
         self.projects.get(repo).map(|p| p.hosts.as_slice())
     }
 
+    /// The repository of each project, in its order.
+    pub fn repos(&self) -> impl Iterator<Item = &ThreadName> {
+        self.projects.keys()
+    }
+
     /// The record enrolls its repository, or sets the hosts of the
     /// project. A project keeps the `by` and the time of its first
     /// record.

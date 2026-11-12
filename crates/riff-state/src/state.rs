@@ -2340,6 +2340,18 @@ impl State {
         self.written.projects().has(repo)
     }
 
+    /// The repository of each project of the riff, in its order, for the
+    /// reply to `who` (01M77F7HPBNJY9QFG3HA6YH5F4).
+    ///
+    /// ```
+    /// use riff_state::state::State;
+    ///
+    /// assert!(State::default().project_repos().is_empty());
+    /// ```
+    pub fn project_repos(&self) -> Vec<ThreadName> {
+        self.written.projects().repos().cloned().collect()
+    }
+
     /// True when the log has a record of a project: then riff-server
     /// looks for no project at its start (01M76SG8NCSAP69Y5AX455BJQM).
     pub fn projects_known(&self) -> bool {

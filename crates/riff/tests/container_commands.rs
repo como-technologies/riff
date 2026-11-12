@@ -191,7 +191,8 @@ const LEAD: &str = "riff://mike@thelio/como-technologies/riff?session=c1";
 const AUTHOR: &str = "riff://mike@pangolin/como-technologies/riff?session=a1&claim=issue-12";
 
 /// What the daemon reads for `riff who` and `riff top`: the riff runs,
-/// and has the lead and the author of issue-12.
+/// and has the lead and the author of issue-12, in the project
+/// como-technologies/riff.
 fn who_facts() -> Value {
     json!({
         "pauses": {"state": "running"},
@@ -201,6 +202,7 @@ fn who_facts() -> Value {
                 {"uri": format!("{LEAD}&lead=1"), "live": true, "container": true},
                 {"uri": AUTHOR, "live": true, "status": {"step": "writing the tests", "age_secs": 60}},
             ],
+            "projects": ["como-technologies/riff"],
         },
     })
 }

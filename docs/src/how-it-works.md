@@ -1562,16 +1562,26 @@ riff who
 
 The first lines are facts: the state of the riff and the build. Then a
 table shows a row for each session: its name with the short session ID,
-its state, its role, and the detail of its state:
+its state, its role, and the detail of its state.
+
+The rows group by project (see
+[The projects of the riff](#the-projects-of-the-riff)). A bold line
+with the repository of each project comes before the rows of its
+sessions, in the order of `OWNER/REPO`. The sessions in a repository
+that is no project, or in no repository, come last, under the dim line
+`no project`:
 
 ```text
 riff   running
 build  v0.7.0  (f45be4d, 2026-09-29)
 
 SESSION                            STATE    ROLE      DETAIL
+como-technologies/riff
 mike@pangolin:riff#issue-6 (a6cf)  busy     you lead  working on #6
 mike@thelio:riff#issue-7 (5b1e)    busy     worker    working on #7  4m ago: write the tests
 brett@heron:riff (77e0)            blocked            which of two designs? (1m ago)
+no project
+mike@thelio:theme (9c0d)           idle               ready for work for 3m
 ```
 
 `riff who` works in the container of the lead too, and in the container
@@ -1600,6 +1610,7 @@ The row of a daemon on thelio:
 
 ```text
 SESSION                      STATE  ROLE    DETAIL
+como-technologies/riff
 mike@thelio:riff (002d404c)  idle   daemon  hosts containers for 2h  25s ago: daemon host: pid 249637, build 3.2.0, 0 sessions
 ```
 
@@ -2183,8 +2194,10 @@ riff top
 ```
 
 The header shows the state of the riff and the build, as in
-`riff who`. A board comes next for each repository with a live
-session, and for the repository where you run `riff top`: the current
+`riff who`. A board comes next for each project with a live session,
+and for the repository where you run `riff top` when it is a project
+(see [The projects of the riff](#the-projects-of-the-riff)). A
+repository that is no project gets no board. A board has the current
 wave with its repository, one line for the `free` items, one for the
 `held` items, one for the `claimed` items, one for the items in
 `verify`, and one for the `stuck` items. An item is in `verify` when a
@@ -2200,8 +2213,13 @@ claims it: the reason of the hold follows its items. No worker and no
 wave takes a held item, so it is never in `free` (see
 [Hold an item by hand](#hold-an-item-by-hand)).
 
-Under the boards, a tree shows each person, the hosts of the person,
-the repositories on each host, and the sessions in each repository:
+Under the boards, a tree groups the sessions by project: each project,
+the people in the project, the hosts of each person, and the sessions
+on each host. The sessions in a repository that is no project, or in
+no repository, come last, under the line `no project`: each person,
+the hosts of the person, the repositories on each host, and the
+sessions in each repository. Then each member of the riff with no
+session has a line:
 
 ```text
 riff   running
@@ -2217,32 +2235,35 @@ Wave 3 (como-technologies/riff)
 Wave 5 (como-technologies/strata)
   claimed: #88
 
-ann  admin  offline  seen 1h ago
-brett  online  › kadomony  › strata  1 session: 1 worker; 1 busy, 1 claim
-└─ 7a8b9c0d  #issue-88  worker  busy
-     working on #88 Split the store
-mike  admin  online  7 sessions: 2 busy, 3 idle, 1 blocked, 3 claims
-├─ pangolin  › riff  2 sessions: 1 container, 1 worker; 2 busy, 2 claims
+riff  › mike  admin  online  5 sessions: 2 busy, 1 idle, 1 blocked, 3 claims
+├─ pangolin  2 sessions: 1 container, 1 worker; 2 busy, 2 claims
 │  ├─ 5b1e2a90  #issue-7  worker  busy
 │  │    working on #7 Fix the help
 │  │    runs Bash: run just ci for 12m
 │  │    20m ago: tests
 │  └─ 9c0d1e2f  #issue-9  container  busy
 │       working on #9 Mark the hosts
-└─ thelio  4 sessions: 2 leads; 1 to update; 3 idle, 1 blocked, 1 claim
-   ├─ riff  4 sessions: 2 idle, 1 blocked, 1 claim
-   │  ├─ 3a3f8d5d  #issue-8  blocked
-   │  │    which of two designs? (32m ago)
-   │  │    the lead gave no answer
-   │  │    working on #8 Show the plan
-   │  ├─ 4e54d4e5  ↑  lead  idle
-   │  │    monitoring work for 2h
-   │  │    5m ago: plan the next wave
-   │  └─ 8f1c2d3e  offline
-   │       seen 4m ago
-   └─ strata  1 session: 1 idle
-      └─ 6d2b7c1a  lead  idle
-           monitoring work for 1h
+└─ thelio  3 sessions: 1 lead; 1 to update; 1 idle, 1 blocked, 1 claim
+   ├─ 3a3f8d5d  #issue-8  blocked
+   │    which of two designs? (32m ago)
+   │    the lead gave no answer
+   │    working on #8 Show the plan
+   ├─ 4e54d4e5  ↑  lead  idle
+   │    monitoring work for 2h
+   │    5m ago: plan the next wave
+   └─ 8f1c2d3e  offline
+        seen 4m ago
+strata  2 sessions: 1 busy, 1 idle, 1 claim
+├─ brett  online  › kadomony  1 session: 1 worker; 1 busy, 1 claim
+│  └─ 7a8b9c0d  #issue-88  worker  busy
+│       working on #88 Split the store
+└─ mike  admin  online  › thelio  1 session: 1 lead; 1 idle
+   └─ 6d2b7c1a  lead  idle
+        monitoring work for 1h
+no project  › mike  admin  online  › thelio  › website  1 session: 1 idle
+└─ e1f2a3b4  idle
+     ready for work for 3m
+ann  admin  offline  seen 1h ago
 ```
 
 - When the riff or the repository is paused, nobody can claim its
@@ -2256,24 +2277,23 @@ mike  admin  online  7 sessions: 2 busy, 3 idle, 1 blocked, 3 claims
   and `online` when a session of the person is online. Else `offline`,
   with the time since the last call. Each member of the riff has a
   line, also when away.
-- A person, host or repository line ends with its counts: the
+- A project, person, host or repository line ends with its counts: the
   sessions, then the `busy`, `idle` and `blocked` sessions and the
   claims. A count of 0 is not shown.
 - A host line also counts each kind of session, before the states:
   `leads`, `containers`, `workers` and `daemons`. A session
   counts once, as the first kind that matches. A session with none of
-  these tags has no kind. In the example, thelio has 4 sessions: 2
-  leads, and 2 sessions with no kind. After the kinds, a host
-  line counts the sessions that run an old riff: `1 to update`. See
-  [Update a session that runs an old
+  these tags has no kind. In the example, thelio in riff has 3
+  sessions: 1 lead, and 2 sessions with no kind. After the kinds, a
+  host line counts the sessions that run an old riff: `1 to update`.
+  See [Update a session that runs an old
   riff](#update-a-session-that-runs-an-old-riff).
 - A line with only one line under it takes that line, after a `›`. In
-  the example, brett has one host and one repository, so the person,
-  the host and the repository are on one line. So a small riff stays
-  short.
-- A repository line has the short name of the repository. When the
-  repositories have more than one owner, it has the owner too:
-  `como-technologies/riff`.
+  the example, mike is the only person in riff, so the project and the
+  person are on one line. So a small riff stays short.
+- A project or repository line has the short name of the repository.
+  When the repositories have more than one owner, it has the owner too:
+  `como-technologies/riff`. The line `no project` is dim.
 - A session: the first line has the short session ID, the mark `↑`
   when the session runs an old riff, the worktree of
   the session (`#issue-7` in the worktree `issue-7`, nothing in the
@@ -2281,7 +2301,7 @@ mike  admin  online  7 sessions: 2 busy, 3 idle, 1 blocked, 3 claims
   `daemon`), and the state of the session in its color. Under it comes
   one line for each fact of the detail of the state. See
   [The state of a session](#the-state-of-a-session). A lead is the
-  lead of the repository on the line above it.
+  lead of its project, or of the repository on the line above it.
 
 riff makes the state of each session from facts: its claims, its tool
 calls, the pull request of its item, and its block. No session types
@@ -2303,29 +2323,30 @@ stateDiagram-v2
 The table of each state, its color and its detail is in
 [The state of a session](#the-state-of-a-session).
 
-- Each board has the issues of its own repository, and a session shows
-  the title of an issue of its own repository. riff reads them with
-  `gh` each minute, for each repository with a live session. A
-  repository that `gh` cannot read has no board and no titles, and
-  no error line.
+- Each board has the issues of its own project, and a session in a
+  project shows the title of an issue of its own project. riff reads
+  them with `gh` each minute, for each project with a live session. A
+  project that `gh` cannot read has no board and no titles, and no
+  error line. riff reads no repository that is no project.
 
 ```mermaid
 flowchart LR
     T["riff top"] -->|each minute| G["gh: issues and pull requests"]
     G --> B1["board of como-technologies/riff"]
     G --> B2["board of como-technologies/strata"]
-    T -->|each 3 seconds| S["riff-server: who"]
-    S --> Tree["person › host › repository › session"]
+    T -->|each 3 seconds| S["riff-server: who,<br/>the sessions and the projects"]
+    S --> Tree["project › person › host › session"]
+    S --> None["no project › person › host › repository › session"]
 ```
 
 The tree grows down, not across. No line is wider than your terminal,
 or 80 columns in a pipe. riff cuts a longer line with `…`.
 
 The tags mean the same as in [`riff who`](#see-who-is-in-the-riff).
-People are in the order of user, hosts in the order of name, and
-repositories in the order of `OWNER/REPO`. In a repository, a blocked
-session comes first. With no `gh`, the tree shows no titles and no
-board.
+Projects are in the order of `OWNER/REPO`, people in the order of
+user, hosts in the order of name, and repositories in the order of
+`OWNER/REPO`. In a row, a blocked session comes first. With no `gh`,
+the tree shows no titles and no board.
 
 `riff top` only reads. It posts nothing and wakes no session.
 
@@ -2608,7 +2629,7 @@ riff top --user brett
 ```
 
 The tree shows only the sessions of that user. The boards are those of
-the repositories of these sessions.
+the projects of these sessions.
 
 ### Show the sessions on one host
 
@@ -2629,16 +2650,18 @@ Give the repository as `OWNER/REPO`. You can use `--user`, `--host` and
 riff top --user mike --repo como-technologies/strata
 ```
 
-### Put the repositories at the top of the tree
+### Put the people at the top of the tree
 
-To see what each repository does across people:
+By default, the tree of `riff top` has the project at the top. To see
+what each person does across the projects:
 
 ```sh
-riff top --by repo
+riff top --by person
 ```
 
-The tree then has the levels repository, person, host, session.
-`--by person` is the default. `--by` works with the other flags.
+The tree then has the levels person, host, repository, session. Each
+member of the riff has a line, also with no session. `--by project` is
+the default. `--by` works with the other flags.
 
 ## See the refusals of auto mode
 
@@ -5640,6 +5663,7 @@ column of the row of its session:
 
 ```text
 SESSION                            STATE    ROLE  DETAIL
+como-technologies/riff
 mike@pangolin:riff#issue-6 (a6cf)  busy           working on #6  runs Bash: run just ci for 4m  6m ago: write the tests
 brett@heron:riff#issue-7 (77e0)    waiting        working on #7  waits for a verify of PR #418
 ```
@@ -5745,6 +5769,7 @@ riff top --once
 
 ```text
 SESSION                  STATE  ROLE    DETAIL
+como-technologies/riff
 mike@thelio:riff (4e54)  idle   lead    monitoring work for 2h
 mike@thelio:riff (9c0d)  idle   worker  ready for work for 6m
 ```
@@ -5933,6 +5958,7 @@ riff who
 
 ```text
 SESSION                  STATE  ROLE  DETAIL
+como-technologies/riff
 mike@thelio:riff (4e54)  idle   lead  monitoring work for 2m  12s ago: told 075ff6a7
 ```
 
@@ -6203,6 +6229,35 @@ riff project remove acme/app
 
 The riff forgets the project. GitHub keeps the repository as it is:
 `riff.toml`, the rulesets and the waves stay.
+
+### What reads the projects
+
+The reply of riff-server to `who` names each project of the riff, to
+each person and each session. These views read the projects there:
+
+| View | What it shows |
+|---|---|
+| `riff questions` | The questions of your projects only: each project where you have a session, live or gone, a lead or the notes of a lead, and the project of your folder. See [See all your open questions](development.md#see-all-your-open-questions). |
+| The Waves tab of the TUI | A board for each of your projects: the projects of `riff questions`. See [See the open items of a wave](waves.md#see-the-open-items-of-a-wave). |
+| `riff top` | A board for each project with a live session. The tree groups the sessions by project. See [See each session in a live table](#see-each-session-in-a-live-table). |
+| `riff who` | The table groups the rows by project. See [See who is in the riff](#see-who-is-in-the-riff). |
+
+A repository that a session names and that is no project gets no
+question and no board. Its sessions come last in `riff top` and in
+`riff who`, under the line `no project`. To see the sessions of each
+project, run:
+
+```sh
+riff who
+```
+
+```mermaid
+flowchart LR
+    S["riff-server: who"] -- "the projects" --> Q["riff questions:<br/>your projects"]
+    S --> W["the Waves tab:<br/>your projects"]
+    S --> T["riff top:<br/>project › person › host › session"]
+    S --> R["riff who:<br/>a group for each project"]
+```
 
 ### The projects of a riff from before the projects
 

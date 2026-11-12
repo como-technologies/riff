@@ -270,9 +270,13 @@ tab of the TUI:
 riff
 ```
 
-The tab shows a board for each repository with a live session, and for
-the repository of your folder. A board has the current wave and one row
-for each of its open items:
+The tab shows a board for each of your projects: the projects that
+`riff questions` reads (see
+[What reads the projects](how-it-works.md#what-reads-the-projects)). A
+repository that is no project gets no board. With none of your
+projects, the tab says `None of your repositories is a project of the
+riff.` A board has the current wave and one row for each of its open
+items:
 
 ```text
  1 Sessions  2 Chat•2  [3 Waves]  4 Machines  5 Devices  6 Reports

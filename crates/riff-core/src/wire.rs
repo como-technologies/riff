@@ -514,6 +514,11 @@ pub struct WhoReply {
     /// session in `sessions`. It does not depend on `all`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub repos: Vec<ThreadName>,
+    /// The repository of each project of the riff, in its order
+    /// (01M77F7HPBNJY9QFG3HA6YH5F4). `riff questions`, the TUI, `riff
+    /// top` and `riff who` read them. It does not depend on `all`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub projects: Vec<ThreadName>,
 }
 
 /// The reply to `GET /v1/me`: only the session of the caller, and the
