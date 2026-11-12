@@ -1477,6 +1477,7 @@ pub fn setup_check(path: &std::path::Path, left: &Rules) -> String {
 ///     wave: wave.into(),
 ///     free,
 ///     held,
+///     needs: vec![],
 ///     claimed,
 ///     verify: vec![],
 ///     stuck: vec![],

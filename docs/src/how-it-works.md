@@ -2262,8 +2262,10 @@ project with a live session, and for the repository where you run
 [The projects of the riff](#the-projects-of-the-riff)). A repository
 that is no project gets no board. A board has the current
 wave with its repository, one line for the `free` items, one for the
-`held` items, one for the `claimed` items, one for the items in
-`verify`, and one for the `stuck` items. An item is in `verify` when a
+`held` items, one for the `needs` items, one for the `claimed` items,
+one for the items in `verify`, and one for the `stuck` items. An item
+is in `needs` when an issue of its `Needs:` line is open (see
+[Needs](waves.md#needs)). An item is in `verify` when a
 session verifies it, and when no session holds it and its pull request
 waits for a verify or for the merge. An item is in `stuck` when no
 session holds it and its pull request cannot merge by itself: a

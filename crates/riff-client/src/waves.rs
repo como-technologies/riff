@@ -13,10 +13,11 @@
 //!   waves, the current wave first, and the items in verify.
 //! - [`Board`]: the board of a wave of a repository, from its
 //!   [`Issues`], the claims of the sessions of riff-server and the holds
-//!   of the lead: `free`, `held`, `claimed`, `verify`, `stuck`, `tracker`
-//!   and `question` (01M3Z9N6X92KT051P10CKKV7EK, 01M58ATZ1F42DWNNB24C2HJPEY,
-//!   01M5ND16V2SVN8A9K7W90VC6X9). `stuck` holds the items whose pull
-//!   request cannot merge by itself, with the reason (#279).
+//!   of the lead: `free`, `held`, `needs`, `claimed`, `verify`, `stuck`,
+//!   `tracker` and `question` (01M3Z9N6X92KT051P10CKKV7EK,
+//!   01M58ATZ1F42DWNNB24C2HJPEY, 01M5ND16V2SVN8A9K7W90VC6X9). `stuck` holds
+//!   the items whose pull request cannot merge by itself, with the reason
+//!   (#279).
 //!   `riff top` shows the board of the current wave, `riff wave list`
 //!   the board of each wave (01M58ATZ408RBCX0PM0D0ZCY4B).
 //! - [`is_tracker`]: a tracker issue has no code of its own. No session
@@ -24,6 +25,10 @@
 //! - [`QUESTION`]: an issue with this label waits for the answer of a
 //!   person. The wave starts no build of it, and the group `question`
 //!   shows it.
+//! - [`Issues::needs`]: an issue with an open issue in its `Needs:` line
+//!   waits for that issue. The wave starts no build of it
+//!   (`riff::rollout::free_items`), so it is in the group `needs`, never
+//!   in `free` (01M78TW2TPG6JM99RN73NV5GB9).
 //! - [`Milestone`]: an open milestone, a line of `riff wave list`
 //!   (01M509TJRBE2J7HYKKHRJ1ZFR0).
 //!
@@ -44,7 +49,7 @@
 //! use riff_client::waves::{Board, Issue, Issues};
 //! use riff_core::wire::{HoldInfo, SessionInfo};
 //!
-//! let issue = |number, title: &str| Issue { number, title: title.into(), milestone: Some("Wave 3".into()), tracker: false, question: false };
+//! let issue = |number, title: &str| Issue { number, title: title.into(), milestone: Some("Wave 3".into()), tracker: false, question: false, needs: vec![] };
 //! let issues = Issues::of(vec![issue(12, "Claimed"), issue(13, "Free"), issue(14, "Asked"), issue(15, "Held")])
 //!     .with_verify([14]);
 //! let claim: SessionInfo = serde_json::from_value(serde_json::json!({
@@ -83,6 +88,9 @@ pub struct Issue {
     /// answer of a person.
     #[serde(default)]
     pub question: bool,
+    /// The issues of its `Needs:` line, open or closed.
+    #[serde(default)]
+    pub needs: Vec<u64>,
 }
 
 /// The open issues of a repository: the title of each, the current
@@ -109,6 +117,11 @@ pub struct Issues {
     /// The issues with the label [`QUESTION`].
     #[serde(default)]
     pub questions: BTreeSet<u64>,
+    /// The open needs of each issue that has one: the issues of its
+    /// `Needs:` line that are open issues of the repository
+    /// (01M78TW2TPG6JM99RN73NV5GB9).
+    #[serde(default)]
+    pub needs: BTreeMap<u64, Vec<u64>>,
     /// The issues whose verify or rebase waits for another pull request
     /// whose head conflicts with theirs, with the number of that pull
     /// request (#1710, #1801, #1895). An issue in `stuck` with a conflict waits for its rebase.
@@ -119,7 +132,8 @@ pub struct Issues {
 }
 
 impl Issues {
-    /// The model of the open issues `list`.
+    /// The model of the open issues `list`. A need of an issue is open
+    /// when `list` has it ([`Issues::needs`]).
     ///
     /// ```
     /// use riff_client::waves::{Issue, Issues};
@@ -130,6 +144,7 @@ impl Issues {
     ///     milestone: milestone.map(Into::into),
     ///     tracker: riff_client::waves::is_tracker(title, []),
     ///     question: title.starts_with("Ask"),
+    ///     needs: vec![],
     /// };
     /// let issues = Issues::of(vec![
     ///     issue(12, "Show the wave", Some("Wave 10")),
@@ -139,10 +154,14 @@ impl Issues {
     ///     issue(5, "New", None),
     ///     issue(14, "Tracker: the cloud", Some("Wave 10")),
     ///     issue(15, "Ask the person", Some("Wave 10")),
+    ///     // 4 is open, and 3 is closed.
+    ///     Issue { needs: vec![3, 4], ..issue(16, "After the kept one", Some("Wave 11")) },
+    ///     Issue { needs: vec![3], ..issue(17, "After a closed one", Some("Wave 11")) },
     /// ]);
     /// assert_eq!(issues.titles[&12], "Show the wave");
     /// assert_eq!(issues.trackers, [14].into());
     /// assert_eq!(issues.questions, [15].into());
+    /// assert_eq!(issues.needs, [(16, vec![4])].into());
     /// assert_eq!(issues.wave(), Some(&("Wave 9: Cloud".into(), vec![9])));
     /// let titles: Vec<&str> = issues.waves.iter().map(|(t, _)| t.as_str()).collect();
     /// assert_eq!(titles, ["Wave 9: Cloud", "Wave 10", "Wave 11"]);
@@ -167,6 +186,7 @@ impl Issues {
                 (title, items)
             })
             .collect();
+        let open: BTreeSet<u64> = list.iter().map(|i| i.number).collect();
         Issues {
             trackers: list
                 .iter()
@@ -177,6 +197,18 @@ impl Issues {
                 .iter()
                 .filter(|i| i.question)
                 .map(|i| i.number)
+                .collect(),
+            needs: list
+                .iter()
+                .filter_map(|i| {
+                    let needs: Vec<u64> = i
+                        .needs
+                        .iter()
+                        .copied()
+                        .filter(|n| open.contains(n))
+                        .collect();
+                    (!needs.is_empty()).then_some((i.number, needs))
+                })
                 .collect(),
             titles: list.into_iter().map(|i| (i.number, i.title)).collect(),
             waves,
@@ -224,7 +256,7 @@ impl Issues {
     /// ```
     /// use riff_client::waves::{Issue, Issues};
     ///
-    /// let wave = Issue { number: 7, title: "Fix".into(), milestone: Some("Wave 3".into()), tracker: false, question: false };
+    /// let wave = Issue { number: 7, title: "Fix".into(), milestone: Some("Wave 3".into()), tracker: false, question: false, needs: vec![] };
     /// let last = Some(Issues::of(vec![wave]));
     /// // The read failed: the last issues stay.
     /// assert_eq!(Issues::newest(last.clone(), None), last);
@@ -252,6 +284,7 @@ impl Issues {
     ///     milestone: Some(format!("Wave {n}")),
     ///     tracker: false,
     ///     question: false,
+    ///     needs: vec![],
     /// }]);
     /// let last = BTreeMap::from([("o/r".to_owned(), wave(3)), ("o/old".to_owned(), wave(4))]);
     /// let each = Issues::newest_each(last, vec![("o/r".into(), None), ("o/s".into(), Some(wave(5)))]);
@@ -421,6 +454,12 @@ pub struct Board {
     /// The items with no claim and no pull request in verify that the
     /// lead holds, each with the reason of its hold.
     pub held: Vec<(u64, String)>,
+    /// The items with no claim, no pull request in verify and no hold
+    /// that need an open issue, each with its open needs
+    /// ([`Issues::needs`], 01M78TW2TPG6JM99RN73NV5GB9). The wave starts no
+    /// build of them.
+    #[serde(default)]
+    pub needs: Vec<(u64, Vec<u64>)>,
     /// The items with a claim that is not a verify claim.
     pub claimed: Vec<u64>,
     /// The items with a verify claim, and the items with no claim whose
@@ -482,7 +521,7 @@ impl Board {
     /// use riff_client::waves::{Board, Issue, Issues};
     /// use riff_core::wire::{HoldInfo, SessionInfo};
     ///
-    /// let issue = |number, wave: &str| Issue { number, title: "t".into(), milestone: Some(wave.into()), tracker: false, question: false };
+    /// let issue = |number, wave: &str| Issue { number, title: "t".into(), milestone: Some(wave.into()), tracker: false, question: false, needs: vec![] };
     /// let issues = Issues::of(vec![
     ///     issue(12, "Wave 3"), issue(13, "Wave 3"), issue(14, "Wave 3"), issue(20, "Wave 4"),
     /// ]);
@@ -531,6 +570,7 @@ impl Board {
             wave: wave.to_owned(),
             free: Vec::new(),
             held: Vec::new(),
+            needs: Vec::new(),
             claimed: Vec::new(),
             verify: Vec::new(),
             stuck: Vec::new(),
@@ -567,6 +607,8 @@ impl Board {
                 board.question.push(n);
             } else if let Some(hold) = holds.get(&format!("issue-{n}")) {
                 board.held.push((n, hold.reason.clone()));
+            } else if let Some(needs) = issues.needs.get(&n) {
+                board.needs.push((n, needs.clone()));
             } else {
                 board.free.push(n);
             }
@@ -575,17 +617,18 @@ impl Board {
     }
 
     /// One line for each group of the board that is not empty, in the
-    /// order `free`, `held`, `claimed`, `verify`, `verify waits for #N`,
-    /// `rebase waits for #N`, `stuck`, `tracker`, `question`. With
-    /// `paused`, no group `free`: nobody can claim its items
+    /// order `free`, `held`, `needs`, `claimed`, `verify`, `verify waits
+    /// for #N`, `rebase waits for #N`, `stuck`, `tracker`, `question`.
+    /// With `paused`, no group `free`: nobody can claim its items
     /// (01M588G5K0B58QXD35AA5MTZ6E). The reason of each hold follows its
     /// items (01M58ATZ1F42DWNNB24C2HJPEY), and so does the reason of each
-    /// stuck pull request (#279). The reason of a hold is text of the lead:
-    /// the UI makes it safe. An item whose verify waits for the merge of
-    /// the pull request #N is in the group `verify waits for #N`, not in
-    /// `verify` (01M6WCGNGNQXG443D5EMC8JRAC). An item whose rebase waits
-    /// for its turn after the pull request #N is in the group `rebase waits
-    /// for #N` (01M6YPYTPG8RJY7PRERR2ZM10H).
+    /// stuck pull request (#279), and the open needs of each item in
+    /// `needs` (01M78TW2TPG6JM99RN73NV5GB9). The reason of a hold is text
+    /// of the lead: the UI makes it safe. An item whose verify waits for
+    /// the merge of the pull request #N is in the group `verify waits for
+    /// #N`, not in `verify` (01M6WCGNGNQXG443D5EMC8JRAC). An item whose
+    /// rebase waits for its turn after the pull request #N is in the group
+    /// `rebase waits for #N` (01M6YPYTPG8RJY7PRERR2ZM10H).
     ///
     /// ```
     /// use riff_client::waves::Board;
@@ -595,6 +638,7 @@ impl Board {
     ///     wave: "Wave 3".into(),
     ///     free: vec![14, 15],
     ///     held: vec![(12, "a reading".into()), (13, "a reading".into()), (16, "later".into())],
+    ///     needs: vec![(28, vec![12]), (29, vec![12, 40]), (30, vec![12])],
     ///     claimed: vec![],
     ///     verify: vec![17, 23, 24, 25],
     ///     stuck: vec![(19, "checks".into()), (20, "auto-merge off".into()), (21, "checks".into())],
@@ -606,6 +650,7 @@ impl Board {
     /// assert_eq!(board.groups(false), [
     ///     "free: #14 #15",
     ///     "held: #12 #13 (a reading), #16 (later)",
+    ///     "needs: #28 #30 (#12), #29 (#12 #40)",
     ///     "verify: #17",
     ///     "verify waits for #41: #23 #25",
     ///     "verify waits for #43: #24",
@@ -618,6 +663,7 @@ impl Board {
     ///     board.groups(true),
     ///     [
     ///         "held: #12 #13 (a reading), #16 (later)",
+    ///         "needs: #28 #30 (#12), #29 (#12 #40)",
     ///         "verify: #17",
     ///         "verify waits for #41: #23 #25",
     ///         "verify waits for #43: #24",
@@ -672,9 +718,16 @@ impl Board {
         } else {
             list(&self.free)
         };
+        // The open needs of an item are its reason.
+        let needs: Vec<(u64, String)> = self
+            .needs
+            .iter()
+            .map(|(n, needs)| (*n, list(needs)))
+            .collect();
         [
             ("free".to_owned(), free),
             ("held".to_owned(), by_reason(&self.held)),
+            ("needs".to_owned(), by_reason(&needs)),
             ("claimed".to_owned(), list(&self.claimed)),
             ("verify".to_owned(), list(&verify)),
         ]
@@ -725,6 +778,7 @@ mod tests {
             milestone: Some("Wave 3".into()),
             tracker: false,
             question: false,
+            needs: vec![],
         };
         Issues::of((12..=16).map(issue).collect()).with_verify([15])
     }
@@ -797,6 +851,7 @@ mod tests {
             milestone: Some("Wave 3".into()),
             tracker: is_tracker(title, labels.iter().copied()),
             question: false,
+            needs: vec![],
         };
         let issues = Issues::of(vec![
             issue(12, "Tracker: claimed anyway", &[]),
@@ -839,6 +894,7 @@ mod tests {
             milestone: Some("Wave 3".into()),
             tracker: false,
             question,
+            needs: vec![],
         };
         let issues = Issues::of(vec![
             issue(12, true),
@@ -866,6 +922,63 @@ mod tests {
             board.groups(true),
             ["claimed: #12", "verify: #13 #15", "question: #14"],
             "a pause hides no question"
+        );
+    }
+
+    /// An item with an open issue in its `Needs:` line and no claim is in
+    /// `needs` with its open needs, never in `free`. An item whose needs
+    /// are closed is free. A claim, a verify and a hold win: a session
+    /// that works shows, and the hold of the lead keeps its reason
+    /// (01M78TW2TPG6JM99RN73NV5GB9).
+    #[test]
+    fn an_item_with_an_open_need_is_in_needs_and_never_free() {
+        let who: Vec<SessionInfo> = serde_json::from_str(
+            r#"[{"uri": "riff://mike@thelio/o/r?session=a1&claim=issue-1523", "live": true}]"#,
+        )
+        .unwrap();
+        let sessions = Sessions::new(who, vec![]);
+        let issue = |number, needs: &[u64]| Issue {
+            number,
+            title: format!("item {number}"),
+            milestone: Some("Wave 3".into()),
+            tracker: false,
+            question: false,
+            needs: needs.to_vec(),
+        };
+        let issues = Issues::of(vec![
+            // #1522 is open, #1519 is closed.
+            issue(1520, &[1522]),
+            issue(1521, &[1519]),
+            issue(1522, &[]),
+            issue(1523, &[1522]),
+            issue(1524, &[1522]),
+            issue(1525, &[1522, 1519]),
+            issue(1526, &[1522]),
+        ])
+        .with_verify([1524]);
+        let holds = BTreeMap::from([(
+            "issue-1526".to_owned(),
+            HoldInfo {
+                reason: "later".into(),
+                by: None,
+                at_ms: 1,
+            },
+        )]);
+        let board = Board::of("o/r", &issues, &sessions, &holds).unwrap();
+        assert_eq!(board.free, [1521, 1522], "a closed need keeps no item back");
+        assert_eq!(board.needs, [(1520, vec![1522]), (1525, vec![1522])]);
+        assert_eq!(board.claimed, [1523]);
+        assert_eq!(board.verify, [1524]);
+        assert_eq!(board.held, [(1526, "later".to_owned())]);
+        assert_eq!(
+            board.groups(true),
+            [
+                "held: #1526 (later)",
+                "needs: #1520 #1525 (#1522)",
+                "claimed: #1523",
+                "verify: #1524"
+            ],
+            "a pause hides no item that needs another"
         );
     }
 

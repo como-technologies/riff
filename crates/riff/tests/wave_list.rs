@@ -2,6 +2,7 @@
 //! (#1609, 01M6QBEV0PNMAESMW620AF5HH7). A fake `gh` answers `304` as
 //! GitHub does, and logs each call.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::Duration;
 
@@ -349,4 +350,38 @@ fn the_file_is_in_the_folder_wave_list_of_the_daemon() {
             .join("wave-list/o~r.json")
             .exists()
     );
+}
+
+/// 01M78TW2TPG6JM99RN73NV5GB9: an item with an open issue in its `Needs:`
+/// line is in the group `needs` of `riff wave list`, never in `free`, as
+/// the wave keeps it back. A closed need keeps no item back. A run that
+/// shares the kept read shows the same groups.
+#[test]
+fn an_item_with_an_open_need_is_in_needs_and_never_free() {
+    let host = Host::new(&[]);
+    let issue = |n: u64, needs: &str| {
+        format!(
+            r#"{{"number":{n},"title":"t","body":"Done when: x.\n\nNeeds: {needs}","comments":[],"milestone":{{"title":"Wave 1"}},"labels":[]}}"#
+        )
+    };
+    // #1 needs the open #2, and #3 needs the closed #9.
+    let open = [issue(1, "#2"), issue(2, "nothing"), issue(3, "#9")];
+    host.put("issues", &format!("[{}]", open.join(",")));
+    let groups = |listed: &Listed| {
+        let issues = listed.issues.as_ref().unwrap();
+        let items = riff::waves::Items::of(REPO, issues, vec![], &BTreeMap::new());
+        items.boards[0].groups(false)
+    };
+    let first = host.run(0, false);
+    assert_eq!(groups(&first), ["free: #2 #3", "needs: #1 (#2)"]);
+    let calls = host.calls();
+    assert!(
+        calls
+            .iter()
+            .any(|c| c.starts_with("issue list") && c.contains(",body")),
+        "the read asks for the bodies: {calls:?}"
+    );
+    let kept = host.run(2, false);
+    assert_eq!(host.calls(), Vec::<String>::new());
+    assert_eq!(groups(&kept), ["free: #2 #3", "needs: #1 (#2)"]);
 }

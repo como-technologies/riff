@@ -747,6 +747,14 @@
   `question`. The issue stays blocked until the people agree. Then the
   lead records the decision that they agree on, and removes the label.
   The rules of the lead (`text::LEAD_RULES`) name the rule.
+- **01M78TW2TPG6JM99RN73NV5GB9** `riff wave list`, the board of `riff
+  top` and the Waves tab of the TUI show the group `needs`: each open
+  item of the wave with an open issue in its `Needs:` line, with its
+  open needs, for example `needs: #1520 (#1522)`. Such an item is never
+  in `free`, as the wave starts no build of it. An item whose needs are
+  all closed is free. A claim, a verify, a stuck pull request, a
+  tracker, a question and a hold win over the group. A pause hides no
+  item of the group.
 
 ## Issue hygiene on GitHub
 

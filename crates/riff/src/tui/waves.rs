@@ -48,13 +48,14 @@
 //!   opens it again with `Enter`, `←`, `→` or `Space`
 //!   (01M6VFG882T794B1CTHK5AKPDG).
 //! - **The rows** ([`ItemRow`], 01M6VFGJWVB3WEEYBCNSZ2FJT0): stuck, free,
-//!   held, asked, work, verify and tracker. A work row shows the session
-//!   that holds the claim with its state and mark
-//!   ([`super::Mark`]), a verify or stuck row its pull request. A verify
-//!   or a rebase that waits for its turn is a verify row that names the
-//!   pull request before it, as `PR #42 after #41`
-//!   (01M6YPYTW6CVCDBZ9631CFXQBJ). The
-//!   closed items of the wave are one line, and `Enter` shows them.
+//!   held, needs, asked, work, verify and tracker. A needs row names the
+//!   open issues of its `Needs:` line, as `waits for #1522`
+//!   (01M78TW2TPG6JM99RN73NV5GB9). A work row shows the session that holds
+//!   the claim with its state and mark ([`super::Mark`]), a verify or
+//!   stuck row its pull request. A verify or a rebase that waits for its
+//!   turn is a verify row that names the pull request before it, as
+//!   `PR #42 after #41` (01M6YPYTW6CVCDBZ9631CFXQBJ). The closed items of
+//!   the wave are one line, and `Enter` shows them.
 //! - **The questions of each wave** (01M6Y0ZQWDYVC23WA5CVN0QSH8): the
 //!   asked rows have the issues with the label `question` of the later
 //!   waves too ([`later_questions`]), in number order, as `riff
@@ -148,6 +149,8 @@ pub enum ItemState {
     Free,
     /// The lead holds it.
     Held,
+    /// An issue of its `Needs:` line is open (01M78TW2TPG6JM99RN73NV5GB9).
+    Needs,
     /// It has the label `question`: it waits for the answer of a person.
     Asked,
     /// A session holds a claim of it.
@@ -178,6 +181,7 @@ impl ItemState {
             ItemState::Stuck => "stuck",
             ItemState::Free => "free",
             ItemState::Held => "held",
+            ItemState::Needs => "needs",
             ItemState::Asked => "asked",
             ItemState::Work => "work",
             ItemState::Verify => "verify",
@@ -194,6 +198,7 @@ impl ItemState {
             ItemState::Stuck => ("!", ERROR),
             ItemState::Free => ("○", DIM),
             ItemState::Held => ("◌", DIM),
+            ItemState::Needs => ("◌", DIM),
             ItemState::Asked => ("?", WARNING),
             ItemState::Work => ("●", Style::new().fg(Color::Green)),
             ItemState::Verify => ("◐", CYAN),
@@ -852,6 +857,11 @@ fn items(
             .and_then(|h| i64::try_from(h.at_ms).ok());
         rows.push(row(*n, ItemState::Held, reason.clone(), at));
     }
+    for (n, needs) in &board.needs {
+        let needs: Vec<String> = needs.iter().map(|n| format!("#{n}")).collect();
+        let who = format!("waits for {}", needs.join(" "));
+        rows.push(row(*n, ItemState::Needs, who, None));
+    }
     // The questions of the current wave and of each later wave, in
     // number order.
     let mut asked: Vec<(u64, Option<String>)> = board.question.iter().map(|n| (*n, None)).collect();
@@ -1095,6 +1105,7 @@ pub fn wave_name(title: &str) -> String {
 ///     milestone: Some(wave.into()),
 ///     tracker: false,
 ///     question,
+///     needs: vec![],
 /// };
 /// let issues = Issues::of(vec![
 ///     issue(1700, "Wave 52", true),
@@ -1472,6 +1483,7 @@ mod tests {
             milestone: Some(wave.into()),
             tracker: false,
             question: false,
+            needs: vec![],
         }
     }
 
@@ -2489,6 +2501,35 @@ mod tests {
                 "   ◐   verify  #1599  The wave takes an issue         PR #1614 after #1613 5m",
                 "   ◐   verify  #1600  The book tells how to detach    PR #1613 merge       9m",
                 "   ◐   verify  #1601  Fix the help                    PR #1604 after #1613 2h",
+            ]
+        );
+    }
+
+    /// 01M78TW2TPG6JM99RN73NV5GB9: an item with an open issue in its
+    /// `Needs:` line is a needs row that names that issue, never a free
+    /// row. The board counts it.
+    #[test]
+    fn an_item_that_needs_an_open_issue_is_a_needs_row_and_never_free() {
+        let mut state = mock_up();
+        let mut forge = riff_forge();
+        // #1622 needs the held #1631.
+        forge.issues.needs = BTreeMap::from([(1622, vec![1631])]);
+        state.read_forge(vec![(RIFF.to_owned(), Ok(forge))], NOW - 41_000);
+        let rows = drawn(&state, 80, 24);
+        assert!(
+            rows[2].contains("1 stuck 1 free 1 held 1 needs 3 work"),
+            "{rows:#?}"
+        );
+        let items: Vec<&String> = rows
+            .iter()
+            .filter(|r| r.contains("#1620") || r.contains("#1622") || r.contains("#1631"))
+            .collect();
+        assert_eq!(
+            items,
+            [
+                " > ○   free    #1620  Add the flag --format           -                    -",
+                "   ◌   held    #1631  Design: the web UI              waits for mike       3d",
+                "   ◌   needs   #1622  The book names the flag         waits for #1631      -",
             ]
         );
     }
