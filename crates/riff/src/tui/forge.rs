@@ -11,7 +11,7 @@
 //!
 //! | What | Call | Cost |
 //! |---|---|---|
-//! | The open issues, their titles, waves and labels | a conditional REST read of each page of `repos/R/issues?state=open` ([`open_path`]) | A `304` costs no point. A new page costs one REST call |
+//! | The open issues, their titles, waves, labels and `Needs:` lines | a conditional REST read of each page of `repos/R/issues?state=open` ([`open_path`]) | A `304` costs no point. A new page costs one REST call |
 //! | The pull requests that wait or are stuck | `gh pr list` with the checks ([`crate::rollout::pulls`]), only when the list of issues has an open pull request, and the ruleset of `main` when a head has a failed check ([`crate::rollout::Pull::required`]) | About 2 GraphQL points. The ruleset is two REST calls, one time in 10 minutes |
 //! | The items that closed in the current wave | a conditional REST read of `repos/R/issues?state=closed&milestone=N` ([`closed_path`]) | A `304` costs no point |
 //! | The full check of `main` | the check runs of each required check ([`crate::look::read_main`]), and the jobs of a run that goes or failed | A few REST calls |
@@ -124,15 +124,19 @@ pub struct Entry {
     /// The time it opened, for example `2026-11-07T10:00:00Z`.
     #[serde(default, deserialize_with = "crate::text::forge_de_opt")]
     pub created_at: Option<String>,
+    /// The body. Only its `Needs:` line counts ([`crate::rollout::needs`]).
+    #[serde(default)]
+    pub body: Option<String>,
 }
 
 impl Entry {
-    /// The issue of the entry: its title, its wave, and whether it is a
-    /// tracker or a question.
+    /// The issue of the entry: its title, its wave, whether it is a tracker
+    /// or a question, and its needs.
     fn issue(self) -> Issue {
         Issue {
             tracker: is_tracker(&self.title, self.labels.iter().map(|l| l.name.as_str())),
             question: self.labels.iter().any(|l| l.name == QUESTION),
+            needs: crate::rollout::needs(self.body.as_deref().unwrap_or_default()),
             number: self.number,
             title: self.title,
             milestone: self.milestone.map(|m| m.title),
@@ -293,7 +297,8 @@ impl Forge {
     ///   {"number": 12, "title": "Show the board", "milestone": {"number": 5, "title": "Wave 3: Boards"}},
     ///   {"number": 13, "title": "Hold it", "milestone": {"number": 5, "title": "Wave 3: Boards"},
     ///    "labels": [{"name": "question"}]},
-    ///   {"number": 14, "title": "Later", "milestone": {"number": 6, "title": "Wave 4"}},
+    ///   {"number": 14, "title": "Later", "milestone": {"number": 6, "title": "Wave 4"},
+    ///    "body": "Needs: #15, #2"},
     ///   {"number": 15, "title": "Some day", "milestone": {"number": 1, "title": "Backlog"}},
     ///   {"number": 16, "title": "Release v4.11.0", "milestone": {"number": 5, "title": "Wave 3: Boards"},
     ///    "labels": [{"name": "release"}]},
@@ -309,6 +314,8 @@ impl Forge {
     /// assert_eq!(forge.issues.wave(), Some(&("Wave 3: Boards".into(), vec![12, 13, 16])));
     /// assert_eq!(forge.milestones["Wave 3: Boards"], 5);
     /// assert_eq!(forge.issues.questions, [13].into());
+    /// // #15 is open, and #2 is not.
+    /// assert_eq!(forge.issues.needs, [(14, vec![15])].into());
     /// assert_eq!(forge.backlog, 1);
     /// assert_eq!(forge.releases, [(16, "Release v4.11.0".to_owned())]);
     /// assert_eq!(forge.issues.verify, [12].into());

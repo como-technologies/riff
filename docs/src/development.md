@@ -3972,10 +3972,12 @@ riff wave list
 
 The current wave has the mark `current`, and `runs on HOST` for each
 host whose daemon runs its loop. Under each wave come its open items
-in the groups of the board of `riff top`: `free`, `held`, `claimed`,
-`verify`, `stuck`, `tracker` and `question`. A held item has the reason
-of the lead, and the wave does not start it. The wave never starts a
-tracker (see [Track a group of items](waves.md#track-a-group-of-items)).
+in the groups of the board of `riff top`: `free`, `held`, `needs`,
+`claimed`, `verify`, `stuck`, `tracker` and `question`. A held item has
+the reason of the lead, and the wave does not start it. An item in
+`needs` has its open needs, and the wave does not start it either (see
+[Needs](waves.md#needs)). The wave never starts a tracker (see
+[Track a group of items](waves.md#track-a-group-of-items)).
 An item in `question` waits for the answer of a person (see
 [Ask the person a question](#ask-the-person-a-question)). A verify that
 waits for the merge of the pull request #N is in the group
@@ -3991,14 +3993,15 @@ Wave 33: Hosts  current  runs on thelio  4 open, 21 closed
   claimed: #1103
   tracker: #1248
   question: #1596
-Wave 34  1 open, 0 closed
+Wave 34  2 open, 0 closed
   free: #1106
+  needs: #1107 (#1103)
 Backlog  61 open, 4 closed
 ```
 
 When the wave says "no free work now" while items are open, look at
-the groups: the items are held, claimed, in verify, stuck, trackers or
-waiting for an answer.
+the groups: the items are held, wait for their needs, claimed, in
+verify, stuck, trackers or waiting for an answer.
 
 The lead runs the same command in its container. There, riff reads
 the sessions and the holds through the riff daemon of the host.

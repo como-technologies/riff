@@ -7237,6 +7237,7 @@ esac
             milestone: Some("Wave 1".into()),
             tracker: false,
             question: false,
+            needs: vec![],
         };
         let all: BTreeSet<u64> = verify.iter().chain(conflicts).copied().collect();
         let issues = riff_client::waves::Issues::of(all.iter().map(|n| issue(*n)).collect())

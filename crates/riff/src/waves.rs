@@ -616,7 +616,7 @@ impl Items {
     ///     session("riff://mike@pangolin/o/s?session=d2", Some(&runs("o/s", BTreeMap::from([(14, 60)])))),
     ///     session("riff://mike@thelio/o/r?session=a1&claim=issue-12", None),
     /// ];
-    /// let issue = |number, wave: &str| Issue { number, title: "t".into(), milestone: Some(wave.into()), tracker: false, question: false };
+    /// let issue = |number, wave: &str| Issue { number, title: "t".into(), milestone: Some(wave.into()), tracker: false, question: false, needs: vec![] };
     /// let issues = Issues::of(vec![
     ///     issue(12, "Wave 3"), issue(13, "Wave 3"), issue(14, "Wave 3"), issue(15, "Wave 3"), issue(20, "Wave 4"),
     /// ])
@@ -1120,12 +1120,22 @@ mod tests {
             milestone: Some(wave.into()),
             tracker: false,
             question: false,
+            needs: vec![],
         };
         let issues = Issues::of(vec![
             issue(1003, "Wave 33: Hosts"),
             issue(1008, "Wave 33: Hosts"),
             issue(1103, "Wave 33: Hosts"),
             issue(1106, "Wave 34"),
+            // #1103 is open, and #990 is closed (01M78TW2TPG6JM99RN73NV5GB9).
+            Issue {
+                needs: vec![1103, 990],
+                ..issue(1107, "Wave 34")
+            },
+            Issue {
+                needs: vec![990],
+                ..issue(1108, "Wave 34")
+            },
             Issue {
                 tracker: true,
                 ..issue(1248, "Wave 33: Hosts")
@@ -1153,7 +1163,7 @@ mod tests {
         };
         let milestones = in_order(vec![
             m("Backlog", 61, 4),
-            m("Wave 34", 1, 0),
+            m("Wave 34", 3, 0),
             m("Wave 33: Hosts", 4, 21),
         ]);
         assert_eq!(
@@ -1163,15 +1173,16 @@ mod tests {
              claimed: #1103\n  \
              tracker: #1248\n  \
              question: #1250\n\
-             Wave 34  1 open, 0 closed\n  \
-             free: #1106\n\
+             Wave 34  3 open, 0 closed\n  \
+             free: #1106 #1108\n  \
+             needs: #1107 (#1103)\n\
              Backlog  61 open, 4 closed"
         );
         // With no read of riff-server: the milestones and the mark only.
         assert_eq!(
             text::waves_list(&milestones, None),
             "Wave 33: Hosts  current  4 open, 21 closed\n\
-             Wave 34  1 open, 0 closed\n\
+             Wave 34  3 open, 0 closed\n\
              Backlog  61 open, 4 closed"
         );
     }
