@@ -1003,9 +1003,9 @@ async fn the_replies_of_a_daemon_go_only_to_the_person_and_the_lead() {
 }
 
 /// A `gh` that logs its arguments in `log`, and a test that writes its
-/// `RIFF_SERVER` in `dir/server`, waits while the file `dir/hold`
-/// exists, and ends with the code in `code`, in `dir`. Gives the
-/// variables for a host.
+/// `RIFF_SERVER` in `dir/server` and its arguments in `dir/args`, waits
+/// while the file `dir/hold` exists, and ends with the code in `code`, in
+/// `dir`. Gives the variables for a host.
 fn fake_real_session(dir: &Path, log: &Path, code: &Path) -> Vec<(String, String)> {
     let script = |name: &str, body: String| {
         isolated::write_program(dir.join(name), format!("#!/bin/sh\n{body}\n"))
@@ -1030,8 +1030,9 @@ fn fake_real_session(dir: &Path, log: &Path, code: &Path) -> Vec<(String, String
     let run = script(
         "run",
         format!(
-            "printf %s \"$RIFF_SERVER\" > {}\necho \"a line\"\necho \"GH_TOKEN=ghp_secret1\"\necho \"real-session: FAIL at step 6 of 10, run the item: exit 1\" >&2\nwhile [ -e {} ]; do sleep 0.1; done\nexit $(cat {})",
+            "printf %s \"$RIFF_SERVER\" > {}\necho \"$*\" > {}\necho \"a line\"\necho \"GH_TOKEN=ghp_secret1\"\necho \"real-session: FAIL at step 6 of 10, run the item: exit 1\" >&2\nwhile [ -e {} ]; do sleep 0.1; done\nexit $(cat {})",
             dir.join("server").display(),
+            dir.join("args").display(),
             dir.join("hold").display(),
             code.display()
         ),
@@ -1052,6 +1053,7 @@ fn fake_real_session(dir: &Path, log: &Path, code: &Path) -> Vec<(String, String
 /// failure on a fail. A work session gets the refusal.
 /// 01M5MR8CM887EFGMKZM5BQA9JJ: the daemon has no `RIFF_SERVER`, and the
 /// test gets the riff-server of the repository.
+/// 01M78TS03FK4908GVSTFH1DKYY: the test gets each `--skip` of the request.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_daemon_runs_the_real_session_test_and_sets_the_status() {
     let tmp = tempfile::tempdir().unwrap();
@@ -1091,12 +1093,17 @@ async fn the_daemon_runs_the_real_session_test_and_sets_the_status() {
     let commit = git(&r.main, &["rev-parse", "HEAD"]);
 
     let hold = tmp.path().join("hold");
-    for (host, exit, state) in [("a", "0", "success"), ("b", "1", "failure")] {
+    let skips = [".mozilla".to_owned(), "/srv/cache".to_owned()];
+    for (host, exit, state, skips) in [
+        ("a", "0", "success", &skips[..]),
+        ("b", "1", "failure", &[]),
+    ] {
         std::fs::write(&code, exit).unwrap();
         std::fs::write(&hold, "").unwrap();
         let asked = remote::Request::ReleaseTest {
             commit: commit.clone(),
             tag: TAG.to_owned(),
+            skips: skips.to_vec(),
         };
         let reply = remote::ask(
             &r.api(&r.lead),
@@ -1194,6 +1201,9 @@ async fn the_daemon_runs_the_real_session_test_and_sets_the_status() {
         }
         let server = tmp.path().join("server");
         assert_eq!(std::fs::read_to_string(&server).unwrap(), &*r.server);
+        let args = std::fs::read_to_string(tmp.path().join("args")).unwrap();
+        let want: Vec<String> = skips.iter().map(|skip| format!("--skip {skip}")).collect();
+        assert_eq!(args.trim_end(), want.join(" "), "{host}");
         std::fs::remove_file(&log).unwrap();
         std::fs::remove_file(&server).unwrap();
     }
@@ -1207,6 +1217,7 @@ async fn the_daemon_runs_the_real_session_test_and_sets_the_status() {
     let asked = remote::Request::ReleaseTest {
         commit,
         tag: TAG.to_owned(),
+        skips: Vec::new(),
     };
     let err = remote::ask(
         &r.api(&worker),
@@ -1306,6 +1317,7 @@ async fn the_daemon_refuses_the_test_and_the_build_of_a_repository_with_no_relea
     let test = remote::Request::ReleaseTest {
         commit,
         tag: TAG.to_owned(),
+        skips: Vec::new(),
     };
     for asked in [test, remote::Request::Build] {
         let err = remote::ask(
@@ -1358,6 +1370,7 @@ async fn the_daemon_runs_the_test_and_the_build_with_the_release_table_that_orig
     let asked = remote::Request::ReleaseTest {
         commit: merged.clone(),
         tag: TAG.to_owned(),
+        skips: Vec::new(),
     };
     let wait = Duration::from_secs(30);
     let reply = remote::ask(&r.api(&r.lead), &r.lead, "a", &asked, wait)

@@ -269,14 +269,17 @@ session-test *ARGS:
 # needs podman. fetch.sh takes the static riff of the commit from the
 # artifacts of CI, or from the release, and builds it only when it finds
 # neither (01M6QQ1PDNMHQ47FG8TD85P7CN). ARGS: --skip PATH, --gate-wait
-# SECONDS.
+# SECONDS. The daemon of a host gives it the paths of riff release test
+# --skip: each argument goes to the test as it is, and no shell reads it
+# (01M78TS03FK4908GVSTFH1DKYY).
 # Run the real-session test on this host: one scratch item to a pull request
+[positional-arguments]
 real-session *ARGS:
     #!/usr/bin/env bash
     set -euo pipefail
     static=$(deploy/static/fetch.sh)
     cargo build -q -p real-session
-    target/debug/real-session --riff "$static/riff" {{ARGS}}
+    target/debug/real-session --riff "$static/riff" "$@"
 
 # Set up the GitHub repository for pull requests: auto-merge, squash only, the rulesets on main and the tags
 github REPO="como-technologies/riff":

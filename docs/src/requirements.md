@@ -8876,18 +8876,17 @@ of this part when they merge.
   `.claude/worktrees` of each git clone of the home (a folder with
   `.git` in it). The other sessions of the person build and commit in
   their worktrees, and make new worktrees, while the test runs. A new
-  path in the rest of each clone still counts, also a new hook and a
-  new config file of git.
+  hook and a new config file of git still count.
 - **01M51X6JA3W2CMV1S5VZEY7FC3** The home check of the real-session
   test also reads `config` and `config.worktree` in the folder `.git`
-  of each git clone of the home, before and after `riff run`. This
-  includes the main clone and the worktree of the test: the check
-  leaves out the rest of them. A new, a changed or a removed key fails
-  the test, and the message names the file and each key. A key of a
-  section `[branch "NAME"]` does not count. A change to a file in
-  `.git/hooks` fails the test too. `config.worktree` in
-  `.git/worktrees/NAME`, and the git folder of each submodule in
-  `.git/modules`, stay left out.
+  of each git clone of the home outside the work tree of another clone,
+  before and after `riff run`. This includes the main clone and the
+  worktree of the test: the check leaves out the rest of them. A new, a
+  changed or a removed key fails the test, and the message names the
+  file and each key. A key of a section `[branch "NAME"]` does not
+  count. A change to a file in `.git/hooks` fails the test too.
+  `config.worktree` in `.git/worktrees/NAME`, and the git folder of each
+  submodule in `.git/modules`, stay left out.
 - **01M51X6JCHZB8HJ8C8M3J1G6GZ** When the home is itself a git clone,
   the home check of the real-session test leaves out
   `.claude/worktrees` in the home, as in each other clone.
@@ -8992,6 +8991,31 @@ of this part when they merge.
   pass, `next:` names `riff release cut X.Y.Z`. Supersedes
   01M5924C8BTT6CW05Q0YZJ1GCY, 01M5NBZRJ71MREAJCPNVFYVKCM,
   01M4ZCFGKDKH16KGKR5NBEK3Y4 and 01M58KMKZ2EG8NZG4F085S6NQX in part.
+- **01M78TRZQYZC2PCTDG48CS17EB** The home check of the real-session test
+  leaves out, with no flag, the work tree of each git clone in the home:
+  each path in a folder with `.git` in it, except that `.git`. A person
+  and the other sessions pull, build and test there while the test runs.
+  The home is no such clone. A clone in a work tree is part of that work
+  tree. In a work tree, the files that the check guards
+  (01M51K051FR0WN71NJXNA86XWY), the Claude folder and `.claude.json`
+  still count. Supersedes 01M51SPS50QQ9Y5C6VE26A18FZ in part: a new path
+  in the rest of each clone. Supersedes 01M51X6JA3W2CMV1S5VZEY7FC3 in
+  part: the git config of a clone in a work tree.
+- **01M78TRZWQ9XN3QKHJBYEB4D6Q** The home check of the real-session test
+  also leaves out, with no flag, `registry` and `git` in `CARGO_HOME`,
+  else in `~/.cargo`, and `logs` in `CLOUDSDK_CONFIG`, else in
+  `~/.config/gcloud`. cargo and `gcloud` of the person write there while
+  the test runs.
+- **01M78TS004W7TF4D86B8V8A3PW** A relative path of `--skip` of the
+  real-session test is in the home, and so is a path that starts with
+  `~/`.
+- **01M78TS03FK4908GVSTFH1DKYY** `riff release test vX.Y.Z --host HOST
+  --skip PATH` takes `--skip` one time for each path, and the daemon of
+  HOST gives each one to the test as `--skip PATH`. A path in the home
+  of the caller goes as a path relative to the home, so it names the
+  same path in the home of HOST. riff refuses an empty path and a path
+  with a space. `just real-session` gives its arguments to the test as
+  they are: no shell reads them.
 
 ## The UIs
 

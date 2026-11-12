@@ -38,6 +38,8 @@
 //! | `elsewhere` | `riff run` writes a new folder in `~/.config` |
 //! | `workers` | `riff run` builds and commits in a worktree of the other clone ([`Fake::other_clone`]), and makes a new worktree there |
 //! | `in-clone` | `riff run` writes a new file in the other clone, outside its worktrees |
+//! | `build` | the person pulls, builds and tests in the other clone while `riff run` runs: a commit and new files in its work tree, new crates in `~/.cargo/registry` and `~/.cargo/git`, and a log of `gcloud` in `~/.config/gcloud/logs` |
+//! | `cargo-config` | `riff run` writes `~/.cargo/config.toml` |
 //! | `hook` | `riff run` writes a new hook in the git folder of the other clone |
 //! | `branch` | `riff run` adds a section `[branch "x"]` to the git config of the other clone and of the clone of the test, as `git push -u` does, and builds in the clone of the test |
 //! | `hooks-path` | `riff run` sets `core.hooksPath` in the git config of the other clone and of the clone of the test |
@@ -196,6 +198,17 @@ run)
     git -C "$w" -c user.name=W -c user.email=w@example.com commit -q -m "WIP: a worker"
   fi
   if [ -f "$c/in-clone" ]; then touch "$m/notes.md"; fi
+  if [ -f "$c/build" ]; then
+    r="$HOME/.cargo/registry"
+    mkdir -p "$m/src" "$m/target/debug/deps" "$r/cache/index" "$r/src/index/serde-1.0.0" \
+      "$HOME/.cargo/git/checkouts/lib-1a2b" "$HOME/.config/gcloud/logs/2026.11.12"
+    echo 'fn main() {}' > "$m/src/main.rs"
+    git -C "$m" add src/main.rs
+    git -C "$m" -c user.name=A -c user.email=a@example.com commit -q -m "a pull"
+    touch "$m/target/debug/deps/main-1a2b" "$r/cache/index/serde-1.0.0.crate" \
+      "$r/src/index/serde-1.0.0/lib.rs" "$HOME/.config/gcloud/logs/2026.11.12/19.52.01.log"
+  fi
+  if [ -f "$c/cargo-config" ]; then printf '[build]\njobs = 1\n' > "$HOME/.cargo/config.toml"; fi
   if [ -f "$c/hook" ]; then touch "$m/.git/hooks/pre-commit"; fi
   t="$HOME/src/riff"
   if [ -f "$c/branch" ]; then
@@ -232,7 +245,8 @@ impl Fake {
         let bin = env.path().join("bin");
         let ctl = env.path().join("ctl");
         let clone = env.home().join("src/riff");
-        // A host with claude has its state folder before the test.
+        // A host with claude has its state folder before the test, and a
+        // host with cargo and gcloud their folders.
         let claude_state = env.home().join(".local/state/claude");
         for dir in [
             &bin,
@@ -240,6 +254,8 @@ impl Fake {
             &clone,
             &env.home().join(".claude/projects"),
             &claude_state,
+            &env.home().join(".cargo"),
+            &env.home().join(".config/gcloud"),
         ] {
             std::fs::create_dir_all(dir).unwrap();
         }
@@ -340,6 +356,8 @@ impl Fake {
         paths.extend(std::env::split_paths(&path));
         cmd.env("PATH", std::env::join_paths(paths).unwrap())
             .env_remove("RIFF_HOME")
+            .env_remove("CARGO_HOME")
+            .env_remove("CLOUDSDK_CONFIG")
             .env("XDG_CACHE_HOME", self.env.home().join(".cache"))
             .arg("--riff")
             .arg(self.bin.join("riff"))
@@ -830,15 +848,16 @@ fn the_snap_apps_the_locks_of_claude_and_gvfs_metadata_do_not_count_and_another_
 }
 
 /// Workers build and commit in the worktrees of another clone of the
-/// person while the test runs, and make a new worktree there. With no
-/// `--skip`, this does not fail the home check. A new file in that clone
-/// outside its worktrees fails it, and so does a new hook in its git
-/// folder (01M51SPS50QQ9Y5C6VE26A18FZ).
+/// person while the test runs, and make a new worktree there, and write
+/// a new file in its work tree. With no `--skip`, this does not fail the
+/// home check. A new hook in its git folder fails it
+/// (01M51SPS50QQ9Y5C6VE26A18FZ, 01M78TRZQYZC2PCTDG48CS17EB).
 #[test]
-fn the_worktrees_of_other_sessions_do_not_count_and_the_rest_of_their_clone_does() {
+fn the_work_of_other_sessions_in_a_clone_does_not_count_and_a_new_hook_does() {
     let fake = Fake::new();
     let clone = fake.other_clone();
     fake.set("workers");
+    fake.set("in-clone");
     let out = fake.run(&[]);
     assert!(
         out.status.success(),
@@ -855,21 +874,7 @@ fn the_worktrees_of_other_sessions_do_not_count_and_the_rest_of_their_clone_does
             .join(".claude/worktrees/issue-1/target/debug/riff")
             .exists()
     );
-
-    let fake = Fake::new();
-    let clone = fake.other_clone();
-    fake.set("workers");
-    fake.set("in-clone");
-    let out = fake.run(&[]);
-    assert_eq!(out.status.code(), Some(1));
-    let stderr = text(&out.stderr);
-    let shown = format!(
-        "real-session: FAIL at step 7 of 11, check the home: the home has 1 new path outside \
-         the folders of riff:\n  {}\nWhen another program",
-        clone.join("notes.md").display()
-    );
-    assert!(stderr.contains(&shown), "{shown}\n{stderr}");
-    assert_clean(&fake);
+    assert!(clone.join("notes.md").exists());
 
     let fake = Fake::new();
     let clone = fake.other_clone();
@@ -943,6 +948,53 @@ fn a_new_branch_section_does_not_count_and_a_new_hooks_path_does() {
     assert_clean(&fake);
 }
 
+/// A person pulls, builds and tests in a clone of the home while the
+/// test runs, and runs `gcloud`. cargo gets new crates, and `gcloud`
+/// writes its log. With no `--skip`, the home check passes
+/// (01M78TRZQYZC2PCTDG48CS17EB, 01M78TRZWQ9XN3QKHJBYEB4D6Q). A new
+/// config of cargo fails it: only the crates of cargo are left out.
+#[test]
+fn a_person_who_builds_in_a_clone_while_the_test_runs_does_not_fail_the_check() {
+    let fake = Fake::new();
+    let clone = fake.other_clone();
+    fake.set("build");
+    let out = fake.run(&[]);
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
+    assert!(
+        stdout.contains("  no new path, no changed file\n"),
+        "{stdout}"
+    );
+    assert_eq!(commits(&clone, "HEAD"), "2");
+    let home = fake.env.home();
+    assert!(clone.join("target/debug/deps/main-1a2b").exists());
+    assert!(home.join(".cargo/git/checkouts/lib-1a2b").is_dir());
+    assert!(
+        home.join(".config/gcloud/logs/2026.11.12/19.52.01.log")
+            .exists()
+    );
+    assert_clean(&fake);
+
+    let fake = Fake::new();
+    fake.other_clone();
+    fake.set("build");
+    fake.set("cargo-config");
+    let out = fake.run(&[]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = text(&out.stderr);
+    let shown = format!(
+        "real-session: FAIL at step 7 of 11, check the home: the home has 1 new path outside \
+         the folders of riff:\n  {}\nWhen another program",
+        fake.env.home().join(".cargo/config.toml").display()
+    );
+    assert!(stderr.contains(&shown), "{shown}\n{stderr}");
+    assert_clean(&fake);
+}
+
+/// Each path of `--skip` is left out: an absolute path, a relative path
+/// in the home, and a path that starts with `~/` (01M4ZCFGHCS7WJ6CFYBZSX0AT5,
+/// 01M78TS004W7TF4D86B8V8A3PW). The daemon of a host gives the paths of
+/// `riff release test --skip` so.
 #[test]
 fn a_folder_of_skip_does_not_count() {
     let fake = Fake::new();
@@ -951,6 +1003,17 @@ fn a_folder_of_skip_does_not_count() {
     std::fs::write(home.join(".cvsignore"), "").unwrap();
     let skip = home.join(".claude/projects");
     let out = fake.run(&["--skip", &skip.display().to_string()]);
+    assert!(
+        out.status.success(),
+        "{}\n{}",
+        text(&out.stdout),
+        text(&out.stderr)
+    );
+
+    // The test runs in the clone, and the paths are in the home.
+    let fake = Fake::new();
+    fake.set("stray");
+    let out = fake.run(&["--skip", ".claude/projects", "--skip", "~/.cvsignore"]);
     assert!(
         out.status.success(),
         "{}\n{}",
@@ -1227,6 +1290,28 @@ fn a_child_that_ends_by_a_signal_counts_as_a_signal() {
     let log = fake.log();
     assert!(find(&log, "gh pr diff").is_none(), "{log:#?}");
     assert_clean(&fake);
+}
+
+/// 01M78TS03FK4908GVSTFH1DKYY: `just real-session` gives each argument
+/// to the test as it is. The daemon of a host gives it the paths of `riff
+/// release test --skip`, and no shell reads them.
+#[test]
+fn the_recipe_gives_each_argument_to_the_test_as_it_is() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../justfile");
+    let justfile = std::fs::read_to_string(path).unwrap();
+    let recipe = justfile
+        .split("\n\n")
+        .find(|block| block.contains("\nreal-session *ARGS:\n"))
+        .unwrap();
+    assert!(
+        recipe.contains("\n[positional-arguments]\nreal-session *ARGS:\n"),
+        "{recipe}"
+    );
+    assert!(
+        recipe.ends_with("target/debug/real-session --riff \"$static/riff\" \"$@\""),
+        "{recipe}"
+    );
+    assert!(!recipe.contains("{{ARGS}}"), "{recipe}");
 }
 
 #[test]
