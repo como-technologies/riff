@@ -8257,10 +8257,8 @@ of this part when they merge.
   container of the lead runs the new riff, and its next step is `riff
   release check vX.Y.Z`. A host with `update.auto` off does not wait for
   its daemon, and a host with no lead of the repository does not wait
-  for a lead. After 30 minutes the watch posts all the same, and the
-  message says what it waited for. This supersedes
-  01M5RGD0RTXYA7FF5K1TH72MGX in part: the time of the message of a
-  deploy that passed.
+  for a lead. This supersedes 01M5RGD0RTXYA7FF5K1TH72MGX in part: the
+  time of the message of a deploy that passed.
 - **01M6WFNDS76NESPXHMQPGHHQSS** The watch of a deploy that passed also
   holds its message to the lead and its note to the other leads while
   the riff daemon of another host of the riff with `update.auto` on runs
@@ -8340,15 +8338,34 @@ of this part when they merge.
   four checks of the Cloud Run log from the status `riff/deploy-check`
   of the commit of the tag, and runs no `gcloud`. A status that is
   missing, or older than the start of the job `Deploy`, makes each of
-  the four checks unknown. Then riff names the CI run and the time when
-  the job `Check the deploy` ends: 6 minutes after the end of the job
-  `Deploy`. For a run by hand, which has no such job, riff names `riff
-  cloud check shared --since TIME --commit SHA` for a person on a host.
+  the four checks unknown. For a run by hand, which has no such job,
+  riff names `riff cloud check shared --since TIME --commit SHA` for a
+  person on a host.
   A status `error` makes each of the four checks unknown, with its
   description. An unknown check changes nothing but the comment on the
   release issue. This supersedes 01M58KMM5ZPAQ289S2YJVQ5WW6 and
   01M58KMMP9FKRFYX58ESVRSZQX in part, and 01M5GVPND32X3R9MYXYB5SV83W and
   01M5ND5B14MXGGK0RJ7R2BREW6 in full.
+- **01M77BT0489T9R084WEFHPMCR5** When the job `Deploy` of the CI run of
+  the push of a release tag passed, the watch of the deploy also holds
+  its message to the lead and its note to the other leads until the job
+  `Check the deploy` of the run ends, or until the tagged commit has the
+  status `riff/deploy-check` of this deploy. A status `failure` puts the
+  failed checks of the log in the message. A status `error`, and a job
+  that ended with no status, put the reason in the message. A run by
+  hand has no such job and waits for none. After 30 minutes from the
+  pass, the watch posts all the same, and the message says what it
+  waited for. Supersedes 01M6WBX2G1PX11D89HNBAZ6MCM in part: the wait of
+  30 minutes.
+- **01M77BT4XB4T8MQVCY7MK0B843** `riff release check vX.Y.Z` refuses
+  while the job `Check the deploy` of the CI run of the tag did not end
+  and the tagged commit has no status `riff/deploy-check` of this
+  deploy. It changes nothing: no release issue, no comment and no note
+  to the other leads. It names the CI run and the time when the job
+  ends: 6 minutes after the end of the job `Deploy`. A run by hand has
+  no such job, and a run that ended with no such job counts as ended.
+  Supersedes 01M76SSFTGW41RHHV445ZM5RHY in part: a check before the end
+  of the job.
 
 ### The real-session test
 

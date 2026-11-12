@@ -1803,7 +1803,7 @@ pub fn release_check_unwritten(tag: &str, issue: u64) -> String {
 /// Why `riff release check` could not do a check of the log: the job
 /// `Check the deploy` of the run `url` set no status
 /// `riff/deploy-check` for this deploy yet. It ends at `end`
-/// (01M76SSFTGW41RHHV445ZM5RHY).
+/// (01M77BT4XB4T8MQVCY7MK0B843).
 ///
 /// ```
 /// let why = riff::text::deploy_check_missing("v3.3.0", "https://x/runs/9", "20:09 UTC");
@@ -1831,10 +1831,131 @@ pub fn deploy_check_missing(tag: &str, url: &str, end: &str) -> String {
 /// ```
 pub fn deploy_check_by_hand(tag: &str, since: &str, commit: &str) -> String {
     format!(
-        "a run by hand, as of riff release rollback, has no job Check the deploy. A person on a \
-         host runs: riff cloud check shared --since {since} --commit {commit}. Then run: riff \
-         release check {tag}"
+        "a run by hand, as of riff release rollback, has no job Check the deploy. {}",
+        check_by_hand(tag, since, commit)
     )
+}
+
+/// The check of the log of a person on a host, from `since`, that sets
+/// the status of `commit`, and then the check of the lead
+/// (01M76SSFTGW41RHHV445ZM5RHY).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::check_by_hand("v3.3.0", "2026-10-18T20:00:00Z", "c1"),
+///     "A person on a host runs: riff cloud check shared --since 2026-10-18T20:00:00Z --commit \
+///      c1. Then run: riff release check v3.3.0"
+/// );
+/// ```
+pub fn check_by_hand(tag: &str, since: &str, commit: &str) -> String {
+    format!(
+        "A person on a host runs: riff cloud check shared --since {since} --commit {commit}. Then \
+         run: riff release check {tag}"
+    )
+}
+
+/// Why the check of the log has no result after the end of the job
+/// `Check the deploy` of the run `url`: the job ended with `conclusion`,
+/// or the run ended with no such job (`None`), and the tag has no status
+/// `riff/deploy-check` of this deploy (01M77BT0489T9R084WEFHPMCR5,
+/// 01M77BT4XB4T8MQVCY7MK0B843).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::deploy_check_none("https://x/runs/9", Some("failure")),
+///     "the job Check the deploy of https://x/runs/9 ended with failure, and set no status \
+///      riff/deploy-check for this deploy"
+/// );
+/// assert_eq!(
+///     riff::text::deploy_check_none("https://x/runs/9", None),
+///     "the CI run https://x/runs/9 ended with no job Check the deploy, and set no status \
+///      riff/deploy-check for this deploy"
+/// );
+/// ```
+pub fn deploy_check_none(url: &str, conclusion: Option<&str>) -> String {
+    let ended = match conclusion {
+        Some(conclusion) => format!("the job Check the deploy of {url} ended with {conclusion}"),
+        None => format!("the CI run {url} ended with no job Check the deploy"),
+    };
+    format!("{ended}, and set no status riff/deploy-check for this deploy")
+}
+
+/// The refusal of `riff release check` while the job `Check the deploy`
+/// of the run `url` did not end, and the tag has no status
+/// `riff/deploy-check` of this deploy: the job ends at `end`
+/// (01M77BT4XB4T8MQVCY7MK0B843).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::release_check_early("v3.3.0", "https://x/runs/9", "20:09 UTC"),
+///     "riff release check v3.3.0: the job Check the deploy of https://x/runs/9 did not end. \
+///      It ends at about 20:09 UTC. riff changed nothing, and told the other leads nothing. \
+///      next: riff release check v3.3.0 after the end of the job"
+/// );
+/// ```
+pub fn release_check_early(tag: &str, url: &str, end: &str) -> String {
+    format!(
+        "riff release check {tag}: the job Check the deploy of {url} did not end. It ends at \
+         about {end}. riff changed nothing, and told the other leads nothing. next: riff release \
+         check {tag} after the end of the job"
+    )
+}
+
+/// What the watch of a deploy that passed waits for while the job `Check
+/// the deploy` of the run `url` did not end (01M77BT0489T9R084WEFHPMCR5).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::deploy_check_runs("https://x/runs/9"),
+///     "the job Check the deploy of https://x/runs/9 did not end"
+/// );
+/// ```
+pub fn deploy_check_runs(url: &str) -> String {
+    format!("the job Check the deploy of {url} did not end")
+}
+
+/// The words of the message of a deploy that passed for what the job
+/// `Check the deploy` found (01M77BT0489T9R084WEFHPMCR5): the failed
+/// checks of the log, or the reason when it found no result. A pass of
+/// each check has no words: the check of the lead says it.
+///
+/// ```
+/// use riff::cycle::LogMeasures;
+///
+/// assert_eq!(riff::text::deploy_check_found(&Ok(LogMeasures::default())), None);
+/// let failed = LogMeasures { longest_503: 25, replies_500: 2, ..LogMeasures::default() };
+/// assert_eq!(
+///     riff::text::deploy_check_found(&Ok(failed)).unwrap(),
+///     "The job Check the deploy found a failed check of the log: a run of 503 took 25 s; 2 \
+///      replies 500."
+/// );
+/// assert_eq!(
+///     riff::text::deploy_check_found(&Err("the status says: no log.".into())).unwrap(),
+///     "The check of the log has no result: the status says: no log."
+/// );
+/// ```
+pub fn deploy_check_found(found: &Result<crate::cycle::LogMeasures, String>) -> Option<String> {
+    match found {
+        Ok(m) if m.passed() => None,
+        Ok(m) => {
+            let failed: Vec<String> = m
+                .verdicts()
+                .into_iter()
+                .filter_map(|(_, v)| match v {
+                    crate::cycle::Verdict::Failed(why) => Some(why),
+                    _ => None,
+                })
+                .collect();
+            Some(format!(
+                "The job Check the deploy found a failed check of the log: {}.",
+                failed.join("; ")
+            ))
+        }
+        Err(why) => Some(format!(
+            "The check of the log has no result: {}.",
+            why.trim_end_matches('.')
+        )),
+    }
 }
 
 /// Why `riff release check` could not do a check of the log: the status

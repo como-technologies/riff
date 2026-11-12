@@ -7153,7 +7153,8 @@ flowchart TD
     I -- "FAIL: wakes the lead with the failed jobs" --> I1[Old revision still serves. riff release check files the issue and resumes the riff. riff release retry vX.Y.Z] --> H
     I -- PASS --> R1[The riff daemon of each host starts again on vX.Y.Z, after its last session]
     R1 --> R2[riff starts the lead container again on vX.Y.Z, at the end of its turn]
-    R2 -- "wakes the lead: the deploy passed, and your container runs vX.Y.Z" --> J{riff release check vX.Y.Z}
+    R2 --> R3[The job Check the deploy reads the Cloud Run log and sets the status riff/deploy-check of the tag]
+    R3 -- "wakes the lead: the deploy passed, and your container runs vX.Y.Z" --> J{riff release check vX.Y.Z}
     J -- PASS --> K[riff resumes. Release issue closes. riff wave end N. Next wave starts]
     J -- FAIL --> L{Lead: fix forward or roll back}
     L -- fix forward --> L1[Issue, fix merges: the release A.B.C of main, the same cycle] --> C
@@ -7171,7 +7172,7 @@ The gates:
 | HUMAN GATE 1: deploy | the owner or an admin, in a terminal. No session, also not the lead: a message in riff chat approves nothing | `riff release approve vX.Y.Z` | the release waits; the riff is not paused; the next `cut` refuses |
 | Hold | a lead of another repository, in a critical place | `riff release hold vX.Y.Z REASON` | `approve` refuses until the lead ends the hold, or a person passes `--over-holds` |
 | HUMAN GATE 2: rollback | the owner or an admin, in a terminal | `riff release approve vPREV` | the new release keeps serving; the riff stays paused |
-| Log check | the CI job `Check the deploy`, as `riff-check`, 5 minutes after the job `Deploy` (see [Check the release after the deploy](#check-the-release-after-the-deploy)) | `riff cloud check shared` sets the commit status `riff/deploy-check` of the tag | `riff release check` says when the job ends |
+| Log check | the CI job `Check the deploy`, as `riff-check`, 5 minutes after the job `Deploy` (see [Check the release after the deploy](#check-the-release-after-the-deploy)) | `riff cloud check shared` sets the commit status `riff/deploy-check` of the tag | the watch of the deploy waits up to 30 minutes for it; `riff release check` refuses and says when the job ends |
 
 The state of the current release in `riff release status` is `building`,
 `built`, `tested`, `published`, `waiting`, `deploying`, `deployed`,
@@ -7261,7 +7262,7 @@ sequenceDiagram
 | The pull request of the next version | `riff release cut` | the Gate failed (the failed jobs; the watch stays), the pull request merged (next: the next step of the release), or it closed with no merge (next: `riff release cut`). A Gate that passed gets no message: the pull request merges by itself |
 | The real-session test | `riff release test --host HOST` | the test passed (next: `riff release cut`), or failed |
 | The CI run of the tag | `riff release cut` | the job `Deploy` waits for a person (the owner gets the line in `riff chat`), or a job failed |
-| The job `Deploy` | `riff release approve`, `retry`, `rollback` | the job failed (the failed jobs), or it passed and your container runs the release (see [Wait for the new riff before the check](#wait-for-the-new-riff-before-the-check)) |
+| The job `Deploy` | `riff release approve`, `retry`, `rollback` | the job failed (the failed jobs), or it passed, your container runs the release, and the job `Check the deploy` set its status or ended (see [Wait for the new riff before the check](#wait-for-the-new-riff-before-the-check) and [Check the release after the deploy](#check-the-release-after-the-deploy)) |
 | The wave | `riff join` | the last open item of the current wave closed (next: `riff release test`, then `riff release cut`); from the release issue to the check, it also gives the step of the release to `riff who` and the TUI |
 | The check of the lead | the watch of the job `Deploy`, at its end | never: it gives the step to `riff who` and the TUI (see [See who acts next on the release](#see-who-acts-next-on-the-release)) |
 
@@ -7470,9 +7471,10 @@ sequenceDiagram
 | `riff release cut` | the command | the tag, the CI run that builds, and the pull request of the next version |
 | The job `Deploy` waits | the watch of the daemon | the deploy waits for a person: hold now, when you are in a critical place |
 | `riff release approve` | the command | the riff is paused: stop at your next step, and keep your state in your notes |
-| The job `Deploy` ends | the watch of the daemon | the deploy passed (the daemon of your host starts again on the release after its sessions), or it failed (the old revision still serves). The note of a pass comes with the message to the lead of the release: when its container runs the release |
+| The job `Deploy` ends | the watch of the daemon | the deploy passed (the daemon of your host starts again on the release after its sessions), or it failed (the old revision still serves). The note of a pass comes with the message to the lead of the release: when its container runs the release, and the job `Check the deploy` set its status or ended |
 | `riff release check` | the command | the checks passed and the riff runs again, or a check failed, or the deploy had failed |
 | `riff release check`, an unknown result | the command | the checks could not all run, and no check failed, for example when the sign-in of gcloud ended: the riff stays paused, and the lead checks again after a sign-in on the host |
+| `riff release check` before the end of the job `Check the deploy` | no one: the command refuses and changes nothing | nothing |
 | `riff release rollback` | the command | the older release deploys: hold now, when you are in a critical place |
 
 The note of the cut, for example:
@@ -7572,12 +7574,14 @@ The deploy of v3.3.0 passed: https://github.com/como-technologies/riff/actions/r
 ```
 
 The watch waits for no daemon on a host with `update.auto` off, and for
-no lead on a host with no lead of the repository. After 30 minutes it
-tells the lead all the same, and says what it waited for, for example
-`riff waited 30 minutes for the new riff, but your container still runs
-an old riff`, or a host that still runs the old build: `the riff daemon
-of bob@pangolin still runs v3.2.0, not v3.3.0`. To see the build of the
-daemon of each host, look at the part `Hosts`:
+no lead on a host with no lead of the repository. The watch also waits
+for the job `Check the deploy` (see
+[Check the release after the deploy](#check-the-release-after-the-deploy)).
+After 30 minutes it tells the lead all the same, and says what it
+waited for, for example `riff waited 30 minutes, but your container
+still runs an old riff`, or a host that still runs the old build: `the
+riff daemon of bob@pangolin still runs v3.2.0, not v3.3.0`. To see the
+build of the daemon of each host, look at the part `Hosts`:
 
 ```sh
 riff who
@@ -7595,12 +7599,21 @@ riff --version
 
 #### Check the release after the deploy
 
-The lead runs the checks after the watch says that its container runs
-the release, in its container (`riff lead start`):
+The lead runs the checks in its container (`riff lead start`), when
+the message of the watch of the deploy names this step:
 
 ```sh
 riff release check v3.3.0
 ```
+
+The lead gets that step after the job `Deploy` passed, and after two
+waits. First, its container runs the release (see
+[Wait for the new riff before the check](#wait-for-the-new-riff-before-the-check)).
+Second, the CI job `Check the deploy` read the Cloud Run log: the watch
+waits until the job sets the status `riff/deploy-check` of the tag, or
+until the job ends. That is about 6 minutes after the end of the job
+`Deploy`. The note to the other leads waits too. A run by hand, as of
+`riff release rollback`, has no such job, and the watch waits for none.
 
 In the container, riff reaches riff-server through the riff daemon of
 the host, as the riff tools do:
@@ -7631,12 +7644,15 @@ sequenceDiagram
     participant C as the job Check the deploy (riff-check)
     participant G as Cloud Logging
     participant H as GitHub
+    participant W as the watch of the deploy
     participant L as riff release check (the lead)
     D->>C: the time before the deploy
     Note over C: waits 5 minutes
     C->>G: gcloud logging read
     G-->>C: the lines
     C->>H: the status riff/deploy-check of the tag
+    W->>H: each minute: the status, and the jobs of the run
+    W->>L: the deploy passed. next: riff release check
     L->>H: the status riff/deploy-check of the tag
     H-->>L: the four checks of the log
 ```
@@ -7650,10 +7666,29 @@ gh api repos/como-technologies/riff/commits/v3.3.0/status \
   --jq '.statuses[] | select(.context == "riff/deploy-check") | .state + ": " + .description'
 ```
 
-When the job did not set the status yet, each check of the log is
-unknown. riff names the CI run and the time when the job ends, about
-6 minutes after the end of the job `Deploy`. Then the lead runs the
-check again.
+The message of the watch says what the job found when a check failed,
+or when the job gave no result:
+
+```text
+The deploy of v3.3.0 passed: https://github.com/como-technologies/riff/actions/runs/9. The job Check the deploy found a failed check of the log: a run of 503 took 25 s. Your container runs v3.3.0, as the riff daemon of this host does. next: riff release check v3.3.0
+```
+
+A status `error`, and a job that ended with no status, give `The check
+of the log has no result:` and the reason. After 30 minutes with no
+status and no end of the job, the message goes all the same: `riff
+waited 30 minutes, but the job Check the deploy of URL did not end`.
+
+A check before the job sets the status refuses, and changes nothing:
+riff makes no release issue, writes no comment, and tells the other
+leads nothing. riff names the CI run and the time when the job ends:
+
+```text
+riff release check v3.3.0: the job Check the deploy of https://github.com/como-technologies/riff/actions/runs/9 did not end. It ends at about 20:09 UTC. riff changed nothing, and told the other leads nothing. next: riff release check v3.3.0 after the end of the job
+```
+
+After the end of the job, a missing status makes each check of the log
+unknown, and riff names the check of a person (see
+[Check the log of a deploy by hand](#check-the-log-of-a-deploy-by-hand)).
 A status `error` also makes each check of the log unknown, with the
 reason of the job. riff changes nothing but the comment on the
 release issue, and the riff stays paused.
@@ -7694,8 +7729,9 @@ run, and resumes the riff. When GitHub fails a call, see
 A run by hand, as of `riff release rollback`, has no job `Check the
 deploy`. Then `riff release check` names the command for a person on a
 host, with the time of the start of the job `Deploy` and the commit of
-the tag. That person signs in with `gcloud auth login`, and runs it in
-a clone:
+the tag. It names it too after a job `Check the deploy` that ended with
+no status, for example a job that a person cancelled. That person signs
+in with `gcloud auth login`, and runs it in a clone:
 
 ```sh
 riff cloud check shared --since 2026-10-18T20:00:00Z --commit COMMIT
