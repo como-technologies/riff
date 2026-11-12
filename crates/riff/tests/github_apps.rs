@@ -39,13 +39,15 @@ pub(crate) async fn serve(fake: &FakeGitHub, keys: At) -> common::Signed {
 
 /// The token of `gh` of `mike` in [`enroll`]: on the fake GitHub, an
 /// admin of each repository that it enrolls.
+#[cfg(target_os = "linux")]
 const PROJECT_ADMIN: &str = "gho_admin_of_the_projects";
 
 /// Enrolls `repo` (`OWNER/REPO`) as a project of the riff `server`, whose
 /// GitHub is `fake`, with the hosts `hosts`: none allows each host. The
 /// person is `mike`, an admin of the riff and of `repo` on the fake
 /// (01M76SG8GBXFYXKWMQHPCNEXBN). A wave and a lead run only for a project
-/// (#1863).
+/// (#1863). Only the tests for Linux use it.
+#[cfg(target_os = "linux")]
 pub(crate) async fn enroll(server: &common::Signed, fake: &FakeGitHub, repo: &str, hosts: &[&str]) {
     fake.seen().person(PROJECT_ADMIN, repo, true);
     let me = "riff://mike@thelio".parse().unwrap();
