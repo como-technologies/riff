@@ -169,7 +169,7 @@
 //! let register = Register { me: me.clone(), worker: false };
 //! engine.dispatch(engine.authenticate(None, register).unwrap()).await.unwrap();
 //! let person = "riff://mike@pangolin/como-technologies/riff".parse().unwrap();
-//! let lead = Lead { me: person, session: "a6cf".into() };
+//! let lead = Lead { me: person, session: "a6cf".into(), if_free: false };
 //! engine.dispatch(engine.authenticate(None, lead).unwrap()).await.unwrap();
 //! let call = engine.authenticate(None, Resume::whole(me)).unwrap();
 //! assert!(engine.dispatch(call).await.unwrap().changed);
