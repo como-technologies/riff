@@ -2844,7 +2844,7 @@ pub enum Refusal {
     Worker,
     /// A container session.
     Container,
-    /// An agent session that is not the lead of its user.
+    /// An agent session that is not the lead of the project.
     NotTheLead,
     /// An agent session, and riff cannot ask riff-server for the lead.
     LeadUnknown,
@@ -2860,8 +2860,8 @@ impl Caller {
     /// Why this caller may not run a step of the lead: `riff release
     /// cut`, `check`, `retry` and `rollback`, or `None`
     /// (01M58KMMF9WMH39ZMD0MKGRVZB, 01M7641T7FX9416CYY1XKHTJE6). A person in
-    /// a plain terminal, or the lead of its user, may when the user is an
-    /// admin of the riff, or when the riff has no sign-in.
+    /// a plain terminal, or the lead of the project, may when its user is
+    /// an admin of the riff, or when the riff has no sign-in.
     ///
     /// ```
     /// use riff::cycle::{Caller, Refusal};
@@ -2922,7 +2922,7 @@ impl Caller {
     }
 
     /// Why this caller may not run `riff release hold`, or `None`
-    /// (01M5SNV78EBAYY4SZ891DM2MQG). Only the lead of its user may, and
+    /// (01M5SNV78EBAYY4SZ891DM2MQG). Only the lead of the project may, and
     /// the lead of a member may too: a hold needs no role. A person in a
     /// plain terminal may not, because a hold names the lead of a
     /// repository.

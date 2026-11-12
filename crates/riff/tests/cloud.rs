@@ -1750,9 +1750,9 @@ fn a_worker_runs_the_reads() {
     }
 }
 
-/// In an agent session, only the lead of its user runs a write. A
+/// In an agent session, only the lead of the project runs a write. A
 /// session that is not the lead gets a refusal, and riff calls no
-/// `gcloud` (01M558C4VZ2PSMEYPAZBRYW1VV).
+/// `gcloud` (01M558C4VZ2PSMEYPAZBRYW1VV, 01M78A9FSHE9XEPGC3SJAB7PMX).
 #[tokio::test(flavor = "multi_thread")]
 async fn each_write_refuses_in_a_session_that_is_not_the_lead() {
     let server = crate::common::start_signed().await;
@@ -1784,8 +1784,8 @@ async fn each_write_refuses_in_a_session_that_is_not_the_lead() {
         assert_eq!(ran.out.status.code(), Some(1), "{args:?}: {}", ran.stderr());
         assert_eq!(
             ran.stderr(),
-            "riff: only the lead of your user changes a riff in the cloud. This session is not \
-             the lead, so riff cloud changed nothing.\n",
+            "riff: only the lead of the project changes a riff in the cloud. This session is \
+             not the lead, so riff cloud changed nothing.\n",
             "{args:?}"
         );
         assert!(ran.calls.is_empty(), "{args:?}: {}", ran.calls);

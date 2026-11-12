@@ -1927,7 +1927,7 @@ pub trait World: Send + Sync {
     }
 
     /// Posts `body` of `kind` as the person of the wave: to the session
-    /// that claims `item`, or to the lead of the person when `item` is
+    /// that claims `item`, or to the lead of the project when `item` is
     /// `None`. The error is a post that did not go out. A post with a
     /// `key` is dropped by riff-server when a kept message of the person
     /// has the key in the thread of the wave (01M5TKG2K1AYK1KE7C2AA2W9DS).
@@ -2943,8 +2943,9 @@ pub struct Live {
 }
 
 /// Posts `body` of `kind` as the person of `wave`: to the session that
-/// claims `item`, or to the lead of the person. The post has `key`, when
-/// there is one (01M5TKG2K1AYK1KE7C2AA2W9DS).
+/// claims `item`, or to the lead of the project
+/// (01M78A9FSHE9XEPGC3SJAB7PMX). The post has `key`, when there is one
+/// (01M5TKG2K1AYK1KE7C2AA2W9DS).
 pub(crate) async fn post_as_person(
     wave: &Wave,
     item: Option<&str>,

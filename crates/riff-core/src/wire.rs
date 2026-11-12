@@ -865,7 +865,7 @@ pub struct Facts {
     pub waiting: bool,
     /// The session holds a claim.
     pub claims: bool,
-    /// The session is the lead of its user.
+    /// The session is the lead of its project.
     pub lead: bool,
     /// The hooks saw a turn that runs.
     pub turn: bool,
@@ -2397,9 +2397,10 @@ pub struct ReleaseReply {
     pub must_clear: bool,
 }
 
-/// `POST /v1/release/for`: the lead of a user frees the claim of
-/// another session of that user (01M3WG243BW7P6E1ME0DFNQF8C). The
-/// server posts a note to the thread of the claim.
+/// `POST /v1/release/for`: the lead of the project frees the claim of
+/// another session of its repository, of any person
+/// (01M3WG243BW7P6E1ME0DFNQF8C, 01M78A9FSHE9XEPGC3SJAB7PMX). The server
+/// posts a note to the thread of the claim.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ReleaseFor {
     pub me: SessionUri,
@@ -2416,9 +2417,9 @@ pub struct ReleaseFor {
 pub const LEAD_CLAIM: &str = "lead";
 
 /// `POST /v1/lead`: the person `me` makes the session `session` the
-/// lead of the user in the repository of `me`, and gives it the claim
-/// [`LEAD_CLAIM`] of the project. It replaces the old lead. A session
-/// cannot send it.
+/// lead of the project of the repository of `me`, and gives it the
+/// claim [`LEAD_CLAIM`]. It replaces the old lead, of any person. A
+/// session cannot send it.
 ///
 /// ```
 /// use riff_core::wire::Lead;

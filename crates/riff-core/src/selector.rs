@@ -17,7 +17,7 @@
 //! | `repo` | `OWNER/REPO`, or `-` outside git. |
 //! | `worktree` | The worktree. The main worktree has none. |
 //! | `claim` | One of the claims that the session holds. |
-//! | `lead` | `true`: the lead of its user in its repository. `false`: each other session. |
+//! | `lead` | `true`: the one lead of the project of its repository, of any person. `false`: each other session. |
 //! | `person` | `true`: the terminals of a person (`riff chat`, `riff tail`, the phone), which have no session ID. `false`: each agent session. |
 //! | `name` | A name of the chat: a person or a project. riff-server resolves it when the message is posted. |
 //!
@@ -137,8 +137,8 @@ pub struct Selector {
     /// A claimed work item, for example `issue-6`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claim: Option<String>,
-    /// True picks the lead of its user in its repository. Use it with
-    /// `user` and `repo`.
+    /// True picks the one lead of the project of its repository, of any
+    /// person. Use it with `repo` ([`Selector::lead`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lead: Option<bool>,
     /// True picks the terminals of a person: they have no session ID.

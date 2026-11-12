@@ -353,7 +353,7 @@ fn tag(value: &str) -> String {
 /// The kind of the session that got the refusal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
-    /// The lead of the user.
+    /// The lead of the project.
     Lead,
     /// A worker session that has no container.
     Worker,

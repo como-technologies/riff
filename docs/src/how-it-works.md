@@ -1590,7 +1590,7 @@ session.
 
 `you` marks your own row. A tag shows the role of a session:
 
-- `lead`: the lead of its user in the repository (see
+- `lead`: the one lead of the project of the repository (see
   [The lead](#the-lead)).
 - `worker`: a session that registered as a worker. It tells the server,
   so each machine shows the same tag.
@@ -3063,7 +3063,7 @@ sequenceDiagram
     participant G as GitHub
     A->>A: commit, checks pass, push the branch
     A->>G: riff pr open: the pull request, auto-merge on
-    A->>E: post to [lead of mike] "verify request: issue-6, PR #40, commit"
+    A->>E: post to [lead of the project] "verify request: issue-6, PR #40, commit"
     E->>L: wake
     L->>E: tell V "request: claim verify-issue-6"
     E->>V: wake
@@ -3099,14 +3099,14 @@ request, then checks out the commit again. When the base commit cannot
 show the fault, the verifier uses a test of the guard on a sample, the
 control of the author, or a read.
 
-A verify request wakes only the lead of the author's user. The lead
-gives it to a session with no claim, or starts a worker for it. The
-author never gets the verify, also after a `/clear` (see "No verify for
-the author" in
+A verify request wakes only the lead of the project, a session of any
+person. The lead gives it to a session with no claim, or starts a
+worker for it. The author never gets the verify, also after a `/clear`
+(see "No verify for the author" in
 [riff starts the work by itself](#riff-starts-the-work-by-itself)).
-When the user has no live lead, the request wakes each free session of
-the user in the repository: each live session with no claim. Each other
-session sees it at its next read. A verify request is free work: a
+When the project has no live lead, the request wakes each free session
+in the repository, of any person: each live session with no claim. Each
+other session sees it at its next read. A verify request is free work: a
 session picks it like any other item.
 
 ### Who may send a verify request and a result
@@ -3769,11 +3769,11 @@ riff tell lead "a live security fault: WHAT AND WHERE"
 ### Ask for a verify by hand
 
 A person can ask the sessions to verify a pushed branch. Name the
-issue, the branch and the commit. The post wakes your lead, which
-gives it to a free session:
+issue, the branch and the commit. The post wakes the lead of the
+project, which gives it to a free session:
 
 ```sh
-riff post --to user=mike,repo=como-technologies/riff,lead=true "verify request: issue-6, branch issue-6, commit 1a2b3c4"
+riff post --to repo=como-technologies/riff,lead=true "verify request: issue-6, branch issue-6, commit 1a2b3c4"
 ```
 
 ## The local folder
@@ -3845,7 +3845,7 @@ sequenceDiagram
 | `[{claim: "issue-6"}]` | the holder of issue-6 |
 | `[{user: "mike", host: "pangolin"}]` | each session of mike on pangolin |
 | `[{user: "mike", host: "pangolin", person: true}]` | the terminals of mike on pangolin, and no agent session |
-| `[{user: "mike", repo: "como-technologies/riff", lead: true}]` | the lead of mike in the repository |
+| `[{repo: "como-technologies/riff", lead: true}]` | the one lead of the project, a session of any person |
 
 In a thread, a selector with `lead: true` that matches no live session
 wakes each live session with no claim that its other fields match. So
@@ -5100,8 +5100,8 @@ These posts wake:
 | Post | Wakes |
 |---|---|
 | A board, "started", "done", other news | nobody: a note |
-| A verify request | the lead of the author's user, or its free sessions when no lead is live |
-| A verify result | the holder of the item: `claim=ITEM`. With no holder, also the lead of the verifier |
+| A verify request | the lead of the project, or the free sessions of the repository when no lead is live |
+| A verify result | the holder of the item: `claim=ITEM`. With no holder, also the lead of the project |
 | A question or a request | the one session: `tell` |
 | A status request | the sessions that it selects |
 
@@ -5909,7 +5909,7 @@ goes on from its first start.
 
 A session is blocked when it cannot go on with no decision of a
 person. One command says so. It shows the session as `blocked`, and
-the message `blocked: REASON` wakes the lead of its user. A session
+the message `blocked: REASON` wakes the lead of its project. A session
 calls the `blocked` tool. From a terminal:
 
 ```sh
@@ -5945,8 +5945,9 @@ sequenceDiagram
     Note over P: riff top: the lead gave no answer
 ```
 
-The `riff relay mcp` of the lead looks each minute. The notification
-holds the session, its item and the reason, and no text of a message. It
+The `riff relay mcp` of the lead looks each minute at the blocks of
+the sessions of each person in its repository. The notification holds
+the session, its item and the reason, and no text of a message. It
 needs a desktop: a display and `notify-send`, as on GNOME. A machine
 with no desktop gets no notification, and nothing fails. The keys
 `lead.wake` (minutes, 15 by default) and `lead.notify` (true by

@@ -132,8 +132,8 @@
 //!
 //! The author of a pull request releases its item at the verify
 //! request. So the issue can have no holder. Then the result wakes the
-//! lead of the user of the verifier in the repository ([`result_to`],
-//! 01M3Z9N70J4H79VJN4ZKKH3G6S): a result is never silent.
+//! lead of the project ([`result_to`], 01M3Z9N70J4H79VJN4ZKKH3G6S,
+//! 01M78A9FSHE9XEPGC3SJAB7PMX): a result is never silent.
 //!
 //! ```mermaid
 //! sequenceDiagram

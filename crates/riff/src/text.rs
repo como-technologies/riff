@@ -2493,7 +2493,8 @@ fn workers_count(n: usize) -> String {
 }
 
 /// The refusals of a command that only a person in a plain terminal or
-/// the lead of its user runs (01M558C4VZ2PSMEYPAZBRYW1VV).
+/// the lead of the project runs (01M558C4VZ2PSMEYPAZBRYW1VV,
+/// 01M78A9FSHE9XEPGC3SJAB7PMX).
 pub struct LeadOnly {
     /// In a worker.
     pub worker: &'static str,
@@ -2575,8 +2576,8 @@ pub fn release_refused(command: &str, refusal: crate::cycle::Refusal) -> String 
         ),
         Refusal::NotTheLead => (
             format!(
-                "riff: only the lead of your user runs {step}. This session is not the lead, so \
-                 {step} changed nothing."
+                "riff: only the lead of the project runs {step}. This session is not the lead, \
+                 so {step} changed nothing."
             ),
             format!("the lead runs {step}"),
         ),
@@ -5561,8 +5562,8 @@ pub fn clock(at: u64) -> String {
 pub const CLOUD: LeadOnly = LeadOnly {
     worker: "riff: a worker never changes a riff in the cloud. riff cloud changed nothing. \
 Ask the lead: the lead or a person runs it.",
-    not_the_lead: "riff: only the lead of your user changes a riff in the cloud. This session \
-is not the lead, so riff cloud changed nothing.",
+    not_the_lead: "riff: only the lead of the project changes a riff in the cloud. This \
+session is not the lead, so riff cloud changed nothing.",
     lead_unknown: "riff: cannot check that this session is the lead, so riff cloud changed \
 nothing. Check the riff with riff whoami.",
 };

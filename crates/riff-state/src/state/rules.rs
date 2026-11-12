@@ -966,9 +966,8 @@ fn release_for(holder: &str) -> ReleaseFor {
     }
 }
 
-/// The lead of a user frees the claim of another session of that user,
-/// live or gone (01M3WG243BW7P6E1ME0DFNQF8C). The record names the
-/// holder.
+/// The lead frees the claim of another session of its user, live or
+/// gone (01M3WG243BW7P6E1ME0DFNQF8C). The record names the holder.
 #[test]
 fn the_lead_releases_the_claim_of_a_session_of_its_user() {
     let mut records = team();

@@ -195,7 +195,7 @@ pub struct ReadArgs {
 pub struct TellArgs {
     /// The session: its session ID or the start of it, as `read` shows
     /// it, its full riff:// URI from `who`, or `lead` for the lead of
-    /// your user in your repository.
+    /// your project, a session of any person.
     session: String,
     /// The message.
     body: String,

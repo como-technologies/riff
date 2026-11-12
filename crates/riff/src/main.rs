@@ -3634,13 +3634,13 @@ async fn lead_only(server: &str, refusals: &text::LeadOnly) -> Option<String> {
     }
 }
 
-/// True when the agent session `id` is the lead of its user, as
-/// riff-server sees it.
+/// True when the agent session `id` is the lead of the project, as
+/// riff-server sees it (01M78A9FSHE9XEPGC3SJAB7PMX).
 async fn is_lead(server: &str, id: &str) -> Result<bool> {
     Ok(lead_and_role(server, Some(id)).await?.0)
 }
 
-/// Whether the agent session `id` is the lead of its user, and the role
+/// Whether the agent session `id` is the lead of the project, and the role
 /// of its user in the riff. With no `id`: the role of the person on this
 /// machine. The role is `None` in a riff with no sign-in, which has no
 /// people (01M58B0JSQMWNCMSNX19536XT8). A user with no row is a member.

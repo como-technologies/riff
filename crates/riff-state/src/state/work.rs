@@ -589,9 +589,10 @@ impl Command for ReleaseFor {
     }
 }
 
-/// The person names the session `session` the lead of the user in its
-/// repository (01M5NJAXTQ0YKN7Q7XN0A7ZMPF). It replaces the old lead,
-/// and tells it (01M5NJAYMYF50B9WXH5RF9W737). The note is the old lead,
+/// The person names the session `session` the lead of the project of
+/// its repository (01M5NJAXTQ0YKN7Q7XN0A7ZMPF). It replaces the old lead
+/// of the project, of any person, and tells it
+/// (01M5NJAYMYF50B9WXH5RF9W737, 01M78A9FSHE9XEPGC3SJAB7PMX). The note is the old lead,
 /// if another session was the lead. [`permits`](super::permits)
 /// refuses a session, and `handle` refuses a worker.
 ///

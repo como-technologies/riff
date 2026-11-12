@@ -1687,8 +1687,8 @@ impl Session {
         Ok(())
     }
 
-    /// Posts `note` to the lead of the user in the repository, as a note
-    /// in the repository thread. It wakes nobody.
+    /// Posts `note` to the lead of the project, as a note in the
+    /// repository thread (01M78A9FSHE9XEPGC3SJAB7PMX). It wakes nobody.
     async fn note_lead(&self, note: &str) {
         let Some(thread) = self.me.default_thread() else {
             return;

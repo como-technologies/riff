@@ -738,7 +738,7 @@ pub fn permits(kind: CommandKind, caller: &Caller, needs: Role) -> Result<(), Re
         CommandKind::Start | CommandKind::End => (&[Session], Can),
         CommandKind::Join | CommandKind::Leave | CommandKind::Post => (&[Person, Session], Can),
         CommandKind::Claim | CommandKind::Release => (&[Person, Session], Can),
-        // `handle` checks that the caller is the lead of the user of
+        // `handle` checks that the caller is the lead of the project of
         // the holder.
         CommandKind::ReleaseFor => (&[Session], Can),
         // Only a person names the lead (01M5NJAXTQ0YKN7Q7XN0A7ZMPF).

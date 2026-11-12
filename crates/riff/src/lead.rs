@@ -1397,8 +1397,8 @@ fn in_editor(old: &str) -> Result<String> {
     Ok(std::fs::read_to_string(&path)?)
 }
 
-/// Sends `body` to the lead of the person in the repository of
-/// `place`, else of this directory, as the person.
+/// Sends `body` to the lead of the project of `place`, else of this
+/// directory, as the person (01M78A9FSHE9XEPGC3SJAB7PMX).
 pub(crate) async fn tell_lead(place: Option<&Place>, server: &str, body: &str) -> Result<()> {
     let place = identity::here(place)?;
     let me = identity::person(&place, server)?;

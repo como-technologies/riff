@@ -33,8 +33,9 @@ fn notes_set(user: &str, text: &str) -> Change {
     })
 }
 
-/// The team, and ann is the lead of the project: she holds the claim
-/// `lead`. bob is the lead of his user, and not the lead of the project.
+/// The team, and ann is the lead of the project: the session ann holds
+/// the claim `lead`. bob is the lead of its user, and not the lead of the
+/// project.
 fn led() -> Vec<Change> {
     [team(), vec![claimed(&ann(), LEAD_CLAIM)]].concat()
 }

@@ -1881,8 +1881,8 @@ impl Api {
     }
 
     /// The person `me` makes the session `session` (its ID, or the start
-    /// of it) the lead of the user in the repository of `me`. It replaces
-    /// the old lead, and riff-server tells the old lead
+    /// of it) the lead of the project of `me`. It replaces the old lead,
+    /// of any person, and riff-server tells the old lead
     /// (01M5NJAXTQ0YKN7Q7XN0A7ZMPF, 01M5NJAYMYF50B9WXH5RF9W737). riff-server
     /// refuses a `me` with a session ID.
     pub async fn lead(&self, me: &SessionUri, session: &str) -> Result<LeadReply> {
