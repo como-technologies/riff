@@ -7119,6 +7119,14 @@ of this part when they merge.
   head while its look still shows the head as waiting for a verify, and
   neither does it for a head whose FAIL the daemon put on the pull
   request.
+- **01M78THTMTGMFZ3SNET2072P4H** The look of the daemon at the pull
+  requests and at `main` (01M5QVH3MAEPPJN9PPVDX6N2EY) runs only where
+  the loop of the wave runs. It reads the projects from riff-server
+  before each look, as the loop of the wave does
+  (01M77FHMTD5Y5FXRD903S2ZGCX). On a host that the projects refuse, it
+  reads nothing with "gh", posts no message, and files no fix item of a
+  broken `main`. When the project allows the host again, it looks again
+  at its next look.
 
 ### The lead, the view and the takeover
 

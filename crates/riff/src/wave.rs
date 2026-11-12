@@ -23,7 +23,10 @@
 //! image ([`ask`]). The loop reads the projects before each look
 //! ([`World::projects`]): when they refuse the host, the look reads
 //! nothing, the wave starts no new session, and its word says why
-//! ([`crate::project::Refused::word`]). The sessions that run go on.
+//! ([`crate::project::Refused::word`]). The sessions that run go on. The
+//! look of the daemon at the pull requests and at `main` (`watch`)
+//! reads the projects too: on that host it reads nothing, posts nothing
+//! and files nothing (01M78THTMTGMFZ3SNET2072P4H).
 //!
 //! Each item has one session: it starts, does the item and ends
 //! (01M4Z60B7NW4GHKGCYZZDG26R6). A verify is an item too: a new session
@@ -2214,6 +2217,15 @@ async fn limit_pause(
     Some((until(&wait), text::wave_limit_word(&wait)))
 }
 
+/// Why the host of `wave` runs no wave of its repository now, from the
+/// projects of the riff ([`World::projects`], #1863): `None` when the
+/// project allows the host. The loop of the wave and its watch ask before
+/// each look (01M78THTMTGMFZ3SNET2072P4H).
+async fn refused(world: &dyn World, wave: &Wave) -> Result<Option<project::Refused>> {
+    let projects = world.projects(wave).await?;
+    Ok(project::wave_refused(&projects, &wave.repo, &wave.host))
+}
+
 /// Adds the comment `Merged in #PULL (COMMIT)` to each issue of
 /// `look.merged` ([`World::merged_in`], #1754) one time: `said` holds each
 /// issue and pull request that got it from the loop, while the look still
@@ -2337,11 +2349,9 @@ pub(crate) async fn run<R: Runtime + 'static>(
         let mut wait = LOOK_EVERY;
         // A wave only for a project that allows the host: else the look
         // reads nothing, and the word says why (#1863).
-        let seen = match world.projects(&wave).await {
-            Ok(projects) => match project::wave_refused(&projects, &wave.repo, &wave.host) {
-                Some(refused) => Ok(Err(refused)),
-                None => world.look(&wave, events.clone()).await.map(Ok),
-            },
+        let seen = match refused(&*world, &wave).await {
+            Ok(Some(refused)) => Ok(Err(refused)),
+            Ok(None) => world.look(&wave, events.clone()).await.map(Ok),
             Err(e) => Err(e),
         };
         let next = match seen {
@@ -2486,7 +2496,9 @@ pub(crate) async fn run<R: Runtime + 'static>(
 /// (01M5QVH3MAEPPJN9PPVDX6N2EY): [`crate::look::look_wave`] at once, then
 /// each [`Daemon::look_every`]. It takes no room: a host that is full
 /// still sees a broken `main`. A look that fails prints its fault one
-/// time until the fault changes.
+/// time until the fault changes. It reads the projects before each look,
+/// as the loop of the wave does ([`refused`]): on a host that they
+/// refuse, the look reads nothing, posts nothing and files nothing.
 pub(crate) async fn watch<R: Runtime + 'static>(daemon: Arc<Daemon<R>>, wave: Wave) {
     let mut watch = look::Watch::default();
     watch.accepts = daemon.look_every();
@@ -2504,7 +2516,15 @@ pub(crate) async fn watch<R: Runtime + 'static>(daemon: Arc<Daemon<R>>, wave: Wa
         // requests, so this look takes its reply when the reply is not older
         // than the wait and one more look.
         watch.waits = daemon.order_waits(&wave.repo);
-        let quiet = match look::look_wave(&*world, &wave, &mut watch).await {
+        // The look runs only where the loop of the wave runs: on a host
+        // that the projects refuse, it is a quiet look that reads nothing,
+        // posts nothing and files nothing (01M78THTMTGMFZ3SNET2072P4H).
+        let looked = match refused(&*world, &wave).await {
+            Ok(Some(_)) => Ok(false),
+            Ok(None) => look::look_wave(&*world, &wave, &mut watch).await,
+            Err(e) => Err(e),
+        };
+        let quiet = match looked {
             Ok(told) => {
                 last_error = None;
                 !told
@@ -9522,6 +9542,38 @@ esac
             ]
         );
         assert_eq!(here.calls("issue close").len(), 1);
+    }
+
+    /// 01M78THTMTGMFZ3SNET2072P4H: `main` is broken, and the repository is
+    /// no project, or the project does not allow the host. The look of the
+    /// daemon calls no `gh`, tells the lead nothing and files no fix item.
+    /// When the project allows the host again, the look tells the lead and
+    /// files the fix item.
+    #[tokio::test]
+    async fn the_look_of_the_daemon_reads_nothing_on_a_host_that_the_projects_refuse() {
+        let refused = [
+            (vec![], text::WAVE_NO_PROJECT.to_owned()),
+            (
+                vec![project_of(&["pangolin"])],
+                text::wave_host_not_allowed("thelio"),
+            ),
+        ];
+        for (projects, word) in refused {
+            let here = Here::looking().await;
+            here.put("gate", &gate("5103311abcdef", "failure"));
+            here.forge().projects = Some(projects);
+            here.run();
+            here.until(0, |h| h.daemon.waves_shown()[0].word == word)
+                .await;
+            here.idle(0).await;
+            assert_eq!(here.calls(""), Vec::<String>::new(), "{word}");
+            assert!(here.posts().is_empty(), "{word}");
+
+            here.forge().projects = None;
+            here.until(0, |h| h.posts().len() == 1).await;
+            assert!(here.posts()[0].2.starts_with("main is broken"), "{word}");
+            assert_eq!(here.calls("issue create").len(), 1, "{word}");
+        }
     }
 
     /// #1393, 01M5R13DGMTNWPY88A3EG49WWS: the repository has no check

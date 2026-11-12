@@ -8,6 +8,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use isolated::Isolated;
@@ -166,6 +167,12 @@ impl Drop for Host {
 /// project (#1863), and riff-server takes the fact of a release only for
 /// a project (01M77F60MR8WZTMFJ5CF2295Q6).
 async fn start_server() -> crate::common::Signed {
+    start_server_of(&["local/riff", "local/other", "local/third"]).await
+}
+
+/// As [`start_server`], where only the repositories `projects` are
+/// projects of the riff.
+async fn start_server_of(projects: &[&str]) -> crate::common::Signed {
     let github = crate::common::fake_github::FakeGitHub::start().await;
     let settings = riff_server::github::Settings {
         api: github.url.clone(),
@@ -181,7 +188,7 @@ async fn start_server() -> crate::common::Signed {
         |config| config.github = settings,
     )
     .await;
-    for repo in ["local/riff", "local/other", "local/third"] {
+    for repo in projects {
         crate::github_apps::enroll(&server, &github, repo, &[]).await;
     }
     server
@@ -566,6 +573,73 @@ async fn a_new_daemon_serves_with_the_same_session() {
             .map(|p| p.split(',').next().unwrap().to_owned())
     };
     assert_ne!(pid(&old), pid(&new), "{old}\n{new}");
+}
+
+impl Riff {
+    /// The lead `l1` writes its handover to the notes when riff asks for
+    /// it. It gives each ask that it got.
+    fn writes_the_handover(&self) -> Arc<Mutex<Vec<String>>> {
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let (api, me, got) = (self.api(&self.lead), self.lead.clone(), asked.clone());
+        let thread = me.default_thread().unwrap();
+        tokio::spawn(async move {
+            loop {
+                for inbox in api.inbox(&me, None, false).await.unwrap_or_default() {
+                    for checked in inbox.messages {
+                        let body = checked.message.body;
+                        if body.contains("Write your handover") {
+                            api.notes_set(&me, &thread, "Handover: wave 1 runs.")
+                                .await
+                                .unwrap();
+                            got.lock().unwrap().push(body);
+                        }
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        });
+        asked
+    }
+}
+
+/// 01M77FHTT8BZ2YN1SV7H1X3NG8: `riff lead move b` in a repository that is
+/// no project of the riff. riff asks the old lead on `a` for its handover,
+/// then the daemon of `b` refuses with the fix, `riff project init`. It
+/// starts no session and no container, and the old lead stays the lead.
+#[tokio::test(flavor = "multi_thread")]
+async fn riff_lead_move_in_a_repository_that_is_no_project_refuses_and_the_old_lead_stays() {
+    let r = riff_on(start_server_of(&[]).await, (300, 300), &[]).await;
+    let repo = r.lead.place().repo_text();
+    let asked = r.writes_the_handover();
+
+    let out = r.a.run(&r.main, &["lead", "move", "b"], None).await;
+
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let stderr = text(&out.stderr);
+    assert!(stderr.contains(&riff::text::no_project(&repo)), "{stderr}");
+    assert!(!stderr.contains("wrote no handover"), "{stderr}");
+    assert_eq!(
+        asked.lock().unwrap().as_slice(),
+        [riff::text::lead_handover_ask("b")]
+    );
+    // l1 is the lead still, and no other session came: only the daemons.
+    let who = r.api(&r.lead).who(&r.lead, false).await.unwrap();
+    let leads: Vec<&str> = who
+        .iter()
+        .filter(|s| s.live && s.uri.lead())
+        .filter_map(|s| s.uri.who().session())
+        .collect();
+    assert_eq!(leads, ["l1"]);
+    let others: Vec<&str> = who
+        .iter()
+        .filter(|s| s.live && !remote::is_daemon(s))
+        .filter_map(|s| s.uri.who().session())
+        .collect();
+    assert_eq!(others, ["l1"]);
+    let out = r.lead(&["daemon", "status"], "b").await;
+    assert!(out.status.success(), "{out:?}");
+    let status = text(&out.stdout);
+    assert!(!status.contains(&riff::lead::name_of(&repo)), "{status}");
 }
 
 impl Host {

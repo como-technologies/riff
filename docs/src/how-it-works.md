@@ -1633,15 +1633,16 @@ has the same color in both. `running` is green and `paused` is yellow.
 A blocked status is red. The `who` tool of a session stays plain.
 
 ### See the facts of each host
- The riff daemon of each host sends the facts of its host to the riff
+
+The riff daemon of each host sends the facts of its host to the riff
 server each 30 seconds. It does so for each repository where the host
 has a part: after `riff host join` in the main clone on that host, or
 while a lead runs there. `riff who` shows them in its last part,
 `Hosts`. The line `parts` of a host names the parts of the host in each
-repository: `workers`, `lead`, or `workers and lead`. `riff top` shows
-the facts under the row of the host. The `who` tool of a session shows
-the same
-part, so the lead sees the facts in its session:
+repository: `workers`, `lead`, `workers and lead`, or `workers, no
+lead`. `riff top` shows the facts under the row of the host. The `who`
+tool of a session shows the same part, so the lead sees the facts in
+its session:
 
 ```sh
 riff who
@@ -6245,8 +6246,10 @@ flowchart LR
     H -- "yes" --> W["the wave runs"]
 ```
 
-`riff host join` and `riff lead move` ask riff-server first. In a
-repository that is no project, both name the fix and start nothing:
+`riff host join` asks riff-server first. `riff lead move` first asks
+the old lead for its handover, and then the daemon of the new host asks
+riff-server. In a repository that is no project, both name the fix and
+start nothing. The old lead stays the lead:
 
 ```text
 Error: acme/app is no project of the riff, so it gets no wave and no lead. A session there has the chat and the messages only. To make it a project, an admin of the riff who is an admin of acme/app on GitHub runs riff project init in a clone of acme/app.
@@ -6268,7 +6271,9 @@ riff project init --host heron --host thelio
 The loop of the wave reads the projects before each look. When the
 project no longer allows the host, or the riff forgot the project, the
 host starts no new session for it. The sessions that run go on to
-their end. To see why:
+their end. The look of the daemon at the pull requests and at `main`
+reads the projects too: on that host it reads nothing with `gh`,
+messages nobody, and files no fix item of a broken `main`. To see why:
 
 ```sh
 riff daemon status
