@@ -67,17 +67,51 @@
 //! the start of the daemon, are the business of the daemon
 //! (`Daemon::lead_back`): the lead starts again with `claude --resume`
 //! while its session holds the claim, or nobody holds it.
+//!
+//! One start of the lead of a project runs at a time on a host
+//! ([`crate::lead::one_start`], 01M77Y2BG12SEVF4ZEZ673QBFZ): the start of
+//! the daemon, `riff lead start`, `l` in the Sessions tab, `riff lead
+//! move` and the start again of the daemon share a lock in the folder of
+//! the lead.
+//!
+//! # A lead that fails to start
+//!
+//! A fault of a start of a lead on a host makes the next start there wait,
+//! longer at each fault in a row ([`Faults`], #2032,
+//! 01M77Y24FEQM5246G3CBXYWW62): 10 s, 30 s, 2 min, then 10 min
+//! ([`LEAD_START_WAITS`]). A fault is a start of the lead loop that failed
+//! ([`Did::Failed`]), and a lead of the host whose session ended because
+//! it ended less than a minute after its start, or because 3 starts again
+//! failed (`Daemon::lead_back`). The loop makes no start in the wait
+//! ([`Did::Waits`]). So the end of a session that frees the claim makes no
+//! new session at once, and another host of the project can claim the
+//! lead. A lead of the host that runs for [`LEAD_SHORT`] ends the row
+//! ([`Faults::ran`]). At the first fault of a row, the person gets one
+//! line of riff-bot in riff chat ([`BotFact::LeadCannotStart`],
+//! 01M77Y2BD66Z3VZD4A0B1Y60H1): the fault, and that the log of the daemon
+//! has the cause.
+//!
+//! ```mermaid
+//! flowchart LR
+//!     F["a fault: the start failed,<br/>or the lead ended at once"] --> W["no start for 10 s,<br/>30 s, 2 min, then 10 min"]
+//!     F -- "the first of a row" --> C["one line in riff chat"]
+//!     W --> S["the next start"]
+//!     S -- "a fault" --> F
+//!     S -- "the lead runs for a minute" --> E["the row ends"]
+//! ```
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use anyhow::Result;
 use riff_client::api::Api;
 use riff_core::name::{Place, SessionUri};
-use riff_core::wire::PlanReply;
+use riff_core::wire::{BotFact, LEAD_START_WAITS, LeadFault, PlanReply};
 use tokio::sync::Notify;
+use tokio::time::Instant;
 
-use crate::daemon::Daemon;
+use crate::daemon::{Daemon, LEAD_SHORT};
 use crate::runtime::Runtime;
 use crate::wave::{BoxFuture, Wave};
 use crate::{identity, text};
@@ -89,6 +123,99 @@ pub const LOOK_EVERY: Duration = Duration::from_secs(60);
 /// the wait of its load: the host of the last lead claims first on a tie.
 pub const TIE: Duration = Duration::from_secs(1);
 
+/// The faults in a row of the starts of the lead of each project on a
+/// host (#2032). After a fault, the host starts no lead of the project
+/// before the wait of [`LEAD_START_WAITS`]: the first fault of a row
+/// waits the first, and each fault after the last waits the last.
+///
+/// ```
+/// use std::time::Duration;
+/// use riff::lead_host::Faults;
+/// use riff_core::wire::LeadFault;
+/// use tokio::time::Instant;
+///
+/// let faults = Faults::default();
+/// let now = Instant::now();
+/// assert_eq!(faults.left("o/r", now), None);
+/// assert_eq!(faults.fault("o/r", LeadFault::Start, now), Duration::from_secs(10));
+/// assert_eq!(faults.left("o/r", now), Some(Duration::from_secs(10)));
+/// assert_eq!(faults.left("o/r", now + Duration::from_secs(10)), None);
+/// let next: Vec<u64> = (0..4).map(|_| faults.fault("o/r", LeadFault::Start, now).as_secs()).collect();
+/// assert_eq!(next, [30, 120, 600, 600]);
+/// // riff chat hears of a row one time, with its first fault.
+/// assert_eq!(faults.untold("o/r"), Some(LeadFault::Start));
+/// assert_eq!(faults.untold("o/r"), None);
+/// // A lead that runs for a minute ends the row.
+/// faults.ran("o/r", Duration::from_secs(59));
+/// assert!(faults.left("o/r", now).is_some());
+/// faults.ran("o/r", Duration::from_secs(60));
+/// assert_eq!(faults.left("o/r", now), None);
+/// assert_eq!(faults.fault("o/r", LeadFault::EndedSoon, now), Duration::from_secs(10));
+/// assert_eq!(faults.untold("o/r"), Some(LeadFault::EndedSoon));
+/// ```
+#[derive(Debug, Default)]
+pub struct Faults(Mutex<HashMap<String, Row>>);
+
+/// The faults in a row of one project ([`Faults`]).
+#[derive(Debug)]
+struct Row {
+    /// The faults of the row.
+    count: usize,
+    /// The first fault of the row.
+    first: LeadFault,
+    /// No start of a lead before this time.
+    until: Instant,
+    /// True when riff chat heard of the row.
+    told: bool,
+}
+
+impl Faults {
+    fn rows(&self) -> std::sync::MutexGuard<'_, HashMap<String, Row>> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// A fault `fault` of a start of the lead of `repo` at `now`. It gives
+    /// the wait before the next start of a lead of `repo` on this host.
+    pub fn fault(&self, repo: &str, fault: LeadFault, now: Instant) -> Duration {
+        let mut rows = self.rows();
+        let row = rows.entry(repo.to_owned()).or_insert(Row {
+            count: 0,
+            first: fault,
+            until: now,
+            told: false,
+        });
+        let wait = LEAD_START_WAITS[row.count.min(LEAD_START_WAITS.len() - 1)];
+        row.count += 1;
+        row.until = now + wait;
+        wait
+    }
+
+    /// The time from `now` until the next start of a lead of `repo` on this
+    /// host may come, or `None` when it may come now.
+    pub fn left(&self, repo: &str, now: Instant) -> Option<Duration> {
+        let rows = self.rows();
+        let left = rows.get(repo)?.until.saturating_duration_since(now);
+        (!left.is_zero()).then_some(left)
+    }
+
+    /// The lead of `repo` on this host runs, and its container started
+    /// `ran` ago: after [`LEAD_SHORT`], the row of faults ends.
+    pub fn ran(&self, repo: &str, ran: Duration) {
+        if ran >= LEAD_SHORT {
+            self.rows().remove(repo);
+        }
+    }
+
+    /// The first fault of the row of `repo`, one time for each row: riff
+    /// chat hears of it ([`BotFact::LeadCannotStart`]).
+    pub fn untold(&self, repo: &str) -> Option<LeadFault> {
+        let mut rows = self.rows();
+        let row = rows.get_mut(repo).filter(|row| !row.told)?;
+        row.told = true;
+        Some(row.first)
+    }
+}
+
 /// What the lead loop of a host can read and do. The daemon gives it
 /// with [`Hosted`]; a test gives a fake.
 pub trait Ground: Send + Sync {
@@ -99,6 +226,17 @@ pub trait Ground: Send + Sync {
     /// The session ID of the lead of the repository of `wave` on this
     /// host, while its container runs.
     fn mine(&self, wave: &Wave) -> Option<String>;
+
+    /// How long ago the container of the lead of the repository of `wave`
+    /// on this host started, while it runs.
+    fn ran(&self, wave: &Wave) -> Option<Duration>;
+
+    /// The faults in a row of the starts of the leads of this host.
+    fn faults(&self) -> &Faults;
+
+    /// Tells riff-server the fact `fact` as the person of `wave`: a line of
+    /// riff-bot in riff chat.
+    fn bot<'a>(&'a self, wave: &'a Wave, fact: BotFact) -> BoxFuture<'a, Result<()>>;
 
     /// The live sessions of this host, and its limit.
     fn load(&self) -> (usize, u32);
@@ -166,6 +304,12 @@ pub enum Did {
     Taken,
     /// This host stopped its old lead: another session holds the claim.
     Stopped,
+    /// The claim is free, and this host starts no lead for this time yet:
+    /// a fault of a start came before ([`Faults`]).
+    Waits(Duration),
+    /// The start of a new lead failed for `why`: the next start of a lead
+    /// on this host waits `wait` ([`Faults::fault`]).
+    Failed { why: String, wait: Duration },
 }
 
 /// The wait of a host with `live` sessions and the limit `limit` before
@@ -189,12 +333,18 @@ pub fn wait(live: usize, limit: u32, last: bool) -> Duration {
 }
 
 /// One look of the lead loop of the host of `wave` ([`step`]). The lead
-/// of this host claims at once. The start of a new lead waits first
+/// of this host claims at once. After a fault, no new lead starts before
+/// the end of its wait ([`Faults`]). The start of a new lead waits first
 /// ([`wait`]), then reads the plan again, and starts the lead only when
-/// the claim lead is still free.
+/// the claim lead is still free. A start that fails is a fault.
 pub async fn look(ground: &dyn Ground, wave: &Wave) -> Result<Did> {
     let plan = ground.plan(wave).await?;
     let mine = ground.mine(wave);
+    let faults = ground.faults();
+    if let Some(ran) = mine.as_ref().and_then(|_| ground.ran(wave)) {
+        faults.ran(&wave.repo, ran);
+    }
+    let waits = || faults.left(&wave.repo, Instant::now()).map(Did::Waits);
     match step(plan.lead.as_ref(), mine.as_deref()) {
         Step::Keep => Ok(Did::Nothing),
         Step::Stop(session) => {
@@ -207,21 +357,37 @@ pub async fn look(ground: &dyn Ground, wave: &Wave) -> Result<Did> {
             Ok(if granted { Did::Claimed } else { Did::Taken })
         }
         Step::Claim => {
+            if let Some(waits) = waits() {
+                return Ok(waits);
+            }
             let (live, limit) = ground.load();
             let last = plan.last_lead.as_deref() == Some(wave.host.as_str());
             tokio::time::sleep(wait(live, limit, last)).await;
             if ground.plan(wave).await?.lead.is_some() || ground.mine(wave).is_some() {
                 return Ok(Did::Taken);
             }
-            let granted = ground.start(wave).await?;
-            Ok(if granted { Did::Started } else { Did::Taken })
+            // A fault in the wait: a lead of this host ended at once.
+            if let Some(waits) = waits() {
+                return Ok(waits);
+            }
+            match ground.start(wave).await {
+                Ok(true) => Ok(Did::Started),
+                Ok(false) => Ok(Did::Taken),
+                Err(e) => Ok(Did::Failed {
+                    why: format!("{e:#}"),
+                    wait: faults.fault(&wave.repo, LeadFault::Start, Instant::now()),
+                }),
+            }
         }
     }
 }
 
 /// The lead loop of the host of `wave`: a look at each change of the plan
-/// that `changed` tells, and each [`LOOK_EVERY`]. It prints what a look
-/// did, and a fault one time until it changes. It never ends.
+/// that `changed` tells, each [`LOOK_EVERY`], and at the end of the wait
+/// after a fault ([`Faults::left`]). It prints what a look did, and a
+/// fault of a look one time until it changes. At the first fault of a row
+/// of starts, it tells riff chat one time ([`BotFact::LeadCannotStart`]).
+/// It never ends.
 pub async fn run(ground: Arc<dyn Ground>, wave: Wave, changed: Arc<Notify>) {
     let mut fault = None;
     loop {
@@ -240,8 +406,18 @@ pub async fn run(ground: Arc<dyn Ground>, wave: Wave, changed: Arc<Notify>) {
                 fault = Some(e);
             }
         }
+        let faults = ground.faults();
+        if let Some(fault) = faults.untold(&wave.repo) {
+            let fact = BotFact::LeadCannotStart { fault };
+            if let Err(e) = ground.bot(&wave, fact).await {
+                eprintln!("riff daemon: {}: the lead: {e:#}", wave.repo);
+            }
+        }
+        let next = faults
+            .left(&wave.repo, Instant::now())
+            .map_or(LOOK_EVERY, |left| left.min(LOOK_EVERY));
         tokio::select! {
-            () = tokio::time::sleep(LOOK_EVERY) => {}
+            () = tokio::time::sleep(next) => {}
             () = changed.notified() => {}
         }
     }
@@ -282,6 +458,21 @@ impl<R: Runtime + 'static> Ground for Hosted<R> {
 
     fn mine(&self, wave: &Wave) -> Option<String> {
         self.0.lead_session(&wave.repo)
+    }
+
+    fn ran(&self, wave: &Wave) -> Option<Duration> {
+        self.0.lead_ran(&wave.repo)
+    }
+
+    fn faults(&self) -> &Faults {
+        self.0.lead_faults()
+    }
+
+    fn bot<'a>(&'a self, wave: &'a Wave, fact: BotFact) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
+            let (api, me, _) = Self::person(wave)?;
+            api.bot(&me, fact).await
+        })
     }
 
     fn load(&self) -> (usize, u32) {
@@ -384,6 +575,16 @@ mod tests {
         live: usize,
         lead: Mutex<Option<String>>,
         starts: AtomicUsize,
+        /// The time of each start of a new lead, on the clock of tokio.
+        tries: Mutex<Vec<tokio::time::Instant>>,
+        /// When true, each start of a new lead fails after the claim: the
+        /// new session ends, and the plan changes ([`Host::changed`]).
+        broken: bool,
+        /// The changes of the plan of the thread, for [`run`].
+        changed: Arc<Notify>,
+        faults: Faults,
+        /// Each fact that riff chat got.
+        chats: Mutex<Vec<BotFact>>,
     }
 
     impl Host {
@@ -395,6 +596,20 @@ mod tests {
                 live,
                 lead: Mutex::new(None),
                 starts: AtomicUsize::new(0),
+                tries: Mutex::new(Vec::new()),
+                broken: false,
+                changed: Arc::new(Notify::new()),
+                faults: Faults::default(),
+                chats: Mutex::new(Vec::new()),
+            }
+        }
+
+        /// The host `name` whose start of a lead fails each time, for
+        /// example with a broken image.
+        fn broken(name: &'static str, server: &Arc<Server>) -> Host {
+            Host {
+                broken: true,
+                ..Host::new(name, server, 0)
             }
         }
 
@@ -420,6 +635,27 @@ mod tests {
         async fn look(&self) -> Did {
             look(self, &self.wave()).await.unwrap()
         }
+
+        /// The lead of this host ends less than a minute after its start, as
+        /// `Daemon::lead_back` does it: a fault first, then the end of its
+        /// session. It gives the wait before the next start.
+        async fn ends_at_once(&self) -> Duration {
+            let session = self.mine().unwrap();
+            let now = tokio::time::Instant::now();
+            let wait = self.faults.fault("acme/app", LeadFault::EndedSoon, now);
+            self.stop(&self.wave(), &session).await.unwrap();
+            wait
+        }
+
+        /// The time between each two starts of a new lead.
+        fn gaps(&self) -> Vec<Duration> {
+            let tries = self.tries.lock().unwrap();
+            tries.windows(2).map(|w| w[1] - w[0]).collect()
+        }
+
+        fn chats(&self) -> Vec<BotFact> {
+            self.chats.lock().unwrap().clone()
+        }
     }
 
     impl Ground for Host {
@@ -437,6 +673,21 @@ mod tests {
             self.mine()
         }
 
+        /// The last start of a new lead on the clock of tokio.
+        fn ran(&self, _: &Wave) -> Option<Duration> {
+            let last = *self.tries.lock().unwrap().last()?;
+            Some(last.elapsed())
+        }
+
+        fn faults(&self) -> &Faults {
+            &self.faults
+        }
+
+        fn bot<'a>(&'a self, _: &'a Wave, fact: BotFact) -> BoxFuture<'a, Result<()>> {
+            self.chats.lock().unwrap().push(fact);
+            Box::pin(async { Ok(()) })
+        }
+
         fn load(&self) -> (usize, u32) {
             (self.live, 4)
         }
@@ -448,6 +699,7 @@ mod tests {
         }
 
         fn start<'a>(&'a self, _: &'a Wave) -> BoxFuture<'a, Result<bool>> {
+            self.tries.lock().unwrap().push(tokio::time::Instant::now());
             let n = self.starts.fetch_add(1, Ordering::SeqCst);
             let session = format!("{}{n}", self.name);
             let me = self.uri(&session);
@@ -455,6 +707,13 @@ mod tests {
             let mut state = self.server.state();
             state.register(&me, now);
             let granted = state.claim_lead(&me, now);
+            if self.broken {
+                // The container does not start: the new session ends, and
+                // the claim is free again at once.
+                state.end(&me, now);
+                self.changed.notify_one();
+                return Box::pin(async { anyhow::bail!("the image is broken") });
+            }
             if granted == Ok(true) {
                 *self.lead.lock().unwrap() = Some(session);
             } else {
@@ -562,5 +821,68 @@ mod tests {
         assert_eq!((a, b), (Did::Claimed, Did::Nothing));
         assert_eq!(server.lead().unwrap().who(), old.who());
         assert_eq!(thelio.mine(), None);
+    }
+
+    /// The test of #2032 with a fake clock: each start of the lead fails,
+    /// for example with a broken image, and the end of each new session
+    /// frees the claim and changes the plan at once. The lead loop waits
+    /// longer before each next start: 10 s, 30 s, 2 min, then 10 min. riff
+    /// chat gets one line, with the fault.
+    #[tokio::test(start_paused = true)]
+    async fn a_start_that_fails_waits_longer_each_time_and_riff_chat_gets_one_line() {
+        let server = Server::new();
+        let host = Arc::new(Host::broken("pangolin", &server));
+        let ground: Arc<dyn Ground> = host.clone();
+        let task = tokio::spawn(run(ground, host.wave(), host.changed.clone()));
+        tokio::time::sleep(Duration::from_secs(25 * 60)).await;
+        task.abort();
+
+        let secs: Vec<u64> = host.gaps().iter().map(Duration::as_secs).collect();
+        assert_eq!(secs, [10, 30, 120, 600, 600]);
+        let fault = LeadFault::Start;
+        assert_eq!(host.chats(), [BotFact::LeadCannotStart { fault }]);
+        assert_eq!(server.lead(), None);
+    }
+
+    /// #2032: a lead that ends less than a minute after its start is a
+    /// fault too. The host starts no new lead before the end of the wait,
+    /// and the wait grows. A lead that then runs for a minute ends the
+    /// row: the next fault waits 10 s again.
+    #[tokio::test(start_paused = true)]
+    async fn a_lead_that_ends_at_once_waits_longer_each_time_until_a_lead_runs_a_minute() {
+        let server = Server::new();
+        let host = Host::new("pangolin", &server, 0);
+        assert_eq!(host.look().await, Did::Started);
+        for want in [10, 30, 120, 600, 600] {
+            let wait = host.ends_at_once().await;
+            assert_eq!(wait, Duration::from_secs(want));
+            assert_eq!(host.look().await, Did::Waits(wait));
+            tokio::time::sleep(wait - Duration::from_secs(1)).await;
+            assert_eq!(host.look().await, Did::Waits(Duration::from_secs(1)));
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            assert_eq!(host.look().await, Did::Started);
+        }
+        assert_eq!(host.faults.untold("acme/app"), Some(LeadFault::EndedSoon));
+
+        tokio::time::sleep(LEAD_SHORT).await;
+        assert_eq!(host.look().await, Did::Nothing);
+        assert_eq!(host.ends_at_once().await, Duration::from_secs(10));
+        assert_eq!(host.faults.untold("acme/app"), Some(LeadFault::EndedSoon));
+    }
+
+    /// #2032: while a host waits after a fault, another host of the
+    /// project claims the lead and starts it.
+    #[tokio::test(start_paused = true)]
+    async fn while_a_host_waits_after_a_fault_another_host_starts_the_lead() {
+        let server = Server::new();
+        let pangolin = Host::new("pangolin", &server, 0);
+        let thelio = Host::new("thelio", &server, 2);
+        assert_eq!(pangolin.look().await, Did::Started);
+        pangolin.ends_at_once().await;
+
+        let (a, b) = tokio::join!(pangolin.look(), thelio.look());
+        assert_eq!(a, Did::Waits(Duration::from_secs(10)));
+        assert_eq!(b, Did::Started);
+        assert_eq!(server.lead().unwrap().place().host(), "thelio");
     }
 }

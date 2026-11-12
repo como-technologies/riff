@@ -30,6 +30,7 @@
 //! |---|---|---|
 //! | The container | `riff-lead-OWNER-REPO` ([`name_of`]): one lead for each repository | 01M4Z60B81RTZT71PN5HV0GZHX, 01M501P9MXNAP5QXNVBVF5JJFN |
 //! | The folder | `leads/OWNER-REPO` in the data folder of riff ([`folder_of`]): `clone/` and `claude/` | 01M501P9Q51AYN9GBPWKVHA229 |
+//! | The start | one start of the lead at a time on the host: each start holds the lock `start.lock` in the folder of the lead ([`start_lock`]), and under the lock a start that finds the lead running starts nothing ([`one_start`]) | 01M77Y2BG12SEVF4ZEZ673QBFZ |
 //! | The clone | `git clone --reference MAIN`, on the default branch, at the first start; a fetch and a fast-forward at each later start, when it has no local change and git can fast-forward it ([`fresh_clone`]) | 01M501P9Q51AYN9GBPWKVHA229, 01M50RRQ9DT0JPSB358EAZRP8Z, 01M51JYDHAQDJ3GH2J8DT3AZQS |
 //! | The Claude folder | the first-run answers of `claude`, as for each session ([`run::claude_folder`]), and `"tui": "default"`, so `claude` turns on no mouse reports ([`run::TUI`]) | 01M501P9SDGVWG3MTVCW5BDRQQ, 01M51JACH6TQP318ZFG6NQ9GRM, 01M6XVBRT2T838TX53SSXR6HRH |
 //! | The command | `claude --model MODEL --session-id ID --dangerously-skip-permissions START` ([`spec`]), with the model of the merged `riff.toml` ([`crate::session_setup::Setup::claude`]); the daemon runs it as `riff relay --terminal -- ...` | 01M501P9VN47QAKZ6B8P39ZSW4, 01M5GG2X5F1HXCQJ2JJWV6305K, 01M6VAQWECJ6N6VJF66KCMNYD1 |
@@ -742,9 +743,13 @@ pub async fn start_with(
         return attach_here(runtime, &name, &folder).await;
     };
     let start = text::lead_start(&repo);
-    launch(dir, api, here, server, (&main, &common), &start, false).await?;
-    if !gives_workers(&status, &repo) {
-        println!("{}", text::lead_gives_no_workers(&repo));
+    match launch(dir, api, here, server, (&main, &common), &start, false).await? {
+        Launched::New(_) if !gives_workers(&status, &repo) => {
+            println!("{}", text::lead_gives_no_workers(&repo));
+        }
+        Launched::New(_) => {}
+        // Another start made the lead while this one waited (#2032).
+        Launched::Runs(_) => println!("{}", text::lead_runs(&repo, &name)),
     }
     attach_here(runtime, &name, &folder).await
 }
@@ -771,7 +776,7 @@ pub async fn start_of_wave(dir: &Path, repo: &str) -> Result<String> {
     session_image::merged(&main, |_| {})?;
     let api = Api::new(&wave.server);
     let start = text::lead_start(repo);
-    launch(
+    let launched = launch(
         dir,
         api,
         &here,
@@ -781,6 +786,9 @@ pub async fn start_of_wave(dir: &Path, repo: &str) -> Result<String> {
         false,
     )
     .await?;
+    if let Launched::Runs(_) = launched {
+        println!("{}", text::lead_runs(repo, &name));
+    }
     Ok(name)
 }
 
@@ -789,6 +797,8 @@ pub async fn start_of_wave(dir: &Path, repo: &str) -> Result<String> {
 /// as [`start_of_wave`] does, from the main clone of the wave, and asks
 /// for the claim lead only when it is free. False when another session
 /// got the claim first: the new session ends, and no container starts.
+/// False too when another start on this host made the lead first
+/// ([`one_start`]): the next look claims for that lead.
 pub async fn claim_start(dir: &Path, wave: &crate::wave::Wave) -> Result<bool> {
     let here = wave.place(None)?;
     let main = wave.main.clone();
@@ -811,7 +821,8 @@ pub async fn claim_start(dir: &Path, wave: &crate::wave::Wave) -> Result<bool> {
     )
     .await
     {
-        Ok(_) => Ok(true),
+        Ok(Launched::New(_)) => Ok(true),
+        Ok(Launched::Runs(_)) => Ok(false),
         Err(e) if e.downcast_ref::<Held>().is_some() => Ok(false),
         Err(e) => Err(e),
     }
@@ -837,16 +848,108 @@ impl std::fmt::Display for Held {
 
 impl std::error::Error for Held {}
 
+/// The file of the lock of the starts of the lead, in the folder of the
+/// lead ([`start_lock`], #2032).
+pub const START_LOCK: &str = "start.lock";
+
+/// Takes the lock of the starts of the lead in the folder `folder` of the
+/// lead ([`START_LOCK`]): one start of the lead of a repository at a time
+/// on the host. When another start holds the lock, it calls `waits`, then
+/// waits for the end of that start. The lock ends when the file drops, or
+/// when the process ends.
+///
+/// ```
+/// # tokio::runtime::Runtime::new()?.block_on(async {
+/// let folder = tempfile::tempdir()?;
+/// let lock = riff::lead::start_lock(folder.path(), || panic!("no other start")).await?;
+/// let file = std::fs::File::open(folder.path().join(riff::lead::START_LOCK))?;
+/// assert!(file.try_lock().is_err(), "a second start waits");
+/// drop(lock);
+/// assert!(file.try_lock().is_ok());
+/// # anyhow::Ok(())
+/// # })?;
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub async fn start_lock(folder: &Path, waits: impl FnOnce()) -> Result<std::fs::File> {
+    let path = folder.join(START_LOCK);
+    std::fs::create_dir_all(folder).with_context(|| format!("cannot make {}", folder.display()))?;
+    let file = riff_client::files::options()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .with_context(|| format!("cannot open {}", path.display()))?;
+    match file.try_lock() {
+        Ok(()) => return Ok(file),
+        Err(std::fs::TryLockError::WouldBlock) => waits(),
+        Err(std::fs::TryLockError::Error(e)) => {
+            return Err(e).with_context(|| format!("cannot lock {}", path.display()));
+        }
+    }
+    tokio::task::spawn_blocking(move || file.lock().map(|()| file))
+        .await?
+        .with_context(|| format!("cannot lock {}", path.display()))
+}
+
+/// What a start of the lead did ([`one_start`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Launched {
+    /// It started a new lead with this session ID.
+    New(String),
+    /// A lead of the repository ran already on the host, with this
+    /// session ID: it started nothing.
+    Runs(String),
+}
+
+/// One start of the lead of `repo` at a time on this host (#2032): `start`
+/// runs under the lock of the starts of the lead in the folder `folder` of
+/// the lead ([`start_lock`]), and only when the daemon in the folder `dir`
+/// runs no lead of `repo` then. `riff lead start`, `l` in the Sessions tab,
+/// `riff lead move` and the start of the daemon ([`claim_start`]) go
+/// through it, and the daemon holds the lock to start a lead again
+/// (`Daemon::lead_back`). So two starts at once make one container.
+pub async fn one_start(
+    dir: &Path,
+    folder: &Path,
+    repo: &str,
+    start: impl Future<Output = Result<String>>,
+) -> Result<Launched> {
+    let _lock = start_lock(folder, || println!("{}", text::lead_start_waits_lock(repo))).await?;
+    let name = name_of(repo);
+    let status = daemon::status(dir).await?;
+    if let Some(live) = status.sessions.iter().find(|s| s.name == name) {
+        return Ok(Launched::Runs(live.session.clone()));
+    }
+    Ok(Launched::New(start.await?))
+}
+
 /// Starts the lead of the repository of `here` on the daemon in the
 /// folder `dir`, from the main clone `main` with the git dir `common`,
-/// with the first prompt `start`. It waits until the container runs,
-/// and makes the new session the lead as the person, with no session
-/// ID (01M5NJAYC7MXS13TA3VJB4N6RP). The new lead gets the claim lead of
-/// the project (#1791): with `if_free`, only when no live session holds
-/// it, else the error is [`Held`]; with no `if_free`, it takes the claim
-/// from its holder. It gives the session ID of the lead. A failed start
-/// ends the new session.
+/// with the first prompt `start`, one start at a time ([`one_start`]). It
+/// waits until the container runs, and makes the new session the lead as
+/// the person, with no session ID (01M5NJAYC7MXS13TA3VJB4N6RP). The new
+/// lead gets the claim lead of the project (#1791): with `if_free`, only
+/// when no live session holds it, else the error is [`Held`]; with no
+/// `if_free`, it takes the claim from its holder. A failed start ends the
+/// new session.
 async fn launch(
+    dir: &Path,
+    api: Api,
+    here: &Place,
+    server: &str,
+    main: (&Path, &Path),
+    start: &str,
+    if_free: bool,
+) -> Result<Launched> {
+    let repo = here.repo_text();
+    let folder = folder_of(&run::data_dir()?, &repo);
+    let new = launch_new(dir, api, here, server, main, start, if_free);
+    one_start(dir, &folder, &repo, new).await
+}
+
+/// [`launch`] itself, under the lock of the starts of the lead. It gives
+/// the session ID of the new lead.
+async fn launch_new(
     dir: &Path,
     api: Api,
     here: &Place,
@@ -1112,7 +1215,7 @@ pub async fn take(dir: &Path, wave: &crate::wave::Wave) -> Result<String> {
             let (main, common) = run::main_clone(&wave.main)?;
             let api = Api::new(&wave.server);
             let start = text::lead_moved(&repo);
-            launch(
+            let launched = launch(
                 dir,
                 api,
                 &here,
@@ -1121,7 +1224,10 @@ pub async fn take(dir: &Path, wave: &crate::wave::Wave) -> Result<String> {
                 &start,
                 false,
             )
-            .await?
+            .await?;
+            match launched {
+                Launched::New(session) | Launched::Runs(session) => session,
+            }
         }
     };
     let place = Place::new(here.host(), here.repo().clone(), None)?;
@@ -1327,7 +1433,7 @@ pub async fn stop_here(dir: &Path, repo: &str) -> Result<()> {
 
 /// Asks the daemon in the folder `dir` to start the session of `start`
 /// with a terminal, and waits until its container runs.
-async fn ask_start(dir: &Path, start: daemon::Start) -> Result<()> {
+pub(crate) async fn ask_start(dir: &Path, start: daemon::Start) -> Result<()> {
     let mut client = daemon::Client::connect(dir).await?;
     client.ask(Ask::Start(Box::new(start))).await?;
     loop {

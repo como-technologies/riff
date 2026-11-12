@@ -497,7 +497,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 use riff_core::build::Build;
 use riff_core::name::{Place, SessionUri};
-use riff_core::wire::{BotFact, Wake};
+use riff_core::wire::{BotFact, LeadFault, Wake};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
@@ -2639,6 +2639,10 @@ pub struct Daemon<R> {
     /// no container now ([`Daemon::lead_back`]): it is the lead of this
     /// host ([`Daemon::lead_session`]).
     backs: Mutex<BTreeMap<String, String>>,
+    /// The faults in a row of the starts of the lead of each repository on
+    /// this host (#2032, [`crate::lead_host::Faults`]): the lead loop waits
+    /// before its next start.
+    faults: crate::lead_host::Faults,
     /// The session of each lead that lost its network at the restart of the
     /// daemon: the person heard of it in riff chat, and `riff daemon status`
     /// shows it ([`Daemon::recover`]).
@@ -2804,6 +2808,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             lead_idle: lead_idle(),
             again_told: Mutex::default(),
             backs: Mutex::default(),
+            faults: crate::lead_host::Faults::default(),
             lost: Mutex::default(),
             looked: Mutex::default(),
             own_gh: Mutex::default(),
@@ -3229,6 +3234,23 @@ impl<R: Runtime + 'static> Daemon<R> {
             .or_else(|| self.backs_lock().get(repo).cloned())
     }
 
+    /// How long ago the container of the lead of `repo` (`OWNER/REPO`) that
+    /// this daemon runs started ([`crate::lead_host::Ground::ran`]).
+    pub fn lead_ran(&self, repo: &str) -> Option<Duration> {
+        self.records()
+            .into_iter()
+            .find(|r| r.terminal && r.me.place().repo_text() == repo)
+            .map(|r| {
+                let ran = now_ms().saturating_sub(r.live.since_ms);
+                Duration::from_millis(u64::try_from(ran).unwrap_or(0))
+            })
+    }
+
+    /// The faults in a row of the starts of the leads of this host (#2032).
+    pub fn lead_faults(&self) -> &crate::lead_host::Faults {
+        &self.faults
+    }
+
     /// Tells the person in riff chat, once for each lead, that the
     /// sign-in of `claude` in the lead is stale
     /// (01M5NJ87YEHHGJBANM7CRYV56Z): the lead holds the sign-in file of
@@ -3506,7 +3528,12 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// instead, and the host loses the part lead, when another session
     /// holds the claim, when the lead ended `short` after its start
     /// ([`LEAD_SHORT`]), or when the start fails [`LEAD_STARTS`] times. Then
-    /// a host of the project starts a new lead ([`crate::lead_host`]). It
+    /// a host of the project starts a new lead ([`crate::lead_host`]). The
+    /// end soon after the start and the 3 failed starts are faults (#2032):
+    /// the lead loop of this host waits before its next start
+    /// ([`crate::lead_host::Faults`]). The start again holds the lock of
+    /// the starts of the lead ([`crate::lead::start_lock`]), and starts
+    /// nothing when another start on this host made a new lead first. It
     /// gives the line of the log.
     ///
     /// ```mermaid
@@ -3514,9 +3541,12 @@ impl<R: Runtime + 'static> Daemon<R> {
     ///     E["the lead has no container"] --> H{"the claim lead"}
     ///     H -- "another session" --> L["its session ends"]
     ///     H -- "this lead, or free" --> S{"ended less than a minute<br/>after its start?"}
-    ///     S -- yes --> L
-    ///     S -- no --> A["claude --resume, the same session"]
-    ///     A -- "3 starts fail" --> L
+    ///     S -- yes --> F["a fault: this host<br/>waits before its next start"]
+    ///     S -- no --> K{"under the lock: another<br/>start made a new lead?"}
+    ///     K -- yes --> L
+    ///     K -- no --> A["claude --resume, the same session"]
+    ///     A -- "3 starts fail" --> F
+    ///     F --> L
     ///     L --> N["a host of the project<br/>starts a new lead"]
     /// ```
     ///
@@ -3541,40 +3571,75 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// [`Daemon::lead_back`] itself.
     async fn lead_back_now(self: &Arc<Self>, record: Record, short: bool) -> String {
         let name = record.live.name.clone();
+        let repo = record.me.place().repo_text();
         let other = match self.world.lead_holder(&record).await {
             Ok(Some(lead)) if lead.who().session() != Some(record.live.session.as_str()) => {
                 Some(lead)
             }
             _ => None,
         };
-        let why = if let Some(lead) = other {
-            text::lead_lost(&name, &lead)
+        let (why, fault) = if let Some(lead) = other {
+            (text::lead_lost(&name, &lead), None)
         } else if short {
-            text::lead_ended_soon(&name)
+            (text::lead_ended_soon(&name), Some(LeadFault::EndedSoon))
         } else {
-            match self.lead_start(&record).await {
-                Ok(start) => {
-                    let mut why = String::new();
-                    for attempt in 0..LEAD_STARTS {
-                        if attempt > 0 {
-                            tokio::time::sleep(LEAD_START_WAIT).await;
-                        }
-                        match self.lead_launch(start.clone()).await {
-                            Ok(()) => return text::lead_back(&name),
-                            Err(e) => why = e,
-                        }
-                    }
-                    text::lead_back_failed(&name, &why)
-                }
-                Err(e) => text::lead_back_failed(&name, &format!("{e:#}")),
+            match self.lead_back_start(&record).await {
+                Ok(None) => return text::lead_back(&name),
+                Ok(Some(why)) => (why, None),
+                Err(why) => (text::lead_back_failed(&name, &why), Some(LeadFault::Start)),
             }
         };
+        // The fault comes before the end of the session: the end frees the
+        // claim lead, and the lead loop of this host must wait (#2032).
+        let why = match fault {
+            Some(fault) => {
+                let wait = self.faults.fault(&repo, fault, tokio::time::Instant::now());
+                format!("{why} {}", text::lead_start_waits(wait))
+            }
+            None => why,
+        };
         self.world.leave(&record).await;
-        self.lead_part(&record, false);
-        for line in self.retire(&record.me.place().repo_text()) {
+        // The new lead of another start keeps the part lead of the host.
+        if !self.records().iter().any(|r| r.live.name == name) {
+            self.lead_part(&record, false);
+        }
+        for line in self.retire(&repo) {
             println!("{line}");
         }
         why
+    }
+
+    /// The start again of the lead of `record` for [`Daemon::lead_back`],
+    /// under the lock of the starts of the lead (#2032,
+    /// [`crate::lead::start_lock`]), with up to [`LEAD_STARTS`] tries.
+    /// `None` when the lead runs again, and the line of the log when
+    /// another start on this host made a new lead first: then it starts
+    /// nothing. The error is why the start failed.
+    async fn lead_back_start(self: &Arc<Self>, record: &Record) -> Result<Option<String>, String> {
+        let name = &record.live.name;
+        let repo = record.me.place().repo_text();
+        let waits = || println!("riff daemon: {}", text::lead_start_waits_lock(&repo));
+        let _lock = crate::lead::start_lock(&record.folder, waits)
+            .await
+            .map_err(|e| format!("{e:#}"))?;
+        if self.lock().contains_key(name) {
+            return Ok(Some(text::lead_started_by_other(name)));
+        }
+        let start = self
+            .lead_start(record)
+            .await
+            .map_err(|e| format!("{e:#}"))?;
+        let mut why = String::new();
+        for attempt in 0..LEAD_STARTS {
+            if attempt > 0 {
+                tokio::time::sleep(LEAD_START_WAIT).await;
+            }
+            match self.lead_launch(start.clone()).await {
+                Ok(()) => return Ok(None),
+                Err(e) => why = e,
+            }
+        }
+        Err(why)
     }
 
     /// The lead of `record` cannot start again now, for `why`: it runs the
@@ -10433,10 +10498,20 @@ mod tests {
         assert!(!waits_for_lead(&api, &person).await);
     }
 
+    /// The wait from now before the next start of a lead of the repository
+    /// of [`LEAD`] on the daemon of `here` ([`crate::lead_host::Faults`]).
+    fn lead_wait(here: &Here) -> Option<Duration> {
+        let now = tokio::time::Instant::now();
+        here.daemon
+            .lead_faults()
+            .left("como-technologies/riff", now)
+    }
+
     /// #1791, 01M776RSYKJK9NETFAD8G0CCVQ: a lead that ends less than a
     /// minute after its start does not start again. Its session ends on
     /// riff-server at once, so the claim lead is free, and the wave of the
-    /// repository waits for a lead. A new lead ends the wait.
+    /// repository waits for a lead. A new lead ends the wait. #2032: the
+    /// end is a fault, so the next start of a lead on the host waits.
     #[tokio::test]
     async fn a_lead_that_ends_soon_after_its_start_ends_its_session_and_its_wave_waits() {
         let (api, person) = riff_of_the_lead().await;
@@ -10446,10 +10521,13 @@ mod tests {
         owned.lock().record.live.since_ms = now_ms();
         drop(owned);
         assert!(!waits_for_lead(&api, &person).await);
+        assert_eq!(lead_wait(&here), None);
 
         here.fake.stop(LEAD).await.unwrap();
         until(|| !said_of(&server, "leave").is_empty()).await;
         assert_eq!(lead_starts(&here), 1);
+        let wait = lead_wait(&here).expect("the next start waits");
+        assert!(wait <= Duration::from_secs(10), "{wait:?}");
         assert!(waits_for_lead(&api, &person).await);
         assert_eq!(server.lead_holder(&record).await.unwrap(), None);
 
@@ -10511,6 +10589,113 @@ mod tests {
         );
         assert_eq!(lead_starts(&here), 1);
         assert!(here.daemon.lead_session("como-technologies/riff").is_none());
+    }
+
+    /// #2032: a lead that ended long after its start, and cannot start again,
+    /// is a fault: its session ends, and the next start of a lead on the
+    /// host waits.
+    #[tokio::test]
+    async fn a_lead_that_cannot_start_again_is_a_fault_and_the_next_start_waits() {
+        let (api, _) = riff_of_the_lead().await;
+        let (here, server) = here_with_riff(&api).await;
+        let record = started_lead(&here).await;
+        *server.again_fault.lock().unwrap() = Some(("the image is broken".into(), false));
+
+        here.fake.stop(LEAD).await.unwrap();
+        until(|| !said_of(&server, "leave").is_empty()).await;
+        assert_eq!(
+            said_of(&server, "leave"),
+            [format!("leave {}", record.live.session)]
+        );
+        assert_eq!(lead_starts(&here), 1);
+        let wait = lead_wait(&here).expect("the next start waits");
+        assert!(wait <= Duration::from_secs(10), "{wait:?}");
+    }
+
+    /// The [`Start`] of a new lead [`LEAD`] with the session `session`.
+    fn new_lead(here: &Here, session: &str) -> Start {
+        Start {
+            session: session.into(),
+            terminal: true,
+            ..here.start(LEAD, crate::lead::ITEM)
+        }
+    }
+
+    /// The test of #2032: `riff lead start` and the start of the daemon at
+    /// once make one container. Both go through the lock of the starts of
+    /// the lead ([`crate::lead::one_start`]): the second finds the lead of
+    /// the first under the lock, and starts nothing.
+    #[tokio::test]
+    async fn a_start_of_the_daemon_and_riff_lead_start_at_once_make_one_container() {
+        let world: Arc<dyn World> = Arc::new(Server::default());
+        let fake = Fake::default().with_image(IMAGE);
+        let here = Here::with_world(fake, QUIET_LIMIT, Some(world)).await;
+        let folder = crate::lead::folder_of(here.root.path(), "como-technologies/riff");
+        // Each start does its slow steps first, as the image, the clone and
+        // riff-server take a while, then asks the daemon.
+        let start = |session: &str| {
+            let (dir, start) = (here.dir.clone(), new_lead(&here, session));
+            async move {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                crate::lead::ask_start(&dir, start).await?;
+                Ok(start_session(&dir, LEAD).await)
+            }
+        };
+        let repo = "como-technologies/riff";
+        let (person, daemon) = tokio::join!(
+            crate::lead::one_start(&here.dir, &folder, repo, start("person")),
+            crate::lead::one_start(&here.dir, &folder, repo, start("daemon")),
+        );
+        let mut both = [person.unwrap(), daemon.unwrap()];
+        both.sort_by_key(|launched| matches!(launched, crate::lead::Launched::Runs(_)));
+        assert_eq!(lead_starts(&here), 1);
+        let [
+            crate::lead::Launched::New(new),
+            crate::lead::Launched::Runs(runs),
+        ] = both
+        else {
+            panic!("{both:?}");
+        };
+        assert_eq!(new, runs, "the second start finds the lead of the first");
+    }
+
+    /// The session ID of the session `name` in the status of the daemon in
+    /// the folder `dir`.
+    async fn start_session(dir: &Path, name: &str) -> String {
+        let status = status(dir).await.unwrap();
+        let live = status.sessions.iter().find(|s| s.name == name).unwrap();
+        live.session.clone()
+    }
+
+    /// #2032: the start again of a lead holds the lock of the starts of the
+    /// lead too. The lead ends by itself while another start on the host
+    /// holds the lock and makes a new lead: the old lead does not start
+    /// again, its session ends, and the host keeps the part lead.
+    #[tokio::test]
+    async fn a_lead_that_ends_while_another_start_makes_a_new_lead_does_not_start_again() {
+        let (api, _) = riff_of_the_lead().await;
+        let (here, server) = here_with_riff(&api).await;
+        let record = started_lead(&here).await;
+        let lock = crate::lead::start_lock(&record.folder, || {})
+            .await
+            .unwrap();
+        here.fake.stop(LEAD).await.unwrap();
+        until(|| here.daemon.lock().get(LEAD).is_none()).await;
+        crate::lead::ask_start(&here.dir, new_lead(&here, "new"))
+            .await
+            .unwrap();
+        drop(lock);
+
+        until(|| !said_of(&server, "leave").is_empty()).await;
+        assert_eq!(
+            said_of(&server, "leave"),
+            [format!("leave {}", record.live.session)]
+        );
+        assert_eq!(lead_starts(&here), 2);
+        let session = here.daemon.lead_session("como-technologies/riff");
+        assert_eq!(session.as_deref(), Some("new"));
+        assert!(parts::of(&here.dir, "como-technologies/riff").lead);
+        assert_eq!(lead_wait(&here), None, "no fault");
     }
 
     /// #1791: a lead that runs while another session holds the claim lead,

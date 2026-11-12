@@ -43,7 +43,7 @@
 //! |---|---|---|---|
 //! | `release_published` | `riff release cut` | yes | each admin, and the giver |
 //! | `release_waits` | the watch of the deploy | yes | each admin, and the giver |
-//! | `lead_started`, `lead_waits`, `lead_no_main`, `lead_failed`, `lead_stale`, `lead_no_network` | the daemon | no | no one |
+//! | `lead_started`, `lead_waits`, `lead_no_main`, `lead_failed`, `lead_stale`, `lead_no_network`, `lead_cannot_start` | the daemon | no | no one |
 //!
 //! A line that names a person with `@USER` wakes the terminals of that
 //! person by the name (01M6Y1A5PTCVZ6GRJ0FXMART2T): an ask of riff. A
@@ -59,7 +59,7 @@
 use riff_core::hold::Hold;
 use riff_core::name::{SessionUri, lead_container};
 use riff_core::selector::Selector;
-use riff_core::wire::BotFact;
+use riff_core::wire::{BotFact, LEAD_START_WAITS, LeadFault};
 
 /// The refusal of a fact from a session that is not the lead.
 pub const ONLY_PERSON_OR_LEAD: &str =
@@ -244,6 +244,18 @@ pub fn line(fact: &BotFact, facts: &Facts<'_>) -> Result<Line, String> {
             capital(&lead),
             lead_container(&repo)
         ),
+        BotFact::LeadCannotStart { fault } => {
+            let fault = match fault {
+                LeadFault::Start => "the start failed",
+                LeadFault::EndedSoon => "the lead ended less than a minute after its start",
+            };
+            format!(
+                "riff cannot start {lead}: {fault}. The log of the riff daemon on {host} has the \
+                 cause. The daemon tries again after {}, and says no more here until a lead runs \
+                 on {host} for a minute.",
+                start_waits()
+            )
+        }
     };
     let named: &[&str] = match fact {
         BotFact::ReleasePublished { .. } | BotFact::ReleaseWaits { .. } => admins,
@@ -252,7 +264,8 @@ pub fn line(fact: &BotFact, facts: &Facts<'_>) -> Result<Line, String> {
         | BotFact::LeadNoMain
         | BotFact::LeadFailed
         | BotFact::LeadStale
-        | BotFact::LeadNoNetwork => &[],
+        | BotFact::LeadNoNetwork
+        | BotFact::LeadCannotStart { .. } => &[],
     };
     let to = named
         .iter()
@@ -289,6 +302,23 @@ fn mention(admins: &[&str]) -> String {
         .filter(|admin| !admin.is_empty())
         .map(|admin| format!("@{admin} "))
         .collect()
+}
+
+/// The waits of [`LEAD_START_WAITS`] in words, for a line.
+///
+/// ```text
+/// 10 s, 30 s, 2 min, then every 10 min
+/// ```
+fn start_waits() -> String {
+    let mut each: Vec<String> = LEAD_START_WAITS
+        .iter()
+        .map(|wait| match wait.as_secs() {
+            secs if secs >= 60 && secs % 60 == 0 => format!("{} min", secs / 60),
+            secs => format!("{secs} s"),
+        })
+        .collect();
+    let last = each.pop().unwrap_or_default();
+    format!("{}, then every {last}", each.join(", "))
 }
 
 /// `text` with a capital first letter, for the start of a line.
@@ -542,6 +572,9 @@ mod tests {
             BotFact::LeadFailed,
             BotFact::LeadStale,
             BotFact::LeadNoNetwork,
+            BotFact::LeadCannotStart {
+                fault: LeadFault::Start,
+            },
         ] {
             let line = line(&fact, &facts(&me, &["brett"])).unwrap();
             assert!(
@@ -569,6 +602,29 @@ mod tests {
                 .starts_with("The lead of mike in o/r on thelio lost")
         );
         assert!(lost.body.contains("podman stop riff-lead-o-r,"));
+    }
+
+    /// #2032: the line of a lead that cannot start names the fault, the
+    /// log of the daemon for the cause, and the waits before the next
+    /// starts. It holds no text of the daemon.
+    #[test]
+    fn the_line_of_a_lead_that_cannot_start_names_the_fault_and_the_waits() {
+        let me = me();
+        let of = |fault| {
+            let fact = BotFact::LeadCannotStart { fault };
+            line(&fact, &facts(&me, &[])).unwrap().body
+        };
+        assert_eq!(
+            of(LeadFault::Start),
+            "riff cannot start the lead of mike in o/r on thelio: the start failed. The log of \
+             the riff daemon on thelio has the cause. The daemon tries again after 10 s, 30 s, 2 \
+             min, then every 10 min, and says no more here until a lead runs on thelio for a \
+             minute."
+        );
+        assert!(of(LeadFault::EndedSoon).starts_with(
+            "riff cannot start the lead of mike in o/r on thelio: the lead ended less than a \
+             minute after its start. The log"
+        ));
     }
 
     /// A caller in no repository gets no line.
