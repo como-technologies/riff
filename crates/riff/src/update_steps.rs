@@ -648,6 +648,7 @@ mod tests {
         let unit = Unit {
             exe: "/home/mike/.cargo/bin/riff".into(),
             env: vec![("PATH".into(), "/home/mike/.cargo/bin:/usr/bin".into())],
+            desktop: false,
         };
         let text = unit.text().unwrap();
         assert!(text.contains("RestartSec=2\n"), "{text}");

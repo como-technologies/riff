@@ -2,8 +2,10 @@
 //! that the tally knows (#1597). A `Gh::default()` counts nothing, so
 //! `riff daemon status` would show its calls as the calls of "other
 //! callers" (#1582). A `Gh::for_repo(..)` with no `.by(..)` counts as
-//! "other" too (#1629). The code is the source of each crate: the check
-//! reads the files, as `no_skill.rs` does.
+//! "other" too (#1629). A `gh` that riff starts with no `Gh` counts
+//! nothing, and in the daemon it can ask the keyring for an unlock prompt
+//! (01M77AB7XZV8KG8RRZ8C6R5A8X). The code is the source of each crate: the
+//! check reads the files, as `no_skill.rs` does.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -25,7 +27,13 @@ const CRATES: [&str; 5] = [
 ];
 
 /// The ways to get a `gh` that counts nothing.
-const UNCOUNTED: [&str; 3] = ["Gh::default()", "Gh::at(", "Command::new(\"gh\")"];
+const UNCOUNTED: [&str; 5] = [
+    "Gh::default()",
+    "Gh::at(",
+    "Command::new(\"gh\")",
+    "output(\"gh\"",
+    "output_within(\"gh\"",
+];
 
 /// Each file of `dir` with the extension `ext`, and of its folders.
 fn files(dir: &Path, ext: &str, out: &mut Vec<PathBuf>) {
@@ -200,6 +208,7 @@ impl X {
         Gh::at(\"gh\");
     }
     fn e() { Command::new(\"gh\"); }
+    fn f() { run::output_within(\"gh\", dir, &[\"auth\", \"token\"], WAIT); }
 }
 ";
     assert_eq!(
@@ -207,6 +216,11 @@ impl X {
         [
             (4, "fn a() { let gh = Gh::default(); }".to_owned()),
             (18, "fn e() { Command::new(\"gh\"); }".to_owned()),
+            (
+                19,
+                "fn f() { run::output_within(\"gh\", dir, &[\"auth\", \"token\"], WAIT); }"
+                    .to_owned()
+            ),
         ]
     );
     assert_eq!(names(source), ["top"]);

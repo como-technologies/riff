@@ -403,6 +403,64 @@ const TOKEN_VARS: [&str; 2] = ["GH_TOKEN", "GITHUB_TOKEN"];
 /// The time between two looks at a `gh` with a time limit.
 const LIMIT_POLL: Duration = Duration::from_millis(20);
 
+/// The keyring service of the token of `gh` for github.com. `gh` keeps
+/// its token in the OS keyring under this service, with an empty user.
+pub const GH_KEYRING: &str = "gh:github.com";
+
+/// Fails with the error of a locked keyring when the call `gh ARGS`
+/// would read its token from a locked OS keyring, in a process that asks
+/// for no prompt: the riff daemon (01M77AB7XZV8KG8RRZ8C6R5A8X). Such a
+/// `gh` asks for an unlock prompt, and waits for it with no time limit.
+/// So riff does not run it. The caller gives `gh` no token, and the
+/// environment has none.
+///
+/// ```standalone_crate
+/// # keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
+/// use keyring_core::{Entry, Error, mock};
+///
+/// let dir = tempfile::tempdir()?;
+/// let log = dir.path().join("gh.log");
+/// let script = format!("#!/bin/sh\necho \"$*\" >> {}\necho '[]'\n", log.display());
+/// let gh = riff::pr::Gh::at(isolated::write_program(dir.path().join("gh"), &script));
+/// // The keyring holds the token of gh, and keeps it locked.
+/// let entry = Entry::new(riff::pr::GH_KEYRING, "")?;
+/// entry.set_password("gho_not_real")?;
+/// let lock = || {
+///     let cred: &mock::Cred = entry.as_any().downcast_ref().unwrap();
+///     cred.set_error(Error::NoStorageAccess(Box::new(std::io::Error::other("locked"))));
+/// };
+/// # if std::env::var_os("GH_TOKEN").is_none() && std::env::var_os("GITHUB_TOKEN").is_none() {
+/// // A command of a person runs gh: gh asks for the prompt itself.
+/// lock();
+/// gh.run(&["pr", "list"], None)?;
+/// // The daemon runs no gh, and says why.
+/// riff_client::secrets::ask_no_prompt();
+/// let error = gh.run(&["pr", "view", "12"], None).unwrap_err();
+/// assert!(riff_client::secrets::is_locked(&error), "{error:#}");
+/// assert!(format!("{error:#}").starts_with("riff did not run gh pr view 12: the OS keyring of "));
+/// assert!(format!("{error:#}").contains("unlock it at the desktop"));
+/// // A gh with a token reads no keyring: it runs.
+/// lock();
+/// gh.clone().with_given_token("ghs_not_real").run(&["api", "user"], None)?;
+/// // The next gh with no token finds the keyring still locked.
+/// assert!(gh.run(&["issue", "list"], None).is_err());
+/// // The keyring is open again: gh runs.
+/// gh.run(&["issue", "list"], None)?;
+/// assert_eq!(std::fs::read_to_string(&log)?, "pr list\napi user\nissue list\n");
+/// # }
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+fn keyring_open(args: &[&str]) -> Result<()> {
+    let given = TOKEN_VARS
+        .iter()
+        .any(|var| std::env::var_os(var).is_some_and(|v| !v.is_empty()));
+    if given || !riff_client::secrets::holds_locked(GH_KEYRING, "") {
+        return Ok(());
+    }
+    Err(anyhow::Error::msg(riff_client::secrets::Locked::here())
+        .context(text::gh_not_run(&args.join(" "))))
+}
+
 impl Gh {
     /// How long a shared reply of a fact that never changes stays: the
     /// message of a commit ([`Gh::read_within`]).
@@ -1347,12 +1405,16 @@ impl Gh {
 
     /// Runs `gh ARGS` one time, and counts the call ([`Gh::with_calls`]).
     /// While the limit of its resource is out, it makes no call and fails
-    /// with [`ghcalls::Limited`].
+    /// with [`ghcalls::Limited`]. A call that a locked keyring stops
+    /// ([`keyring_open`]) counts as no call.
     fn counted(&self, args: &[&str], input: Option<&str>) -> Result<(bool, String, String)> {
         if let Some(limited) = self.refused(args) {
             return Err(limited.into());
         }
         let result = self.spawn(args, input);
+        if result.as_ref().is_err_and(riff_client::secrets::is_locked) {
+            return result;
+        }
         if let Some(calls) = &self.calls {
             let now = crate::daemon::now_ms();
             let kind = ghcalls::kind_of(args);
@@ -1385,15 +1447,19 @@ impl Gh {
     /// stderr. With a time limit, it fails at the end of the limit
     /// ([`Gh::with_limit`]). A `gh` that ends before it reads all of
     /// `input` gives its status and its stderr, not a broken pipe
-    /// (#1803, 01M6Y4XHQADF27SHMMMV8RQ7Q1).
+    /// (#1803, 01M6Y4XHQADF27SHMMMV8RQ7Q1). A `gh` that would ask for an
+    /// unlock prompt of the riff daemon does not run ([`keyring_open`]).
     fn spawn(&self, args: &[&str], input: Option<&str>) -> Result<(bool, String, String)> {
         use std::os::unix::process::CommandExt;
         let mut command = Command::new(&self.program);
         if let Some(repo) = &self.repo {
             command.env("GH_REPO", repo);
         }
-        if let Some(token) = self.token_for(args) {
-            command.env("GH_TOKEN", token.as_str());
+        match self.token_for(args) {
+            Some(token) => {
+                command.env("GH_TOKEN", token.as_str());
+            }
+            None => keyring_open(args)?,
         }
         if self.tally.is_some() {
             command.env(crate::gh_wrapper::COUNTED_VAR, "1");

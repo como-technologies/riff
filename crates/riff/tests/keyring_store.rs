@@ -26,12 +26,14 @@ use std::time::{Duration, Instant};
 
 use keyring_core::api::CredentialStoreApi;
 use riff::claude_token;
+use riff::daemon::facts::gh_sign;
 use riff::keyring_store::{self, SECRETS};
-use riff_client::daemons::Token;
+use riff_client::daemons::{Sign, Token};
 use riff_client::device;
 use riff_client::login::{self, SignIn};
 use riff_client::secrets::{self, SERVICE};
 use riff_core::dpop::Key;
+use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
 
 /// The variable that names the check of the child.
 const CHILD: &str = "RIFF_TEST_KEYRING_CHILD";
@@ -83,13 +85,26 @@ fn one_store_reads_a_secret_again_after_a_restart_of_the_keyring() {
     on_a_private_keyring("restart");
 }
 
-/// The criterion 2 of #1522: the reads of the riff daemon. The keyring
-/// starts again locked, and an unlock prompt of riff gets no answer.
-/// Then the keyring starts again unlocked, and the same process reads
-/// the claude token and the user of the wave.
+/// The criterion 2 of #1522: the reads of a riff process that a person
+/// runs, for example `riff chat`. The keyring starts again locked, and an
+/// unlock prompt of riff gets no answer. Then the keyring starts again
+/// unlocked, and the same process reads the claude token and the user.
 #[test]
-fn the_reads_of_the_daemon_work_again_after_a_restart_of_a_locked_keyring() {
-    on_a_private_keyring("daemon");
+fn the_reads_of_a_process_work_again_after_a_restart_of_a_locked_keyring() {
+    on_a_private_keyring("prompt");
+}
+
+/// The criteria of #1520 (01M77AB7XZV8KG8RRZ8C6R5A8X): the riff daemon
+/// asks for no unlock prompt. A login with a security key leaves the
+/// keyring locked: the reads of the daemon are a locked keyring at once,
+/// with no `Unlock` call, and the daemon runs no `gh` that would read the
+/// locked token of `gh`: no call of a wave, and no `gh auth token` of the
+/// facts of the host. The person unlocks the same keyring at the desktop,
+/// with no restart of a service. Then the same process reads its secrets,
+/// and runs `gh`.
+#[test]
+fn the_daemon_asks_for_no_unlock_prompt_and_works_after_an_unlock_at_the_desktop() {
+    on_a_private_keyring("no-prompt");
 }
 
 /// Runs the check `check` of [`child`] in a child on a private keyring,
@@ -123,6 +138,8 @@ fn on_a_private_keyring(check: &str) {
         .env_remove("GNOME_KEYRING_CONTROL")
         .env_remove("SSH_AUTH_SOCK")
         .env_remove("RIFF_HOME")
+        .env_remove("GH_TOKEN")
+        .env_remove("GITHUB_TOKEN")
         .stdin(Stdio::null())
         .stdout(out.try_clone().unwrap())
         .stderr(out)
@@ -172,7 +189,8 @@ fn child() {
         "memory" => memory(&keyring),
         "old" => old(),
         "restart" => restart(&mut keyring),
-        "daemon" => daemon(&mut keyring),
+        "prompt" => prompt(&mut keyring),
+        "no-prompt" => no_prompt(&keyring),
         other => panic!("no check {other}"),
     }
 }
@@ -180,7 +198,7 @@ fn child() {
 /// The store of riff opens each session as `plain`, and the store of
 /// the `keyring` crate as DH.
 fn plain() {
-    let monitor = Monitor::start();
+    let monitor = Monitor::start("OpenSession");
     let name = login::secret_name("https://riff.example");
     // The secrets of riff go through the store of the OS: one session.
     secrets::set(&name, "not a real secret").unwrap();
@@ -314,7 +332,7 @@ fn old() {
 /// One store reads a secret before and after a restart of the keyring,
 /// with one plain session for each keyring.
 fn restart(keyring: &mut Keyring) {
-    let monitor = Monitor::start();
+    let monitor = Monitor::start("OpenSession");
     let name = login::secret_name("https://riff.example");
     let store = keyring_store::Store::new().unwrap();
     let entry = store.build(SERVICE, &name, None).unwrap();
@@ -330,9 +348,10 @@ fn restart(keyring: &mut Keyring) {
     assert_eq!(monitor.wait_for(2), ["plain", "plain"]);
 }
 
-/// The reads of a riff daemon, through the store of the process: a
-/// locked keyring, then a restart of the keyring.
-fn daemon(keyring: &mut Keyring) {
+/// The reads of a riff process that can ask for a prompt, through the
+/// store of the process: a locked keyring, then a restart of the
+/// keyring.
+fn prompt(keyring: &mut Keyring) {
     let server = "https://riff.example";
     let dir = tempfile::tempdir().unwrap();
     let sign_in = SignIn {
@@ -364,7 +383,7 @@ fn daemon(keyring: &mut Keyring) {
     let user = login::user(server).unwrap_err();
     assert!(secrets::is_locked(&user), "{user:#}");
     assert!(
-        format!("{user:#}").contains("does not answer"),
+        format!("{user:#}").contains("does not answer in"),
         "riff does not wait for the prompt: {user:#}"
     );
     drop(prompter);
@@ -376,6 +395,85 @@ fn daemon(keyring: &mut Keyring) {
     assert_eq!(claude_token::state(dir.path()), Token::Set);
     assert_eq!(login::user(server).unwrap().as_deref(), Some("mike"));
     assert!(start.elapsed() < secrets::KEYRING_WAIT);
+}
+
+/// The reads and the `gh` of the riff daemon, which asks for no prompt: a
+/// keyring that locks, then an unlock of the same keyring at the desktop.
+fn no_prompt(keyring: &Keyring) {
+    secrets::ask_no_prompt();
+    let server = "https://riff.example";
+    let dir = tempfile::tempdir().unwrap();
+    let sign_in = SignIn {
+        user: "mike".into(),
+        access_token: "a-1".into(),
+        refresh_token: "r-1".into(),
+        expires_at: 1,
+        riff_id: Some("riff-1".into()),
+    };
+    // Other processes keep the claude token, the sign-in and the token of
+    // `gh`, so this process keeps no value.
+    let other = keyring_store::Store::new().unwrap();
+    let write = |service: &str, name: &str, value: &str| {
+        let entry = other.build(service, name, None).unwrap();
+        entry.set_password(value).unwrap();
+    };
+    write(SERVICE, claude_token::NAME, "sk-ant-oat01-not-real");
+    write(
+        SERVICE,
+        &login::secret_name(server),
+        &serde_json::to_string(&sign_in).unwrap(),
+    );
+    write(riff::pr::GH_KEYRING, "", "gho_not_real");
+    assert_eq!(claude_token::state(dir.path()), Token::Set);
+    let log = dir.path().join("gh.log");
+    let script = format!(
+        "#!/bin/sh\necho \"$*\" >> {}\nif [ \"$1 $2\" = 'auth token' ]; then echo gho_not_real; fi\n",
+        log.display()
+    );
+    let gh = riff::pr::Gh::at(isolated::write_program(dir.path().join("gh"), &script));
+    gh.run(&["api", "user"], None).unwrap();
+    assert_eq!(gh_sign(&gh), Sign::On);
+
+    // A login with a security key leaves the keyring locked. A prompt
+    // would get no answer.
+    let unlocks = Monitor::start("Unlock");
+    let prompter = silent_prompter();
+    keyring.lock();
+    let start = Instant::now();
+    assert_eq!(claude_token::state(dir.path()), Token::Locked);
+    let user = login::user(server).unwrap_err();
+    assert!(secrets::is_locked(&user), "{user:#}");
+    assert!(
+        !format!("{user:#}").contains("does not answer in"),
+        "riff waits for a prompt: {user:#}"
+    );
+    let error = gh.run(&["pr", "list"], None).unwrap_err();
+    assert!(secrets::is_locked(&error), "{error:#}");
+    assert!(
+        format!("{error:#}").starts_with("riff did not run gh pr list: the OS keyring of "),
+        "{error:#}"
+    );
+    // The facts of the host cannot say whether `gh` has a sign-in.
+    assert_eq!(gh_sign(&gh), Sign::Unknown);
+    assert!(start.elapsed() < secrets::KEYRING_WAIT);
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap(),
+        "api user\nauth token\n"
+    );
+
+    // The person unlocks the keyring at the desktop, with no restart of
+    // a service. The same process reads it, and runs `gh`.
+    keyring.unlock();
+    assert_eq!(claude_token::state(dir.path()), Token::Set);
+    assert_eq!(login::user(server).unwrap().as_deref(), Some("mike"));
+    gh.run(&["pr", "list"], None).unwrap();
+    assert_eq!(gh_sign(&gh), Sign::On);
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap(),
+        "api user\nauth token\npr list\nauth token\n"
+    );
+    assert_eq!(unlocks.calls(), 0, "riff asked for an unlock");
+    drop(prompter);
 }
 
 /// A system prompter of GNOME on the private bus that takes each prompt
@@ -496,6 +594,44 @@ impl Keyring {
         );
     }
 
+    /// Locks the default collection of the daemon that runs, as a login
+    /// with a security key leaves it. The lock shows no prompt.
+    fn lock(&self) {
+        let conn = zbus::blocking::Connection::session().unwrap();
+        let service = secret_service(&conn, "org.freedesktop.Secret.Service");
+        let default: OwnedObjectPath = service.call("ReadAlias", &("default",)).unwrap();
+        let (locked, prompt): (Vec<OwnedObjectPath>, OwnedObjectPath) =
+            service.call("Lock", &(vec![default.clone()],)).unwrap();
+        assert_eq!(locked, [default]);
+        assert_eq!(prompt.as_str(), "/", "the lock asks for a prompt");
+    }
+
+    /// Unlocks the default collection of the daemon that runs with the
+    /// test password, as a person does at the desktop, with no restart.
+    /// It uses the interface of GNOME Keyring for its own tools: no
+    /// `Unlock` call, and no prompt.
+    fn unlock(&self) {
+        let conn = zbus::blocking::Connection::session().unwrap();
+        let service = secret_service(&conn, "org.freedesktop.Secret.Service");
+        let (_, session): (OwnedValue, OwnedObjectPath) = service
+            .call("OpenSession", &("plain", Value::from("")))
+            .unwrap();
+        let default: OwnedObjectPath = service.call("ReadAlias", &("default",)).unwrap();
+        let internal = secret_service(
+            &conn,
+            "org.gnome.keyring.InternalUnsupportedGuiltRiddenInterface",
+        );
+        let password = (
+            session,
+            Vec::<u8>::new(),
+            b"test-password".to_vec(),
+            "text/plain",
+        );
+        let () = internal
+            .call("UnlockWithMasterPassword", &(default, password))
+            .unwrap();
+    }
+
     /// The log of each daemon of the test.
     fn log() -> std::path::PathBuf {
         Path::new(&std::env::var_os("HOME").unwrap()).join("gnome-keyring.log")
@@ -524,6 +660,15 @@ impl Drop for Keyring {
     }
 }
 
+/// The object of the Secret Service on `conn`, with the interface
+/// `interface`.
+fn secret_service<'a>(
+    conn: &zbus::blocking::Connection,
+    interface: &'static str,
+) -> zbus::blocking::Proxy<'a> {
+    zbus::blocking::Proxy::new(conn, SECRETS, "/org/freedesktop/secrets", interface).unwrap()
+}
+
 /// True when the bus has an owner of the Secret Service.
 fn has_owner() -> bool {
     bus_call("NameHasOwner").contains("boolean true")
@@ -546,20 +691,22 @@ fn bus_call(method: &str) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr)
 }
 
-/// A `dbus-monitor` of each `OpenSession` call on the bus of the child.
+/// A `dbus-monitor` of each call of one method of the Secret Service on
+/// the bus of the child, for example `OpenSession`.
 struct Monitor {
     child: Child,
     lines: Arc<Mutex<Vec<String>>>,
 }
 
 impl Monitor {
-    /// Starts the monitor, and waits until the bus sends it the calls.
-    fn start() -> Monitor {
+    /// Starts the monitor of the calls of the method `member`, and waits
+    /// until the bus sends it the calls.
+    fn start(member: &str) -> Monitor {
+        let rule = format!(
+            "type='method_call',interface='org.freedesktop.Secret.Service',member='{member}'"
+        );
         let mut child = Command::new("dbus-monitor")
-            .args([
-                "--session",
-                "type='method_call',interface='org.freedesktop.Secret.Service',member='OpenSession'",
-            ])
+            .args(["--session", &rule])
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
@@ -585,6 +732,18 @@ impl Monitor {
         // No later call comes with the calls that the test waits for.
         std::thread::sleep(Duration::from_millis(500));
         algorithms(&self.lines.lock().unwrap())
+    }
+
+    /// The number of calls up to now, after a short wait for the calls
+    /// that the bus still sends.
+    fn calls(&self) -> usize {
+        std::thread::sleep(Duration::from_millis(500));
+        self.lines
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|l| l.starts_with("method call"))
+            .count()
     }
 
     fn wait(&self, done: impl Fn(&[String]) -> bool) {

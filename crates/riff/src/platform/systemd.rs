@@ -7,7 +7,7 @@ use std::process::{Output, Stdio};
 
 use anyhow::{Context, Result, bail};
 
-use crate::service::{MARK, ServiceManager, UNIT, Unit};
+use crate::service::{DESKTOP_TARGET, MARK, ServiceManager, UNIT, Unit};
 use crate::text;
 
 /// systemd, for the user units of the person.
@@ -176,7 +176,9 @@ fn write_file(path: &Path, text: &str) -> Result<()> {
 impl ServiceManager for Systemd {
     fn install(&self, unit: &Unit) -> Result<PathBuf> {
         let path = self.rewrite(unit)?;
-        systemctl(&["enable", UNIT], true)?;
+        // It also moves the link of an older unit to the target of this
+        // one (01M77AB12JTJAEEAND02DNK9NG).
+        systemctl(&["reenable", UNIT], true)?;
         systemctl(&["restart", UNIT], true)?;
         Ok(path)
     }
@@ -243,6 +245,14 @@ impl ServiceManager for Systemd {
         } else {
             state
         })
+    }
+
+    /// True when the user manager has the target of a desktop active now:
+    /// `systemctl --user is-active graphical-session.target`. A desktop
+    /// such as GNOME or KDE Plasma starts it at each login. On a server, on
+    /// WSL2, and on a host with no desktop open now, it is inactive.
+    fn desktop(&self) -> bool {
+        systemctl(&["is-active", DESKTOP_TARGET], false).is_ok_and(|state| state == "active")
     }
 }
 
@@ -313,6 +323,7 @@ mod tests {
         let unit = Unit {
             exe: "/home/mike/.cache/riff/check/target/static/release/riff".into(),
             env: vec![("PATH".into(), "/home/mike/.cargo/bin:/usr/bin".into())],
+            desktop: false,
         };
         write_file(&systemd.unit_path(), &unit.text().unwrap()).unwrap();
         assert_eq!(systemd.installed().unwrap(), Some(unit));

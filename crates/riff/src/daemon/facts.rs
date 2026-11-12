@@ -242,7 +242,7 @@ pub fn of_status(status: &Status) -> Facts {
 /// 01M6WJYQJ58MHQF1XPXXZW2ET6).
 pub async fn look(dir: &Path, wave: &Wave, api: &Api) -> anyhow::Result<Facts> {
     let mut facts = of_status(&super::status_within(dir, DAEMON_WAIT).await?);
-    let (dir, main) = (dir.to_owned(), wave.main.clone());
+    let dir = dir.to_owned();
     let (server, repo) = (wave.server.clone(), wave.repo.clone());
     let mut waves = std::mem::take(&mut facts.waves);
     let host = tokio::task::spawn_blocking(move || {
@@ -254,7 +254,7 @@ pub async fn look(dir: &Path, wave: &Wave, api: &Api) -> anyhow::Result<Facts> {
             crate::disk::here(&dir),
             podman(),
             waves,
-            gh(&main),
+            gh_sign(&host_gh()),
             claude(crate::run::now_ms()),
             riff_client::login::stored(&server),
             crate::settings::path()
@@ -414,11 +414,47 @@ pub fn pins(dir: &Path, waves: &mut [daemons::Wave], has: impl Fn(&str) -> bool 
     }
 }
 
-/// The sign-in of `gh` in the main clone `main`: it gives a token, or
-/// not.
-fn gh(main: &Path) -> Sign {
-    match crate::run::output_within("gh", main, &["auth", "token"], STEP_WAIT) {
-        Ok(token) if !token.is_empty() => Sign::On,
+/// The `gh` of a look: the `gh` of the facts of the host
+/// ([`host_gh`](crate::run::host_gh)) with the time limit [`STEP_WAIT`].
+/// It is a `gh` of the daemon, so it runs no `gh` that would ask the
+/// keyring for an unlock prompt (01M77AB7XZV8KG8RRZ8C6R5A8X).
+///
+/// ```
+/// use riff::daemon::facts::{STEP_WAIT, host_gh};
+///
+/// assert_eq!(host_gh().limit(), Some(STEP_WAIT));
+/// assert_eq!(host_gh().caller(), riff::run::host_gh().caller());
+/// ```
+pub fn host_gh() -> crate::pr::Gh {
+    crate::run::host_gh().with_limit(STEP_WAIT)
+}
+
+/// The sign-in of `gh` with `gh auth token`: it gives a token, or not.
+/// riff keeps no token of it. While the token of `gh` is locked in the
+/// keyring, the daemon runs no `gh` ([`host_gh`]), and cannot say.
+///
+/// ```
+/// use std::time::Duration;
+/// use riff::daemon::facts::gh_sign;
+/// use riff::pr::Gh;
+/// use riff_client::daemons::Sign;
+///
+/// let dir = tempfile::tempdir()?;
+/// let gh = |script: &str| Gh::at(isolated::write_program(dir.path().join("gh"), script));
+/// assert_eq!(gh_sign(&gh("#!/bin/sh\necho gho_not_real\n")), Sign::On);
+/// assert_eq!(gh_sign(&gh("#!/bin/sh\n")), Sign::Off);
+/// assert_eq!(gh_sign(&gh("#!/bin/sh\necho 'not logged in' >&2\nexit 1\n")), Sign::Off);
+/// let hangs = gh("#!/bin/sh\nsleep 600\n").with_limit(Duration::from_millis(500));
+/// assert_eq!(gh_sign(&hangs), Sign::Off);
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn gh_sign(gh: &crate::pr::Gh) -> Sign {
+    match gh
+        .run(&["auth", "token"], None)
+        .map(zeroize::Zeroizing::new)
+    {
+        Ok(token) if !token.trim().is_empty() => Sign::On,
+        Err(e) if riff_client::secrets::is_locked(&e) => Sign::Unknown,
         _ => Sign::Off,
     }
 }

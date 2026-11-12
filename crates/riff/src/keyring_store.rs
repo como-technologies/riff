@@ -64,6 +64,29 @@
 //! keyring: a private D-Bus session bus with its own GNOME Keyring. It
 //! also starts that keyring again under one store.
 //!
+//! # No prompt in the daemon
+//!
+//! A read or a write of a locked item asks the Secret Service to unlock
+//! it, and that shows a prompt. In a process that asks for no prompt,
+//! the riff daemon ([`riff_client::secrets::ask_no_prompt`]), the store
+//! makes no `Unlock` call: a locked item, or a locked default collection
+//! for a new item, is a locked keyring at once
+//! (01M77AB7XZV8KG8RRZ8C6R5A8X). The `SearchItems` call before it shows
+//! no prompt.
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant D as the riff daemon
+//!     participant S as the Secret Service
+//!     D->>S: SearchItems(service, username)
+//!     S-->>D: the item, locked
+//!     Note over D: no Unlock call: the keyring is locked
+//!     Note over S: a person unlocks it at the desktop
+//!     D->>S: SearchItems, at the next look
+//!     S-->>D: the item, unlocked
+//!     D->>S: GetSecret
+//! ```
+//!
 //! # Example
 //!
 //! ```no_run
@@ -246,6 +269,17 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// Ok before an unlock that can show a prompt: this process can ask for
+/// one ([`riff_client::secrets::prompts`]). Else the error of a locked
+/// keyring, and riff asks the Secret Service for nothing
+/// (01M77AB7XZV8KG8RRZ8C6R5A8X).
+fn may_prompt() -> Result<()> {
+    match riff_client::secrets::prompts() {
+        true => Ok(()),
+        false => Err(decode(secret_service::Error::Locked)),
+    }
+}
+
 /// The secret `user` of `service`.
 struct Cred {
     secrets: Arc<Secrets>,
@@ -263,7 +297,9 @@ impl Cred {
     }
 
     /// Runs `call` on the one item of this secret, after an unlock when
-    /// it is locked. `None` when there is no item.
+    /// it is locked. In a process that asks for no prompt, a locked item
+    /// is a locked keyring at once ([`may_prompt`]). `None` when there is no
+    /// item.
     fn with_item<T>(
         &self,
         ss: &SecretService<'_>,
@@ -273,6 +309,7 @@ impl Cred {
             .search_items(attributes(&self.service, &self.user))
             .map_err(decode)?;
         if !found.locked.is_empty() {
+            may_prompt()?;
             let locked: Vec<&Item> = found.locked.iter().collect();
             ss.unlock_all(&locked).map_err(decode)?;
         }
@@ -302,6 +339,7 @@ impl CredentialApi for Cred {
             }
             let collection = ss.get_default_collection().map_err(decode)?;
             if collection.is_locked().map_err(decode)? {
+                may_prompt()?;
                 collection.unlock().map_err(decode)?;
             }
             collection

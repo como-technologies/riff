@@ -439,13 +439,13 @@ pub fn token_from(
     Ok(zeroize::Zeroizing::new(token.trim().to_owned()))
 }
 
-/// [`token_from`] this process, with the `gh` of the machine in the
-/// folder `dir`. riff gives the token only to riff-server.
-pub fn gh_token(dir: &Path) -> Result<zeroize::Zeroizing<String>> {
+/// [`token_from`] this process, with the `gh` of the machine. riff gives
+/// the token only to riff-server.
+pub fn gh_token() -> Result<zeroize::Zeroizing<String>> {
     token_from(
         std::env::var("GH_TOKEN").ok(),
         std::env::var("GITHUB_TOKEN").ok(),
-        || crate::run::output("gh", dir, &["auth", "token"]),
+        || crate::pr::Gh::here("project init").run(&["auth", "token"], None),
     )
 }
 
@@ -510,7 +510,7 @@ pub async fn init(
     }
     let api = api?;
     let me = person(&api, &here)?;
-    let token = gh_token(&here)?;
+    let token = gh_token()?;
     let reply = api.project_init(&me, &repo, hosts, &token).await?;
     println!("{}", text::project_enrolled(&reply));
     Ok(0)
@@ -524,7 +524,7 @@ pub async fn remove(server: &str, repo: &str) -> Result<String> {
     let here = identity::working_dir()?;
     let api = Api::new(server).signed_in(None)?;
     let me = person(&api, &here)?;
-    let token = gh_token(&here)?;
+    let token = gh_token()?;
     let gone = api.project_remove(&me, &repo, &token).await?;
     Ok(text::project_removed(&gone.repo))
 }

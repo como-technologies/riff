@@ -773,7 +773,7 @@ pub const OLD_LOOK: Duration = Duration::from_secs(60);
 /// use riff::service::Unit;
 ///
 /// let own = Path::new("/home/mike/.cargo/bin/riff");
-/// let unit = |exe: &str| Unit { exe: exe.into(), env: vec![] };
+/// let unit = |exe: &str| Unit { exe: exe.into(), env: vec![], desktop: false };
 /// let cargo = unit("/home/mike/.cargo/bin/riff");
 /// assert!(!stale(Some(&cargo), own, false));
 /// assert!(stale(Some(&cargo), own, true));
@@ -862,6 +862,7 @@ pub async fn after_update(
     let unit = crate::service::Unit {
         exe: riff.to_owned(),
         env: old.env.clone(),
+        desktop: old.desktop,
     };
     if !crate::binary::same_file(&old.exe, riff) {
         let path = manager.rewrite(&unit)?;
@@ -6681,8 +6682,11 @@ pub async fn follow_events(
 /// SIGINT. It takes up each session that runs ([`Daemon::recover`]).
 /// The stop stops no session (01M4ZDTVH57VE77YT20G65A4BQ). Its runtime
 /// is the runtime of this OS ([`crate::runtime::here`]): on macOS, it
-/// starts no session (01M6Z49R87D50VD4RS0BP641MM).
+/// starts no session (01M6Z49R87D50VD4RS0BP641MM). It asks the OS keyring
+/// for no unlock prompt, also for its `gh` (01M77AB7XZV8KG8RRZ8C6R5A8X).
 pub async fn serve_here() -> Result<()> {
+    // Only a command that a person types asks for the prompt.
+    riff_client::secrets::ask_no_prompt();
     // Its working folder can be the work tree of another repository
     // (01M58AW5SBG3ZP7149ZY66VTYW).
     crate::auto_update::no_place();
@@ -6809,7 +6813,10 @@ pub async fn show_status(dir: &Path, manager: &impl crate::service::ServiceManag
 
 /// `riff daemon install`: installs the unit of the daemon with
 /// `manager`, starts it again, and waits up to `wait` for the daemon in
-/// the folder `dir` to answer (01M4ZDTVK74596M0ZA46N51NKV).
+/// the folder `dir` to answer (01M4ZDTVK74596M0ZA46N51NKV). On a host with
+/// a desktop ([`ServiceManager::desktop`](crate::service::ServiceManager::desktop)),
+/// the unit starts after the desktop of each login
+/// (01M77AB12JTJAEEAND02DNK9NG).
 pub async fn install(
     manager: &impl crate::service::ServiceManager,
     unit: &crate::service::Unit,
@@ -6819,7 +6826,11 @@ pub async fn install(
     if !crate::run::machine_data() {
         bail!("{}", text::DAEMON_INSTALL_RIFF_HOME);
     }
-    let path = manager.install(unit)?;
+    let unit = crate::service::Unit {
+        desktop: manager.desktop(),
+        ..unit.clone()
+    };
+    let path = manager.install(&unit)?;
     println!("{}", text::daemon_installed(&path));
     let start = std::time::Instant::now();
     loop {
@@ -11844,6 +11855,7 @@ mod tests {
             let unit = Unit {
                 exe: exe.to_owned(),
                 env: vec![("PATH".into(), "/home/mike/.cargo/bin:/usr/bin".into())],
+                desktop: false,
             };
             Units {
                 unit: Mutex::new(Some(unit)),

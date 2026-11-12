@@ -16,8 +16,35 @@
 //! | Step | Command |
 //! |---|---|
 //! | Read the unit again | `systemctl --user daemon-reload` |
-//! | Start it at each login | `systemctl --user enable riff.service` |
+//! | Start it at each login, and move the link of an older unit | `systemctl --user reenable riff.service` |
 //! | Start it, or start it again with this riff | `systemctl --user restart riff.service` |
+//!
+//! # The start at a login
+//!
+//! On a host with a desktop, the daemon starts after the desktop of each
+//! login (01M77AB12JTJAEEAND02DNK9NG). Before the desktop, the keyring
+//! can show no unlock prompt, and a login with a security key leaves the
+//! keyring locked. `riff daemon install` asks the service manager
+//! whether the host has a desktop ([`ServiceManager::desktop`]): on
+//! Linux, whether the user manager of systemd has [`DESKTOP_TARGET`]
+//! active. The answer goes in [`Unit::desktop`]:
+//!
+//! | The host | In `[Unit]` | In `[Install]` |
+//! |---|---|---|
+//! | With a desktop | `After=graphical-session.target` | `WantedBy=graphical-session.target` |
+//! | With no desktop, for example a server or WSL2 | | `WantedBy=default.target` |
+//!
+//! ```mermaid
+//! flowchart LR
+//!     L["a login"] --> U["the user manager starts:<br/>default.target"]
+//!     U -- "a host with no desktop" --> D["riff daemon"]
+//!     L --> G["the desktop starts:<br/>graphical-session.target"]
+//!     G -- "a host with a desktop" --> D
+//! ```
+//!
+//! The `reenable` moves the link of an older unit from
+//! `default.target.wants` to the new target. A write of the unit after an
+//! update keeps its target ([`Unit::parse`]).
 //!
 //! `riff daemon uninstall` undoes it (01M501M0T0JBWGMMHCT7HT95T9). It
 //! deletes only a unit file that starts with the line [`MARK`]:
@@ -58,11 +85,15 @@
 //! let unit = Unit {
 //!     exe: "/home/mike/.cargo/bin/riff".into(),
 //!     env: vec![("PATH".into(), "/home/mike/.cargo/bin:/usr/bin".into())],
+//!     desktop: false,
 //! };
 //! let text = unit.text()?;
 //! assert!(text.contains("ExecStart=\"/home/mike/.cargo/bin/riff\" daemon\n"));
 //! assert!(text.contains("Environment=\"PATH=/home/mike/.cargo/bin:/usr/bin\"\n"));
 //! assert!(text.contains("WantedBy=default.target\n"));
+//! let desktop = Unit { desktop: true, ..unit }.text()?;
+//! assert!(desktop.contains("After=graphical-session.target\n"));
+//! assert!(desktop.contains("WantedBy=graphical-session.target\n"));
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
@@ -78,6 +109,14 @@ pub const UNIT: &str = "riff.service";
 /// The first line of each unit file that riff writes.
 pub const MARK: &str = "# The unit of the riff daemon. riff daemon install writes this file.";
 
+/// The target of the user manager of systemd that the desktop of a login
+/// starts, for example GNOME or KDE Plasma (01M77AB12JTJAEEAND02DNK9NG).
+pub const DESKTOP_TARGET: &str = "graphical-session.target";
+
+/// The target of the user manager of systemd at its start, before a
+/// desktop: the target of the unit on a host with no desktop.
+pub const DEFAULT_TARGET: &str = "default.target";
+
 /// The user unit of the daemon as data.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Unit {
@@ -85,6 +124,11 @@ pub struct Unit {
     pub exe: PathBuf,
     /// The variables of the daemon.
     pub env: Vec<(String, String)>,
+    /// True on a host with a desktop: the daemon starts after the
+    /// desktop of each login, with [`DESKTOP_TARGET`]. Else it starts
+    /// with the user manager, with [`DEFAULT_TARGET`]
+    /// (01M77AB12JTJAEEAND02DNK9NG).
+    pub desktop: bool,
 }
 
 /// `text` in double quotes for a line of a unit. `dollar` doubles each
@@ -135,8 +179,8 @@ fn unquoted(text: &str, dollar: bool) -> Option<(String, &str)> {
 
 impl Unit {
     /// The unit in `text`, the text of a unit file that [`Unit::text`]
-    /// wrote: its `ExecStart` and its `Environment` lines. `None` when it
-    /// has no `ExecStart` of `riff daemon`.
+    /// wrote: its `ExecStart`, its `Environment` lines and its target.
+    /// `None` when it has no `ExecStart` of `riff daemon`.
     ///
     /// ```
     /// use riff::service::Unit;
@@ -144,17 +188,22 @@ impl Unit {
     /// let unit = Unit {
     ///     exe: "/opt/my $riff/riff".into(),
     ///     env: vec![("PATH".into(), "/a b:/c\"d\\e%f$g".into())],
+    ///     desktop: false,
     /// };
-    /// assert_eq!(Unit::parse(&unit.text()?), Some(unit));
+    /// assert_eq!(Unit::parse(&unit.text()?), Some(unit.clone()));
+    /// let desktop = Unit { desktop: true, ..unit };
+    /// assert_eq!(Unit::parse(&desktop.text()?), Some(desktop));
     /// assert_eq!(Unit::parse("[Service]\nExecStart=/opt/riff daemon\n"), None);
     /// assert_eq!(Unit::parse("[Service]\nExecStart=\"/opt/riff\" relay\n"), None);
     /// assert_eq!(Unit::parse("[Unit]\nDescription=mine\n"), None);
     /// # Ok::<(), anyhow::Error>(())
     /// ```
     pub fn parse(text: &str) -> Option<Unit> {
-        let (mut exe, mut env) = (None, Vec::new());
+        let (mut exe, mut env, mut desktop) = (None, Vec::new(), false);
         for line in text.lines() {
-            if let Some(value) = line.strip_prefix("ExecStart=") {
+            if line.strip_prefix("WantedBy=") == Some(DESKTOP_TARGET) {
+                desktop = true;
+            } else if let Some(value) = line.strip_prefix("ExecStart=") {
                 let (path, rest) = unquoted(value, true)?;
                 if rest.trim() != "daemon" {
                     return None;
@@ -166,13 +215,18 @@ impl Unit {
                 env.push((name.to_owned(), value.to_owned()));
             }
         }
-        Some(Unit { exe: exe?, env })
+        Some(Unit {
+            exe: exe?,
+            env,
+            desktop,
+        })
     }
 
     /// The unit of this riff: the path of this binary on disk
     /// ([`crate::binary::this_on_disk`]), its `PATH`, and its
     /// `XDG_DATA_HOME` and `CLAUDE_CONFIG_DIR` when they are set
-    /// (01M51M3ZTV61C9BMFT3J1M06NF).
+    /// (01M51M3ZTV61C9BMFT3J1M06NF). It has no desktop: the install asks
+    /// the service manager for it ([`crate::daemon::install`]).
     pub fn of_this() -> Result<Unit> {
         let exe = crate::binary::this_on_disk().context("cannot find the path of this riff")?;
         let env = ["PATH", "XDG_DATA_HOME", "CLAUDE_CONFIG_DIR"]
@@ -184,7 +238,11 @@ impl Unit {
                     .map(|v| (name.to_owned(), v))
             })
             .collect();
-        Ok(Unit { exe, env })
+        Ok(Unit {
+            exe,
+            env,
+            desktop: false,
+        })
     }
 
     /// The text of the unit file.
@@ -192,11 +250,11 @@ impl Unit {
     /// ```
     /// use riff::service::Unit;
     ///
-    /// let unit = Unit { exe: "/opt/my riff/riff".into(), env: vec![("PATH".into(), "/a%b$c".into())] };
+    /// let unit = Unit { exe: "/opt/my riff/riff".into(), env: vec![("PATH".into(), "/a%b$c".into())], desktop: false };
     /// let text = unit.text()?;
     /// assert!(text.contains("ExecStart=\"/opt/my riff/riff\" daemon\n"));
     /// assert!(text.contains("Environment=\"PATH=/a%%b$c\"\n"));
-    /// let bad = Unit { exe: "/opt/riff\n".into(), env: vec![] };
+    /// let bad = Unit { exe: "/opt/riff\n".into(), env: vec![], desktop: false };
     /// assert!(bad.text().is_err());
     /// # Ok::<(), anyhow::Error>(())
     /// ```
@@ -208,10 +266,12 @@ impl Unit {
         let mut out = format!(
             "{MARK}\n\
              [Unit]\n\
-             Description=riff daemon: the sessions of riff on this machine\n\n\
-             [Service]\n\
-             Type=simple\n",
+             Description=riff daemon: the sessions of riff on this machine\n",
         );
+        if self.desktop {
+            out.push_str(&format!("After={DESKTOP_TARGET}\n"));
+        }
+        out.push_str("\n[Service]\nType=simple\n");
         out.push_str(&format!("ExecStart={} daemon\n", quoted(exe, true)?));
         for (name, value) in &self.env {
             out.push_str(&format!(
@@ -219,12 +279,16 @@ impl Unit {
                 quoted(&format!("{name}={value}"), false)?
             ));
         }
-        out.push_str(
+        let target = match self.desktop {
+            true => DESKTOP_TARGET,
+            false => DEFAULT_TARGET,
+        };
+        out.push_str(&format!(
             "Restart=on-failure\n\
              RestartSec=2\n\n\
              [Install]\n\
-             WantedBy=default.target\n",
-        );
+             WantedBy={target}\n",
+        ));
         Ok(out)
     }
 }
@@ -242,6 +306,14 @@ pub trait ServiceManager {
 
     /// The state of the unit, for example `active` or `inactive`.
     fn state(&self) -> Result<String>;
+
+    /// True when this host has a desktop now: the unit then starts after
+    /// the desktop of each login ([`Unit::desktop`],
+    /// 01M77AB12JTJAEEAND02DNK9NG). The default has none: a manager with
+    /// no target of a desktop, for example launchd.
+    fn desktop(&self) -> bool {
+        false
+    }
 
     /// The unit in the unit file, or `None` when no unit file is there.
     /// An error for a unit file that riff did not write.
@@ -316,6 +388,7 @@ mod tests {
                 ("PATH".into(), "/a b:/c\"d\\e".into()),
                 ("XDG_DATA_HOME".into(), "/home/mike/.local/share".into()),
             ],
+            desktop: false,
         };
         let text = unit.text().unwrap();
         assert_eq!(
@@ -337,6 +410,7 @@ mod tests {
         let dollar = Unit {
             exe: "/opt/$riff".into(),
             env: vec![],
+            desktop: false,
         };
         assert!(
             dollar
@@ -347,7 +421,46 @@ mod tests {
         let bad = Unit {
             exe: "/opt/riff".into(),
             env: vec![("PATH".into(), "/a\n[Service]".into())],
+            desktop: false,
         };
         assert!(bad.text().is_err());
+    }
+
+    /// 01M77AB12JTJAEEAND02DNK9NG: the unit of a host with a desktop
+    /// starts after the desktop of each login. The unit of a host with no
+    /// desktop starts with the user manager. A unit keeps its target
+    /// through a read of its file.
+    #[test]
+    fn the_unit_of_a_host_with_a_desktop_starts_after_the_desktop() {
+        let unit = |desktop| Unit {
+            exe: "/home/mike/bin/riff".into(),
+            env: vec![("PATH".into(), "/usr/bin".into())],
+            desktop,
+        };
+        assert_eq!(
+            unit(true).text().unwrap(),
+            "# The unit of the riff daemon. riff daemon install writes this file.\n\
+             [Unit]\n\
+             Description=riff daemon: the sessions of riff on this machine\n\
+             After=graphical-session.target\n\n\
+             [Service]\n\
+             Type=simple\n\
+             ExecStart=\"/home/mike/bin/riff\" daemon\n\
+             Environment=\"PATH=/usr/bin\"\n\
+             Restart=on-failure\n\
+             RestartSec=2\n\n\
+             [Install]\n\
+             WantedBy=graphical-session.target\n"
+        );
+        let server = unit(false).text().unwrap();
+        assert!(!server.contains("graphical-session"), "{server}");
+        assert!(
+            server.ends_with("[Install]\nWantedBy=default.target\n"),
+            "{server}"
+        );
+        for desktop in [true, false] {
+            let text = unit(desktop).text().unwrap();
+            assert_eq!(Unit::parse(&text), Some(unit(desktop)), "{text}");
+        }
     }
 }

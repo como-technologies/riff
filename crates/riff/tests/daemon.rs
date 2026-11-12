@@ -22,10 +22,11 @@ fn text(out: &[u8]) -> String {
 
 /// The calls of `systemctl` in `log` that change the unit: each call
 /// but `is-active`, which riff also makes to wait for a daemon that
-/// starts (01M5MS2T8VY8NX4VBMQTCKWDKH).
+/// starts (01M5MS2T8VY8NX4VBMQTCKWDKH), and to ask for a desktop
+/// (01M77AB12JTJAEEAND02DNK9NG).
 fn changes(log: &str) -> String {
     log.lines()
-        .filter(|l| !l.ends_with("is-active riff.service"))
+        .filter(|l| !l.starts_with("systemctl --user is-active "))
         .map(|l| format!("{l}\n"))
         .collect()
 }
@@ -115,10 +116,19 @@ async fn riff_daemon_install_writes_the_unit_and_starts_the_daemon() {
     ] {
         assert!(unit.lines().any(|l| l == line), "{line}\nnot in\n{unit}");
     }
+    // A host with no desktop: the daemon starts with the user manager
+    // (01M77AB12JTJAEEAND02DNK9NG).
+    assert!(!unit.contains("graphical-session.target"), "{unit}");
+    assert!(
+        here.read("systemctl.log")
+            .contains("systemctl --user is-active graphical-session.target\n"),
+        "{}",
+        here.read("systemctl.log")
+    );
     assert_eq!(
         changes(&here.read("systemctl.log")),
         "systemctl --user daemon-reload\n\
-         systemctl --user enable riff.service\n\
+         systemctl --user reenable riff.service\n\
          systemctl --user restart riff.service\n"
     );
 
@@ -144,6 +154,55 @@ async fn riff_daemon_install_writes_the_unit_and_starts_the_daemon() {
     let old: u32 = here.read("daemon.pid").trim().parse().unwrap();
     term(old);
     wait_for(&here.bin.path().join("daemon.out"), "The riff daemon stops").await;
+}
+
+/// 01M77AB12JTJAEEAND02DNK9NG: on a host with a desktop, `riff daemon
+/// install` writes a unit that starts after the desktop of each login.
+/// Its `reenable` moves the link of the older unit, which started with
+/// the user manager.
+#[tokio::test]
+async fn on_a_host_with_a_desktop_the_daemon_starts_after_the_desktop() {
+    let here = Here::new();
+    let unit_path = here.env.home().join(".config/systemd/user/riff.service");
+    let daemon_out = here.bin.path().join("daemon.out");
+    // An older install, before a desktop.
+    let out = here.run(true, &["daemon", "install"]).await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let old = std::fs::read_to_string(&unit_path).unwrap();
+    assert!(
+        old.ends_with("[Install]\nWantedBy=default.target\n"),
+        "{old}"
+    );
+    term(here.read("daemon.pid").trim().parse().unwrap());
+    wait_for(&daemon_out, "The riff daemon stops").await;
+    std::fs::remove_file(&daemon_out).unwrap();
+    std::fs::remove_file(here.bin.path().join("systemctl.log")).unwrap();
+
+    // The person installs it again at the desktop.
+    std::fs::write(here.bin.path().join("desktop"), "").unwrap();
+    let out = here.run(true, &["daemon", "install"]).await;
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
+    assert!(stdout.contains("The riff daemon runs: pid "), "{stdout}");
+    let unit = std::fs::read_to_string(&unit_path).unwrap();
+    assert!(
+        unit.contains("Description=riff daemon: the sessions of riff on this machine\nAfter=graphical-session.target\n"),
+        "{unit}"
+    );
+    assert!(
+        unit.ends_with("[Install]\nWantedBy=graphical-session.target\n"),
+        "{unit}"
+    );
+    assert!(!unit.contains("default.target"), "{unit}");
+    assert_eq!(
+        changes(&here.read("systemctl.log")),
+        "systemctl --user daemon-reload\n\
+         systemctl --user reenable riff.service\n\
+         systemctl --user restart riff.service\n"
+    );
+
+    term(here.read("daemon.pid").trim().parse().unwrap());
+    wait_for(&daemon_out, "The riff daemon stops").await;
 }
 
 /// 01M6JGF6Z6Y8FP86Q9VAS3NPZ7, 01M6JGF755TSQKWJBBZNEAW1GP (#1582): the
@@ -262,6 +321,7 @@ async fn a_daemon_of_a_dev_build_does_no_step_of_an_update() {
     let unit = riff::service::Unit {
         exe: std::fs::canonicalize(here.env.riff_path()).unwrap(),
         env: vec![("PATH".into(), here.path.clone())],
+        desktop: false,
     };
     let old = unit
         .text()
@@ -320,6 +380,7 @@ async fn an_old_unit_asks_again(here: &Here, mode: &str, line: &str) {
     let unit = riff::service::Unit {
         exe: "/opt/riff-of-an-older-release/riff".into(),
         env: vec![("PATH".into(), here.path.clone())],
+        desktop: false,
     };
     let unit_path = here.env.home().join(".config/systemd/user/riff.service");
     std::fs::create_dir_all(unit_path.parent().unwrap()).unwrap();

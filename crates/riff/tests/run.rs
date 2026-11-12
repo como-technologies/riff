@@ -311,6 +311,8 @@ exec "$@"
 /// as systemd does, and writes its pid to `bin/daemon.pid`. `disable
 /// --now riff.service` stops it with a SIGTERM.
 /// `is-active riff.service` says `active` while that daemon runs.
+/// `is-active graphical-session.target` says `active` when the file
+/// `bin/desktop` is there: a host with a desktop.
 /// `show --property=MainPID` gives that pid. `--no-block try-restart
 /// riff.service` does what the file `bin/try-restart` says: `stop` ends
 /// this `systemctl` with a SIGTERM, as the stop of the unit does; other
@@ -330,6 +332,11 @@ case "$*" in
     printf '%s\n' "${5#CPUWeight=}" > "$dir/slice.weight" ;;
   '--user is-active riff.service')
     if [ -f "$dir/daemon.pid" ] && kill -0 "$(cat "$dir/daemon.pid")" 2>/dev/null; then
+      echo active; exit 0
+    fi
+    echo inactive; exit 3 ;;
+  '--user is-active graphical-session.target')
+    if [ -f "$dir/desktop" ]; then
       echo active; exit 0
     fi
     echo inactive; exit 3 ;;

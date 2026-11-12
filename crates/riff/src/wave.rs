@@ -1973,9 +1973,11 @@ fn running<R: Runtime + 'static>(
 
 /// The `gh` of the loop and the jobs of a wave for `repo`: its calls are
 /// the calls of the caller `wave` in the count of the daemon
-/// ([`crate::ghcalls`]).
+/// ([`crate::ghcalls`]). Each call has the time limit
+/// [`sweep::GH_LIMIT`], as the look has, so a `gh` that hangs stops no
+/// wave (01M77AB80MEFD9K8Y7FPDATY3D).
 fn forge(repo: &str) -> pr::Gh {
-    pr::Gh::for_repo(repo).by("wave")
+    sweep::gh(repo).by("wave")
 }
 
 /// How long the wave waits after the look `look` (#1549). The wave is idle
@@ -4266,10 +4268,9 @@ impl World for Live {
         }))
     }
 
-    fn host<'a>(&'a self, wave: &'a Wave) -> BoxFuture<'a, Result<(), run::HostFault>> {
-        let main = wave.main.clone();
+    fn host<'a>(&'a self, _: &'a Wave) -> BoxFuture<'a, Result<(), run::HostFault>> {
         Box::pin(async move {
-            tokio::task::spawn_blocking(move || run::host_facts(&main).map(drop))
+            tokio::task::spawn_blocking(move || run::host_facts().map(drop))
                 .await
                 .unwrap_or_else(|e| Err(run::HostFault::Missing(e.to_string())))
         })
@@ -4309,8 +4310,7 @@ impl World for Live {
     ) -> BoxFuture<'a, Result<Option<Start>>> {
         Box::pin(async move {
             let item = work.item();
-            let main = wave.main.clone();
-            let host = blocking(move || Ok(run::host_facts(&main)?)).await?;
+            let host = blocking(move || Ok(run::host_facts()?)).await?;
             let base = {
                 let repo = wave.repo.clone();
                 blocking(move || pr::default_branch(&forge(&repo), &repo)).await?
@@ -4880,6 +4880,28 @@ mod tests {
 
     const IMAGE: &str = "localhost/riff-session:test";
     const GB: u64 = 1 << 30;
+
+    /// 01M77AB80MEFD9K8Y7FPDATY3D: each `gh` call of the wave, of its jobs
+    /// and of the facts of the host has the time limit of the look. A `gh`
+    /// that hangs ends at the limit, and the error says why.
+    #[test]
+    fn each_gh_of_the_wave_has_the_limit_of_the_look() {
+        assert_eq!(forge("o/r").limit(), Some(sweep::GH_LIMIT));
+        assert_eq!(forge("o/r").caller(), "wave");
+        assert_eq!(sweep::gh("o/r").limit(), Some(sweep::GH_LIMIT));
+        assert_eq!(run::host_gh().limit(), Some(sweep::GH_LIMIT));
+
+        let dir = tempfile::tempdir().unwrap();
+        let hangs = isolated::write_program(dir.path().join("gh"), "#!/bin/sh\nsleep 600\n");
+        let limit = Duration::from_millis(300);
+        let start = Instant::now();
+        let error = pr::default_branch(&pr::Gh::at(&hangs).with_limit(limit), "o/r").unwrap_err();
+        assert!(
+            format!("{error:#}").contains("no answer in 0.3 s. riff stopped it."),
+            "{error:#}"
+        );
+        assert!(start.elapsed() < Duration::from_secs(10));
+    }
 
     /// The link of the failed check of another app than GitHub Actions in
     /// the fake forge.

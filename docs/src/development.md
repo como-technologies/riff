@@ -1501,6 +1501,37 @@ and starts it. The unit gets the `PATH` of your shell, so the daemon
 finds the same `podman`. After each update of riff, run the command
 again: it starts the daemon again with the new riff.
 
+#### When the daemon starts
+
+On a machine with a desktop, the daemon starts after the desktop of
+each login. Before the desktop, the keyring cannot show its unlock
+prompt. On a machine with no desktop, for example a server or WSL2,
+the daemon starts with the user manager of systemd.
+
+```mermaid
+flowchart LR
+    L["your login"] --> U["the user manager of systemd"]
+    U -- "no desktop" --> D["riff daemon"]
+    L --> G["your desktop:<br/>graphical-session.target"]
+    G -- "a desktop" --> D
+```
+
+`riff daemon install` looks for the desktop when you run it: the
+desktop is there when `graphical-session.target` is active. So run it
+in a terminal of your desktop, not over `ssh`. To see when the daemon
+starts:
+
+```sh
+systemctl --user is-active graphical-session.target
+grep -E '^(After|WantedBy)=' ~/.config/systemd/user/riff.service
+```
+
+On a desktop, the first command says `active`, and the unit has
+`After=graphical-session.target` and
+`WantedBy=graphical-session.target`. A unit on a desktop with only
+`WantedBy=default.target` is from an older install: run `riff daemon
+install` again at the desktop. It moves the start of the daemon.
+
 #### Install the daemon on a Mac
 
 On a Mac with Apple silicon, launchd runs the daemon. Run these
@@ -1944,6 +1975,8 @@ riff daemon status
 ```
 
 It shows `claude token: keyring locked.` until the keyring answers.
+The daemon asks for no unlock prompt: see
+[At a login with a security key](#at-a-login-with-a-security-key).
 When the keyring does not answer at all, see
 [When the keyring does not answer](#when-the-keyring-does-not-answer).
 
@@ -6201,6 +6234,49 @@ the OS keyring of pangolin is locked or does not answer: unlock it at the deskto
    ```
 
 Then the next command works.
+
+#### At a login with a security key
+
+A login with a security key, for example a YubiKey with `pam_u2f`,
+gives no password to the keyring. So the keyring stays locked after
+each login and each unlock of the screen. That is normal.
+
+The riff daemon starts after your desktop (see
+[When the daemon starts](#when-the-daemon-starts)). It never asks for
+the unlock prompt, and it runs no `gh` that would ask for it. It waits
+for an open keyring, and the waves say `unlock it at the desktop`.
+Only a command that you type asks for the prompt.
+
+```mermaid
+sequenceDiagram
+    participant P as you
+    participant K as the keyring
+    participant D as the riff daemon
+    Note over K: locked after the login
+    D->>K: a read, with no prompt
+    K-->>D: locked: the wave waits
+    P->>K: gh auth status: the unlock prompt
+    P->>K: the password of the keyring
+    D->>K: a read at the next look
+    K-->>D: the secret: riff and gh work
+```
+
+At each login, unlock the keyring one time. Open a terminal at the
+desktop, and run:
+
+```sh
+gh auth status
+```
+
+Type the password of the keyring in the prompt. Or open "Passwords
+and Keys", and unlock the "Login" keyring. You start no service again:
+the next look of the daemon reads the keyring. Check it:
+
+```sh
+riff daemon status
+```
+
+It shows `claude token: set.` when the daemon reads the keyring.
 
 #### When the keyring does not answer
 
