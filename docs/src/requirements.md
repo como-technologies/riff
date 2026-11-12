@@ -9657,9 +9657,9 @@ that builds it merges.
 - **01M77F7R7RERVQH7XS39GWJJKF** The Waves tab of the TUI shows a board
   for each project of the person: the projects that `riff questions`
   reads (01M77F889Q3D6VCEDNNNXSWGNK). A repository of a session that is
-  no project gets no board.
-  With no such project, the tab says that none of your repositories is a
-  project of the riff. Supersedes 01M6VFG882T794B1CTHK5AKPDG in part.
+  no project gets no board. With no such project, the tab says that none
+  of your repositories is a project of the riff. Supersedes
+  01M6VFG882T794B1CTHK5AKPDG in part.
 - **01M77XYFZW86MCXD22GDCXMS00** `riff who` and `riff top` show a fact
   `lead` for each project with a live lead, after the facts of the
   pauses: `OWNER/REPO on HOST: NAME`, with the name and the short
