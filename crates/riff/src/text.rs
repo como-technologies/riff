@@ -2881,6 +2881,16 @@ pub fn release_holds_unread(fault: &str) -> String {
     format!("riff: cannot read the holds of the release: {fault}. riff shows no hold.")
 }
 
+/// `riff release test --skip` with an empty path
+/// (01M78TS03FK4908GVSTFH1DKYY).
+pub const RELEASE_TEST_EMPTY_SKIP: &str =
+    "an empty path leaves out nothing: give a path in the home of HOST, for example .mozilla";
+
+/// `riff release test --skip` with a path with a space: the request to
+/// the daemon is words (01M78TS03FK4908GVSTFH1DKYY).
+pub const RELEASE_TEST_SPACED_SKIP: &str = "a path with a space cannot go to the daemon: give a \
+     folder of it with no space";
+
 /// `riff release hold` with an empty reason.
 pub const RELEASE_HOLD_NO_REASON: &str = "riff: riff release hold needs a reason, in one line for the other leads. riff changed \
      nothing. next: riff release hold vX.Y.Z REASON";

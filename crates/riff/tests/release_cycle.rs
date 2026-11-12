@@ -2500,6 +2500,33 @@ async fn test_refuses_a_worker() {
     assert_eq!(machine.log(), "");
 }
 
+/// 01M78TS03FK4908GVSTFH1DKYY: `riff release test --skip` refuses an
+/// empty path and a path with a space, and nothing runs.
+#[tokio::test]
+async fn test_refuses_an_empty_skip_and_a_skip_with_a_space() {
+    let machine = Machine::new().await;
+    for (skip, why) in [
+        ("", riff::text::RELEASE_TEST_EMPTY_SKIP),
+        ("~/My Files", riff::text::RELEASE_TEST_SPACED_SKIP),
+    ] {
+        let out = machine
+            .run(
+                &[],
+                &[
+                    "release", "test", "v3.3.0", "--host", "thelio", "--skip", ".mozilla",
+                    "--skip", skip,
+                ],
+                "",
+            )
+            .await;
+        assert_eq!(out.status.code(), Some(2), "{out:?}");
+        let err = text(&out.stderr);
+        assert!(err.contains("--skip <PATH>"), "{err}");
+        assert!(err.contains(why), "{err}");
+    }
+    assert_eq!(machine.log(), "");
+}
+
 const LEAD: [(&str, &str); 1] = [("RIFF_SESSION", "s1")];
 
 impl Machine {

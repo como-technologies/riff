@@ -24,7 +24,7 @@
 //!
 //! | Command | Who | What |
 //! |---|---|---|
-//! | `riff release test vX.Y.Z --host HOST` | the lead or a person; not a worker | the real-session test of the last commit of `origin/main` on the daemon of a host, and the release issue ([`test_target`], [`crate::daemon::release_test`], 01M76428TRD7KWC4C8V5NNPNC7) |
+//! | `riff release test vX.Y.Z --host HOST [--skip PATH]...` | the lead or a person; not a worker | the real-session test of the last commit of `origin/main` on the daemon of a host, with each `--skip` for its home check, and the release issue ([`test_target`], [`crate::daemon::release_test`], 01M76428TRD7KWC4C8V5NNPNC7, 01M78TS03FK4908GVSTFH1DKYY) |
 //! | `riff release cut X.Y.Z` | an admin of the riff, or its lead; the ruleset `releases` lets the admin role and the lead App push the tag | the tag on the last commit of `origin/main`, the GitHub release, the pull request of the next version, the chat line to each admin, when each alert has a review ([`cut`], [`crate::alerts`], 01M7641BHHND5JJA8DGJPFNAN7, 01M7641T7FX9416CYY1XKHTJE6) |
 //! | `riff release status` | each session | the versions, what waits, the state and the next step ([`status`], 01M76428NPN7HZCNFCJW8H67RS) |
 //! | `riff release approve vX.Y.Z` | only a person in a terminal: never a session, also not the lead (01M6WZ40SFVZ6CRQ1H4Z27CWP4) | the pause of the riff, then the approval of `production`; it refuses while a lead holds the version, unless a person passes `--over-holds` ([`approve`], 01M58KMM3NFGJRW4CCV50KJQB2, 01M5SNV7E775DRY9QY60E8JPJR) |

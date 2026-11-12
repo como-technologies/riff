@@ -5340,10 +5340,11 @@ The files that riff must not write:
 A line of a git config can run code at your next git command, for
 example `core.hooksPath`, `core.fsmonitor` or an alias. So the test
 also reads `.git/config` and `.git/config.worktree` of each git clone
-of your home, also of your clone of the test. A new section
-`[branch "NAME"]` does not count: each `git push -u` of a session
-writes one. Each other change of a key fails the test, and the message
-names the file and the key:
+of your home, also of your clone of the test, but not of a clone in
+the work tree of another clone. A new section `[branch "NAME"]` does
+not count: each `git push -u` of a session writes one. Each other
+change of a key fails the test, and the message names the file and
+the key:
 
 ```text
   /home/ada/src/riff/.git/config (changed: core.hookspath)
@@ -5367,10 +5368,10 @@ home while the test runs, for example a browser. It also fails when
 you change a file that riff must not write, for example your
 `~/.bashrc`. The message lists each path. Leave out the folder of that
 program, or the file, with `--skip`, and run the test again. Give
-`--skip` one time for each path:
+`--skip` one time for each path. A relative path is in your home:
 
 ```sh
-just real-session --skip ~/.mozilla --skip ~/.config/Code
+just real-session --skip ~/.mozilla --skip .config/Code
 ```
 
 The test leaves out these paths with no `--skip`:
@@ -5379,17 +5380,50 @@ The test leaves out these paths with no `--skip`:
 |---|---|
 | `~/.config/riff`, `~/.local/share/riff`, `~/.local/state/riff`, `~/.cache/riff`, and `RIFF_HOME` | riff |
 | `~/.local/share/containers`, `~/.config/containers` | podman: the images and the volumes |
-| your clone, and the worktree of the test, except the hooks and the config files in their `.git` | the build of the test, and the fetch of `riff run` |
+| the work tree of each git clone of your home: each path in a folder with `.git` in it, except that `.git`. Your clone and the worktree of the test are such clones too | you and your other sessions: a pull, a build and a test; the build of the test, and the fetch of `riff run` |
 | `~/.cache` | the caches of your tools |
+| `~/.cargo/registry`, `~/.cargo/git` | cargo: the crates of a build |
+| `~/.config/gcloud/logs` | `gcloud`: its logs |
 | `~/snap` | the snap apps, for example the Firefox snap |
 | `~/.local/state/claude/locks` | each `claude` on your machine |
 | `~/.local/share/gvfs-metadata` | GNOME: `gvfsd-metadata` writes there when the desktop touches a file |
 | `.claude/worktrees` and `.git` in each git clone of your home, except `.git/hooks`, `.git/config` and `.git/config.worktree`. When your home is itself a git clone, this is also `~/.claude/worktrees` | your other sessions: they build and commit in their worktrees, and git writes in the `.git` of the clone |
 | `~/.claude`, `~/.claude.json`, `~/.claude.json.lock` | your other Claude Code sessions (see [What the home check compares](#what-the-home-check-compares)) |
 
+So you can work on the host while the test runs: pull, build and test
+in your clones, and run `gcloud`. Your home is not such a clone, also
+when it has a `.git`. A clone in the work tree of another clone is
+part of that work tree. A new clone outside a work tree fails the
+test. In a work tree, the files that riff must not write still count,
+and so do `~/.claude` and `~/.claude.json`. For example, when
+`~/.config` is a git clone, a change in `~/.config/gh` still fails the
+test:
+
+```mermaid
+flowchart LR
+    R["~/src/riff: a git clone"] --> W["its work tree: src, target and the rest<br/>left out"]
+    R --> G[".git: the hooks and the config files count"]
+    C["~/.config: a git clone"] --> K["gh, git, fish/config.fish and fish/conf.d<br/>count"]
+    C --> O["each other path: left out"]
+```
+
 The test uses `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME` and
 `XDG_CACHE_HOME` in place of `~/.config`, `~/.local/share`,
-`~/.local/state` and `~/.cache` when you set them.
+`~/.local/state` and `~/.cache` when you set them. It uses
+`CARGO_HOME` in place of `~/.cargo`, and `CLOUDSDK_CONFIG` in place of
+`~/.config/gcloud`.
+
+#### Leave out a path in the test on a host
+
+When the lead runs the test on a host with `riff release test`, give
+`--skip` to that command. The daemon of the host gives each path to
+the test. A relative path, and a path in your home, name that path in
+the home of the host: `~/.mozilla` in the container of the lead is
+`~/.mozilla` of the host. A path cannot have a space:
+
+```sh
+riff release test v3.3.0 --host thelio --skip .mozilla --skip .config/Code
+```
 
 ### Wait longer for the Gate
 

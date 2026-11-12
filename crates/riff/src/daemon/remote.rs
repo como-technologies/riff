@@ -415,6 +415,7 @@ pub fn remove_clone(dir: &Path, data: &Path, wave: &Wave) -> Vec<String> {
 ///     "leave o/r",
 ///     "leave o/r --now",
 ///     "release test 0123abc v3.3.0",
+///     "release test 0123abc v3.3.0 --skip .mozilla --skip /srv/cache",
 ///     "build",
 ///     "lead move",
 ///     "lead restart",
@@ -447,6 +448,22 @@ pub fn remove_clone(dir: &Path, data: &Path, wave: &Wave) -> Vec<String> {
 /// assert!("workers start 2".parse::<Request>().is_err());
 /// assert!("release test main v3.3.0".parse::<Request>().is_err());
 /// assert!("release test 0123abc".parse::<Request>().is_err());
+/// assert_eq!(
+///     "release test 0123abc v3.3.0 --skip .mozilla".parse(),
+///     Ok(Request::ReleaseTest {
+///         commit: "0123abc".into(),
+///         tag: "v3.3.0".into(),
+///         skips: vec![".mozilla".into()],
+///     })
+/// );
+/// for bad in [
+///     "release test 0123abc v3.3.0 --skip",
+///     "release test 0123abc v3.3.0 .mozilla",
+///     "release test 0123abc v3.3.0 --skip a b",
+///     "release test 0123abc v3.3.0 --gate-wait 9",
+/// ] {
+///     assert!(bad.parse::<Request>().is_err(), "{bad}");
+/// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Request {
@@ -512,6 +529,10 @@ pub enum Request {
         commit: String,
         /// The tag of the release, `vX.Y.Z`.
         tag: String,
+        /// Each path of `--skip`, for the home check of the test
+        /// (01M78TS03FK4908GVSTFH1DKYY): a path with no space, relative
+        /// to the home of the host or absolute.
+        skips: Vec<String>,
     },
     /// `riff build`: build the default branch in the check clone of the
     /// host (#1239).
@@ -579,19 +600,31 @@ impl FromStr for Request {
             ["lead", "move"] => Ok(Request::LeadMove),
             ["lead", "restart"] => Ok(Request::LeadRestart),
             ["build"] => Ok(Request::Build),
-            ["release", "test", commit, tag]
+            ["release", "test", commit, tag, ref flags @ ..]
                 if super::release_test::is_commit(commit)
                     && crate::cycle::tag_version(tag).is_ok() =>
             {
                 Ok(Request::ReleaseTest {
                     commit: commit.to_owned(),
                     tag: tag.to_owned(),
+                    skips: skips_of(flags)?,
                 })
             }
             ["daemon", "limit", ref flags @ ..] => limit_of(flags).map(Request::Limit),
             _ => Err(()),
         }
     }
+}
+
+/// The paths of the flags `--skip PATH` of `riff release test`.
+fn skips_of(flags: &[&str]) -> Result<Vec<String>, ()> {
+    flags
+        .chunks(2)
+        .map(|pair| match pair {
+            ["--skip", path] => Ok((*path).to_owned()),
+            _ => Err(()),
+        })
+        .collect()
 }
 
 /// The [`Change`] of the flags of `riff daemon limit`.
@@ -678,7 +711,13 @@ impl fmt::Display for Request {
             Request::LeadMove => write!(f, "lead move"),
             Request::LeadRestart => write!(f, "lead restart"),
             Request::Build => write!(f, "build"),
-            Request::ReleaseTest { commit, tag } => write!(f, "release test {commit} {tag}"),
+            Request::ReleaseTest { commit, tag, skips } => {
+                write!(f, "release test {commit} {tag}")?;
+                for skip in skips {
+                    write!(f, " --skip {skip}")?;
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -1191,11 +1230,11 @@ pub async fn answer(
             };
             lines_of(dir, ask).await
         }
-        Request::ReleaseTest { commit, tag } => {
+        Request::ReleaseTest { commit, tag, skips } => {
             let (dir, served) = (dir.to_owned(), served.clone());
-            let (commit, tag) = (commit.clone(), tag.clone());
+            let (commit, tag, skips) = (commit.clone(), tag.clone(), skips.clone());
             tokio::task::spawn_blocking(move || {
-                super::release_test::start(&dir, &served, &commit, &tag)
+                super::release_test::start(&dir, &served, &commit, &tag, &skips)
             })
             .await
             .map_err(anyhow::Error::from)

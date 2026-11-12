@@ -190,17 +190,32 @@
 //! |---|---|
 //! | `RIFF_HOME`, and `riff` in each XDG base folder | the folders of riff, with the data folder of the test |
 //! | `containers` in `XDG_DATA_HOME` and in `XDG_CONFIG_HOME` | the images and the volumes of podman |
-//! | the main clone, and the worktree of the test ([`Home::clones`]), except their `.git` | the build of the test, and the fetch of `riff run` |
+//! | the work tree of each git clone in the home, also of the clones of the test, except the files that the check guards and the Claude folder ([`Home::kept`]) | a person and the sessions pull, build and test there; the build of the test, and the fetch of `riff run` |
 //! | `XDG_CACHE_HOME` | the caches of the tools of the host |
+//! | `registry` and `git` in `CARGO_HOME` | the crates that cargo gets for a build (01M78TRZWQ9XN3QKHJBYEB4D6Q) |
+//! | `logs` in `CLOUDSDK_CONFIG` | the logs of each `gcloud` (01M78TRZWQ9XN3QKHJBYEB4D6Q) |
 //! | `snap` in the home | the snap apps, for example the Firefox snap (01M51MQB46AYY39YSAY18NMD8T) |
 //! | `claude/locks` in `XDG_STATE_HOME` | the locks of each `claude` on the host (01M51MQB46AYY39YSAY18NMD8T) |
 //! | `.claude/worktrees` and `.git` in each git clone, also in the home when it is a clone, except the hooks and the config files of git ([`GIT_KEPT`]) | the worktrees and the builds of the other sessions, and the git of each session (01M51SPS50QQ9Y5C6VE26A18FZ, 01M51X6JCHZB8HJ8C8M3J1G6GZ, [`of_other_sessions`]) |
-//! | each path of `--skip` | the other programs of the person that write while the test runs |
+//! | each path of `--skip`: a relative path is in the home ([`Env::in_home`], 01M78TS004W7TF4D86B8V8A3PW) | the other programs of the person that write while the test runs |
 //!
-//! So the test also passes on a busy machine, for example while workers
-//! build and commit in the worktrees of another clone of the person.
-//! A new path in the rest of that clone still counts, for example a new
-//! hook in `.git/hooks`.
+//! So the test runs apart from the work of the person and of the other
+//! sessions on the host (01M78TRZQYZC2PCTDG48CS17EB): a pull, a build and a
+//! test in a clone of the home, and `gcloud`, do not fail it. A git
+//! clone is a folder with `.git` in it, and its work tree is each other
+//! path in that folder. The home is no such clone. A clone in the work
+//! tree of another clone is part of that work tree. A new hook or config
+//! file in the `.git` of a clone still counts, and so does a new clone
+//! outside a work tree.
+//!
+//! ```mermaid
+//! flowchart TD
+//!     P[a path of the home] --> W{"in the work tree of a git clone?"}
+//!     W -- no --> I[the check walks it]
+//!     W -- yes --> K{"a file that the check guards, the Claude folder,<br/>.claude.json, or a folder on the way to one?"}
+//!     K -- yes --> I
+//!     K -- no --> N[left out]
+//! ```
 //!
 //! The check also sees a change to a file that is there already, in the
 //! files that riff must not write (01M51K051FR0WN71NJXNA86XWY,
@@ -226,7 +241,8 @@
 //! file and the key. A key of a section `[branch "NAME"]` does not
 //! count: each `git push -u` of a session writes one. `config.worktree`
 //! in `.git/worktrees/NAME`, and the git folder of each submodule in
-//! `.git/modules`, stay left out.
+//! `.git/modules`, stay left out, and so does the `.git` of a clone in
+//! the work tree of another clone.
 //!
 //! The other sessions of the person write in the Claude folder of the
 //! person (`CLAUDE_CONFIG_DIR`, else `~/.claude`) and in `.claude.json`
@@ -465,7 +481,8 @@ impl fmt::Display for Failure {
 pub struct Options {
     /// The riff binary of the tree.
     pub riff: PathBuf,
-    /// The paths that the home check also leaves out.
+    /// The paths that the home check also leaves out, as the person gave
+    /// them: [`Env::skips`] puts a relative one in the home.
     pub skips: Vec<PathBuf>,
     /// The longest wait for the Gate.
     pub gate_wait: Duration,
@@ -542,6 +559,11 @@ pub struct Env {
     /// The config file of Claude Code: `.claude.json` in
     /// `CLAUDE_CONFIG_DIR`, else `~/.claude.json`.
     pub claude_json: PathBuf,
+    /// The folder of cargo: `CARGO_HOME`, else `~/.cargo`.
+    pub cargo: PathBuf,
+    /// The config folder of `gcloud`: `CLOUDSDK_CONFIG`, else
+    /// `~/.config/gcloud`. `gcloud` does not read `XDG_CONFIG_HOME`.
+    pub gcloud: PathBuf,
 }
 
 impl Env {
@@ -562,14 +584,30 @@ impl Env {
     /// assert_eq!(env.cache, Path::new("/c"));
     /// assert_eq!(env.claude, Path::new("/h/.claude"));
     /// assert_eq!(env.claude_json, Path::new("/h/.claude.json"));
+    /// assert_eq!(env.cargo, Path::new("/h/.cargo"));
+    /// assert_eq!(env.gcloud, Path::new("/h/.config/gcloud"));
     /// assert!(Env::from_vars(|_| None).is_err());
     ///
     /// let env = Env::from_vars(|name| match name {
     ///     "HOME" => Some("/h".into()),
     ///     "CLAUDE_CONFIG_DIR" => Some("/h/cc".into()),
+    ///     "XDG_CONFIG_HOME" => Some("/x".into()),
+    ///     "CARGO_HOME" => Some("/h/cargo".into()),
+    ///     "CLOUDSDK_CONFIG" => Some("/h/gc".into()),
     ///     _ => None,
     /// })?;
     /// assert_eq!(env.claude_json, Path::new("/h/cc/.claude.json"));
+    /// assert_eq!(env.cargo, Path::new("/h/cargo"));
+    /// assert_eq!(env.gcloud, Path::new("/h/gc"));
+    ///
+    /// // gcloud does not read XDG_CONFIG_HOME.
+    /// let env = Env::from_vars(|name| match name {
+    ///     "HOME" => Some("/h".into()),
+    ///     "XDG_CONFIG_HOME" => Some("/x".into()),
+    ///     _ => None,
+    /// })?;
+    /// assert_eq!(env.config, Path::new("/x"));
+    /// assert_eq!(env.gcloud, Path::new("/h/.config/gcloud"));
     /// # Ok::<(), String>(())
     /// ```
     pub fn from_vars(var: impl Fn(&str) -> Option<OsString>) -> Result<Env, String> {
@@ -588,6 +626,8 @@ impl Env {
             cache: base("XDG_CACHE_HOME", ".cache"),
             claude: base("CLAUDE_CONFIG_DIR", ".claude"),
             claude_json,
+            cargo: base("CARGO_HOME", ".cargo"),
+            gcloud: base("CLOUDSDK_CONFIG", ".config/gcloud"),
             home,
         })
     }
@@ -641,17 +681,19 @@ impl Env {
     }
 
     /// The folders that the home check leaves out: the folders of riff,
-    /// the storage of podman, the cache, the snap apps, the locks of
-    /// `claude`, the metadata of GNOME (01M5MR9FGEBKQWHH7RZ9THAHQB), and `skips`
-    /// (01M4ZCFGHCS7WJ6CFYBZSX0AT5, 01M51MQB46AYY39YSAY18NMD8T). The clones of the test are in
-    /// [`Home::clones`].
+    /// the storage of podman, the cache, the crates of cargo and the logs
+    /// of `gcloud` (01M78TRZWQ9XN3QKHJBYEB4D6Q), the snap apps, the locks
+    /// of `claude`, the metadata of GNOME (01M5MR9FGEBKQWHH7RZ9THAHQB),
+    /// and `skips` in the home ([`Env::in_home`], 01M4ZCFGHCS7WJ6CFYBZSX0AT5,
+    /// 01M51MQB46AYY39YSAY18NMD8T). The work tree of each git clone is
+    /// in [`Home::kept`].
     ///
     /// ```
     /// use std::path::PathBuf;
     /// use real_session::Env;
     ///
     /// let env = Env::from_vars(|name| (name == "HOME").then(|| "/h".into()))?;
-    /// let skips = env.skips(&["/h/.mozilla".into()]);
+    /// let skips = env.skips(&["/h/.mozilla".into(), ".config/Code".into()]);
     /// let skips: Vec<String> = skips.iter().map(|p| p.display().to_string()).collect();
     /// assert_eq!(
     ///     skips,
@@ -663,10 +705,14 @@ impl Env {
     ///         "/h/.local/share/containers",
     ///         "/h/.config/containers",
     ///         "/h/.cache",
+    ///         "/h/.cargo/registry",
+    ///         "/h/.cargo/git",
+    ///         "/h/.config/gcloud/logs",
     ///         "/h/snap",
     ///         "/h/.local/state/claude/locks",
     ///         "/h/.local/share/gvfs-metadata",
     ///         "/h/.mozilla",
+    ///         "/h/.config/Code",
     ///     ]
     /// );
     /// # Ok::<(), String>(())
@@ -680,11 +726,39 @@ impl Env {
         all.push(self.data.join("containers"));
         all.push(self.config.join("containers"));
         all.push(self.cache.clone());
+        all.push(self.cargo.join("registry"));
+        all.push(self.cargo.join("git"));
+        all.push(self.gcloud.join("logs"));
         all.push(self.home.join("snap"));
         all.push(self.state.join("claude/locks"));
         all.push(self.data.join("gvfs-metadata"));
-        all.extend(skips.iter().cloned());
+        all.extend(skips.iter().map(|skip| self.in_home(skip)));
         all
+    }
+
+    /// The path of `--skip PATH` (01M78TS004W7TF4D86B8V8A3PW): a relative
+    /// path, and a path that starts with `~/`, is in the home. So the
+    /// daemon of a host gives the test the paths of `riff release test
+    /// --skip` as they came (01M78TS03FK4908GVSTFH1DKYY).
+    ///
+    /// ```
+    /// use std::path::Path;
+    /// use real_session::Env;
+    ///
+    /// let env = Env::from_vars(|name| (name == "HOME").then(|| "/h".into()))?;
+    /// assert_eq!(env.in_home(Path::new("/h/.mozilla")), Path::new("/h/.mozilla"));
+    /// assert_eq!(env.in_home(Path::new("/tmp/x")), Path::new("/tmp/x"));
+    /// assert_eq!(env.in_home(Path::new(".mozilla")), Path::new("/h/.mozilla"));
+    /// assert_eq!(env.in_home(Path::new("~/.config/Code")), Path::new("/h/.config/Code"));
+    /// assert_eq!(env.in_home(Path::new("~")), Path::new("/h"));
+    /// assert_eq!(env.in_home(Path::new("~ada/x")), Path::new("/h/~ada/x"));
+    /// # Ok::<(), String>(())
+    /// ```
+    pub fn in_home(&self, path: &Path) -> PathBuf {
+        match path.strip_prefix("~") {
+            Ok(rest) => self.home.join(rest),
+            Err(_) => self.home.join(path),
+        }
     }
 
     /// The files that riff must not write (01M4Z60B85X62PNYSVJWKXEWH3):
@@ -795,7 +869,8 @@ impl Changes {
 }
 
 /// The home check (01M4ZCFGHCS7WJ6CFYBZSX0AT5,
-/// 01M51K051FR0WN71NJXNA86XWY, 01M51K053WS0KK3E376V6DH6GR).
+/// 01M51K051FR0WN71NJXNA86XWY, 01M51K053WS0KK3E376V6DH6GR,
+/// 01M78TRZQYZC2PCTDG48CS17EB).
 ///
 /// ```
 /// use real_session::{Changes, Home};
@@ -804,6 +879,7 @@ impl Changes {
 /// let root = dir.path().to_owned();
 /// std::fs::create_dir_all(root.join(".claude/projects"))?;
 /// std::fs::create_dir_all(root.join(".local/share/riff"))?;
+/// std::fs::create_dir_all(root.join("src/app/.git/hooks"))?;
 /// std::fs::write(root.join(".gitconfig"), "[user]\n")?;
 /// std::fs::write(root.join(".bash_history"), "ls\n")?;
 /// let home = Home {
@@ -812,22 +888,25 @@ impl Changes {
 ///     claude: root.join(".claude"),
 ///     claude_json: root.join(".claude.json"),
 ///     guarded: vec![root.join(".gitconfig")],
-///     clones: Vec::new(),
 /// };
 /// let before = home.list();
-/// assert_eq!(before.len(), 6);
+/// assert_eq!(before.len(), 10);
 ///
-/// // A new file, a new folder with a file in it, and a change to a file
-/// // that riff must not write: they count.
+/// // A new file, a new folder with a file in it, a change to a file that
+/// // riff must not write, and a new hook of git: they count.
 /// std::fs::write(root.join(".cvsignore"), "")?;
 /// std::fs::create_dir_all(root.join("new/deep"))?;
 /// std::fs::write(root.join(".gitconfig"), "[user]\n\tname = x\n")?;
+/// std::fs::write(root.join("src/app/.git/hooks/pre-commit"), "")?;
 /// // A file of riff, a file of another Claude session, the lock of
-/// // .claude.json, and a change to another file: they do not.
+/// // .claude.json, a change to another file, and a build in the work
+/// // tree of a clone: they do not.
 /// std::fs::write(root.join(".local/share/riff/state"), "")?;
 /// std::fs::write(root.join(".claude/projects/other.jsonl"), "")?;
 /// std::fs::write(root.join(".claude.json.lock"), "")?;
 /// std::fs::write(root.join(".bash_history"), "ls\npwd\n")?;
+/// std::fs::create_dir_all(root.join("src/app/target/debug"))?;
+/// std::fs::write(root.join("src/app/target/debug/app"), "")?;
 /// // A folder in the Claude folder that names the session counts.
 /// std::fs::create_dir_all(root.join(".claude/projects/-s-issue-12-1a2b3c4d-clone"))?;
 ///
@@ -839,6 +918,7 @@ impl Changes {
 ///             root.join(".claude/projects/-s-issue-12-1a2b3c4d-clone"),
 ///             root.join(".cvsignore"),
 ///             root.join("new"),
+///             root.join("src/app/.git/hooks/pre-commit"),
 ///         ],
 ///         ..Changes::default()
 ///     }
@@ -858,18 +938,14 @@ pub struct Home {
     /// The files that riff must not write: a change to one of them
     /// counts. A folder guards each file in it.
     pub guarded: Vec<PathBuf>,
-    /// The main clone and the worktree of the test: the check leaves
-    /// them out, except their `.git`. There, as in each other clone, the
-    /// hooks and the config files of git count (01M51X6JA3W2CMV1S5VZEY7FC3).
-    pub clones: Vec<PathBuf>,
 }
 
 impl Home {
     /// Each path of the home, except the paths that the check leaves out
-    /// ([`Home::skips`], [`Home::clones`] and [`of_other_sessions`]),
-    /// the state of each file that it guards
-    /// ([`Home::guarded`], and the hooks of git), and the keys of each
-    /// git config ([`git_config`]).
+    /// ([`Home::skips`], [`of_other_sessions`], and the work tree of each
+    /// git clone outside [`Home::kept`]), the state of each file that it
+    /// guards ([`Home::guarded`], and the hooks of git), and the keys of
+    /// each git config ([`git_config`]).
     pub fn list(&self) -> Listing {
         let mut listing = Listing::default();
         self.walk(&mut |path, meta| {
@@ -950,18 +1026,50 @@ impl Home {
     }
 
     /// True when the check leaves out `path`: it is in [`Home::skips`],
-    /// it is of the other sessions ([`of_other_sessions`]), or it is in
-    /// one of [`Home::clones`] and not in its `.git`.
+    /// or it is of the other sessions ([`of_other_sessions`]).
     fn left_out(&self, path: &Path) -> bool {
-        self.skips.iter().any(|skip| path.starts_with(skip))
-            || self.clones.iter().any(|clone| {
-                path.strip_prefix(clone).is_ok_and(|rest| {
-                    rest.components()
-                        .next()
-                        .is_some_and(|first| first.as_os_str() != ".git")
-                })
-            })
-            || of_other_sessions(path)
+        self.skips.iter().any(|skip| path.starts_with(skip)) || of_other_sessions(path)
+    }
+
+    /// True when the check keeps `path` in the work tree of a git clone
+    /// (01M78TRZQYZC2PCTDG48CS17EB): it is a file of [`Home::guarded`],
+    /// the Claude folder or a file `.claude.json*` beside it, a path
+    /// in one of them, or a folder on the way to one. So a clone of the
+    /// config of the person, for example `~/.config`, keeps its guarded
+    /// files in the check.
+    ///
+    /// ```
+    /// use std::path::Path;
+    /// use real_session::Home;
+    ///
+    /// let home = Home {
+    ///     root: "/h".into(),
+    ///     skips: Vec::new(),
+    ///     claude: "/h/.claude".into(),
+    ///     claude_json: "/h/.claude.json".into(),
+    ///     guarded: vec!["/h/.config/gh".into(), "/h/.config/fish/config.fish".into()],
+    /// };
+    /// for kept in [
+    ///     "/h/.config/gh",
+    ///     "/h/.config/gh/hosts.yml",
+    ///     "/h/.config/fish",
+    ///     "/h/.config/fish/config.fish",
+    ///     "/h/.claude/settings.json",
+    ///     "/h/.claude.json.lock",
+    /// ] {
+    ///     assert!(home.kept(Path::new(kept)), "{kept}");
+    /// }
+    /// for out in ["/h/.config/fish/functions", "/h/.config/tool", "/h/src/app/target"] {
+    ///     assert!(!home.kept(Path::new(out)), "{out}");
+    /// }
+    /// ```
+    pub fn kept(&self, path: &Path) -> bool {
+        self.of_claude(path)
+            || self
+                .guarded
+                .iter()
+                .chain([&self.claude, &self.claude_json])
+                .any(|keep| path.starts_with(keep) || keep.starts_with(path))
     }
 
     /// True when `path` is in the Claude folder, or its name starts with
@@ -972,21 +1080,27 @@ impl Home {
     }
 
     /// Calls `visit` for each path of the home, except the paths that
-    /// the check leaves out ([`Home::left_out`]), with the metadata of
-    /// the path itself. It
-    /// goes into a folder when `visit` gives true, and the folder is on
-    /// the file system of the home. It follows no link, and it skips a
-    /// folder that it cannot read.
+    /// the check leaves out ([`Home::left_out`]), and the work tree of
+    /// each git clone outside [`Home::kept`] (01M78TRZQYZC2PCTDG48CS17EB),
+    /// with the metadata of the path itself. A git clone is a folder with
+    /// `.git` in it, and not the home; its work tree is each other path
+    /// in it, also each clone in it. It goes into a folder when `visit`
+    /// gives true, and the folder is on the file system of the home. It
+    /// follows no link, and it skips a folder that it cannot read.
     fn walk(&self, visit: &mut dyn FnMut(&Path, &Metadata) -> bool) {
         let device = std::fs::symlink_metadata(&self.root).map(|m| m.dev()).ok();
-        let mut folders = vec![self.root.clone()];
-        while let Some(folder) = folders.pop() {
+        // Each folder to read, with true when it is in a work tree.
+        let mut folders = vec![(self.root.clone(), false)];
+        while let Some((folder, in_tree)) = folders.pop() {
             let Ok(entries) = std::fs::read_dir(&folder) else {
                 continue;
             };
-            for entry in entries.flatten() {
+            let entries: Vec<_> = entries.flatten().collect();
+            let clone = folder != self.root && entries.iter().any(|e| e.file_name() == ".git");
+            for entry in entries {
                 let path = entry.path();
-                if self.left_out(&path) {
+                let tree = (in_tree || clone) && !(clone && named(&path, ".git"));
+                if self.left_out(&path) || (tree && !self.kept(&path)) {
                     continue;
                 }
                 // The metadata of a link, not of its target.
@@ -994,7 +1108,7 @@ impl Home {
                     continue;
                 };
                 if visit(&path, &meta) && meta.is_dir() && Some(meta.dev()) == device {
-                    folders.push(path);
+                    folders.push((path, tree));
                 }
             }
         }
@@ -1699,24 +1813,17 @@ fn steps(options: &Options, stop: &AtomicBool, made: &mut Made) -> Result<String
         env,
         image,
         model,
-        clones,
         address,
     } = step(Step::Host, stop, || host(options, stop, &mut made.server))?;
     let riff = Riff::new(&options.riff, &env).with_server(&address);
     made.riff = Some(riff.clone());
     made.sessions = Some(env.sessions());
-    let skips: Vec<PathBuf> = options
-        .skips
-        .iter()
-        .map(|skip| std::path::absolute(skip).unwrap_or_else(|_| skip.clone()))
-        .collect();
     let home = Home {
         root: env.home.clone(),
-        skips: env.skips(&skips),
+        skips: env.skips(&options.skips),
         claude: env.claude.clone(),
         claude_json: env.claude_json.clone(),
         guarded: env.guarded(),
-        clones,
     };
     let before = step(Step::List, stop, || {
         let listing = home.list();
@@ -1820,8 +1927,6 @@ struct Host {
     image: String,
     /// The model of `riff.toml` of the tree ([`model_of_config`]).
     model: String,
-    /// The main clone and the worktree of the test.
-    clones: Vec<PathBuf>,
     /// The address of the riff-server of the test.
     address: String,
 }
@@ -1848,15 +1953,6 @@ fn host(options: &Options, stop: &AtomicBool, server: &mut Option<Child>) -> Res
     if image.is_empty() {
         return Err("riff image printed no image".into());
     }
-    let common = PathBuf::from(output(
-        "git",
-        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-        stop,
-    )?);
-    let main = common
-        .parent()
-        .ok_or_else(|| format!("the git dir {} has no parent", common.display()))?
-        .to_owned();
     let top = PathBuf::from(output("git", &["rev-parse", "--show-toplevel"], stop)?);
     let config = top.join("riff.toml");
     let text = std::fs::read_to_string(&config)
@@ -1871,7 +1967,6 @@ fn host(options: &Options, stop: &AtomicBool, server: &mut Option<Child>) -> Res
         env,
         image,
         model,
-        clones: vec![main, top],
         address,
     })
 }
@@ -2697,8 +2792,12 @@ mod tests {
         assert!(home.changes(&before, &[String::new()]).is_empty());
     }
 
+    /// 01M78TRZQYZC2PCTDG48CS17EB: a person and the other sessions pull,
+    /// build and test in the work tree of a clone. It does not count, and
+    /// nor does a clone in it. A new hook and a new config file of git
+    /// count, and so does a new path in a folder that is not a clone.
     #[test]
-    fn the_worktrees_and_the_git_of_a_clone_do_not_count_and_the_rest_of_it_does() {
+    fn the_work_tree_and_the_git_of_a_clone_do_not_count_and_its_hooks_do() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().to_owned();
         let clone = root.join("src/riff");
@@ -2707,14 +2806,19 @@ mod tests {
         std::fs::create_dir_all(clone.join(".git/hooks")).unwrap();
         std::fs::write(clone.join(".git/config"), "[core]\n").unwrap();
         std::fs::create_dir_all(&worktree).unwrap();
+        // A clone in the work tree, for example the source of a crate.
+        let inner = clone.join("vendor/lib");
+        std::fs::create_dir_all(inner.join(".git/hooks")).unwrap();
         // A folder `.claude/worktrees` in a folder that is not a clone.
         let not_clone = root.join("notes/.claude/worktrees");
         std::fs::create_dir_all(&not_clone).unwrap();
         let home = home_in(&root, Vec::new());
         let before = home.list();
+        assert!(!before.contains(&clone.join("vendor")));
+        assert!(before.contains(&clone.join(".git/hooks")));
 
         // The other sessions build and commit in their worktrees, and
-        // make a new worktree.
+        // make a new worktree. The person pulls, builds and tests.
         std::fs::create_dir_all(worktree.join("target/debug")).unwrap();
         std::fs::write(worktree.join("target/debug/riff"), "").unwrap();
         std::fs::write(worktree.join("new.rs"), "").unwrap();
@@ -2722,25 +2826,88 @@ mod tests {
         std::fs::write(clone.join(".git/objects/ab/cdef"), "").unwrap();
         std::fs::create_dir_all(clone.join(".git/worktrees/issue-2")).unwrap();
         std::fs::write(clone.join(".git/worktrees/issue-2/HEAD"), "").unwrap();
-        assert_eq!(home.changes(&before, &[]), Changes::default());
-
-        // A new path in the rest of the clone, a new hook and config file
-        // of git, and a new path in the folder that is not a clone count.
+        std::fs::create_dir_all(clone.join("target/debug/deps")).unwrap();
+        std::fs::write(clone.join("target/debug/deps/riff-1a2b"), "").unwrap();
         std::fs::write(clone.join("notes.md"), "").unwrap();
         std::fs::write(clone.join(".claude/settings.json"), "{}").unwrap();
+        std::fs::write(inner.join(".git/hooks/pre-commit"), "").unwrap();
+        assert_eq!(home.changes(&before, &[]), Changes::default());
+
+        // A new hook and config file of git, a new path in the folder that
+        // is not a clone, and a new clone outside a work tree, count.
         std::fs::write(clone.join(".git/hooks/pre-commit"), "").unwrap();
         std::fs::write(clone.join(".git/config.worktree"), "").unwrap();
         std::fs::write(not_clone.join("x"), "").unwrap();
+        std::fs::create_dir_all(root.join("src/new/.git")).unwrap();
         assert_eq!(
             home.changes(&before, &[]).new,
             [
                 not_clone.join("x"),
-                clone.join(".claude/settings.json"),
+                root.join("src/new"),
                 clone.join(".git/config.worktree"),
                 clone.join(".git/hooks/pre-commit"),
-                clone.join("notes.md"),
             ]
         );
+    }
+
+    /// 01M78TRZQYZC2PCTDG48CS17EB: a clone of the config of the person,
+    /// here `~/.config` and `~/.claude`, keeps the files that the check
+    /// guards and the Claude folder in the check. Each other path of its
+    /// work tree does not count.
+    #[test]
+    fn a_clone_keeps_its_guarded_files_and_the_claude_folder_in_the_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_owned();
+        let config = root.join(".config");
+        for folder in [".git", "gh", "fish/functions", "tool"] {
+            std::fs::create_dir_all(config.join(folder)).unwrap();
+        }
+        let hosts = config.join("gh/hosts.yml");
+        std::fs::write(&hosts, "github.com:\n").unwrap();
+        let fish = config.join("fish/config.fish");
+        std::fs::write(&fish, "set x 1\n").unwrap();
+        std::fs::create_dir_all(root.join(".claude/.git")).unwrap();
+        std::fs::create_dir_all(root.join(".claude/projects")).unwrap();
+        let home = home_in(&root, vec![config.join("gh"), fish.clone()]);
+        let before = home.list();
+
+        std::fs::write(&hosts, "gitlab.com:\n").unwrap();
+        std::fs::write(&fish, "set x 2\n").unwrap();
+        std::fs::write(config.join("gh/new.yml"), "").unwrap();
+        std::fs::write(config.join("fish/functions/f.fish"), "").unwrap();
+        std::fs::write(config.join("tool/x"), "").unwrap();
+        std::fs::create_dir_all(config.join("other")).unwrap();
+        std::fs::write(root.join(".claude/projects/other.jsonl"), "").unwrap();
+        let named = root.join(".claude/projects/-s-issue-12-1a2b3c4d-clone");
+        std::fs::create_dir_all(&named).unwrap();
+        assert_eq!(
+            home.changes(&before, &["1a2b3c4d".into()]),
+            Changes {
+                changed: vec![fish, hosts],
+                new: vec![named, config.join("gh/new.yml")],
+                ..Changes::default()
+            }
+        );
+    }
+
+    /// 01M51X6JCHZB8HJ8C8M3J1G6GZ: the home is no clone, also when it has
+    /// a `.git`. A new path in it counts, and its `.claude/worktrees` is
+    /// left out.
+    #[test]
+    fn the_home_is_no_clone() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_owned();
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::create_dir_all(root.join(".claude/worktrees")).unwrap();
+        let home = Home {
+            claude: root.join("cc"),
+            claude_json: root.join("cc/.claude.json"),
+            ..home_in(&root, Vec::new())
+        };
+        let before = home.list();
+        std::fs::write(root.join("x"), "").unwrap();
+        std::fs::create_dir_all(root.join(".claude/worktrees/issue-1")).unwrap();
+        assert_eq!(home.changes(&before, &[]).new, [root.join("x")]);
     }
 
     /// A [`Home`] in `root` with the Claude folder `.claude`, its
@@ -2752,7 +2919,6 @@ mod tests {
             claude: root.join(".claude"),
             claude_json: root.join(".claude.json"),
             guarded,
-            clones: Vec::new(),
         }
     }
 
@@ -2875,6 +3041,9 @@ mod tests {
         assert_eq!(home.changes(&before, &[]).keys[&config], ["core.bare"]);
     }
 
+    /// The main clone and the worktree of the test are clones of the home
+    /// as each other one: the check leaves them out, except their hooks
+    /// and their git config (01M51X6JA3W2CMV1S5VZEY7FC3).
     #[test]
     fn a_clone_of_the_test_is_left_out_except_its_hooks_and_its_git_config() {
         let dir = tempfile::tempdir().unwrap();
@@ -2884,10 +3053,7 @@ mod tests {
         clone_in(&clone);
         std::fs::create_dir_all(&worktree).unwrap();
         std::fs::write(worktree.join(".git"), "gitdir: x\n").unwrap();
-        let home = Home {
-            clones: vec![clone.clone(), worktree.clone()],
-            ..home_in(&root, Vec::new())
-        };
+        let home = home_in(&root, Vec::new());
         let before = home.list();
 
         // The build of the test and the fetch of riff run.
