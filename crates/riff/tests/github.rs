@@ -223,7 +223,7 @@ fn just_github_sets_the_repository_and_makes_the_ruleset() {
         checks["required_status_checks"],
         serde_json::json!([{ "context": "Gate" }, { "context": "Hygiene" }, { "context": "riff/verify" }])
     );
-    // 01M75NAPJVW8FJZTJEF416MR4J: the merge queue of riff init.
+    // 01M75NAPJVW8FJZTJEF416MR4J: the merge queue of riff project init.
     assert_eq!(rule("merge_queue"), riff::repo_setup::merge_queue());
 }
 
@@ -250,7 +250,7 @@ fn just_github_again_updates_the_same_ruleset() {
 }
 
 /// 01M75NAPJVW8FJZTJEF416MR4J: `deploy/merge-queue.sh on` adds the same
-/// rule as `just github` and `riff init`.
+/// rule as `just github` and `riff project init`.
 #[test]
 fn the_merge_queue_script_adds_the_rule_of_riff_init() {
     let script = std::fs::read_to_string(repo().join("deploy/merge-queue.sh")).unwrap();
@@ -265,7 +265,7 @@ fn the_merge_queue_script_adds_the_rule_of_riff_init() {
 
 /// 01M6WZ40PZNBHW2BZHMQX80WJ8: only the repository admin role and the
 /// lead App create, move or delete a release tag `v*`. The ruleset is the
-/// one of `riff init` ([`riff::repo_setup::releases`]).
+/// one of `riff project init` ([`riff::repo_setup::releases`]).
 #[test]
 fn just_github_lets_only_an_admin_and_the_lead_app_make_a_release_tag() {
     let (out, log) = setup(None);

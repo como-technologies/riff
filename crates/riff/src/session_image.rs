@@ -563,7 +563,7 @@ const RUST_DOCKERFILE: &str = include_str!("../../../deploy/rust/Dockerfile");
 
 /// The `riff-base` that the release of riff that runs pins
 /// (01M5SNTPEP41NMSP3SEKR7KVB0): the image in the first `FROM` of
-/// `deploy/rust/Dockerfile` at the commit of the build. `riff init` pins
+/// `deploy/rust/Dockerfile` at the commit of the build. `riff project init` pins
 /// it in a repository that has no [`FILE`], and the daemon names it to the
 /// lead of a repository whose image has an old tool
 /// ([`crate::image_tools`]).

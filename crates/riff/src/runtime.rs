@@ -32,15 +32,15 @@
 //! |---|---|---|
 //! | Find the image | [`Runtime::has_image`] | `podman image exists IMAGE` |
 //! | Get the image | [`Runtime::pull`] | `podman pull IMAGE` |
-//! | Start | [`Runtime::start`] | `nice -n 19 podman run --rm -i ...` ([`crate::podman::run_args`], [`crate::podman::start_command`]) |
+//! | Start | [`Runtime::start`] | `systemctl --user set-property --runtime riff.slice CPUWeight=1`, then `nice -n 19 podman run --rm -i ... --cgroup-parent riff.slice ...` ([`crate::podman::run_args`], [`crate::podman::start_command`]) |
 //! | The events | [`Running::events`] | the stdout of `podman run` |
 //! | Stop | [`Runtime::stop`] | `podman stop NAME` |
 //! | Find a live session | [`Runtime::running`] | `podman container inspect --format {{.State.Running}} NAME` |
 //! | Attach a terminal | [`Runtime::attach`] | `podman attach NAME` |
-//! | Draw the terminal again at the next attach | [`Runtime::redraw`] | `podman exec NAME stty -F /dev/console rows ROWS cols COLS` |
-//! | Start with a terminal | [`Runtime::start_terminal`] | `nice -n 19 podman run --rm -d -i -t ...` ([`crate::podman::terminal_args`]), then `podman wait NAME` |
+//! | Draw the terminal again at the next attach | [`Runtime::redraw`] | `podman exec NAME nice -n 19 stty -F /dev/console rows ROWS cols COLS` |
+//! | Start with a terminal | [`Runtime::start_terminal`] | as the start, with `nice -n 19 podman run --rm -d -i -t ...` ([`crate::podman::terminal_args`]), then `podman wait NAME` |
 //! | Run a command with a terminal | [`Runtime::exec`] | `podman exec -it NAME nice -n 19 COMMAND` ([`crate::podman::exec_args`]) |
-//! | Find out if a live session reaches the network | [`Runtime::reaches`] | `podman exec NAME getent hosts api.anthropic.com` |
+//! | Find out if a live session reaches the network | [`Runtime::reaches`] | `podman exec NAME nice -n 19 getent hosts api.anthropic.com` |
 //! | Find the image digest of a live session | [`Runtime::digest`] | `podman container inspect --format {{.ImageDigest}} NAME` |
 //! | List the processes of a live session | [`Runtime::processes`] | `podman top NAME pid ppid etime args` ([`crate::podman::top_args`]) |
 //!

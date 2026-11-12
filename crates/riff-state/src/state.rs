@@ -12,6 +12,7 @@
 //! | Leads | user and repository thread | [`Riff`] | The log. The lead session of the user. |
 //! | Riff state | none: one for the server | [`Riff`] | The log. The pause of the riff and of each repository, and the settings of idle workers. |
 //! | People | email, or USER | [`Riff`] | The log. The riff ID, the email of each USER, the members, the admins, the owner, and the request for the owner role (01M3XA875QZ584JBGA37853PWX). |
+//! | Projects | repository thread | [`Riff`] | The log. Who enrolled each project and when, and the hosts that may run its wave (01M76SG2E9RPV4B7CYSZPGGZ3P). |
 //! | Known sessions | who | [`Riff`] | The log. The URI and the time of the last record that names the session, and its life cycle: the worker mark, the MustClear mark and the time of its last fresh start (see [`sessions`]). |
 //! | Sessions | who | [`Presence`] | Memory. The place, open watch streams, the last call, the last sign of life, whether it ended, and its last status. |
 //! | Read cursors | who and thread | [`Presence`] | Memory and the checkpoint. The last sequence number that the session read. |
@@ -44,6 +45,7 @@
 //! | work | [`work`] | [`Work`](work::Work) | [`Claim`], [`Release`], [`ReleaseFor`], [`Lead`] |
 //! | the riff | [`the_riff`] | [`TheRiff`](the_riff::TheRiff) | [`MakeRiff`], [`Pause`], [`Resume`], [`SetIdle`], [`Forget`], [`Import`] |
 //! | people | [`people`] | [`People`] | [`Admit`], `Invite`, `Remove`, `SetAdmin`, `PassOwner`, `TakeOwner`, `DenyOwner`, [`GrantOwner`], [`EndOwner`], [`NameOwner`], `Revoke` |
+//! | projects | [`projects`] | [`Projects`] | [`EnrollProject`], [`RemoveProject`], [`FindProjects`] |
 //!
 //! The wire type of a command that a client can send is its command
 //! type (01M3WRD8TBDPA4JNEZY6J4N2EX). A new command is a type with
@@ -267,7 +269,7 @@ use riff_core::wire::{
     SetStep, Start, StartReason, Status, StatusInfo, StepChange, StepInfo, Tailed, ThreadInfo,
     Waits, Wake,
 };
-use riff_core::wire::{ChatName, MachineInfo, NotesReply, SetMachine, ThreadPage};
+use riff_core::wire::{ChatName, MachineInfo, NotesReply, ProjectsReply, SetMachine, ThreadPage};
 
 /// A blocked session that the look of the lead found, with its reason
 /// ([`State::look_blocks`]).
@@ -281,6 +283,7 @@ pub mod notes;
 pub mod people;
 pub mod plan;
 pub mod presence;
+pub mod projects;
 pub mod proof;
 pub mod read;
 pub mod riff;
@@ -300,6 +303,7 @@ pub use devices::{AddKey, PersonKey, Prove};
 pub use people::{Admit, Admitted, EndOwner, GrantOwner, NameOwner, OwnerChange, People};
 pub use plan::Plans;
 pub use presence::{Imported, ImportedSession, Presence, Signal};
+pub use projects::{EnrollProject, Enrolled, FindProjects, OnGitHub, Projects, RemoveProject};
 pub use riff::{Riff, apply};
 pub use sessions::Arrive;
 pub use snapshot::Snapshot;
@@ -2265,6 +2269,27 @@ impl State {
         let user = user.unwrap_or_else(|| caller.who().user());
         notes::may_read(caller, user)?;
         Ok(notes::reply(self.written.plans(), thread, user, history))
+    }
+
+    /// Each project of the riff, as the query `projects` gives them
+    /// (01M76SG8JVHTKY6N62FQG7XAE6): each person and each session reads
+    /// them.
+    pub fn projects(&self, now: Instant) -> ProjectsReply {
+        self.written_view().projects(now)
+    }
+
+    /// True when the log has a record of a project: then riff-server
+    /// looks for no project at its start (01M76SG8NCSAP69Y5AX455BJQM).
+    pub fn projects_known(&self) -> bool {
+        self.written.projects().known()
+    }
+
+    /// True when the search of the projects at a start enrolls a
+    /// repository: the log has no record of a project, and a repository
+    /// thread has a lead or the notes of a lead
+    /// (01M76SG8NCSAP69Y5AX455BJQM).
+    pub fn projects_to_find(&self) -> bool {
+        !self.written_view().to_find().is_empty()
     }
 
     /// Each repository thread of `user` (#1666): each one with a session
@@ -4400,6 +4425,9 @@ mod tests {
                     "plan": {"wave": {"number": 21, "title": "Wave 21"},
                              "items": [{"item": "issue-7", "needs": ["issue-6"]}],
                              "done": ["issue-6"], "position": 2, "at_ms": T0}}},
+                "projects": [{"repo": "como-technologies/riff", "by": {"person": "mike"},
+                              "at_ms": T0, "hosts": ["pangolin"]}],
+                "projects_known": true,
                 "calls": [{"position": 2, "written_at_ms": T0, "by": {"session": "mike/a1"},
                            "command": "claim", "call": "c1",
                            "change": {"claimed": {

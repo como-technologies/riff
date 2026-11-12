@@ -12,6 +12,7 @@
 //! | [`TheRiff`] | [`super::the_riff`] | The pauses, the settings, and the policy of the proof of presence. |
 //! | [`People`] | [`super::people`] | The riff ID, the email of each USER, the members, the admins, the owner, the request for the owner role, and the keys of each USER. |
 //! | [`Plans`] | [`super::plan`] | The holds and the plan of each repository thread. |
+//! | [`Projects`] | [`super::projects`] | The projects of the riff: the repositories that a person enrolled, with their hosts. |
 //!
 //! # Only `apply` changes the riff
 //!
@@ -56,11 +57,14 @@
 //! | `device_removed` | A name that the person has no device with changes nothing. | Yes. |
 //! | `policy_set` | It keeps the policy of the proof of presence (01M75WKS7H066EXQPGF003B4SC). | Yes. |
 //! | `proved` | It keeps the time of the record as the time of the last use of the key, and the counter of the proof (01M75WKS4RF17WF85MWA4GFK0C). A key that the person does not have changes nothing. | Yes. |
+//! | `project_enrolled` | It keeps the `by` and the time of the first record of a project, and sets the hosts of a project that is there (01M76SG2E9RPV4B7CYSZPGGZ3P). Each record of a project sets the mark that the log has one. | Yes. |
+//! | `project_removed` | A repository that is no project changes nothing but the mark. | Yes. |
 
 use riff_core::record::{Change, Record};
 
 use super::people::People;
 use super::plan::Plans;
+use super::projects::Projects;
 use super::sessions::Sessions;
 use super::snapshot::LoadPath;
 use super::the_riff::TheRiff;
@@ -99,6 +103,7 @@ pub struct Riff {
     the_riff: TheRiff,
     people: People,
     plans: Plans,
+    projects: Projects,
     /// The position of the last record.
     position: u64,
 }
@@ -118,6 +123,7 @@ impl Riff {
         the_riff: TheRiff,
         people: People,
         plans: Plans,
+        projects: Projects,
     ) -> Riff {
         Riff {
             sessions,
@@ -126,6 +132,7 @@ impl Riff {
             the_riff,
             people,
             plans,
+            projects,
             position,
         }
     }
@@ -163,6 +170,11 @@ impl Riff {
     /// The plan of each repository thread: the holds.
     pub fn plans(&self) -> &Plans {
         &self.plans
+    }
+
+    /// The projects of the riff (01M76SG2E9RPV4B7CYSZPGGZ3P).
+    pub fn projects(&self) -> &Projects {
+        &self.projects
     }
 }
 
@@ -250,6 +262,8 @@ pub fn apply(riff: &mut Riff, record: &Record) {
         Change::DeviceRemoved(removed) => riff.people.device_removed(removed),
         Change::PolicySet(set) => riff.the_riff.policy_set(set),
         Change::Proved(proved) => riff.people.proved(proved, record.envelope.written_at_ms),
+        Change::ProjectEnrolled(enrolled) => riff.projects.enrolled(enrolled, record),
+        Change::ProjectRemoved(removed) => riff.projects.removed(removed),
     };
     if let Err(what) = taken {
         tracing::warn!(

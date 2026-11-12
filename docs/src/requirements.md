@@ -496,9 +496,9 @@
 - **01M5QVF58KEC9WNHAJ8WTZ18EP** `riff wave make` also makes the open
   milestone `Backlog` when the repository has none, and says so. When it
   cannot make it, it says why on stderr, and the wave stays made.
-- **01M5QWA0H5KJ2SRRP50478X3J2** The check of the Backlog in `riff init`
-  passes when the repository has the open milestone `Backlog`. Its step
-  makes that milestone, as `riff wave make` does.
+- **01M5QWA0H5KJ2SRRP50478X3J2** The check of the Backlog in `riff
+  project init` passes when the repository has the open milestone
+  `Backlog`. Its step makes that milestone, as `riff wave make` does.
 - **01M5R0HERC566W14SEJ3ZCG6V5** `riff wave move ITEM... --to WAVE`
   warns when an issue has no "Done when" line, and moves it. The
   warning says that the wave takes only an issue with that line.
@@ -556,18 +556,18 @@
   `question`, next to `held` and `tracker`. A claim, a verify and a
   stuck pull request win over it, a tracker wins over it, and it wins
   over a hold. A pause hides no item of the group.
-- **01M6QBJHZBDQ8BB1JPT003RXW7** `riff init` makes the label `question`
-  with the first wave, when the repository has none. It never changes a
-  label that is there.
+- **01M6QBJHZBDQ8BB1JPT003RXW7** `riff project init` makes the label
+  `question` with the first wave, when the repository has none. It
+  never changes a label that is there.
 - **01M6QBJJ3R5CNTHT4FAPZ5DDSW** `riff questions` lists the open issues
   with the label `question`. Each line has the repository, the number,
   the title and the link. `riff questions --web` opens one GitHub search
   for `is:issue is:open label:question` in the browser, and lists
   nothing.
-- **01M6QCXGC42AG1RY5QNGT47GVV** The start text of a work session names
-  both forms of a "Done when" line: the line `Done when:` and the
-  heading `## Done when`. The note of `riff init` for the open issues
-  with no "Done when" line says both forms too. Supersedes
+- **01M6QCXGC42AG1RY5QNGT47GVV** The start text of a work session
+  names both forms of a "Done when" line: the line `Done when:` and
+  the heading `## Done when`. The note of `riff project init` for the
+  open issues with no "Done when" line says both forms too. Supersedes
   01M5SMMP7ZW2PZNGK63WWZAC8P in part.
 - **01M6QFZ9JHR19Y8F1PWH2HVQ07** The start text of a verify session
   names both forms of a "Done when" line: the line `Done when:` and the
@@ -953,13 +953,13 @@
   check. When the ruleset of the default branch requires no check but
   `riff/verify`, the full check is empty, and `riff/verify` is the only
   check that gates a merge. riff names no check `Gate` for it. The
-  verify of the wave starts when the pull request has a head commit, and
-  `riff verify pass` needs no check run. `riff init` makes the ruleset
-  `riff` with `riff/verify` alone when no pull request ran a check, and
-  it says in a note that the repository has no CI. `riff.toml` has no
-  setting for the full check. Supersedes 01M5QYDE41FVFX26EC8K5QGYH4,
-  01M5QWA0E9A4ZJ8X49EM2MJM5Q, 01M5QZ01Y14Z76RC220RT7YTX7 and
-  01M5R1675HZ6TJPMQ6536X37T5 in part.
+  verify of the wave starts when the pull request has a head commit,
+  and `riff verify pass` needs no check run. `riff project init`
+  makes the ruleset `riff` with `riff/verify` alone when no pull
+  request ran a check, and it says in a note that the repository has
+  no CI. `riff.toml` has no setting for the full check. Supersedes
+  01M5QYDE41FVFX26EC8K5QGYH4, 01M5QWA0E9A4ZJ8X49EM2MJM5Q,
+  01M5QZ01Y14Z76RC220RT7YTX7 and 01M5R1675HZ6TJPMQ6536X37T5 in part.
 - **01M5TKPHDNHY75BHPD4XVBJRN9** The ruleset `main` of
   como-technologies/riff has a merge queue with the squash method. A
   pull request merges through the queue: GitHub builds a merge group of
@@ -1210,19 +1210,20 @@
   the host (01M6XZJFE2ZTR5RE3AWM30R704). This supersedes
   01M6WPMWSMQABE97YCMS5Z3M1P in full, and 01M6WPMWYSW98MQYQCCJ54ZX04 and
   01M6WZ2C8JXEA888XYMRXTS17V in part.
-- **01M6Z87JTXW0Y99X08VHA2SSSR** Each state with no token of an App that
-  a lead cannot repair gives the person the fix and a prompt for
+- **01M6Z87JTXW0Y99X08VHA2SSSR** Each state with no token of an App
+  that a lead cannot repair gives the person the fix and a prompt for
   `claude` on the host. The reason names the fix, for example `riff
   github install OWNER`. The daemon adds a prompt to paste into a
-  `claude` session that the person starts on the host, in a clone of the
-  repository: it asks `claude` to read the lines `GitHub:` of `riff
-  daemon status`, and to give the commands for a terminal of the person,
-  because riff refuses them in a session. `riff daemon status` names the
-  repository, the reason and the prompt. `riff lead start` prints them,
-  and the first prompt of the lead ends with them. The wave tells the
-  lead the same text. `riff init --check` fails a check with the same
-  fix. While riff-server cannot read the keys of the Apps, its own
-  reason and prompt stay (01M6YC3SYATQW7GZZV3APFG85B).
+  `claude` session that the person starts on the host, in a clone of
+  the repository: it asks `claude` to read the lines `GitHub:` of
+  `riff daemon status`, and to give the commands for a terminal of
+  the person, because riff refuses them in a session. `riff daemon
+  status` names the repository, the reason and the prompt. `riff
+  lead start` prints them, and the first prompt of the lead ends
+  with them. The wave tells the lead the same text. `riff project
+  init --check` fails a check with the same fix. While riff-server
+  cannot read the keys of the Apps, its own reason and prompt stay
+  (01M6YC3SYATQW7GZZV3APFG85B).
 
 ## Pause
 
@@ -1494,6 +1495,35 @@
   with a string literal for a webhook secret or a key: the value of a
   name with the word `secret`, or the argument for a secret or a key of
   `signature`, `signed`, `AppKeys::new` or a function of the same test.
+- **01M76SG2E9RPV4B7CYSZPGGZ3P** riff-server keeps the projects of the
+  riff: each project is a repository `OWNER/REPO` on GitHub that a
+  person enrolled. A project has who enrolled it and when, and the hosts
+  that may run its wave: an empty list is each host. The record
+  `project_enrolled` (`repo`, `hosts`) enrolls a repository, or sets the
+  hosts of a project and keeps who enrolled it and when. The record
+  `project_removed` (`repo`) forgets the project. The checkpoint keeps
+  the projects.
+- **01M76SG8GBXFYXKWMQHPCNEXBN** Only an admin of the riff who is also
+  an admin of the repository on GitHub enrolls a project, or sets its
+  hosts, with `POST /v1/project/init` (the command `enroll_project`),
+  and removes it with `POST /v1/project/remove` (the command
+  `remove_project`). Each call carries the token of `gh` of the person.
+  riff-server reads `GET /repos/OWNER/REPO` on GitHub with it one time,
+  and needs `permissions.admin`. It keeps the token in no record, no log
+  line and no reply. A member, a session, and an admin who is not an
+  admin of the repository get `not_allowed`. In a riff with no sign-in,
+  each person is an admin of the riff, and the check on GitHub stays.
+- **01M76SG8JVHTKY6N62FQG7XAE6** `POST /v1/projects` gives each project
+  of the riff to each person and each session: the repository, who
+  enrolled it and when, its hosts, and the user of each lead of its
+  thread.
+- **01M76SG8NCSAP69Y5AX455BJQM** At a start with no record of a project
+  in the log, riff-server enrolls each repository thread that has a lead
+  or the notes of a lead, with the command `find_projects` of the
+  server. It then posts one line of the kind `riff` in the chat to the
+  owner: the projects, and to review them with `riff project list`. A
+  riff with no such repository gets no record and no line. A riff with a
+  record of a project runs no such search again.
 - **01M779MKDQFY6982B7D533G8K2** A test changes a file that a fake
   program reads while riff runs, for example the state of a CI run that
   the fake `gh` of a watch of the daemon gives, with
@@ -5996,10 +6026,10 @@ of this part when they merge.
 - **01M5RG2AS2CYJPWGKTV7N2HNYP** A stop or a restart of the daemon
   leaves the network of each container that runs
   (01M4ZDTW00B7N6T9P3MK066KA7). When the daemon has an `INVOCATION_ID`,
-  it runs in a systemd unit, and it starts each `podman run` as
-  `systemd-run --user --scope --collect --quiet -- podman run ...`. So
-  pasta, the network process of podman, runs in a scope of its own, not
-  in the cgroup of the unit, and a stop of the unit does not end it.
+  it runs in a systemd unit, and it starts each `podman run` with
+  `systemd-run --user --scope`. So pasta, the network process of podman,
+  runs in a scope of its own, not in the cgroup of the unit, and a stop
+  of the unit does not end it.
   With no `INVOCATION_ID`, the daemon starts `podman run` itself.
 - **01M5SN561BM9SK24SS0AVJ3P5J** `riff join --host HOST` for a
   repository that no daemon of the user on HOST serves goes to the
@@ -6204,12 +6234,28 @@ of this part when they merge.
 - **01M7755V17SGY2NW231WJ12WXN** Each process of a session container
   runs at nice 19, the lowest CPU priority. The daemon starts the
   `podman run` of each worker, verify and lead with `nice -n 19`, so
-  each process of the container gets the value from podman. A takeover
-  starts its command in the container with `nice -n 19`. Each container
-  also gets `--cgroup-conf cpu.weight=1`: the lowest CPU weight of
-  cgroup v2, below the default weight 100 of the cgroups of the person.
-  riff writes neither of them in a file of the person. This supersedes
-  01M5SMW28KT5D5HPRH7KAZ8TVC in part.
+  each process of the container gets the value from podman. Each
+  container also gets `--cgroup-conf cpu.weight=1`: the lowest CPU
+  weight of cgroup v2. riff writes neither of them in a file of the
+  person. This supersedes 01M5SMW28KT5D5HPRH7KAZ8TVC in part.
+- **01M778VSP6Z29FCPGX5S76ME1T** Each session container runs in
+  riff.slice, a slice of the manager of the user next to app.slice, the
+  slice of the programs of the person. riff.slice has the CPU weight 1,
+  the lowest of cgroup v2, so a build in a session yields the CPU to the
+  programs of the person. Each container gets `--cgroup-parent
+  riff.slice`: podman puts the container and its conmon in the slice. In
+  a unit, the scope of each `podman run` gets `--slice riff.slice`, so
+  podman and pasta run in the slice too. Before each start of a
+  container, riff runs `systemctl --user set-property --runtime
+  riff.slice CPUWeight=1`: systemd keeps the value in the runtime folder
+  of the user, and riff writes it in no file of the person. A start
+  fails when that command fails. This supersedes
+  01M7755V17SGY2NW231WJ12WXN and 01M5RG2AS2CYJPWGKTV7N2HNYP in part.
+- **01M778VZCT30WV6VBP2GY1HNBD** Each `podman exec` of riff in a session
+  container starts its command with `nice -n 19`: the command of a
+  takeover, and the checks `stty`, `getent` and `stat` of the daemon.
+  `podman exec` itself keeps the nice value of its caller. This
+  supersedes 01M7755V17SGY2NW231WJ12WXN in part.
 
 ### riff relay
 
@@ -7170,17 +7216,17 @@ of this part when they merge.
   screen. A person selects, copies and pastes in the terminal of an
   attach or of a takeover as in a plain terminal. riff adds the key to a
   `settings.json` with no `tui`, and keeps a `tui` that is there.
-- **01M74A84SA5KCBVGVW7M9ETJ3A** In a container, each riff command that
-  asks riff-server goes through the riff daemon on the socket of the
-  session (RIFF_SOCKET), as riff who does: also riff top, riff read,
-  riff post, riff status, riff blocked, riff step, riff tell, riff
-  denials, riff pause, riff resume, riff pr open, riff pr wait, riff
-  verify, riff init and the TUI. No command in a container asks the
-  riff-server of the machine. The table riff::reach::COMMANDS names the
-  way of each subcommand in a container: through the socket, only on the
-  host, or no riff-server. A test fails for a subcommand with no row,
-  and for a row whose command asks the riff-server of the machine
-  (#1733).
+- **01M74A84SA5KCBVGVW7M9ETJ3A** In a container, each riff command
+  that asks riff-server goes through the riff daemon on the socket of
+  the session (RIFF_SOCKET), as riff who does: also riff top, riff
+  read, riff post, riff status, riff blocked, riff step, riff tell,
+  riff denials, riff pause, riff resume, riff pr open, riff pr wait,
+  riff verify, riff project list and the TUI. No command in a container
+  asks the riff-server of the machine. The table riff::reach::COMMANDS
+  names the way of each subcommand in a container: through the socket,
+  only on the host, or no riff-server. A test fails for a subcommand
+  with no row, and for a row whose command asks the riff-server of
+  the machine (#1733).
 - **01M74A8CXVRD352VRJ9FH54HJ1** In a container, riff login, riff
   logout, riff invite, riff remove, riff admin, riff owner, riff chat,
   riff tail, riff claim, riff release ITEM, riff lead --session, riff
@@ -7203,10 +7249,13 @@ of this part when they merge.
   open at each fault of a look through the socket, and keep the last
   table. The Chat tab of the TUI in a container says that the chat is
   for a person on the host, and sends no line (#1733).
-- **01M74A8DC74TT2YGZPBBAENMWH** In a container, riff init reads the
-  GitHub Apps of the riff through the socket of the session for its
-  checks of the guard and of the lead App: the daemon reads them with
-  the sign-in of the person on the host (#1733).
+- **01M776HMKPTH3S6MYJZ8RJGWXV** In a container, `riff project list`
+  goes through the riff daemon on the socket of the session, as `riff
+  who` does: the daemon asks riff-server for the projects as the session
+  (01M76SHB4SAWFW3S5Y7X9KC6E4). `riff init` asks no riff-server, so in a
+  container it takes no socket, and the table riff::reach::COMMANDS
+  gives it no riff-server. Supersedes 01M74A84SA5KCBVGVW7M9ETJ3A in
+  part: `riff init` through the socket.
 
 ### The first run
 
@@ -7249,29 +7298,28 @@ of this part when they merge.
 - **01M4ZJN718EF1PC9YY9GFD0EJ2** Then `riff init` asks the daemon for
   the session image. The daemon pulls it when podman does not have it.
   The last line says that the machine is ready for `riff run`.
-- **01M5QVF5535YRN1EF3DZAB4W8G** `riff init` also checks the repository
-  of the current folder on GitHub, with the `gh` of the machine, when
-  the remote `origin` of the folder names one. It prints one line for
-  each check: the repository allows auto-merge and squash merge; a
-  ruleset of its default branch requires the check `riff/verify`; the
-  repository has the open Backlog. Each failed check names its step,
-  and each step has its own fix. A folder with no remote `origin` has
-  no such check. When `gh` cannot read the repository, one check fails,
-  and its fix is `gh auth login`. `riff init --check` only reads.
+- **01M5QVF5535YRN1EF3DZAB4W8G** `riff project init` checks the
+  repository of the current folder on GitHub, with the `gh` of the
+  machine. It prints one line for each check: the repository allows
+  auto-merge and squash merge; a ruleset of its default branch requires
+  the check `riff/verify`; the repository has the open Backlog. Each
+  failed check names its step, and each step has its own fix. When
+  `gh` cannot read the repository, one check fails, and its fix is
+  `gh auth login`. `riff project init --check` only reads.
 - **01M5QVF5C3CYJPMQ9CXNZJ8E93** The book page "Start a Riff" has the
   how-to "Add another repository to the riff": the checks of `riff
-  init`, `riff.toml` with the session image on the default branch, the
-  settings of the repository, the ruleset of the default branch, the
-  Backlog and the first wave, and a session image with another
-  toolchain, built from the session image of riff. Each step has a
-  copyable `sh` block.
-- **01M5QWA0E9A4ZJ8X49EM2MJM5Q** Each failed check of the repository on
-  GitHub carries its step in code (`riff::repo_setup::Step`): allow
-  auto-merge and squash merge, make the ruleset `riff` that requires a
-  pull request and the check `riff/verify`, and make the Backlog. A
-  step is safe to do again. The how-to makes the same ruleset: a test
-  compares the two. `riff init` does the steps after a question
-  (01M5R1672NF56P15VD0JEX51K4).
+  project init`, `riff.toml` with the session image on the default
+  branch, the settings of the repository, the ruleset of the default
+  branch, the Backlog and the first wave, and a session image with
+  another toolchain, built from the session image of riff. Each step
+  has a copyable `sh` block.
+- **01M5QWA0E9A4ZJ8X49EM2MJM5Q** Each failed check of the repository
+  on GitHub carries its step in code (`riff::repo_setup::Step`):
+  allow auto-merge and squash merge, make the ruleset `riff` that
+  requires a pull request and the check `riff/verify`, and make the
+  Backlog. A step is safe to do again. The how-to makes the same
+  ruleset: a test compares the two. `riff project init` does the
+  steps after a question (01M5R1672NF56P15VD0JEX51K4).
 - **01M5QZ01Y14Z76RC220RT7YTX7** The how-to "Add another repository to
   the riff" has a step "Use the checks that you have" with a copyable
   `sh` block that lists the checks that riff waits for: the required
@@ -7279,116 +7327,158 @@ of this part when they merge.
   (01M5QYDE41FVFX26EC8K5QGYH4). The step says that an empty list means
   that the repository has no CI, and that `riff/verify` is the only
   check. The verifier of the wave gets the same rule in its start text.
-- **01M5R1672NF56P15VD0JEX51K4** In a clone of a repository on GitHub
-  that is not set up for riff, `riff init` does the setup of the
-  repository after one question, `Question::Setup`, with `[y/N]`: only a
-  `y` in a terminal does it. `riff init --yes` does it with no question.
-  `riff init --check` names each step and changes nothing. A step is one
-  of these, in this order: allow auto-merge and squash merge; make
-  `riff.toml` on the default branch of `origin` (the branch
-  `riff-setup`, the pull request "Set up riff", a squash merge); make
-  the open `Backlog`; make the open wave `Wave 1`; make the
-  ruleset `riff`. Each step uses `gh` and the API of GitHub, never the
-  working tree of the clone. A second run of `riff init` in a repository
-  that is set up asks nothing and makes no call that changes GitHub.
-- **01M5R1675HZ6TJPMQ6536X37T5** The ruleset `riff` that `riff init`
-  makes requires `riff/verify` and the checks that the CI runs on a pull
-  request: the check runs of the head of the latest pull request of the
-  default branch that has some. When the setup pull request is the only
-  one, riff waits for its check runs. `riff init` also checks the CI
-  check of the default branch. riff changes nothing for a person who is
-  not an admin of the repository. A step that fails prints why and its
-  fix, and the next steps run.
-- **01M5RGG9KJXCKH8C94145WS8SM** Before the question of the setup, `riff
-  init` prints the line of a check that a step of the setup fixes with
-  `step` in place of `fail`, and names the step, when a plain `riff
-  init` or `riff init --yes` can do the step (the person is an admin of
-  the repository). A check that no step fixes stays `fail` with its fix.
-  The check of the checks of a pull request counts as fixed by a step
-  when no pull request ran a check yet and the pull request of
-  `riff.toml` is to come, and the check of the session image counts as
-  fixed when neither the clone nor the default branch has `riff.toml`.
-  `riff init --check` and a person who is not an admin get `fail` and
-  the fix.
+- **01M5R1672NF56P15VD0JEX51K4** In a clone of a repository on
+  GitHub that is not set up for riff, `riff project init` does the
+  setup of the repository after one question, `Question::Setup`, with
+  `[y/N]`: only a `y` in a terminal does it. `riff project init --yes`
+  does it with no question. `riff project init --check` names each
+  step and changes nothing. A step is one of these, in this order:
+  allow auto-merge and squash merge; make `riff.toml` on the default
+  branch of `origin` (the branch `riff-setup`, the pull request "Set up
+  riff", a squash merge); make the open `Backlog`; make the open wave
+  `Wave 1`; make the ruleset `riff`. Each step uses `gh` and the API
+  of GitHub, never the working tree of the clone. A second run of
+  `riff project init` in a repository that is set up asks nothing
+  and makes no call that changes GitHub.
+- **01M5R1675HZ6TJPMQ6536X37T5** The ruleset `riff` that `riff project
+  init` makes requires `riff/verify` and the checks that the CI runs
+  on a pull request: the check runs of the head of the latest pull
+  request of the default branch that has some. When the setup pull
+  request is the only one, riff waits for its check runs. `riff project
+  init` also checks the CI check of the default branch. riff changes
+  nothing for a person who is not an admin of the repository. A step
+  that fails prints why and its fix, and the next steps run.
+- **01M5RGG9KJXCKH8C94145WS8SM** Before the question of the setup,
+  `riff project init` prints the line of a check that a step of the
+  setup fixes with `step` in place of `fail`, and names the step,
+  when a plain `riff project init` or `riff project init --yes` can
+  do the step (the person is an admin of the repository). A check that
+  no step fixes stays `fail` with its fix. The check of the checks of
+  a pull request counts as fixed by a step when no pull request ran
+  a check yet and the pull request of `riff.toml` is to come. `riff
+  project init --check` and a person who is not an admin get `fail`
+  and the fix.
 - **01M5RGGD6YR36EXZEG61XCJVRY** After the steps of the setup, `riff
-  init` prints the list of the checks again, and the end of a run with a
-  failed check names each check that still fails with its fix. A check
-  whose step failed shows as `fail` with its fix in the second list.
+  project init` prints the list of the checks again, and the end of
+  a run with a failed check names each check that still fails with
+  its fix. A check whose step failed shows as `fail` with its fix in
+  the second list.
 - **01M5RGGD9AYNC12Z2CG5CDZWNA** After the step that merges `riff.toml`
-  on the default branch, when the clone is on the default branch, has no
-  change, and lacks only commits of `origin`, `riff init` runs `git pull
-  --ff-only origin BRANCH` in the clone and says so, and the check of
-  the session image reads the `riff.toml` of the clone. Else `riff init`
-  says why it ran no `git pull` and names the step to do by hand.
-- **01M5RN89Z749VYS1CRYJQTKAWY** `riff init` checks no file of rules for
-  agents: not `CLAUDE.md`, not `AGENTS.md`. It prints no line for such a
-  file, and a repository with none passes. A `CLAUDE.md` is the choice
-  of the repository. `riff.toml` has no table for the check or the rules
-  of a repository, and riff reads no file of a build tool: the CI of the
-  repository is the gate of a change. Supersedes
+  on the default branch, when the clone is on the default branch,
+  has no change, and lacks only commits of `origin`, `riff project
+  init` runs `git pull --ff-only origin BRANCH` in the clone and
+  says so. Else `riff project init` says why it ran no `git pull`
+  and names the step to do by hand.
+- **01M5RN89Z749VYS1CRYJQTKAWY** `riff project init` checks no file of
+  rules for agents: not `CLAUDE.md`, not `AGENTS.md`. It prints no line
+  for such a file, and a repository with none passes. A `CLAUDE.md`
+  is the choice of the repository. `riff.toml` has no table for the
+  check or the rules of a repository, and riff reads no file of a build
+  tool: the CI of the repository is the gate of a change. Supersedes
   01M5R1675HZ6TJPMQ6536X37T5 in part: the check of the `CLAUDE.md`.
 - **01M5SMJMR5KS1Z1Z7CEPH9JVBB** In a session container (`RIFF_SOCKET`
   is set), `riff init` and `riff init --check` run no check of the
   machine: not podman, not the init of podman, not `/etc/subuid`, not
-  `/etc/subgid`, not cgroup v2. A session container runs no podman, and
-  the host runs those checks. In place of them, riff prints one line,
-  `skip` and the words `the checks of the machine: the host runs them`,
-  and then runs the checks of the repository. A run of `riff init` with
-  no `--check` in a session container installs no daemon and pulls no
-  image: the host has the daemon. On a host, the checks stay as
-  01M4ZJN6TEWCYCB39XTH6BBD9H gives them.
-- **01M5SMMP7ZW2PZNGK63WWZAC8P** `riff init` counts the open issues of
-  the repository that have no "Done when" line, and names them in a
-  note, as `riff init --check` does too. A tracker and a release issue
-  are not counted: no session does them. The note changes no exit code,
-  and `riff init` prints nothing when each open issue has the line. When
-  `gh` cannot list the open issues, the note says so.
-- **01M5SNTPEP41NMSP3SEKR7KVB0** `riff init` pins `riff-base` in a
-  repository that has no `riff.toml`: the digest in the `FROM` of
-  `deploy/rust/Dockerfile` at the commit of the build
+  `/etc/subgid`, not cgroup v2. A session container runs no podman,
+  and the host runs those checks. In place of them, riff prints one
+  line, `skip` and the words `the checks of the machine: the host runs
+  them`. A run of `riff init` with no `--check` in a session container
+  installs no daemon and pulls no image: the host has the daemon. On
+  a host, the checks stay as 01M4ZJN6TEWCYCB39XTH6BBD9H gives them.
+- **01M5SMMP7ZW2PZNGK63WWZAC8P** `riff project init` counts the open
+  issues of the repository that have no "Done when" line, and names
+  them in a note, as `riff project init --check` does too. A tracker
+  and a release issue are not counted: no session does them. The note
+  changes no exit code, and `riff project init` prints nothing when
+  each open issue has the line. When `gh` cannot list the open issues,
+  the note says so.
+- **01M5SNTPEP41NMSP3SEKR7KVB0** `riff project init` pins `riff-base`
+  in a repository that has no `riff.toml`: the digest in the
+  `FROM` of `deploy/rust/Dockerfile` at the commit of the build
   (`riff::session_image::base`). It prints one line that says the
   project adds its toolchain in an image of its own, built `FROM` that
   image. With `--image REF`, it pins REF in place of `riff-base`. riff
   refuses a tag in REF, as it does in `riff.toml`. Supersedes
-  01M5R1675HZ6TJPMQ6536X37T5 in part: the image that `riff init` pins.
-- **01M6WPV86SW4AAVA2NCBQNYXK3** `riff init` checks the guard on the
-  default branch. It asks riff-server for the bot of the session App. A
-  riff with no sign-in has no session App. The check passes when the
-  guard is the guard of that bot, or when the riff has no session App.
-  It fails with the step of the pull request "Set up riff" when the
-  guard is missing or is not the guard of that bot: the pull request
-  adds the guard, and `riff.toml` when that is missing too. When riff
-  cannot ask riff-server, the check passes when the guard is there, and
-  fails with no step when it is not.
+  01M5R1675HZ6TJPMQ6536X37T5 in part: the image that `riff project
+  init` pins.
+- **01M6WPV86SW4AAVA2NCBQNYXK3** `riff project init` checks the
+  guard on the default branch. It asks riff-server for the bot of
+  the session App. A riff with no sign-in has no session App. The
+  check passes when the guard is the guard of that bot, or when the
+  riff has no session App. It fails with the step of the pull request
+  "Set up riff" when the guard is missing or is not the guard of that
+  bot: the pull request adds the guard, and `riff.toml` when that
+  is missing too. When riff cannot ask riff-server, the check passes
+  when the guard is there, and fails with no step when it is not.
 - **01M6WPV89D01D8WQTQ9KKY9HCT** The section "Add to an issue" of "How
   it works" says what the guard does, with a copyable `sh` block for `gh
   run list --workflow riff-guard.yml`.
-- **01M6WZ40YED6THKVJ2JQRXFK4N** In a repository whose `riff.toml` on
-  the default branch has the table `[release]`, `riff init` checks the
-  ruleset `releases` on the tags `v*`. It asks riff-server for the App
-  ID of the lead App. The check passes when the ruleset has the lead App
-  as a bypass actor, when the riff has no lead App, and when GitHub does
-  not show the bypass actors to the person: only an admin of the
-  repository sees them. Else it fails with the step `Step::Releases`,
-  after the step of the ruleset `riff`: it makes or updates the ruleset
-  `releases` as `just github` does. When riff cannot ask riff-server,
-  the check passes when the ruleset is there, and fails with no step
-  when it is not. A repository with no `[release]` has no such check.
-- **01M6WZ410X4RPG1KMPEBVEP2DF** In a session container, `riff init` and
-  `riff init --yes` only check, as `riff init --check` does: they ask no
-  question and do no step of the repository, and one line says that a
-  person does the steps in a terminal. Supersedes
-  01M5SMJMR5KS1Z1Z7CEPH9JVBB in part.
-- **01M75NAPNH1SP8AC90NYFQP8SK** In a repository whose `riff.toml` on
-  the default branch has the table `[release]`, `riff init` checks that
-  the rules of the default branch have a merge queue with the squash
-  method. Else the check fails with the step `Step::Queue`, after the
-  step of the ruleset `riff`: it reads the ruleset that requires
-  `riff/verify`, and puts the rule `merge_queue` of `just github` in it,
-  in place of an old one. It changes no other rule. A second run finds
-  the queue and changes nothing. A repository with no `[release]` has no
-  such check, and the ruleset `riff` that `riff init` makes for it has
-  no merge queue. Supersedes 01M5TKPHDNHY75BHPD4XVBJRN9 in part.
+- **01M6WZ40YED6THKVJ2JQRXFK4N** In a repository whose `riff.toml`
+  on the default branch has the table `[release]`, `riff project init`
+  checks the ruleset `releases` on the tags `v*`. It asks riff-server
+  for the App ID of the lead App. The check passes when the ruleset
+  has the lead App as a bypass actor, when the riff has no lead App,
+  and when GitHub does not show the bypass actors to the person:
+  only an admin of the repository sees them. Else it fails with the
+  step `Step::Releases`, after the step of the ruleset `riff`: it
+  makes or updates the ruleset `releases` as `just github` does. When
+  riff cannot ask riff-server, the check passes when the ruleset is
+  there, and fails with no step when it is not. A repository with no
+  `[release]` has no such check.
+- **01M75NAPNH1SP8AC90NYFQP8SK** In a repository whose `riff.toml`
+  on the default branch has the table `[release]`, `riff project
+  init` checks that the rules of the default branch have a merge
+  queue with the squash method. Else the check fails with the step
+  `Step::Queue`, after the step of the ruleset `riff`: it reads the
+  ruleset that requires `riff/verify`, and puts the rule `merge_queue`
+  of `just github` in it, in place of an old one. It changes no other
+  rule. A second run finds the queue and changes nothing. A repository
+  with no `[release]` has no such check, and the ruleset `riff` that
+  `riff project init` makes for it has no merge queue. Supersedes
+  01M5TKPHDNHY75BHPD4XVBJRN9 in part.
+- **01M76SHAX0KR0DM9GPXAPZJRDZ** `riff project init` runs in a clone of
+  a repository on GitHub. It does each check and each step of the
+  repository that `riff init` did, with the same `--check`, `--yes` and
+  `--image`. When each check passes, it enrolls the repository as a
+  project of the riff (01M76SG8GBXFYXKWMQHPCNEXBN). With `--host HOST`,
+  one time for each host, only those hosts may run the wave of the
+  project; with no `--host`, each host may. A second run sets the hosts
+  again and changes nothing else. `--check` enrolls nothing. When a
+  check fails, riff enrolls nothing, names the fix of each failed check,
+  and exits with 1. In a folder with no remote `origin` on GitHub, it
+  stops and says so. Supersedes in part 01M5QVF5535YRN1EF3DZAB4W8G,
+  01M5QVF5C3CYJPMQ9CXNZJ8E93, 01M5QWA0E9A4ZJ8X49EM2MJM5Q,
+  01M5QWA0H5KJ2SRRP50478X3J2, 01M5R1672NF56P15VD0JEX51K4,
+  01M5R1675HZ6TJPMQ6536X37T5, 01M5RGG9KJXCKH8C94145WS8SM,
+  01M5RGGD6YR36EXZEG61XCJVRY, 01M5RGGD9AYNC12Z2CG5CDZWNA,
+  01M5RN89Z749VYS1CRYJQTKAWY, 01M5SMMP7ZW2PZNGK63WWZAC8P,
+  01M5SNTPEP41NMSP3SEKR7KVB0, 01M6WPV86SW4AAVA2NCBQNYXK3,
+  01M6WZ40YED6THKVJ2JQRXFK4N, 01M75NAPNH1SP8AC90NYFQP8SK,
+  01M6QBJHZBDQ8BB1JPT003RXW7, 01M6QCXGC42AG1RY5QNGT47GVV,
+  01M5SMNKDWBD1J6Y18ENQG87CK and 01M6Z87JTXW0Y99X08VHA2SSSR: each of
+  their rules of the repository is a rule of `riff project init`.
+- **01M76SHAZK2PSMET0HRYM0J7VN** `riff init` keeps only the checks and
+  the fixes of the machine: podman, the init of podman, `/etc/subuid`,
+  `/etc/subgid`, cgroup v2, the session image, the riff binary and the
+  wide rules, then the daemon and the session image. It reads no
+  repository on GitHub, asks riff-server nothing, and has no `--image`.
+  The fix of the session image names `riff project init`. Supersedes
+  01M6WZ410X4RPG1KMPEBVEP2DF and 01M74A8DC74TT2YGZPBBAENMWH in full, and
+  01M5SMJMR5KS1Z1Z7CEPH9JVBB in part: in a session container, `riff
+  init` checks only the session image and the riff binary.
+- **01M76SHB27S4QDV9HMRR4B6APJ** `riff project init` and `riff project
+  remove OWNER/REPO` refuse in an agent session and in a container,
+  before each call, also with `--check`. `riff project remove` asks
+  riff-server to forget the project (01M76SG8GBXFYXKWMQHPCNEXBN), and
+  keeps the repository on GitHub as it is. Each reads the token of `gh`
+  of the person with `gh auth token`, or takes `GH_TOKEN` or
+  `GITHUB_TOKEN` when the environment has one, and gives it only to
+  riff-server.
+- **01M76SHB4SAWFW3S5Y7X9KC6E4** `riff project list` prints one block
+  for each project of the riff: the repository, who enrolled it and
+  when, its hosts (`each host` when it names none) and the users of its
+  leads (`no lead` when it has none). It runs in a terminal and in a
+  session.
 
 ### The permission rules
 
@@ -8263,10 +8353,8 @@ of this part when they merge.
   container of the lead runs the new riff, and its next step is `riff
   release check vX.Y.Z`. A host with `update.auto` off does not wait for
   its daemon, and a host with no lead of the repository does not wait
-  for a lead. After 30 minutes the watch posts all the same, and the
-  message says what it waited for. This supersedes
-  01M5RGD0RTXYA7FF5K1TH72MGX in part: the time of the message of a
-  deploy that passed.
+  for a lead. This supersedes 01M5RGD0RTXYA7FF5K1TH72MGX in part: the
+  time of the message of a deploy that passed.
 - **01M6WFNDS76NESPXHMQPGHHQSS** The watch of a deploy that passed also
   holds its message to the lead and its note to the other leads while
   the riff daemon of another host of the riff with `update.auto` on runs
@@ -8346,15 +8434,34 @@ of this part when they merge.
   four checks of the Cloud Run log from the status `riff/deploy-check`
   of the commit of the tag, and runs no `gcloud`. A status that is
   missing, or older than the start of the job `Deploy`, makes each of
-  the four checks unknown. Then riff names the CI run and the time when
-  the job `Check the deploy` ends: 6 minutes after the end of the job
-  `Deploy`. For a run by hand, which has no such job, riff names `riff
-  cloud check shared --since TIME --commit SHA` for a person on a host.
+  the four checks unknown. For a run by hand, which has no such job,
+  riff names `riff cloud check shared --since TIME --commit SHA` for a
+  person on a host.
   A status `error` makes each of the four checks unknown, with its
   description. An unknown check changes nothing but the comment on the
   release issue. This supersedes 01M58KMM5ZPAQ289S2YJVQ5WW6 and
   01M58KMMP9FKRFYX58ESVRSZQX in part, and 01M5GVPND32X3R9MYXYB5SV83W and
   01M5ND5B14MXGGK0RJ7R2BREW6 in full.
+- **01M77BT0489T9R084WEFHPMCR5** When the job `Deploy` of the CI run of
+  the push of a release tag passed, the watch of the deploy also holds
+  its message to the lead and its note to the other leads until the job
+  `Check the deploy` of the run ends, or until the tagged commit has the
+  status `riff/deploy-check` of this deploy. A status `failure` puts the
+  failed checks of the log in the message. A status `error`, and a job
+  that ended with no status, put the reason in the message. A run by
+  hand has no such job and waits for none. After 30 minutes from the
+  pass, the watch posts all the same, and the message says what it
+  waited for. Supersedes 01M6WBX2G1PX11D89HNBAZ6MCM in part: the wait of
+  30 minutes.
+- **01M77BT4XB4T8MQVCY7MK0B843** `riff release check vX.Y.Z` refuses
+  while the job `Check the deploy` of the CI run of the tag did not end
+  and the tagged commit has no status `riff/deploy-check` of this
+  deploy. It changes nothing: no release issue, no comment and no note
+  to the other leads. It names the CI run and the time when the job
+  ends: 6 minutes after the end of the job `Deploy`. A run by hand has
+  no such job, and a run that ended with no such job counts as ended.
+  Supersedes 01M76SSFTGW41RHHV445ZM5RHY in part: a check before the end
+  of the job.
 
 ### The real-session test
 

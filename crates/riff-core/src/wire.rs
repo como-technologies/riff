@@ -47,6 +47,18 @@
 //! | `/v1/idle` | [`IdleQuery`] | [`Idle`] | query |
 //! | `/v1/plan/show` | [`PlanShow`] | [`PlanReply`] | query |
 //! | `/v1/notes` | [`NotesShow`] | [`NotesReply`] | query |
+//! | `/v1/projects` | [`ProjectsQuery`] | [`ProjectsReply`] | query |
+//!
+//! Two calls enroll and remove a project of the riff
+//! (01M76SG8GBXFYXKWMQHPCNEXBN). Each carries the token of `gh` of the
+//! person: riff-server reads the repository on GitHub with it first, and
+//! then runs the command `enroll_project` or `remove_project`. A call
+//! that names the person with no token goes in a riff with no sign-in.
+//!
+//! | Path | Request | Reply | Who |
+//! |---|---|---|---|
+//! | `POST /v1/project/init` | [`ProjectInit`] | [`ProjectInitReply`] | an admin who is an admin of the repository |
+//! | `POST /v1/project/remove` | [`ProjectRemove`] | [`ProjectFacts`] | an admin who is an admin of the repository |
 //!
 //! `GET /v1/me` gives [`MeReply`]. `GET /v1/server` gives
 //! [`ServerFacts`], also while the server replies 503 to each other
@@ -275,6 +287,9 @@ calls! {
     PlanShow => "/v1/plan/show", PlanReply;
     SetNotes => "/v1/notes/set", SetNotesReply;
     NotesShow => "/v1/notes", NotesReply;
+    ProjectInit => "/v1/project/init", ProjectInitReply;
+    ProjectRemove => "/v1/project/remove", ProjectFacts;
+    ProjectsQuery => "/v1/projects", ProjectsReply;
     SetStatus => "/v1/status", ();
     SetBlocked => "/v1/blocked", ();
     SetStep => "/v1/step", ();
@@ -2207,6 +2222,146 @@ pub struct NotesReply {
     /// `history`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub history: Vec<NotesVersion>,
+}
+
+/// `POST /v1/project/init`: enroll the repository `repo` as a project of
+/// the riff, or set the hosts of the project (01M76SG8GBXFYXKWMQHPCNEXBN).
+/// Only an admin of the riff who is also an admin of the repository on
+/// GitHub can. riff-server reads the repository on GitHub with
+/// `github_token` one time, and keeps the token nowhere. Its `Debug`
+/// hides the token.
+///
+/// ```
+/// use riff_core::wire::{Call, ProjectInit};
+///
+/// let init: ProjectInit = serde_json::from_str(
+///     r#"{"me":"riff://mike@pangolin","repo":"acme/app","github_token":"gho_abcd"}"#,
+/// ).unwrap();
+/// assert!(init.hosts.is_empty());
+/// assert!(!format!("{init:?}").contains("gho_abcd"));
+/// assert_eq!(ProjectInit::PATH, "/v1/project/init");
+/// ```
+#[derive(Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ProjectInit {
+    pub me: SessionUri,
+    /// The repository, `OWNER/REPO`.
+    pub repo: ThreadName,
+    /// The hosts that may run the wave of the project. Empty: each host
+    /// may.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hosts: Vec<String>,
+    /// The token of `gh` of the person.
+    pub github_token: String,
+}
+
+impl std::fmt::Debug for ProjectInit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProjectInit")
+            .field("me", &self.me)
+            .field("repo", &self.repo)
+            .field("hosts", &self.hosts)
+            .field("github_token", &"[secret]")
+            .finish()
+    }
+}
+
+/// The reply to [`ProjectInit`]: the project now, and what the call
+/// changed. A call with the hosts of now changes nothing.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ProjectInitReply {
+    pub project: ProjectFacts,
+    /// True when the repository was no project before the call.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub enrolled: bool,
+    /// True when the call set other hosts of a project.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hosts_changed: bool,
+}
+
+/// `POST /v1/project/remove`: the riff forgets the project `repo`
+/// (01M76SG8GBXFYXKWMQHPCNEXBN). GitHub keeps the repository. Only an
+/// admin of the riff who is also an admin of the repository on GitHub
+/// can, as with [`ProjectInit`]. Its `Debug` hides the token. The reply
+/// is the project that went.
+///
+/// ```
+/// use riff_core::wire::{Call, ProjectRemove};
+///
+/// let remove = ProjectRemove {
+///     me: "riff://mike@pangolin".parse()?,
+///     repo: "acme/app".parse()?,
+///     github_token: "gho_abcd".into(),
+/// };
+/// assert!(!format!("{remove:?}").contains("gho_abcd"));
+/// assert_eq!(ProjectRemove::PATH, "/v1/project/remove");
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+#[derive(Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ProjectRemove {
+    pub me: SessionUri,
+    pub repo: ThreadName,
+    /// The token of `gh` of the person.
+    pub github_token: String,
+}
+
+impl std::fmt::Debug for ProjectRemove {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProjectRemove")
+            .field("me", &self.me)
+            .field("repo", &self.repo)
+            .field("github_token", &"[secret]")
+            .finish()
+    }
+}
+
+/// `POST /v1/projects`: the query for the projects of the riff
+/// (01M76SG8JVHTKY6N62FQG7XAE6). Each person and each session can read
+/// them.
+///
+/// ```
+/// use riff_core::wire::{Call, ProjectsQuery};
+///
+/// let query: ProjectsQuery = serde_json::from_str(r#"{"me":"riff://mike@pangolin"}"#).unwrap();
+/// assert_eq!(query.me.who().user(), "mike");
+/// assert_eq!(ProjectsQuery::PATH, "/v1/projects");
+/// ```
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ProjectsQuery {
+    pub me: SessionUri,
+}
+
+/// The reply to [`ProjectsQuery`]: each project, in the order of the
+/// repository.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ProjectsReply {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub projects: Vec<ProjectFacts>,
+}
+
+/// One project of the riff (01M76SG2E9RPV4B7CYSZPGGZ3P): the repository,
+/// who enrolled it and when, the hosts that may run its wave, and its
+/// leads now.
+///
+/// ```
+/// use riff_core::wire::ProjectFacts;
+///
+/// let each: ProjectFacts = serde_json::from_str(r#"{"repo":"acme/app","at_ms":5}"#).unwrap();
+/// assert!(each.hosts.is_empty() && each.leads.is_empty() && each.by.is_none());
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ProjectFacts {
+    pub repo: ThreadName,
+    /// Who enrolled it. `None` when the record has no cause.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<By>,
+    /// When it was enrolled, in milliseconds since the Unix epoch.
+    pub at_ms: u64,
+    /// The hosts that may run its wave, sorted. Empty: each host may.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hosts: Vec<String>,
+    /// The user of each lead of the thread of the project now, sorted.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub leads: Vec<String>,
 }
 
 /// The plan of the server for one repository thread

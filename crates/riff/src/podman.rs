@@ -11,13 +11,14 @@
 //! | Part of the spec | The argument of `podman run` |
 //! |---|---|
 //! | (each spec) | the start is `nice -n 19 podman run ...`: each process of the container gets nice 19 from podman ([`start_command`], [`NICE`]) |
-//! | (the daemon in a unit) | the start is `systemd-run --user --scope --collect --quiet -- nice -n 19 podman run ...`: pasta runs in a scope of its own ([`start_command`], 01M5RG2AS2CYJPWGKTV7N2HNYP) |
+//! | (the daemon in a unit) | the start is `systemd-run --user --scope --slice riff.slice --collect --quiet -- nice -n 19 podman run ...`: pasta runs in a scope of its own, in [`SLICE`] ([`start_command`], 01M5RG2AS2CYJPWGKTV7N2HNYP) |
 //! | (each spec) | `--sig-proxy=false` |
 //! | `name` | `--name NAME` |
 //! | The user | `--userns=keep-id` |
 //! | (each spec) | `--init`: the init of podman is PID 1, and reaps each orphan process (01M51117K3WXK35CE67KPRFMA8) |
 //! | `memory`, `cpus` | `--memory 8g`, `--cpus 4` |
 //! | (each spec) | `--cgroup-conf cpu.weight=1`: the lowest CPU weight of cgroup v2 ([`CPU_WEIGHT`]) |
+//! | (each spec) | `--cgroup-parent riff.slice`: the container and its conmon run in the slice of riff ([`SLICE`]) |
 //! | `home` | `--mount type=tmpfs,destination=HOME,tmpfs-mode=0700,U=true` |
 //! | Each folder of [`SessionSpec::home_folders`] | `--mount type=tmpfs,destination=FOLDER,tmpfs-mode=0755,U=true`: a folder of the session user, not of root (01M748WY71EFVZR6SG5CCEQYE0) |
 //! | A [`Bind`] | `-v SOURCE:TARGET`, with `:ro` when it has no write |
@@ -44,24 +45,45 @@
 //!
 //! # The priority
 //!
-//! Each process of a session container runs at the lowest CPU priority
-//! of the host, so a build in a session never slows the processes of the
-//! person (#1990, 01M7755V17SGY2NW231WJ12WXN). A nice value counts only
-//! inside its own cgroup, so the cgroup of the container gets the lowest
-//! CPU weight too:
+//! Each process of a session container runs at the lowest CPU priority,
+//! so a build in a session yields the CPU to the programs of the person
+//! (#1990, #2001). A nice value counts only against the processes of its
+//! own cgroup, and a CPU weight only against the other cgroups of its
+//! level. So riff sets each of them:
 //!
 //! - The daemon starts each `podman run` of a worker, a verify and the
-//!   lead with `nice -n 19` ([`NICE`]). podman, conmon and the runtime
-//!   keep the nice value, and each process of the container gets it from
-//!   them: the init of podman, the relay, `claude` and each build.
-//! - A takeover starts its command in the container with `nice -n 19`.
-//!   So `podman exec` itself keeps the nice value of the person.
+//!   lead with `nice -n 19` ([`NICE`], 01M7755V17SGY2NW231WJ12WXN).
+//!   podman, conmon and the runtime keep the nice value, and each process
+//!   of the container gets it from them: the init of podman, the relay,
+//!   `claude` and each build.
+//! - Each `podman exec` of riff starts its command in the container with
+//!   `nice -n 19`: a takeover, and the checks `stty`, `getent` and `stat`
+//!   of the daemon ([`exec_of`], 01M778VZCT30WV6VBP2GY1HNBD). So `podman
+//!   exec` itself keeps the nice value of its caller.
 //! - `--cgroup-conf cpu.weight=1` ([`CPU_WEIGHT`]): the runtime gives the
 //!   scope of the container the systemd property `CPUWeight=1`, and
-//!   writes `cpu.weight` in the cgroup of the container. The default
-//!   weight of a cgroup is 100.
+//!   writes `cpu.weight` in the cgroup of the container. It counts against
+//!   the other cgroups of the slice: the scopes of conmon and of pasta.
+//! - Each container runs in [`SLICE`], a slice of the manager of the user
+//!   next to `app.slice`, where the manager runs the programs of the
+//!   person (01M778VSP6Z29FCPGX5S76ME1T). `--cgroup-parent` puts the
+//!   container and its conmon there, and `systemd-run --slice` the scope
+//!   of `podman run` and pasta. Before each start, [`set_cpu_weight`]
+//!   gives the slice the CPU weight [`SLICE_WEIGHT`]. The default weight
+//!   of a cgroup is 100.
 //!
-//! riff writes neither of them in a file of the person.
+//! riff writes none of them in a file of the person. A login over SSH
+//! runs in a scope of the system manager, beside the manager of the user:
+//! the weight of the slice does not count against it.
+//!
+//! ```mermaid
+//! flowchart TD
+//!     M["user@UID.service: the manager of the user"] --> A["app.slice: weight 100<br/>riff.service and the programs of the person"]
+//!     M --> R["riff.slice: weight 1"]
+//!     R --> S["run-pNNN.scope: nice -n 19 podman run, and pasta"]
+//!     R --> O["libpod-conmon-ID.scope: conmon"]
+//!     R --> C["libpod-ID.scope: the container,<br/>nice 19, cpu.weight 1"]
+//! ```
 //!
 //! conmon, the monitor of podman, holds the container. A stop of the
 //! daemon stops no container, and leaves its network
@@ -88,7 +110,7 @@
 //! ```mermaid
 //! flowchart TD
 //!     U["riff.service"] --> D["riff daemon"]
-//!     D -- "systemd-run --user --scope" --> S["scope run-pNNN.scope"]
+//!     D -- "systemd-run --user --scope --slice riff.slice" --> S["scope run-pNNN.scope"]
 //!     S --> P["nice -n 19 podman run"]
 //!     S --> N["pasta: the network"]
 //!     P -- "conmon, in a scope of its own, at nice 19" --> C["the container:<br/>nice 19, cpu.weight 1"]
@@ -101,6 +123,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 
+use crate::platform::systemd::set_cpu_weight;
 use crate::ps::Proc;
 use crate::runtime::{Bind, End, Env, Exit, REACH_HOST, Running, Runtime, SessionSpec, Source};
 use crate::text;
@@ -116,6 +139,13 @@ pub const NICE: [&str; 3] = ["nice", "-n", "19"];
 /// The value of `--cgroup-conf` of each session container: `cpu.weight`
 /// 1, the lowest CPU weight of cgroup v2. The default is 100.
 pub const CPU_WEIGHT: &str = "cpu.weight=1";
+
+/// The slice of the manager of the user that holds each session
+/// container, next to `app.slice` (see "The priority" above).
+pub const SLICE: &str = "riff.slice";
+
+/// The CPU weight of [`SLICE`]: 1, the lowest of cgroup v2.
+pub const SLICE_WEIGHT: u16 = 1;
 
 /// Rootless podman, from `PATH`.
 #[derive(Debug, Clone, Copy, Default)]
@@ -152,6 +182,7 @@ pub struct Podman;
 ///     args.join(" "),
 ///     "run --rm -i --sig-proxy=false --name riff-issue-12-1a2b3c4d --userns=keep-id \
 ///      --init --memory 8g --cpus 4 --cgroup-conf cpu.weight=1 \
+///      --cgroup-parent riff.slice \
 ///      --mount type=tmpfs,destination=/home/mike,tmpfs-mode=0700,U=true \
 ///      --mount type=tmpfs,destination=/home/mike/.cache,tmpfs-mode=0755,U=true \
 ///      --mount type=tmpfs,destination=/home/mike/.local,tmpfs-mode=0755,U=true \
@@ -197,7 +228,7 @@ pub fn run_args(spec: &SessionSpec) -> Result<Vec<OsString>> {
 /// assert_eq!(
 ///     args.join(" "),
 ///     "run --rm -d -i -t --name riff-lead-o-r --userns=keep-id --init --memory 8g --cpus 4 \
-///      --cgroup-conf cpu.weight=1 \
+///      --cgroup-conf cpu.weight=1 --cgroup-parent riff.slice \
 ///      --mount type=tmpfs,destination=/home/mike,tmpfs-mode=0700,U=true \
 ///      --mount type=tmpfs,destination=/home/mike/.cache,tmpfs-mode=0755,U=true \
 ///      --mount type=tmpfs,destination=/home/mike/.local,tmpfs-mode=0755,U=true \
@@ -223,25 +254,58 @@ pub fn terminal_args(spec: &SessionSpec) -> Result<Vec<OsString>> {
 ///
 /// assert_eq!(
 ///     redraw_args("riff-lead-o-r", 30, 100).join(" "),
-///     "exec riff-lead-o-r stty -F /dev/console rows 29 cols 100"
+///     "exec riff-lead-o-r nice -n 19 stty -F /dev/console rows 29 cols 100"
 /// );
-/// assert_eq!(redraw_args("n", 1, 80)[6], "2");
+/// assert_eq!(redraw_args("n", 1, 80)[9], "2");
 /// ```
 pub fn redraw_args(name: &str, rows: u16, cols: u16) -> Vec<String> {
     let rows = if rows > 1 { rows - 1 } else { rows + 1 };
-    [
-        "exec",
+    exec_of(
+        &[],
         name,
-        "stty",
-        "-F",
-        "/dev/console",
-        "rows",
-        &rows.to_string(),
-        "cols",
-        &cols.to_string(),
-    ]
-    .map(str::to_owned)
-    .to_vec()
+        [
+            "stty",
+            "-F",
+            "/dev/console",
+            "rows",
+            &rows.to_string(),
+            "cols",
+            &cols.to_string(),
+        ],
+    )
+}
+
+/// The arguments of `podman` that run `command` in the container `name`
+/// at nice 19 ([`NICE`]), with the options `options` of `exec`. The
+/// nice value is in the container: `podman exec` itself keeps the nice
+/// value of its caller (01M778VZCT30WV6VBP2GY1HNBD).
+///
+/// ```
+/// use riff::podman::exec_of;
+///
+/// assert_eq!(
+///     exec_of(&[], "riff-issue-12-1a2b3c4d", ["stat", "-c", "%h"]).join(" "),
+///     "exec riff-issue-12-1a2b3c4d nice -n 19 stat -c %h"
+/// );
+/// assert_eq!(
+///     exec_of(&["-it"], "riff-lead-o-r", ["claude"]).join(" "),
+///     "exec -it riff-lead-o-r nice -n 19 claude"
+/// );
+/// ```
+pub fn exec_of<'a>(
+    options: &[&str],
+    name: &str,
+    command: impl IntoIterator<Item = &'a str>,
+) -> Vec<String> {
+    let mut args: Vec<String> = ["exec"]
+        .into_iter()
+        .chain(options.iter().copied())
+        .chain([name])
+        .chain(NICE)
+        .map(str::to_owned)
+        .collect();
+    args.extend(command.into_iter().map(str::to_owned));
+    args
 }
 
 /// The arguments of `podman` for `spec`, after the arguments `first`.
@@ -257,6 +321,8 @@ fn args_of(spec: &SessionSpec, first: &[&str]) -> Result<Vec<OsString>> {
     args.push(spec.cpus.to_string().into());
     args.push("--cgroup-conf".into());
     args.push(CPU_WEIGHT.into());
+    args.push("--cgroup-parent".into());
+    args.push(SLICE.into());
     args.push("--mount".into());
     args.push(
         format!(
@@ -324,14 +390,28 @@ pub const INVOCATION_ID: &str = "INVOCATION_ID";
 pub const REACH_LIMIT: Duration = Duration::from_secs(15);
 
 /// The arguments of the look-up of [`Runtime::reaches`] in the container
-/// `name`.
+/// `name`, at nice 19 ([`exec_of`]).
 ///
 /// ```
 /// let args = riff::podman::reach_args("riff-lead-o-r");
-/// assert_eq!(args, ["exec", "riff-lead-o-r", "getent", "hosts", "api.anthropic.com"]);
+/// assert_eq!(
+///     args.join(" "),
+///     "exec riff-lead-o-r nice -n 19 getent hosts api.anthropic.com"
+/// );
 /// ```
-pub fn reach_args(name: &str) -> [&str; 5] {
-    ["exec", name, "getent", "hosts", REACH_HOST]
+pub fn reach_args(name: &str) -> Vec<String> {
+    exec_of(&[], name, ["getent", "hosts", REACH_HOST])
+}
+
+/// The arguments of `podman` for [`Runtime::links`] in the container
+/// `name`, at nice 19 ([`exec_of`]): the path comes after them.
+///
+/// ```
+/// let args = riff::podman::links_args("riff-issue-12-1a2b3c4d");
+/// assert_eq!(args.join(" "), "exec riff-issue-12-1a2b3c4d nice -n 19 stat -c %h");
+/// ```
+pub fn links_args(name: &str) -> Vec<String> {
+    exec_of(&[], name, ["stat", "-c", "%h"])
 }
 
 /// What the exit code of `getent hosts` says: the container reaches the
@@ -436,10 +516,18 @@ fn podman() -> tokio::process::Command {
 /// The program that puts a command in a systemd scope.
 pub const SYSTEMD_RUN: &str = "systemd-run";
 
-/// The arguments of [`SYSTEMD_RUN`] before the command: a scope in the
-/// manager of the user that systemd removes when it ends, and says
-/// nothing.
-pub const SCOPE: [&str; 5] = ["--user", "--scope", "--collect", "--quiet", "--"];
+/// The arguments of [`SYSTEMD_RUN`] before the command: a scope in
+/// [`SLICE`] of the manager of the user that systemd removes when it
+/// ends, and says nothing.
+pub const SCOPE: [&str; 7] = [
+    "--user",
+    "--scope",
+    "--slice",
+    SLICE,
+    "--collect",
+    "--quiet",
+    "--",
+];
 
 /// True when this process runs in a systemd unit: systemd sets
 /// [`INVOCATION_ID`] in each process of a unit.
@@ -455,9 +543,10 @@ fn starter(in_unit: bool) -> &'static str {
 /// The command that starts `podman` with `args`, the arguments of `run`,
 /// at nice 19 ([`NICE`]), and with no [`INVOCATION_ID`]. Each process of
 /// the container gets the nice value from podman. In a unit (`in_unit`),
-/// it starts in a systemd scope of its own: pasta, the network process
-/// of podman, is then not in the cgroup of the unit, and a stop of the
-/// unit leaves the network of the container (01M5RG2AS2CYJPWGKTV7N2HNYP).
+/// it starts in a systemd scope of its own, in [`SLICE`]: pasta, the
+/// network process of podman, is then not in the cgroup of the unit, and
+/// a stop of the unit leaves the network of the container
+/// (01M5RG2AS2CYJPWGKTV7N2HNYP, 01M778VSP6Z29FCPGX5S76ME1T).
 ///
 /// ```
 /// use riff::podman::{run_args, start_command, terminal_args};
@@ -487,8 +576,8 @@ fn starter(in_unit: bool) -> &'static str {
 /// let worker = start_command(&run_args(&spec)?, true);
 /// assert!(
 ///     words(&worker).starts_with(
-///         "systemd-run --user --scope --collect --quiet -- nice -n 19 podman run --rm -i \
-///          --sig-proxy=false "
+///         "systemd-run --user --scope --slice riff.slice --collect --quiet -- nice -n 19 podman \
+///          run --rm -i --sig-proxy=false "
 ///     ),
 ///     "{}",
 ///     words(&worker)
@@ -497,7 +586,8 @@ fn starter(in_unit: bool) -> &'static str {
 /// let lead = start_command(&terminal_args(&spec)?, true);
 /// assert!(
 ///     words(&lead).starts_with(
-///         "systemd-run --user --scope --collect --quiet -- nice -n 19 podman run --rm -d -i -t "
+///         "systemd-run --user --scope --slice riff.slice --collect --quiet -- nice -n 19 podman \
+///          run --rm -d -i -t "
 ///     ),
 ///     "{}",
 ///     words(&lead)
@@ -528,8 +618,8 @@ pub fn start_command(args: &[OsString], in_unit: bool) -> tokio::process::Comman
 
 /// The arguments of `podman` for [`Runtime::exec`]: `command` in the
 /// container `name` with the terminal of the person, at nice 19
-/// ([`NICE`]). The nice value is in the container: `podman exec` itself
-/// keeps the nice value of the person.
+/// ([`exec_of`]). `podman exec` itself keeps the nice value of the
+/// person.
 ///
 /// ```
 /// let command = ["claude".to_owned(), "--resume".to_owned(), "s1".to_owned()];
@@ -539,12 +629,7 @@ pub fn start_command(args: &[OsString], in_unit: bool) -> tokio::process::Comman
 /// );
 /// ```
 pub fn exec_args(name: &str, command: &[String]) -> Vec<String> {
-    ["exec", "-it", name]
-        .into_iter()
-        .chain(NICE)
-        .map(str::to_owned)
-        .chain(command.iter().cloned())
-        .collect()
+    exec_of(&["-it"], name, command.iter().map(String::as_str))
 }
 
 /// Runs `podman ARGS` with no stdin and no stdout, and gives its exit.
@@ -654,9 +739,12 @@ impl Runtime for Podman {
     }
 
     /// Only the `podman` child gets the values of the host, in its
-    /// environment (01M58B7H2HMYT6VTY0B8T2G0KW).
+    /// environment (01M58B7H2HMYT6VTY0B8T2G0KW). Before it, [`SLICE`]
+    /// gets the CPU weight [`SLICE_WEIGHT`]: a start fails when systemd
+    /// does not set it (01M778VSP6Z29FCPGX5S76ME1T).
     async fn start(&self, spec: &SessionSpec, values: &[(String, String)]) -> Result<Running> {
         spec.check_values(values)?;
+        set_cpu_weight(SLICE, SLICE_WEIGHT).await?;
         let in_unit = in_unit();
         let mut child = start_command(&run_args(spec)?, in_unit)
             .envs(values.iter().map(|(name, value)| (name, value)))
@@ -740,9 +828,11 @@ impl Runtime for Podman {
 
     /// Only the `podman` child gets the values of the host. The end is
     /// `podman wait`: no exit code when it cannot say, for example when
-    /// the container went before the wait.
+    /// the container went before the wait. As [`Runtime::start`], it
+    /// first gives [`SLICE`] its weight.
     async fn start_terminal(&self, spec: &SessionSpec, values: &[(String, String)]) -> Result<End> {
         spec.check_values(values)?;
+        set_cpu_weight(SLICE, SLICE_WEIGHT).await?;
         let in_unit = in_unit();
         let out = start_command(&terminal_args(spec)?, in_unit)
             .envs(values.iter().map(|(name, value)| (name, value)))
@@ -783,10 +873,10 @@ impl Runtime for Podman {
         Ok(status.into())
     }
 
-    /// `podman exec NAME stat -c %h PATH`.
+    /// `podman exec NAME nice -n 19 stat -c %h PATH` ([`links_args`]).
     async fn links(&self, name: &str, path: &Path) -> Result<u64> {
         let out = podman()
-            .args(["exec", name, "stat", "-c", "%h"])
+            .args(links_args(name))
             .arg(path)
             .stdin(Stdio::null())
             .output()
@@ -805,7 +895,8 @@ impl Runtime for Podman {
             .with_context(|| format!("podman exec {name} stat: {}", shown.trim()))
     }
 
-    /// `podman exec NAME getent hosts api.anthropic.com` ([`reach_args`]).
+    /// `podman exec NAME nice -n 19 getent hosts api.anthropic.com`
+    /// ([`reach_args`]).
     /// A look-up that gets no answer in [`REACH_LIMIT`] says no network:
     /// `podman exec` ends with it.
     async fn reaches(&self, name: &str) -> Result<bool> {
@@ -992,6 +1083,8 @@ mod tests {
                 "systemd-run",
                 "--user",
                 "--scope",
+                "--slice",
+                "riff.slice",
                 "--collect",
                 "--quiet",
                 "--",
@@ -1043,6 +1136,55 @@ mod tests {
                 let image = words.iter().position(|w| w == "img").unwrap();
                 assert!(weight < image, "{kind}: {words:?}");
             }
+        }
+    }
+
+    /// 01M778VSP6Z29FCPGX5S76ME1T: each container of a worker, a verify
+    /// and the lead starts in the slice of riff, in a unit and out of it.
+    /// In a unit, the scope of `podman run` and pasta is in it too.
+    #[test]
+    fn each_container_starts_in_the_slice_of_riff() {
+        assert_eq!(SLICE, "riff.slice");
+        assert_eq!(CPU_WEIGHT, format!("cpu.weight={SLICE_WEIGHT}"));
+        let kinds = [
+            ("worker", run_args(&spec()).unwrap()),
+            ("verify", run_args(&spec()).unwrap()),
+            ("lead", terminal_args(&spec()).unwrap()),
+        ];
+        for (kind, args) in kinds {
+            for in_unit in [true, false] {
+                let words = words(&start_command(&args, in_unit));
+                let podman = words.iter().position(|w| w == "podman").unwrap();
+                let parent = words[podman..]
+                    .windows(2)
+                    .position(|w| w == ["--cgroup-parent", "riff.slice"])
+                    .map(|at| podman + at);
+                let image = words.iter().position(|w| w == "img").unwrap();
+                assert!(parent.is_some_and(|at| at < image), "{kind}: {words:?}");
+                let scope = words[..podman]
+                    .windows(2)
+                    .any(|w| w == ["--slice", "riff.slice"]);
+                assert_eq!(scope, in_unit, "{kind}: {words:?}");
+            }
+        }
+    }
+
+    /// 01M778VZCT30WV6VBP2GY1HNBD: each `podman exec` of riff starts its
+    /// command at nice 19 in the container, right after the name.
+    #[test]
+    fn each_exec_of_riff_runs_its_command_at_nice_19_in_the_container() {
+        let name = "riff-issue-12-1a2b3c4d";
+        let execs = [
+            ("takeover", exec_args(name, &["claude".to_owned()])),
+            ("redraw", redraw_args(name, 30, 100)),
+            ("reach", reach_args(name)),
+            ("links", links_args(name)),
+        ];
+        for (what, args) in execs {
+            assert_eq!(args[0], "exec", "{what}: {args:?}");
+            let at = args.iter().position(|a| a == name).unwrap();
+            assert_eq!(args[at + 1..at + 4], NICE, "{what}: {args:?}");
+            assert!(args.len() > at + 4, "{what}: {args:?}");
         }
     }
 

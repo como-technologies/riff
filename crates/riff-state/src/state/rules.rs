@@ -25,6 +25,7 @@ mod devices;
 mod notes;
 mod people;
 mod plan;
+mod projects;
 mod proof;
 
 fn ann() -> SessionUri {

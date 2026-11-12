@@ -124,7 +124,11 @@
 //! tagged commit (01M76SS6T89DPNV7S4SWY1R7F3). `riff release check`
 //! takes the four checks of the log from that status
 //! ([`Forge::deploy_check`], [`log_of`]), and runs no `gcloud`
-//! (01M76SSFTGW41RHHV445ZM5RHY).
+//! (01M76SSFTGW41RHHV445ZM5RHY). Before the end of the job, with no
+//! status of this deploy, it refuses and changes nothing
+//! ([`check_waits`], 01M77BT4XB4T8MQVCY7MK0B843): the watch of the deploy
+//! gives the lead the step of the check only then
+//! ([`crate::watches`], 01M77BT0489T9R084WEFHPMCR5).
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -504,6 +508,24 @@ pub struct Deploy {
     /// True for a run by hand on `main` with the input `tag`, as of
     /// `riff release rollback`: it has no job `Check the deploy`.
     pub by_hand: bool,
+    /// Where its job `Check the deploy` ([`CHECK_JOB`]) is.
+    pub check_job: CheckJob,
+}
+
+/// The name of the CI job that checks the Cloud Run log after the job
+/// `Deploy` (01M76SS6T89DPNV7S4SWY1R7F3).
+pub const CHECK_JOB: &str = "Check the deploy";
+
+/// Where the job [`CHECK_JOB`] of a CI run is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckJob {
+    /// It did not end: it waits for the job `Deploy` or for a runner, or
+    /// it runs. A run that did not end and has no such job yet counts too.
+    Runs,
+    /// It ended, with its conclusion, for example `success` or `failure`.
+    Ended(String),
+    /// The run ended with no such job.
+    Missing,
 }
 
 /// A commit status of GitHub, as [`log_of`] reads it.
@@ -2083,12 +2105,13 @@ pub fn set_deploy_check(
 /// The four checks of the log for `riff release check` of `tag`, from
 /// the status [`DEPLOY_CHECK`] of `check` (01M76SSFTGW41RHHV445ZM5RHY). A
 /// status that is missing, or older than the start of the job `Deploy`
-/// of `deploy`, gives the step: when the job `Check the deploy` ends, or
-/// for a run by hand, the `riff cloud check` of a person. Each other
-/// state than `success` and `failure` gives its description.
+/// of `deploy`, gives the step: while the job `Check the deploy` runs,
+/// when it ends ([`check_waits`]); after its end, the `riff cloud check`
+/// of a person; for a run by hand, the same. Each other state than
+/// `success` and `failure` gives its description.
 ///
 /// ```
-/// use riff::cycle::{CommitStatus, Deploy, DeployCheck, DeployState, LogMeasures, log_of};
+/// use riff::cycle::{CheckJob, CommitStatus, Deploy, DeployCheck, DeployState, LogMeasures, log_of};
 ///
 /// let deploy = Deploy {
 ///     run: 9,
@@ -2098,6 +2121,7 @@ pub fn set_deploy_check(
 ///     ended: "2026-10-18T20:03:00Z".into(),
 ///     failed: vec![],
 ///     by_hand: false,
+///     check_job: CheckJob::Runs,
 /// };
 /// let status = |state: &str, at: &str| DeployCheck {
 ///     commit: "c1".into(),
@@ -2112,14 +2136,20 @@ pub fn set_deploy_check(
 /// // A status of an older deploy counts as none.
 /// let old = log_of("v3.3.0", &deploy, &status("success", "2026-10-17T10:00:00Z"));
 /// assert!(old.unwrap_err().contains("ends at about 20:09 UTC"));
+/// let failed = Deploy { check_job: CheckJob::Ended("failure".into()), ..deploy.clone() };
+/// let none = DeployCheck { commit: "c1".into(), status: None };
+/// assert!(log_of("v3.3.0", &failed, &none).unwrap_err().contains("ended with failure"));
 /// let by_hand = Deploy { by_hand: true, ..deploy.clone() };
-/// let none = log_of("v3.3.0", &by_hand, &DeployCheck { commit: "c1".into(), status: None });
-/// assert!(none.unwrap_err().contains("riff cloud check shared --since 2026-10-18T20:00:00Z --commit c1"));
+/// let why = log_of("v3.3.0", &by_hand, &none).unwrap_err();
+/// assert!(why.contains("riff cloud check shared --since 2026-10-18T20:00:00Z --commit c1"));
 /// assert!(log_of("v3.3.0", &deploy, &status("error", "2026-10-18T20:09:10Z")).is_err());
 /// ```
 pub fn log_of(tag: &str, deploy: &Deploy, check: &DeployCheck) -> Result<LogMeasures, String> {
-    let status = check.status.as_ref().filter(|s| !older(&s.at, &deploy.at));
-    let Some(status) = status else {
+    if let Some(why) = check_none(deploy, check) {
+        let how = text::check_by_hand(tag, &deploy.at, &check.commit);
+        return Err(format!("{why}. {how}"));
+    }
+    let Some(status) = fresh(deploy, check) else {
         return Err(if deploy.by_hand {
             text::deploy_check_by_hand(tag, &deploy.at, &check.commit)
         } else {
@@ -2131,6 +2161,85 @@ pub fn log_of(tag: &str, deploy: &Deploy, check: &DeployCheck) -> Result<LogMeas
             .ok_or_else(|| text::deploy_check_unread(tag, &status.description)),
         _ => Err(text::deploy_check_error(tag, &status.description)),
     }
+}
+
+/// The status [`DEPLOY_CHECK`] of `check` when it is one of `deploy`: not
+/// older than the start of its job `Deploy`.
+fn fresh<'a>(deploy: &Deploy, check: &'a DeployCheck) -> Option<&'a CommitStatus> {
+    check.status.as_ref().filter(|s| !older(&s.at, &deploy.at))
+}
+
+/// Why the check of the log of `deploy` has no result after the end of
+/// its job `Check the deploy`: the job ended, or the run ended with no
+/// such job, and `check` has no status [`DEPLOY_CHECK`] of this deploy
+/// (01M77BT0489T9R084WEFHPMCR5). `None` for a run by hand, while the job
+/// runs, and with a status.
+///
+/// ```
+/// use riff::cycle::{CheckJob, Deploy, DeployCheck, DeployState, check_none};
+///
+/// let deploy = Deploy {
+///     run: 9,
+///     url: "https://x/runs/9".into(),
+///     state: DeployState::Passed,
+///     at: String::new(),
+///     ended: String::new(),
+///     failed: vec![],
+///     by_hand: false,
+///     check_job: CheckJob::Ended("cancelled".into()),
+/// };
+/// let none = DeployCheck::default();
+/// let why = check_none(&deploy, &none).unwrap();
+/// assert_eq!(why, riff::text::deploy_check_none("https://x/runs/9", Some("cancelled")));
+/// assert_eq!(check_none(&Deploy { check_job: CheckJob::Runs, ..deploy.clone() }, &none), None);
+/// assert_eq!(check_none(&Deploy { by_hand: true, ..deploy.clone() }, &none), None);
+/// ```
+pub fn check_none(deploy: &Deploy, check: &DeployCheck) -> Option<String> {
+    if deploy.by_hand || fresh(deploy, check).is_some() {
+        return None;
+    }
+    match &deploy.check_job {
+        CheckJob::Runs => None,
+        CheckJob::Ended(conclusion) => Some(text::deploy_check_none(&deploy.url, Some(conclusion))),
+        CheckJob::Missing => Some(text::deploy_check_none(&deploy.url, None)),
+    }
+}
+
+/// True while the check of the lead after `deploy` waits for the job
+/// `Check the deploy` (01M77BT0489T9R084WEFHPMCR5,
+/// 01M77BT4XB4T8MQVCY7MK0B843): the job did not end, and `check` has no
+/// status [`DEPLOY_CHECK`] of this deploy. A run by hand has no such job,
+/// and waits for none.
+///
+/// ```
+/// use riff::cycle::{CheckJob, CommitStatus, Deploy, DeployCheck, DeployState, check_waits};
+///
+/// let deploy = Deploy {
+///     run: 9,
+///     url: "https://github.com/o/r/actions/runs/9".into(),
+///     state: DeployState::Passed,
+///     at: "2026-10-18T20:00:00Z".into(),
+///     ended: "2026-10-18T20:03:00Z".into(),
+///     failed: vec![],
+///     by_hand: false,
+///     check_job: CheckJob::Runs,
+/// };
+/// let none = DeployCheck { commit: "c1".into(), status: None };
+/// assert!(check_waits(&deploy, &none));
+/// let set = |at: &str| DeployCheck {
+///     commit: "c1".into(),
+///     status: Some(CommitStatus { state: "error".into(), description: "x".into(), at: at.into() }),
+/// };
+/// assert!(!check_waits(&deploy, &set("2026-10-18T20:09:10Z")));
+/// // A status of an older deploy counts as none.
+/// assert!(check_waits(&deploy, &set("2026-10-17T10:00:00Z")));
+/// for job in [CheckJob::Ended("failure".into()), CheckJob::Missing] {
+///     assert!(!check_waits(&Deploy { check_job: job, ..deploy.clone() }, &none));
+/// }
+/// assert!(!check_waits(&Deploy { by_hand: true, ..deploy.clone() }, &none));
+/// ```
+pub fn check_waits(deploy: &Deploy, check: &DeployCheck) -> bool {
+    !deploy.by_hand && deploy.check_job == CheckJob::Runs && fresh(deploy, check).is_none()
 }
 
 /// True when the RFC 3339 time `at` is before `start`. A time that riff
@@ -2442,13 +2551,16 @@ fn log_verdicts(found: &Result<LogMeasures, String>) -> Vec<(&'static str, Verdi
 }
 
 /// The checks after the deploy of `tag` (01M58KMM5ZPAQ289S2YJVQ5WW6). It
-/// refuses while the deploy did not end. After a failed job `Deploy`,
-/// it files an issue with the failed jobs and the run in the current
-/// wave. Else it runs [`checks`], with the four checks of the log from
-/// the status [`DEPLOY_CHECK`] of the tag ([`log_of`]), and writes the
-/// result on the release issue. When each check passed, it closes the
-/// release issue. The caller resumes the riff after a failed deploy, and
-/// after a pass. It runs no `gcloud` (01M76SSFTGW41RHHV445ZM5RHY).
+/// refuses while the deploy did not end, and while it waits for the job
+/// `Check the deploy` ([`check_waits`], 01M77BT4XB4T8MQVCY7MK0B843): then
+/// it makes no release issue, writes nothing, and its caller tells no
+/// other lead. After a failed job `Deploy`, it files an issue with the
+/// failed jobs and the run in the current wave. Else it runs [`checks`],
+/// with the four checks of the log from the status [`DEPLOY_CHECK`] of
+/// the tag ([`log_of`]), and writes the result on the release issue.
+/// When each check passed, it closes the release issue. The caller
+/// resumes the riff after a failed deploy, and after a pass. It runs no
+/// `gcloud` (01M76SSFTGW41RHHV445ZM5RHY).
 ///
 /// It gives the text of the result ([`check_text`]) to `show` before it
 /// writes the comment (01M6H12QRZFBDTT5D5VQ4FB4C1). So a fault of the
@@ -2464,6 +2576,23 @@ pub fn check(
     let tag = tag(version);
     let Some(deploy) = forge.deploy(&tag)? else {
         bail!("riff release check: no CI run deploys {tag}. next: riff release status");
+    };
+    // The status of the job Check the deploy, read before any write: a
+    // check before the end of the job changes nothing
+    // (01M77BT4XB4T8MQVCY7MK0B843).
+    let status = match deploy.state {
+        DeployState::Passed => {
+            let status = forge.deploy_check(&tag)?;
+            if check_waits(&deploy, &status) {
+                bail!(text::release_check_early(
+                    &tag,
+                    &deploy.url,
+                    &check_end(&deploy.ended)
+                ));
+            }
+            Some(status)
+        }
+        _ => None,
     };
     let wave = forge.current_wave()?;
     let issue = match forge.issue_of(&title(version))? {
@@ -2498,7 +2627,7 @@ pub fn check(
             })
         }
         DeployState::Passed => {
-            let log = log_of(&tag, &deploy, &forge.deploy_check(&tag)?);
+            let log = log_of(&tag, &deploy, &status.unwrap_or_default());
             let lines = checks(version, served, &log);
             let passed = lines.iter().all(|(_, v)| *v == Verdict::Passed);
             let result = check_text(&tag, &lines);
@@ -3533,6 +3662,11 @@ impl Forge for GitHub {
             .filter(|j| matches!(j.conclusion.as_str(), "failure" | "timed_out" | "cancelled"))
             .map(|j| text::forge(&j.name))
             .collect();
+        let check_job = match jobs.jobs.iter().find(|j| j.name == CHECK_JOB) {
+            Some(j) if j.status == "completed" => CheckJob::Ended(text::forge(&j.conclusion)),
+            None if run.status == "completed" => CheckJob::Missing,
+            _ => CheckJob::Runs,
+        };
         let state = match (run.status.as_str(), job) {
             ("waiting", _) => DeployState::Waiting,
             (_, Some(j)) if j.status == "completed" => match j.conclusion.as_str() {
@@ -3554,6 +3688,7 @@ impl Forge for GitHub {
                 .unwrap_or_default(),
             failed,
             by_hand: tag_version(&run.head_branch).is_err(),
+            check_job,
         }))
     }
 
@@ -4035,6 +4170,10 @@ pub(crate) mod tests {
                 vec![]
             },
             by_hand: false,
+            check_job: match state {
+                DeployState::Passed => CheckJob::Ended("success".into()),
+                _ => CheckJob::Runs,
+            },
         }
     }
 
@@ -5282,18 +5421,54 @@ pub(crate) mod tests {
         );
     }
 
-    /// 01M76SSFTGW41RHHV445ZM5RHY: before the job Check the deploy sets the
-    /// status, each check of the log is unknown, and names when the job
-    /// ends. The checks of riff-server still run, and riff closes nothing.
+    /// 01M77BT4XB4T8MQVCY7MK0B843: before the job Check the deploy sets the
+    /// status, the check refuses, names when the job ends, and changes
+    /// nothing: no release issue and no comment. Its caller tells the other
+    /// leads nothing.
     #[test]
-    fn check_names_when_the_job_ends_before_the_status_is_there() {
-        let forge = Fake {
+    fn check_refuses_before_the_job_check_the_deploy_ends() {
+        let mut forge = Fake {
             issue: None,
             ..deployed(DeployCheck {
                 commit: "c1".into(),
                 status: None,
             })
         };
+        forge.deploy.as_mut().unwrap().check_job = CheckJob::Runs;
+        let error = check(&forge, "v3.3.0", &served("3.3.0"), &mut |_| {}).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            text::release_check_early(
+                "v3.3.0",
+                "https://github.com/o/r/actions/runs/9",
+                "20:09 UTC"
+            )
+        );
+        assert!(forge.log().is_empty(), "{:?}", forge.log());
+
+        // A status of this deploy counts before the end of the job.
+        forge.deploy_check = deploy_status("success", LogMeasures::default());
+        let done = check(&forge, "v3.3.0", &served("3.3.0"), &mut |_| {}).unwrap();
+        assert!(
+            matches!(done, Checked::Ran { passed: true, .. }),
+            "{done:?}"
+        );
+    }
+
+    /// 01M76SSFTGW41RHHV445ZM5RHY: a job Check the deploy that ended with no
+    /// status makes each check of the log unknown, and names the check of
+    /// a person. The checks of riff-server still run, and riff closes
+    /// nothing.
+    #[test]
+    fn check_names_the_check_of_a_person_after_a_job_that_set_no_status() {
+        let mut forge = Fake {
+            issue: None,
+            ..deployed(DeployCheck {
+                commit: "c1".into(),
+                status: None,
+            })
+        };
+        forge.deploy.as_mut().unwrap().check_job = CheckJob::Ended("failure".into());
         let done = check(&forge, "v3.3.0", &served("3.3.0"), &mut |_| {}).unwrap();
         let Checked::Ran {
             lines,
@@ -5305,10 +5480,10 @@ pub(crate) mod tests {
         };
         // No check failed: the other leads hear an unknown result.
         assert_eq!(check_step(lines), Step::CheckUnknown);
-        let why = text::deploy_check_missing(
-            "v3.3.0",
-            "https://github.com/o/r/actions/runs/9",
-            "20:09 UTC",
+        let why = format!(
+            "{}. {}",
+            text::deploy_check_none("https://github.com/o/r/actions/runs/9", Some("failure")),
+            text::check_by_hand("v3.3.0", "2026-10-18T20:00:00Z", "c1")
         );
         let names: Vec<&str> = lines
             .iter()
@@ -5354,7 +5529,10 @@ pub(crate) mod tests {
         old.status.as_mut().unwrap().at = "2026-10-17T10:00:00Z".into();
         let why = unknown(&deployed(old.clone()));
         assert_eq!(why.len(), 4, "{why:?}");
-        assert!(why[0].contains("did not set the status"), "{why:?}");
+        assert!(
+            why[0].contains("ended with success, and set no status riff/deploy-check"),
+            "{why:?}"
+        );
 
         let mut by_hand = deployed(old);
         by_hand.deploy.as_mut().unwrap().by_hand = true;

@@ -1412,13 +1412,10 @@ pub enum ServerCall {
     /// first, as `riff denials` reads them ([`crate::denied`],
     /// 01M74A8D1GV6TCPXV2XEPVA53A). Only the lead may.
     Denials,
-    /// The GitHub Apps of the riff, as the person reads them, for the
-    /// checks of the guard and of the lead App of `riff init` in a
-    /// container (01M74A8DC74TT2YGZPBBAENMWH). Each session may: the
-    /// answer holds no key and no secret. The answer is a
-    /// [`riff_core::wire::GitHubAppsReply`], or `null` for a riff with no
-    /// sign-in.
-    Apps,
+    /// Each project of the riff, as `riff project list` reads it
+    /// ([`riff_core::wire::ProjectsReply`], 01M76SHB4SAWFW3S5Y7X9KC6E4).
+    /// Each session may.
+    Projects,
 }
 
 /// Makes the call `call` of the session of `record` on its riff-server,
@@ -1584,15 +1581,7 @@ async fn server_call(record: &Record, call: &ServerCall) -> Result<Value> {
             }
             serde_json::to_value(crate::denied::bodies(&signed()?, &record.me).await?)?
         }
-        ServerCall::Apps => {
-            let person = api.clone().signed_in(None)?;
-            match person.github_apps(None, None).await {
-                Ok(apps) => serde_json::to_value(apps)?,
-                // A riff with no sign-in has no App.
-                Err(_) if matches!(person.has_sign_in().await, Ok(false)) => Value::Null,
-                Err(e) => return Err(e),
-            }
-        }
+        ServerCall::Projects => serde_json::to_value(signed()?.projects(&record.me).await?)?,
         ServerCall::Person => bail!("the daemon reads the person itself"),
         ServerCall::Run { .. } => bail!("the daemon runs the item itself"),
         ServerCall::Watch { .. } => bail!("the daemon watches itself"),
@@ -12198,8 +12187,8 @@ mod tests {
     /// 01M74A8D1GV6TCPXV2XEPVA53A: through the socket of its session,
     /// each session posts, reads, sets its status, starts a long step and
     /// says that it is blocked. Only the lead pauses and resumes, tells the
-    /// state of a pull request and reads the thread denials. A riff with no
-    /// sign-in has no GitHub Apps (01M74A8DC74TT2YGZPBBAENMWH).
+    /// state of a pull request and reads the thread denials. Each session
+    /// reads the projects of the riff (01M776HMKPTH3S6MYJZ8RJGWXV).
     #[tokio::test(flavor = "multi_thread")]
     async fn a_session_talks_through_its_socket_and_only_the_lead_pauses() {
         use crate::reach::Reach;
@@ -12298,7 +12287,7 @@ mod tests {
         let told = crate::session_relay::ask_server(socket, &fact).await;
         assert_eq!(told.unwrap(), Value::Null);
         for reach in [&lead, &worker] {
-            assert_eq!(reach.apps().await.unwrap(), None);
+            assert!(reach.projects().await.unwrap().projects.is_empty());
         }
     }
 

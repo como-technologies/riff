@@ -14,7 +14,8 @@
 #   (01M3JN4QQCM0GXK9BCGXVS2YC7). A merge queue with the squash method
 #   merges each pull request, after the checks ran on its merge group
 #   (01M75NAPJVW8FJZTJEF416MR4J). The rule is the one of
-#   deploy/merge-queue.sh and riff init (riff::repo_setup::merge_queue).
+#   deploy/merge-queue.sh and riff project init
+#   (riff::repo_setup::merge_queue).
 # - The ruleset `releases` on the tags `v*`: only the repository admin
 #   role and the lead App of the riff create, move or delete a release
 #   tag (01M6WZ40PZNBHW2BZHMQX80WJ8). LEAD_APP is the slug of the lead
@@ -110,7 +111,8 @@ ruleset main <<'JSON'
 JSON
 
 # RepositoryRole 5 is the admin role. An Integration is a GitHub App, by
-# its App ID. riff init makes the same ruleset (riff::repo_setup::releases).
+# its App ID. riff project init makes the same ruleset
+# (riff::repo_setup::releases).
 ruleset releases <<JSON
 {
   "name": "releases",

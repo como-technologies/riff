@@ -33,9 +33,9 @@
 //! - The guard does not stop the change: the issue shows it for some
 //!   seconds, and the history of the issue keeps both edits.
 //!
-//! `riff init` writes the guard with the bot of the session App of the
-//! riff ([`workflow`], [`session_bot`]), in the pull request "Set up riff"
-//! ([`crate::repo_setup`]).
+//! `riff project init` writes the guard with the bot of the session App
+//! of the riff ([`workflow`], [`session_bot`]), in the pull request "Set
+//! up riff" ([`crate::repo_setup`]).
 //!
 //! ```
 //! let text = riff::guard::workflow("riff-acme[bot]");
@@ -140,8 +140,8 @@ pub fn valid_bot(bot: &str) -> bool {
 }
 
 /// The text of the guard for the bot `bot` of the session App
-/// (01M6WPV2HK96JH900RX9ZPYHJ3). `riff init` writes it to [`PATH`]. Each
-/// line of [`ENV`] and of [`SCRIPT`] is in it.
+/// (01M6WPV2HK96JH900RX9ZPYHJ3). `riff project init` writes it to [`PATH`].
+/// Each line of [`ENV`] and of [`SCRIPT`] is in it.
 ///
 /// ```
 /// use riff::guard::{ENV, SCRIPT, workflow};
@@ -167,8 +167,8 @@ pub fn workflow(bot: &str) -> String {
         })
         .collect();
     format!(
-        "# The guard of riff. riff init writes this file with the bot of the\n\
-         # session App of the riff. Each worker and each verifier of riff acts\n\
+        "# The guard of riff. riff project init writes this file with the bot of\n\
+         # the session App of the riff. Each worker and each verifier of riff acts\n\
          # on GitHub as that bot. When the bot changes the body or the title of\n\
          # an issue, or changes or deletes a comment of another account, the\n\
          # guard puts back the old text with GITHUB_TOKEN. See \"Add to an\n\
@@ -217,8 +217,7 @@ pub async fn session_bot(api: &Api) -> Result<Option<String>, String> {
 }
 
 /// The bot of the session App of `apps`, the reply of riff-server to
-/// the read of its GitHub Apps ([`session_bot`]). `riff init` in a
-/// container gets the reply through the riff daemon (#1733).
+/// the read of its GitHub Apps ([`session_bot`]).
 pub fn session_bot_of(apps: &riff_core::wire::GitHubAppsReply) -> Result<Option<String>, String> {
     match apps.apps.iter().find(|app| app.app == GitHubApp::Session) {
         None => Ok(None),

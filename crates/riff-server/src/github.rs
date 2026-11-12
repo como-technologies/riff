@@ -908,6 +908,33 @@ impl Client {
         Ok(granted)
     }
 
+    /// True when GitHub says that the person of `token` is an admin of
+    /// the repository `repo`: `permissions.admin` of `GET /repos/REPO`
+    /// (01M76SG8GBXFYXKWMQHPCNEXBN).
+    async fn admin(&self, repo: &str, token: &str) -> Result<bool, GitHubError> {
+        #[derive(Deserialize)]
+        struct Repository {
+            #[serde(default)]
+            permissions: Option<Permissions>,
+        }
+        #[derive(Deserialize)]
+        struct Permissions {
+            #[serde(default)]
+            admin: bool,
+        }
+        let what = format!("the repository {repo}");
+        let request = self
+            .request(reqwest::Method::GET, &format!("/repos/{repo}"))
+            .bearer_auth(token);
+        let repository: Repository = self
+            .send(&what, request)
+            .await?
+            .json()
+            .await
+            .map_err(|e| GitHubError::new(format!("{what}: {e}")))?;
+        Ok(repository.permissions.is_some_and(|p| p.admin))
+    }
+
     /// Revokes `token` at once.
     async fn revoke(&self, token: &str) -> Result<(), GitHubError> {
         let request = self
@@ -1020,6 +1047,23 @@ impl GitHub {
                 }
             }
         });
+    }
+
+    /// The check of a call of a project (01M76SG8GBXFYXKWMQHPCNEXBN):
+    /// GitHub says that the person of `token`, the token of `gh` of the
+    /// person, is an admin of `repo`. Else why not. The token goes in
+    /// this one call to GitHub, and in no log line.
+    pub(crate) async fn admin_of(&self, repo: &str, token: &str) -> Result<(), String> {
+        if token.trim().is_empty() {
+            return Err("the call has no token of gh: run gh auth login, then try again".into());
+        }
+        match self.client.admin(repo, token.trim()).await {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(format!(
+                "GitHub says that the account of your gh is no admin of {repo}"
+            )),
+            Err(e) => Err(e.text),
+        }
     }
 
     fn states(&self) -> std::sync::MutexGuard<'_, States> {
@@ -1635,7 +1679,8 @@ pub(crate) async fn created(
 /// `POST /v1/github/apps`: each App of the riff, whether it is installed
 /// on the account of the query, with the ID of the install, and whether
 /// it is installed on the repository of the query. Each person asks with
-/// neither, for example `riff init` for the bot of the guard. Only the
+/// neither, for example `riff project init` for the bot of the
+/// guard. Only the
 /// owner or an admin asks with an account or a repository
 /// (01M6WPV8473EBABR1ZMEPZMTQQ, 01M6Z7DMYAW52X62TN1DEX9NCG). With an
 /// account, riff-server also reads the rights of each App and of its

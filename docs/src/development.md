@@ -2297,7 +2297,8 @@ another host, add `--host thelio`.
 - The caps of the host: `--cpus` and `--memory`. The defaults are 8
   CPUs and 8 GB. See
   [Set the caps of a container](#set-the-caps-of-a-container).
-- The lowest CPU priority: nice 19 and the CPU weight 1. See
+- The lowest CPU priority: nice 19, and the CPU weight 1 in
+  `riff.slice`. See
   [The priority of a session](#the-priority-of-a-session).
 - The folder of its own socket of the daemon at `/run/riff`, with
   write, and `RIFF_SOCKET=/run/riff/riff.sock`.
@@ -2635,10 +2636,10 @@ for a day shows `no wake for 1d`: its wave reads GitHub as with no
 events, with the two cheap reads before each full read.
 
 The daemon is not the only caller. The token of your account also pays
-for `riff top`, `riff pr wait`, `riff verify`, `riff run`, `riff init`,
-the release commands, and each `gh` that a session runs in its
-container. Each of them counts its calls too, and
-the daemon adds them to its own. Each `gh` call of riff has a caller
+for `riff top`, `riff pr wait`, `riff verify`, `riff run`,
+`riff project init`, the release commands, and each `gh` that a session
+runs in its container. Each of them counts its calls too, and the
+daemon adds them to its own. Each `gh` call of riff has a caller
 name, and a test fails on a `gh` with none. A command on the host writes
 its calls to the folder `gh-calls` in the folder of the daemon. A
 session in a container sends them to the daemon on its socket. In a
@@ -2697,9 +2698,9 @@ the daemon starts to serve), `release test` (the real-session test of a
 release), `token` (the token of a session on GitHub: the push right of
 the person and the revoke), or the command of `riff` that made the
 call: `top`, `pr open`, `pr wait`, `verify`, `release`, `waves` (`riff
-wave ...`), `audit`, `questions`, `run`, `init`, `claim` (the pull
-request line of a claim), `github` (`riff github create` and `install`
-read the account), `tui` (the Waves tab of the TUI, see
+wave ...`), `audit`, `questions`, `run`, `project init`, `claim` (the
+pull request line of a claim), `github` (`riff github create` and
+`install` read the account), `tui` (the Waves tab of the TUI, see
 [See the open items of a wave](waves.md#see-the-open-items-of-a-wave)),
 or `chat` (the list of `#` of `riff chat`, see
 [Pick an issue with #](how-it-works.md#pick-an-issue-with)).
@@ -2986,21 +2987,21 @@ it since, the wave acts one time for the head commit:
 
 ### Turn the merge queue on or off
 
-`riff init` turns the queue on in a repository with `[release]` in
-`riff.toml`, as this one. `just github` turns it on too: see
+`riff project init` turns the queue on in a repository with `[release]`
+in `riff.toml`, as this one. `just github` turns it on too: see
 [Set up the repository](#set-up-the-repository). You need the rights of
 an admin of the repository. In a plain terminal, not in a container, in
 your clone of `como-technologies/riff`:
 
 ```sh
-riff init
+riff project init
 ```
 
-`riff init` puts the rule `merge_queue` in the ruleset that requires
-`riff/verify`, here `main`, and changes no other rule. A second run
-finds the queue and changes nothing. The queue merges with the method
-`squash`, builds up to 5 merge groups at the same time, and waits 60
-minutes for the checks of a group. The checks `Gate`, `Hygiene` and
+`riff project init` puts the rule `merge_queue` in the ruleset that
+requires `riff/verify`, here `main`, and changes no other rule. A second
+run finds the queue and changes nothing. The queue merges with the
+method `squash`, builds up to 5 merge groups at the same time, and waits
+60 minutes for the checks of a group. The checks `Gate`, `Hygiene` and
 `riff/verify` of the ruleset run on each merge group.
 
 To turn the queue off for a time, run the script. It changes no other
@@ -3027,8 +3028,8 @@ Turn the queue on only when the `main` of the repository has the event
 never start, and it removes each pull request after 60 minutes. The
 workflows of this repository have it: the Gate and Hygiene run on the
 merge group, and the job `Verify of the merge group` sets `riff/verify`
-on it. So `riff init` puts no merge queue in a repository with no
-`[release]`.
+on it. So `riff project init` puts no merge queue in a repository with
+no `[release]`.
 
 ### Add a host to the wave
 
@@ -3694,15 +3695,15 @@ warns when an item has no line (see
 
 ### Find the issues with no Done when line
 
-`riff init` counts the open issues that have no line that starts with
-`Done when:` and no heading `## Done when`, and names them in a note. A
-heading `## Done when` counts, with or without the colon, as it does for
-the wave. A tracker and a release issue are not in the note: no session
-does them. Run it in a clone of the repository. `--check` changes
-nothing:
+`riff project init` counts the open issues that have no line that
+starts with `Done when:` and no heading `## Done when`, and names them
+in a note. A heading `## Done when` counts, with or without the colon,
+as it does for the wave. A tracker and a release issue are not in the
+note: no session does them. Run it in a clone of the repository.
+`--check` changes nothing and enrolls nothing:
 
 ```sh
-riff init --check
+riff project init --check
 ```
 
 The note comes after the list of the checks. It fails no check, and it
@@ -3715,7 +3716,7 @@ For example:
 
 ```mermaid
 flowchart LR
-    I["riff init"] --> L["gh issue list:<br/>the open issues"]
+    I["riff project init"] --> L["gh issue list:<br/>the open issues"]
     L --> T{"a tracker, a release issue,<br/>a Done when: line,<br/>or a ## Done when heading?"}
     T -- yes --> O["not in the note"]
     T -- no --> N["named in the note"]
@@ -4106,8 +4107,8 @@ gh issue edit 1596 --remove-label question
 ```
 
 One open question keeps the label on. The wave takes the issue at its
-next look after the label goes. `riff init` makes the label in a new
-repository, when it is not there.
+next look after the label goes. `riff project init` makes the label in
+a new repository, when it is not there.
 
 ```mermaid
 flowchart LR
@@ -4259,19 +4260,51 @@ at its start. A session that runs keeps its caps. riff refuses 0.
 #### The priority of a session
 
 Each process of a session container runs at the lowest CPU priority,
-so a build in a session does not slow your own programs. The daemon
-starts each worker, verify and lead with `nice -n 19`, and each process
-of the container gets nice 19. A takeover runs its command in the
-container with `nice -n 19` too. A nice value counts only inside its
-own cgroup, so each container also gets `--cgroup-conf cpu.weight=1`:
-the lowest CPU weight. The default weight of a cgroup is 100. The
-priority has no setting, and riff writes it in no file of yours.
+so a build in a session yields the CPU to the programs of your
+desktop. A nice value counts only against the processes of its own
+cgroup, and a CPU weight only against the other cgroups of its level.
+So riff sets each of them:
+
+- The daemon starts each worker, verify and lead with `nice -n 19`,
+  and each process of the container gets nice 19. Each `podman exec`
+  of riff runs its command in the container with `nice -n 19` too: a
+  takeover, and the short checks of the daemon.
+- Each container runs in `riff.slice`, a slice of the systemd manager
+  of your user. The slice is next to `app.slice`, where your desktop
+  starts your programs. Before each start, the daemon gives the slice
+  the CPU weight 1, the lowest. The default weight is 100. So when
+  your programs and the sessions all want the CPU, your programs get
+  100 parts and the sessions 1.
+- Each container also gets `--cgroup-conf cpu.weight=1`: in the slice,
+  it yields to podman and its network.
+
+The priority has no setting. riff writes it in no file of yours:
+systemd keeps the weight of the slice in the runtime folder of your
+user.
 
 ```mermaid
-flowchart LR
-    D["riff daemon"] -- "nice -n 19 podman run<br/>--cgroup-conf cpu.weight=1" --> C["a session container:<br/>each process at nice 19"]
-    C --- G["its cgroup: cpu.weight 1"]
-    Y["your programs: nice 0"] --- W["your cgroups: cpu.weight 100"]
+flowchart TD
+    M["user@UID.service:<br/>the systemd manager of your user"] --> A["app.slice: weight 100<br/>your programs"]
+    M --> R["riff.slice: weight 1"]
+    R --> C["each session container:<br/>cpu.weight 1, each process at nice 19"]
+```
+
+To see the CPU weight of `riff.slice` and of each slice next to it:
+
+```sh
+grep . /sys/fs/cgroup/user.slice/user-$(id -u).slice/user@$(id -u).service/*/cpu.weight
+```
+
+The line of `riff.slice` ends with `:1`, and the line of `app.slice`
+with `:100`.
+
+A login over SSH runs in a scope of the system, next to the manager of
+your user, not in it. The weight of `riff.slice` does not count against
+it: a build of the login and the sessions get one half of the CPU each.
+To give a build of an SSH login the lead, start it in `app.slice`:
+
+```sh
+systemd-run --user --scope -- cargo build
 ```
 
 To see the nice value of each process of each session container:
@@ -4289,8 +4322,8 @@ container, for example `riff-issue-12-21c026a1`:
 podman exec riff-issue-12-21c026a1 cat /sys/fs/cgroup/cpu.weight
 ```
 
-It shows `1`. A session that an older riff started keeps nice 0 and the
-weight 100 until it ends.
+It shows `1`. A session that an older riff started keeps its old
+priority and its old slice until it ends.
 
 ### Set the effort of the sessions
 
@@ -5637,7 +5670,7 @@ two rulesets:
   `Hygiene` and `riff/verify`. A merge queue with the method `squash`
   merges each pull request: see
   [Turn the merge queue on or off](#turn-the-merge-queue-on-or-off).
-  `riff init` sets the same queue.
+  `riff project init` sets the same queue.
 - `releases` on the tags `v*`: only the repository admin role and the
   lead App of the riff can create, move or delete a release tag. So the
   lead pushes the tag of a release from its container, and a worker
@@ -7170,7 +7203,8 @@ flowchart TD
     I -- "FAIL: wakes the lead with the failed jobs" --> I1[Old revision still serves. riff release check files the issue and resumes the riff. riff release retry vX.Y.Z] --> H
     I -- PASS --> R1[The riff daemon of each host starts again on vX.Y.Z, after its last session]
     R1 --> R2[riff starts the lead container again on vX.Y.Z, at the end of its turn]
-    R2 -- "wakes the lead: the deploy passed, and your container runs vX.Y.Z" --> J{riff release check vX.Y.Z}
+    R2 --> R3[The job Check the deploy reads the Cloud Run log and sets the status riff/deploy-check of the tag]
+    R3 -- "wakes the lead: the deploy passed, and your container runs vX.Y.Z" --> J{riff release check vX.Y.Z}
     J -- PASS --> K[riff resumes. Release issue closes. riff wave end N. Next wave starts]
     J -- FAIL --> L{Lead: fix forward or roll back}
     L -- fix forward --> L1[Issue, fix merges: the release A.B.C of main, the same cycle] --> C
@@ -7188,7 +7222,7 @@ The gates:
 | HUMAN GATE 1: deploy | the owner or an admin, in a terminal. No session, also not the lead: a message in riff chat approves nothing | `riff release approve vX.Y.Z` | the release waits; the riff is not paused; the next `cut` refuses |
 | Hold | a lead of another repository, in a critical place | `riff release hold vX.Y.Z REASON` | `approve` refuses until the lead ends the hold, or a person passes `--over-holds` |
 | HUMAN GATE 2: rollback | the owner or an admin, in a terminal | `riff release approve vPREV` | the new release keeps serving; the riff stays paused |
-| Log check | the CI job `Check the deploy`, as `riff-check`, 5 minutes after the job `Deploy` (see [Check the release after the deploy](#check-the-release-after-the-deploy)) | `riff cloud check shared` sets the commit status `riff/deploy-check` of the tag | `riff release check` says when the job ends |
+| Log check | the CI job `Check the deploy`, as `riff-check`, 5 minutes after the job `Deploy` (see [Check the release after the deploy](#check-the-release-after-the-deploy)) | `riff cloud check shared` sets the commit status `riff/deploy-check` of the tag | the watch of the deploy waits up to 30 minutes for it; `riff release check` refuses and says when the job ends |
 
 The state of the current release in `riff release status` is `building`,
 `built`, `tested`, `published`, `waiting`, `deploying`, `deployed`,
@@ -7278,7 +7312,7 @@ sequenceDiagram
 | The pull request of the next version | `riff release cut` | the Gate failed (the failed jobs; the watch stays), the pull request merged (next: the next step of the release), or it closed with no merge (next: `riff release cut`). A Gate that passed gets no message: the pull request merges by itself |
 | The real-session test | `riff release test --host HOST` | the test passed (next: `riff release cut`), or failed |
 | The CI run of the tag | `riff release cut` | the job `Deploy` waits for a person (the owner gets the line in `riff chat`), or a job failed |
-| The job `Deploy` | `riff release approve`, `retry`, `rollback` | the job failed (the failed jobs), or it passed and your container runs the release (see [Wait for the new riff before the check](#wait-for-the-new-riff-before-the-check)) |
+| The job `Deploy` | `riff release approve`, `retry`, `rollback` | the job failed (the failed jobs), or it passed, your container runs the release, and the job `Check the deploy` set its status or ended (see [Wait for the new riff before the check](#wait-for-the-new-riff-before-the-check) and [Check the release after the deploy](#check-the-release-after-the-deploy)) |
 | The wave | `riff join` | the last open item of the current wave closed (next: `riff release test`, then `riff release cut`); from the release issue to the check, it also gives the step of the release to `riff who` and the TUI |
 | The check of the lead | the watch of the job `Deploy`, at its end | never: it gives the step to `riff who` and the TUI (see [See who acts next on the release](#see-who-acts-next-on-the-release)) |
 
@@ -7487,9 +7521,10 @@ sequenceDiagram
 | `riff release cut` | the command | the tag, the CI run that builds, and the pull request of the next version |
 | The job `Deploy` waits | the watch of the daemon | the deploy waits for a person: hold now, when you are in a critical place |
 | `riff release approve` | the command | the riff is paused: stop at your next step, and keep your state in your notes |
-| The job `Deploy` ends | the watch of the daemon | the deploy passed (the daemon of your host starts again on the release after its sessions), or it failed (the old revision still serves). The note of a pass comes with the message to the lead of the release: when its container runs the release |
+| The job `Deploy` ends | the watch of the daemon | the deploy passed (the daemon of your host starts again on the release after its sessions), or it failed (the old revision still serves). The note of a pass comes with the message to the lead of the release: when its container runs the release, and the job `Check the deploy` set its status or ended |
 | `riff release check` | the command | the checks passed and the riff runs again, or a check failed, or the deploy had failed |
 | `riff release check`, an unknown result | the command | the checks could not all run, and no check failed, for example when the sign-in of gcloud ended: the riff stays paused, and the lead checks again after a sign-in on the host |
+| `riff release check` before the end of the job `Check the deploy` | no one: the command refuses and changes nothing | nothing |
 | `riff release rollback` | the command | the older release deploys: hold now, when you are in a critical place |
 
 The note of the cut, for example:
@@ -7589,12 +7624,14 @@ The deploy of v3.3.0 passed: https://github.com/como-technologies/riff/actions/r
 ```
 
 The watch waits for no daemon on a host with `update.auto` off, and for
-no lead on a host with no lead of the repository. After 30 minutes it
-tells the lead all the same, and says what it waited for, for example
-`riff waited 30 minutes for the new riff, but your container still runs
-an old riff`, or a host that still runs the old build: `the riff daemon
-of bob@pangolin still runs v3.2.0, not v3.3.0`. To see the build of the
-daemon of each host, look at the part `Hosts`:
+no lead on a host with no lead of the repository. The watch also waits
+for the job `Check the deploy` (see
+[Check the release after the deploy](#check-the-release-after-the-deploy)).
+After 30 minutes it tells the lead all the same, and says what it
+waited for, for example `riff waited 30 minutes, but your container
+still runs an old riff`, or a host that still runs the old build: `the
+riff daemon of bob@pangolin still runs v3.2.0, not v3.3.0`. To see the
+build of the daemon of each host, look at the part `Hosts`:
 
 ```sh
 riff who
@@ -7612,12 +7649,21 @@ riff --version
 
 #### Check the release after the deploy
 
-The lead runs the checks after the watch says that its container runs
-the release, in its container (`riff lead start`):
+The lead runs the checks in its container (`riff lead start`), when
+the message of the watch of the deploy names this step:
 
 ```sh
 riff release check v3.3.0
 ```
+
+The lead gets that step after the job `Deploy` passed, and after two
+waits. First, its container runs the release (see
+[Wait for the new riff before the check](#wait-for-the-new-riff-before-the-check)).
+Second, the CI job `Check the deploy` read the Cloud Run log: the watch
+waits until the job sets the status `riff/deploy-check` of the tag, or
+until the job ends. That is about 6 minutes after the end of the job
+`Deploy`. The note to the other leads waits too. A run by hand, as of
+`riff release rollback`, has no such job, and the watch waits for none.
 
 In the container, riff reaches riff-server through the riff daemon of
 the host, as the riff tools do:
@@ -7648,12 +7694,15 @@ sequenceDiagram
     participant C as the job Check the deploy (riff-check)
     participant G as Cloud Logging
     participant H as GitHub
+    participant W as the watch of the deploy
     participant L as riff release check (the lead)
     D->>C: the time before the deploy
     Note over C: waits 5 minutes
     C->>G: gcloud logging read
     G-->>C: the lines
     C->>H: the status riff/deploy-check of the tag
+    W->>H: each minute: the status, and the jobs of the run
+    W->>L: the deploy passed. next: riff release check
     L->>H: the status riff/deploy-check of the tag
     H-->>L: the four checks of the log
 ```
@@ -7667,10 +7716,29 @@ gh api repos/como-technologies/riff/commits/v3.3.0/status \
   --jq '.statuses[] | select(.context == "riff/deploy-check") | .state + ": " + .description'
 ```
 
-When the job did not set the status yet, each check of the log is
-unknown. riff names the CI run and the time when the job ends, about
-6 minutes after the end of the job `Deploy`. Then the lead runs the
-check again.
+The message of the watch says what the job found when a check failed,
+or when the job gave no result:
+
+```text
+The deploy of v3.3.0 passed: https://github.com/como-technologies/riff/actions/runs/9. The job Check the deploy found a failed check of the log: a run of 503 took 25 s. Your container runs v3.3.0, as the riff daemon of this host does. next: riff release check v3.3.0
+```
+
+A status `error`, and a job that ended with no status, give `The check
+of the log has no result:` and the reason. After 30 minutes with no
+status and no end of the job, the message goes all the same: `riff
+waited 30 minutes, but the job Check the deploy of URL did not end`.
+
+A check before the job sets the status refuses, and changes nothing:
+riff makes no release issue, writes no comment, and tells the other
+leads nothing. riff names the CI run and the time when the job ends:
+
+```text
+riff release check v3.3.0: the job Check the deploy of https://github.com/como-technologies/riff/actions/runs/9 did not end. It ends at about 20:09 UTC. riff changed nothing, and told the other leads nothing. next: riff release check v3.3.0 after the end of the job
+```
+
+After the end of the job, a missing status makes each check of the log
+unknown, and riff names the check of a person (see
+[Check the log of a deploy by hand](#check-the-log-of-a-deploy-by-hand)).
 A status `error` also makes each check of the log unknown, with the
 reason of the job. riff changes nothing but the comment on the
 release issue, and the riff stays paused.
@@ -7711,8 +7779,9 @@ run, and resumes the riff. When GitHub fails a call, see
 A run by hand, as of `riff release rollback`, has no job `Check the
 deploy`. Then `riff release check` names the command for a person on a
 host, with the time of the start of the job `Deploy` and the commit of
-the tag. That person signs in with `gcloud auth login`, and runs it in
-a clone:
+the tag. It names it too after a job `Check the deploy` that ended with
+no status, for example a job that a person cancelled. That person signs
+in with `gcloud auth login`, and runs it in a clone:
 
 ```sh
 riff cloud check shared --since 2026-10-18T20:00:00Z --commit COMMIT

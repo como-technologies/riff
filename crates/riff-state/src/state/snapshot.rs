@@ -13,6 +13,7 @@
 //! | `presence::Saved` | `cursors`, `statuses` (the status and the long step of each session) |
 //! | `people::Saved` | `riff_id`, `users`, `members`, `admins`, `owner`, `no_owner`, `owner_asked`, `signins_ended`, `keys` |
 //! | `plan::Saved` | `plans` |
+//! | `projects::Saved` | `projects`, `projects_known` |
 //! | `calls::Saved` | `calls` |
 //!
 //! A group that adds a part to the state adds a field to its own
@@ -25,7 +26,7 @@ use riff_core::name::Who;
 use serde::{Deserialize, Serialize};
 
 use super::riff::Riff;
-use super::{calls, people, plan, presence, sessions, the_riff, threads, work};
+use super::{calls, people, plan, presence, projects, sessions, the_riff, threads, work};
 
 /// The state that a checkpoint keeps: the state that the log gives up to
 /// [`Snapshot::position`], the read cursors, and the last call of each
@@ -49,6 +50,8 @@ pub struct Snapshot {
     people: people::Saved,
     #[serde(flatten)]
     plans: plan::Saved,
+    #[serde(flatten)]
+    projects: projects::Saved,
     #[serde(flatten)]
     calls: calls::Saved,
 }
@@ -78,6 +81,7 @@ impl Snapshot {
             presence: presence.saved(),
             people: riff.people().saved(),
             plans: riff.plans().saved(),
+            projects: riff.projects().saved(),
             calls,
         }
     }
@@ -94,6 +98,7 @@ impl Snapshot {
             presence,
             people,
             plans,
+            projects,
             calls,
         } = self;
         let (sessions, seen) = sessions.restore();
@@ -106,6 +111,7 @@ impl Snapshot {
             the_riff.restore(),
             people.restore(),
             plans.restore(),
+            projects.restore(),
         );
         (riff, presence, seen, calls)
     }

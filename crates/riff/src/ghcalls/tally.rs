@@ -79,7 +79,7 @@ pub const CALLERS: &[&str] = &[
     "usage",
     "run",
     "claim",
-    "init",
+    "project init",
     "questions",
     "tui",
     "chat",

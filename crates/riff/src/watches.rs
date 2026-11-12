@@ -24,7 +24,7 @@
 //! |---|---|---|
 //! | `riff release cut` | [`Op::Pull`] | the pull request of the next version merges or closes; a failed Gate gets a message, and the watch stays (01M76SBPGH2218K3ED569T051D) |
 //! | `riff release test --host HOST` | [`Op::Test`] | the real-session test passes or fails |
-//! | `riff release cut`, `approve`, `retry`, `rollback` | [`Op::Deploy`] | the job `Deploy` of the tag passes or fails |
+//! | `riff release cut`, `approve`, `retry`, `rollback` | [`Op::Deploy`] | the job `Deploy` of the tag fails, or it passes and the job `Check the deploy` sets its status or ends (see "A deploy" below) |
 //! | `riff join` | [`Op::Wave`] | never: it posts each time the last open item of the current wave closes |
 //! | the end of the watch of a deploy | [`Op::Check`] | the check of the lead ends the release, or another deploy follows (see "The check" below) |
 //!
@@ -130,7 +130,8 @@
 //!     Runs --> Failed: the job Deploy failed
 //!     Waits --> Failed: a job failed
 //!     Passed --> Passed: a daemon or the lead runs an old riff, up to 30 minutes
-//!     Passed --> Check: each daemon and the lead run the new riff: message to the lead: next: riff release check
+//!     Passed --> Passed: the job Check the deploy runs, up to 30 minutes
+//!     Passed --> Check: the new riff, and the status riff/deploy-check or the end of the job: message to the lead: next: riff release check
 //!     Failed --> Check: message to the lead: the jobs, next: riff release retry
 //!     Check --> [*]: the watch of the check (see "The check" below)
 //! ```
@@ -152,15 +153,28 @@
 //! check` reads the build of each host. Each daemon sends its build and
 //! its `update.auto` in its facts ([`riff_client::daemons::Facts`]), and
 //! the look reads them from `who` ([`Lookout::hosts`],
-//! [`Riffs::hosts_of`]). After [`DEPLOY_SETTLE`] the message goes all the
-//! same, and says what it waited for, for example the host that still runs
-//! an old riff.
+//! [`Riffs::hosts_of`]).
+//!
+//! The message also waits for the CI job `Check the deploy`
+//! (01M77BT0489T9R084WEFHPMCR5): `riff release check` takes the four
+//! checks of the Cloud Run log from the status `riff/deploy-check` that
+//! the job sets, about 6 minutes after the end of the job `Deploy`
+//! ([`cycle::check_waits`]). The message goes when the tag has the status
+//! of this deploy, or when the job ended. Only then the look reads the
+//! status, with one call of `gh`. A status `failure` puts the failed
+//! checks in the message, and a status `error`, or a job that ended with
+//! no status, the reason ([`cycle::check_none`],
+//! [`crate::text::deploy_check_found`]). A run by hand, as of a rollback,
+//! has no such job. After [`DEPLOY_SETTLE`] the message goes all the same,
+//! and says what it waited for, for example the host that still runs an
+//! old riff, or the job that did not end.
 //!
 //! ```mermaid
 //! sequenceDiagram
 //!     participant W as the watch of the deploy
 //!     participant D as riff daemon (the host)
 //!     participant O as riff daemon (each other host)
+//!     participant C as the job Check the deploy
 //!     participant L as the lead (its container)
 //!     Note over W: the job Deploy passed: the message waits
 //!     D->>D: riff update, then a new start on the release
@@ -168,6 +182,7 @@
 //!     O->>W: its facts in who: the build of the release
 //!     L->>D: the end of a turn (the Stop hook)
 //!     D->>L: a new container on the release
+//!     C->>W: the status riff/deploy-check of the tag, or the end of the job
 //!     W->>L: the deploy passed, your container runs the release. next: riff release check
 //! ```
 //!
@@ -188,8 +203,8 @@
 //!
 //! # The check
 //!
-//! At the end of the job `Deploy`, the watch of the deploy goes, and the
-//! watch of the check of the lead takes its place in the same write
+//! With its message of the end of the deploy, the watch of the deploy goes,
+//! and the watch of the check of the lead takes its place in the same write
 //! ([`Outcome::then`], [`Op::Check`], 01M6XTS7RGXB30MFM6DZ7PVZ75). The watch
 //! of the check posts nothing and fetches nothing: each look reads the
 //! releases and the release issue with `gh`. It gives the step of the release
@@ -215,7 +230,7 @@
 //! |---|---|
 //! | [`Op::Deploy`], the job waits for `production` | [`ReleaseStep::Waits`] |
 //! | [`Op::Deploy`], the job runs | [`ReleaseStep::Runs`] |
-//! | [`Op::Deploy`], the job passed, the message waits for the new riff | [`ReleaseStep::Passed`] |
+//! | [`Op::Deploy`], the job passed, the message waits for the new riff or for the job `Check the deploy` | [`ReleaseStep::Passed`] |
 //! | [`Op::Check`] after a pass | [`ReleaseStep::Passed`] |
 //! | [`Op::Check`] after a failure | [`ReleaseStep::DeployFailed`] |
 //! | [`Op::Check`], the last check failed | [`ReleaseStep::CheckFailed`] |
@@ -512,7 +527,8 @@ pub enum Op {
         /// The commit that the test runs on.
         commit: String,
     },
-    /// The CI run of `tag` up to the end of the job `Deploy`
+    /// The CI run of `tag` up to the end of the job `Deploy`, and after a
+    /// pass up to the end of the job `Check the deploy`
     /// (`riff release cut`, `approve`, `retry`, `rollback`).
     Deploy {
         /// The tag of the release, `vX.Y.Z`.
@@ -1588,30 +1604,60 @@ fn look_deploy(
         }
         DeployState::Passed => {
             // The message waits for the new riff of the daemon and of the
-            // lead (01M6WBX2G1PX11D89HNBAZ6MCM).
+            // lead (01M6WBX2G1PX11D89HNBAZ6MCM), and for the job Check the
+            // deploy (01M77BT0489T9R084WEFHPMCR5). A run by hand has no
+            // such job.
             let since = *seen.deployed_ms.get_or_insert(now_ms);
             let waited = now_ms.saturating_sub(since);
-            let why = deployed.riffs.waits_for(repo, tag);
             let settle = i64::try_from(DEPLOY_SETTLE.as_millis()).unwrap_or(i64::MAX);
-            if why.is_some() && waited < settle {
+            let riff_why = deployed.riffs.waits_for(repo, tag);
+            if riff_why.is_some() && waited < settle {
+                return Ok(Outcome::default());
+            }
+            let check = match deploy.by_hand {
+                true => None,
+                false => Some(forge.deploy_check(tag)?),
+            };
+            let runs = check
+                .as_ref()
+                .is_some_and(|c| cycle::check_waits(&deploy, c));
+            if runs && waited < settle {
                 return Ok(Outcome::default());
             }
             let next = next_of(forge, tag, &format!("riff release check {tag}"));
-            let riff = match (why, deployed.riffs.leads.contains_key(repo)) {
-                (Some(why), _) => format!(
-                    " riff waited {} minutes for the new riff, but {why}.",
-                    waited / 60_000
+            // What the job found, the failed checks or the reason; or what
+            // the message waited for; or the riff of the container.
+            let found = match &check {
+                Some(c) if !runs => {
+                    let found = cycle::check_none(&deploy, c)
+                        .map_or_else(|| cycle::log_of(tag, &deploy, c), Err);
+                    crate::text::deploy_check_found(&found).map(|words| format!(" {words}"))
+                }
+                _ => None,
+            };
+            let whys: Vec<String> = riff_why
+                .into_iter()
+                .chain(runs.then(|| crate::text::deploy_check_runs(run)))
+                .collect();
+            let riff = match (whys.is_empty(), deployed.riffs.leads.contains_key(repo)) {
+                (false, _) => format!(
+                    " riff waited {} minutes, but {}.",
+                    waited / 60_000,
+                    whys.join(", and ")
                 ),
-                (None, true) => match deployed.riffs.daemon {
+                (true, true) => match deployed.riffs.daemon {
                     Some(daemon) => format!(
                         " Your container runs v{daemon}, as the riff daemon of this host does."
                     ),
                     None => " Your container runs the riff of the riff daemon of this host.".into(),
                 },
-                (None, false) => String::new(),
+                (true, false) => String::new(),
             };
             let said = say_and_tell_leads(
-                format!("The deploy of {tag} passed: {run}.{riff} next: {next}"),
+                format!(
+                    "The deploy of {tag} passed: {run}.{}{riff} next: {next}",
+                    found.unwrap_or_default()
+                ),
                 crate::text::release_note(Step::Deployed, tag, &hold::by(repo)),
                 true,
             );
@@ -1831,7 +1877,7 @@ mod tests {
 
     use super::*;
     use crate::cycle::tests::Fake;
-    use crate::cycle::{Deploy, Pull};
+    use crate::cycle::{CheckJob, Deploy, DeployCheck, Pull};
 
     const REPO: &str = "o/r";
 
@@ -1861,7 +1907,12 @@ mod tests {
     }
 
     impl Ground {
-        fn new(forge: Fake) -> Arc<Ground> {
+        /// The ground of `forge`. The job Check the deploy set the status
+        /// `success` of the tag, unless `forge` has a status.
+        fn new(mut forge: Fake) -> Arc<Ground> {
+            if forge.deploy_check.status.is_none() {
+                forge.deploy_check = log_checked("success", LOG_PASSED);
+            }
             Arc::new(Ground {
                 forge: Mutex::new(forge),
                 fault: Mutex::new(None),
@@ -2046,7 +2097,28 @@ mod tests {
             ended: String::new(),
             failed: failed.iter().map(ToString::to_string).collect(),
             by_hand: false,
+            check_job: match state {
+                DeployState::Passed => CheckJob::Ended("success".into()),
+                _ => CheckJob::Runs,
+            },
         })
+    }
+
+    /// The description of the status riff/deploy-check when each check of
+    /// the log passed.
+    const LOG_PASSED: &str = "503 run: 0 s, 500: 0, token store: 0, old lease: no";
+
+    /// The status riff/deploy-check of the tag that the job Check the
+    /// deploy set: `state` with `description`.
+    fn log_checked(state: &str, description: &str) -> DeployCheck {
+        DeployCheck {
+            commit: "c1".into(),
+            status: Some(crate::cycle::CommitStatus {
+                state: state.into(),
+                description: description.into(),
+                at: String::new(),
+            }),
+        }
     }
 
     /// 01M76SBPGH2218K3ED569T051D, 01M76428R8GY6J323AWG3JV8HA: the cut
@@ -2342,6 +2414,168 @@ mod tests {
         assert_eq!(kept(dir.path()), [check_op(true)]);
     }
 
+    /// A forge of v3.3.0 whose job Deploy passed, and whose job Check the
+    /// deploy runs: the tag has no status riff/deploy-check yet.
+    fn check_runs(ground: &Ground) {
+        ground.forge(|f| {
+            f.tags = vec!["v3.3.0".into()];
+            f.deploy = deploy(DeployState::Passed, &[]);
+            f.deploy.as_mut().unwrap().check_job = CheckJob::Runs;
+            f.deploy_check = DeployCheck {
+                commit: "c1".into(),
+                status: None,
+            };
+        });
+    }
+
+    /// 01M77BT0489T9R084WEFHPMCR5: the message of a deploy that passed, and
+    /// the note to the other leads, wait for the status riff/deploy-check
+    /// of the job Check the deploy. The lead gets the step of the check
+    /// only then.
+    #[tokio::test]
+    async fn a_deploy_that_passed_waits_for_the_job_check_the_deploy() {
+        let dir = daemon_dir();
+        let ground = Ground::new(Fake::ready("3.3.0"));
+        check_runs(&ground);
+        watch(dir.path(), deploy_op(None));
+        for minute in 1..=5 {
+            look(dir.path(), &ground, minute * MINUTE).await;
+        }
+        assert!(ground.told().is_empty() && ground.leads().is_empty());
+        assert_eq!(kept(dir.path()), [deploy_op(None)]);
+        // The deploy passed: riff who says so while the message waits.
+        let watches = Watches::new(dir.path()).read().unwrap();
+        assert_eq!(watches[0].release().unwrap().step, ReleaseStep::Passed);
+
+        // The job sets the status: the message goes before the job ends.
+        ground.forge(|f| f.deploy_check = log_checked("success", LOG_PASSED));
+        look(dir.path(), &ground, 6 * MINUTE).await;
+        assert_eq!(
+            ground.told(),
+            [
+                "The deploy of v3.3.0 passed: https://github.com/o/r/actions/runs/9. next: \
+                 riff release check v3.3.0"
+            ]
+        );
+        assert_eq!(
+            ground.leads(),
+            [crate::text::release_note(
+                Step::Deployed,
+                "v3.3.0",
+                "the lead of o/r"
+            )]
+        );
+        assert_eq!(kept(dir.path()), [check_op(true)]);
+    }
+
+    /// 01M77BT0489T9R084WEFHPMCR5: a job Check the deploy that failed, and a
+    /// status `error`, wake the lead with the reason: the failed checks of
+    /// the log, the description of the error, or the end of a job that set
+    /// no status.
+    #[tokio::test]
+    async fn a_job_check_the_deploy_that_fails_wakes_the_lead_with_the_reason() {
+        /// The end of the job, and the reason in the message of the lead.
+        type End = (Box<dyn Fn(&mut Fake)>, String);
+        let url = "https://github.com/o/r/actions/runs/9";
+        let cases: [End; 3] = [
+            (
+                Box::new(|f| {
+                    f.deploy.as_mut().unwrap().check_job = CheckJob::Ended("failure".into());
+                    f.deploy_check = log_checked(
+                        "failure",
+                        "503 run: 25 s, 500: 0, token store: 3, old lease: no",
+                    );
+                }),
+                "The job Check the deploy found a failed check of the log: a run of 503 took 25 \
+                 s; 3 lines."
+                    .into(),
+            ),
+            (
+                Box::new(|f| {
+                    f.deploy_check = log_checked(
+                        "error",
+                        "The job Check the deploy failed before it read the log.",
+                    );
+                }),
+                "The check of the log has no result: the status riff/deploy-check of v3.3.0 \
+                 says: The job Check the deploy failed before it read the log."
+                    .into(),
+            ),
+            (
+                Box::new(|f| {
+                    f.deploy.as_mut().unwrap().check_job = CheckJob::Ended("cancelled".into());
+                }),
+                format!(
+                    "The check of the log has no result: the job Check the deploy of {url} \
+                     ended with cancelled, and set no status riff/deploy-check for this deploy."
+                ),
+            ),
+        ];
+        for (end, reason) in cases {
+            let dir = daemon_dir();
+            let ground = Ground::new(Fake::ready("3.3.0"));
+            check_runs(&ground);
+            watch(dir.path(), deploy_op(None));
+            look(dir.path(), &ground, MINUTE).await;
+            assert!(ground.told().is_empty(), "{reason}");
+            ground.forge(|f| end(f));
+            look(dir.path(), &ground, 7 * MINUTE).await;
+            assert_eq!(
+                ground.told(),
+                [format!(
+                    "The deploy of v3.3.0 passed: {url}. {reason} next: riff release check v3.3.0"
+                )]
+            );
+            assert_eq!(ground.leads().len(), 1, "{reason}");
+            assert_eq!(kept(dir.path()), [check_op(true)], "{reason}");
+        }
+    }
+
+    /// 01M77BT0489T9R084WEFHPMCR5: after 30 minutes the message goes all
+    /// the same, and names the job that did not end.
+    #[tokio::test]
+    async fn a_deploy_that_passed_names_after_30_minutes_the_job_check_the_deploy() {
+        let dir = daemon_dir();
+        let ground = Ground::new(Fake::ready("3.3.0"));
+        check_runs(&ground);
+        watch(dir.path(), deploy_op(None));
+        look(dir.path(), &ground, MINUTE).await;
+        look(dir.path(), &ground, 30 * MINUTE).await;
+        assert!(ground.told().is_empty() && ground.leads().is_empty());
+
+        look(dir.path(), &ground, 31 * MINUTE).await;
+        assert_eq!(
+            ground.told(),
+            [
+                "The deploy of v3.3.0 passed: https://github.com/o/r/actions/runs/9. riff \
+                 waited 30 minutes, but the job Check the deploy of \
+                 https://github.com/o/r/actions/runs/9 did not end. next: riff release check \
+                 v3.3.0"
+            ]
+        );
+        assert_eq!(ground.leads().len(), 1);
+        assert_eq!(kept(dir.path()), [check_op(true)]);
+    }
+
+    /// 01M77BT0489T9R084WEFHPMCR5: a run by hand, as of a rollback, has no
+    /// job Check the deploy: its message waits for none.
+    #[tokio::test]
+    async fn a_deploy_by_hand_waits_for_no_job_check_the_deploy() {
+        let dir = daemon_dir();
+        let ground = Ground::new(Fake::ready("3.3.0"));
+        check_runs(&ground);
+        ground.forge(|f| f.deploy.as_mut().unwrap().by_hand = true);
+        watch(dir.path(), deploy_op(None));
+        look(dir.path(), &ground, MINUTE).await;
+        assert_eq!(
+            ground.told(),
+            [
+                "The deploy of v3.3.0 passed: https://github.com/o/r/actions/runs/9. next: \
+                 riff release check v3.3.0"
+            ]
+        );
+    }
+
     /// #1693, 01M6WBX2G1PX11D89HNBAZ6MCM: the message of a deploy that
     /// passed, and the note to the other leads, wait until the daemon runs
     /// the release and the lead runs the riff of the daemon. Each look is
@@ -2428,9 +2662,9 @@ mod tests {
             ground.told(),
             [
                 "The deploy of v3.3.0 passed: https://github.com/o/r/actions/runs/9. riff \
-                 waited 30 minutes for the new riff, but your container still runs an old riff: \
-                 riff starts it again on the riff of the daemon at the end of your turn. next: \
-                 riff release check v3.3.0"
+                 waited 30 minutes, but your container still runs an old riff: riff starts it \
+                 again on the riff of the daemon at the end of your turn. next: riff release \
+                 check v3.3.0"
             ]
         );
         assert_eq!(ground.leads().len(), 1);
@@ -2500,8 +2734,8 @@ mod tests {
             ground.told(),
             [
                 "The deploy of v3.3.0 passed: https://github.com/o/r/actions/runs/9. riff \
-                 waited 30 minutes for the new riff, but the riff daemon of bob@pangolin still \
-                 runs v3.2.0, not v3.3.0. next: riff release check v3.3.0"
+                 waited 30 minutes, but the riff daemon of bob@pangolin still runs v3.2.0, not \
+                 v3.3.0. next: riff release check v3.3.0"
             ]
         );
         assert_eq!(ground.leads().len(), 1);

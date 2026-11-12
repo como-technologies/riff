@@ -119,14 +119,16 @@ esac
 /// `--network=none` prints the version of `claude` and `gh` in the image,
 /// and of `/usr/local/bin/gh` when `bin/own-gh` is there, else it fails as
 /// podman does for a file that is not in the image. `run` logs, with its
-/// nice value in `bin/run.nice`, and
+/// nice value in `bin/run.nice` and the weight of the slice of riff at
+/// its start in `bin/run.slice`, and
 /// plays the container on the host: it runs the riff of the bind at
 /// `/opt/riff/riff` as the entrypoint, `riff relay`, with the socket of
 /// the bind at `/run/riff`. With `-d` (a terminal), it runs it in the
 /// background, and `wait` waits for its end. `stop` logs, and ends the
 /// `run`. `container inspect` says `true` while the `run` runs, and gives the text of
 /// `bin/digest` as the image digest, or fails with no such file. `attach`
-/// and `exec` log, and end at once. `attach` and `exec -it` first turn
+/// and `exec` log, and end at once. An `exec` whose command does not
+/// start with `nice -n 19` fails with 127. `attach` and `exec -it` first turn
 /// on the mouse reports of the terminal ([`MOUSE_ON`]). `volume inspect`
 /// of `riff-sccache` gives the folder `bin/volume` when it is there. With `bin/no-network`, the
 /// look-up of `exec ... getent` fails: the container has no network. With
@@ -153,12 +155,16 @@ case "$1" in
   pull) echo "podman $*" >> "$dir/podman.log"; [ -f "$dir/no-pull" ] && exit 125
     rm -f "$dir/no-image"; exit 0 ;;
   stop) echo "podman $*" >> "$dir/podman.log"; kill "$(cat "$dir/run.pid")"; exit 0 ;;
-  # The count of the links of a file in the container: the file `links`
-  # holds it.
-  exec) if [ "$3" = stat ]; then cat "$dir/links" 2>/dev/null; exit; fi
+  # Each exec of riff runs its command at nice 19 in the container: else
+  # it fails as for no such program (01M778VZCT30WV6VBP2GY1HNBD).
+  exec) [ "$2" = -it ] && name=$3 || name=$2
+    case " $* " in *" $name nice -n 19 "*) ;; *) exit 127 ;; esac
+    # The count of the links of a file in the container: the file `links`
+    # holds it.
+    if [ "$6" = stat ]; then cat "$dir/links" 2>/dev/null; exit; fi
     # The look-up of a host in the container: exit 2 (no address) when the
     # file `no-network` is there.
-    if [ "$3" = getent ]; then [ -f "$dir/no-network" ] && exit 2; exit 0; fi
+    if [ "$6" = getent ]; then [ -f "$dir/no-network" ] && exit 2; exit 0; fi
     echo "podman $*" >> "$dir/podman.log"
     # The claude of a terminal turns on the mouse reports.
     [ "$2" = -it ] && printf '\033[?1003h'
@@ -209,6 +215,7 @@ case "$1" in
 esac
 printf '%s\n' "$@" > "$dir/run.args"
 nice > "$dir/run.nice"
+cat "$dir/slice.weight" > "$dir/run.slice" 2>/dev/null
 printf '%s' "$GH_TOKEN" > "$dir/run.token"
 printf '%s' "$INVOCATION_ID" > "$dir/run.invocation"
 echo $$ > "$dir/run.pid"
@@ -308,11 +315,19 @@ exec "$@"
 /// riff.service` does what the file `bin/try-restart` says: `stop` ends
 /// this `systemctl` with a SIGTERM, as the stop of the unit does; other
 /// text goes to stderr with the exit code 1. With no file, it exits 0.
+/// `set-property --runtime riff.slice CPUWeight=N` writes N to
+/// `bin/slice.weight`, or fails with the exit code 1 when `bin/no-slice`
+/// is there.
 pub fn fake_systemctl(bin: &Path) {
     let body = r#"#!/bin/sh
 dir=$(dirname "$0")
 echo "systemctl $*" >> "$dir/systemctl.log"
 case "$*" in
+  '--user set-property --runtime riff.slice CPUWeight='*)
+    if [ -f "$dir/no-slice" ]; then
+      echo 'Failed to set unit properties on riff.slice: Access denied' >&2; exit 1
+    fi
+    printf '%s\n' "${5#CPUWeight=}" > "$dir/slice.weight" ;;
   '--user is-active riff.service')
     if [ -f "$dir/daemon.pid" ] && kill -0 "$(cat "$dir/daemon.pid")" 2>/dev/null; then
       echo active; exit 0
@@ -952,6 +967,10 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         // 01M7755V17SGY2NW231WJ12WXN: the lowest CPU weight.
         "--cgroup-conf",
         "cpu.weight=1",
+        // 01M778VSP6Z29FCPGX5S76ME1T: the container runs in the slice of
+        // riff.
+        "--cgroup-parent",
+        "riff.slice",
         "--mount",
         &format!("type=tmpfs,destination={h},tmpfs-mode=0700,U=true"),
         // The folders of the home: each folder above a bind, and the
@@ -1063,6 +1082,16 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
     assert_eq!(args, want);
     // 01M7755V17SGY2NW231WJ12WXN: podman of a worker runs at nice 19.
     assert_eq!(machine.read("run.nice").trim(), "19");
+    // 01M778VSP6Z29FCPGX5S76ME1T: the slice of riff has the lowest CPU
+    // weight before the container starts in it.
+    assert_eq!(machine.read("run.slice").trim(), "1");
+    assert!(
+        machine
+            .read("systemctl.log")
+            .contains("systemctl --user set-property --runtime riff.slice CPUWeight=1\n"),
+        "{}",
+        machine.read("systemctl.log")
+    );
 
     // The relay starts claude with the riff tools: the MCP server riff
     // runs riff relay mcp, with the binary of the relay.
@@ -1109,7 +1138,8 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
     assert_eq!(
         machine.read("systemd-run.log").lines().next().unwrap(),
         format!(
-            "systemd-run --user --scope --collect --quiet -- nice -n 19 podman {}",
+            "systemd-run --user --scope --slice riff.slice --collect --quiet -- nice -n 19 \
+             podman {}",
             args.join(" ")
         )
     );
@@ -1708,6 +1738,29 @@ async fn a_failed_check_takes_no_claim_and_starts_no_container() {
     assert!(machine.read("run.args").is_empty());
     assert!(!machine.env.riff_home().join("sessions").exists());
     machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
+}
+
+/// 01M778VSP6Z29FCPGX5S76ME1T: when systemd does not give the slice of
+/// riff its weight, no container starts, and the error names the
+/// command.
+#[tokio::test]
+async fn riff_run_starts_no_container_when_the_slice_of_riff_gets_no_weight() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    std::fs::write(machine.bin.path().join("no-slice"), "").unwrap();
+    let out = machine
+        .run(None, &["run", "issue-12", "--image", IMAGE])
+        .await;
+    let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
+    assert!(!out.status.success(), "{stdout}\n{stderr}");
+    assert!(
+        stderr.contains(
+            "systemctl --user set-property --runtime riff.slice CPUWeight=1: Failed to set unit \
+             properties on riff.slice: Access denied"
+        ),
+        "{stdout}\n{stderr}"
+    );
+    assert!(machine.read("run.args").is_empty());
 }
 
 #[tokio::test]
@@ -2799,7 +2852,8 @@ async fn riff_lead_start_runs_the_lead_with_a_terminal_and_attaches_to_it() {
     assert_eq!(
         machine.read("systemd-run.log").trim_end(),
         format!(
-            "systemd-run --user --scope --collect --quiet -- nice -n 19 podman {}",
+            "systemd-run --user --scope --slice riff.slice --collect --quiet -- nice -n 19 \
+             podman {}",
             args.join(" ")
         )
     );
@@ -2811,6 +2865,14 @@ async fn riff_lead_start_runs_the_lead_with_a_terminal_and_attaches_to_it() {
             .any(|w| w == ["--cgroup-conf", "cpu.weight=1"]),
         "{args:?}"
     );
+    // 01M778VSP6Z29FCPGX5S76ME1T: the lead runs in the slice of riff, and
+    // the slice has the lowest CPU weight before the start.
+    assert!(
+        args.windows(2)
+            .any(|w| w == ["--cgroup-parent", "riff.slice"]),
+        "{args:?}"
+    );
+    assert_eq!(machine.read("run.slice").trim(), "1");
     let at = args.iter().position(|a| *a == "/opt/riff/riff").unwrap();
     assert_eq!(
         args[at..at + 5],
