@@ -165,7 +165,7 @@ impl Drop for Host {
 /// tests are projects that allow each host: a wave runs only for a
 /// project (#1863).
 async fn start_server() -> crate::common::Signed {
-    let github = crate::github_apps::fake_github::FakeGitHub::start().await;
+    let github = crate::common::fake_github::FakeGitHub::start().await;
     let settings = riff_server::github::Settings {
         api: github.url.clone(),
         web: github.url.clone(),
