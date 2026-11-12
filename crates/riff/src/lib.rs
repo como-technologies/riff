@@ -151,3 +151,4 @@ pub mod watches;
 pub mod wave;
 pub mod wave_list;
 pub mod waves;
+pub mod workflow;
