@@ -24,6 +24,7 @@ default:
 # One-time setup: install the tools the recipes need
 init:
     rustup component add clippy rustfmt
+    rustup target add aarch64-apple-darwin
     cargo install --locked mdbook mdbook-gruvbox mdbook-mermaid cargo-audit
 
 # hygiene ci prints the recipe, ci-text or ci-full, and one line that says
@@ -71,7 +72,7 @@ check:
     set -euo pipefail
     . "{{justfile_directory()}}/crates/hygiene/ci-lock.sh"
     ci_lock "$PWD/target"
-    {{just_executable()}} fmt-check lint doc book reqs wrap versions
+    {{just_executable()}} fmt-check lint lint-macos doc book reqs wrap versions
     crates=$(cargo run -q -p hygiene -- crates)
     if [ -n "$crates" ]; then
         # shellcheck disable=SC2086 # each word is one argument of cargo test
@@ -122,6 +123,15 @@ fmt-check:
 # Lint the whole workspace including tests and examples
 lint:
     cargo clippy --workspace --all-targets -- -D warnings
+
+# The crates of the job macOS of the Gate (01M6YPB5DZ9M3VEJ7V7P7EF797).
+macos_crates := "-p riff-core -p riff-client -p riff"
+
+# 01M77NFYCGDD3GKCE4RXDPKRNE: the clippy of test-macos, for a Mac, on
+# each host. It needs the Rust target of a Mac: just init adds it.
+# Lint riff, riff-client and riff-core for a Mac, also on Linux
+lint-macos:
+    deploy/lint-macos.sh {{macos_crates}} --all-targets -- -D warnings
 
 # Build in debug mode
 build:
@@ -182,8 +192,8 @@ test-named NAME ARCHIVE:
 # cfg(target_os = "linux") (01M6YPB5GTHFQG8HGM57DVBGBN).
 # Lint and test riff, riff-client and riff-core on a Mac
 test-macos:
-    cargo clippy -p riff-core -p riff-client -p riff --all-targets -- -D warnings
-    {{just_executable()}} cargo-test -p riff-core -p riff-client -p riff --no-fail-fast
+    cargo clippy {{macos_crates}} --all-targets -- -D warnings
+    {{just_executable()}} cargo-test {{macos_crates}} --no-fail-fast
 
 # cargo test ARGS for test and check, in the environment of the tests.
 # 01M49NP2907J4SH4S6MAY09VXE: .cargo/config.toml sets the TMPDIR.

@@ -4,7 +4,7 @@ Install [Rust](https://rustup.rs) and [just](https://just.systems).
 Then:
 
 ```sh
-just init    # once: installs the book and audit tools
+just init    # once: installs the book and audit tools, and the Rust target of a Mac
 just check   # before a push: the fast checks and the tests you touched
 ```
 
@@ -24,10 +24,12 @@ own. Run this command before each push:
 just check
 ```
 
-It runs the fast checks: `fmt-check`, `lint`, `doc`, `book`, `reqs`,
-`wrap` and `versions`. Then it runs the tests of each crate that your
-change touches, and of each crate that depends on one of them. It
-prints one line that says which tests it runs, and why:
+It runs the fast checks: `fmt-check`, `lint`, `lint-macos`, `doc`,
+`book`, `reqs`, `wrap` and `versions` (see
+[Lint for a Mac on Linux](#lint-for-a-mac-on-linux)). Then it runs the
+tests of each crate that your change touches, and of each crate that
+depends on one of them. It prints one line that says which tests it
+runs, and why:
 
 ```text
 just check runs the tests of riff, riff-core, riff-server: riff-core differs from origin/main, and each crate that depends on a changed crate runs too
@@ -52,6 +54,37 @@ After the push, see the Gate of your pull request:
 ```sh
 gh pr checks 40
 ```
+
+### Lint for a Mac on Linux
+
+`just check` lints `riff`, `riff-client` and `riff-core` for a Mac
+with Apple silicon too, also on Linux. So code that only Linux uses
+fails before the push, not in the job `macOS` of the Gate. An example
+is an import that only a test with `cfg(target_os = "linux")` uses.
+The lint links nothing, so it needs no Mac. It needs the Rust target
+of a Mac. `just init` adds it, and the session image has it. To add it
+yourself:
+
+```sh
+rustup target add aarch64-apple-darwin
+```
+
+To run only the lint for a Mac:
+
+```sh
+just lint-macos
+```
+
+When the target is missing, the lint fails with this line:
+
+```text
+lint-macos: the Rust target aarch64-apple-darwin is missing. Add it: rustup target add aarch64-apple-darwin
+```
+
+`deploy/lint-macos.sh` runs `cargo clippy --target aarch64-apple-darwin`
+with the flags of `just test-macos`. The build script of `aws-lc-sys`
+compiles C, and only a Mac has the C compiler for a Mac. So the script
+gives cargo a links override in place of that build script.
 
 ## Run the checks that your change can break
 
@@ -1030,7 +1063,7 @@ flowchart LR
 |---|---|---|
 | `deploy/base/` | `ghcr.io/como-technologies/riff-base` | Debian, `bash`, CA certificates, `git`, `curl`, `procps`, `gh` and `claude`. No language. |
 | `deploy/rust/` | `ghcr.io/como-technologies/riff-rust` | The C linker, and the Rust channel of `rust-toolchain.toml` with `rustfmt` and `clippy`. |
-| `deploy/session/` | `ghcr.io/como-technologies/riff-session` | What only riff needs: `just`, `mdbook`, `sccache`, `rust-analyzer`, D-Bus and the keyring of the tests. |
+| `deploy/session/` | `ghcr.io/como-technologies/riff-session` | What only riff needs: `just`, `mdbook`, `sccache`, `rust-analyzer`, the Rust target of a Mac for `just lint-macos`, D-Bus and the keyring of the tests. |
 
 To see the image that your working tree pins:
 

@@ -166,11 +166,15 @@ fn the_job_macos_tests_three_crates_on_a_mac_with_apple_silicon() {
         .map(str::trim)
         .collect();
     let crates = "-p riff-core -p riff-client -p riff";
+    assert!(
+        justfile.contains(&format!("\nmacos_crates := \"{crates}\"\n")),
+        "{justfile}"
+    );
     assert_eq!(
         body,
         [
-            format!("cargo clippy {crates} --all-targets -- -D warnings"),
-            format!("{{{{just_executable()}}}} cargo-test {crates} --no-fail-fast"),
+            "cargo clippy {{macos_crates}} --all-targets -- -D warnings",
+            "{{just_executable()}} cargo-test {{macos_crates}} --no-fail-fast",
         ]
     );
 }
