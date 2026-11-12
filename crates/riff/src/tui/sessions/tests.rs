@@ -1344,10 +1344,12 @@ fn book(heading: &str, first: &str) -> Vec<String> {
         .collect()
 }
 
-/// The tree of `riff top --once` stays as it was: person › host ›
-/// repository › session, and with `--by repo` repository › person ›
-/// host › session (01M42KHNCBMBCT3TFBYWE339H5). The tab has its own
-/// shape of the shared sessions model.
+/// `riff top --once` keeps its own tree of the shared sessions model,
+/// apart from the shape of the Sessions tab
+/// (01M6WKCC98EGKB3MSYKN3X2JMH): person › host › repository › session
+/// with `By::Person`, as `--by person` shows it
+/// (01M77F8JJ8WC0TSCYP3ARJNQGS), and repository › person › host ›
+/// session with `By::Repo`.
 #[test]
 fn riff_top_keeps_its_own_tree() {
     let state = mock_up();
