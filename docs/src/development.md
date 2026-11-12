@@ -6897,13 +6897,15 @@ riff cloud create shared
 ```
 
 The command checks each resource first, so you can run it again.
-It makes the bucket `como-riff-state` and two service accounts.
+It makes the bucket `como-riff-state` and four service accounts.
 `riff-server` runs as `riff-server`. That account can read and write
 only the bucket, and read only the client secret. Cloud Build builds
 the image as `riff-build`.
 CI signs in as `riff-deploy`, from `main` and from the tags `v*` of the
 repository only. When the identity provider exists, the command sets
-this condition on it again.
+this condition on it again. The CI job `Check the deploy` signs in as
+`riff-check`: see
+[Let CI read the log after a deploy](#let-ci-read-the-log-after-a-deploy).
 
 The bucket is a standard bucket with object versioning: it keeps each
 older version of an object. It has two lifecycle rules. One rule
@@ -6923,6 +6925,43 @@ gcloud storage buckets describe gs://como-riff-state --project como-riff \
 
 The output shows versioning on, and two `Delete` rules: one with `age`
 30 and the prefix `threads/`, and one with `daysSinceNoncurrentTime` 7.
+
+### Let CI read the log after a deploy
+
+The checks of the Cloud Run log after a deploy need no sign-in of a
+person. The CI job `Check the deploy` signs in to Google Cloud as
+`riff-check`, with the identity provider of GitHub and no key. Only a
+job of a tag `v*` signs in as it. Its only role is
+`roles/logging.viewer`: it reads the log, and changes nothing.
+
+```mermaid
+flowchart LR
+    J[a job of the repository] --> P{main or a tag v*?}
+    P -- no --> N[no sign-in]
+    P -- yes --> T{a tag?}
+    T -- yes --> C["riff-check: roles/logging.viewer"]
+    T -- no --> N
+```
+
+An owner of the project makes the account, its role and its binding
+once:
+
+```sh
+riff cloud create shared
+```
+
+The output has the line
+`CI check: set, for a job of a tag v*. riff-check only reads the log.`
+The setting `CLOUD_CHECK_ACCOUNT` in `deploy/cloud/shared.env` names
+the account. With no such setting, the command makes no check account.
+
+Check the roles of `riff-check` on the project. Only
+`roles/logging.viewer` shows:
+
+```sh
+gcloud projects get-iam-policy como-riff --flatten bindings \
+  --filter 'bindings.members:riff-check@' --format 'value(bindings.role)'
+```
 
 ### Get an email for each error
 
@@ -7103,7 +7142,7 @@ The gates:
 | HUMAN GATE 1: deploy | the owner or an admin, in a terminal. No session, also not the lead: a message in riff chat approves nothing | `riff release approve vX.Y.Z` | the release waits; the riff is not paused; the next `cut` refuses |
 | Hold | a lead of another repository, in a critical place | `riff release hold vX.Y.Z REASON` | `approve` refuses until the lead ends the hold, or a person passes `--over-holds` |
 | HUMAN GATE 2: rollback | the owner or an admin, in a terminal | `riff release approve vPREV` | the new release keeps serving; the riff stays paused |
-| Log access | a person on the host, when the sign-in of `gcloud` is gone | `gcloud auth login` | `riff release check` says which check it could not do |
+| Log check | the CI job `Check the deploy`, as `riff-check`, 5 minutes after the job `Deploy` (see [Check the release after the deploy](#check-the-release-after-the-deploy)) | `riff cloud check shared` sets the commit status `riff/deploy-check` of the tag | `riff release check` says when the job ends |
 
 The state of the current release in `riff release status` is `building`,
 `built`, `tested`, `published`, `waiting`, `deploying`, `deployed`,
@@ -7548,27 +7587,47 @@ sequenceDiagram
     D-->>C: the answers
 ```
 
-The container has no `gcloud` and no Google sign-in. riff reads the
-Cloud Run log through the daemon of the host, with the `gcloud` and the
-sign-in of the person on the host. Only the lead can ask for it: the
-daemon refuses a worker.
+No person signs in to Google Cloud for the check, and `riff release
+check` runs no `gcloud`. The CI job `Check the deploy` reads the Cloud
+Run log. It runs after a pass of the job `Deploy` in the CI run of the
+tag, and waits 5 minutes. Then it signs in as `riff-check` (see
+[Let CI read the log after a deploy](#let-ci-read-the-log-after-a-deploy)),
+runs `riff cloud check shared` of the release, and sets the commit
+status `riff/deploy-check` of the tag. `riff release check` takes the
+four checks of the log from that status.
 
 ```mermaid
 sequenceDiagram
-    participant C as riff release check (the lead, in its container)
-    participant D as riff daemon (the host)
-    participant G as gcloud (the host)
-    C->>D: read the log (on RIFF_SOCKET)
-    D->>G: gcloud logging read
-    G-->>D: the lines
-    D-->>C: the lines
+    participant D as the job Deploy
+    participant C as the job Check the deploy (riff-check)
+    participant G as Cloud Logging
+    participant H as GitHub
+    participant L as riff release check (the lead)
+    D->>C: the time before the deploy
+    Note over C: waits 5 minutes
+    C->>G: gcloud logging read
+    G-->>C: the lines
+    C->>H: the status riff/deploy-check of the tag
+    L->>H: the status riff/deploy-check of the tag
+    H-->>L: the four checks of the log
 ```
 
-When the sign-in of `gcloud` on the host is gone, each check of the log
-says that a person on the host runs `gcloud auth login`. The daemon
-also tells the lead in chat. When the host has no `gcloud`, each check
-says to install it, or to add it to PATH. After the fix, the lead runs
-`riff release check` again.
+The state of the status is `success` when each check of the log
+passed, `failure` when one failed, and `error` when the job could not
+read the log. To see it:
+
+```sh
+gh api repos/como-technologies/riff/commits/v3.3.0/status \
+  --jq '.statuses[] | select(.context == "riff/deploy-check") | .state + ": " + .description'
+```
+
+When the job did not set the status yet, each check of the log is
+unknown. riff names the CI run and the time when the job ends, about
+6 minutes after the end of the job `Deploy`. Then the lead runs the
+check again.
+A status `error` also makes each check of the log unknown, with the
+reason of the job. riff changes nothing but the comment on the
+release issue, and the riff stays paused.
 
 riff checks that:
 
@@ -7601,14 +7660,23 @@ revision still serves: riff files an issue with the failed jobs and the
 run, and resumes the riff. When GitHub fails a call, see
 [When GitHub fails a call of a release command](#when-github-fails-a-call-of-a-release-command).
 
-riff reads the log with the `gcloud` of the host and the cloud settings
-`shared` (see
-[Read the log of the server](#read-the-log-of-the-server)). A person on
-the host signs in again:
+#### Check the log of a deploy by hand
+
+A run by hand, as of `riff release rollback`, has no job `Check the
+deploy`. Then `riff release check` names the command for a person on a
+host, with the time of the start of the job `Deploy` and the commit of
+the tag. That person signs in with `gcloud auth login`, and runs it in
+a clone:
 
 ```sh
-gcloud auth login
+riff cloud check shared --since 2026-10-18T20:00:00Z --commit COMMIT
 ```
+
+`riff cloud check` reads the Cloud Run log from `--since`, by default 1
+hour ago, and prints the result of each of the four checks. With
+`--commit`, it also sets the status `riff/deploy-check` of that commit,
+with `gh`. It exits with 1 when a check failed, or when it could not
+read the log. Then the lead runs `riff release check` again.
 
 #### When GitHub fails a call of a release command
 

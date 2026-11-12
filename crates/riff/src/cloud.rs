@@ -1086,7 +1086,12 @@ pub fn create(gcloud: &Gcloud, s: &Settings, owner: Option<&str>) -> Result<()> 
     )?;
     println!("Bucket {}: versioning on, lifecycle rules set.", s.bucket);
 
-    for name in [&s.run_account, &s.build_account, &s.deploy_account, &s.check_account] {
+    for name in [
+        &s.run_account,
+        &s.build_account,
+        &s.deploy_account,
+        &s.check_account,
+    ] {
         if name.is_empty() {
             continue;
         }

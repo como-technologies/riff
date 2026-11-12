@@ -656,14 +656,20 @@ fn create_makes_riff_check_with_only_the_role_that_reads_the_log() {
         .collect();
     assert_eq!(
         roles,
-        ["projects add-iam-policy-binding como-riff --member serviceAccount:riff-check@como-riff.iam.gserviceaccount.com --role roles/logging.viewer --condition None --project como-riff"],
+        [
+            "projects add-iam-policy-binding como-riff --member serviceAccount:riff-check@como-riff.iam.gserviceaccount.com --role roles/logging.viewer --condition None --project como-riff"
+        ],
         "{}",
         ran.calls
     );
     let users: Vec<&str> = ran
         .calls
         .lines()
-        .filter(|l| l.starts_with(&format!("iam service-accounts add-iam-policy-binding {account} ")))
+        .filter(|l| {
+            l.starts_with(&format!(
+                "iam service-accounts add-iam-policy-binding {account} "
+            ))
+        })
         .collect();
     assert_eq!(users.len(), 1, "{users:#?}");
     assert!(
@@ -691,6 +697,37 @@ fn create_makes_riff_check_with_only_the_role_that_reads_the_log() {
         "{}",
         ran.stdout()
     );
+}
+
+/// The book: "Set up the cloud project" has the how-to of the check
+/// account, with the one run of `riff cloud create shared` in a `sh`
+/// block, the line that it prints, and the only role of `riff-check`
+/// (01M76SSFX0QGPA4MTXV39JV5P3).
+#[test]
+fn the_book_lets_ci_read_the_log_after_a_deploy() {
+    let part = book::part("development.md", "Set up the cloud project");
+    let start = part
+        .find("\n### Let CI read the log after a deploy\n")
+        .expect("the part has \"### Let CI read the log after a deploy\"");
+    let how_to = &part[start + 1..];
+    let how_to = how_to[4..]
+        .find("\n###")
+        .map_or(how_to, |end| &how_to[..end + 4]);
+    assert!(
+        book::commands_in(how_to)
+            .iter()
+            .any(|c| c == "riff cloud create shared"),
+        "{how_to}"
+    );
+    for text in [
+        "`riff-check`",
+        "`CLOUD_CHECK_ACCOUNT`",
+        "Only a\njob of a tag `v*` signs in as it.",
+        "CI check: set, for a job of a tag v*. riff-check only reads the log.",
+        riff::cloud::CHECK_ROLE,
+    ] {
+        assert!(how_to.contains(text), "{text}: {how_to}");
+    }
 }
 
 /// `create` removes the old binding that let each job of the

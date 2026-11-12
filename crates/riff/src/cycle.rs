@@ -2118,10 +2118,7 @@ pub fn set_deploy_check(
 /// assert!(log_of("v3.3.0", &deploy, &status("error", "2026-10-18T20:09:10Z")).is_err());
 /// ```
 pub fn log_of(tag: &str, deploy: &Deploy, check: &DeployCheck) -> Result<LogMeasures, String> {
-    let status = check
-        .status
-        .as_ref()
-        .filter(|s| !older(&s.at, &deploy.at));
+    let status = check.status.as_ref().filter(|s| !older(&s.at, &deploy.at));
     let Some(status) = status else {
         return Err(if deploy.by_hand {
             text::deploy_check_by_hand(tag, &deploy.at, &check.commit)
@@ -3552,7 +3549,9 @@ impl Forge for GitHub {
             url: text::forge(&run.url),
             state,
             at: job.map(|j| text::forge(&j.started_at)).unwrap_or_default(),
-            ended: job.map(|j| text::forge(&j.completed_at)).unwrap_or_default(),
+            ended: job
+                .map(|j| text::forge(&j.completed_at))
+                .unwrap_or_default(),
             failed,
             by_hand: tag_version(&run.head_branch).is_err(),
         }))
@@ -5390,13 +5389,7 @@ pub(crate) mod tests {
             }),
             ..Fake::ready("3.3.0")
         };
-        let done = check(
-            &forge,
-            "v3.3.0",
-            &served("3.2.0"),
-            &mut |_| {},
-        )
-        .unwrap();
+        let done = check(&forge, "v3.3.0", &served("3.2.0"), &mut |_| {}).unwrap();
         assert!(
             matches!(done, Checked::DeployFailed { issue: 88, .. }),
             "{done:?}"
@@ -5438,25 +5431,15 @@ pub(crate) mod tests {
                 issue: Some(ReleaseIssue::default()),
                 ..Fake::ready("3.3.0")
             };
-            let error = check(
-                &forge,
-                "v3.3.0",
-                &served("3.3.0"),
-                &mut |_| {},
-            )
-            .unwrap_err()
-            .to_string();
+            let error = check(&forge, "v3.3.0", &served("3.3.0"), &mut |_| {})
+                .unwrap_err()
+                .to_string();
             assert!(error.contains(want), "{want}: {error}");
             assert!(forge.log().is_empty());
         }
-        let error = check(
-            &Fake::new(),
-            "v3.3.0",
-            &served("3.3.0"),
-            &mut |_| {},
-        )
-        .unwrap_err()
-        .to_string();
+        let error = check(&Fake::new(), "v3.3.0", &served("3.3.0"), &mut |_| {})
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("no CI run deploys v3.3.0"), "{error}");
     }
 
