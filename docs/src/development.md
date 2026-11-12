@@ -3531,8 +3531,12 @@ gh pr merge --auto --squash 40
 A verify can fail only on the body of the pull request, for example
 Hygiene refuses the first line. The fix is a new body, with no new
 commit. The status `riff/verify` of the head stays `failure`. After the
-fix, the session sends a new verify request for the same commit. The
-wave then starts a verify of that commit, not a build, when the Gate
+fix, the session that claims the item, the lead or the person sends a
+new verify request for the same commit: the wave counts a request of
+another sender as a plain message (see
+[Who may send a verify request and a
+result](how-it-works.md#who-may-send-a-verify-request-and-a-result)).
+The wave then starts a verify of that commit, not a build, when the Gate
 and Hygiene of the head pass. With no new request, a failed verify is
 free work as a build. A push makes a new head, and a new verify
 follows as always.

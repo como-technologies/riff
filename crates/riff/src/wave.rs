@@ -398,7 +398,8 @@
 //! and the rebase makes a new one. A pull request whose verify failed is
 //! free work as a build already, with the failed result, until a new
 //! verify request for the same head comes ([`said`], #1157): then it
-//! waits for a verify again.
+//! waits for a verify again. A verify request and a verify result count
+//! only from their right sender ([`right_sender`], #2027).
 //!
 //! A pull request whose `mergeable` is `UNKNOWN` has no verify in the
 //! free work either ([`rollout::Pull::unknown`], #1464). GitHub gives
@@ -671,7 +672,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 use riff_core::name::{Place, SessionUri, ThreadName};
 use riff_core::wire::{
-    BotFact, GitHubRenew, HoldInfo, Kind, ProjectFacts, PullState, RiffReply, RiffState,
+    BotFact, GitHubRenew, HoldInfo, Kind, Message, ProjectFacts, PullState, RiffReply, RiffState,
     StartReason, WORKER_ALIVE_EVERY, Wake,
 };
 use serde::{Deserialize, Serialize};
@@ -3749,10 +3750,10 @@ pub fn fixes(open: &rollout::Open, free: Vec<String>) -> (Vec<String>, Fixes) {
 pub fn said(bodies: &[&str]) -> HashMap<(u64, String), rollout::Verify> {
     let mut said = HashMap::new();
     for body in bodies {
-        if let Some(rest) = body.strip_prefix(VERIFY_REQUEST) {
-            said.extend(item_commit(rest).map(|head| (head, rollout::Verify::Asked)));
+        if let Some(head) = request_of(body) {
+            said.insert(head, rollout::Verify::Asked);
         } else if let Some((word, rest)) = body
-            .strip_prefix("verify result: ")
+            .strip_prefix(VERIFY_RESULT)
             .and_then(|r| r.split_once(" for "))
         {
             let verify = match word {
@@ -3768,6 +3769,116 @@ pub fn said(bodies: &[&str]) -> HashMap<(u64, String), rollout::Verify> {
 
 /// The start of a verify request in the thread.
 const VERIFY_REQUEST: &str = "verify request: ";
+
+/// The start of a verify result in the thread.
+const VERIFY_RESULT: &str = "verify result: ";
+
+/// The issue and the commit (7 characters) of the verify request `body`:
+/// `verify request: issue-N, PR #P, ... commit ABCDEFG`.
+fn request_of(body: &str) -> Option<(u64, String)> {
+    body.strip_prefix(VERIFY_REQUEST).and_then(item_commit)
+}
+
+/// The issue and the commit (7 characters) of the verify result `body`:
+/// `verify result: VERDICT for issue-N, PR #P, commit ABCDEFG`.
+fn result_of(body: &str) -> Option<(u64, String)> {
+    body.strip_prefix(VERIFY_RESULT)
+        .and_then(|rest| rest.split_once(" for "))
+        .and_then(|(_, rest)| item_commit(rest))
+}
+
+/// True unless `body` is a verify request or a verify result that `from`
+/// may not send in the thread of the repository `repo` (#2027,
+/// 01M77PF3MZ1NG1RCP3G8TZHT2E):
+///
+/// - a verify result for issue-N: only the verify session of issue-N (a
+///   session of `repo` that claims `verify-issue-N`), or the riff daemon;
+/// - a verify request for issue-N: only the work session of the item (a
+///   session of `repo` that claims `issue-N`), the riff daemon, or the
+///   lead of `repo`.
+///
+/// The riff daemon posts as the session of the job, or as the person: a
+/// sender with no session, but not riff-server. `from` is the URI of the
+/// sender when it posted, with its claims and its lead mark from
+/// riff-server. GitHub still requires the status `riff/verify` of the
+/// head, so a wrong sender cannot merge code with no verify.
+///
+/// ```
+/// use riff::wave::right_sender;
+/// use riff_core::name::SessionUri;
+///
+/// let uri = |text: &str| text.parse::<SessionUri>().unwrap();
+/// let request = "verify request: issue-12, PR #40, branch worktree-issue-12, commit 1a2b3c4.";
+/// let result = "verify result: PASS for issue-12, PR #40, commit 1a2b3c4.";
+/// let author = uri("riff://ann@heron/o/r?session=a1&claim=issue-12#issue-12");
+/// let verifier = uri("riff://ann@heron/o/r?session=v1&claim=verify-issue-12#verify-issue-12");
+/// let lead = uri("riff://ann@heron/o/r?session=l1&lead=true");
+/// let person = uri("riff://ann@heron/o/r");
+/// let other = uri("riff://ann@heron/o/r?session=b2&claim=issue-13");
+/// assert!(right_sender(&author, request, "o/r"));
+/// assert!(right_sender(&lead, request, "o/r"));
+/// assert!(right_sender(&person, request, "o/r"));
+/// assert!(!right_sender(&verifier, request, "o/r"));
+/// assert!(!right_sender(&other, request, "o/r"));
+/// assert!(right_sender(&verifier, result, "o/r"));
+/// assert!(right_sender(&person, result, "o/r"));
+/// assert!(!right_sender(&author, result, "o/r"));
+/// assert!(!right_sender(&lead, result, "o/r"));
+/// // The lead of another repository.
+/// assert!(!right_sender(&lead, request, "o/other"));
+/// // riff-server is not the riff daemon.
+/// assert!(!right_sender(&SessionUri::server(), result, "o/r"));
+/// // Each other body is a plain message.
+/// assert!(right_sender(&other, "hello", "o/r"));
+/// ```
+pub fn right_sender(from: &SessionUri, body: &str, repo: &str) -> bool {
+    let session = from.who().session().is_some();
+    let daemon = !session && !from.is_server();
+    let here = session && from.place().repo_text() == repo;
+    let claims = |item: String| here && from.claims().contains(&item);
+    if let Some((issue, _)) = request_of(body) {
+        daemon || here && from.lead() || claims(format!("issue-{issue}"))
+    } else if let Some((issue, _)) = result_of(body) {
+        daemon || claims(format!("verify-issue-{issue}"))
+    } else {
+        true
+    }
+}
+
+/// The bodies of `messages`, the messages of the thread of the
+/// repository `repo`, oldest first, that the wave reads: each body but a
+/// verify request or a verify result from a wrong sender
+/// ([`right_sender`], #2027). Such a body is a plain message, and the
+/// wave does not count it.
+///
+/// ```
+/// use riff_core::wire::{Kind, Message};
+///
+/// let said = |from: &str, body: &str| Message {
+///     seq: 0,
+///     from: from.parse().unwrap(),
+///     to: vec![],
+///     body: body.into(),
+///     at_ms: 0,
+///     kind: Kind::Message,
+///     sig: None,
+///     payload: None,
+/// };
+/// let request = "verify request: issue-12, PR #40, branch worktree-issue-12, commit 1a2b3c4.";
+/// let messages = [
+///     said("riff://ann@heron/o/r?session=b2", request),
+///     said("riff://ann@heron/o/r?session=b2", "hello"),
+///     said("riff://ann@heron/o/r?session=a1&claim=issue-12", request),
+/// ];
+/// assert_eq!(riff::wave::counted(&messages, "o/r"), ["hello", request]);
+/// ```
+pub fn counted<'a>(messages: &'a [Message], repo: &str) -> Vec<&'a str> {
+    messages
+        .iter()
+        .filter(|m| right_sender(&m.from, &m.body, repo))
+        .map(|m| m.body.as_str())
+        .collect()
+}
 
 /// The issue and the commit (7 characters) of `issue-N, PR #P, ... commit
 /// ABCDEFG`.
@@ -3807,7 +3918,7 @@ fn item_commit(rest: &str) -> Option<(u64, String)> {
 pub fn requests(bodies: &[&str]) -> HashMap<u64, usize> {
     let mut places = HashMap::new();
     for (place, body) in bodies.iter().enumerate() {
-        if let Some((issue, _)) = body.strip_prefix(VERIFY_REQUEST).and_then(item_commit) {
+        if let Some((issue, _)) = request_of(body) {
             places.entry(issue).or_insert(place);
         }
     }
@@ -3829,21 +3940,22 @@ pub fn look_on(
     look_with(gh, repo, claims, holds, &[])
 }
 
-/// [`look_on`] with `bodies`, the bodies of the messages of the thread of
-/// the repository, oldest first. What the thread says of the verify of a
-/// head ([`said`]) counts with its status: a pull request with a failed
-/// verify whose head has a new verify request waits for a verify again,
-/// and one whose head has a PASS after the fail passed. The places of the
-/// verify requests ([`requests`]) give the order of the verifies
-/// ([`order()`]).
+/// [`look_on`] with `messages`, the messages of the thread of the
+/// repository, oldest first. A verify request or a verify result counts
+/// only from its right sender ([`counted`], #2027). What the thread says
+/// of the verify of a head ([`said`]) counts with its status: a pull
+/// request with a failed verify whose head has a new verify request waits
+/// for a verify again, and one whose head has a PASS after the fail
+/// passed. The places of the verify requests ([`requests`]) give the
+/// order of the verifies ([`order()`]).
 pub fn look_with(
     gh: &pr::Gh,
     repo: &str,
     claims: BTreeSet<String>,
     holds: BTreeSet<String>,
-    bodies: &[&str],
+    messages: &[Message],
 ) -> Result<Look> {
-    look_from(gh, repo, claims, holds, bodies, None)
+    look_from(gh, repo, claims, holds, messages, None)
 }
 
 /// [`look_with`] with the events of GitHub of the repository in `told`
@@ -3856,10 +3968,10 @@ pub fn look_told(
     repo: &str,
     claims: BTreeSet<String>,
     holds: BTreeSet<String>,
-    bodies: &[&str],
+    messages: &[Message],
     told: &hooks::Told,
 ) -> Result<Look> {
-    look_from(gh, repo, claims, holds, bodies, Some(told))
+    look_from(gh, repo, claims, holds, messages, Some(told))
 }
 
 /// The look of [`look_with`] and [`look_told`].
@@ -3868,10 +3980,11 @@ fn look_from(
     repo: &str,
     claims: BTreeSet<String>,
     holds: BTreeSet<String>,
-    bodies: &[&str],
+    messages: &[Message],
     told: Option<&hooks::Told>,
 ) -> Result<Look> {
-    let said = said(bodies);
+    let bodies = counted(messages, repo);
+    let said = said(&bodies);
     // The wakes of GitHub name what changed (#1656). Else GitHub is asked
     // first whether anything changed (#1566). A branch that does not read
     // is the error of the look: the wave starts no work, and reads it
@@ -3901,7 +4014,7 @@ fn look_from(
     let no_done_when = open.no_done_when(&claimed, &held).into_iter().collect();
     let merged = open.unsaid();
     let pulls = waiting(gh, repo, &free, &open)?;
-    let lanes = lanes(&open, &free, &requests(bodies), |pull| {
+    let lanes = lanes(&open, &free, &requests(&bodies), |pull| {
         order::files(gh, repo, pull.number, &pull.head).unwrap_or_default()
     });
     Ok(Look {
@@ -4100,15 +4213,14 @@ impl World for Live {
                 .holds
                 .into_keys()
                 .collect();
-            let bodies: Vec<String> = api
+            let messages: Vec<Message> = api
                 .read(&person, &thread, true)
                 .await
-                .map(|all| all.into_iter().map(|m| m.message.body).collect())
+                .map(|all| all.into_iter().map(|m| m.message).collect())
                 .unwrap_or_default();
             let (repo, main) = (wave.repo.clone(), wave.main.clone());
             blocking(move || {
-                let bodies: Vec<&str> = bodies.iter().map(String::as_str).collect();
-                let mut look = look_told(&forge(&repo), &repo, claims, holds, &bodies, &told)?;
+                let mut look = look_told(&forge(&repo), &repo, claims, holds, &messages, &told)?;
                 // Two pull requests whose heads merge with no conflict are
                 // in two groups of the order (#1895).
                 order::merges(&main, &mut look.lanes);
@@ -7272,6 +7384,57 @@ esac
             .map(|s| s.item)
             .collect();
         assert_eq!(items, ["issue-2"]);
+    }
+
+    /// #2027: a verify request or a verify result of the thread counts
+    /// only from its right sender. A result from the author does not end
+    /// a new request, a PASS from the author does not count over a FAIL
+    /// (#2014), and a request from a session with no claim takes no place
+    /// in the order.
+    #[test]
+    fn a_verify_body_from_a_wrong_sender_is_a_plain_message() {
+        let post = |from: &str, body: &str| Message {
+            seq: 0,
+            from: from.parse().unwrap(),
+            to: Vec::new(),
+            body: body.into(),
+            at_ms: 0,
+            kind: Kind::Message,
+            sig: None,
+            payload: None,
+        };
+        let request = "verify request: issue-12, PR #40, branch worktree-issue-12, commit 1a2b3c4.";
+        let result = |word: &str| {
+            format!(
+                "verify result: {word} for issue-12, PR #40, commit 1a2b3c4. PR comment https://c."
+            )
+        };
+        let (fail, pass) = (result("FAIL"), result("PASS"));
+        let author = "riff://ann@heron/o/r?session=a1&claim=issue-12#issue-12";
+        let verifier = "riff://ann@heron/o/r?session=v1&claim=verify-issue-12#verify-issue-12";
+        let of = |thread: &[Message]| {
+            said(&counted(thread, "o/r"))
+                .get(&(12, "1a2b3c4".into()))
+                .copied()
+        };
+        let failed = [post(author, request), post(verifier, &fail)];
+        assert_eq!(of(&failed), Some(rollout::Verify::Failed));
+        let forged = [failed.to_vec(), vec![post(author, &pass)]].concat();
+        assert_eq!(of(&forged), Some(rollout::Verify::Failed));
+        let passed = [failed.to_vec(), vec![post(verifier, &pass)]].concat();
+        assert_eq!(of(&passed), Some(rollout::Verify::Passed));
+        let thread = [failed.to_vec(), vec![post(author, request)]].concat();
+        assert_eq!(of(&thread), Some(rollout::Verify::Asked));
+        let forged = [thread.to_vec(), vec![post(author, &fail)]].concat();
+        assert_eq!(of(&forged), Some(rollout::Verify::Asked));
+        let ended = [thread.to_vec(), vec![post(verifier, &fail)]].concat();
+        assert_eq!(of(&ended), Some(rollout::Verify::Failed));
+        let other = "verify request: issue-13, PR #41, branch worktree-issue-13, commit 5e6f7a8.";
+        let first = [
+            post("riff://ann@heron/o/r?session=n1", other),
+            post(author, request),
+        ];
+        assert_eq!(requests(&counted(&first, "o/r")), HashMap::from([(12, 0)]));
     }
 
     /// 01M558EYCXPFW8CJV3XJ7HK3NR: riff-server refuses the claim of each

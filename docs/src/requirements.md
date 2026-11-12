@@ -6993,6 +6993,17 @@ of this part when they merge.
   failure: the wave starts no build and no verify of that head. With no
   status, a PASS or a FAIL in the thread gives the state. A status
   `success` makes the head passed.
+- **01M77PF3MZ1NG1RCP3G8TZHT2E** The wave counts a verify result for
+  issue-N in the thread of the repository only from the verify session
+  of issue-N (a session of the repository that claims verify-issue-N) or
+  from the riff daemon. It counts a verify request for issue-N only from
+  the work session of the item (a session of the repository that claims
+  issue-N), from the riff daemon, or from the lead of the repository.
+  The riff daemon posts as the session of the job, or as the person: a
+  sender with no session. riff-server itself is not the riff daemon.
+  riff-server gives the URI of each sender, with its claims and its lead
+  mark. Each other body of that form is a plain message: the wave does
+  not count it.
 
 ### The lead, the view and the takeover
 

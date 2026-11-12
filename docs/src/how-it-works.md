@@ -3089,6 +3089,42 @@ the user in the repository: each live session with no claim. Each other
 session sees it at its next read. A verify request is free work: a
 session picks it like any other item.
 
+### Who may send a verify request and a result
+
+The wave reads the verify requests and the verify results in the
+thread of the repository. A new request for a head whose verify failed
+starts a verify of that head again (see [Answer a failed verify with a
+new request](development.md#answer-a-failed-verify-with-a-new-request)).
+A result ends that request, and a PASS counts over an old failure of
+the same head. The first request of an item gives its place in
+[the order of the verifies](#the-order-of-the-verifies-of-a-wave).
+
+The wave counts each one only from its right sender:
+
+| Message | The wave counts it from |
+|---|---|
+| `verify result: ... for issue-N` | the verify session of issue-N: the session that claims `verify-issue-N`; the riff daemon |
+| `verify request: issue-N, ...` | the work session of the item: the session that claims `issue-N`; the riff daemon; the lead of the repository |
+
+The riff daemon posts as the session of the job, or as the person.
+riff-server gives the sender of each message, with its claims and its
+lead mark. Each other message of that form is a plain message: the
+wave does not count it. Such a message cannot merge code either:
+GitHub merges a pull request only when its head commit has a
+`riff/verify` success.
+
+```mermaid
+flowchart TD
+    M["a message in the thread of the repository"] --> K{"its form?"}
+    K -- "verify request: issue-N" --> R{"from the session that claims issue-N,<br/>the riff daemon or the lead?"}
+    K -- "verify result for issue-N" --> V{"from the session that claims verify-issue-N,<br/>or the riff daemon?"}
+    K -- "another form" --> P["a plain message"]
+    R -- "yes" --> C["the wave counts it"]
+    V -- "yes" --> C
+    R -- "no" --> P
+    V -- "no" --> P
+```
+
 The wave verifies a pull request from a fork too. The head commit of
 such a pull request is on a branch of the fork, not on a branch of
 `origin`. So the clone of the verify fetches `refs/pull/N/head` from
