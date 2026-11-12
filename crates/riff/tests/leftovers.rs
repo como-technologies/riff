@@ -20,5 +20,14 @@ const SAMPLE: &[&str] = &[
 fn no_test_of_the_sample_leaves_a_process_after_it_ends() {
     let exe = std::env::current_exe().unwrap();
     let left = isolated::left_after(&exe, SAMPLE);
-    assert!(left.is_empty(), "the tests left these processes: {left:#?}");
+    // The dir of an environment that dropped is gone: its drop missed the
+    // process. The dir of an environment that did not drop is there.
+    let there: Vec<bool> = left
+        .iter()
+        .map(|p| p.dir.as_ref().is_some_and(|dir| dir.exists()))
+        .collect();
+    assert!(
+        left.is_empty(),
+        "the tests left these processes: {left:#?}\nthe dir of each is there: {there:?}"
+    );
 }

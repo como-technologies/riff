@@ -46,7 +46,7 @@
 //! `/proc`. On another OS, it finds no process.
 
 use std::ffi::OsStr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
@@ -63,20 +63,30 @@ pub const RUN: &str = "ISOLATED_RUN";
 pub struct Marked {
     /// The ID of the process.
     pub pid: i32,
+    /// The ID of its parent.
+    pub parent: i32,
     /// Its command line, with a space between two arguments.
     pub command: String,
+    /// Its [`MARK`]: the temp dir of the environment that started it.
+    pub dir: Option<PathBuf>,
 }
 
 /// The time for which [`end_marked`] waits for a process that starts a
 /// program, when it finds no process with the mark.
-pub const SETTLE: Duration = Duration::from_millis(200);
+pub const SETTLE: Duration = Duration::from_secs(1);
+
+/// The time between the two looks that find no process with the mark at
+/// the end of [`end_marked`].
+pub const AGAIN: Duration = Duration::from_millis(20);
 
 /// One look at the processes: each process but this one with the mark,
-/// and the number of the processes that start a program at this moment.
+/// the number of the processes that start a program at this moment, and
+/// whether the look could not read the list of the processes.
 #[derive(Debug, Default)]
 struct Look {
     marked: Vec<Marked>,
     starting: usize,
+    failed: bool,
 }
 
 /// Each process but this one whose environment has the variable `name`
@@ -94,6 +104,7 @@ struct Look {
 /// assert_eq!(found.len(), usize::from(cfg!(target_os = "linux")));
 /// if let Some(sleep) = found.first() {
 ///     assert_eq!(sleep.pid, child.id() as i32);
+///     assert_eq!(sleep.parent, std::process::id() as i32);
 ///     assert_eq!(sleep.command, "sleep 60");
 /// }
 /// child.kill()?;
@@ -112,12 +123,18 @@ fn look(name: &str, value: &OsStr) -> Look {
     let mut entry = name.as_bytes().to_vec();
     entry.push(b'=');
     entry.extend_from_slice(value.as_bytes());
+    let mark = format!("{MARK}=");
     let me = std::process::id();
     let mut look = Look::default();
     let Ok(procs) = std::fs::read_dir("/proc") else {
+        look.failed = true;
         return look;
     };
-    for proc in procs.flatten() {
+    for proc in procs {
+        let Ok(proc) = proc else {
+            look.failed = true;
+            continue;
+        };
         let Some(pid) = proc
             .file_name()
             .to_str()
@@ -132,14 +149,19 @@ fn look(name: &str, value: &OsStr) -> Look {
         let Ok(environ) = std::fs::read(proc.path().join("environ")) else {
             continue;
         };
+        let stat = || std::fs::read_to_string(proc.path().join("stat")).unwrap_or_default();
         if environ.is_empty() {
-            let stat = std::fs::read_to_string(proc.path().join("stat")).unwrap_or_default();
-            look.starting += usize::from(starts_a_program(&stat));
+            look.starting += usize::from(starts_a_program(&stat()));
             continue;
         }
-        if !environ.split(|b| *b == 0).any(|var| var == entry) {
+        let mut vars = environ.split(|b| *b == 0);
+        if !vars.any(|var| var == entry) {
             continue;
         }
+        let dir = environ
+            .split(|b| *b == 0)
+            .find_map(|var| var.strip_prefix(mark.as_bytes()))
+            .map(|dir| PathBuf::from(OsStr::from_bytes(dir)));
         let line = std::fs::read(proc.path().join("cmdline")).unwrap_or_default();
         let args: Vec<_> = line
             .split(|b| *b == 0)
@@ -148,7 +170,9 @@ fn look(name: &str, value: &OsStr) -> Look {
             .collect();
         look.marked.push(Marked {
             pid,
+            parent: parent_of(&stat()),
             command: args.join(" "),
+            dir,
         });
     }
     look.marked.sort_by_key(|p| p.pid);
@@ -162,11 +186,29 @@ fn look(name: &str, value: &OsStr) -> Look {
     Look::default()
 }
 
+/// The fields of `stat`, the text of `/proc/PID/stat`, after the name in
+/// parentheses: the state first, the parent second, and the flags
+/// seventh. The name can hold a space or a parenthesis: the fields start
+/// after the last one.
+fn fields(stat: &str) -> Vec<&str> {
+    stat.rsplit_once(") ")
+        .map(|(_, fields)| fields.split_whitespace().collect())
+        .unwrap_or_default()
+}
+
+/// The parent in `stat`, or 0.
+#[cfg(target_os = "linux")]
+fn parent_of(stat: &str) -> i32 {
+    fields(stat)
+        .get(1)
+        .and_then(|f| f.parse().ok())
+        .unwrap_or(0)
+}
+
 /// True when `stat`, the text of `/proc/PID/stat` of a process whose
 /// environment reads empty, says that the process starts a program: it
 /// lives, and it is no kernel thread. A process that ended waits for its
-/// parent (`Z`), or is dead (`X`). The fields come after the name in
-/// parentheses: the state first, and the flags seventh.
+/// parent (`Z`), or is dead (`X`).
 ///
 /// ```
 /// use isolated::processes::starts_a_program;
@@ -182,12 +224,7 @@ fn look(name: &str, value: &OsStr) -> Look {
 pub fn starts_a_program(stat: &str) -> bool {
     /// The flag of a kernel thread in the flags of `stat`.
     const KERNEL_THREAD: u64 = 0x0020_0000;
-    // The name can hold a space or a parenthesis: the fields start after
-    // the last one.
-    let Some((_, fields)) = stat.rsplit_once(") ") else {
-        return false;
-    };
-    let fields: Vec<&str> = fields.split_whitespace().collect();
+    let fields = fields(stat);
     let Some(flags) = fields.get(6).and_then(|f| f.parse::<u64>().ok()) else {
         return false;
     };
@@ -195,11 +232,13 @@ pub fn starts_a_program(stat: &str) -> bool {
 }
 
 /// Ends each process of [`marked`] with a SIGKILL, and looks again until
-/// it finds none, or for [`HANG`](crate::HANG). While a look finds no
-/// process with the mark and a process starts a program, it looks again
-/// for up to [`SETTLE`]: that process can have the mark. Gives each
-/// process that it ended, once. It never panics: an environment calls it
-/// when it drops, also in a test that failed.
+/// it finds none, or for [`HANG`](crate::HANG). It ends after two looks,
+/// [`AGAIN`] apart, that find no process with the mark: one look can miss
+/// a process that starts at that moment. While a process starts a
+/// program, or a look cannot read the list of the processes, it looks
+/// again, for up to [`SETTLE`]. Gives each process that it ended, once.
+/// It never panics: an environment calls it when it drops, also in a
+/// test that failed.
 ///
 /// ```
 /// use std::process::Command;
@@ -231,10 +270,16 @@ pub fn end_marked(name: &str, value: impl AsRef<OsStr>) -> Vec<Marked> {
         }
         if look.marked.is_empty() {
             let since = *quiet.get_or_insert_with(Instant::now);
-            if look.starting == 0 || since.elapsed() >= SETTLE {
+            let sure = look.starting == 0 && !look.failed;
+            if (sure && since.elapsed() >= AGAIN) || since.elapsed() >= SETTLE {
                 return ended;
             }
-            std::thread::sleep(Duration::from_millis(1));
+            let pause = if sure {
+                AGAIN
+            } else {
+                Duration::from_millis(1)
+            };
+            std::thread::sleep(pause);
             continue;
         }
         quiet = None;

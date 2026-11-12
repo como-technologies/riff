@@ -65,6 +65,10 @@ fn the_drop_ends_each_process_of_the_environment_and_no_other() {
     let (dir, other_dir) = (env.path().to_owned(), other.path().to_owned());
     wait_for_daemon(&dir);
     wait_for_daemon(&other_dir);
+    for process in isolated::marked(MARK, &dir) {
+        assert_eq!(process.dir.as_deref(), Some(dir.as_path()));
+        assert!(process.parent > 0, "{process:?}");
+    }
 
     drop(env);
     assert_eq!(isolated::marked(MARK, &dir), []);
