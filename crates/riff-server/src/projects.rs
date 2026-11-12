@@ -36,9 +36,9 @@
 
 use std::time::Instant;
 
+use axum::Json;
 use axum::extract::State as AxumState;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use riff_core::name::ThreadName;
 use riff_core::selector::Selector;
 use riff_core::wire::{Kind, ProjectInit, ProjectRemove, ProjectsQuery, ProjectsReply};
@@ -122,7 +122,10 @@ async fn on_github(s: &Server, admitted: &Admitted, repo: &ThreadName, token: &s
     }
     let checked = s.github.admin_of(&repo, token).await;
     match &checked {
-        Ok(()) => tracing::info!(repo, "GitHub says that the person is an admin of the repository"),
+        Ok(()) => tracing::info!(
+            repo,
+            "GitHub says that the person is an admin of the repository"
+        ),
         Err(why) => tracing::info!(repo, "the check of a project on GitHub: {why}"),
     }
     checked

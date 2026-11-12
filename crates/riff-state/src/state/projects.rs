@@ -230,7 +230,10 @@ impl Command for EnrollProject {
             None => Enrolled::New,
         };
         let repo = repo.clone();
-        Ok((vec![Change::ProjectEnrolled(ProjectEnrolled { repo, hosts })], made))
+        Ok((
+            vec![Change::ProjectEnrolled(ProjectEnrolled { repo, hosts })],
+            made,
+        ))
     }
 
     fn reply(
@@ -241,13 +244,15 @@ impl Command for EnrollProject {
         made: Enrolled,
         now: Now,
     ) -> ProjectInitReply {
-        let project = view.project(&self.repo, now.at).unwrap_or_else(|| ProjectFacts {
-            repo: self.repo.clone(),
-            by: None,
-            at_ms: 0,
-            hosts: Vec::new(),
-            leads: Vec::new(),
-        });
+        let project = view
+            .project(&self.repo, now.at)
+            .unwrap_or_else(|| ProjectFacts {
+                repo: self.repo.clone(),
+                by: None,
+                at_ms: 0,
+                hosts: Vec::new(),
+                leads: Vec::new(),
+            });
         ProjectInitReply {
             project,
             enrolled: made == Enrolled::New,
@@ -285,9 +290,8 @@ impl Command for RemoveProject {
         repository(repo)?;
         admin_on_github(repo, github)?;
         let Some(project) = view.project(repo, now.at) else {
-            let reason = format!(
-                "{repo} is no project of the riff. riff project list shows the projects."
-            );
+            let reason =
+                format!("{repo} is no project of the riff. riff project list shows the projects.");
             return Err(Refused::new(Code::BadRequest, reason));
         };
         let repo = repo.clone();

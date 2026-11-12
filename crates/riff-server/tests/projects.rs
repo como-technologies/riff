@@ -276,14 +276,29 @@ async fn a_member_or_an_admin_who_is_not_an_admin_of_the_repository_is_refused()
 
     // The admin enrolls; then a member and an admin who is no admin of
     // the repository cannot remove.
-    let (status, _, text) =
-        call(&url, &cy, "/v1/project/init", init(&cy.me, &[], ADMIN_TOKEN)).await;
+    let (status, _, text) = call(
+        &url,
+        &cy,
+        "/v1/project/init",
+        init(&cy.me, &[], ADMIN_TOKEN),
+    )
+    .await;
     assert_eq!(status, 200, "{text}");
-    let (status, code, _) =
-        call(&url, &bob, "/v1/project/remove", remove(&bob.me, ADMIN_TOKEN)).await;
+    let (status, code, _) = call(
+        &url,
+        &bob,
+        "/v1/project/remove",
+        remove(&bob.me, ADMIN_TOKEN),
+    )
+    .await;
     assert_eq!((status, code.as_str()), (403, "not_allowed"));
-    let (status, code, _) =
-        call(&url, &cy, "/v1/project/remove", remove(&cy.me, WRITER_TOKEN)).await;
+    let (status, code, _) = call(
+        &url,
+        &cy,
+        "/v1/project/remove",
+        remove(&cy.me, WRITER_TOKEN),
+    )
+    .await;
     assert_eq!((status, code.as_str()), (403, "not_allowed"));
     assert_eq!(projects_of(&url, &cy).await.len(), 1);
 
@@ -298,7 +313,11 @@ async fn a_member_or_an_admin_who_is_not_an_admin_of_the_repository_is_refused()
     )
     .await;
     assert_eq!((status, code.as_str()), (403, "not_allowed"), "{text}");
-    assert_eq!(fake.seen().repo_reads.len(), reads, "a session gets no call");
+    assert_eq!(
+        fake.seen().repo_reads.len(),
+        reads,
+        "a session gets no call"
+    );
     // A session reads the list.
     assert_eq!(projects_of(&url, &as_session).await.len(), 1);
 }
@@ -337,7 +356,10 @@ async fn the_record_keeps_the_hosts_over_a_restart() {
         .filter(|r| r.change.kind() == "project_enrolled")
         .collect();
     assert_eq!(enrolled.len(), 1);
-    assert_eq!(enrolled[0].envelope.command.as_deref(), Some("enroll_project"));
+    assert_eq!(
+        enrolled[0].envelope.command.as_deref(),
+        Some("enroll_project")
+    );
     let line = serde_json::to_string(enrolled[0]).unwrap();
     assert!(!line.contains("gho_"), "{line}");
 }
@@ -411,7 +433,11 @@ async fn the_first_start_enrolls_each_repository_with_a_lead_or_notes_and_tells_
     .await;
     let repos: Vec<String> = listed.iter().map(|p| p.repo.to_string()).collect();
     assert_eq!(repos, ["acme/app", "acme/web"]);
-    assert!(listed.iter().all(|p| p.hosts.is_empty() && p.by == Some(By::Server)));
+    assert!(
+        listed
+            .iter()
+            .all(|p| p.hosts.is_empty() && p.by == Some(By::Server))
+    );
     let chat = in_time(|| async {
         let read = json!({ "me": me, "thread": "chat", "all": true });
         let (_, text) = plain(&url, "/v1/read", read).await;

@@ -309,8 +309,8 @@ use riff_core::wire::{
     SetPolicy, UseProof,
 };
 use riff_core::wire::{BotPost, Names, NamesReply, SetMachine};
-use riff_core::wire::{ProjectInit, ProjectRemove, ProjectsQuery};
 use riff_core::wire::{Devices, KeyReply, KeyStart, KeyTicket, KeyWait, RemoveDevice};
+use riff_core::wire::{ProjectInit, ProjectRemove, ProjectsQuery};
 use riff_state::owner::{Check, Checks};
 use riff_state::state::{
     Announce, Code, OwnerChange, Refused, Role, Settings, Signal, Snapshot, State, may_read,

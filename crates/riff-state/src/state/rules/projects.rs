@@ -93,7 +93,10 @@ fn a_member_and_a_session_cannot_enroll_or_remove_a_project() {
     let member = Caller::of(&person());
     given(&team())
         .when_as(&member, enroll(&[]))
-        .then_refused_as(Code::NotAllowed, "ann is not an admin; only an admin enrolls");
+        .then_refused_as(
+            Code::NotAllowed,
+            "ann is not an admin; only an admin enrolls",
+        );
     let written = [team(), vec![enrolled(&[])]].concat();
     given(&written)
         .when_as(&member, remove())
@@ -155,7 +158,9 @@ fn a_bad_host_or_a_thread_that_is_no_repository_is_refused() {
 #[test]
 fn an_admin_removes_a_project_and_a_repository_that_is_no_project_is_refused() {
     let written = [team(), vec![enrolled(&["heron"])]].concat();
-    given(&written).when_as(&admin(), remove()).then(&[removed()]);
+    given(&written)
+        .when_as(&admin(), remove())
+        .then(&[removed()]);
     given(&team())
         .when_as(&admin(), remove())
         .then_refused_as(Code::BadRequest, "riff project list shows the projects");
@@ -191,7 +196,10 @@ fn a_project_keeps_who_enrolled_it_and_when_and_the_query_names_its_leads() {
     assert!(state.projects_known());
     // The removal gives the project that went.
     let (_, went) = written(&mut state, &admin(), &remove(), now);
-    assert_eq!(went.as_ref().map(|p| p.hosts.clone()), Some(vec!["heron".into()]));
+    assert_eq!(
+        went.as_ref().map(|p| p.hosts.clone()),
+        Some(vec!["heron".into()])
+    );
     assert!(state.projects(now).projects.is_empty());
     // The mark stays after the last project went.
     assert!(state.projects_known());
@@ -222,7 +230,9 @@ fn the_server_enrolls_each_repository_with_a_lead_or_notes() {
         .when_as(&Caller::server(), FindProjects)
         .then(&[enrolled(&[]), web]);
     // No lead and no notes: no record.
-    given(&[]).when_as(&Caller::server(), FindProjects).then(&[]);
+    given(&[])
+        .when_as(&Caller::server(), FindProjects)
+        .then(&[]);
 }
 
 /// A log with a record of a project gets no search, also after the last
