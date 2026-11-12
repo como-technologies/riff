@@ -4337,6 +4337,16 @@
   the line in the chunk of the command that makes the change, so a
   replay of the log has it. Supersedes 01M76S6128EZRZS2D5CE2QCC05 in
   part.
+- **01M77AB7XZV8KG8RRZ8C6R5A8X** The riff daemon asks the OS keyring for
+  no unlock prompt. Only a command that a person types asks for it. On
+  Linux and BSD, a secret of riff in a locked keyring is a locked
+  keyring to the daemon at once (01M4385CCATXC0B8HV1XD6EFWG). Before
+  each `gh` call with no token in `GH_TOKEN` or `GITHUB_TOKEN`, the
+  daemon looks at the item of `gh` in the keyring, with the service
+  `gh:github.com`, and asks for no prompt. While that item is locked, or
+  the keyring does not answer, the daemon runs no such `gh`: the call
+  fails with the line of a locked keyring. The daemon waits for an open
+  keyring: the next look of each wave tries again.
 
 ## Terminal
 
@@ -5775,11 +5785,10 @@ of this part when they merge.
   (`XDG_CONFIG_HOME/systemd/user`, else `~/.config/systemd/user`). The
   unit runs `riff daemon` with the absolute path of this riff. It gets
   the `PATH` of the shell that installs it, and `XDG_DATA_HOME` when it
-  is set. Then riff runs `systemctl --user daemon-reload`, `enable` and
-  `restart`, and waits up to 10 seconds for the daemon to answer. The
-  unit file and the link of its `enable` are the only files of riff in
-  the home outside its own folders. With `RIFF_HOME` set, riff installs
-  nothing.
+  is set. Then riff waits up to 10 seconds for the daemon to answer. The
+  unit file and its link are the only files of riff in the home outside
+  its own folders. With `RIFF_HOME` set, riff installs nothing.
+  Superseded in part by 01M77AB12JTJAEEAND02DNK9NG.
 - **01M501M0T0JBWGMMHCT7HT95T9** On Linux, `riff daemon uninstall` runs
   `systemctl --user disable --now riff.service`, deletes the unit file
   `riff.service`, and runs `systemctl --user daemon-reload`. It deletes
@@ -6277,6 +6286,17 @@ of this part when they merge.
   takeover, and the checks `stty`, `getent` and `stat` of the daemon.
   `podman exec` itself keeps the nice value of its caller. This
   supersedes 01M7755V17SGY2NW231WJ12WXN in part.
+- **01M77AB12JTJAEEAND02DNK9NG** On Linux, `riff daemon install` asks
+  the user manager of systemd whether `graphical-session.target` is
+  active. When it is, the host has a desktop: the unit has
+  `After=graphical-session.target` and
+  `WantedBy=graphical-session.target`, so the daemon starts after the
+  desktop of each login. Else, for example on a server or on WSL2, the
+  unit has `WantedBy=default.target`. Then riff runs `systemctl --user
+  daemon-reload`, `reenable` and `restart`. The `reenable` moves the
+  link of an older unit to the new target. A write of the unit after an
+  update keeps its target. Supersedes 01M4ZDTVK74596M0ZA46N51NKV in
+  part.
 
 ### riff relay
 
@@ -6994,6 +7014,13 @@ of this part when they merge.
   riff-server gives the URI of each sender, with its claims and its lead
   mark. Each other body of that form is a plain message: the wave does
   not count it.
+- **01M77AB80MEFD9K8Y7FPDATY3D** Each `gh` call of the wave of the
+  daemon has a time limit of 30 seconds, as the look of the wave and the
+  sweep (01M53S7WGM9DQV2DXFHBRSMTP8) have. So does `gh auth token` of
+  the facts of the host before each start of a session, also in `riff
+  run`. At the end of the limit, riff stops `gh` and each process that
+  it started. A `gh` that hangs stops no wave: the call fails, and the
+  wave says why.
 
 ### The lead, the view and the takeover
 

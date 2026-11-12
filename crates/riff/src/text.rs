@@ -4252,6 +4252,18 @@ pub fn gh_no_answer(args: &str, limit: std::time::Duration) -> String {
     no_answer("gh", args, limit)
 }
 
+/// The context of a call `gh ARGS` that the riff daemon did not run: `gh`
+/// would ask for an unlock prompt of the keyring
+/// (01M77AB7XZV8KG8RRZ8C6R5A8X). The line of the locked keyring follows
+/// it.
+///
+/// ```
+/// assert_eq!(riff::text::gh_not_run("pr list"), "riff did not run gh pr list");
+/// ```
+pub fn gh_not_run(args: &str) -> String {
+    format!("riff did not run gh {args}")
+}
+
 /// The error of a step of the host, `program ARGS`, that gave no answer
 /// in `limit` (#1858): riff stopped it.
 ///

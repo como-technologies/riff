@@ -61,6 +61,31 @@
 //!     Locked --> Answers: a look gets an answer (one line, one note to the lead)
 //! ```
 //!
+//! # No unlock prompt
+//!
+//! A read of a locked keyring asks the Secret Service for an unlock
+//! prompt. The riff daemon asks for none (01M77AB7XZV8KG8RRZ8C6R5A8X):
+//! it starts with the login, before a person can answer a prompt, and a
+//! prompt with no desktop can leave the keyring locked for the whole
+//! login. Only a command that a person types asks for it. So the daemon
+//! calls [`ask_no_prompt`] at its start, and [`prompts`] is false then.
+//! The store of riff then gives a [`Locked`] error at once for a secret
+//! in a locked keyring.
+//!
+//! `gh` reads its token from the same keyring, and asks for the prompt
+//! too, with no time limit. So before such a `gh` call, the daemon
+//! looks at the item of `gh` ([`holds_locked`]). While it is locked, the
+//! daemon runs no such `gh`.
+//!
+//! ```mermaid
+//! flowchart LR
+//!     R["a read of the daemon"] --> L{"the item is locked?"}
+//!     L -- no --> V["the value"]
+//!     L -- yes --> E["Locked: unlock it at the desktop<br/>no prompt"]
+//!     P["riff whoami, gh auth status:<br/>a command of a person"] --> U["the unlock prompt at the desktop"]
+//!     U --> O["the keyring is open:<br/>the next look of the daemon reads it"]
+//! ```
+//!
 //! With `RIFF_HOME`, riff keeps each secret in a file of
 //! `$RIFF_HOME/secrets` and never opens the OS keyring
 //! (01M3MY2KSV73WS8D902YCH2PRX). Only the tests set it.
@@ -262,6 +287,69 @@ impl Gate {
 /// or another error, is an answer.
 pub fn refuses(name: &str) -> bool {
     get(name).is_err_and(|e| is_locked(&e))
+}
+
+/// True after [`ask_no_prompt`] in this process.
+static NO_PROMPT: AtomicBool = AtomicBool::new(false);
+
+/// From now on, this process asks the OS keyring for no unlock prompt
+/// (01M77AB7XZV8KG8RRZ8C6R5A8X). A secret in a locked keyring is then a
+/// [`Locked`] error at once. The riff daemon calls it at its start.
+///
+/// ```standalone_crate
+/// use riff_client::secrets;
+///
+/// assert!(secrets::prompts());
+/// secrets::ask_no_prompt();
+/// assert!(!secrets::prompts());
+/// ```
+pub fn ask_no_prompt() {
+    NO_PROMPT.store(true, Ordering::SeqCst);
+}
+
+/// True when this process can ask the OS keyring for an unlock prompt: a
+/// command that a person types. False after [`ask_no_prompt`].
+pub fn prompts() -> bool {
+    !NO_PROMPT.load(Ordering::SeqCst)
+}
+
+/// True in a process that asks for no prompt ([`ask_no_prompt`]) when
+/// the OS keyring holds the secret `user` of the service `service`, and
+/// keeps it locked, or does not answer (01M77AB7XZV8KG8RRZ8C6R5A8X). The
+/// secret is of another program, for example the token of `gh`: a read of
+/// that program asks for the prompt. The look reads no value, and asks
+/// for no prompt. It is false in a process that can ask for a prompt,
+/// with the secret files of a test, and with no keyring.
+///
+/// ```standalone_crate
+/// # keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
+/// use keyring_core::{Entry, Error, mock};
+/// use riff_client::secrets;
+///
+/// let entry = Entry::new("gh:github.com", "")?;
+/// entry.set_password("gho_not_real")?;
+/// let cred: &mock::Cred = entry.as_any().downcast_ref().unwrap();
+/// cred.set_error(Error::NoStorageAccess(Box::new(std::io::Error::other("locked"))));
+/// // A command of a person: `gh` asks for the prompt itself.
+/// assert!(!secrets::holds_locked("gh:github.com", ""));
+/// secrets::ask_no_prompt();
+/// assert!(secrets::holds_locked("gh:github.com", ""));
+/// // The keyring holds no such secret: `gh` reads its token elsewhere.
+/// assert!(!secrets::holds_locked("gh:example.com", ""));
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn holds_locked(service: &str, user: &str) -> bool {
+    if prompts() || files().is_some() {
+        return false;
+    }
+    log("read", format!("{service} {user}").trim_end());
+    let (service, user) = (service.to_owned(), user.to_owned());
+    in_time(KEYRING_WAIT, move || {
+        default_store().is_ok()
+            && Entry::new(&service, &user)
+                .is_ok_and(|entry| matches!(entry.get_credential(), Err(Error::NoStorageAccess(_))))
+    })
+    .unwrap_or(true)
 }
 
 /// Returns the secret with this name, or `None` if there is none. It
@@ -607,13 +695,20 @@ fn file_fail(what: &str, name: &str, file: &Path, e: std::io::Error) -> anyhow::
 }
 
 fn entry(name: &str) -> Result<Entry> {
+    default_store()?;
+    Entry::new(SERVICE, name).map_err(|e| fail("open", name, e))
+}
+
+/// Sets the store of the OS as the default store, when the process has
+/// no store.
+fn default_store() -> Result<()> {
     if keyring_core::get_default_store().is_none() {
         os_store()
             .as_ref()
             .map_err(|e| anyhow!("{e}"))
             .context(NO_KEYRING)?;
     }
-    Entry::new(SERVICE, name).map_err(|e| fail("open", name, e))
+    Ok(())
 }
 
 const NO_KEYRING: &str = "riff cannot open the OS keyring. On Linux, start a Secret \

@@ -1110,6 +1110,7 @@ mod tests {
         Unit {
             exe: "/opt/riff".into(),
             env: vec![],
+            desktop: false,
         }
     }
 

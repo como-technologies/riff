@@ -48,6 +48,7 @@
 //! let unit = Unit {
 //!     exe: "/Users/mike/.cargo/bin/riff".into(),
 //!     env: vec![("PATH".into(), "/opt/homebrew/bin:/usr/bin".into())],
+//!     desktop: false,
 //! };
 //! let text = launchd.plist(&unit)?;
 //! assert!(text.contains("\t\t<string>/Users/mike/.cargo/bin/riff</string>\n\t\t<string>daemon</string>\n"));
@@ -150,11 +151,11 @@ impl Launchd {
     /// use riff::service::Unit;
     ///
     /// let launchd = Launchd::from(Some("/Users/mike".into()), 501)?;
-    /// let unit = Unit { exe: "/opt/a&b/riff".into(), env: vec![("A".into(), "<x>".into())] };
+    /// let unit = Unit { exe: "/opt/a&b/riff".into(), env: vec![("A".into(), "<x>".into())], desktop: false };
     /// let text = launchd.plist(&unit)?;
     /// assert!(text.contains("<string>/opt/a&amp;b/riff</string>"));
     /// assert!(text.contains("\t\t<key>A</key>\n\t\t<string>&lt;x&gt;</string>\n"));
-    /// let bad = Unit { exe: "/opt/riff\n".into(), env: vec![] };
+    /// let bad = Unit { exe: "/opt/riff\n".into(), env: vec![], desktop: false };
     /// assert!(launchd.plist(&bad).is_err());
     /// # Ok::<(), anyhow::Error>(())
     /// ```
@@ -222,7 +223,7 @@ impl Launchd {
     /// use riff::service::Unit;
     ///
     /// let launchd = Launchd::from(Some("/Users/mike".into()), 501)?;
-    /// let unit = Unit { exe: "/opt/my <riff>/riff".into(), env: vec![("PATH".into(), "/a b:/c&d".into())] };
+    /// let unit = Unit { exe: "/opt/my <riff>/riff".into(), env: vec![("PATH".into(), "/a b:/c&d".into())], desktop: false };
     /// assert_eq!(Launchd::parse(&launchd.plist(&unit)?), Some(unit));
     /// let relay = "\t<key>ProgramArguments</key>\n\t<array>\n\t\t<string>/opt/riff</string>\n\t\t<string>relay</string>\n\t</array>\n";
     /// assert_eq!(Launchd::parse(relay), None);
@@ -260,7 +261,11 @@ impl Launchd {
                 _ => {}
             }
         }
-        Some(Unit { exe: exe?, env })
+        Some(Unit {
+            exe: exe?,
+            env,
+            desktop: false,
+        })
     }
 
     /// Runs `launchctl ARGS`, and gives its output.
@@ -618,6 +623,7 @@ exit 0
                 ("PATH".into(), "/opt/homebrew/bin:/usr/bin".into()),
                 ("XDG_DATA_HOME".into(), "/Users/mike/.local/share".into()),
             ],
+            desktop: false,
         }
     }
 
@@ -665,6 +671,7 @@ exit 0
         let bare = Unit {
             exe: "/opt/riff".into(),
             env: vec![],
+            desktop: false,
         };
         let text = launchd.plist(&bare).unwrap();
         assert!(!text.contains("EnvironmentVariables"), "{text}");
@@ -672,6 +679,7 @@ exit 0
         let bad = Unit {
             exe: "/opt/riff".into(),
             env: vec![("PATH".into(), "/a\n</string>".into())],
+            desktop: false,
         };
         assert!(launchd.plist(&bad).is_err());
     }

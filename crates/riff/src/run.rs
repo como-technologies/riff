@@ -1527,16 +1527,12 @@ pub fn credentials_in(home: &Path) -> PathBuf {
         .join(".credentials.json")
 }
 
-/// Reads the [`Host`] facts, with `gh` in the folder `main`, for the
-/// daemon of this process ([`daemon::dir`]). A fact that is missing is
-/// a [`HostFault`] that says the fix.
-pub(crate) fn host_facts(main: &Path) -> Result<Host, HostFault> {
+/// Reads the [`Host`] facts, with `gh` ([`host_gh`]), for the daemon of
+/// this process ([`daemon::dir`]). A fact that is missing is a
+/// [`HostFault`] that says the fix.
+pub(crate) fn host_facts() -> Result<Host, HostFault> {
     let missing = HostFault::Missing;
-    // The sign-in of `gh` for the steps on the host. riff keeps no token
-    // of it (01M6Z87A04EXTT1FFJSJ1EM6TB).
-    output("gh", main, &["auth", "token"])
-        .map(|token| drop(zeroize::Zeroizing::new(token)))
-        .map_err(|e| missing(format!("{}: {e:#}", text::RUN_NO_GH)))?;
+    gh_signed_in(&host_gh())?;
     let home = std::env::var_os("HOME")
         .filter(|h| !h.is_empty())
         .map(PathBuf::from)
@@ -1548,6 +1544,59 @@ pub(crate) fn host_facts(main: &Path) -> Result<Host, HostFault> {
     let dir = daemon::dir().map_err(|e| missing(format!("{e:#}")))?;
     let claude = claude_of(&dir, &credentials_in(&home), now_ms())?;
     Ok(Host { home, user, claude })
+}
+
+/// The `gh` of the facts of the host. Each call has the time limit
+/// [`GH_LIMIT`](daemon::sweep::GH_LIMIT), as the look of a wave has, so a
+/// `gh` that hangs stops no wave (01M77AB80MEFD9K8Y7FPDATY3D).
+///
+/// ```
+/// use riff::daemon::sweep::GH_LIMIT;
+///
+/// assert_eq!(riff::run::host_gh().limit(), Some(GH_LIMIT));
+/// ```
+pub fn host_gh() -> pr::Gh {
+    pr::Gh::in_daemon("token").with_limit(daemon::sweep::GH_LIMIT)
+}
+
+/// The fact of the host that `gh` has a sign-in, with `gh auth token`.
+/// riff keeps no token of it (01M6Z87A04EXTT1FFJSJ1EM6TB). A `gh` that
+/// the riff daemon does not run, because the keyring is locked
+/// (01M77AB7XZV8KG8RRZ8C6R5A8X), is a fault that says to unlock it at the
+/// desktop. A `gh` with no answer in its time limit is a fault that says
+/// so (01M77AB80MEFD9K8Y7FPDATY3D).
+///
+/// ```
+/// use std::time::{Duration, Instant};
+/// use riff::run::{HostFault, gh_signed_in};
+///
+/// let dir = tempfile::tempdir()?;
+/// let gh = |script: &str| riff::pr::Gh::at(isolated::write_program(dir.path().join("gh"), script));
+/// assert_eq!(gh_signed_in(&gh("#!/bin/sh\necho gho_not_real\n")), Ok(()));
+/// let out = gh_signed_in(&gh("#!/bin/sh\necho 'not logged in' >&2\nexit 1\n"));
+/// assert_eq!(
+///     out,
+///     Err(HostFault::Missing(
+///         "riff needs the sign-in of gh. Run: gh auth login: gh auth token: not logged in".into()
+///     ))
+/// );
+/// // A gh that hangs ends at its limit, and the fault says why.
+/// let start = Instant::now();
+/// let hangs = gh("#!/bin/sh\nsleep 600\n").with_limit(Duration::from_millis(500));
+/// let Err(HostFault::Missing(why)) = gh_signed_in(&hangs) else { panic!("no fault") };
+/// assert!(why.ends_with("gh auth token: no answer in 0.5 s. riff stopped it."), "{why}");
+/// assert!(start.elapsed() < Duration::from_secs(10));
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn gh_signed_in(gh: &pr::Gh) -> Result<(), HostFault> {
+    match gh.run(&["auth", "token"], None) {
+        Ok(token) => {
+            drop(zeroize::Zeroizing::new(token));
+            Ok(())
+        }
+        Err(e) if riff_client::secrets::is_locked(&e) => Err(HostFault::Missing(format!("{e:#}"))),
+        Err(e) => Err(HostFault::Missing(format!("{}: {e:#}", text::RUN_NO_GH))),
+    }
 }
 
 /// The trailers of the pull request of the session `session` in its
@@ -1708,9 +1757,9 @@ pub(crate) async fn no_verify_now(
 /// Checks each fact that a session needs, before the claim. The daemon
 /// in the folder `daemon` pulls the image when this machine does not
 /// have it (01M4Z81B5A456HDKW7G0WFGCY6).
-async fn check(daemon: &Path, main: &Path, issue: u64, image: &str) -> Result<Checked> {
+async fn check(daemon: &Path, issue: u64, image: &str) -> Result<Checked> {
     daemon::image(daemon, image, |line| println!("{line}")).await?;
-    let host = host_facts(main)?;
+    let host = host_facts()?;
     Ok(Checked {
         frame: frame(&pr::Gh::here("run"), issue)?,
         host,
@@ -2125,7 +2174,7 @@ pub async fn run_with(
     };
     let image = image.map_or_else(|| merged.image.to_string(), str::to_owned);
     let image = image.as_str();
-    let checked = check(daemon, &main, issue, image).await?;
+    let checked = check(daemon, issue, image).await?;
     let Some(thread) = here.default_thread() else {
         bail!("{}", text::RUN_NO_REPO);
     };

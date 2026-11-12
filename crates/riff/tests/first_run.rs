@@ -27,10 +27,11 @@ fn text(out: &[u8]) -> String {
 
 /// The calls of `systemctl` in `log` that change the unit: each call
 /// but `is-active`, which riff also makes to wait for a daemon that
-/// starts (01M5MS2T8VY8NX4VBMQTCKWDKH).
+/// starts (01M5MS2T8VY8NX4VBMQTCKWDKH), and to ask for a desktop
+/// (01M77AB12JTJAEEAND02DNK9NG).
 fn changes(log: &str) -> String {
     log.lines()
-        .filter(|l| !l.ends_with("is-active riff.service"))
+        .filter(|l| !l.starts_with("systemctl --user is-active "))
         .map(|l| format!("{l}\n"))
         .collect()
 }
@@ -226,7 +227,7 @@ async fn riff_init_installs_the_daemon_and_the_daemon_pulls_the_image() {
     assert_eq!(
         changes(&machine.read("systemctl.log")),
         "systemctl --user daemon-reload\n\
-         systemctl --user enable riff.service\n\
+         systemctl --user reenable riff.service\n\
          systemctl --user restart riff.service\n"
     );
     let pulls = |log: &str| log.lines().filter(|l| l.starts_with("podman pull")).count();

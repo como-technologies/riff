@@ -862,7 +862,7 @@ async fn launch(
         return Err(refused.into());
     }
     // With no token, a sign-in file that ends soon is no token either.
-    let host = run::host_facts(main).map_err(|fault| match fault {
+    let host = run::host_facts().map_err(|fault| match fault {
         run::HostFault::SignInEnds(_) => anyhow::anyhow!("{}", text::LEAD_NEEDS_TOKEN),
         fault => fault.into(),
     })?;
@@ -1068,7 +1068,7 @@ pub fn again(wave: Option<&crate::wave::Wave>, record: &daemon::Record) -> Resul
         }
     };
     let (main, common) = run::main_clone(&main)?;
-    let host = run::host_facts(&main).map_err(|fault| match fault {
+    let host = run::host_facts().map_err(|fault| match fault {
         run::HostFault::SignInEnds(_) => anyhow::anyhow!("{}", text::LEAD_NEEDS_TOKEN),
         fault => fault.into(),
     })?;

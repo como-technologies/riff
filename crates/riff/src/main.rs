@@ -1472,7 +1472,10 @@ enum DaemonCommand {
     ///
     /// On Linux, it writes riff.service in ~/.config/systemd/user, with
     /// the path of this riff and the PATH of this shell. It enables the
-    /// unit and starts it again, so a new riff takes effect. On a Mac, it
+    /// unit and starts it again, so a new riff takes effect. When
+    /// graphical-session.target is active, the unit starts after the
+    /// desktop of each login, else at the start of the user manager of
+    /// systemd. On a Mac, it
     /// writes the launchd agent io.github.como-technologies.riff in
     /// ~/Library/LaunchAgents, and loads it again with launchctl. It
     /// waits until the daemon answers. With RIFF_HOME or RIFF_DATA set,
