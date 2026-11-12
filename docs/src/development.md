@@ -663,7 +663,7 @@ ends, even when the command hides the error.
 
 Sign in the command with `common::sign_in(&server, home, user)`. For a
 client in the test process, use `common::api(&server, user, session)`.
-The users are `brett` (owner), `mike` (admin) and `bob` (member).
+The users are `brett` (admin), `mike` (admin) and `bob` (member).
 
 ```rust,ignore
 let server = common::start_signed().await;
@@ -1811,7 +1811,7 @@ in the data folder of riff.
 |---|---|
 | The key of the daemon | The secret `daemon-key DIR` in the OS keyring |
 | The records and the riffs of the daemon | The folder `state` in DIR, and each folder `state.lost-MS` beside it |
-| The invites of the owner | `invites.json` in DIR |
+| The invites | `invites.json` in DIR |
 | The main clones of the claims | `forges.json` in DIR |
 | The claims of `--peers` | The refs `refs/riff/claims/ITEM` on GitHub |
 
@@ -5805,7 +5805,7 @@ release. Write it in "Done when" as a line that starts with `Live:`:
 ## Done when:
 
 - A test with a fake GitHub: `riff github check` prints the bot.
-- Live: the owner runs `riff github check`, and it passes.
+- Live: an admin runs `riff github check`, and it passes.
 ```
 
 A line of "Done when" is a line after the "Done when" line or heading,
@@ -5979,12 +5979,12 @@ riff usage 12 --total
 ## Check that a wave followed the rules
 
 `riff audit` reads the log of the riff and the forge, and checks that
-the sessions followed the flow of a wave. Only the owner or an admin
-can read the log. Run it in your clone. It needs `gh`. Give the number
-of the wave. The name is not necessary.
+the sessions followed the flow of a wave. Only an admin can read the
+log. Run it in your clone. It needs `gh`. Give the number of the wave.
+The name is not necessary.
 The lead runs it in its container too: the riff daemon of the host reads
 the log for the lead, and riff-server still gives the log only to the
-owner and the admins.
+admins.
 
 ```sh
 riff audit --wave 18
@@ -6313,30 +6313,13 @@ the Claude Code session again, as a new session.
 
 ### Allow another domain
 
-The accounts of `comotechnologies.io` can sign in, and the owner and
-the members (see [Owner and members](#owner-and-members)). To allow
+The accounts of `comotechnologies.io` can sign in, and the admins and
+the members (see [Admins and members](#admins-and-members)). To allow
 another Workspace domain, add `--allowed-domain DOMAIN` to
 `riff-server`.
 Give `--allowed-domain` once for each domain, the default domain too.
 Two domains do not share a user: `alice@a.com` and `alice@b.com` both
 give `alice`, and only the first account gets it.
-
-### Name an admin
-
-An admin can end each sign-in of another person, and invite and
-remove members. The owner is an admin. Name each other admin by
-verified email, once for each admin:
-
-```sh
-riff-server --admin alice@comotechnologies.io
-```
-
-A name that is not an email names nobody: the log says so at start.
-Then an admin runs:
-
-```sh
-riff logout --all --user USER
-```
 
 ### Tokens
 
@@ -6363,28 +6346,45 @@ riff-server --issuer https://login.example.com --client-id ID --client-secret SE
 
 Without `--client-id`, the server has no sign-in.
 
-## Owner and members
+## Admins and members
+
+A riff with sign-in has two roles: admin and member. An admin is a
+member too. Each admin can invite and remove a member, make a person an
+admin, make an admin a member again, and end the sign-ins of another
+person. The riff keeps one admin at least.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Admin: the first sign-in, or riff-server --admin EMAIL
+    [*] --> Member: riff invite EMAIL
+    Member --> Admin: riff admin add EMAIL
+    Admin --> Member: riff admin remove EMAIL, while another admin stays
+    Member --> [*]: riff remove EMAIL
+```
+
+A person signs in when the person is a member, when the account is in
+an allowed domain, or when the riff has no admin. The first person who
+signs in to a riff with no admin is an admin:
 
 ```mermaid
 flowchart TD
-    A[a person signs in] --> O{owner, admin or member?}
+    A[a person signs in] --> O{admin or member?}
     O -- yes --> IN[signed in]
     O -- no --> D{allowed domain?}
     D -- yes --> IN
-    D -- no --> N{riff has no owner and no admin?}
-    N -- yes --> OW[signed in as the owner]
-    N -- no --> R[refused: ask the owner for an invite]
+    D -- no --> N{riff has no admin?}
+    N -- yes --> IN
+    N -- no --> R[refused: ask an admin for an invite]
+    IN --> F{riff has no admin yet?}
+    F -- yes --> AD[the person is an admin]
 ```
 
-The first person who signs in to a riff is its owner. The owner is an
-admin. On a riff with `--admin`, only an admin becomes the owner.
-
 A riff with sign-in listens only on a loopback address until it has an
-owner. So the first person signs in on the machine of the server. A
-server with no bucket forgets its owner when it starts again. To let
-it listen on your network, name the owner in the settings.
+admin. So the first person signs in on the machine of the server. To
+let the server listen on your network at once, name an admin when you
+start it.
 
-### Become the owner
+### Become the first admin
 
 On the machine of the server, after you start the server with sign-in,
 sign in first:
@@ -6393,21 +6393,33 @@ sign in first:
 riff login
 ```
 
-### Name the owner when you set up the server
+### Name an admin when you start the server
 
-A server that must listen on the network at once needs an owner. Name
-it by verified email:
+Name each admin by verified email. Give `--admin` once for each admin:
 
 ```sh
-riff-server --owner alice@example.com --listen 0.0.0.0:7878
+riff-server --admin alice@example.com --listen 0.0.0.0:7878
 ```
 
-A riff that has an owner keeps it. `--owner` does not change it.
+`RIFF_ADMINS` holds the same emails, with a comma between two emails.
+At each start, the server makes each of them an admin and a member. So
+an admin that `riff admin remove` made a member is an admin again at
+the next start with that setting. The riff has an admin before the
+first sign-in. So the next person who signs in is a member, and needs
+an invite or an allowed domain. A name that is not an email names
+nobody: the log says so at the start.
+
+With no admin, the server does not start on an address that is not
+loopback. It says:
+
+```text
+this riff has no admin yet, so it listens only on a loopback address, not on 0.0.0.0:7878. Sign in first on this machine with riff login: the first person is an admin. Or name an admin with --admin EMAIL (RIFF_ADMINS).
+```
 
 ### Invite a person
 
 A member needs no allowed domain, so a person with a personal Google
-account can join. Only the owner or an admin can invite:
+account can join. Only an admin can invite:
 
 ```sh
 riff invite bob@gmail.com
@@ -6421,19 +6433,19 @@ Before the invite,
 ### Remove a person
 
 It removes the member and ends each sign-in of that person, on each
-device. Only the owner or an admin can remove. The owner stays:
+device. Only an admin can remove:
 
 ```sh
 riff remove bob@gmail.com
 ```
 
-A person of an allowed domain can still sign in after a removal. To
-remove an admin, first make the admin a member again.
+A person of an allowed domain can still sign in after a removal. riff
+does not remove an admin. It says
+`bob@gmail.com is an admin; run riff admin remove bob@gmail.com first`.
 
 ### Make a person an admin
 
-An admin can invite and remove members. Only the owner can make an
-admin. The person is also a member:
+Each admin can make a person an admin. The person is also a member:
 
 ```sh
 riff admin add bob@gmail.com
@@ -6441,26 +6453,27 @@ riff admin add bob@gmail.com
 
 ### Make an admin a member again
 
-The person stays a member, but can no longer invite or remove. Only
-the owner can do this. The owner stays an admin:
+The person stays a member, but can no longer invite or remove. Each
+admin can do this, also for the own role:
 
 ```sh
 riff admin remove bob@gmail.com
 ```
 
-### Pass the owner role
+The last admin stays. riff refuses, and changes nothing:
 
-A riff has one owner. The owner can pass the role to a member or an
-admin. You stay an admin. Only the owner can do this:
-
-```sh
-riff owner bob@gmail.com
+```text
+bob@gmail.com is the last admin of this riff, and the riff keeps one; make another person an admin first: riff admin add EMAIL
 ```
 
-The new owner stays after a restart. The `--owner` setting of
-`riff-server` names the owner only of a new riff. An admin can also
-ask for the role: see
-[Take the owner role](start-a-team-riff.md#take-the-owner-role).
+### End the sign-ins of another person
+
+An admin can end each sign-in of another person, on each device. The
+person stays a member, and can sign in again:
+
+```sh
+riff logout --all --user USER
+```
 
 ## Run the server in a terminal
 
@@ -6482,8 +6495,9 @@ see [The tools of the log](#the-tools-of-the-log).
 
 - With no OAuth client, an address that is not loopback needs
   `--insecure`. Else the server does not start.
-- With sign-in, an address that is not loopback needs an owner:
-  `--owner EMAIL`, or a bucket that holds one.
+- With sign-in, an address that is not loopback needs an admin:
+  `--admin EMAIL`, or a bucket that holds one. See
+  [Name an admin when you start the server](#name-an-admin-when-you-start-the-server).
 
 ### Read the log of the server
 
@@ -6619,8 +6633,8 @@ Put the release that ran in place of `vX.Y.Z`. `riff cloud list` shows
 it.
 
 The new state has no threads, sessions, claims or members. The deploy
-names the owner again. Each person signs in again with `riff login`,
-and the owner invites each member again.
+makes the email of `RIFF_OWNER` an admin again. Each person signs in
+again with `riff login`, and an admin invites each member again.
 
 ## Keep the state in a directory
 
@@ -6689,10 +6703,9 @@ riff-server log --dir ~/.local/state/riff-server | grep 'the session ann/s1)'
 
 ### Find who changed the people
 
-The people of the riff are records of the log too: who joined, who is
-a member, an admin or the owner, and each request for the owner role.
-To find each change of one person, or each change that one person
-made:
+The people of the riff are records of the log too: who joined, and who
+is a member or an admin. To find each change of one person, or each
+change that one person made:
 
 ```sh
 riff-server log --dir ~/.local/state/riff-server | grep bob@gmail.com
@@ -6701,8 +6714,9 @@ riff-server log --dir ~/.local/state/riff-server | grep 'the person ada)'
 
 ```text
 12  2026-10-01T12:00:00Z  person_joined  ada@gmail.com as ada  (admit, the sign-in ada@gmail.com)
-13  2026-10-01T12:00:00Z  owner_set  ada@gmail.com  (admit, the sign-in ada@gmail.com)
-14  2026-10-01T12:01:00Z  member_invited  bob@gmail.com  (invite, the person ada)
+13  2026-10-01T12:00:00Z  member_invited  ada@gmail.com  (admit, the sign-in ada@gmail.com)
+14  2026-10-01T12:00:00Z  admin_set  ada@gmail.com is an admin  (admit, the sign-in ada@gmail.com)
+15  2026-10-01T12:01:00Z  member_invited  bob@gmail.com  (invite, the person ada)
 21  2026-10-01T12:09:00Z  member_removed  bob@gmail.com  (remove, the person ada)
 ```
 
@@ -6712,8 +6726,7 @@ riff-server log --dir ~/.local/state/riff-server | grep 'the person ada)'
 | `person_joined` | An email signed in for the first time. It holds its USER. |
 | `member_invited`, `member_removed` | An email is a member, or it is not. A removal ends each sign-in of the person. |
 | `admin_set` | An email is an admin, or a member again. |
-| `owner_set` | An email is the owner. With no email, the owner is gone. |
-| `owner_asked`, `owner_denied` | An admin asks for the owner role, or the owner keeps it. |
+| `owner_set`, `owner_asked`, `owner_denied` | Records of an old log, from the owner role. An `owner_set` with an email makes that email an admin. The other records change nothing. |
 | `signins_ended` | Each sign-in of a person ended: `riff logout --all`. |
 
 An email is in a record, and in the answer to a member. It is in no
@@ -7121,8 +7134,8 @@ gcloud projects get-iam-policy como-riff --flatten bindings \
 
 The setup makes an alert in the cloud project. When a log line of
 `riff-server` has the severity `ERROR` or more, Google Cloud sends an
-email to the owner, at most one each 5 minutes. The repository is
-public, so give your email in `RIFF_OWNER`:
+email to you, at most one each 5 minutes. The repository is public, so
+give your email in `RIFF_OWNER`:
 
 ```sh
 RIFF_OWNER=YOUR_EMAIL riff cloud create shared
@@ -7262,14 +7275,14 @@ flowchart TD
     Q -- "yes: riff release cut refuses and lists each alert" --> Q1{Fix or dismiss}
     Q1 -- "dismiss it with the reason" --> Q
     Q1 -- "fix it in the code: the fix merges" --> C
-    Q -- no --> G[riff release cut X.Y.Z: the tag on the last commit of main with the lead App, the GitHub release, chat line to the owner]
+    Q -- no --> G[riff release cut X.Y.Z: the tag on the last commit of main with the lead App, the GitHub release, chat line to each admin]
     G --> P[The pull request of the next version A.B.C: riff/verify passed at the cut, auto-merge on]
     P --> P1{Gate}
     P1 -- "FAIL: wakes the lead: the Gate failed, with its jobs" --> P2[Run the failed jobs again] --> P
     P1 -- PASS --> V[It merges by itself]
     V -- "wakes the lead: the pull request merged" --> V1[A.B.C on main: the first commit of the next wave]
     G --> T[The CI run of the tag takes the release build of the commit, and compiles nothing]
-    T -- "wakes the lead and the owner when the job Deploy waits" --> H{{"HUMAN GATE 1: riff release approve vX.Y.Z, by a person in a terminal (pauses the riff, approves production)"}}
+    T -- "wakes the lead and each admin when the job Deploy waits" --> H{{"HUMAN GATE 1: riff release approve vX.Y.Z, by a person in a terminal (pauses the riff, approves production)"}}
     H -- no answer --> H1[Waits. Work goes on. The next cut refuses. Reminder in chat each 4 h]
     H1 --> H
     H -- "a lead holds: riff release hold" --> H2[approve refuses until the hold ends, or a person passes --over-holds]
@@ -7294,21 +7307,22 @@ The gates:
 | Release build | CI, for each push to `main` | the release build and the release test of the commit set its artifacts and the status `riff/release-test` (see [The release build of each commit of main](#the-release-build-of-each-commit-of-main)) | `riff release test` and `cut` refuse |
 | Real session | the riff daemon of a host, or a person who wrote none of the items, on a host | `riff release test vX.Y.Z --host HOST`, or `just real-session`, sets the commit status `riff/real-session` | `riff release cut` refuses |
 | Alerts | the lead or a person: fix each alert, or dismiss it with the reason (see [Cut the release](#cut-the-release)) | `riff release cut X.Y.Z` checks them | `cut` refuses |
-| HUMAN GATE 1: deploy | the owner or an admin, in a terminal. No session, also not the lead: a message in riff chat approves nothing | `riff release approve vX.Y.Z` | the release waits; the riff is not paused; the next `cut` refuses |
+| HUMAN GATE 1: deploy | an admin, in a terminal. No session, also not the lead: a message in riff chat approves nothing | `riff release approve vX.Y.Z` | the release waits; the riff is not paused; the next `cut` refuses |
 | Hold | a lead of another repository, in a critical place | `riff release hold vX.Y.Z REASON` | `approve` refuses until the lead ends the hold, or a person passes `--over-holds` |
-| HUMAN GATE 2: rollback | the owner or an admin, in a terminal | `riff release approve vPREV` | the new release keeps serving; the riff stays paused |
+| HUMAN GATE 2: rollback | an admin, in a terminal | `riff release approve vPREV` | the new release keeps serving; the riff stays paused |
 | Log check | the CI job `Check the deploy`, as `riff-check`, 5 minutes after the job `Deploy` (see [Check the release after the deploy](#check-the-release-after-the-deploy)) | `riff cloud check shared` sets the commit status `riff/deploy-check` of the tag | the watch of the deploy waits up to 30 minutes for it; `riff release check` refuses and says when the job ends |
 
 The state of the current release in `riff release status` is `building`,
 `built`, `tested`, `published`, `waiting`, `deploying`, `deployed`,
 `checked`, `failed` or `rolled back`.
 
-riff asks the owner at HUMAN GATE 1 only when the job `Deploy` waits
+riff asks each admin at HUMAN GATE 1 only when the job `Deploy` waits
 for `production`. Before that, riff asks for nothing. The chat line of
 `riff release cut` says that the CI run of the tag builds, and that
-riff tells the owner when the deploy waits. When the job `Deploy`
-waits, riff posts the line "waits for your approval" in `riff chat`,
-and wakes the owner. That line is the only ask.
+riff tells each admin when the deploy waits. When the job `Deploy`
+waits, riff posts the line "waits for your approval" in `riff chat`.
+The line names each admin with `@USER`, and wakes each admin. That
+line is the only ask.
 
 #### Turn on the release cycle
 
@@ -7386,7 +7400,7 @@ sequenceDiagram
 |---|---|---|
 | The pull request of the next version | `riff release cut` | the Gate failed (the failed jobs; the watch stays), the pull request merged (next: the next step of the release), or it closed with no merge (next: `riff release cut`). A Gate that passed gets no message: the pull request merges by itself |
 | The real-session test | `riff release test --host HOST` | the test passed (next: `riff release cut`), or failed |
-| The CI run of the tag | `riff release cut` | the job `Deploy` waits for a person (the owner gets the line in `riff chat`), or a job failed |
+| The CI run of the tag | `riff release cut` | the job `Deploy` waits for a person (each admin gets the line in `riff chat`), or a job failed |
 | The job `Deploy` | `riff release approve`, `retry`, `rollback` | the job failed (the failed jobs), or it passed, your container runs the release, and the job `Check the deploy` set its status or ended (see [Wait for the new riff before the check](#wait-for-the-new-riff-before-the-check) and [Check the release after the deploy](#check-the-release-after-the-deploy)) |
 | The wave | `riff host join` | the last open item of the current wave closed (next: `riff release test`, then `riff release cut`); from the release issue to the check, it also gives the step of the release to `riff who` and the TUI |
 | The check of the lead | the watch of the job `Deploy`, at its end | never: it gives the step to `riff who` and the TUI (see [See who acts next on the release](#see-who-acts-next-on-the-release)) |
@@ -7397,9 +7411,9 @@ release cut` of the same tag, adds no second watch of its deploy.
 
 The CI run of the tag runs the jobs before the job `Deploy` first, so
 the deploy does not wait yet. The watch posts the line "waits for your
-approval" to the owner in `riff chat` only when the job `Deploy` waits
-for `production`. While it waits, the watch reminds the owner in `riff
-chat` each 4 hours.
+approval" to each admin in `riff chat` only when the job `Deploy`
+waits for `production`. While it waits, the watch reminds each admin
+in `riff chat` each 4 hours.
 
 The daemon keeps the watches in the file `watches.json` of its folder,
 so a restart of the daemon keeps them. The watches of a check are in
@@ -7523,7 +7537,7 @@ release  v3.3.0: the deploy runs; the riff is paused
 | The deploy runs | `v3.3.0: the deploy runs; the riff is paused` | nobody: the job runs |
 | The deploy passed | `v3.3.0: the deploy passed; it waits for the check of the lead of como-technologies/riff` | the lead: `riff release check v3.3.0` |
 | The deploy failed | `v3.3.0: the deploy failed; it waits for the check of the lead of como-technologies/riff` | the lead: `riff release check v3.3.0` files the issue |
-| A check failed | `v3.3.0: the check failed: the owner resumes or rolls back` | the owner: `riff resume --riff`, or a rollback |
+| A check failed | `v3.3.0: the check failed: an admin resumes or rolls back` | an admin: `riff resume --riff`, or a rollback |
 | A check failed, and the riff runs | `v3.3.0: the check failed: the lead of como-technologies/riff fixes forward or rolls back` | the lead |
 | The wave is complete, and the full check of `main` runs | `Wave 41 is complete: the release waits for its cut; the full check of main runs` | nobody: the check runs |
 | The wave is complete, and the full check of `main` failed | `Wave 41 is complete: the release waits for its cut; the full check of main failed` | the session that fixes `main` |
@@ -7640,7 +7654,7 @@ Each other lead hears the hold, and so does the lead of the release.
 hold: the lead of n8behavior/sens-o-matic asks to wait: I run a database migration until 17:00.
 ```
 
-The line to the owner in `riff chat`, while the deploy waits for the
+The line to each admin in `riff chat`, while the deploy waits for the
 approval, shows each hold too. While a hold stands, `riff release
 approve` refuses and names each reason. A person who knows better
 passes `--over-holds`, in a plain terminal:
@@ -8066,9 +8080,9 @@ Cut the release when the real-session test passed on the last commit
 of `origin/main`. The cut tags that commit (see
 [How a release is cut](how-it-works.md#how-a-release-is-cut)).
 
-Only the owner or an admin of the riff, in a terminal or by the lead,
-cuts the release. A riff with no sign-in has no roles: there each
-person and each lead may. The riff runs on:
+Only an admin of the riff, in a terminal or by the lead, cuts the
+release. A riff with no sign-in has no roles: there each person and
+each lead may. The riff runs on:
 
 ```sh
 riff release cut 3.3.0
@@ -8203,7 +8217,7 @@ riff prints each step that it did, and the next step:
 ```text
 riff tagged 4f2a9c1e… as v3.3.0, and made the release: https://github.com/como-technologies/riff/releases/tag/v3.3.0
 The CI run of the tag: https://github.com/como-technologies/riff/actions/runs/9
-riff told the owner mike in riff chat.
+riff told each admin in riff chat.
 riff watches the deploy of v3.3.0. The lead gets one message when it ends.
 The pull request #1141 sets the next version 3.4.0 on main, for issue #7, with auto-merge on: https://github.com/como-technologies/riff/pull/1141
 riff passed the verify of its one commit: it merges when its Gate passes.
@@ -8211,7 +8225,7 @@ riff watches the pull request #1141 of the release. The lead gets one message wh
 next: a person runs riff release approve v3.3.0 in a terminal when the deploy waits
 ```
 
-riff-bot writes one line in riff chat to the owner. It asks for
+riff-bot writes one line in riff chat to each admin. It asks for
 nothing:
 
 ```text
@@ -8222,7 +8236,7 @@ riff posts one note to each other lead (see
 [Know what the other leads hear](#know-what-the-other-leads-hear)). It
 registers a watch of the CI run of the tag. When the job `Deploy` waits
 for `production`, the daemon posts the line "waits for your approval"
-to the owner, with `riff release approve v3.3.0`, and one message to
+to each admin, with `riff release approve v3.3.0`, and one message to
 the lead. When a job failed, it wakes the lead with the failed jobs. It
 also registers the watch of the pull request of the next version (see
 [Watch the pull request of the next version](#watch-the-pull-request-of-the-next-version)).
@@ -8330,7 +8344,7 @@ Steps of the release:
 
 #### Approve the deploy
 
-Only a person, the owner or an admin, approves the deploy, in a plain
+Only a person, an admin, approves the deploy, in a plain
 terminal (HUMAN GATE 1). Exit each Claude Code session first: the
 command refuses each agent session, also in a `!` command of Claude
 Code. It refuses the lead too, in its container and in a terminal,
@@ -8414,7 +8428,7 @@ image and deploys it. A tag that is not `vX.Y.Z` does not deploy. One
 deploy runs at a time.
 
 The job `Deploy` runs in the GitHub environment `production`. It waits
-for the approval of the owner, with `riff release approve`. See
+for the approval of an admin, with `riff release approve`. See
 [Approve the deploy of a release](#approve-the-deploy-of-a-release).
 
 Then update each machine: each person runs `riff update`, or has
@@ -8461,7 +8475,7 @@ riff cloud log shared --limit 1000 --filter 'timestamp>="START" AND textPayload:
 
 ### Approve the deploy of a release
 
-The owner approves each deploy to the shared riff with
+An admin approves each deploy to the shared riff with
 `riff release approve` in a plain terminal: see
 [Approve the deploy](#approve-the-deploy). Do not approve in the GitHub
 app or on the page of the run: they do not pause the riff.
@@ -8573,7 +8587,7 @@ flowchart TD
    `riff server` then shows `v1.0.0  same build ✓` on the `release`
    line and `yes, signed in as USER` on the `sign-in` line, the riff
    ID is the one of before.
-6. The whole riff is paused after the import. The owner or an admin
+6. The whole riff is paused after the import. An admin
    resumes it. riff then asks the riff daemon to run the wave (see
    [riff starts the work by itself](how-it-works.md#riff-starts-the-work-by-itself)):
 
@@ -8663,12 +8677,15 @@ riff release test v3.4.0 --host thelio
 riff release cut 3.4.0
 ```
 
-### Name the owner of the cloud riff
+### Name the first admin of the cloud riff
 
-The cloud riff listens on the network, so it needs an owner from its
-first start. Each deploy passes the GitHub Actions variable
-`RIFF_OWNER` as `--owner`. With no variable, the deploy stops. Set it
-once, with your verified email:
+The cloud riff listens on the network, so it needs an admin from its
+first start. The GitHub Actions variable `RIFF_OWNER` holds your
+email: the first admin of the cloud riff, and the address of the
+alert. Each deploy passes it to `riff-server` as `RIFF_ADMINS` (see
+[Name an admin when you start the server](#name-an-admin-when-you-start-the-server)).
+With no variable, the deploy stops. Set it once, with your verified
+email:
 
 ```sh
 gh variable set RIFF_OWNER --body alice@comotechnologies.io
@@ -8680,7 +8697,9 @@ For [Deploy by hand](#deploy-by-hand), export it in your shell too:
 export RIFF_OWNER=alice@comotechnologies.io
 ```
 
-A riff that has an owner keeps it, so a new value names nobody new.
+A new value makes one more admin at the next deploy, and the old admin
+stays an admin. To make another person an admin, see
+[Make a person an admin](#make-a-person-an-admin).
 
 ### Turn the shared server on
 
@@ -8864,8 +8883,8 @@ the repository does it. `riff cloud create stage` also makes the deploy
 account `riff-stage-deploy`, which CI signs in as with no key.
 
 Make the GitHub environments. The environment `stage` needs no
-approval. The environment `production` waits for the approval of the
-owner (the reviewer ID is the GitHub user ID):
+approval. The environment `production` waits for your approval (the
+reviewer ID is your GitHub user ID):
 
 ```sh
 gh api -X PUT repos/como-technologies/riff/environments/stage
@@ -8879,7 +8898,7 @@ Give `gh api` its body in a file, not on stdin: `--input -` can lose
 the body (#566).
 
 The smoke test signs in as a test account: a Google account that only
-the stage admits. Invite it on the stage, as the owner of the stage:
+the stage admits. Invite it on the stage, as an admin of the stage:
 
 ```sh
 . deploy/cloud/stage.env
@@ -8942,8 +8961,8 @@ RIFF_HOME=$(mktemp -d) riff cloud smoke stage
 ### Deploy a release on the stage
 
 Give the release tag. The deploy uses the image that CI built for the
-tag, so CI must have deployed that tag before. The stage needs an
-owner, as the shared riff:
+tag, so CI must have deployed that tag before. The stage needs a
+first admin, as the shared riff:
 
 ```sh
 export RIFF_OWNER=YOUR_EMAIL
@@ -8973,8 +8992,8 @@ deploy (see the next step).
 Each client has a home of its own: its binaries, its settings, its
 secrets and its Claude Code settings. So the rehearsal never changes
 the `riff` of your machine. Make two homes, one for each person. Use
-two accounts of the organization: `ann` is the owner (`RIFF_OWNER`),
-and `bob` is the second account.
+two accounts of the organization: `ann` is the first admin
+(`RIFF_OWNER`), and `bob` is the second account.
 
 ```sh
 for who in ann bob; do

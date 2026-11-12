@@ -1,6 +1,6 @@
 //! "Start a Team Riff" (01M3MEFG6F102T1H8DFJ38EJ4A): the page starts a
 //! real `riff-server` with the OIDC app in the environment. The test
-//! gives it a fake provider, signs in the owner and invites a person.
+//! gives it a fake provider, signs in the admin and invites a person.
 //! The `riff` commands of the page are checked in
 //! `crates/riff/tests/start_a_riff.rs`.
 
@@ -56,14 +56,14 @@ fn free_port() -> u16 {
 const WAIT: Duration = Duration::from_secs(60);
 
 /// Runs the `riff-server` command of the page on a free port, and gives
-/// the server and its URL. `URL` is that URL and `EMAIL` is `owner`.
+/// the server and its URL. `URL` is that URL and `EMAIL` is `admin`.
 /// The environment holds the OIDC app of the page, with the fake
 /// `issuer`, and the listen address of the test. The TLS proxy of the
 /// page is not in the test. Another process can take the free port
 /// before the server listens there. Then the server ends, and the test
 /// starts it again on a new port. The log line of the server shows that
 /// it is the server that listens there (01M6YP7699AQGQ0QAG7HTY9ME9).
-async fn start(command: &str, issuer: &str, owner: &str) -> (Server, String) {
+async fn start(command: &str, issuer: &str, admin: &str) -> (Server, String) {
     let start = Instant::now();
     loop {
         let listen = format!("127.0.0.1:{}", free_port());
@@ -74,7 +74,7 @@ async fn start(command: &str, issuer: &str, owner: &str) -> (Server, String) {
             .skip(1)
             .map(|word| match word {
                 "URL" => url.clone(),
-                "EMAIL" => owner.to_owned(),
+                "EMAIL" => admin.to_owned(),
                 other => other.to_owned(),
             })
             .collect();
@@ -126,7 +126,7 @@ async fn sign_in(url: &str, issuer: &str, email: &str) -> (Key, TokenReply) {
 }
 
 #[tokio::test]
-async fn the_page_starts_a_team_riff_signs_in_the_owner_and_invites_a_person() {
+async fn the_page_starts_a_team_riff_signs_in_the_admin_and_invites_a_person() {
     let commands = commands();
     // The OIDC app comes from the environment: no secret on the page.
     assert!(
@@ -138,27 +138,24 @@ async fn the_page_starts_a_team_riff_signs_in_the_owner_and_invites_a_person() {
         .iter()
         .filter(|c| c.starts_with("riff-server "))
         .collect();
-    // The second command is the example of "Change the times"
-    // (01M3Q5460YESBSQHTV3M15PE53). The third keeps the state over a
-    // restart (R30).
+    // The second command keeps the state over a restart (R30).
     assert_eq!(
         servers,
         [
-            "riff-server --public-url URL --owner EMAIL",
-            "riff-server --public-url URL --owner EMAIL --owner-take-minutes 30",
-            "riff-server --public-url URL --owner EMAIL --dir ~/.local/state/riff-server",
+            "riff-server --public-url URL --admin EMAIL",
+            "riff-server --public-url URL --admin EMAIL --dir ~/.local/state/riff-server",
         ]
     );
 
     let issuer = common::fake_provider().await;
     let (_server, url) = start(servers[0], &issuer, "Ada@gmail.com").await;
 
-    // The owner signs in first.
-    let (key, owner) = sign_in(&url, &issuer, "ada@gmail.com").await;
-    assert_eq!(owner.user, "ada");
+    // The admin of the setting signs in first.
+    let (key, admin) = sign_in(&url, &issuer, "ada@gmail.com").await;
+    assert_eq!(admin.user, "ada");
 
-    // The owner invites a person. The reply names the public address.
-    let invite = common::post(&format!("{url}/v1/invite"), &key, Some(&owner.access_token))
+    // The admin invites a person. The reply names the public address.
+    let invite = common::post(&format!("{url}/v1/invite"), &key, Some(&admin.access_token))
         .json(&Invite {
             email: "bob@gmail.com".into(),
         })

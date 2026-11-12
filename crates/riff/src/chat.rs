@@ -28,7 +28,7 @@
 //! 14:02 <mike> is the release out?
 //! 14:03 <riff> @mike not yet: #12 waits for CI.
 //! 14:09 <riff-bot> @mike riff release v1.2.3 waits for your approval: ...
-//! 14:12 <riff-bot> members: ann passed the owner role to mike.
+//! 14:12 <riff-bot> members: ann made mike an admin.
 //! ```
 //!
 //! A line of riff itself prints above the prompt too, and the typed text
@@ -497,7 +497,7 @@ pub struct Said {
 ///
 /// // A line of riff-server itself shows as riff-bot.
 /// let server = riff_core::name::SessionUri::server();
-/// let passed = "members: ann passed the owner role to mike.";
+/// let passed = "members: ann made mike an admin.";
 /// let line = Message { from: server, kind: Kind::Riff, body: passed.into(), ..message.clone() };
 /// let bot = said(&line);
 /// assert_eq!((bot.before, bot.name.as_str(), bot.after), ("<", "riff-bot", ">"));

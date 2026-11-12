@@ -86,7 +86,7 @@ fn an_admin_with_a_proof_sets_the_policy() {
 }
 
 /// A member cannot set the policy, also with a proof, and a session
-/// cannot, also as the owner.
+/// cannot, also as an admin.
 #[test]
 fn a_member_or_a_session_cannot_set_the_policy() {
     let on = Action::Policy {
@@ -98,7 +98,7 @@ fn a_member_or_a_session_cannot_set_the_policy() {
             set(Policy::Required),
         )
         .then_refused_as(Code::NotAllowed, "ann is not an admin");
-    let session = Caller::of(&ann()).with_role(Role::Owner).with_proof(on);
+    let session = Caller::of(&ann()).with_role(Role::Admin).with_proof(on);
     given(&[])
         .when_as(&session, set(Policy::Required))
         .then_refused_as(

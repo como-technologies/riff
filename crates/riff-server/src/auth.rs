@@ -88,11 +88,9 @@ pub struct Config {
     pub public_url: String,
     /// True: each `/v1` route except `/v1/token` needs an access token.
     pub require_sign_in: bool,
-    /// The people who may revoke the tokens of any person (R20).
+    /// The admins of the setting `--admin` (R210): the server names
+    /// them in the log at each start (01M7767SVH8AKK7144QTJGGGRY).
     pub admins: Vec<String>,
-    /// The email of the owner of a new riff
-    /// (01M3JN3ASSV9SA0QZKXXJ0RTEV). A riff that has an owner keeps it.
-    pub owner: Option<String>,
     /// The OpenID Connect provider that people sign in with. Without
     /// it, nobody can sign in.
     pub provider: Option<Provider>,
@@ -102,8 +100,6 @@ pub struct Config {
     /// (01M53NHJXGK1PN2A9F7NSX0B4G). `main` reads it from `K_REVISION`
     /// of Cloud Run. `None` outside Cloud Run.
     pub revision: Option<crate::lease::Revision>,
-    /// The times of the owner role (01M3Q5460YESBSQHTV3M15PE53).
-    pub owner_role: riff_state::owner::Timing,
     /// How long the writer tries a chunk of the log.
     pub log: riff_state::log::Timing,
     /// When the server writes checkpoints, and which it keeps.
@@ -137,11 +133,9 @@ impl Config {
             public_url: public_url.trim_end_matches('/').to_owned(),
             require_sign_in: false,
             admins: Vec::new(),
-            owner: None,
             provider: None,
             lease: crate::lease::Timing::default(),
             revision: None,
-            owner_role: riff_state::owner::Timing::default(),
             log: riff_state::log::Timing::default(),
             checkpoint: riff_state::checkpoint::Settings::default(),
             save_every: crate::SAVE_EVERY,

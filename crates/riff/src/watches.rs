@@ -17,7 +17,7 @@
 //!     D["riff daemon:<br/>a look each minute"] -- "read" --> F
 //!     D -- "gh, git" --> G["the forge"]
 //!     D -- "one message at the end" --> L["the lead"]
-//!     D -- "a line while a deploy waits" --> O["the owner in riff chat"]
+//!     D -- "a line while a deploy waits" --> O["each admin in riff chat"]
 //! ```
 //!
 //! | Command | [`Op`] | Ends when |
@@ -124,7 +124,7 @@
 //!     [*] --> Builds: riff release cut
 //!     Builds --> Waits: the job Deploy waits for production
 //!     Builds --> Failed: a job failed
-//!     Waits --> Waits: 4 hours: a reminder to the owner
+//!     Waits --> Waits: 4 hours: a reminder to each admin
 //!     Waits --> Runs: a person runs riff release approve
 //!     Runs --> Passed: the job Deploy passed
 //!     Runs --> Failed: the job Deploy failed
@@ -186,7 +186,7 @@
 //!     W->>L: the deploy passed, your container runs the release. next: riff release check
 //! ```
 //!
-//! At "Waits" the lead gets one message, and the owner gets the line of
+//! At "Waits" the lead gets one message, and each admin gets the line of
 //! riff-bot "waits for your approval" in `riff chat`: the watch tells
 //! riff-server the run ([`BotFact::ReleaseWaits`]), and riff-server writes
 //! the line with each hold of the version (01M5SNV7BC5J58WRZRJ5HS4NSJ).
@@ -198,7 +198,7 @@
 //! each other lead of the riff ([`Post::Leads`], [`crate::hold`],
 //! 01M5SNV75DRFHR26BT2M8243VV): the lead of the release has the message
 //! above, and the other leads have the note, with what comes next for
-//! them. The note comes after the message and the line to the owner, so
+//! them. The note comes after the message and the line to the admins, so
 //! a post that fails leaves the message to the lead as the first fact.
 //!
 //! # The check
@@ -219,7 +219,7 @@
 //! stateDiagram-v2
 //!     [*] --> Waits: the job Deploy passed or failed
 //!     Waits --> Failed: riff release check v3.3.0 failed
-//!     Failed --> Failed: the owner resumes, or the lead fixes
+//!     Failed --> Failed: an admin resumes, or the lead fixes
 //!     Waits --> [*]: a passed check, the check of a failed deploy, a closed issue
 //!     Failed --> [*]: a passed check, a rollback, a newer release
 //!     Waits --> [*]: a new watch of a deploy of the repository
@@ -319,7 +319,7 @@ pub fn every() -> Duration {
         .map_or(crate::look::LOOK_EVERY, Duration::from_millis)
 }
 
-/// The time between two lines to the owner while a deploy waits for the
+/// The time between two lines to the admins while a deploy waits for the
 /// approval (01M58KMM3NFGJRW4CCV50KJQB2, 01M5RGD0XTR4X1MEV726HMCEGQ).
 pub const REMIND_EVERY: Duration = Duration::from_secs(4 * 60 * 60);
 
@@ -613,7 +613,7 @@ pub struct Seen {
     pub gate_failed: bool,
     /// [`Op::Deploy`]: the job `Deploy` waits, and the lead got the news.
     pub waits: bool,
-    /// [`Op::Deploy`]: the last line to the owner, in milliseconds since
+    /// [`Op::Deploy`]: the last line to the admins, in milliseconds since
     /// the epoch.
     pub reminded_ms: Option<i64>,
     /// [`Op::Wave`]: the title of the wave that had an open item.
@@ -803,9 +803,9 @@ pub enum Post {
     /// that the watch saw ([`crate::hold::tell_leads`],
     /// 01M5SNV75DRFHR26BT2M8243VV).
     Leads(String),
-    /// A line of riff-bot to the owner in `riff chat`: the deploy of `tag`
+    /// A line of riff-bot to each admin in `riff chat`: the deploy of `tag`
     /// waits for the approval ([`BotFact::ReleaseWaits`]).
-    Owner {
+    Admins {
         /// The tag of the release.
         tag: String,
         /// The ID of the CI run.
@@ -837,8 +837,8 @@ pub trait Lookout: Send + Sync {
 
     /// Tells riff-server the fact `fact`, as the person: riff-server
     /// writes the line of riff-bot for it in `riff chat`
-    /// ([`riff_core::wire::BotPost`]). The line names the owner with
-    /// `@USER`, so it wakes the terminals of the owner
+    /// ([`riff_core::wire::BotPost`]). The line names each admin with
+    /// `@USER`, so it wakes the terminals of each admin
     /// (01M6Y1A5PTCVZ6GRJ0FXMART2T), and shows each hold of the version.
     fn bot<'a>(&'a self, wave: &'a Wave, fact: BotFact) -> BoxFuture<'a, Result<()>>;
 
@@ -1346,7 +1346,7 @@ async fn post_one(lookout: &dyn Lookout, wave: &Wave, post: &Post) -> Result<()>
         Post::Lead(body) => lookout.tell(wave, body, None).await,
         Post::Once { body, key } => lookout.tell(wave, body, Some(key)).await,
         Post::Leads(body) => lookout.leads(wave, body).await,
-        Post::Owner { tag, run, reminder } => {
+        Post::Admins { tag, run, reminder } => {
             let fact = BotFact::ReleaseWaits {
                 tag: tag.clone(),
                 run: *run,
@@ -1570,10 +1570,10 @@ fn look_deploy(
             Ok(Outcome {
                 posts: vec![
                     Post::Lead(format!(
-                        "The deploy of {tag} waits for a person: {run}. riff told the owner in \
-                         riff chat. next: a person runs riff release approve {tag} in a terminal"
+                        "The deploy of {tag} waits for a person: {run}. riff told each admin \
+                         in riff chat. next: a person runs riff release approve {tag} in a terminal"
                     )),
-                    Post::Owner {
+                    Post::Admins {
                         tag: tag.to_owned(),
                         run: deploy.run,
                         reminder: false,
@@ -1593,7 +1593,7 @@ fn look_deploy(
             }
             seen.reminded_ms = Some(now_ms);
             Ok(Outcome {
-                posts: vec![Post::Owner {
+                posts: vec![Post::Admins {
                     tag: tag.to_owned(),
                     run: deploy.run,
                     reminder: true,
@@ -2302,7 +2302,7 @@ mod tests {
         }
     }
 
-    /// The fact of the line of riff-bot to the owner while the run 9 of
+    /// The fact of the line of riff-bot to the admins while the run 9 of
     /// v3.3.0 waits: riff-server writes the text, with each hold of the
     /// version (01M5SNV7BC5J58WRZRJ5HS4NSJ).
     fn waits(reminder: bool) -> BotFact {
@@ -2327,13 +2327,13 @@ mod tests {
         assert!(ground.chats().is_empty(), "no line of an approval");
         assert_eq!(kept(dir.path()), [deploy_op(None)]);
 
-        // The job Deploy waits: the lead and the owner get it, one time.
+        // The job Deploy waits: the lead and each admin get it, one time.
         ground.forge(|f| f.deploy = deploy(DeployState::Waiting, &[]));
         look(dir.path(), &ground, 5 * MINUTE).await;
         assert_eq!(
             ground.told(),
             ["The deploy of v3.3.0 waits for a person: \
-                 https://github.com/o/r/actions/runs/9. riff told the owner in riff chat. \
+                 https://github.com/o/r/actions/runs/9. riff told each admin in riff chat. \
                  next: a person runs riff release approve v3.3.0 in a terminal"]
         );
         assert_eq!(ground.chats(), [waits(false)],);
@@ -2353,7 +2353,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_deploy_that_waits_reminds_the_owner_each_four_hours() {
+    async fn a_deploy_that_waits_reminds_each_admin_each_four_hours() {
         let dir = daemon_dir();
         let ground = Ground::new(Fake::ready("3.3.0"));
         ground.forge(|f| f.deploy = deploy(DeployState::Waiting, &[]));

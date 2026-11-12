@@ -11,7 +11,7 @@
 //! | `work::Saved` | `claims`, `leads` |
 //! | `sessions::Saved` | `sessions` |
 //! | `presence::Saved` | `cursors`, `statuses` (the status and the long step of each session) |
-//! | `people::Saved` | `riff_id`, `users`, `members`, `admins`, `owner`, `no_owner`, `owner_asked`, `signins_ended`, `keys` |
+//! | `people::Saved` | `riff_id`, `users`, `members`, `admins`, `signins_ended`, `keys`; and `owner`, `no_owner`, `owner_asked` from a checkpoint from before |
 //! | `plan::Saved` | `plans` |
 //! | `projects::Saved` | `projects`, `projects_known` |
 //! | `calls::Saved` | `calls` |

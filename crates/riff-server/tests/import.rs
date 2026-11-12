@@ -287,8 +287,8 @@ async fn the_import_gives_the_state_of_the_old_server() {
     assert_eq!(riff[199]["verified"], true);
     assert_eq!(riff[0]["verified"], false, "a note with no signature");
 
-    // The riff is paused after the import: a claim fails. The owner or
-    // an admin resumes the whole riff. The settings stay.
+    // The riff is paused after the import: a claim fails. An admin
+    // resumes the whole riff. The settings stay.
     let claim = json!({ "me": m1, "thread": RIFF, "item": "issue-500" });
     let reply = common::client()
         .post(format!("{base}/v1/claim"))
@@ -626,8 +626,8 @@ async fn a_refresh_token_of_the_old_server_works_one_time_with_no_login() {
     let store = old_store().await;
     let (service, base) = common::start_signed_on(Arc::new(store.clone())).await;
 
-    // The owner is the owner of today: no person is the owner by a
-    // first sign-in.
+    // The owner of v0.8.0 is an admin of today: no person is an admin
+    // by a first sign-in.
     assert_eq!(service.tokens().sign_ins(), 2);
     // A token of another key is refused, and stays good.
     assert_eq!(
@@ -725,11 +725,12 @@ async fn a_refresh_token_of_the_old_server_works_one_time_with_no_login() {
             .any(|uri| uri.contains("session=m2&claim=issue-341")),
         "{uris:?}"
     );
-    // The owner of today resumes the riff, and the session posts.
+    // The owner of v0.8.0 is an admin, and resumes the riff. The
+    // session posts.
     let person_uri = "riff://mike@pangolin/como-technologies/riff";
     let resume = json!({ "me": person_uri, "riff": true });
     let reply = send("resume", resume, &person.access_token).await.unwrap();
-    assert_eq!(reply.status(), 200, "mike is the owner");
+    assert_eq!(reply.status(), 200, "mike is an admin");
     let mut post = Post::new(&m2, Some(RIFF.parse().unwrap()), vec![], "after go-live");
     post.sign(&mike, now_ms());
     let reply = send(
@@ -749,6 +750,40 @@ async fn a_refresh_token_of_the_old_server_works_one_time_with_no_login() {
     let (again, base) = common::start_signed_on(Arc::new(store)).await;
     assert_eq!(again.tokens().sign_ins(), 2);
     assert!(refresh(&base, &mike, &person.refresh_token).await.is_ok());
+}
+
+/// The owner of v0.8.0 is an admin and a member of today
+/// (01M77VQJ5R4TQAHP14D0HARJJZ). After `riff admin remove`, the owner is
+/// a member again (01M3JY7T109BR860EQBSKEFDHY), also after a restart.
+#[tokio::test]
+async fn riff_admin_remove_makes_the_owner_of_the_import_a_member_again() {
+    let facts = facts();
+    let brett = key("brett");
+    let store = old_store().await;
+    let (service, base) = common::start_signed_on(Arc::new(store.clone())).await;
+    let (owner, admin) = ("mike@comotechnologies.io", "brett@comotechnologies.io");
+    assert_eq!(service.members().admins, [admin, owner]);
+
+    let token = facts["refresh"]["brett"].as_str().unwrap();
+    let pair = refresh(&base, &brett, token).await.unwrap();
+    let reply = common::post(
+        &format!("{base}/v1/admin"),
+        &brett,
+        Some(&pair.access_token),
+    )
+    .json(&json!({ "email": owner, "admin": false }))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(reply.status(), 200);
+    let members = service.members();
+    assert_eq!(members.admins, [admin]);
+    assert_eq!(members.members, [owner, "new@comotechnologies.io"]);
+
+    service.save().await.unwrap();
+    drop(service);
+    let (again, _base) = common::start_signed_on(Arc::new(store)).await;
+    assert_eq!(again.members().members, members.members);
 }
 
 /// A riff of v0.8.0 against the new server gets the `riff-build` header

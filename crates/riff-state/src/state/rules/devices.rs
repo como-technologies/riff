@@ -55,10 +55,10 @@ fn a_person_adds_a_key() {
         .then(&[key_added("ann", "yubikey", "c1")]);
 }
 
-/// A session cannot add a key or remove a device, also as the owner.
+/// A session cannot add a key or remove a device, also as an admin.
 #[test]
 fn a_session_cannot_add_or_remove_a_device() {
-    let session = Caller::of(&ann()).with_role(Role::Owner);
+    let session = Caller::of(&ann()).with_role(Role::Admin);
     given(&[])
         .when_as(&session, add("yubikey", "c1"))
         .then_refused_as(

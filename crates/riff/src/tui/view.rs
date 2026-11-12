@@ -63,7 +63,6 @@ use ratatui::layout::{Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Widget};
-use riff_core::wire::RiffOwner;
 
 use super::{Key, State, Tab, chat};
 use crate::text;
@@ -539,11 +538,11 @@ fn strip_narrow(state: &State, area: Rect) -> (Line<'static>, Vec<Hit>) {
 }
 
 /// The header (01M6VAZK4RQSZ0MG2DHWQC598Q): the state of the whole
-/// riff, the owner, the build of this riff and of riff-server when it
-/// is another, and the link. The narrow layout has only the state of
-/// the riff and the link. The line of a new riff on disk
-/// ([`installed_rows`]) and the line of an open release ([`release_rows`])
-/// come under it.
+/// riff, the build of this riff and of riff-server when it is another,
+/// and the link. It names no owner (01M7767T8EFVR79NSHKTK53G7B). The narrow
+/// layout has only the state of the riff and the link. The line of a new riff
+/// on disk ([`installed_rows`]) and the line of an open release
+/// ([`release_rows`]) come under it.
 fn header(state: &State, layout: Layout, now_ms: i64) -> Line<'static> {
     let wide = layout == Layout::Wide;
     let mut parts: Vec<Vec<Span<'static>>> = Vec::new();
@@ -555,15 +554,6 @@ fn header(state: &State, layout: Layout, now_ms: i64) -> Line<'static> {
             Span::styled("running", GOOD)
         };
         parts.push(vec![Span::raw("riff "), riff]);
-        if wide {
-            match &look.who.owner {
-                RiffOwner::NoSignIn => {}
-                RiffOwner::Nobody => parts.push(vec![Span::raw("owner none")]),
-                RiffOwner::Owner { user, .. } => {
-                    parts.push(vec![Span::raw(format!("owner {}", text::safe(user)))]);
-                }
-            }
-        }
     }
     if wide {
         let build = state.build();
@@ -789,17 +779,15 @@ mod tests {
         format!("0.1.0 {id} 2026-11-06T12:00:00Z").parse().unwrap()
     }
 
-    /// The state of the mock-ups of #994: a riff that runs, of the
-    /// owner mike, at the same build as riff-server, 2 seconds after a
-    /// good look, with two new lines in the chat and news in the waves.
+    /// The state of the mock-ups of #994: a riff that runs, at the same
+    /// build as riff-server, 2 seconds after a good look, with two new
+    /// lines in the chat and news in the waves.
     fn mock_up() -> State {
         let mut state = State::new(build("10df8a4c0ffe"), "riff://mike@thelio".parse().unwrap());
-        let mut look = Look::default();
-        look.who.owner = RiffOwner::Owner {
-            user: "mike".into(),
-            email: "m@x.io".into(),
+        let look = Look {
+            server: Some(build("10df8a4c0ffe")),
+            ..Look::default()
         };
-        look.server = Some(build("10df8a4c0ffe"));
         state.looked(look, NOW - 2_000);
         state.news(Tab::Chat, News::Lines(2));
         state.news(Tab::Waves, News::Dot);
@@ -837,7 +825,7 @@ mod tests {
         state.note("Read again 2s ago.");
         let mut want = vec![
             " 1 Sessions  2 Chat•2  3 Waves•  4 Machines  [5 Devices]  6 Reports",
-            " riff running · owner mike · build 10df8a4 · link ok 2s",
+            " riff running · build 10df8a4 · link ok 2s",
             " The Devices tab is not built yet.",
         ];
         want.resize(22, "");
@@ -917,10 +905,7 @@ mod tests {
         let fault = "riff: no good look since 21:35:07: cannot reach riff-server";
         state.failed(fault);
         let rows = drawn(&state, 80, 24);
-        assert_eq!(
-            rows[1],
-            " riff running · owner mike · build 10df8a4 · link down"
-        );
+        assert_eq!(rows[1], " riff running · build 10df8a4 · link down");
         assert_eq!(rows[22], format!(" {fault}"));
         let narrow = drawn(&state, 40, 24);
         assert_eq!(narrow[1], "riff running · link down");
@@ -929,29 +914,25 @@ mod tests {
         let (look, _) = state.last_look().unwrap();
         state.looked(look.clone(), NOW);
         let rows = drawn(&state, 80, 24);
-        assert_eq!(
-            rows[1],
-            " riff running · owner mike · build 10df8a4 · link ok 0s"
-        );
+        assert_eq!(rows[1], " riff running · build 10df8a4 · link ok 0s");
         assert_eq!(rows[22], " an old note");
     }
 
     /// 01M6VAZK4RQSZ0MG2DHWQC598Q: the header says when the whole riff
-    /// is paused, when it has no owner, and the build of riff-server
-    /// when it is another.
+    /// is paused, and the build of riff-server when it is another. It
+    /// names no owner (01M7767T8EFVR79NSHKTK53G7B).
     #[test]
-    fn the_header_shows_a_pause_no_owner_and_another_build_of_riff_server() {
+    fn the_header_shows_a_pause_and_another_build_of_riff_server() {
         let mut state = State::new(build("10df8a4c0ffe"), "riff://mike@thelio".parse().unwrap());
         let mut look = Look {
             pauses: RiffState::Paused.into(),
             ..Look::default()
         };
-        look.who.owner = RiffOwner::Nobody;
         look.server = Some(build("3f2a91c00000"));
         state.looked(look, NOW - 125_000);
         assert_eq!(
             drawn(&state, 80, 24)[1],
-            " riff paused · owner none · build 10df8a4 · server 3f2a91c · link ok 2m"
+            " riff paused · build 10df8a4 · server 3f2a91c · link ok 2m"
         );
         assert_eq!(drawn(&state, 40, 24)[1], "riff paused · link ok 2m");
         // No look yet: the link is down.
@@ -1009,7 +990,7 @@ mod tests {
         use riff_client::daemons::ReleaseStep;
         let header = |paused: bool| {
             let state = if paused { "paused" } else { "running" };
-            format!(" riff {state} · owner mike · build 10df8a4 · link ok 2s")
+            format!(" riff {state} · build 10df8a4 · link ok 2s")
         };
         let steps: [(Option<ReleaseStep>, bool, &[&str]); 5] = [
             (
@@ -1033,7 +1014,7 @@ mod tests {
             (
                 Some(ReleaseStep::CheckFailed),
                 true,
-                &[" v3.3.0: the check failed: the owner resumes or rolls back"],
+                &[" v3.3.0: the check failed: an admin resumes or rolls back"],
             ),
             (None, false, &[]),
         ];
@@ -1235,7 +1216,7 @@ mod tests {
         let state = with(mock_up(), &newer);
         let mut want = vec![
             " 1 Sessions  2 Chat•2  3 Waves•  4 Machines  [5 Devices]  6 Reports".to_owned(),
-            " riff running · owner mike · build 10df8a4 · link ok 2s".to_owned(),
+            " riff running · build 10df8a4 · link ok 2s".to_owned(),
             format!(" {line}"),
             " The Devices tab is not built yet.".to_owned(),
         ];

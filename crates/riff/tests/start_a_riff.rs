@@ -139,13 +139,15 @@ fn update_riff_says_that_it_installs_the_release_of_the_riff() {
     assert!(!text.contains("same build"), "{text}");
 }
 
-/// "Start a Team Riff" (01M3MEFG6F102T1H8DFJ38EJ4A): the owner uses the
-/// riff, signs in first, then invites each person, and sees each change
-/// of the members with `riff chat` (01M76S6128EZRZS2D5CE2QCC05). Each
-/// `riff` command is real. The server part of the page runs in
+/// "Start a Team Riff" (01M3MEFG6F102T1H8DFJ38EJ4A): the first admin uses
+/// the riff, signs in first, then invites each person, sees each change
+/// of the members with `riff chat` (01M76S6128EZRZS2D5CE2QCC05), and
+/// shares the admin role (01M77671TQ92487GSM24RJG82Z,
+/// 01M7767SY5PW1AMB0PBMW2GXDX). Each `riff` command is real. The server
+/// part of the page runs in
 /// `crates/riff-server/tests/start_a_team_riff.rs`.
 #[test]
-fn the_owner_of_a_team_riff_signs_in_then_invites() {
+fn the_first_admin_of_a_team_riff_signs_in_then_invites() {
     let commands = commands_of("start-a-team-riff.md");
     assert!(
         commands.contains(&"echo 'export RIFF_SERVER=URL' >> ~/.bashrc".to_owned()),
@@ -175,17 +177,17 @@ fn the_owner_of_a_team_riff_signs_in_then_invites() {
             "riff invite EMAIL",
             "riff members",
             "riff chat",
-            "riff owner --take",
-            "riff owner EMAIL",
-            "riff owner --deny",
-            "riff chat",
-            "riff who",
+            "riff admin add EMAIL",
+            "riff admin remove EMAIL",
         ]
     );
     each_is_real(&riff);
     // The example line of the page is the line that riff-server posts.
     let line = riff_state::state::people::invited_news("ada", "bob@gmail.com");
     assert!(page("start-a-team-riff.md").contains(&line), "{line}");
+    // The refusal of the page is the refusal of riff-server.
+    let refused = riff_state::state::people::last_admin("EMAIL");
+    assert!(page("start-a-team-riff.md").contains(&refused), "{refused}");
 }
 
 #[test]

@@ -14,7 +14,7 @@
 //!
 //! ```text
 //!  1 Sessions  2 Chat•2  [3 Waves]  4 Machines  5 Devices  6 Reports
-//!  riff running · owner mike · build 10df8a4 · link ok 2s
+//!  riff running · build 10df8a4 · link ok 2s
 //!  ▼ como-technologies/riff · Wave 48        1 stuck 2 free 1 held 3 work 2 verify
 //!        STATE   ITEM   TITLE                           WHO / PULL REQUEST   AGE
 //!    !   stuck   #1601  Fix the help                    PR #1604 conflict    2h
@@ -1415,7 +1415,6 @@ mod tests {
     use ratatui::layout::Rect;
     use riff_client::waves::{Issue, Issues};
     use riff_core::build::Build;
-    use riff_core::wire::RiffOwner;
 
     use super::*;
     use crate::tui::forge::ItemPull;
@@ -1520,12 +1519,10 @@ mod tests {
     /// seconds after the read of the forge, with #1620 selected.
     fn mock_up() -> State {
         let mut state = State::new(build("10df8a4c0ffe"), "riff://mike@thelio".parse().unwrap());
-        let mut look = Look::default();
-        look.who.owner = RiffOwner::Owner {
-            user: "mike".into(),
-            email: "m@x.io".into(),
+        let mut look = Look {
+            server: Some(build("10df8a4c0ffe")),
+            ..Look::default()
         };
-        look.server = Some(build("10df8a4c0ffe"));
         let blocked = serde_json::json!({"blocked": {"reason": "which design?", "secs": 1920}});
         look.who.sessions = vec![
             session("3a3f8d5d00", RIFF, "issue-994", "blocked", blocked),
@@ -1624,7 +1621,7 @@ mod tests {
     fn the_waves_tab_at_80_x_24_is_the_mock_up() {
         let want = [
             " 1 Sessions  2 Chat•2  [3 Waves]  4 Machines  5 Devices  6 Reports",
-            " riff running · owner mike · build 10df8a4 · link ok 2s",
+            " riff running · build 10df8a4 · link ok 2s",
             " ▼ como-technologies/riff · Wave 48        1 stuck 2 free 1 held 3 work 2 verify",
             "       STATE   ITEM   TITLE                           WHO / PULL REQUEST   AGE",
             "   !   stuck   #1601  Fix the help                    PR #1604 conflict    2h",

@@ -6,6 +6,7 @@
   "commands": [
     "enroll_project",
     "remove_project",
-    "find_projects"
+    "find_projects",
+    "name_admins"
   ]
 }

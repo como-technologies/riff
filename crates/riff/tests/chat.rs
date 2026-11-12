@@ -320,9 +320,9 @@ async fn each_line_shows_its_sender_by_the_name_to_type() {
 
     // Only a line of riff-server itself shows as <riff-bot>
     // (01M6Y4ZCTSTVM971BDC1F7GJPK). riff-server writes the line that riff
-    // writes for mike from its fact: the ask of a release names the owner
-    // brett, and the note of the daemon names no one. A line that mike
-    // types with the words of riff-bot shows as mike.
+    // writes for mike from its fact: the ask of a release names each
+    // admin, brett and mike, and the note of the daemon names no one. A
+    // line that mike types with the words of riff-bot shows as mike.
     let person: SessionUri = "riff://mike@thelio/como-technologies/riff".parse().unwrap();
     let api = server.api("mike", None);
     let waits = BotFact::ReleaseWaits {
@@ -332,7 +332,7 @@ async fn each_line_shows_its_sender_by_the_name_to_type() {
     };
     api.bot(&person, waits).await.unwrap();
     api.bot(&person, BotFact::LeadStarted).await.unwrap();
-    let asked = "@brett riff release v3.3.0 waits for your approval: \
+    let asked = "@brett @mike riff release v3.3.0 waits for your approval: \
                  https://github.com/como-technologies/riff/actions/runs/9. In a terminal, run: \
                  riff release approve v3.3.0";
     let started = "riff started the lead of mike in como-technologies/riff on thelio again on \
@@ -348,16 +348,6 @@ async fn each_line_shows_its_sender_by_the_name_to_type() {
     mike.say(typed).await;
     let line = brett.shows("v9.9.9").await;
     assert!(is_line(&line, "mike", typed), "{line:?}");
-    // brett, the owner, passes the role: riff-server posts the line.
-    let mike_email = "mike@comotechnologies.io";
-    let pass = server.api("brett", None);
-    pass.pass_owner(mike_email).await.unwrap();
-    let passed = riff_state::owner::passed_news("brett", mike_email, "brett@comotechnologies.io");
-    for client in [&mut mike, &mut brett] {
-        let line = client.shows("passed the owner role").await;
-        assert!(is_line(&line, "riff-bot", &passed), "{line:?}");
-    }
-
     // The line of mike shows at brett as <mike>.
     mike.say("thanks").await;
     let line = brett.shows("thanks").await;
@@ -516,7 +506,7 @@ async fn a_person_who_is_not_a_member_cannot_read_or_post_the_chat() {
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     let api = Api::new(&url);
 
-    // The first sign-in makes the owner. Then an email that is not a
+    // The first sign-in makes an admin. Then an email that is not a
     // member gets no sign-in.
     service.admit("ada@gmail.com", false, "jkt").await.unwrap();
     let error = service
@@ -1197,10 +1187,10 @@ async fn in_a_terminal_never_and_no_color_turn_off_the_bold_of_a_highlight() {
 }
 
 /// 01M74BPHQZHXFYYNXAJ1WFASQQ: riff-server posts the lines that riff
-/// writes for mike, as `<riff-bot>`. The ask of a release names the owner
-/// brett, and is a highlight for brett (01M6XSHMGM82QSABRWCYH595VH): it
-/// is bold, and rings the bell. The line "riff started the lead ..."
-/// names no one, and is plain.
+/// writes for mike, as `<riff-bot>`. The ask of a release names each
+/// admin, brett and mike (01M7767T5VSWN9EYDVSTCEJ8AM), and is a highlight for
+/// brett (01M6XSHMGM82QSABRWCYH595VH): it is bold, and rings the bell. The line
+/// "riff started the lead ..." names no one, and is plain.
 #[tokio::test]
 async fn in_a_terminal_the_ask_of_riff_bot_is_a_highlight_for_its_person() {
     let server = crate::common::start_signed().await;
@@ -1218,7 +1208,7 @@ async fn in_a_terminal_the_ask_of_riff_bot_is_a_highlight_for_its_person() {
         reminder: false,
     };
     api.bot(&person, waits).await.unwrap();
-    let asked = "<riff-bot> @brett riff release v3.3.0 waits for your approval";
+    let asked = "<riff-bot> @brett @mike riff release v3.3.0 waits for your approval";
     brett
         .shows(|rows| rows.iter().any(|row| row.contains(asked)))
         .await;

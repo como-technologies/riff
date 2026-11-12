@@ -77,7 +77,7 @@
 use std::collections::BTreeMap;
 
 use riff_core::build::Build;
-use riff_core::wire::{Person, PersonRole, RiffOwner, SessionInfo, SessionState};
+use riff_core::wire::{Person, PersonRole, SessionInfo, SessionState};
 use serde::{Deserialize, Serialize};
 
 /// What a container session does now, as `riff daemon status` shows it
@@ -209,25 +209,23 @@ impl Sessions {
     /// Each person by USER: each member of `members`, the members of
     /// `who`, and each user with a session on the server. A user that
     /// `members` does not list, as in a riff with no sign-in, gets the
-    /// time from its sessions, and the role `owner` when `owner` names
-    /// it.
+    /// time from its sessions, and the role of a member.
     ///
     /// ```
     /// use riff_client::sessions::Sessions;
-    /// use riff_core::wire::{Person, PersonRole, RiffOwner, SessionInfo};
+    /// use riff_core::wire::{Person, PersonRole, SessionInfo};
     ///
     /// let s: SessionInfo = serde_json::from_value(serde_json::json!({
     ///     "uri": "riff://mike@thelio/o/r?session=a1", "live": false, "idle_secs": 300,
     /// }))?;
     /// let sessions = Sessions::new(vec![s], vec![]);
     /// let ann = Person { user: "ann".into(), role: PersonRole::Admin, live: true, seen_secs: Some(0) };
-    /// let owner = RiffOwner::Owner { user: "mike".into(), email: "m@x.io".into() };
-    /// let people = sessions.people(&[ann], &owner);
+    /// let people = sessions.people(&[ann]);
     /// assert_eq!(people["ann"].role, PersonRole::Admin);
-    /// assert_eq!((people["mike"].role, people["mike"].seen_secs), (PersonRole::Owner, Some(300)));
+    /// assert_eq!((people["mike"].role, people["mike"].seen_secs), (PersonRole::Member, Some(300)));
     /// # Ok::<(), serde_json::Error>(())
     /// ```
-    pub fn people(&self, members: &[Person], owner: &RiffOwner) -> BTreeMap<String, PersonRow> {
+    pub fn people(&self, members: &[Person]) -> BTreeMap<String, PersonRow> {
         let mut people: BTreeMap<String, PersonRow> = members
             .iter()
             .map(|p| {
@@ -245,11 +243,7 @@ impl Sessions {
                 continue;
             }
             let row = people.entry(user.to_owned()).or_insert(PersonRow {
-                role: if owner.is(user) {
-                    PersonRole::Owner
-                } else {
-                    PersonRole::Member
-                },
+                role: PersonRole::Member,
                 live: false,
                 seen_secs: None,
             });
@@ -266,7 +260,7 @@ impl Sessions {
     ///
     /// ```
     /// use riff_client::sessions::{By, Level, Sessions, Show};
-    /// use riff_core::wire::{RiffOwner, SessionInfo};
+    /// use riff_core::wire::SessionInfo;
     ///
     /// let info = |uri: &str| -> SessionInfo {
     ///     serde_json::from_value(serde_json::json!({ "uri": uri, "live": true })).unwrap()
@@ -281,7 +275,7 @@ impl Sessions {
     ///     ],
     ///     vec![],
     /// );
-    /// let people = sessions.people(&[], &RiffOwner::NoSignIn);
+    /// let people = sessions.people(&[]);
     /// let tree = sessions.tree(&Show::default(), &people);
     /// let keys: Vec<&str> = tree.iter().map(|g| g.key.as_str()).collect();
     /// assert_eq!(keys, ["ann", "mike"]);
@@ -590,7 +584,7 @@ mod tests {
             vec![info("riff://mike@thelio/o/r?session=aa"), blocked],
             vec![],
         );
-        let people = sessions.people(&[], &RiffOwner::NoSignIn);
+        let people = sessions.people(&[]);
         let tree = sessions.tree(&Show::default(), &people);
         let ids: Vec<&str> = tree[0]
             .sessions

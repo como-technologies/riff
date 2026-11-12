@@ -6,9 +6,9 @@ meet. It has an address, for example `https://riff.example.com`.
 Use this page to join a riff with sign-in. The steps are the same in
 each case:
 
-- You join the riff of your team, or of another person. The owner of
+- You join the riff of your team, or of another person. An admin of
   the riff invites you first.
-- You add a second machine to your own riff. You are its owner, so you
+- You add a second machine to your own riff. You are its admin, so you
   need no invite.
 
 ```mermaid
@@ -25,8 +25,8 @@ talk to the riff run too, for example `riff login`, `riff chat` and
 ## You need
 
 - The things of [Start a Riff](start-a-riff.md#you-need).
-- The address of the riff. Ask its owner.
-- An invite. The owner of the riff runs `riff invite EMAIL`
+- The address of the riff. Ask an admin of the riff.
+- An invite. An admin of the riff runs `riff invite EMAIL`
   with your email. Your own riff needs no invite.
 - A clone of the project of the riff.
 
@@ -77,7 +77,7 @@ project: `riff lead start`. Ask: *"Who else is in the riff?"*
 ## Update riff
 
 A riff of another version can refuse `riff` (see
-[Builds](how-it-works.md#builds)). When the owner updates the riff,
+[Builds](how-it-works.md#builds)). When an admin updates the riff,
 update riff on your machine. It installs the release that the riff
 runs (see [Releases](how-it-works.md#releases)):
 

@@ -247,16 +247,16 @@ fn secs(line: &str) -> String {
 }
 
 /// The lines of the tree, after the header and the board, with each
-/// time in seconds as `Ns`. The roles of
-/// the owner brett and of the admin mike, and the offline row of brett,
-/// are left out: the server needs a sign-in, and it knows them.
+/// time in seconds as `Ns`. The roles of the admins brett and mike, and
+/// the offline row of brett, are left out: the server needs a sign-in,
+/// and it knows them.
 fn rows(top: &str) -> Vec<String> {
     top.rsplit("\n\n")
         .next()
         .unwrap()
         .lines()
-        .filter(|line| *line != "brett  owner  offline")
-        .map(|line| secs(&line.replacen("  owner", "", 1).replacen("  admin", "", 1)))
+        .filter(|line| *line != "brett  admin  offline")
+        .map(|line| secs(&line.replacen("  admin", "", 1)))
         .collect()
 }
 
@@ -1867,14 +1867,14 @@ async fn top_shows_the_state_of_a_lead_and_its_long_step() {
         "{busy}"
     );
 
-    let wait = ["blocked", "run riff owner --take"];
+    let wait = ["blocked", "run riff admin add ada@gmail.com"];
     output(riff(&server, dir, Some("a1"), bin.path(), &wait)).await;
     let waiting = top().await;
     assert_eq!(state(&waiting), "waiting", "{waiting}");
     assert_eq!(
         detail(&waiting, "a1"),
         [
-            "waiting for mike: run riff owner --take (Ns ago)",
+            "waiting for mike: run riff admin add ada@gmail.com (Ns ago)",
             "live window for Ns"
         ],
         "{waiting}"

@@ -2,7 +2,7 @@
 
 A team riff is the place where the sessions of your team meet. It runs
 on a Linux host that each person of your team reaches. Each person
-signs in with their own account. You are the owner: you invite each
+signs in with their own account. You are an admin: you invite each
 person.
 
 For a riff on your machine only, with no sign-in, see
@@ -56,11 +56,11 @@ Do these steps on the host.
    of `EMAIL`:
 
    ```sh
-   riff-server --public-url URL --owner EMAIL
+   riff-server --public-url URL --admin EMAIL
    ```
 
    `riff-server` listens on `127.0.0.1:7878`. `--public-url` is the
-   address that people use. `--owner` names you as the owner.
+   address that people use. `--admin` makes you an admin.
 
 4. In a second terminal, start the TLS proxy. It takes HTTPS at the
    address of the riff and sends it to `riff-server`. For Caddy:
@@ -145,8 +145,9 @@ secret goes to Secret Manager. The ID goes to the settings file.
 
 ### Deploy the riff
 
-The riff needs an owner: your email. With no tag, Cloud Build builds
-the image from your clone:
+The riff needs an admin. `RIFF_OWNER` holds your email: the first
+admin of the cloud riff, and the address of the alert. With no tag,
+Cloud Build builds the image from your clone:
 
 ```sh
 export RIFF_OWNER=YOUR_EMAIL
@@ -206,8 +207,8 @@ the address of the riff in place of `URL`. For zsh, use `~/.zshrc`:
 echo 'export RIFF_SERVER=URL' >> ~/.bashrc
 ```
 
-Open a new terminal. Sign in with the account of `EMAIL`. Your browser
-opens:
+Open a new terminal. Sign in with the account of `EMAIL`, the admin
+of `--admin`. Your browser opens:
 
 ```sh
 riff login
@@ -224,8 +225,8 @@ a bot of riff, with only the rights of its role:
 | The lead App `riff-OWNER-lead` | `riff-OWNER-lead[bot]` | the lead |
 
 Make them one time, on the account that holds the repositories of the
-riff. You must be the owner or an admin of the riff, and an owner of
-the account on GitHub. Run the command in a plain terminal, not in
+riff. You must be an admin of the riff, and an owner of the account on
+GitHub. Run the command in a plain terminal, not in
 Claude Code: it refuses in a session and in a container. Put the
 account in place of `OWNER`, for example `como-technologies`:
 
@@ -247,7 +248,7 @@ sequenceDiagram
     participant B as your browser
     participant S as riff-server
     participant G as GitHub
-    R->>S: start (the owner or an admin)
+    R->>S: start (an admin)
     R->>B: open the start page
     B->>G: the manifest of riff-OWNER: "Create GitHub App"
     G-->>S: a code
@@ -341,9 +342,9 @@ of them. The deploy needs no step of yours first: until each install
 has the rights, riff-server gives the lead a token with its other
 rights, and logs one warning. Then the lead works as before, with no
 access to the alerts. `riff github check` names each missing right
-with the fix. The owner or an admin of the riff runs the fix in a
-plain terminal, in a clone of a repository of the account. Put the
-account in place of `OWNER`:
+with the fix. An admin of the riff runs the fix in a plain terminal,
+in a clone of a repository of the account. Put the account in place of
+`OWNER`:
 
 ```sh
 riff github install OWNER
@@ -395,7 +396,7 @@ members of the riff, see [See the members](#see-the-members).
 
 ## See the members
 
-To see the owner, the admins, the members, the allowed domains and the
+To see the admins, the members, the allowed domains and the
 [proof of presence](how-it-works.md#a-proof-of-presence) of the riff,
 run:
 
@@ -403,40 +404,33 @@ run:
 riff members
 ```
 
-It shows each person once, with the highest role: owner, then admin,
-then member:
+It shows each person once, with the highest role: admin, then member:
 
 ```text
-owner            mike@example.com
-admins           ada@example.com
+admins           ada@example.com, mike@example.com
 members          bob@gmail.com
 allowed domains  example.com
 proof            off
 ```
 
-A riff with no owner shows the owner `none`. Its last line, in
-yellow, says how an admin takes the owner role (see
-[Take the owner role](#take-the-owner-role)).
-
 The lead runs it in its container too. The riff daemon of the host
 reads riff-server for the lead, so the lead can see who is an admin,
 for example to know who may approve a release. `riff invite`,
-`riff remove`, `riff admin` and `riff owner` change the members. A
-person runs these in a terminal on the host.
+`riff remove` and `riff admin` change the members. A person runs these
+in a terminal on the host.
 
 ## See each change of the members
 
 Each change of the people of the riff shows in the chat only. The
 riff posts one line in the chat for each of these: `riff invite`,
-`riff remove`, `riff admin add`, `riff admin remove`, and each step of
-the owner role (see [Take the owner role](#take-the-owner-role)).
-riff-server posts the line as `<riff-bot>`. The line names the user
-that made the change, the email and the change. It wakes no session.
-The thread of a repository gets no note of the change.
+`riff remove`, `riff admin add` and `riff admin remove`. riff-server
+posts the line as `<riff-bot>`. The line names the user that made the
+change, the email and the change. It wakes no session. The thread of a
+repository gets no note of the change.
 
 ```mermaid
 flowchart LR
-    C[riff invite, riff remove, riff admin, riff owner] --> S[riff-server]
+    C[riff invite, riff remove, riff admin] --> S[riff-server]
     S --> L["one line of riff-bot in the chat"]
     S -. no note .-> R[the thread of a repository]
 ```
@@ -453,116 +447,47 @@ A line looks like this:
 members: ada invited bob@gmail.com. bob@gmail.com is a member now.
 ```
 
-## Take the owner role
+## Share the admin role
 
-A riff has one owner. Each admin can take the owner role. The owner
-can answer, but an owner who is away does not stop the riff.
+Each admin has the same rights: invite and remove a person, make an
+admin, and approve a release. With a second admin, the riff goes on
+while you are away. The riff keeps one admin at least.
 
 ```mermaid
 stateDiagram-v2
-    Owner --> Asked: an admin runs riff owner --take
-    Asked --> Owner: the owner passes or keeps the role
-    Asked --> Owner: no answer in 10 minutes, the admin is the owner
-    Owner --> NoOwner: the owner is gone
-    NoOwner --> Owner: the first admin runs riff owner --take
+    [*] --> Admin: riff-server --admin EMAIL, or the first sign-in
+    Member --> Admin: riff admin add EMAIL
+    Admin --> Member: riff admin remove EMAIL, while another admin stays
 ```
 
-### Ask for the owner role
+### Make another admin
 
-Only an admin can ask:
+Put the email of the person in place of `EMAIL`. The person is also a
+member:
 
 ```sh
-riff owner --take
+riff admin add EMAIL
 ```
 
-The riff tells the owner at once: a direct message to the lead session
-of the owner, and a line in the chat. The owner has 10 minutes to
-answer. With no answer, you are the owner. The old owner stays an
-admin. One request waits at a time. A second request is refused, and
-the refusal names the admin that asked first.
+### Stop being an admin
 
-When you are the owner already, the command says so and changes
-nothing. It is not an error:
+Each admin can make an admin a member again, also the own role. Put
+the email in place of `EMAIL`:
+
+```sh
+riff admin remove EMAIL
+```
+
+The riff keeps one admin. So riff refuses to remove the last admin,
+and changes nothing:
 
 ```text
-You are the owner already. Nothing changed.
+EMAIL is the last admin of this riff, and the riff keeps one; make another person an admin first: riff admin add EMAIL
 ```
 
-### Answer a request
-
-To pass the role, the owner names the admin that asked:
-
-```sh
-riff owner EMAIL
-```
-
-To keep the role:
-
-```sh
-riff owner --deny
-```
-
-The riff tells the admin.
-
-### See a change of the owner in the chat
-
-Each step of the owner role shows in the chat only, as one line of
-`<riff-bot>`: a request, a pass, a deny, a grant after the time, the
-warning to the owner, a gone owner, and a take on a riff with no
-owner. The thread of a repository gets no note of the step. The line
-wakes no session. To see it, run:
-
-```sh
-riff chat
-```
-
-A line looks like this:
-
-```text
-members: mike took the owner role. The riff had no owner. mike@example.com is the owner now.
-```
-
-### An owner who is gone
-
-`riff-server` checks the owner each 10 minutes, while the riff has an
-admin who is not the owner. A check misses when no session of the
-owner is live, and the owner ran no riff command since the last check.
-After 3 misses in a row, the server warns the owner: one line in the
-chat. When the next check misses too, the owner is gone. The old owner
-stays an admin, and the riff has no owner. The riff asks each admin
-for a volunteer: a direct message to the lead session of each admin,
-and a line in the chat. The first admin that runs `riff owner --take`
-is the owner at once, with no wait.
-
-While the riff has no owner, `riff members` says so.
-`riff admin` and `riff owner EMAIL` are refused until an admin takes
-the role.
-
-### Stay the owner
-
-When the server warns you, run any riff command before the next
-check, for example:
-
-```sh
-riff who
-```
-
-### Change the times
-
-Three settings of `riff-server` set the times:
-
-| Option | Variable | Default | What |
-|---|---|---|---|
-| `--owner-take-minutes` | `RIFF_OWNER_TAKE_MINUTES` | 10 | The minutes that the owner has to answer. |
-| `--owner-ping-minutes` | `RIFF_OWNER_PING_MINUTES` | 10 | The minutes between two checks of the owner. |
-| `--owner-pings` | `RIFF_OWNER_PINGS` | 3 | The misses in a row after which the server warns the owner. One more miss, and the owner is gone. |
-
-For example, to give the owner 30 minutes to answer, add the option
-to step 3 of [Start the riff](#start-the-riff):
-
-```sh
-riff-server --public-url URL --owner EMAIL --owner-take-minutes 30
-```
+With `--admin EMAIL` in step 3 of [Start the riff](#start-the-riff),
+the person is an admin again at the next start of `riff-server`.
+Remove it there too.
 
 ## A restart
 
@@ -580,5 +505,5 @@ seconds later. Wait for the line `riff-server listens on` before you
 run the first `riff` command:
 
 ```sh
-riff-server --public-url URL --owner EMAIL --dir ~/.local/state/riff-server
+riff-server --public-url URL --admin EMAIL --dir ~/.local/state/riff-server
 ```

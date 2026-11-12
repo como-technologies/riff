@@ -153,7 +153,7 @@ pub struct PostArgs {
 #[derive(Deserialize, JsonSchema)]
 pub struct PauseArgs {
     /// True names the whole riff: each repository. Only a lead whose
-    /// user is the owner or an admin can. Leave it out to name only
+    /// user is an admin can. Leave it out to name only
     /// your repository.
     riff: Option<bool>,
 }
@@ -421,14 +421,11 @@ your repository) and who set it."
         let pauses = self.api.pauses(&me).await.map_err(err)?;
         let mut who = self.api.roster(&me, all).await.map_err(err)?;
         crate::state::fill(&mut who.sessions, pauses.state);
-        let owner = text::owner_line(&who.owner)
-            .map(|line| format!("{line}\n"))
-            .unwrap_or_default();
         Ok(format!(
-            "{}\n{owner}{}\n{}",
+            "{}\n{}\n{}",
             text::riff_state(&pauses, me.default_thread().as_ref()),
             text::build_line(riff_client::link::server_build().as_ref()),
-            text::who(&who.sessions, &who.owner, &me)
+            text::who(&who.sessions, &me)
         ))
     }
 

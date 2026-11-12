@@ -6,7 +6,7 @@ use crate::daemon::Status;
 use crate::tui::view::{compute_view, render};
 use crate::tui::{Look, News, Tab};
 use ratatui::buffer::Buffer;
-use riff_core::wire::{BlockedInfo, Person, RiffBinary, RiffOwner};
+use riff_core::wire::{BlockedInfo, Person, RiffBinary};
 
 /// The time of the screen tests.
 const NOW: i64 = 1_000_000_000;
@@ -110,20 +110,16 @@ fn sessions() -> Vec<SessionInfo> {
 }
 
 /// The state of the mock-up of the Sessions tab of #994: the riff of the
-/// owner mike, the sessions of [`sessions`], the containers of the
+/// admin mike, the sessions of [`sessions`], the containers of the
 /// daemon of thelio, the title of #994, two new lines in the chat and
 /// news in the waves.
 fn mock_up() -> State {
     let mut state = State::new(build("10df8a4c0ffe"), RIFF.parse().unwrap());
     let mut look = Look::default();
-    look.who.owner = RiffOwner::Owner {
-        user: "mike".into(),
-        email: "m@x.io".into(),
-    };
     look.who.people = vec![
         Person {
             user: "mike".into(),
-            role: PersonRole::Owner,
+            role: PersonRole::Admin,
             live: true,
             seen_secs: Some(0),
         },
@@ -218,10 +214,10 @@ fn the_sessions_tab_at_80_x_24_is_the_mock_up() {
     state.note("The lead of riff runs on. (Ctrl-P Ctrl-Q detached.)");
     let mut want = vec![
         "[1 Sessions]  2 Chat•2  3 Waves•  4 Machines  5 Devices  6 Reports".to_owned(),
-        " riff running · owner mike · build 10df8a4 · link ok 2s".to_owned(),
+        " riff running · build 10df8a4 · link ok 2s".to_owned(),
         " 6 sessions: 1 blocked · 1 done · 3 busy · 1 idle · 1 to update         by repo"
             .to_owned(),
-        " ▼ riff › mike  owner  online                                        4 sessions"
+        " ▼ riff › mike  admin  online                                        4 sessions"
             .to_owned(),
         " > ! 3a3f8d5d  #994   worker     thelio   blocked 32m  which of two designs?".to_owned(),
         "   ✓ 8f1c2d3e  #1599  container  thelio   done         waits for a verify of PR"
@@ -328,7 +324,7 @@ fn b_puts_the_person_at_the_top() {
         rows[2..12],
         [
             " 6 sessions: 1 blocked · 1 done · 3 busy · 1 idle · 1 to update       by person",
-            " ▼ mike  owner  online        5 sessions · 1 blocked · 1 done · 2 busy · 1 idle",
+            " ▼ mike  admin  online        5 sessions · 1 blocked · 1 done · 2 busy · 1 idle",
             "   ▼ riff                     4 sessions · 1 blocked · 1 done · 1 busy · 1 idle",
             " >   ! 3a3f8d5d  #994   worker     thelio   blocked 32m  which of two designs?",
             "     ✓ 8f1c2d3e  #1599  container  thelio   done         waits for a verify of P",
@@ -377,7 +373,7 @@ fn an_active_filter_is_plain_to_see() {
         rows[2..5],
         [
             " filter host:pangolin · 1 of 6 sessions: 1 busy · Esc clears            by repo",
-            " ▼ strata › mike  owner  online                              1 session · 1 busy",
+            " ▼ strata › mike  admin  online                              1 session · 1 busy",
             " > ● 9c0d1e2f  #88    worker     pangolin busy 10m",
         ]
     );
@@ -436,7 +432,7 @@ fn the_detail_shows_the_container_of_this_machine() {
     assert_eq!(
         rows[12..14],
         [
-            rule("──riff › mike · owner · online ", 80),
+            rule("──riff › mike · admin · online ", 80),
             " 4 sessions · 1 blocked · 1 waiting · 1 busy · 1 idle".to_owned(),
         ]
     );
@@ -469,7 +465,7 @@ fn the_keys_select_fold_and_open() {
     );
     let rows = drawn(&state, 80, 24);
     assert!(
-        rows[3].starts_with(" ▶ riff › mike  owner  online · thelio "),
+        rows[3].starts_with(" ▶ riff › mike  admin  online · thelio "),
         "{rows:#?}"
     );
     assert!(rows[4].starts_with(" ▶ strata"), "{rows:#?}");
@@ -659,7 +655,7 @@ fn the_group_with_no_lead_says_why_and_l_starts_the_lead() {
     let mut state = with_no_lead(true);
     let rows = drawn(&state, 80, 24);
     assert!(
-        rows[3].starts_with(" ▼ riff  waits for a lead · l starts it  › mike  owner  online"),
+        rows[3].starts_with(" ▼ riff  waits for a lead · l starts it  › mike  admin  online"),
         "{rows:#?}"
     );
     // The detail of the group.
@@ -1212,7 +1208,6 @@ fn the_tab_and_riff_top_draw_one_sessions_model() {
     );
     let top = crate::top::Top {
         pauses: &RiffState::Running.into(),
-        owner: &RiffOwner::NoSignIn,
         server: None,
         sessions: &state.model,
         people: &[],
@@ -1276,7 +1271,6 @@ fn riff_top_keeps_its_own_tree() {
         };
         let top = crate::top::Top {
             pauses: &RiffState::Running.into(),
-            owner: &look.who.owner,
             server: look.server.as_ref(),
             sessions: &state.model,
             people: &look.who.people,
@@ -1300,7 +1294,7 @@ fn riff_top_keeps_its_own_tree() {
             "│  no numbers",
             "└─ 7a8b9c0d  worker  busy",
             "     working on #12",
-            "mike  owner  online  5 sessions: 2 busy, 1 idle, 1 blocked, 4 claims",
+            "mike  admin  online  5 sessions: 2 busy, 1 idle, 1 blocked, 4 claims",
             "├─ pangolin  › strata  1 session: 1 worker; 1 busy, 1 claim",
             "│  │  no numbers",
             "│  └─ 9c0d1e2f  worker  busy",
@@ -1323,7 +1317,7 @@ fn riff_top_keeps_its_own_tree() {
     assert_eq!(
         tree(By::Repo).lines().collect::<Vec<_>>(),
         [
-            "riff  › mike  owner  online  › thelio  4 sessions: 1 lead, 2 containers, 1 worker; 1 to update; 1 b…",
+            "riff  › mike  admin  online  › thelio  4 sessions: 1 lead, 2 containers, 1 worker; 1 to update; 1 b…",
             "│  no numbers",
             "├─ 3a3f8d5d  worker  blocked",
             "│    which of two designs? (32m ago)",
@@ -1341,7 +1335,7 @@ fn riff_top_keeps_its_own_tree() {
             "│  │  no numbers",
             "│  └─ 7a8b9c0d  worker  busy",
             "│       working on #12",
-            "└─ mike  owner  online  › pangolin  1 session: 1 worker; 1 busy, 1 claim",
+            "└─ mike  admin  online  › pangolin  1 session: 1 worker; 1 busy, 1 claim",
             "   │  no numbers",
             "   └─ 9c0d1e2f  worker  busy",
             "        working on #88",

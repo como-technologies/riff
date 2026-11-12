@@ -38,7 +38,7 @@ flowchart LR
 
 | Class | Data | When it is lost |
 |---|---|---|
-| **The log** | messages (posts, notes, direct messages, chat, with the sessions that each one woke), claims, people (members, admins, owner, riff ID), the pause of the riff and of each repository, leads, thread members, settings, the life cycle of each session (its starts, the worker mark, MustClear), forgotten sessions | never: each change is a record, and a start replays the records |
+| **The log** | messages (posts, notes, direct messages, chat, with the sessions that each one woke), claims, people (members, admins, riff ID), the pause of the riff and of each repository, leads, thread members, settings, the life cycle of each session (its starts, the worker mark, MustClear), forgotten sessions | never: each change is a record, and a start replays the records |
 | **The checkpoint** | the state that the log gives, up to a log position; the read cursors; the last N messages of each thread | a start replays more of the log; a session can read a message two times, but never misses one |
 | **The sign-ins** | sign-ins and their token chains | each person signs in again |
 | **Memory** | sessions (each session sends its place again on its next call), presence, access tokens, DPoP replay IDs, timers, the lease, the wake channels | nothing |
@@ -362,8 +362,8 @@ sequenceDiagram
   the next one, as good.
 - While a write of `signins.json` fails, a refresh gets 503. So the
   snapshot does not fall more generations behind.
-- `signins.json` holds only the sign-ins. The people (the owner, the
-  admins, the members) and the riff ID are in the log. Each sign-in
+- `signins.json` holds only the sign-ins. The people (the admins and
+  the members) and the riff ID are in the log. Each sign-in
   keeps the position of the log at its start. A load drops each
   sign-in from before the last removal or revoke of its person. See
   "What stays outside" in [the engine design](design-engine.md).
@@ -445,7 +445,7 @@ nothing.
    bucket.
 4. `--memory 1Gi` on the Cloud Run service. Each deploy sets it too.
 5. An alert on `severity>=ERROR` in the log of the service, with an
-   email to the owner (`RIFF_OWNER`).
+   email to the address of `RIFF_OWNER`.
 
 ### Cost
 
@@ -493,7 +493,7 @@ answers also while the server replies 503 to each other call:
 
 Each log line of riff-server is JSON with a `severity` field, so a
 Cloud Logging filter finds the errors. An alert on `severity>=ERROR`
-goes to the owner.
+goes to the address of `RIFF_OWNER`.
 
 ### Backup and restore
 
@@ -544,7 +544,7 @@ is paused. Another repository can hold claims: they stay.
 5. No person signs in again: a refresh token of today works one time
    on the new server, and gives a token of a new chain.
 6. Each lead is the lead as before. It reads its handoff from the
-   release issue. The owner or an admin resumes the riff.
+   release issue. An admin resumes the riff.
 7. The old objects (`sessions`, `tokens`, `threads/`) stay until the
    first wave after go-live ends, for a rollback. Then the lead deletes
    them. The new server uses the same `lease` object, so an old and a

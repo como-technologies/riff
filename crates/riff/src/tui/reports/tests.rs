@@ -8,7 +8,6 @@ use crate::tui::{Look, News};
 use crate::usage::{Counted, Kind, Tokens};
 use ratatui::buffer::Buffer;
 use riff_core::build::Build;
-use riff_core::wire::RiffOwner;
 
 /// The time of the screen tests.
 const NOW: i64 = 1_000_000_000;
@@ -99,12 +98,10 @@ fn usage() -> Usage {
 fn opened() -> State {
     let me = format!("riff://mike@thelio/{RIFF}").parse().unwrap();
     let mut state = State::new(build("10df8a4c0ffe"), me).in_clone(Some(RIFF.into()));
-    let mut look = Look::default();
-    look.who.owner = RiffOwner::Owner {
-        user: "mike".into(),
-        email: "m@x.io".into(),
+    let look = Look {
+        server: Some(build("10df8a4c0ffe")),
+        ..Look::default()
     };
-    look.server = Some(build("10df8a4c0ffe"));
     state.looked(look, NOW - 2_000);
     state.news(Tab::Chat, News::Lines(2));
     state.news(Tab::Waves, News::Dot);
@@ -202,7 +199,7 @@ fn the_rustdoc_and_the_book_show_the_screen() {
 fn the_reports_tab_at_80_x_24_is_the_mock_up() {
     let mut want: Vec<String> = [
         " 1 Sessions  2 Chat•2  3 Waves•  4 Machines  5 Devices  [6 Reports]",
-        " riff running · owner mike · build 10df8a4 · link ok 2s",
+        " riff running · build 10df8a4 · link ok 2s",
         " [Usage]  Audit  Session log",
         " USAGE OF WAVE 48 · como-technologies/riff · 14.3M tokens in 6 issues",
         "   ISSUE  TITLE                            TOKENS  MODELS",
@@ -476,11 +473,11 @@ fn the_audit_runs_on_enter_and_shows_each_rule() {
     assert_eq!(rows[22], " riff runs the audit again.");
     assert!(rows.contains(&" Rule 1: fail".to_owned()));
     // A fault says why.
-    state.audited(None, Err("only the owner reads the log".into()), NOW);
+    state.audited(None, Err("only an admin reads the log".into()), NOW);
     let rows = drawn(&state, 80, 24);
     assert_eq!(
         rows[4],
-        " riff cannot audit the wave: only the owner reads the log"
+        " riff cannot audit the wave: only an admin reads the log"
     );
 }
 

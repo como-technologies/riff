@@ -1,39 +1,39 @@
 //! The group "people": who may join the riff, and with which role.
 //!
 //! - Part of the riff: [`People`]. The riff ID, the email of each USER
-//!   (R209), the members, the admins that the owner made, the owner, a
-//!   riff whose owner is gone, the request for the owner role, and the
-//!   position of the last end of the sign-ins of each USER
-//!   (01M3XA87A9GGFA89RQXWSKY0V6). The keys of each USER
-//!   (01M75NH2P3QHCYDKQH60KGSF97) are here too: the group
+//!   (R209), the members, the admins, and the position of the last end
+//!   of the sign-ins of each USER (01M3XA87A9GGFA89RQXWSKY0V6). The keys
+//!   of each USER (01M75NH2P3QHCYDKQH60KGSF97) are here too: the group
 //!   [`super::devices`] has their commands.
 //! - `apply`: one method of [`People`] for each of the kinds
 //!   `riff_made`, `person_joined`, `member_invited`, `member_removed`,
-//!   `admin_set`, `owner_set`, `owner_asked`, `owner_denied`,
-//!   `signins_ended`, `key_added`, `device_removed` and `proved`. Only
-//!   they change the people: see [`super::riff`].
+//!   `admin_set`, `owner_set`, `signins_ended`, `key_added`,
+//!   `device_removed` and `proved`. Only they change the people: see
+//!   [`super::riff`]. The old kinds of the owner role stay readable
+//!   (01M7767T393P46VTNNE5SY203K): an `owner_set` with an email makes it an
+//!   admin and a member, and each other record of the role changes nothing.
 //! - Checkpoint: `Saved`, the fields `riff_id`, `users`, `members`,
-//!   `admins`, `owner`, `no_owner`, `owner_asked`, `signins_ended` and
-//!   `keys`.
-//! - Commands: the wire types [`Invite`], [`Remove`], [`SetAdmin`],
-//!   [`PassOwner`], [`TakeOwner`], [`DenyOwner`] and [`Revoke`], the
-//!   command [`Admit`] of the token path, and the commands
-//!   [`GrantOwner`], [`EndOwner`] and [`NameOwner`] of the server. No
-//!   client can send the last four.
-//! - [`Invite`], [`Remove`], [`SetAdmin`], [`PassOwner`] and
-//!   [`TakeOwner`] are actions of the proof of presence
-//!   ([`Command::proof`], 01M75WKSD5A66RHQMMM5CMKWJB).
+//!   `admins`, `signins_ended` and `keys`. A checkpoint from before
+//!   also has `owner`, `no_owner` and `owner_asked`: the load makes the
+//!   `owner` one more admin and member, and drops the other two.
+//! - Commands: the wire types [`Invite`], [`Remove`], [`SetAdmin`] and
+//!   [`Revoke`], the command [`Admit`] of the token path, and the
+//!   command [`NameAdmins`] of the server. No client can send the last
+//!   one.
+//! - [`Invite`], [`Remove`] and [`SetAdmin`] are actions of the proof
+//!   of presence ([`Command::proof`], 01M75WKSD5A66RHQMMM5CMKWJB).
 //!
 //! # The rules
 //!
 //! A person signs in with a verified email. The USER comes from the
 //! email (R208). The first email that signs in with a USER holds it
-//! (R209). [`Admit`] lets a person in when one of these is true:
+//! (R209). The people have two roles: member and admin. An admin is a
+//! member too (01M77671TQ92487GSM24RJG82Z). [`Admit`] lets a person in when one
+//! of these is true:
 //!
-//! - The person is the owner, a member or an admin.
+//! - The person is a member or an admin.
 //! - The account is in an allowed domain (R15).
-//! - The riff is new, with no owner and no admin: the person becomes
-//!   the owner. A riff whose owner was gone is not new.
+//! - The riff is new: it has no admin. The person becomes an admin.
 //!
 //! [`Admit`] checks the member first, and then the USER of the email
 //! (01M3XGP011KGXDP9D1FNMT374F). So a person who may not join gets "not
@@ -41,49 +41,48 @@
 //!
 //! ```mermaid
 //! flowchart TD
-//!     A[verified email] --> O{owner, member or admin?}
+//!     A[verified email] --> O{member or admin?}
 //!     O -- yes --> IN[sign in]
 //!     O -- no --> D{allowed domain?}
 //!     D -- yes --> IN
-//!     D -- no --> N{no owner and no admin?}
+//!     D -- no --> N{no admin?}
 //!     N -- yes --> IN
-//!     N -- no --> R[refuse: ask the owner for an invite]
-//!     IN --> F{no owner yet, and an admin or no admins?}
-//!     F -- yes --> OW[the person is the owner]
+//!     N -- no --> R[refuse: ask an admin for an invite]
+//!     IN --> F{no admin yet?}
+//!     F -- yes --> AD[the person is an admin]
 //! ```
 //!
-//! - The first person that [`Admit`] lets in is the owner
-//!   (01M3JN3AD44CC98AGMVP43F56G). On a riff with admins of the
-//!   settings, only an admin becomes the owner. The owner is an admin.
+//! - The first person that [`Admit`] lets in to a riff with no admin is
+//!   an admin and a member (01M7767SRX4K1N1BCDHT7M85DN).
+//! - The setting `--admin EMAIL` (R210) names an admin at each start:
+//!   the server sends [`NameAdmins`] one time after the load
+//!   (01M7767SVH8AKK7144QTJGGGRY). So a riff with such a setting has an admin
+//!   before the first sign-in.
 //! - An admin adds a member with [`Invite`], and removes one with
 //!   [`Remove`]. A removal ends each sign-in of that person (R20).
-//! - The owner makes a person an admin, or an admin a member again,
-//!   with [`SetAdmin`]. The admins of the settings (R210) add to the
-//!   admins that the owner made. They are not in the log: the
-//!   [`View`] holds them.
-//! - The owner passes the owner role with [`PassOwner`]. An admin asks
-//!   for it with [`TakeOwner`]. The owner answers with [`PassOwner`] or
-//!   [`DenyOwner`], and [`GrantOwner`] grants the request when its time
-//!   ends. [`EndOwner`] ends the role of an owner who is gone. A riff
-//!   has one owner at a time. The old owner stays an admin: `handle`
-//!   decides it, and gives the `member_invited` and `admin_set` records
-//!   of the old owner before the `owner_set` record.
+//! - An admin makes a person an admin, or an admin a member again, with
+//!   [`SetAdmin`]. A new admin is also a member. The last admin stays
+//!   (01M7767SY5PW1AMB0PBMW2GXDX): a riff with an admin keeps one.
 //! - [`Revoke`] ends each sign-in of one person. It leaves the USER of
 //!   the person: only that email signs in as that USER again.
 //! - Each change of the people posts one line of the server in the chat,
 //!   in the chunk of its command, and no note to the thread of a
-//!   repository (01M6FYH5XZAZYJFPFQVAFQSSVT, 01M76S6128EZRZS2D5CE2QCC05):
-//!   an [`Invite`], a [`Remove`], a [`SetAdmin`] and each step of the
-//!   owner role. A command that changes nothing posts no line.
+//!   repository (01M76S6128EZRZS2D5CE2QCC05, 01M77BSQQGGNE83ECS27YGVEP1):
+//!   an [`Invite`], a [`Remove`] and a [`SetAdmin`]. A command that
+//!   changes nothing posts no line.
 //!
 //! ```mermaid
 //! flowchart LR
 //!     C[a change of the people] --> L[one line of riff-bot in the chat]
-//!     C -- a person must act --> D[a direct message to each live lead of the person]
 //!     C -. no note .-> R[the thread of a repository]
 //! ```
 //!
-//! See [`crate::owner`] for the times and the lines of the owner role.
+//! ```mermaid
+//! stateDiagram-v2
+//!     NoAdmin --> Admins: the first sign-in, or --admin EMAIL at a start
+//!     Admins --> Admins: riff admin add EMAIL
+//!     Admins --> Admins: riff admin remove EMAIL, while another admin stays
+//! ```
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -93,23 +92,15 @@ use riff_core::record::{
     self, Change, DeviceRemoved, Email, KeyAdded, OwnerSet, PersonJoined, Proved, RiffMade,
     SigninsEnded,
 };
-use riff_core::selector::Selector;
 use riff_core::wire::{
-    AdminSet, DenyOwner, Invite, Invited, Kind, MembersReply, Message, OwnerAsked, OwnerDenied,
-    OwnerPassed, PassOwner, PersonRole, Remove, Removed, Revoke, Revoked, RiffOwner, SetAdmin,
-    TakeOwner,
+    AdminSet, Invite, Invited, Kind, MembersReply, Message, PersonRole, Remove, Removed, Revoke,
+    Revoked, SetAdmin,
 };
 use serde::{Deserialize, Serialize};
 
 use super::command::{Caller, Code, Command, CommandKind, Done, Now, Refused, Role};
 use super::devices::PersonKey;
 use super::view::View;
-use crate::owner;
-
-/// The refusal of an action of the owner on a riff with no owner
-/// (01M3Q63NNC6SC03BFCG80M7B4D).
-pub const NO_OWNER: &str =
-    "the riff has no owner; an admin takes the owner role with: riff owner --take";
 
 /// An email as the people keep it: with no space around it, in lower
 /// case.
@@ -155,16 +146,8 @@ pub struct People {
     users: BTreeMap<String, String>,
     /// The email of each member.
     members: BTreeSet<String>,
-    /// The email of each admin that the owner made.
+    /// The email of each admin.
     admins: BTreeSet<String>,
-    /// The email of the owner.
-    owner: Option<String>,
-    /// True when the owner was gone and no admin took the role yet
-    /// (01M3Q63NNC6SC03BFCG80M7B4D). A sign-in then makes no owner.
-    no_owner: bool,
-    /// The request for the owner role that waits for the owner
-    /// (01M3N7K3ZAZFGABN7032AYJWEM).
-    asked: Option<record::OwnerAsked>,
     /// The position of the last `member_removed` or `signins_ended`
     /// record of each USER. A sign-in that started before it is ended
     /// (01M3XA87A9GGFA89RQXWSKY0V6).
@@ -211,7 +194,7 @@ impl People {
         Ok(())
     }
 
-    /// The email is an admin that the owner made, or it is not.
+    /// The email is an admin, or it is not.
     pub(super) fn admin_set(&mut self, set: &record::AdminSet) -> Result<(), &'static str> {
         if set.admin {
             self.admins.insert(set.email.clone());
@@ -221,27 +204,17 @@ impl People {
         Ok(())
     }
 
-    /// The email is the owner. A record with no email says that the
-    /// owner is gone. The request that waits ends.
+    /// An old record of the owner role (01M7767T393P46VTNNE5SY203K): its email
+    /// is an admin and a member. An old log has no `member_invited` of the
+    /// owner, so `riff admin remove` then leaves a member. A record with no
+    /// email said that the owner was gone: the old owner stayed an admin, so
+    /// it changes nothing.
     pub(super) fn owner_set(&mut self, set: &OwnerSet) -> Result<(), &'static str> {
-        self.owner.clone_from(&set.email);
-        self.no_owner = set.email.is_none();
-        self.asked = None;
-        Ok(())
-    }
-
-    /// The email asks for the owner role.
-    pub(super) fn owner_asked(&mut self, asked: &record::OwnerAsked) -> Result<(), &'static str> {
-        self.asked = Some(asked.clone());
-        Ok(())
-    }
-
-    /// The owner keeps the role: the request ends.
-    pub(super) fn owner_denied(&mut self, _: &Email) -> Result<(), &'static str> {
-        match self.asked.take() {
-            Some(_) => Ok(()),
-            None => Err("no request for the owner role waits"),
+        if let Some(email) = &set.email {
+            self.admins.insert(email.clone());
+            self.members.insert(email.clone());
         }
+        Ok(())
     }
 
     /// Each sign-in of the USER that started before `position` is ended.
@@ -340,25 +313,14 @@ impl People {
         self.riff_id.as_deref()
     }
 
-    /// The email of the owner, or `None` when the riff has no owner.
-    pub fn owner(&self) -> Option<&str> {
-        self.owner.as_deref()
+    /// True when the riff has an admin (01M3JN3AQMHZHT6JP3P6GM9PWZ).
+    pub fn has_admin(&self) -> bool {
+        !self.admins.is_empty()
     }
 
-    /// True when the riff has an owner, or had one: a riff whose owner
-    /// was gone counts (01M3JN3AQMHZHT6JP3P6GM9PWZ).
-    pub fn owned(&self) -> bool {
-        self.owner.is_some() || self.no_owner
-    }
-
-    /// The email of the admin whose request for the owner role waits.
-    pub fn asks(&self) -> Option<&str> {
-        self.asked.as_ref().map(|asked| asked.email.as_str())
-    }
-
-    /// True when a request waits and its time ended at `now_ms`.
-    pub fn is_due(&self, now_ms: u64) -> bool {
-        self.asked.as_ref().is_some_and(|a| a.due_ms <= now_ms)
+    /// True when `email`, in lower case, is an admin.
+    pub fn is_admin(&self, email: &str) -> bool {
+        self.admins.contains(email)
     }
 
     /// The verified email that holds `user` (R209).
@@ -398,9 +360,6 @@ impl People {
             users,
             members,
             admins,
-            owner,
-            no_owner,
-            asked,
             ended,
             keys,
         } = self.clone();
@@ -409,9 +368,9 @@ impl People {
             users,
             members,
             admins,
-            owner,
-            no_owner,
-            owner_asked: asked,
+            owner: None,
+            no_owner: false,
+            owner_asked: None,
             signins_ended: ended,
             keys,
         }
@@ -422,6 +381,11 @@ impl People {
 /// it is not written. So the checkpoint of a riff with no people has
 /// the bytes of a checkpoint from before the people
 /// (01M3WNQR41K41TV832GRQZ2CQS).
+///
+/// The fields `owner`, `no_owner` and `owner_asked` come only from a
+/// checkpoint from before (01M7767T393P46VTNNE5SY203K). A read and a write of
+/// such a checkpoint keep its bytes. Its load makes the owner one more admin
+/// and member, and drops the other two. This build writes none of them.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub(super) struct Saved {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -432,10 +396,14 @@ pub(super) struct Saved {
     members: BTreeSet<String>,
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     admins: BTreeSet<String>,
+    /// The owner of a checkpoint from before: the load makes it an
+    /// admin and a member.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     owner: Option<String>,
+    /// A riff whose owner was gone, in a checkpoint from before.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     no_owner: bool,
+    /// A request for the owner role, in a checkpoint from before.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     owner_asked: Option<record::OwnerAsked>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -450,22 +418,21 @@ impl Saved {
         let Saved {
             riff_id,
             users,
-            members,
-            admins,
+            mut members,
+            mut admins,
             owner,
-            no_owner,
-            owner_asked,
+            no_owner: _,
+            owner_asked: _,
             signins_ended,
             keys,
         } = self;
+        members.extend(owner.clone());
+        admins.extend(owner);
         People {
             riff_id,
             users,
             members,
             admins,
-            owner,
-            no_owner,
-            asked: owner_asked,
             ended: signins_ended,
             keys,
         }
@@ -478,60 +445,43 @@ impl View<'_> {
         self.riff.people()
     }
 
-    /// True when `email` is an admin: the owner, an admin that the owner
-    /// made, or an admin of the settings (R210).
-    fn is_admin(&self, email: &str) -> bool {
-        let people = self.people();
-        people.owner() == Some(email)
-            || people.admins.contains(email)
-            || self.settings.is_admin(email)
-    }
-
-    /// True when `user` holds an email that is the owner, an admin or a
-    /// member.
+    /// True when `user` holds an email that is an admin or a member.
     pub(super) fn may_join(&self, user: &str) -> bool {
         let people = self.people();
         people
             .email_of(user)
-            .is_some_and(|email| self.is_admin(email) || people.members.contains(email))
+            .is_some_and(|email| people.is_admin(email) || people.members.contains(email))
     }
 
-    /// The role of `user`: the owner, an admin, or a member. A USER
-    /// with no email is a member.
+    /// The role of `user`: an admin or a member. A USER with no email
+    /// is a member.
     pub fn role_of(&self, user: &str) -> Role {
         let people = self.people();
         match people.email_of(user) {
-            Some(email) if people.owner() == Some(email) => Role::Owner,
-            Some(email) if self.is_admin(email) => Role::Admin,
+            Some(email) if people.is_admin(email) => Role::Admin,
             _ => Role::Member,
         }
     }
 
-    /// Each person once, with the highest role: the owner, the admins
-    /// and the members, each sorted (01M3MN157X8N9QKER1AJEPEJVX). The
-    /// admins of the settings add to the admins that the owner made.
-    pub fn roles(&self) -> (Option<String>, Vec<String>, Vec<String>) {
+    /// Each person once, with the highest role: the admins and the
+    /// members, each sorted (01M3MN157X8N9QKER1AJEPEJVX).
+    pub fn roles(&self) -> (Vec<String>, Vec<String>) {
         let people = self.people();
-        let owner = people.owner.clone();
-        let mut all: BTreeSet<String> = people.admins.clone();
-        all.extend(self.settings.admins().iter().cloned());
-        let not_owner = |email: &String| Some(email) != owner.as_ref();
+        let admins: Vec<String> = people.admins.iter().cloned().collect();
         let members = people
             .members
             .iter()
-            .filter(|m| not_owner(m) && !all.contains(*m))
+            .filter(|member| !people.is_admin(member))
             .cloned()
             .collect();
-        let admins = all.into_iter().filter(not_owner).collect();
-        (owner, admins, members)
+        (admins, members)
     }
 
     /// Who may join the riff: the reply to `members`. The caller adds
     /// the allowed domains.
     pub fn members(&self) -> MembersReply {
-        let (owner, admins, members) = self.roles();
+        let (admins, members) = self.roles();
         MembersReply {
-            owner,
             admins,
             members,
             allowed_domains: Vec::new(),
@@ -543,12 +493,11 @@ impl View<'_> {
     /// (01M3NT4M3A4E3K5S2NM7MS6PQD). A person who never signed in has
     /// no USER, and is not in it.
     pub fn persons(&self) -> Vec<(String, PersonRole)> {
-        let (owner, admins, members) = self.roles();
+        let (admins, members) = self.roles();
         let people = self.people();
-        let mut persons: Vec<(String, PersonRole)> = owner
+        let mut persons: Vec<(String, PersonRole)> = admins
             .into_iter()
-            .map(|email| (email, PersonRole::Owner))
-            .chain(admins.into_iter().map(|email| (email, PersonRole::Admin)))
+            .map(|email| (email, PersonRole::Admin))
             .chain(members.into_iter().map(|email| (email, PersonRole::Member)))
             .filter_map(|(email, role)| Some((people.user_of_email(&email)?.to_owned(), role)))
             .collect();
@@ -556,46 +505,17 @@ impl View<'_> {
         persons
     }
 
-    /// The owner for `who` (01M3Q63NK0AHM25MB258B0K8XP): the USER that
-    /// holds the email of the owner, or else the USER that the email
-    /// gives. [`RiffOwner::Nobody`] when the riff has no owner.
-    pub fn riff_owner(&self) -> RiffOwner {
-        let people = self.people();
-        let Some(email) = people.owner.clone() else {
-            return RiffOwner::Nobody;
-        };
-        let user = people
-            .user_of_email(&email)
-            .map(str::to_owned)
-            .or_else(|| user_of(&email).ok())
-            .unwrap_or_else(|| email.clone());
-        RiffOwner::Owner { user, email }
-    }
-
-    /// The USER of the owner, or `None` when the riff has no owner or
-    /// the owner never signed in.
-    pub fn owner_user(&self) -> Option<&str> {
-        let people = self.people();
-        people.user_of_email(people.owner()?)
-    }
-
-    /// The USER of each admin that is not the owner, sorted.
-    fn admin_users(&self) -> Vec<String> {
-        let (_, admins, _) = self.roles();
+    /// The USER of each admin, sorted: the lines of riff-bot for a
+    /// release name each of them (01M7767T5VSWN9EYDVSTCEJ8AM). An admin who
+    /// never signed in has no USER, and is not in it.
+    pub fn admin_users(&self) -> Vec<String> {
         let people = self.people();
         people
             .users
             .iter()
-            .filter(|(_, email)| admins.contains(email))
+            .filter(|(_, email)| people.is_admin(email))
             .map(|(user, _)| user.clone())
             .collect()
-    }
-
-    /// True when the riff has an owner and one more admin: only then
-    /// the server checks the owner (01M3Q546335NBTKG5BHQ27QC93).
-    pub fn has_other_admin(&self) -> bool {
-        let (owner, admins, _) = self.roles();
-        owner.is_some() && !admins.is_empty()
     }
 
     /// The thread of each repository of the riff, sorted: the
@@ -625,53 +545,28 @@ impl View<'_> {
         leads.into_iter().collect()
     }
 
-    /// The `posted` records of a change of the people that a person must
-    /// act on (01M76S6128EZRZS2D5CE2QCC05): each live lead of `tell` gets
-    /// the text as a direct message, and the last record is
-    /// [`View::chat`]. No record goes to the thread of a repository. The
-    /// records go in the chunk of the command that causes them.
-    fn news(&self, body: &str, tell: &[String], now: Now) -> Vec<Change> {
-        let server = SessionUri::server();
-        let mut changes = Vec::new();
-        let direct = owner::to_lead(body);
-        for lead in tell.iter().flat_map(|user| self.live_leads(user, now.at)) {
-            let Some(id) = lead.session() else {
-                continue;
-            };
-            let to = vec![Selector::session(id)];
-            let thread = ThreadName::direct(server.who(), &lead);
-            let told = server_message(to, direct.clone(), Kind::Message, now);
-            changes.append(&mut self.put(server.who(), thread, told, None, now.at).0);
-        }
-        changes.append(&mut self.chat(body, now));
-        changes
-    }
-
     /// The `posted` record of one line of the server in the chat, for a
-    /// change of the people (01M6FYH5XZAZYJFPFQVAFQSSVT,
-    /// 01M76S6128EZRZS2D5CE2QCC05). The line has no `to`: it wakes no
+    /// change of the people (01M76S6128EZRZS2D5CE2QCC05,
+    /// 01M77BSQQGGNE83ECS27YGVEP1). The line has no `to`: it wakes no
     /// session, and a person sees it in `riff chat`. It has the kind
     /// `riff`, so the chat shows it as `<riff-bot>`
-    /// (01M6Y4ZCTSTVM971BDC1F7GJPK).
+    /// (01M6Y4ZCTSTVM971BDC1F7GJPK). A post of the server has no
+    /// signature (01M3N7K4BC1RPZKQ1XNDTBRPGF). The record goes in the
+    /// chunk of the command that causes it.
     fn chat(&self, body: &str, now: Now) -> Vec<Change> {
         let server = SessionUri::server();
-        let line = server_message(Vec::new(), body.to_owned(), Kind::Riff, now);
+        let line = Message {
+            seq: 0,
+            from: server.clone(),
+            to: Vec::new(),
+            body: body.to_owned(),
+            at_ms: now.ms,
+            kind: Kind::Riff,
+            sig: None,
+            payload: None,
+        };
         self.put(server.who(), ThreadName::chat(), line, None, now.at)
             .0
-    }
-
-    /// The records that keep `old`, the owner who loses the role, an
-    /// admin and a member.
-    fn keeps(&self, old: &str) -> Vec<Change> {
-        let people = self.people();
-        let mut changes = Vec::new();
-        if !people.members.contains(old) {
-            changes.push(invited(old));
-        }
-        if !people.admins.contains(old) {
-            changes.push(admin_set(old, true));
-        }
-        changes
     }
 }
 
@@ -688,24 +583,18 @@ fn admin_set(email: &str, admin: bool) -> Change {
     })
 }
 
-fn owner_set(email: Option<&str>) -> Change {
-    Change::OwnerSet(OwnerSet {
-        email: email.map(str::to_owned),
-    })
-}
-
-/// A post of the server (01M3N7K4BC1RPZKQ1XNDTBRPGF): no signature.
-fn server_message(to: Vec<Selector>, body: String, kind: Kind, now: Now) -> Message {
-    Message {
-        seq: 0,
-        from: SessionUri::server(),
-        to,
-        body,
-        at_ms: now.ms,
-        kind,
-        sig: None,
-        payload: None,
+/// The records that make `email` an admin and a member: a
+/// `member_invited` when it is no member, and an `admin_set` when it is
+/// no admin.
+fn made_admin(people: &People, email: &str) -> Vec<Change> {
+    let mut changes = Vec::new();
+    if !people.members.contains(email) {
+        changes.push(invited(email));
     }
+    if !people.is_admin(email) {
+        changes.push(admin_set(email, true));
+    }
+    changes
 }
 
 /// The line in the chat of an invite (01M76S6128EZRZS2D5CE2QCC05).
@@ -764,6 +653,22 @@ fn valid(text: &str) -> Result<String, Refused> {
     Ok(email)
 }
 
+/// The refusal of the removal of the last admin (01M7767SY5PW1AMB0PBMW2GXDX).
+///
+/// ```
+/// assert_eq!(
+///     riff_state::state::people::last_admin("ada@x.io"),
+///     "ada@x.io is the last admin of this riff, and the riff keeps one; \
+///      make another person an admin first: riff admin add EMAIL"
+/// );
+/// ```
+pub fn last_admin(email: &str) -> String {
+    format!(
+        "{email} is the last admin of this riff, and the riff keeps one; make another person an \
+         admin first: riff admin add EMAIL"
+    )
+}
+
 /// The sign-in of a person from the provider: the command of the token
 /// path (01M3XA877YZQ649SWB5TN60V5P). The caller is the sign-in: the
 /// verified email, before a token is there. See "The rules" in the
@@ -804,18 +709,16 @@ impl Command for Admit {
         let email = email(&self.email);
         // The member comes first (01M3XGP011KGXDP9D1FNMT374F): a person
         // who may not join learns nothing of the USER names.
-        let admin = people.admins.contains(&email) || view.settings.is_admin(&email);
-        let new_riff = !people.owned() && view.settings.admins().is_empty();
-        let may_join = admin
+        let new_riff = !people.has_admin();
+        let may_join = new_riff
             || self.allowed_domain
-            || new_riff
-            || people.owner() == Some(email.as_str())
+            || people.is_admin(&email)
             || people.members.contains(&email);
         if !may_join {
             return Err(Refused::new(
                 Code::NotMember,
                 format!(
-                    "{email} is not a member of this riff; ask its owner to run: riff invite {email}"
+                    "{email} is not a member of this riff; ask an admin to run: riff invite {email}"
                 ),
             ));
         }
@@ -842,8 +745,8 @@ impl Command for Admit {
                 email: email.clone(),
             }));
         }
-        if !people.owned() && (view.settings.admins().is_empty() || admin) {
-            changes.push(owner_set(Some(&email)));
+        if new_riff {
+            changes.append(&mut made_admin(people, &email));
         }
         let position = view.riff.position();
         Ok((changes, Admitted { user, position }))
@@ -895,8 +798,9 @@ impl Command for Invite {
 
 /// Removes a member, by verified email, and ends each sign-in of that
 /// person (R20): the writer ends them after the write of the record. A
-/// person of an allowed domain can still sign in. The owner cannot go.
-/// It needs an admin. The chunk holds one line in the chat
+/// person of an allowed domain can still sign in. An admin cannot go:
+/// `riff admin remove` makes the admin a member first. It needs an
+/// admin. The chunk holds one line in the chat
 /// (01M76S6128EZRZS2D5CE2QCC05).
 impl Command for Remove {
     const KIND: CommandKind = CommandKind::Remove;
@@ -919,16 +823,10 @@ impl Command for Remove {
     ) -> Result<(Vec<Change>, String), Refused> {
         let people = view.people();
         let email = email(&self.email);
-        if people.owner() == Some(email.as_str()) {
+        if people.is_admin(&email) {
             return Err(Refused::new(
                 Code::BadRequest,
-                format!("{email} is the owner of this riff; the owner stays"),
-            ));
-        }
-        if people.admins.contains(&email) {
-            return Err(Refused::new(
-                Code::BadRequest,
-                format!("{email} is an admin; the owner runs riff admin remove {email} first"),
+                format!("{email} is an admin; run riff admin remove {email} first"),
             ));
         }
         let mut changes = Vec::new();
@@ -952,8 +850,9 @@ impl Command for Remove {
 
 /// Makes a person an admin, or an admin a member again
 /// (01M3JY7T109BR860EQBSKEFDHY). A new admin is also a member, so the
-/// person stays a member after the role goes. The owner stays an admin.
-/// It needs the owner. The chunk holds one line in the chat
+/// person stays a member after the role goes. The last admin stays
+/// (01M7767SY5PW1AMB0PBMW2GXDX). It needs an admin
+/// (01M77671TQ92487GSM24RJG82Z). The chunk holds one line in the chat
 /// (01M76S6128EZRZS2D5CE2QCC05).
 impl Command for SetAdmin {
     const KIND: CommandKind = CommandKind::SetAdmin;
@@ -961,7 +860,7 @@ impl Command for SetAdmin {
     type Note = String;
 
     fn needs(&self, _: &Caller) -> Role {
-        Role::Owner
+        Role::Admin
     }
 
     fn proof(&self, _: &Caller, _: &View<'_>, _: Now) -> Option<Action> {
@@ -976,32 +875,25 @@ impl Command for SetAdmin {
     ) -> Result<(Vec<Change>, String), Refused> {
         let people = view.people();
         let user = caller.who().user();
-        let mut changes = Vec::new();
         if self.admin {
             let email = valid(&self.email)?;
-            if !people.members.contains(&email) {
-                changes.push(invited(&email));
-            }
-            if !people.admins.contains(&email) {
-                changes.push(admin_set(&email, true));
+            let mut changes = made_admin(people, &email);
+            if !people.is_admin(&email) {
                 changes.append(&mut view.chat(&admin_news(user, &email, true), now));
             }
             return Ok((changes, email));
         }
         let email = email(&self.email);
-        if people.owner() == Some(email.as_str()) {
+        if !people.is_admin(&email) {
             return Err(Refused::new(
                 Code::BadRequest,
-                format!("{email} is the owner of this riff; the owner stays an admin"),
+                format!("{email} is not an admin"),
             ));
         }
-        if !people.admins.contains(&email) {
-            return Err(Refused::new(
-                Code::BadRequest,
-                format!("{email} is not an admin that the owner made"),
-            ));
+        if people.admins.len() == 1 {
+            return Err(Refused::new(Code::BadRequest, last_admin(&email)));
         }
-        changes.push(admin_set(&email, false));
+        let mut changes = vec![admin_set(&email, false)];
         changes.append(&mut view.chat(&admin_news(user, &email, false), now));
         Ok((changes, email))
     }
@@ -1014,364 +906,43 @@ impl Command for SetAdmin {
     }
 }
 
-/// Passes the owner role to a member or an admin
-/// (01M3JYX8NPZASQY6031R35H39P). The old owner stays an admin and a
-/// member. It ends a request for the owner role that waits. It needs
-/// the owner.
-///
-/// The chunk of the command holds the line in the chat
-/// (01M6FYH5XZAZYJFPFQVAFQSSVT).
-impl Command for PassOwner {
-    const KIND: CommandKind = CommandKind::PassOwner;
-    type Reply = OwnerPassed;
-    /// The new owner and the old owner.
-    type Note = (String, String);
-
-    fn needs(&self, _: &Caller) -> Role {
-        Role::Owner
-    }
-
-    fn proof(&self, _: &Caller, _: &View<'_>, _: Now) -> Option<Action> {
-        Some(Action::pass_owner(&self.email))
-    }
-
-    fn handle(
-        &self,
-        caller: &Caller,
-        view: &View<'_>,
-        now: Now,
-    ) -> Result<(Vec<Change>, (String, String)), Refused> {
-        let people = view.people();
-        let email = email(&self.email);
-        let Some(old) = people.owner() else {
-            return Err(Refused::new(Code::NotAllowed, NO_OWNER));
-        };
-        if old == email {
-            return Err(Refused::new(
-                Code::BadRequest,
-                format!("{email} is the owner of this riff already"),
-            ));
-        }
-        if !people.members.contains(&email) && !view.is_admin(&email) {
-            return Err(Refused::new(
-                Code::NotMember,
-                format!("{email} is not a member of this riff; run riff invite {email} first"),
-            ));
-        }
-        let mut changes = view.keeps(old);
-        changes.push(owner_set(Some(&email)));
-        let news = owner::passed_news(caller.who().user(), &email, old);
-        changes.append(&mut view.chat(&news, now));
-        Ok((changes, (email, old.to_owned())))
-    }
-
-    fn reply(
-        &self,
-        _: &Caller,
-        _: &View<'_>,
-        _: &Done,
-        (owner, admin): (String, String),
-        _: Now,
-    ) -> OwnerPassed {
-        OwnerPassed { owner, admin }
-    }
-}
-
-/// An admin asks for the owner role (01M3N7K3ZAZFGABN7032AYJWEM).
-///
-/// On a riff with no owner, the admin is the owner at once
-/// (01M3Q63NNC6SC03BFCG80M7B4D). Else the request waits: the owner
-/// answers with [`PassOwner`] or [`DenyOwner`], and [`GrantOwner`]
-/// grants it when its time ends (01M3Q5460YESBSQHTV3M15PE53). One
-/// request waits at a time. The owner is the owner already: the command
-/// changes nothing, and posts no line (01M3WRJAFS6W3J2ZRJ6XSW3SB5).
-///
-/// The chunk of the command holds one line in the chat
-/// (01M6FYH5XZAZYJFPFQVAFQSSVT). For a request that waits, each live
-/// lead of the owner also gets the text as a direct message
-/// (01M76S6128EZRZS2D5CE2QCC05).
-impl Command for TakeOwner {
-    const KIND: CommandKind = CommandKind::TakeOwner;
-    type Reply = OwnerAsked;
-    type Note = OwnerAsked;
-
-    fn needs(&self, _: &Caller) -> Role {
-        Role::Admin
-    }
-
-    fn proof(&self, _: &Caller, _: &View<'_>, _: Now) -> Option<Action> {
-        Some(Action::TakeOwner)
-    }
-
-    fn handle(
-        &self,
-        caller: &Caller,
-        view: &View<'_>,
-        now: Now,
-    ) -> Result<(Vec<Change>, OwnerAsked), Refused> {
-        let people = view.people();
-        let user = caller.who().user();
-        let Some(admin) = people.email_of(user).map(str::to_owned) else {
-            return Err(Refused::new(
-                Code::NotAllowed,
-                format!("{user} is not an admin; only an admin can take the owner role"),
-            ));
-        };
-        let Some(owner) = people.owner().map(str::to_owned) else {
-            let mut changes = vec![owner_set(Some(&admin))];
-            changes.append(&mut view.chat(&owner::took_news(user, &admin), now));
-            let asked = OwnerAsked {
-                admin,
-                owner: None,
-                answer_secs: 0,
-            };
-            return Ok((changes, asked));
-        };
-        if owner == admin {
-            let asked = OwnerAsked {
-                admin,
-                owner: Some(owner),
-                answer_secs: 0,
-            };
-            return Ok((Vec::new(), asked));
-        }
-        if let Some(first) = people.asks() {
-            return Err(Refused::new(
-                Code::BadRequest,
-                format!("{first} asked for the owner role first; wait for the answer of the owner"),
-            ));
-        }
-        let answer = view.settings.owner_role().answer;
-        let wait = u64::try_from(answer.as_millis()).unwrap_or(u64::MAX);
-        let mut changes = vec![Change::OwnerAsked(record::OwnerAsked {
-            email: admin.clone(),
-            due_ms: now.ms.saturating_add(wait),
-        })];
-        let news = owner::asked_news(user, &admin, &owner, answer);
-        let tell: Vec<String> = people
-            .user_of_email(&owner)
-            .map(str::to_owned)
-            .into_iter()
-            .collect();
-        changes.append(&mut view.news(&news, &tell, now));
-        let asked = OwnerAsked {
-            admin,
-            owner: Some(owner),
-            answer_secs: answer.as_secs(),
-        };
-        Ok((changes, asked))
-    }
-
-    fn reply(&self, _: &Caller, _: &View<'_>, _: &Done, asked: OwnerAsked, _: Now) -> OwnerAsked {
-        asked
-    }
-}
-
-/// The owner keeps the owner role that an admin asks for
-/// (01M3N7K41N03P26BEFFNX5617K). The chunk of the command holds one line
-/// in the chat, and each live lead of the admin gets the text as a
-/// direct message (01M76S6128EZRZS2D5CE2QCC05). It needs the owner.
-impl Command for DenyOwner {
-    const KIND: CommandKind = CommandKind::DenyOwner;
-    type Reply = OwnerDenied;
-    type Note = OwnerDenied;
-
-    fn needs(&self, _: &Caller) -> Role {
-        Role::Owner
-    }
-
-    fn handle(
-        &self,
-        caller: &Caller,
-        view: &View<'_>,
-        now: Now,
-    ) -> Result<(Vec<Change>, OwnerDenied), Refused> {
-        let people = view.people();
-        let Some(owner) = people.owner().map(str::to_owned) else {
-            return Err(Refused::new(Code::NotAllowed, NO_OWNER));
-        };
-        let Some(admin) = people.asks().map(str::to_owned) else {
-            return Err(Refused::new(
-                Code::BadRequest,
-                "no admin asks for the owner role now",
-            ));
-        };
-        let mut changes = vec![Change::OwnerDenied(Email {
-            email: admin.clone(),
-        })];
-        let news = owner::denied_news(caller.who().user(), &owner, &admin);
-        let tell: Vec<String> = people
-            .user_of_email(&admin)
-            .map(str::to_owned)
-            .into_iter()
-            .collect();
-        changes.append(&mut view.news(&news, &tell, now));
-        Ok((changes, OwnerDenied { owner, admin }))
-    }
-
-    fn reply(
-        &self,
-        _: &Caller,
-        _: &View<'_>,
-        _: &Done,
-        denied: OwnerDenied,
-        _: Now,
-    ) -> OwnerDenied {
-        denied
-    }
-}
-
-/// A change of the owner role that no person made: the server makes it
-/// when a time ends (01M3N7K41N03P26BEFFNX5617K,
-/// 01M3Q546335NBTKG5BHQ27QC93).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum OwnerChange {
-    /// The owner `old` did not answer the request in time. The admin
-    /// that asked is the `owner` now. `old` stays an admin.
-    Granted { owner: String, old: String },
-    /// The owner `old` is gone and stays an admin. The admin of a
-    /// request that waited is the `owner` now. With no request, the
-    /// riff has no owner.
-    Gone { old: String, owner: Option<String> },
-}
-
-/// The timer of the server grants a request for the owner role whose
-/// time ended with no answer of the owner
-/// (01M3N7K41N03P26BEFFNX5617K). The old owner stays an admin. It
-/// changes nothing when no request waits, or its time did not end yet.
-/// The reply is the change that it made. The chunk also holds one line
-/// in the chat (01M6FYH5XZAZYJFPFQVAFQSSVT).
-#[derive(Clone, Copy, Debug)]
-pub struct GrantOwner;
-
-impl Command for GrantOwner {
-    const KIND: CommandKind = CommandKind::GrantOwner;
-    type Reply = Option<OwnerChange>;
-    type Note = Option<OwnerChange>;
-
-    fn handle(
-        &self,
-        _caller: &Caller,
-        view: &View<'_>,
-        now: Now,
-    ) -> Result<(Vec<Change>, Option<OwnerChange>), Refused> {
-        let people = view.people();
-        let (true, Some(owner), Some(old)) = (people.is_due(now.ms), people.asks(), people.owner())
-        else {
-            return Ok((Vec::new(), None));
-        };
-        let change = OwnerChange::Granted {
-            owner: owner.to_owned(),
-            old: old.to_owned(),
-        };
-        let mut changes = view.keeps(old);
-        changes.push(owner_set(Some(owner)));
-        let news = owner::change_news(&change, view.settings.owner_role());
-        changes.append(&mut view.chat(&news, now));
-        Ok((changes, Some(change)))
-    }
-
-    fn reply(
-        &self,
-        _: &Caller,
-        _: &View<'_>,
-        _: &Done,
-        change: Option<OwnerChange>,
-        _: Now,
-    ) -> Option<OwnerChange> {
-        change
-    }
-}
-
-/// The timer of the server ends the role of an owner who is gone
-/// (01M3Q546335NBTKG5BHQ27QC93). The old owner stays an admin. The
-/// admin of a request that waits is the owner at once. With no request,
-/// the riff has no owner (01M3Q63NNC6SC03BFCG80M7B4D): the text then
-/// also goes to each live lead of each admin, to ask for a volunteer.
-/// It changes nothing in a riff with no owner. The reply is the change
-/// that it made. The chunk also holds one line in the chat, with or
-/// without a new owner (01M6FYH5XZAZYJFPFQVAFQSSVT).
-#[derive(Clone, Copy, Debug)]
-pub struct EndOwner;
-
-impl Command for EndOwner {
-    const KIND: CommandKind = CommandKind::EndOwner;
-    type Reply = Option<OwnerChange>;
-    type Note = Option<OwnerChange>;
-
-    fn handle(
-        &self,
-        _caller: &Caller,
-        view: &View<'_>,
-        now: Now,
-    ) -> Result<(Vec<Change>, Option<OwnerChange>), Refused> {
-        let people = view.people();
-        let Some(old) = people.owner() else {
-            return Ok((Vec::new(), None));
-        };
-        let owner = people.asks();
-        let change = OwnerChange::Gone {
-            old: old.to_owned(),
-            owner: owner.map(str::to_owned),
-        };
-        // Each admin after the change: the old owner is one of them.
-        let tell = match owner {
-            Some(_) => Vec::new(),
-            None => {
-                let mut admins = view.admin_users();
-                admins.extend(view.owner_user().map(str::to_owned));
-                admins.sort();
-                admins
-            }
-        };
-        let mut changes = view.keeps(old);
-        changes.push(owner_set(owner));
-        let news = owner::change_news(&change, view.settings.owner_role());
-        changes.append(&mut view.news(&news, &tell, now));
-        Ok((changes, Some(change)))
-    }
-
-    fn reply(
-        &self,
-        _: &Caller,
-        _: &View<'_>,
-        _: &Done,
-        change: Option<OwnerChange>,
-        _: Now,
-    ) -> Option<OwnerChange> {
-        change
-    }
-}
-
-/// The setting `--owner` names the owner of a new riff
-/// (01M3JN3ASSV9SA0QZKXXJ0RTEV): a command of the server, one time
-/// after the load. A riff that has an owner keeps it. A riff whose
-/// owner was gone keeps no owner (01M3N7K4GAKJ621V5AWJRQVF3M).
+/// The setting `--admin EMAIL` (`RIFF_ADMINS`, R210) names the admins
+/// at each start (01M7767SVH8AKK7144QTJGGGRY): a command of the server, one
+/// time after the load. Each email that is not an admin becomes an admin and a
+/// member. A name that gives no USER names nobody: the server warns of it at
+/// start. The reply is each email that became an admin.
 #[derive(Clone, Debug)]
-pub struct NameOwner {
-    /// The verified email of the owner.
-    pub email: String,
+pub struct NameAdmins {
+    /// The verified email of each admin of the setting.
+    pub emails: Vec<String>,
 }
 
-impl Command for NameOwner {
-    const KIND: CommandKind = CommandKind::NameOwner;
-    type Reply = ();
-    type Note = ();
+impl Command for NameAdmins {
+    const KIND: CommandKind = CommandKind::NameAdmins;
+    type Reply = Vec<String>;
+    type Note = Vec<String>;
 
     fn handle(
         &self,
         _caller: &Caller,
         view: &View<'_>,
         _now: Now,
-    ) -> Result<(Vec<Change>, ()), Refused> {
-        let mut changes = Vec::new();
-        if !view.people().owned() {
-            changes.push(owner_set(Some(&email(&self.email))));
-        }
-        Ok((changes, ()))
+    ) -> Result<(Vec<Change>, Vec<String>), Refused> {
+        let people = view.people();
+        let mut named: Vec<String> = self.emails.iter().filter_map(|e| valid(e).ok()).collect();
+        named.sort();
+        named.dedup();
+        named.retain(|email| !people.is_admin(email));
+        let changes = named
+            .iter()
+            .flat_map(|email| made_admin(people, email))
+            .collect();
+        Ok((changes, named))
     }
 
-    fn reply(&self, _: &Caller, _: &View<'_>, _: &Done, (): (), _: Now) {}
+    fn reply(&self, _: &Caller, _: &View<'_>, _: &Done, named: Vec<String>, _: Now) -> Vec<String> {
+        named
+    }
 }
 
 /// The USER whose sign-ins a revoke ends: the USER of the call, or the

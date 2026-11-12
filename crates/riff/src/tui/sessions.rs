@@ -7,9 +7,9 @@
 //!
 //! ```text
 //! [1 Sessions]  2 Chat•2  3 Waves•  4 Machines  5 Devices  6 Reports
-//!  riff running · owner mike · build 10df8a4 · link ok 2s
+//!  riff running · build 10df8a4 · link ok 2s
 //!  6 sessions: 1 blocked · 1 done · 3 busy · 1 idle · 1 to update         by repo
-//!  ▼ riff › mike  owner  online                                        4 sessions
+//!  ▼ riff › mike  admin  online                                        4 sessions
 //!  > ! 3a3f8d5d  #994   worker     thelio   blocked 32m  which of two designs?
 //!    ✓ 8f1c2d3e  #1599  container  thelio   done         waits for a verify of PR
 //!    ● 5b1e2a90  #1590  container  thelio   busy 12m     Bash: just check
@@ -707,7 +707,7 @@ impl State {
     /// Each person of the riff, from `who` and the sessions.
     fn people(&self) -> BTreeMap<String, PersonRow> {
         match self.last_look() {
-            Some((look, _)) => self.model.people(&look.who.people, &look.who.owner),
+            Some((look, _)) => self.model.people(&look.who.people),
             None => BTreeMap::new(),
         }
     }

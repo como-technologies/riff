@@ -367,7 +367,7 @@ pub struct Settings {
     pub min_instances: u32,
     /// The alert on each error in the log, or empty for no alert.
     pub alert: String,
-    /// The channel that sends the alert to the owner.
+    /// The channel that sends the alert to the email of `RIFF_OWNER`.
     pub alert_channel: String,
     /// The public URL of the service.
     pub url: String,
@@ -1569,8 +1569,9 @@ pub fn github_repository(s: &Settings) -> String {
 }
 
 /// The alert on each log line of the service with the severity ERROR
-/// or more, by email to the owner (01M3TJWJ6J3M6JRXJTAETZ5M6F). The
-/// repository is public, so the email comes from `RIFF_OWNER`.
+/// or more, by email to the address of `RIFF_OWNER`
+/// (01M3TJWJ6J3M6JRXJTAETZ5M6F). The repository is public, so the address
+/// is not in it.
 fn make_alert(gcloud: &Gcloud, s: &Settings, owner: Option<&str>) -> Result<()> {
     if s.alert.is_empty() {
         println!("Alert: none, because {}.env has no alert.", s.name);
@@ -1798,9 +1799,10 @@ pub fn build_id(top: &Path) -> Result<String> {
 }
 
 /// Deploys riff-server of `source` to the service of `s` (R5, R6, R29,
-/// R32, R130, R131, R134). `owner` is the owner of the riff
-/// (01M3JN3ASSV9SA0QZKXXJ0RTEV).
-pub fn deploy(gcloud: &Gcloud, s: &Settings, source: &Source, owner: &str) -> Result<()> {
+/// R32, R130, R131, R134). `admin` is the email of `RIFF_OWNER`: riff-server
+/// names it an admin at each start, as `RIFF_ADMINS`
+/// (01M7767SVH8AKK7144QTJGGGRY).
+pub fn deploy(gcloud: &Gcloud, s: &Settings, source: &Source, admin: &str) -> Result<()> {
     if s.client_id.is_empty() {
         bail!(text::cloud_no_client(&s.name));
     }
@@ -1851,7 +1853,7 @@ pub fn deploy(gcloud: &Gcloud, s: &Settings, source: &Source, owner: &str) -> Re
         "--no-invoker-iam-check",
         "--set-env-vars",
         &format!(
-            "RIFF_PUBLIC_URL={},RIFF_REQUIRE_SIGN_IN=true,RIFF_OIDC_CLIENT_ID={},RIFF_BUCKET={},RIFF_OWNER={owner},RIFF_GITHUB_SECRET=projects/{}/secrets/{}",
+            "RIFF_PUBLIC_URL={},RIFF_REQUIRE_SIGN_IN=true,RIFF_OIDC_CLIENT_ID={},RIFF_BUCKET={},RIFF_ADMINS={admin},RIFF_GITHUB_SECRET=projects/{}/secrets/{}",
             s.url, s.client_id, s.bucket, s.project, s.github_secret
         ),
         "--set-secrets",

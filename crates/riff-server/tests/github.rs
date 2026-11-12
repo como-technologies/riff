@@ -499,8 +499,8 @@ async fn a_wrong_an_old_or_a_used_state_is_refused() {
 }
 
 /// 01M6WG52T5PAD9NGQ597CP56K7, 01M6WPV8473EBABR1ZMEPZMTQQ: a member who
-/// is not the owner or an admin cannot make the Apps, or ask whether they
-/// are installed on an account. Each person can see the Apps with no
+/// is not an admin cannot make the Apps, or ask whether they are
+/// installed on an account. Each person can see the Apps with no
 /// account, and check them.
 #[tokio::test]
 async fn a_member_who_is_not_the_owner_or_an_admin_is_refused() {
@@ -526,7 +526,7 @@ async fn a_member_who_is_not_the_owner_or_an_admin_is_refused() {
     let (status, text) = call(&url, &member, "/v1/github/create", create).await;
     assert_eq!(status, 403, "{text}");
     assert!(
-        text.contains("only the owner or an admin of the riff runs riff github create"),
+        text.contains("only an admin of the riff runs riff github create"),
         "{text}"
     );
     let (status, text) = call(&url, &member, "/v1/github/apps", json!({ "owner": OWNER })).await;

@@ -236,8 +236,7 @@ enum Command {
     /// Hold or free a work item of the plan of your repository
     ///
     /// A held item is no free work: no worker can claim it. A hold is
-    /// not a claim. Only a lead, the owner or an admin can hold and free
-    /// an item.
+    /// not a claim. Only a lead or an admin can hold and free an item.
     Plan {
         #[command(subcommand)]
         command: PlanCommand,
@@ -332,26 +331,25 @@ enum Command {
     /// repositories go on. You in a shell, or the lead, can pause a
     /// repository.
     Pause {
-        /// Pause the whole riff: each repository. Only the owner or an
-        /// admin can
+        /// Pause the whole riff: each repository. Only an admin can
         #[arg(long, conflicts_with = "repo")]
         riff: bool,
         /// Pause this repository, not the repository of this directory.
-        /// Only the owner or an admin can
+        /// Only an admin can
         #[arg(long, value_name = "OWNER/REPO")]
         repo: Option<String>,
     },
     /// Resume your repository, or the whole riff
     ///
     /// Each session of the repository of this directory goes on from
-    /// where it stopped. A new riff starts paused: the owner or an
-    /// admin resumes it with --riff to start the work.
+    /// where it stopped. A new riff starts paused: an admin resumes it
+    /// with --riff to start the work.
     Resume {
-        /// Resume the whole riff. Only the owner or an admin can
+        /// Resume the whole riff. Only an admin can
         #[arg(long, conflicts_with = "repo")]
         riff: bool,
         /// Resume this repository, not the repository of this
-        /// directory. Only the owner or an admin can
+        /// directory. Only an admin can
         #[arg(long, value_name = "OWNER/REPO")]
         repo: Option<String>,
     },
@@ -393,7 +391,7 @@ enum Command {
     ///
     /// It adds the verified email of a person to the members of the riff
     /// of riff-server, and prints the address of the riff and the lines
-    /// that the person runs to join. Only the owner or an admin can.
+    /// that the person runs to join. Only an admin can.
     Invite {
         /// The email that the person signs in with.
         email: String,
@@ -401,46 +399,25 @@ enum Command {
     /// Remove a member of this riff
     ///
     /// It removes a person from the riff of riff-server, and ends each
-    /// sign-in of that person. Only the owner or an admin can. The owner
-    /// stays.
+    /// sign-in of that person. Only an admin can. An admin stays: riff
+    /// admin remove makes the admin a member first.
     Remove {
         /// The email of the person.
         email: String,
     },
     /// List who may join this riff
     ///
-    /// It lists the owner, the admins, the members and the allowed domains
-    /// of the riff of riff-server. The lead runs it in its container too.
+    /// It lists the admins, the members and the allowed domains of the
+    /// riff of riff-server. The lead runs it in its container too.
     Members,
     /// Make or remove an admin, or set the proof of presence
     ///
-    /// An admin can invite and remove members. Only the owner makes an
-    /// admin. riff admin proof sets the policy of the proof of presence of
-    /// the riff: only the owner or an admin can.
+    /// An admin invites and removes members, and makes and removes an
+    /// admin. Only an admin can. The riff keeps its last admin. riff admin
+    /// proof sets the policy of the proof of presence of the riff.
     Admin {
         #[command(subcommand)]
         command: Admin,
-    },
-    /// Pass the owner role to another person
-    ///
-    /// The person is a member or an admin. You stay an admin. Only the
-    /// owner can. An admin asks for the role with --take, and the owner
-    /// keeps it with --deny.
-    #[command(group = clap::ArgGroup::new("step").required(true).args(["email", "take", "deny"]))]
-    Owner {
-        /// The email of the new owner. The person must be a member or an
-        /// admin.
-        email: Option<String>,
-        /// Ask for the owner role. Only an admin can. The owner has 10
-        /// minutes to answer (a setting of riff-server). With no answer,
-        /// you are the owner. On a riff with no owner, you are the owner
-        /// at once.
-        #[arg(long)]
-        take: bool,
-        /// Keep the owner role when an admin asks for it. Only the owner
-        /// can.
-        #[arg(long)]
-        deny: bool,
     },
     /// Add the Claude Code permission rules of riff to this project
     ///
@@ -716,8 +693,8 @@ enum Command {
     /// It reads the log of the repository of this directory from the
     /// riff, and the issues and pull requests of the wave with gh. It
     /// prints each rule with pass, fail or not checked, and the records
-    /// that show it. It exits with 1 when a rule fails. Only the owner or
-    /// an admin can. The lead runs it in its container too: the riff daemon
+    /// that show it. It exits with 1 when a rule fails. Only an admin
+    /// can. The lead runs it in its container too: the riff daemon
     /// of the host reads the log for it.
     Audit {
         /// The wave: its number, for example 3 or "Wave 3". The name of
@@ -1070,9 +1047,9 @@ enum GithubCommand {
     /// click "Create GitHub App" for each App, then "Install" for each
     /// App, on the repositories of the riff. riff waits at most 10 minutes
     /// for the two installs. Then it runs riff github check, in a clone of
-    /// a repository of the account. Only the owner or an admin of the riff
-    /// can. On GitHub, you must be an owner of the account, or a manager of
-    /// its GitHub Apps.
+    /// a repository of the account. Only an admin of the riff can. On
+    /// GitHub, you must be an owner of the account, or a manager of its
+    /// GitHub Apps.
     Create {
         /// The organization or the personal account that gets the Apps.
         #[arg(long)]
@@ -1090,8 +1067,8 @@ enum GithubCommand {
     /// opens its page Configure: click "Review request". riff waits at
     /// most 10 minutes for the two installs, each with the repository and
     /// the rights. Then it runs riff github check for the repository. With
-    /// nothing to do, it changes nothing and says so. Only the owner or an
-    /// admin of the riff can.
+    /// nothing to do, it changes nothing and says so. Only an admin of the
+    /// riff can.
     Install {
         /// The organization or the personal account, for example
         /// n8behavior.
@@ -1195,8 +1172,8 @@ enum ReleaseCommand {
     /// review: an open alert of code scanning, secret scanning or
     /// Dependabot, or a dismissed alert with no comment. It lists each one.
     /// A revoked secret and a Dependabot alert that a rule dismissed need no
-    /// comment. No flag skips a check. Only the owner or an admin of the
-    /// riff in a terminal, or the lead of one, may cut, also the lead in its
+    /// comment. No flag skips a check. Only an admin of the riff in a
+    /// terminal, or the lead of one, may cut, also the lead in its
     /// container. It refuses a worker and a work session in a container.
     /// The ruleset releases of GitHub decides the push of the tag: it lets
     /// an admin of the repository and the lead App push it, so the lead
@@ -1232,7 +1209,7 @@ enum ReleaseCommand {
     ///
     /// Only a person in a plain terminal approves. It refuses each agent
     /// session: a worker, a container session, and the lead, also when
-    /// the owner said approve in riff chat. It finds the CI run of the
+    /// an admin said approve in riff chat. It finds the CI run of the
     /// tag that waits for the environment production, shows the tag, the
     /// commit and the run, and asks yes or no. On yes, it pauses the
     /// whole riff, which tells each other lead, then approves.
@@ -1376,7 +1353,10 @@ enum Admin {
         /// The email that the person signs in with.
         email: String,
     },
-    /// Make an admin a member again. The owner stays an admin.
+    /// Make an admin a member again
+    ///
+    /// The person stays a member. The last admin of the riff stays: riff
+    /// refuses to remove it, and changes nothing.
     Remove {
         /// The email of the admin.
         email: String,
@@ -1387,8 +1367,8 @@ enum Admin {
     /// a touch of an authenticator of the person who acts. riff asks for
     /// it in the browser, and refuses the action with no proof. A new riff
     /// is off. The change needs a proof of your key, also to off, so add
-    /// a key first: riff device add --key NAME. Only the owner or an admin
-    /// can. riff whoami and riff members show the policy.
+    /// a key first: riff device add --key NAME. Only an admin can. riff
+    /// whoami and riff members show the policy.
     Proof {
         /// The policy: off or required.
         #[arg(value_parser = ["off", "required"])]
@@ -1893,7 +1873,8 @@ enum LeadCommand {
     /// repository: the running state of the lead, what waits for you, and
     /// your choices. A lead on any host reads them at its start. The lead
     /// writes them with its notes tool. riff refuses a text over 64 KiB and
-    /// a text that looks like a token. Only you and the owner can read them.
+    /// a text that looks like a token. Only you and each admin can read
+    /// them.
     Notes {
         #[command(subcommand)]
         command: Option<NotesCommand>,
@@ -1903,7 +1884,7 @@ enum LeadCommand {
         /// Show also each old text, the newest first.
         #[arg(long)]
         history: bool,
-        /// Show the notes of this user. Only the owner can show the notes
+        /// Show the notes of this user. Only an admin can show the notes
         /// of another user.
         #[arg(long)]
         user: Option<String>,
@@ -2381,35 +2362,6 @@ async fn cli() -> Result<()> {
             println!("{}", text::admin_set(&done));
             return Ok(());
         }
-        Command::Owner {
-            email: Some(email), ..
-        } => {
-            let api = api.signed_in(None)?;
-            let action = Action::pass_owner(email);
-            let done = proof::act(&api, &action, &Asker::terminal(), |api| async move {
-                api.pass_owner(email).await
-            })
-            .await?;
-            println!("{}", text::owner_passed(&done));
-            return Ok(());
-        }
-        Command::Owner { take: true, .. } => {
-            let api = api.signed_in(None)?;
-            let asked = proof::act(
-                &api,
-                &Action::TakeOwner,
-                &Asker::terminal(),
-                |api| async move { api.take_owner().await },
-            )
-            .await?;
-            println!("{}", text::owner_asked(&asked));
-            return Ok(());
-        }
-        Command::Owner { .. } => {
-            let denied = api.signed_in(None)?.deny_owner().await?;
-            println!("{}", text::owner_denied(&denied));
-            return Ok(());
-        }
         _ => {}
     }
     // In a container, the control socket of the daemon is not there: the
@@ -2550,10 +2502,7 @@ async fn cli() -> Result<()> {
             };
             let (pauses, mut who) = (seen.pauses, seen.who);
             riff::state::fill(&mut who.sessions, pauses.state);
-            anstream::print!(
-                "{}",
-                view::who(&pauses, &who.owner, &who.sessions, &me, long)
-            );
+            anstream::print!("{}", view::who(&pauses, &who.sessions, &me, long));
         }
         // In a container, the daemon makes each call of a command of a
         // session for it (01M74A84SA5KCBVGVW7M9ETJ3A).
@@ -2870,7 +2819,6 @@ async fn cli() -> Result<()> {
         | Command::Questions { .. }
         | Command::Chat { .. }
         | Command::Admin { .. }
-        | Command::Owner { .. }
         | Command::Run { .. }
         | Command::Host { .. }
         | Command::Wave { .. } => unreachable!("handled before the identity"),
@@ -2891,7 +2839,6 @@ fn needs_the_host(command: &Command) -> Option<&'static str> {
         Command::Invite { .. } => "riff invite",
         Command::Remove { .. } => "riff remove",
         Command::Admin { .. } => "riff admin",
-        Command::Owner { .. } => "riff owner",
         Command::Chat { .. } => "riff chat",
         Command::Tail { .. } => "riff tail",
         Command::Claim { .. } => "riff claim",
@@ -3766,16 +3713,22 @@ async fn release_caller(server: &str, ask_role: bool) -> riff::cycle::Caller {
     caller
 }
 
-/// The USER of the owner of the riff, or an empty text when it has none.
-async fn release_owner(reach: &Reach) -> Result<String> {
-    Ok(match reach.roster().await?.owner {
-        riff_core::wire::RiffOwner::Owner { user, .. } => user,
-        _ => String::new(),
-    })
+/// The USER of each admin of the riff, sorted: each one that the chat
+/// line of a release names (01M7767T5VSWN9EYDVSTCEJ8AM). None in a riff with no
+/// sign-in.
+async fn release_admins(reach: &Reach) -> Result<Vec<String>> {
+    Ok(reach
+        .roster()
+        .await?
+        .people
+        .into_iter()
+        .filter(|person| person.role == riff_core::wire::PersonRole::Admin)
+        .map(|person| person.user)
+        .collect())
 }
 
 /// Resumes the whole riff after `riff release check`. A failure is a
-/// line: the owner or an admin resumes it by hand.
+/// line: an admin resumes it by hand.
 async fn resume_after_check(reach: &Reach) {
     match reach.resume_riff().await {
         Ok(line) => println!("{line}"),
@@ -3924,20 +3877,20 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
                     None => println!("GitHub shows no CI run of the tag yet."),
                 }
                 let told = async {
-                    let owner = release_owner(reach).await?;
+                    let admins = release_admins(reach).await?;
                     let fact = BotFact::ReleasePublished {
                         tag: tag.clone(),
                         run: release.run.as_deref().and_then(cycle::run_id),
                     };
                     reach.bot(fact).await?;
-                    anyhow::Ok(owner)
+                    anyhow::Ok(admins)
                 };
                 match told.await {
-                    Ok(owner) if !owner.is_empty() => {
-                        println!("riff told the owner {owner} in riff chat.")
+                    Ok(admins) if !admins.is_empty() => {
+                        println!("riff told each admin in riff chat: {}.", admins.join(", "))
                     }
                     Ok(_) => println!("riff told the riff in riff chat."),
-                    Err(e) => eprintln!("riff: cannot post the chat line to the owner: {e:#}"),
+                    Err(e) => eprintln!("riff: cannot post the chat line to the admins: {e:#}"),
                 }
                 let step = riff::hold::Step::Cut { number: cut.number };
                 tell_other_leads(reach, &here, step, &tag).await;
@@ -3982,7 +3935,7 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
         }
         ReleaseCommand::Approve { tag, over_holds } => {
             // Only a person in a terminal approves: never a session, also
-            // not the lead, and riff reads no word of the owner in riff
+            // not the lead, and riff reads no word of an admin in riff
             // chat (01M6WZ40SFVZ6CRQ1H4Z27CWP4). riff asks riff-server for
             // the role only of a person.
             let first = release_caller(server, false).await;
@@ -4810,7 +4763,6 @@ async fn draw_top(
         let machines = riff_client::machines::machines(sessions, None);
         let top = riff::top::Top {
             pauses,
-            owner: &who.owner,
             server: server.as_ref(),
             sessions,
             people: &who.people,

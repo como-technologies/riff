@@ -619,6 +619,14 @@ page [Requirements](requirements.md) holds the rules of today.
   system clears at a logout. So the leave holds over a restart of the
   machine, of `riff mcp` and of `riff-server`.
   Superseded by 4.0 (#1173).
+- **01M3Q63NK0AHM25MB258B0K8XP** `riff who` names the owner of the
+  riff in the fact `owner`: `USER (EMAIL)`, or `none`. A riff with no
+  owner ends with the line that names `riff owner --take`, in yellow.
+  A riff with no sign-in shows no owner. The owner is a person: only a
+  row with no session of the owner gets the tag `owner`. The MCP `who`
+  tool shows the owner line `The owner is USER (EMAIL).` or
+  `The riff has no owner.`, plain.
+  Superseded by 01M7767T8EFVR79NSHKTK53G7B.
 
 ## Threads
 
@@ -719,6 +727,82 @@ page [Requirements](requirements.md) holds the rules of today.
   server posts each of these notes, except the note of a pass
   (01M3MN14ZCTRVD3T455P6TFK1B).
   Superseded by 01M76S6128EZRZS2D5CE2QCC05.
+- **01M3JN3AD44CC98AGMVP43F56G** The first person who signs in to a riff
+  with sign-in is its owner. On a riff with admins (R210), only an admin
+  becomes the owner. The owner is an admin. A riff that has an owner
+  keeps it. Superseded by 01M7767SRX4K1N1BCDHT7M85DN.
+- **01M3JYX8NPZASQY6031R35H39P** `riff owner EMAIL` passes the owner
+  role to a member or an admin. Only the owner can. A riff has one owner
+  at a time. The old owner stays an admin.
+  Superseded by 01M77671TQ92487GSM24RJG82Z.
+- **01M3JYX8QSEZDB5RZJ3Y57DR4Y** `riff-server` keeps a passed owner role
+  in its state. It stays after a restart with a bucket, also when
+  `--owner` names the old owner.
+  Superseded by 01M77671TQ92487GSM24RJG82Z.
+- **01M3N7K3ZAZFGABN7032AYJWEM** `riff owner --take`: an admin asks for
+  the owner role. Only an admin can. `riff-server` tells the owner at
+  once: a direct message to each live lead of the owner. One request
+  waits at a time. A second request is refused, and the refusal names
+  the admin that asked first.
+  Superseded by 01M77671TQ92487GSM24RJG82Z.
+- **01M3WRJAFS6W3J2ZRJ6XSW3SB5** `riff owner --take` by the owner is not
+  an error. It says that the user is the owner already, and exits with
+  0. It changes nothing: no request, no note and no message.
+  Superseded by 01M77671TQ92487GSM24RJG82Z.
+- **01M3N7K41N03P26BEFFNX5617K** The owner answers a request in N
+  minutes. `riff owner EMAIL` passes the role and ends the request.
+  `riff owner --deny` keeps the role: the riff tells the admin with a
+  direct message to each live lead of the admin. With no answer in N
+  minutes, the admin that asked is the owner. The old owner stays an
+  admin.
+  Superseded by 01M77671TQ92487GSM24RJG82Z.
+- **01M3Q5460YESBSQHTV3M15PE53** `riff-server` has three settings of the
+  owner role, each 1 or more: N is `--owner-take-minutes`
+  (`RIFF_OWNER_TAKE_MINUTES`, default 10). M is `--owner-ping-minutes`
+  (`RIFF_OWNER_PING_MINUTES`, default 10). P is `--owner-pings`
+  (`RIFF_OWNER_PINGS`, default 3).
+  Superseded by 01M77671TQ92487GSM24RJG82Z.
+- **01M3Q546335NBTKG5BHQ27QC93** `riff-server` checks the owner each M
+  minutes, while the riff has an owner and an admin who is not the
+  owner. A check misses when no session of the owner is live, and the
+  owner made no call since the last check, also as a person. A check
+  wakes no session. After P misses in a row, the server warns the owner:
+  one line in the chat. When the next check misses too, the owner is
+  gone, and stays an admin. The admin of a request that waits is the
+  owner at once. With no request, the riff has no owner, and asks for a
+  volunteer: a direct message to each live lead of each admin.
+  Superseded by 01M77671TQ92487GSM24RJG82Z.
+- **01M3Q63NNC6SC03BFCG80M7B4D** On a riff with no owner, `riff owner
+  --take` of an admin makes that admin the owner at once. `riff members`
+  shows the owner `none` and ends with the line that says that the riff
+  has no owner, in yellow. `riff admin`, `riff owner EMAIL` and `riff
+  owner --deny` are refused, with a text that names `riff owner --take`.
+  A sign-in makes no owner. Superseded by 01M77671TQ92487GSM24RJG82Z.
+- **01M3N7K4GAKJ621V5AWJRQVF3M** `riff-server` keeps a request that
+  waits, and a riff with no owner, with the tokens in its state. They
+  stay after a restart with a bucket. A request whose time ended while
+  the server was down is granted at the first look after the load.
+  `--owner` names no owner on a riff with no owner. A riff with no owner
+  counts as a riff with an owner for the listen address
+  (01M3JN3AQMHZHT6JP3P6GM9PWZ).
+  Superseded by 01M77671TQ92487GSM24RJG82Z.
+- **01M6FYH5XZAZYJFPFQVAFQSSVT** Each change of the owner role posts
+  one line in the chat, as `riff://riff@server`. The line has no `to`:
+  it wakes no session. A person sees it in `riff chat`. The server posts
+  the line in the chunk of the command that makes the change, so a
+  replay of the log has it.
+  Superseded by 01M77671TQ92487GSM24RJG82Z.
+- **01M3JN3AQMHZHT6JP3P6GM9PWZ** A riff with sign-in listens only on a
+  loopback address until it has an owner, so the owner signs in from the
+  machine of the server. `riff-server` refuses another address at start,
+  also with `--insecure`. It checks again after it loads its bucket.
+  Before the load, it counts `RIFF_OWNER` or a bucket as an owner.
+  Superseded by 01M7767T0PQBQZ0CGA6YJT3VV8.
+- **01M3JN3ASSV9SA0QZKXXJ0RTEV** `--owner EMAIL` (`RIFF_OWNER`) names
+  the owner of a riff that has none. The cloud deploy passes it from the
+  GitHub Actions variable `RIFF_OWNER`. The deploy stops with an error
+  when the variable is missing.
+  Superseded by 01M7767SVH8AKK7144QTJGGGRY.
 
 ## Terminal
 

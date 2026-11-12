@@ -305,8 +305,6 @@ mod tests {
             Action::invite("bob@acme.io"),
             Action::remove("bob@acme.io"),
             Action::admin("bob@acme.io", true),
-            Action::pass_owner("bob@acme.io"),
-            Action::TakeOwner,
             Action::End {
                 host: host(),
                 name: name(),
@@ -492,25 +490,11 @@ mod tests {
             .zip(waits.iter().cycle())
             .map(|(state, waits)| session_info(*state, waits.clone()))
             .collect();
-        for owner in [
-            RiffOwner::NoSignIn,
-            RiffOwner::Nobody,
-            RiffOwner::Owner {
-                user: text("ann"),
-                email: text("ann@acme.io"),
-            },
-        ] {
-            c.trip(&WhoReply {
-                sessions: sessions.clone(),
-                owner,
-                people: vec![
-                    person(PersonRole::Owner),
-                    person(PersonRole::Admin),
-                    person(PersonRole::Member),
-                ],
-                repos: vec![thread()],
-            });
-        }
+        c.trip(&WhoReply {
+            sessions: sessions.clone(),
+            people: vec![person(PersonRole::Admin), person(PersonRole::Member)],
+            repos: vec![thread()],
+        });
         c.trip(&MeReply {
             session: Some(sessions[0].clone()),
             build: text("1.2.0"),
@@ -983,24 +967,6 @@ mod tests {
             email: text("bob@acme.io"),
             admin: true,
         });
-        c.trip(&PassOwner {
-            email: text("bob@acme.io"),
-        });
-        c.trip(&OwnerPassed {
-            owner: text("bob@acme.io"),
-            admin: text("ann@acme.io"),
-        });
-        c.trip(&TakeOwner {});
-        c.trip(&OwnerAsked {
-            admin: text("bob@acme.io"),
-            owner: Some(text("ann@acme.io")),
-            answer_secs: 600,
-        });
-        c.trip(&DenyOwner {});
-        c.trip(&OwnerDenied {
-            owner: text("ann@acme.io"),
-            admin: text("bob@acme.io"),
-        });
         let device = DeviceInfo {
             kind: DeviceKind::Key,
             name: text("yubikey"),
@@ -1207,8 +1173,7 @@ mod tests {
         });
         c.trip(&Members {});
         c.trip(&MembersReply {
-            owner: Some(text("ann@acme.io")),
-            admins: vec![text("bob@acme.io")],
+            admins: vec![text("ann@acme.io"), text("bob@acme.io")],
             members: vec![text("cy@acme.io")],
             allowed_domains: vec![text("acme.io")],
             proof: crate::proof::Policy::Required,

@@ -336,7 +336,7 @@ impl Command for Claim {
                 .as_ref()
                 .map_or_else(String::new, |by| format!(" by {by}"));
             let who = match scope {
-                Scope::Riff => "the owner or an admin resumes it with `riff resume --riff`",
+                Scope::Riff => "an admin resumes it with `riff resume --riff`",
                 Scope::Repository(_) | Scope::Other => "your user or the lead resumes it",
             };
             return Err(Refused::new(

@@ -274,22 +274,22 @@ fn loopback_needs_no_flag_and_gives_no_warning() {
 }
 
 #[test]
-fn a_server_with_sign_in_and_an_owner_listens_anywhere_with_no_flag() {
+fn a_server_with_sign_in_and_an_admin_listens_anywhere_with_no_flag() {
     let (_server, _, log) = serve(&[
         "--listen",
         "0.0.0.0:0",
         "--require-sign-in",
-        "--owner",
+        "--admin",
         "ada@gmail.com",
     ]);
     assert!(!log.contains("any person"), "{log}");
 }
 
-/// A riff with sign-in and no owner listens only on loopback, so that
-/// the first sign-in comes from its own machine
-/// (01M3JN3AQMHZHT6JP3P6GM9PWZ). --insecure does not change that.
+/// A riff with sign-in and no admin listens only on loopback, so that
+/// the first sign-in comes from its own machine (01M7767T0PQBQZ0CGA6YJT3VV8).
+/// --insecure does not change that.
 #[test]
-fn a_server_with_sign_in_and_no_owner_refuses_a_network_address() {
+fn a_server_with_sign_in_and_no_admin_refuses_a_network_address() {
     for args in [
         &["--listen", "0.0.0.0:0", "--require-sign-in"][..],
         &["--listen", "0.0.0.0:0", "--require-sign-in", "--insecure"][..],
@@ -297,24 +297,38 @@ fn a_server_with_sign_in_and_no_owner_refuses_a_network_address() {
         let out = server(args).output().unwrap();
         assert!(!out.status.success(), "{args:?}");
         let stderr = String::from_utf8_lossy(&out.stderr);
-        assert!(stderr.contains("no owner"), "{stderr}");
-        assert!(stderr.contains("--owner"), "{stderr}");
+        assert!(stderr.contains("no admin"), "{stderr}");
+        assert!(stderr.contains("--admin"), "{stderr}");
     }
     let (_server, _, _) = serve(&["--listen", "127.0.0.1:0", "--require-sign-in"]);
 }
 
+/// An admin of the setting that is not an email names nobody (R210):
+/// the server warns of it, and it counts as no admin for the listen
+/// address (01M7767T0PQBQZ0CGA6YJT3VV8).
 #[test]
-fn an_owner_that_is_not_an_email_is_refused() {
+fn an_admin_that_is_not_an_email_names_nobody() {
     let out = server(&[
         "--listen",
-        "127.0.0.1:0",
+        "0.0.0.0:0",
         "--require-sign-in",
-        "--owner",
+        "--admin",
         "ada",
     ])
     .output()
     .unwrap();
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("not an email"), "{stderr}");
+    assert!(stderr.contains("no admin"), "{stderr}");
+    let (_server, _, log) = serve(&[
+        "--listen",
+        "127.0.0.1:0",
+        "--require-sign-in",
+        "--admin",
+        "ada",
+    ]);
+    assert!(
+        log.contains("the admin ada is not an email: it names nobody"),
+        "{log}"
+    );
 }

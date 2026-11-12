@@ -9,8 +9,9 @@
 //! The riff of the person sends only the fact, in the call `bot`
 //! ([`BotPost`](riff_core::wire::BotPost)). riff-server writes the text
 //! of the line itself ([`line()`]), from the fact and from what it holds
-//! ([`Facts`]): the owner of the riff, the place of the caller, and the
-//! holds of the version in the thread `release` ([`riff_core::hold`]).
+//! ([`Facts`]): the admins of the riff (01M7767T5VSWN9EYDVSTCEJ8AM), the place
+//! of the caller, and the holds of the version in the thread `release`
+//! ([`riff_core::hold`]).
 //! It posts the line in the chat with the kind `riff`, so the chat shows
 //! it as `<riff-bot>`. No client posts that kind, and no field of the
 //! call is a text of the line: a client puts no words of its own in a
@@ -23,18 +24,19 @@
 //!     participant S as riff-server
 //!     participant C as riff chat of mike
 //!     D->>S: bot: release_waits v3.3.0, run 9
-//!     S->>S: the owner, the repository, the holds of v3.3.0
+//!     S->>S: the admins, the repository, the holds of v3.3.0
 //!     S-->>C: <riff-bot> @mike riff release v3.3.0 waits for your approval: ...
 //! ```
 //!
 //! | Fact | Who sends it | The line names |
 //! |---|---|---|
-//! | `release_published` | `riff release cut` | the owner |
-//! | `release_waits` | the watch of the deploy | the owner |
+//! | `release_published` | `riff release cut` | each admin |
+//! | `release_waits` | the watch of the deploy | each admin |
 //! | `lead_started`, `lead_waits`, `lead_no_main`, `lead_failed`, `lead_stale`, `lead_no_network` | the daemon | no one |
 //!
 //! A line that names a person with `@USER` wakes the terminals of that
-//! person by the name (01M6Y1A5PTCVZ6GRJ0FXMART2T): an ask of riff. The
+//! person by the name (01M6Y1A5PTCVZ6GRJ0FXMART2T): an ask of riff. A
+//! line of a release names each admin, so each admin can approve. The
 //! line of the daemon about a lead names the person with no `@`, and
 //! wakes no session (01M5NJ87YEHHGJBANM7CRYV56Z).
 //!
@@ -56,7 +58,7 @@ pub const ONLY_PERSON_OR_LEAD: &str =
 pub struct Line {
     /// The text.
     pub body: String,
-    /// One selector `name=USER` for the person that the line names.
+    /// One selector `name=USER` for each person that the line names.
     pub to: Vec<Selector>,
 }
 
@@ -65,8 +67,9 @@ pub struct Line {
 pub struct Facts<'a> {
     /// The caller: its user, and the repository and the host of the fact.
     pub me: &'a SessionUri,
-    /// The USER of the owner of the riff, or `None` when it has none.
-    pub owner: Option<&'a str>,
+    /// The USER of each admin of the riff, sorted. A riff with no
+    /// sign-in has none.
+    pub admins: &'a [&'a str],
     /// The holds that stand on the version of the fact.
     pub holds: &'a [Hold],
 }
@@ -82,16 +85,17 @@ pub struct Facts<'a> {
 ///
 /// let me = "riff://mike@thelio/como-technologies/riff".parse()?;
 /// let held = [Hold { user: "nate".into(), repo: "o/s".into(), reason: "A demo runs.".into() }];
-/// let facts = Facts { me: &me, owner: Some("mike"), holds: &held };
+/// let facts = Facts { me: &me, admins: &["mike", "nate"], holds: &held };
 /// let waits = BotFact::ReleaseWaits { tag: "v3.3.0".into(), run: 9, reminder: false };
 /// let asked = line(&waits, &facts).unwrap();
 /// assert_eq!(
 ///     asked.body,
-///     "@mike riff release v3.3.0 waits for your approval: \
+///     "@mike @nate riff release v3.3.0 waits for your approval: \
 ///      https://github.com/como-technologies/riff/actions/runs/9. In a terminal, run: riff \
 ///      release approve v3.3.0 A hold stands: the lead of o/s asks to wait: A demo runs."
 /// );
 /// assert_eq!(asked.to[0].to_string(), "name=mike");
+/// assert_eq!(asked.to[1].to_string(), "name=nate");
 ///
 /// let started = line(&BotFact::LeadStarted, &facts).unwrap();
 /// assert!(started.body.starts_with(
@@ -112,7 +116,7 @@ pub fn line(fact: &BotFact, facts: &Facts<'_>) -> Result<Line, String> {
     }
     let repo = me.place().repo_text();
     let user = me.who().user();
-    let owner = facts.owner.unwrap_or_default();
+    let admins = facts.admins;
     let host = me.place().host();
     let lead = format!("the lead of {user} in {repo} on {host}");
     let body = match fact {
@@ -124,7 +128,7 @@ pub fn line(fact: &BotFact, facts: &Facts<'_>) -> Result<Line, String> {
             format!(
                 "{}riff release {} is published. Its CI run builds: {run}. riff tells you when \
                  its deploy waits for your approval.",
-                mention(owner),
+                mention(admins),
                 version(tag)?
             )
         }
@@ -137,7 +141,7 @@ pub fn line(fact: &BotFact, facts: &Facts<'_>) -> Result<Line, String> {
             let mut body = format!(
                 "{start}{}riff release {tag} {waits} for your approval: {}. In a terminal, run: \
                  riff release approve {tag}",
-                mention(owner),
+                mention(admins),
                 run_url(&repo, *run)
             );
             if !facts.holds.is_empty() {
@@ -180,19 +184,19 @@ pub fn line(fact: &BotFact, facts: &Facts<'_>) -> Result<Line, String> {
             lead_container(&repo)
         ),
     };
-    let named = match fact {
-        BotFact::ReleasePublished { .. } | BotFact::ReleaseWaits { .. } => facts.owner,
+    let named: &[&str] = match fact {
+        BotFact::ReleasePublished { .. } | BotFact::ReleaseWaits { .. } => admins,
         BotFact::LeadStarted
         | BotFact::LeadWaits
         | BotFact::LeadNoMain
         | BotFact::LeadFailed
         | BotFact::LeadStale
-        | BotFact::LeadNoNetwork => None,
+        | BotFact::LeadNoNetwork => &[],
     };
     let to = named
+        .iter()
         .filter(|name| !name.is_empty())
-        .map(Selector::name)
-        .into_iter()
+        .map(|name| Selector::name(name))
         .collect();
     Ok(Line { body, to })
 }
@@ -216,12 +220,14 @@ fn run_url(repo: &str, run: u64) -> String {
     format!("https://github.com/{repo}/actions/runs/{run}")
 }
 
-/// `@owner ` for a line, or nothing when the riff has no owner.
-fn mention(owner: &str) -> String {
-    match owner.is_empty() {
-        true => String::new(),
-        false => format!("@{owner} "),
-    }
+/// `@USER ` for each admin of a line, or nothing when the riff has no
+/// admin.
+fn mention(admins: &[&str]) -> String {
+    admins
+        .iter()
+        .filter(|admin| !admin.is_empty())
+        .map(|admin| format!("@{admin} "))
+        .collect()
 }
 
 /// `text` with a capital first letter, for the start of a line.
@@ -241,36 +247,36 @@ mod tests {
         "riff://mike@thelio/o/r".parse().unwrap()
     }
 
-    fn facts<'a>(me: &'a SessionUri, owner: Option<&'a str>) -> Facts<'a> {
+    fn facts<'a>(me: &'a SessionUri, admins: &'a [&'a str]) -> Facts<'a> {
         Facts {
             me,
-            owner,
+            admins,
             holds: &[],
         }
     }
 
-    /// Each line of a release names the owner, and wakes the owner by the
-    /// name. With no owner, it names no one.
+    /// 01M7767T5VSWN9EYDVSTCEJ8AM: each line of a release names each admin, and
+    /// wakes each admin by the name. With no admin, it names no one.
     #[test]
-    fn each_line_of_a_release_names_the_owner() {
+    fn each_line_of_a_release_names_each_admin() {
         let me = me();
         let cut = BotFact::ReleasePublished {
             tag: "v3.3.0".into(),
             run: None,
         };
-        let line = line(&cut, &facts(&me, Some("brett"))).unwrap();
+        let line = line(&cut, &facts(&me, &["brett", "mike"])).unwrap();
         assert_eq!(
             line.body,
-            "@brett riff release v3.3.0 is published. Its CI run builds: the CI run of the tag. \
-             riff tells you when its deploy waits for your approval."
+            "@brett @mike riff release v3.3.0 is published. Its CI run builds: the CI run of the \
+             tag. riff tells you when its deploy waits for your approval."
         );
-        assert_eq!(line.to, [Selector::name("brett")]);
-        let alone = super::line(&cut, &facts(&me, None)).unwrap();
+        assert_eq!(line.to, [Selector::name("brett"), Selector::name("mike")]);
+        let alone = super::line(&cut, &facts(&me, &[])).unwrap();
         assert!(alone.body.starts_with("riff release v3.3.0 is published."));
         assert!(alone.to.is_empty());
     }
 
-    /// 01M5TKDYAFA683KNAJTGYTQD5W: the line of the cut asks the owner for
+    /// 01M5TKDYAFA683KNAJTGYTQD5W: the line of the cut asks the admins for
     /// nothing. The only ask is the line while the deploy waits.
     #[test]
     fn the_line_of_the_cut_asks_nothing() {
@@ -279,7 +285,7 @@ mod tests {
             tag: "v4.0.1".into(),
             run: Some(9),
         };
-        let line = line(&cut, &facts(&me, Some("mike"))).unwrap().body;
+        let line = line(&cut, &facts(&me, &["mike"])).unwrap().body;
         let lower = line.to_lowercase();
         for ask in ["say", "approve", "deploy it", "?"] {
             assert!(!lower.contains(ask), "{line}: {ask}");
@@ -291,7 +297,7 @@ mod tests {
     #[test]
     fn the_publish_line_and_the_reminder() {
         let me = me();
-        let at = facts(&me, Some("mike"));
+        let at = facts(&me, &["mike"]);
         let published = |run| BotFact::ReleasePublished {
             tag: "v3.3.0".into(),
             run,
@@ -331,7 +337,7 @@ mod tests {
                 tag: tag.into(),
                 run: None,
             };
-            let refused = line(&cut, &facts(&me, Some("mike"))).unwrap_err();
+            let refused = line(&cut, &facts(&me, &["mike"])).unwrap_err();
             assert!(refused.contains("is no version vX.Y.Z"), "{tag}: {refused}");
         }
     }
@@ -343,7 +349,7 @@ mod tests {
     #[test]
     fn a_tag_with_a_text_after_its_version_gets_no_line() {
         let me = me();
-        let at = facts(&me, Some("mike"));
+        let at = facts(&me, &["mike"]);
         for tag in [
             "v3.3.0-rc1",
             "v3.3.0-approve now in the chat",
@@ -385,7 +391,7 @@ mod tests {
             BotFact::LeadStale,
             BotFact::LeadNoNetwork,
         ] {
-            let line = line(&fact, &facts(&me, Some("brett"))).unwrap();
+            let line = line(&fact, &facts(&me, &["brett"])).unwrap();
             assert!(
                 line.body.to_lowercase().contains(lead),
                 "{fact:?}: {}",
@@ -394,7 +400,7 @@ mod tests {
             assert!(!line.body.contains('@'), "{fact:?}: {}", line.body);
             assert!(line.to.is_empty(), "{fact:?}");
         }
-        let no_main = line(&BotFact::LeadNoMain, &facts(&me, None)).unwrap();
+        let no_main = line(&BotFact::LeadNoMain, &facts(&me, &[])).unwrap();
         assert!(
             no_main
                 .body
@@ -405,7 +411,7 @@ mod tests {
                 .body
                 .contains("Run riff host join in a clone of o/r")
         );
-        let lost = line(&BotFact::LeadNoNetwork, &facts(&me, None)).unwrap();
+        let lost = line(&BotFact::LeadNoNetwork, &facts(&me, &[])).unwrap();
         assert!(
             lost.body
                 .starts_with("The lead of mike in o/r on thelio lost")
@@ -417,6 +423,6 @@ mod tests {
     #[test]
     fn a_caller_in_no_repository_gets_no_line() {
         let me: SessionUri = "riff://mike@thelio".parse().unwrap();
-        assert!(line(&BotFact::LeadStarted, &facts(&me, None)).is_err());
+        assert!(line(&BotFact::LeadStarted, &facts(&me, &[])).is_err());
     }
 }

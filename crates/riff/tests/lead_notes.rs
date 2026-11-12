@@ -154,8 +154,23 @@ async fn the_person_shows_and_edits_the_notes_of_the_lead() {
         text(&long.stderr)
     );
 
-    // Another user reads no notes of mike.
+    // A member reads no notes of mike (01M77671TQ92487GSM24RJG82Z).
     let other = riff(
+        &server,
+        dir,
+        "bob",
+        "true",
+        &["lead", "notes", "--user", "mike"],
+    )
+    .await;
+    assert!(!other.status.success());
+    assert!(
+        text(&other.stderr).contains("only mike and an admin"),
+        "{}",
+        text(&other.stderr)
+    );
+    // The admin brett reads them.
+    let admin = riff(
         &server,
         dir,
         "brett",
@@ -163,12 +178,7 @@ async fn the_person_shows_and_edits_the_notes_of_the_lead() {
         &["lead", "notes", "--user", "mike"],
     )
     .await;
-    assert!(!other.status.success());
-    assert!(
-        text(&other.stderr).contains("only mike and the owner"),
-        "{}",
-        text(&other.stderr)
-    );
+    assert!(admin.status.success(), "{}", text(&admin.stderr));
     let own = riff(&server, dir, "brett", "true", &["lead", "notes"]).await;
     assert!(text(&own.stdout).contains("brett has no notes"));
 }

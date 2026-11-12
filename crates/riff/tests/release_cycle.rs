@@ -474,10 +474,11 @@ fn cut_nothing(machine: &Machine) {
 /// and builds nothing: no cargo, no version commit, and the release build
 /// of the tree from the run of its push to main. It makes the release with
 /// the notes of the merged pull requests, and opens the pull request of the
-/// next version from the tagged commit. The riff runs on: the cut tells the
-/// owner in riff chat, and registers the watches of the tag and of the pull
-/// request (01M76428R8GY6J323AWG3JV8HA). A second cut refuses while that
-/// pull request is open (01M7641T51JY09YVVKR4WGEE72).
+/// next version from the tagged commit. The riff runs on: the cut tells
+/// each admin in riff chat (01M7767T5VSWN9EYDVSTCEJ8AM), and registers the
+/// watches of the tag and of the pull request (01M76428R8GY6J323AWG3JV8HA). A
+/// second cut refuses while that pull request is open
+/// (01M7641T51JY09YVVKR4WGEE72).
 #[tokio::test]
 async fn cut_tags_the_last_commit_builds_nothing_makes_the_release_and_opens_the_next_version() {
     let (machine, commit) = ready_release().await;
@@ -504,7 +505,7 @@ async fn cut_tags_the_last_commit_builds_nothing_makes_the_release_and_opens_the
             "riff tagged {commit} as v3.3.0, and made the release: \
              https://github.com/como-technologies/riff/releases/tag/v3.3.0\n\
              The CI run of the tag: https://github.com/como-technologies/riff/actions/runs/9\n\
-             riff told the owner brett in riff chat.\n\
+             riff told each admin in riff chat: brett, mike.\n\
              riff watches the deploy of v3.3.0. The lead gets one message when it ends.\n\
              The pull request #1141 sets the next version 3.4.0 on main, for issue #7, with \
              auto-merge on: https://github.com/como-technologies/riff/pull/1141\n\
@@ -2128,7 +2129,7 @@ fn the_book_shows_the_release_cycle_with_its_gates_and_a_how_to_for_each_command
         "It merges by itself",
         "wakes the lead: the pull request merged",
         "riff release test: wakes the lead at the end of the test",
-        "wakes the lead and the owner when the job Deploy waits",
+        "wakes the lead and each admin when the job Deploy waits",
         "FAIL: wakes the lead with the failed jobs",
         "#### Know what wakes the lead",
         "`watches.json`",
@@ -2292,7 +2293,7 @@ fn the_book_shows_the_release_cycle_with_its_gates_and_a_how_to_for_each_command
         "{hold}"
     );
     book::each_is_real(&["riff release hold v3.3.0 REASON".to_owned()]);
-    // Start a Riff links the owner to the human gates.
+    // Start a Riff links a person to the human gates.
     let start = book::part("start-a-riff.md", "Approve a release");
     assert!(
         start.contains("(development.md#the-release-cycle)"),
@@ -2335,7 +2336,7 @@ async fn sign_in(
 }
 
 /// In a riff with sign-in, a member is refused in a terminal and in its
-/// lead; the owner and its lead pass the guard
+/// lead; the first admin and its lead pass the guard
 /// (01M7641T7FX9416CYY1XKHTJE6).
 #[tokio::test(flavor = "multi_thread")]
 async fn cut_refuses_a_member_and_the_lead_of_a_member() {
@@ -2346,11 +2347,11 @@ async fn cut_refuses_a_member_and_the_lead_of_a_member() {
     });
     let router = service.router();
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    let owner = Machine::new().await;
+    let admin = Machine::new().await;
     sign_in(
         &service,
         &url,
-        &owner.env,
+        &admin.env,
         "mike@comotechnologies.io",
         false,
     )
@@ -2381,11 +2382,11 @@ async fn cut_refuses_a_member_and_the_lead_of_a_member() {
     );
     assert_eq!(member.log(), "");
 
-    // The control: the lead of the owner passes the guard, and stops at a
+    // The control: the lead of the admin passes the guard, and stops at a
     // later check of the cut.
     let lead = [("RIFF_SESSION", "m1"), ("RIFF_SERVER", url.as_str())];
-    owner.name_lead(&lead).await;
-    let out = owner.run(&lead, &["release", "cut", "3.3.0"], "").await;
+    admin.name_lead(&lead).await;
+    let out = admin.run(&lead, &["release", "cut", "3.3.0"], "").await;
     assert_eq!(out.status.code(), Some(1));
     assert!(
         text(&out.stderr).starts_with("Error: riff release cut: "),
@@ -2393,9 +2394,9 @@ async fn cut_refuses_a_member_and_the_lead_of_a_member() {
         text(&out.stderr)
     );
 
-    // The owner in a terminal passes the guard too.
+    // The admin in a terminal passes the guard too.
     let person = [("RIFF_SERVER", url.as_str())];
-    let out = owner.run(&person, &["release", "cut", "3.3.0"], "").await;
+    let out = admin.run(&person, &["release", "cut", "3.3.0"], "").await;
     assert_eq!(out.status.code(), Some(1));
     assert!(
         text(&out.stderr).starts_with("Error: riff release cut: "),
@@ -2426,7 +2427,7 @@ fn daemon_socket(answer: &'static str) -> (tempfile::TempDir, String) {
 /// 01M7641T7FX9416CYY1XKHTJE6: the lead in its container cuts: the daemon
 /// says that it is the lead (01M59269HHZ5C82DR3RG3QHAM3).
 #[tokio::test]
-async fn the_lead_container_of_the_owner_cuts_the_release() {
+async fn the_lead_container_of_an_admin_cuts_the_release() {
     let (machine, merge) = ready_release().await;
     let (_dir, socket) =
         daemon_socket(r#"{"say":"caller","lead":true,"role":null,"role_unknown":false}"#);
@@ -2567,11 +2568,11 @@ impl Machine {
 }
 
 /// 01M6WZ40SFVZ6CRQ1H4Z27CWP4: only a person approves a deploy. The lead
-/// of the owner is refused, also when the owner said approve in riff chat
+/// of an admin is refused, also when an admin said approve in riff chat
 /// after the line that the deploy waits, and so is each other agent
 /// session. `gh` approves nothing, and riff pauses nothing.
 #[tokio::test]
-async fn approve_refuses_each_agent_session_also_the_lead_with_the_word_of_the_owner() {
+async fn approve_refuses_each_agent_session_also_the_lead_with_the_word_of_an_admin() {
     let machine = lead_with_a_waiting_run().await;
     machine.tell_bot("mike", waits(false)).await;
     machine.say("mike", "Yes, approve v3.3.0 please.").await;
@@ -2617,8 +2618,8 @@ fn waits(reminder: bool) -> riff_core::wire::BotFact {
 
 /// 01M74BPHQZHXFYYNXAJ1WFASQQ: riff-server posts the lines of `riff
 /// release cut` and of the watch of the deploy, as riff-bot: the kind
-/// `riff`, from riff-server itself. Each names the owner brett, and riff
-/// tells it the run of the tag.
+/// `riff`, from riff-server itself. Each names each admin, brett and mike
+/// (01M7767T5VSWN9EYDVSTCEJ8AM), and riff tells it the run of the tag.
 #[tokio::test]
 async fn the_chat_lines_of_riff_go_as_riff_bot() {
     let machine = lead_with_a_waiting_run().await;
@@ -2628,9 +2629,9 @@ async fn the_chat_lines_of_riff_go_as_riff_bot() {
     let read = chat_of(&machine.server).await;
     let run = "https://github.com/como-technologies/riff/actions/runs/9";
     for body in [
-        format!("@brett riff release v3.3.0 is published. Its CI run builds: {run}."),
-        format!("@brett riff release v3.3.0 waits for your approval: {run}."),
-        format!("Reminder: @brett riff release v3.3.0 still waits for your approval: {run}."),
+        format!("@brett @mike riff release v3.3.0 is published. Its CI run builds: {run}."),
+        format!("@brett @mike riff release v3.3.0 waits for your approval: {run}."),
+        format!("Reminder: @brett @mike riff release v3.3.0 still waits for your approval: {run}."),
     ] {
         let line = read
             .iter()
@@ -2650,7 +2651,7 @@ async fn the_chat_lines_of_riff_go_as_riff_bot() {
 type Seen = std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>;
 
 /// A socket that answers as the daemon does for the lead container
-/// (#1319): `caller` is the lead of the owner, and each `server` call
+/// (#1319): `caller` is the lead of an admin, and each `server` call
 /// has the reply that `reply` gives for its name. It logs the calls.
 fn lead_daemon(
     reply: impl Fn(&str) -> serde_json::Value + Send + 'static,
@@ -2682,8 +2683,7 @@ fn lead_daemon(
 fn roster() -> serde_json::Value {
     serde_json::json!({
         "user": "mike",
-        "owner": {"kind": "owner", "user": "mike", "email": "mike@example.com"},
-        "people": [],
+        "people": [{"user": "mike", "role": "admin", "live": true}],
     })
 }
 
@@ -2723,7 +2723,7 @@ async fn cut_in_the_lead_container_tells_the_chat_through_the_socket() {
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(text(&out.stderr), "");
     assert!(
-        text(&out.stdout).contains("riff told the owner mike in riff chat."),
+        text(&out.stdout).contains("riff told each admin in riff chat: mike."),
         "{}",
         text(&out.stdout)
     );
@@ -2768,7 +2768,7 @@ async fn cut_in_the_lead_container_tells_the_chat_through_the_socket() {
     );
 }
 
-/// 01M6WZ40SFVZ6CRQ1H4Z27CWP4: in the container of the lead of the owner,
+/// 01M6WZ40SFVZ6CRQ1H4Z27CWP4: in the container of the lead of an admin,
 /// `riff release approve` refuses before each call: it reads no riff chat
 /// and pauses nothing through the socket, and `gh` approves nothing.
 #[tokio::test]

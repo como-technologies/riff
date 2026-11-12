@@ -28,7 +28,6 @@
 //! | [`log`] | The chunks of the log in a store, the write with its retry, and the replay. |
 //! | [`checkpoint`] | The checkpoint of a state: its write, the load of the newest one, and the prune. |
 //! | [`store`] | The trait [`store::Store`], with [`store::Memory`] and [`store::Dir`]. |
-//! | [`owner`] | The times and the notes of the owner role. |
 //!
 //! The crate does no HTTP, and knows no sign-in. The format of the log
 //! and of the checkpoint is the format of riff-server: its format tests
@@ -37,7 +36,6 @@
 
 pub mod checkpoint;
 pub mod log;
-pub mod owner;
 pub mod state;
 pub mod store;
 

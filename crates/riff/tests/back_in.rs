@@ -489,7 +489,7 @@ async fn a_sign_in_stays_over_a_restart_of_riff_server() {
     assert!(before.status.success(), "{}", text(&before.stderr));
     // The facts are aligned (01M3Q5V313XQN86BA2PBTXHEZC).
     let shown = text(&before.stdout);
-    assert!(shown.starts_with("owner            "), "{shown}");
+    assert!(shown.starts_with("admins           "), "{shown}");
     assert!(shown.contains("\nallowed domains  "), "{shown}");
     assert!(!shown.contains('\x1b'), "{shown:?}");
 
@@ -513,7 +513,7 @@ async fn a_sign_in_stays_over_a_restart_of_riff_server() {
     assert_eq!(stored(&url).user, "ada");
 }
 
-/// The owner runs `riff invite EMAIL`, `riff members` and
+/// The admin runs `riff invite EMAIL`, `riff members` and
 /// `riff remove EMAIL` against riff-server, with no flag `--email`
 /// (01M588J2QAF288ZB3M9PBN71ZS).
 #[tokio::test(flavor = "multi_thread")]
@@ -522,7 +522,7 @@ async fn the_member_commands_take_the_email_as_an_argument() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let config = Config {
-        owner: Some("ada@comotechnologies.io".into()),
+        admins: vec!["ada@comotechnologies.io".into()],
         ..config(&url).await
     };
     let service = Service::new(config);
@@ -545,7 +545,7 @@ async fn the_member_commands_take_the_email_as_an_argument() {
     );
     let shown = run(&["members"]);
     assert!(
-        shown.starts_with("owner            ada@comotechnologies.io\n"),
+        shown.starts_with("admins           ada@comotechnologies.io\n"),
         "{shown}"
     );
     assert!(

@@ -10,7 +10,7 @@
 //! | [`Threads`] | [`super::threads`] | The members and the kept messages of each thread. |
 //! | [`Work`] | [`super::work`] | The claims and the leads. |
 //! | [`TheRiff`] | [`super::the_riff`] | The pauses, the settings, and the policy of the proof of presence. |
-//! | [`People`] | [`super::people`] | The riff ID, the email of each USER, the members, the admins, the owner, the request for the owner role, and the keys of each USER. |
+//! | [`People`] | [`super::people`] | The riff ID, the email of each USER, the members, the admins, and the keys of each USER. |
 //! | [`Plans`] | [`super::plan`] | The holds and the plan of each repository thread. |
 //! | [`Projects`] | [`super::projects`] | The projects of the riff: the repositories that a person enrolled, with their hosts. |
 //!
@@ -49,7 +49,8 @@
 //! | `person_joined` | The first email keeps a USER (R209): a record for a USER that another email holds changes nothing. `handle` refuses such a sign-in. | Yes. |
 //! | `member_removed` | It finds each USER of the email, and keeps the position of the record for each: the end of their sign-ins (01M3XA87A9GGFA89RQXWSKY0V6). | Yes. |
 //! | `signins_ended` | It keeps the position of the record for the USER. | Yes. |
-//! | `owner_set` | It ends the request for the owner role that waits. A record with no email says that the owner is gone. | Yes. |
+//! | `owner_set` | An old record of the owner role: its email is an admin, as with `admin_set`. A record with no email changes nothing. | Yes. |
+//! | `owner_asked`, `owner_denied` | Old records of the owner role: they change nothing. | Yes. |
 //! | `item_held` | It keeps the `by` and the time of the record with the hold: who held the item, and when (01M43GSGB9ZFHSG0Q83Y50FEGW). | Yes. |
 //! | `plan_set` | It keeps the position and the time of the record with the plan (01M4A4Z3QVRC57RE7M43ZRF4T2). | Yes. |
 //! | `notes_set` | It keeps the `by` and the time of the record with the text, and each old text (01M59258K3TYR09HC4AWHWZPEX). | Yes. |
@@ -250,8 +251,7 @@ pub fn apply(riff: &mut Riff, record: &Record) {
         Change::MemberRemoved(removed) => riff.people.removed(removed, record.envelope.position),
         Change::AdminSet(set) => riff.people.admin_set(set),
         Change::OwnerSet(set) => riff.people.owner_set(set),
-        Change::OwnerAsked(asked) => riff.people.owner_asked(asked),
-        Change::OwnerDenied(denied) => riff.people.owner_denied(denied),
+        Change::OwnerAsked(_) | Change::OwnerDenied(_) => Ok(()),
         Change::SigninsEnded(ended) => riff.people.signins_ended(ended, record.envelope.position),
         Change::ItemHeld(held) => riff.plans.held(held, record),
         Change::ItemFreed(freed) => riff.plans.freed(freed),

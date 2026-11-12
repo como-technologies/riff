@@ -10,17 +10,17 @@
 //! (01M3JZN1VEF73EPFE2FJY36EY4).
 //!
 //! A riff with sign-in listens only on a loopback address until it has
-//! an owner. So the first person who signs in, the owner, signs in from
-//! the machine of the server (01M3JN3AQMHZHT6JP3P6GM9PWZ). `--owner`
-//! names the owner up front, for example for a cloud riff. With an
-//! owner, a riff with sign-in listens on any address. `riff-server`
+//! an admin. So the first person who signs in, the first admin, signs
+//! in from the machine of the server (01M7767T0PQBQZ0CGA6YJT3VV8). `--admin`
+//! names an admin up front, for example for a cloud riff. With an admin, a riff
+//! with sign-in listens on any address. `riff-server`
 //! never terminates TLS: a proxy or the platform in front of it does
 //! (01M3JCE51T84JZKJ0NR89TPDNY).
 //!
 //! ```mermaid
 //! flowchart LR
 //!     S[riff-server starts] --> T{no sign-in?}
-//!     T -- no --> O{an owner?}
+//!     T -- no --> O{an admin?}
 //!     O -- yes --> OK[listen]
 //!     O -- no --> L2{loopback address?}
 //!     L2 -- yes --> OK
@@ -32,9 +32,9 @@
 //!     I -- yes --> W[warn, then listen]
 //! ```
 //!
-//! `riff-server` runs [`check()`] at start. The owner is in the state,
+//! `riff-server` runs [`check()`] at start. The admins are in the state,
 //! so `riff-server` checks again after it loads its bucket. Before that,
-//! a bucket counts as an owner.
+//! `--admin` or a bucket counts as an admin.
 //!
 //! # The port
 //!
@@ -207,7 +207,7 @@ fn cannot_listen(addr: SocketAddr, error: std::io::Error) -> std::io::Error {
 }
 
 /// Checks the listen address of a server. `trusted` is true for a riff
-/// with no sign-in. `owned` is true when the riff has an owner. It
+/// with no sign-in. `admin` is true when the riff has an admin. It
 /// returns the warning to show at start, if there is one, or the error
 /// that refuses the address.
 ///
@@ -222,28 +222,28 @@ fn cannot_listen(addr: SocketAddr, error: std::io::Error) -> std::io::Error {
 /// assert!(error.contains("--insecure"));
 /// assert!(error.contains("RIFF_OIDC_CLIENT_ID and RIFF_OIDC_CLIENT_SECRET"));
 /// assert!(check(open, true, true, false).unwrap().unwrap().contains("any person"));
-/// // With sign-in: only loopback until the riff has an owner.
+/// // With sign-in: only loopback until the riff has an admin.
 /// assert_eq!(check(local, false, false, false), Ok(None));
-/// assert!(check(open, false, false, false).unwrap_err().contains("--owner"));
+/// assert!(check(open, false, false, false).unwrap_err().contains("--admin"));
 /// assert_eq!(check(open, false, false, true), Ok(None));
 /// ```
 pub fn check(
     listen: SocketAddr,
     trusted: bool,
     insecure: bool,
-    owned: bool,
+    admin: bool,
 ) -> Result<Option<String>, String> {
     if listen.ip().is_loopback() {
         return Ok(None);
     }
     if !trusted {
-        if owned {
+        if admin {
             return Ok(None);
         }
         return Err(format!(
-            "this riff has no owner yet, so it listens only on a loopback address, not on {listen}. \
-             Sign in first on this machine with riff login: the first person is the owner. \
-             Or name the owner with --owner EMAIL (RIFF_OWNER)."
+            "this riff has no admin yet, so it listens only on a loopback address, not on {listen}. \
+             Sign in first on this machine with riff login: the first person is an admin. \
+             Or name an admin with --admin EMAIL (RIFF_ADMINS)."
         ));
     }
     if insecure {
@@ -389,8 +389,8 @@ where
             };
             let started = async {
                 let service = leased.map_err(failed)?.serve().await.map_err(failed)?;
-                // The owner of the settings is a record of the start:
-                // wait for its write, so that the check reads it.
+                // The admins of the settings are records of the start:
+                // wait for their write, so that the check reads them.
                 service.save().await.map_err(failed)?;
                 check(&service)
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
@@ -475,10 +475,10 @@ mod tests {
     }
 
     /// --insecure is for a riff with no sign-in. It does not let a riff
-    /// with sign-in and no owner listen on the network.
+    /// with sign-in and no admin listen on the network.
     #[test]
-    fn insecure_does_not_replace_an_owner() {
+    fn insecure_does_not_replace_an_admin() {
         let err = check("192.168.1.5:7878".parse().unwrap(), false, true, false).unwrap_err();
-        assert!(err.contains("RIFF_OWNER"), "{err}");
+        assert!(err.contains("RIFF_ADMINS"), "{err}");
     }
 }

@@ -1,6 +1,6 @@
 //! "Join a Riff" (01M3MEHCGZ4AG4C2A77J5HA3P7): one set of steps joins a
-//! riff with sign-in, for a person that the owner invites and for a
-//! second machine of the owner. The page test follows the steps on
+//! riff with sign-in, for a person that the admin invites and for a
+//! second machine of the admin. The page test follows the steps on
 //! three machines, against a real riff and a fake provider: a session
 //! of each machine sees the others in `riff who`.
 //!
@@ -137,7 +137,7 @@ impl Machine {
     async fn who(&self, session: &Api, me: &SessionUri) -> Vec<String> {
         self.use_keyring();
         let sessions = session.who(me, false).await.unwrap();
-        let shown = text::who(&sessions, &Default::default(), me);
+        let shown = text::who(&sessions, me);
         // A person that posted, for example the note of an invite, is
         // in the list too. Count only the agent sessions.
         let mut hosts: Vec<String> = sessions
@@ -159,14 +159,14 @@ fn uri(text: &str) -> SessionUri {
 
 #[tokio::test]
 async fn a_session_of_each_machine_sees_the_others_in_riff_who() {
-    // The owner starts a riff with sign-in, with the owner named. This
+    // The admin starts a riff with sign-in, with the admin named. This
     // test has its own server, not common::start_signed: it tests the
     // sign-in itself, through the fake provider.
     let provider = FakeProvider::start("ada@example.com", None).await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap().to_string();
     let service = Service::new(Config {
-        owner: Some("ada@example.com".into()),
+        admins: vec!["ada@example.com".into()],
         provider: Some(Provider {
             issuer: provider.issuer.clone(),
             client_id: CLIENT.into(),
@@ -178,10 +178,10 @@ async fn a_session_of_each_machine_sees_the_others_in_riff_who() {
     let router = service.router();
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
 
-    // `RIFF_SERVER` takes the address as the owner gives it.
+    // `RIFF_SERVER` takes the address as the admin gives it.
     let server = api::server_url(&address).unwrap();
 
-    // The owner joins from a first machine.
+    // The admin joins from a first machine.
     let first = Machine::new();
     first.join(&server).await.unwrap();
     let ada = uri("riff://ada@pangolin/como-technologies/riff?session=a1");
@@ -207,7 +207,7 @@ async fn a_session_of_each_machine_sees_the_others_in_riff_who() {
     let bob = uri("riff://bob@thelio/como-technologies/riff?session=b2");
     let bob_session = second.start(&server, &bob).await;
 
-    // The owner adds a third machine. The owner needs no invite.
+    // The admin adds a third machine. The admin needs no invite.
     let third = Machine::new();
     provider.sign_in_as("ada@example.com", None);
     third.join(&server).await.unwrap();

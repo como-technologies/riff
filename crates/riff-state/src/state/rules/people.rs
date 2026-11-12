@@ -3,8 +3,6 @@
 //! when, then. A person is `USER@gmail.com`. The role of a caller comes
 //! from the people of the state, as in the engine.
 
-use std::collections::BTreeSet;
-
 use riff_core::record::{self, Email, OwnerSet, PersonJoined, SigninsEnded};
 
 use super::*;
@@ -42,12 +40,14 @@ fn admin_set(email: &str, admin: bool) -> Change {
     })
 }
 
+/// An old record of the owner role (01M7767T393P46VTNNE5SY203K).
 fn owner_set(email: Option<&str>) -> Change {
     Change::OwnerSet(OwnerSet {
         email: email.map(str::to_owned),
     })
 }
 
+/// An old request for the owner role (01M7767T393P46VTNNE5SY203K).
 fn owner_asked(email: &str, due_ms: u64) -> Change {
     Change::OwnerAsked(record::OwnerAsked {
         email: email.into(),
@@ -55,40 +55,21 @@ fn owner_asked(email: &str, due_ms: u64) -> Change {
     })
 }
 
-fn owner_denied(email: &str) -> Change {
-    Change::OwnerDenied(by_email(email))
-}
-
 fn signins_ended(user: &str) -> Change {
     Change::SigninsEnded(SigninsEnded { user: user.into() })
 }
 
-/// Ada is the owner. Bob is an admin that the owner made. Carol is a
-/// member. Each of them signed in.
+/// Ada and Bob are admins. Carol is a member. Each of them signed in.
 fn riff_of_ada() -> Vec<Change> {
     vec![
         person_joined("ada", ADA),
-        owner_set(Some(ADA)),
+        admin_set(ADA, true),
         member_invited(BOB),
         admin_set(BOB, true),
         person_joined("bob", BOB),
         member_invited(CAROL),
         person_joined("carol", CAROL),
     ]
-}
-
-/// The records that keep ada, the old owner, an admin and a member.
-fn ada_stays() -> [Change; 2] {
-    [member_invited(ADA), admin_set(ADA, true)]
-}
-
-/// The time that the owner has to answer a request.
-fn answer() -> Duration {
-    crate::owner::Timing::default().answer
-}
-
-fn answer_ms() -> u64 {
-    u64::try_from(answer().as_millis()).unwrap()
 }
 
 fn admit(email: &str, allowed_domain: bool) -> Admit {
@@ -117,9 +98,9 @@ fn set_admin(email: &str, admin: bool) -> wire::SetAdmin {
     }
 }
 
-fn pass(email: &str) -> wire::PassOwner {
-    wire::PassOwner {
-        email: email.into(),
+fn name_admins(emails: &[&str]) -> NameAdmins {
+    NameAdmins {
+        emails: emails.iter().map(|e| (*e).to_owned()).collect(),
     }
 }
 
@@ -134,17 +115,6 @@ fn server() -> SessionUri {
 }
 
 impl Given {
-    /// The same state with these admin emails of the settings (R210).
-    fn with_admins(self, admins: &[&str]) -> Given {
-        let admins: Vec<String> = admins.iter().map(|a| (*a).to_owned()).collect();
-        let timing = crate::owner::Timing::default();
-        let settings = Settings::new(&admins, "https://riff.test", timing);
-        Given {
-            state: self.state.with_settings(settings),
-            now: self.now,
-        }
-    }
-
     /// The person `user` sends `ask`, with the role that the people
     /// give to `user`.
     fn when_person<A: Ask>(self, user: &str, ask: A) -> When {
@@ -163,9 +133,9 @@ impl Given {
 
 impl When {
     /// The command makes `changes`, and posts `lines` in the chat, in
-    /// this order (01M6FYH5XZAZYJFPFQVAFQSSVT). Each line is from the
+    /// this order (01M76S6128EZRZS2D5CE2QCC05). Each line is from the
     /// server, has the kind `riff`, has no `to`, and wakes no session
-    /// (01M6Y4ZCTSTVM971BDC1F7GJPK).
+    /// (01M77BSQQGGNE83ECS27YGVEP1, 01M6Y4ZCTSTVM971BDC1F7GJPK).
     fn then_chat(self, changes: &[Change], lines: &[&str]) {
         let Ok(made) = self.0 else {
             panic!("refused");
@@ -192,30 +162,39 @@ impl When {
     }
 }
 
+/// The first person who signs in to a riff with no admin is an admin
+/// and a member (01M7767SRX4K1N1BCDHT7M85DN).
 #[test]
-fn the_first_person_that_signs_in_is_the_owner() {
-    given(&[])
+fn the_first_person_that_signs_in_is_an_admin() {
+    given(&[]).when_signs_in(ADA, false).then(&[
+        person_joined("ada", ADA),
+        member_invited(ADA),
+        admin_set(ADA, true),
+    ]);
+    // A member of a riff with no admin, for example from an invite of
+    // the settings, is an admin at the sign-in too.
+    given(&[member_invited(ADA)])
         .when_signs_in(ADA, false)
-        .then(&[person_joined("ada", ADA), owner_set(Some(ADA))]);
+        .then(&[person_joined("ada", ADA), admin_set(ADA, true)]);
 }
 
+/// A riff with an admin, from a sign-in or from `--admin` at a start
+/// (01M7767SVH8AKK7144QTJGGGRY), is not new: the next person is no admin.
 #[test]
-fn on_a_riff_with_admins_of_the_settings_only_an_admin_becomes_the_owner() {
-    // A person of an allowed domain signs in, and is not the owner.
-    given(&[])
-        .with_admins(&[BOB])
+fn on_a_riff_with_an_admin_the_next_person_is_no_admin() {
+    let named = [member_invited(BOB), admin_set(BOB, true)];
+    // A person of an allowed domain signs in, and is a member.
+    given(&named)
         .when_signs_in(ADA, true)
         .then(&[person_joined("ada", ADA)]);
-    // A person of no allowed domain is refused: the riff is not new.
-    given(&[])
-        .with_admins(&[BOB])
+    // A person of no allowed domain is refused.
+    given(&named)
         .when_signs_in(ADA, false)
         .then_refused_as(Code::NotMember, "riff invite ada@gmail.com");
-    // The admin of the settings is the owner.
-    given(&[person_joined("ada", ADA)])
-        .with_admins(&[" Bob@Gmail.com "])
-        .when_signs_in(BOB, false)
-        .then(&[person_joined("bob", BOB), owner_set(Some(BOB))]);
+    // The admin of the setting signs in.
+    given(&named)
+        .when_signs_in(" Bob@Gmail.com ", false)
+        .then(&[person_joined("bob", BOB)]);
 }
 
 #[test]
@@ -224,7 +203,7 @@ fn a_person_who_is_no_member_signs_in_only_with_an_invite_or_an_allowed_domain()
         .when_signs_in(DAN, false)
         .then_refused_as(
             Code::NotMember,
-            "dan@gmail.com is not a member of this riff; ask its owner to run: \
+            "dan@gmail.com is not a member of this riff; ask an admin to run: \
              riff invite dan@gmail.com",
         );
     given(&riff_of_ada())
@@ -327,13 +306,19 @@ fn an_invite_of_a_member_and_of_a_bad_email_makes_no_record() {
 }
 
 #[test]
-fn the_owner_and_an_admin_cannot_be_removed() {
+fn an_admin_cannot_be_removed() {
     given(&riff_of_ada())
         .when_person("bob", remove(ADA))
-        .then_refused_as(Code::BadRequest, "the owner stays");
+        .then_refused_as(
+            Code::BadRequest,
+            "run riff admin remove ada@gmail.com first",
+        );
     given(&riff_of_ada())
         .when_person("ada", remove(BOB))
-        .then_refused_as(Code::BadRequest, "riff admin remove bob@gmail.com first");
+        .then_refused_as(
+            Code::BadRequest,
+            "run riff admin remove bob@gmail.com first",
+        );
     // A person that the riff does not know: no record.
     given(&riff_of_ada())
         .when_person("ada", remove("nobody@gmail.com"))
@@ -353,10 +338,11 @@ fn a_removal_and_a_revoke_keep_their_position_for_the_user() {
     assert_eq!(state.written.people().email_of("carol"), Some(CAROL));
 }
 
+/// Each admin adds and removes an admin (01M77671TQ92487GSM24RJG82Z). A member
+/// cannot.
 #[test]
-fn only_the_owner_adds_and_removes_an_admin() {
-    // A person who is no member is a member too, as before the people
-    // moved to the log.
+fn an_admin_adds_and_removes_an_admin() {
+    // A person who is no member is a member too.
     given(&riff_of_ada())
         .when_person("ada", set_admin("Dan@gmail.com", true))
         .then_chat(
@@ -364,10 +350,10 @@ fn only_the_owner_adds_and_removes_an_admin() {
             &["members: ada made dan@gmail.com an admin."],
         );
     given(&riff_of_ada())
-        .when_person("ada", set_admin(CAROL, true))
+        .when_person("bob", set_admin(CAROL, true))
         .then_chat(
             &[admin_set(CAROL, true)],
-            &["members: ada made carol@gmail.com an admin."],
+            &["members: bob made carol@gmail.com an admin."],
         );
     given(&riff_of_ada())
         .when_person("ada", set_admin(BOB, true))
@@ -379,243 +365,141 @@ fn only_the_owner_adds_and_removes_an_admin() {
             &["members: ada made bob@gmail.com a member again, not an admin."],
         );
     given(&riff_of_ada())
-        .when_person("bob", set_admin(CAROL, true))
-        .then_refused_as(
-            Code::NotAllowed,
-            "bob is not the owner; only the owner adds or removes an admin",
+        .when_person("bob", set_admin(ADA, false))
+        .then_chat(
+            &[admin_set(ADA, false)],
+            &["members: bob made ada@gmail.com a member again, not an admin."],
         );
+    // An admin removes the own role while another admin stays.
     given(&riff_of_ada())
         .when_person("ada", set_admin(ADA, false))
-        .then_refused_as(Code::BadRequest, "the owner stays an admin");
+        .then_chat(
+            &[admin_set(ADA, false)],
+            &["members: ada made ada@gmail.com a member again, not an admin."],
+        );
+    given(&riff_of_ada())
+        .when_person("carol", set_admin(DAN, true))
+        .then_refused_as(
+            Code::NotAllowed,
+            "carol is not an admin; only an admin adds or removes an admin",
+        );
     given(&riff_of_ada())
         .when_person("ada", set_admin(CAROL, false))
-        .then_refused_as(Code::BadRequest, "is not an admin that the owner made");
+        .then_refused_as(Code::BadRequest, "carol@gmail.com is not an admin");
 }
 
-/// The admins of the settings add to the admins that the owner made
-/// (R210). They are not in the log.
+/// The last admin stays (01M7767SY5PW1AMB0PBMW2GXDX): a riff with an admin
+/// keeps one.
 #[test]
-fn an_admin_of_the_settings_has_the_role_of_an_admin() {
-    let given = given(&riff_of_ada()).with_admins(&["Carol@gmail.com"]);
-    assert_eq!(given.state.role("ada"), Role::Owner);
-    assert_eq!(given.state.role("bob"), Role::Admin);
-    assert_eq!(given.state.role("carol"), Role::Admin);
-    assert_eq!(given.state.role("dan"), Role::Member);
-    let (owner, admins, members) = given.state.people().roles();
-    assert_eq!(owner.as_deref(), Some(ADA));
-    assert_eq!(admins, [BOB, CAROL]);
-    assert!(members.is_empty());
-    given.when_person("carol", invite(DAN)).then_chat(
-        &[member_invited(DAN)],
-        &["members: carol invited dan@gmail.com. dan@gmail.com is a member now."],
-    );
-}
-
-/// The old owner stays an admin and a member: `handle` decides it, and
-/// gives the records before `owner_set`.
-#[test]
-fn the_owner_passes_the_role_and_stays_an_admin() {
-    let [invited, admin] = ada_stays();
-    given(&riff_of_ada())
-        .when_person("ada", pass(" Carol@gmail.com"))
+fn the_last_admin_stays() {
+    let mut alone = riff_of_ada();
+    alone.push(admin_set(BOB, false));
+    given(&alone)
+        .when_person("ada", set_admin(" Ada@Gmail.com", false))
+        .then_refused_as(Code::BadRequest, &crate::state::people::last_admin(ADA));
+    // Bob is a member again, and cannot remove an admin.
+    given(&alone)
+        .when_person("bob", set_admin(ADA, false))
+        .then_refused_as(Code::NotAllowed, "bob is not an admin");
+    // With a second admin, the first can go.
+    alone.push(admin_set(CAROL, true));
+    given(&alone)
+        .when_person("carol", set_admin(ADA, false))
         .then_chat(
-            &[invited.clone(), admin.clone(), owner_set(Some(CAROL))],
-            &["members: ada passed the owner role to carol@gmail.com. ada@gmail.com stays an admin."],
+            &[admin_set(ADA, false)],
+            &["members: carol made ada@gmail.com a member again, not an admin."],
         );
-    given(&riff_of_ada())
-        .when_person("bob", pass(BOB))
-        .then_refused_as(
-            Code::NotAllowed,
-            "bob is not the owner; only the owner passes the owner role",
-        );
-    given(&riff_of_ada())
-        .when_person("ada", pass(DAN))
-        .then_refused_as(
-            Code::NotMember,
-            "dan@gmail.com is not a member of this riff; run riff invite dan@gmail.com first",
-        );
-    given(&riff_of_ada())
-        .when_person("ada", pass(ADA))
-        .then_refused_as(Code::BadRequest, "is the owner of this riff already");
-    // The role goes back: ada is a member and an admin already.
-    let mut passed = riff_of_ada();
-    passed.extend([invited, admin, owner_set(Some(CAROL))]);
-    let state = given(&passed).apply(&[]);
-    assert_eq!(state.role("carol"), Role::Owner);
+}
+
+/// The log reads an old `owner_set` as an admin and a member of its email
+/// (01M7767T393P46VTNNE5SY203K). Its other records of the owner role change
+/// nothing.
+#[test]
+fn an_old_log_with_the_owner_role_loads_with_the_owner_as_an_admin() {
+    let old = [
+        person_joined("ada", ADA),
+        owner_set(Some(ADA)),
+        member_invited(BOB),
+        person_joined("bob", BOB),
+        owner_asked(BOB, 9),
+        Change::OwnerDenied(by_email(BOB)),
+        owner_set(Some(BOB)),
+        owner_set(None),
+    ];
+    let state = given(&old).apply(&[]);
     assert_eq!(state.role("ada"), Role::Admin);
-    given(&passed).when_person("carol", pass(ADA)).then_chat(
-        &[admin_set(CAROL, true), owner_set(Some(ADA))],
-        &["members: carol passed the owner role to ada@gmail.com. carol@gmail.com stays an admin."],
-    );
-}
-
-#[test]
-fn an_admin_asks_for_the_owner_role_and_waits() {
-    let asked = crate::owner::asked_news("bob", BOB, ADA, answer());
-    given(&riff_of_ada())
-        .when_person("bob", wire::TakeOwner {})
-        .then_chat(&[owner_asked(BOB, answer_ms())], &[&asked]);
-    given(&riff_of_ada())
-        .when_person("carol", wire::TakeOwner {})
-        .then_refused_as(
-            Code::NotAllowed,
-            "carol is not an admin; only an admin can take the owner role",
-        );
-    // The owner is the owner already: no record.
-    given(&riff_of_ada())
-        .when_person("ada", wire::TakeOwner {})
-        .then(&[]);
-}
-
-#[test]
-fn a_second_request_waits_for_the_first() {
-    let mut asked = riff_of_ada();
-    asked.extend([admin_set(CAROL, true), owner_asked(BOB, 9)]);
-    given(&asked)
-        .when_person("carol", wire::TakeOwner {})
-        .then_refused_as(
-            Code::BadRequest,
-            "bob@gmail.com asked for the owner role first; wait for the answer of the owner",
-        );
-    // The owner still gets "already", and the request still waits.
-    given(&asked)
-        .when_person("ada", wire::TakeOwner {})
-        .then(&[]);
-}
-
-#[test]
-fn the_owner_denies_only_a_request_that_waits() {
-    let mut asked = riff_of_ada();
-    asked.push(owner_asked(BOB, 9));
-    given(&asked)
-        .when_person("ada", wire::DenyOwner {})
-        .then_chat(
-            &[owner_denied(BOB)],
-            &["members: ada kept the owner role. bob@gmail.com asked for it. ada@gmail.com stays the owner."],
-        );
-    given(&asked)
-        .when_person("bob", wire::DenyOwner {})
-        .then_refused_as(
-            Code::NotAllowed,
-            "bob is not the owner; only the owner denies the owner role",
-        );
-    given(&riff_of_ada())
-        .when_person("ada", wire::DenyOwner {})
-        .then_refused_as(Code::BadRequest, "no admin asks for the owner role now");
-    let state = given(&asked).apply(&[owner_denied(BOB)]);
-    assert_eq!(state.asks(), None);
-}
-
-/// A pass ends the request that waits: the `owner_set` record ends it.
-#[test]
-fn a_pass_ends_the_request_that_waits() {
-    let mut asked = riff_of_ada();
-    asked.push(owner_asked(BOB, 9));
-    let state = given(&asked).apply(&[owner_set(Some(CAROL))]);
-    assert_eq!(state.asks(), None);
-}
-
-#[test]
-fn with_no_answer_in_time_the_admin_that_asked_is_the_owner() {
-    let mut asked = riff_of_ada();
-    asked.push(owner_asked(BOB, answer_ms()));
-    let [invited, admin] = ada_stays();
-    // Before the time ends, the server changes nothing.
-    given(&asked).when(&server(), GrantOwner).then(&[]);
-    given(&riff_of_ada())
-        .after(Duration::from_secs(3600))
-        .when(&server(), GrantOwner)
-        .then(&[]);
-    let granted = OwnerChange::Granted {
-        owner: BOB.into(),
-        old: ADA.into(),
-    };
-    let line = crate::owner::change_news(&granted, &crate::owner::Timing::default());
-    given(&asked)
-        .after(answer())
-        .when(&server(), GrantOwner)
-        .then_chat(&[invited, admin, owner_set(Some(BOB))], &[&line]);
-}
-
-#[test]
-fn an_owner_who_is_gone_leaves_the_role_to_the_admin_that_asked_or_to_nobody() {
-    let mut asked = riff_of_ada();
-    asked.push(owner_asked(BOB, 9));
-    let [invited, admin] = ada_stays();
-    let timing = crate::owner::Timing::default();
-    let gone = |owner: Option<&str>| OwnerChange::Gone {
-        old: ADA.into(),
-        owner: owner.map(str::to_owned),
-    };
-    let line = crate::owner::change_news(&gone(Some(BOB)), &timing);
-    given(&asked).when(&server(), EndOwner).then_chat(
-        &[invited.clone(), admin.clone(), owner_set(Some(BOB))],
-        &[&line],
-    );
-    let line = crate::owner::change_news(&gone(None), &timing);
-    given(&riff_of_ada())
-        .when(&server(), EndOwner)
-        .then_chat(&[invited, admin, owner_set(None)], &[&line]);
-    // A riff with no owner: nothing to end.
-    given(&[]).when(&server(), EndOwner).then(&[]);
-}
-
-/// A riff whose owner is gone has no owner until an admin takes the
-/// role (01M3Q63NNC6SC03BFCG80M7B4D).
-#[test]
-fn a_riff_with_no_owner_gets_one_only_from_an_admin_that_asks() {
-    let mut gone = riff_of_ada();
-    gone.extend(ada_stays());
-    gone.push(owner_set(None));
-    let no_owner = "the riff has no owner; an admin takes the owner role with: riff owner --take";
-    // A sign-in and the setting make no owner.
-    given(&gone)
-        .when_signs_in(DAN, true)
-        .then(&[person_joined("dan", DAN)]);
-    let name = NameOwner { email: ADA.into() };
-    given(&gone).when(&server(), name).then(&[]);
-    // Each action of the owner names `riff owner --take`.
-    given(&gone)
+    assert_eq!(state.role("bob"), Role::Admin);
+    let members = state.people().members();
+    assert_eq!(members.admins, [ADA, BOB]);
+    assert!(members.members.is_empty());
+    // The old owner is an admin of today: ada adds an admin.
+    given(&old)
         .when_person("ada", set_admin(CAROL, true))
-        .then_refused_as(Code::NotAllowed, no_owner);
-    given(&gone)
-        .when_person("ada", pass(BOB))
-        .then_refused_as(Code::NotAllowed, no_owner);
-    given(&gone)
-        .when_person("ada", wire::DenyOwner {})
-        .then_refused_as(Code::NotAllowed, no_owner);
-    // The first admin that asks is the owner at once.
-    given(&gone)
-        .when_person("bob", wire::TakeOwner {})
         .then_chat(
-            &[owner_set(Some(BOB))],
-            &["members: bob took the owner role. The riff had no owner. bob@gmail.com is the owner now."],
+            &[member_invited(CAROL), admin_set(CAROL, true)],
+            &["members: ada made carol@gmail.com an admin."],
         );
-    given(&gone)
-        .when_person("carol", wire::TakeOwner {})
-        .then_refused_as(Code::NotAllowed, "carol is not an admin");
 }
 
-/// The setting `--owner` names the owner only of a riff that has none
-/// and had none (01M3JN3ASSV9SA0QZKXXJ0RTEV).
+/// An old log has no `member_invited` of the owner. The old owner is a
+/// member too (01M77671TQ92487GSM24RJG82Z), so `riff admin remove` makes the
+/// old owner a member again (01M3JY7T109BR860EQBSKEFDHY), and the next
+/// sign-in lets the old owner in.
 #[test]
-fn the_setting_names_the_owner_of_a_new_riff() {
-    let name = || NameOwner {
-        email: " Ada@Gmail.com".into(),
-    };
+fn riff_admin_remove_makes_an_old_owner_a_member_again() {
+    let mut old = vec![
+        person_joined("ada", ADA),
+        owner_set(Some(ADA)),
+        member_invited(BOB),
+        admin_set(BOB, true),
+        person_joined("bob", BOB),
+    ];
+    given(&old)
+        .when_person("bob", set_admin(ADA, false))
+        .then_chat(
+            &[admin_set(ADA, false)],
+            &["members: bob made ada@gmail.com a member again, not an admin."],
+        );
+    old.push(admin_set(ADA, false));
+    let state = given(&old).apply(&[]);
+    assert_eq!(state.role("ada"), Role::Member);
+    let members = state.people().members();
+    assert_eq!(members.admins, [BOB]);
+    assert_eq!(members.members, [ADA]);
+    given(&old).when_signs_in(ADA, false).then(&[]);
+    // The load of a checkpoint from before makes its owner a member too.
+    let now = Instant::now();
+    let joined = given(&old[..1]).apply(&[]).snapshot(now, 0);
+    let mut json = serde_json::to_value(&joined).unwrap();
+    let fields = json.as_object_mut().unwrap();
+    fields.insert("owner".into(), serde_json::json!(ADA));
+    let checkpoint: Snapshot = serde_json::from_value(json).unwrap();
+    let loaded = State::load(Some(checkpoint), [], now, 0);
+    assert_eq!(loaded.people().members().admins, [ADA]);
+    let saved = serde_json::to_value(loaded.snapshot(now, 0)).unwrap();
+    assert_eq!(saved["members"], serde_json::json!([ADA]));
+}
+
+/// The setting `--admin EMAIL` names each admin at each start
+/// (01M7767SVH8AKK7144QTJGGGRY): an email that is not an admin becomes an admin
+/// and a member. A name that is not an email names nobody.
+#[test]
+fn the_setting_names_each_admin_at_each_start() {
     given(&[])
-        .when(&server(), name())
-        .then(&[owner_set(Some(ADA))]);
-    given(&[owner_set(Some(BOB))])
-        .when(&server(), name())
+        .when(
+            &server(),
+            name_admins(&[" Ada@Gmail.com", "not-an-email", ADA]),
+        )
+        .then(&[member_invited(ADA), admin_set(ADA, true)]);
+    given(&riff_of_ada())
+        .when(&server(), name_admins(&[ADA, BOB]))
         .then(&[]);
-    // The first other person is then not the owner.
-    given(&[owner_set(Some(ADA))])
-        .when_signs_in(BOB, false)
-        .then_refused_as(Code::NotMember, "riff invite bob@gmail.com");
-    given(&[owner_set(Some(ADA))])
-        .when_signs_in(ADA, false)
-        .then(&[person_joined("ada", ADA)]);
+    // An admin that riff admin remove made a member is an admin again.
+    let mut removed = riff_of_ada();
+    removed.push(admin_set(BOB, false));
+    given(&removed)
+        .when(&server(), name_admins(&[BOB]))
+        .then(&[admin_set(BOB, true)]);
 }
 
 /// A person ends the own sign-ins. Only an admin ends the sign-ins of
@@ -650,10 +534,12 @@ fn a_session_cannot_send_a_command_of_the_people() {
     given(&team())
         .when(&person(), admit(ADA, true))
         .then_refused_as(Code::NotAllowed, "a person cannot send the command admit");
-    given(&team()).when(&person(), EndOwner).then_refused_as(
-        Code::NotAllowed,
-        "a person cannot send the command end_owner",
-    );
+    given(&team())
+        .when(&person(), name_admins(&[ADA]))
+        .then_refused_as(
+            Code::NotAllowed,
+            "a person cannot send the command name_admins",
+        );
 }
 
 /// A command of the people names no `me`, so it changes no presence:
@@ -682,228 +568,16 @@ fn a_change_of_a_role_counts_for_the_next_command_in_the_queue() {
     let records = state.queue(&cause, &riff_of_ada(), now);
     state.written(&records);
     assert_eq!(state.role("bob"), Role::Admin);
-    // The owner makes bob a member again. The record waits in the queue.
+    // An admin makes bob a member again. The record waits in the queue.
     state.queue(&cause, &[admin_set(BOB, false)], now);
     assert_eq!(state.role("bob"), Role::Member, "the pending copy");
     // A query still reads the written copy.
     assert_eq!(state.people().role_of("bob"), Role::Admin);
 }
 
-/// The people of a riff with repositories: ann is the owner, and bob is
-/// an admin. Both are live.
-fn riff_of_ann_and_bob(tail: &[Change]) -> Vec<Change> {
-    let mut riff = team();
-    riff.extend([
-        person_joined("ann", "ann@acme.io"),
-        owner_set(Some("ann@acme.io")),
-        member_invited("bob@acme.io"),
-        admin_set("bob@acme.io", true),
-        person_joined("bob", "bob@acme.io"),
-    ]);
-    riff.extend_from_slice(tail);
-    riff
-}
-
-/// The riff of ann and bob with `tail`, and the live sessions of ann and
-/// bob in the repository acme/app.
-fn ann_and_bob(tail: &[Change]) -> Given {
-    given(&riff_of_ann_and_bob(tail)).live(&[ann(), bob()])
-}
-
-/// The records of a command that is not refused.
-fn made(when: When) -> Vec<Change> {
-    match when {
-        When(Ok(changes)) => changes,
-        When(Err(refused)) => panic!("refused: {refused}"),
-    }
-}
-
-/// The posts of a chunk: the thread, and the body.
-fn posts_of(changes: &[Change]) -> Vec<(ThreadName, String)> {
-    changes
-        .iter()
-        .filter_map(|change| match change {
-            Change::Posted(posted) => Some((posted.thread.clone(), posted.message.body.clone())),
-            _ => None,
-        })
-        .collect()
-}
-
-/// The one line of a chunk in the chat (01M76S6128EZRZS2D5CE2QCC05). The
-/// chunk posts no note to the thread of a repository: each other post
-/// is a direct message. The line is from the server, has the kind
-/// `riff`, has no `to`, and wakes no session.
-fn line_of(changes: &[Change]) -> String {
-    let posts: Vec<&Posted> = changes
-        .iter()
-        .filter_map(|change| match change {
-            Change::Posted(posted) => Some(&**posted),
-            _ => None,
-        })
-        .collect();
-    let (lines, rest): (Vec<&Posted>, Vec<&Posted>) = posts
-        .into_iter()
-        .partition(|post| post.thread == ThreadName::chat());
-    for post in rest {
-        assert!(post.thread.is_direct(), "a note in {}", post.thread);
-    }
-    let [line] = &lines[..] else {
-        panic!("not one line in the chat: {changes:?}");
-    };
-    assert_eq!(
-        (&line.message.from, line.message.kind),
-        (&server(), Kind::Riff)
-    );
-    assert!(line.message.to.is_empty() && line.woken.is_empty());
-    line.message.body.clone()
-}
-
-/// A take, a pass, a grant and a new member each post one line in the
-/// chat, and no note in the thread of a repository: the riff has the
-/// repository acme/app (01M76S6128EZRZS2D5CE2QCC05).
-#[test]
-fn a_take_a_pass_a_grant_and_a_new_member_each_post_one_line_in_the_chat() {
-    assert_eq!(ann_and_bob(&[]).state.repositories(), [repo()]);
-    // A take on a riff with no owner.
-    let took = made(ann_and_bob(&[owner_set(None)]).when_person("bob", wire::TakeOwner {}));
-    assert_eq!(
-        line_of(&took),
-        "members: bob took the owner role. The riff had no owner. bob@acme.io is the owner now."
-    );
-    // A pass.
-    let passed = made(ann_and_bob(&[]).when_person("ann", pass("bob@acme.io")));
-    assert_eq!(
-        line_of(&passed),
-        "members: ann passed the owner role to bob@acme.io. ann@acme.io stays an admin."
-    );
-    // A grant after N minutes.
-    let asked = owner_asked("bob@acme.io", answer_ms());
-    let granted = made(
-        ann_and_bob(&[asked])
-            .after(answer())
-            .when(&server(), GrantOwner),
-    );
-    let grant = OwnerChange::Granted {
-        owner: "bob@acme.io".into(),
-        old: "ann@acme.io".into(),
-    };
-    let timing = crate::owner::Timing::default();
-    assert_eq!(
-        line_of(&granted),
-        crate::owner::change_news(&grant, &timing)
-    );
-    // A new member.
-    let invited = made(ann_and_bob(&[]).when_person("ann", invite("cy@acme.io")));
-    assert_eq!(
-        line_of(&invited),
-        "members: ann invited cy@acme.io. cy@acme.io is a member now."
-    );
-    for chunk in [took, passed, granted, invited] {
-        assert!(!posts_of(&chunk).iter().any(|(thread, _)| *thread == repo()));
-    }
-}
-
-/// A removal, a change of an admin, a request, a deny and a gone owner
-/// each post one line in the chat too, and no note in the thread of a
-/// repository (01M76S6128EZRZS2D5CE2QCC05).
-#[test]
-fn each_other_change_of_the_people_posts_one_line_in_the_chat() {
-    let cy = [member_invited("cy@acme.io")];
-    let removed = made(ann_and_bob(&cy).when_person("ann", remove("cy@acme.io")));
-    assert_eq!(
-        line_of(&removed),
-        "members: ann removed cy@acme.io. cy@acme.io is not a member now."
-    );
-    let added = made(ann_and_bob(&cy).when_person("ann", set_admin("cy@acme.io", true)));
-    assert_eq!(line_of(&added), "members: ann made cy@acme.io an admin.");
-    let dropped = made(ann_and_bob(&[]).when_person("ann", set_admin("bob@acme.io", false)));
-    assert_eq!(
-        line_of(&dropped),
-        "members: ann made bob@acme.io a member again, not an admin."
-    );
-    let asked = made(ann_and_bob(&[]).when_person("bob", wire::TakeOwner {}));
-    assert!(line_of(&asked).starts_with("members: bob asks for the owner role."));
-    let waits = [owner_asked("bob@acme.io", 9)];
-    let denied = made(ann_and_bob(&waits).when_person("ann", wire::DenyOwner {}));
-    assert!(line_of(&denied).starts_with("members: ann kept the owner role."));
-    let gone = made(ann_and_bob(&[]).when(&server(), EndOwner));
-    assert!(line_of(&gone).starts_with("members: the owner ann@acme.io is gone"));
-    // A change of nothing posts no line.
-    let again = made(ann_and_bob(&[]).when_person("ann", invite("bob@acme.io")));
-    assert!(posts_of(&again).is_empty(), "{again:?}");
-}
-
-/// A request goes in the chunk of its command: one line in the chat,
-/// which wakes no session, and a direct message to each live lead of
-/// the owner, who must act (01M3N7K3ZAZFGABN7032AYJWEM).
-#[test]
-fn the_line_of_a_request_is_in_the_chunk_of_the_command() {
-    let changes = made(ann_and_bob(&[]).when_person("bob", wire::TakeOwner {}));
-    assert_eq!(changes[0], owner_asked("bob@acme.io", answer_ms()));
-    let posts: Vec<&Posted> = changes
-        .iter()
-        .filter_map(|change| match change {
-            Change::Posted(posted) => Some(&**posted),
-            _ => None,
-        })
-        .collect();
-    let [told, line] = &posts[..] else {
-        panic!("{changes:?}");
-    };
-    assert_eq!(line.thread, ThreadName::chat());
-    let body = &line.message.body;
-    assert!(
-        body.starts_with("members: bob asks for the owner role."),
-        "{body}"
-    );
-    // The owner must answer: the lead of ann gets a direct message.
-    assert!(told.thread.is_direct());
-    assert_eq!(told.message.kind, Kind::Message);
-    assert_eq!(told.woken, BTreeSet::from([ann().who().clone()]));
-    assert_eq!(told.message.body, crate::owner::to_lead(body));
-}
-
-/// A deny posts one line in the chat, and a direct message to the lead
-/// of the admin that asked (01M3N7K41N03P26BEFFNX5617K).
-#[test]
-fn a_deny_posts_one_line_in_the_chat_and_tells_the_admin() {
-    let waits = [owner_asked("bob@acme.io", 9)];
-    let changes = made(ann_and_bob(&waits).when_person("ann", wire::DenyOwner {}));
-    let posts = posts_of(&changes);
-    let [(told, _), (chat, _)] = &posts[..] else {
-        panic!("{changes:?}");
-    };
-    assert!(told.is_direct());
-    assert_eq!(chat, &ThreadName::chat());
-}
-
-/// A take on a riff with no owner makes the admin the owner. The chunk
-/// holds one line in the chat. The line has the next seq of the chat,
-/// and a replay of the records has it (01M6FYH5XZAZYJFPFQVAFQSSVT).
-#[test]
-fn a_take_on_a_riff_with_no_owner_posts_one_line_in_the_chat() {
-    let earlier = posted(&ThreadName::chat(), message(ann(), 1, &[], "hi"), &[]);
-    let riff = riff_of_ann_and_bob(&[earlier, owner_set(None)]);
-    let start = given(&riff).live(&[ann(), bob()]);
-    let changes = made(start.when_person("bob", wire::TakeOwner {}));
-    let line =
-        "members: bob took the owner role. The riff had no owner. bob@acme.io is the owner now.";
-    assert_eq!(posts_of(&changes), [(ThreadName::chat(), line.to_owned())]);
-    let Some(Change::Posted(chat)) = changes.last() else {
-        panic!("{changes:?}");
-    };
-    assert_eq!(chat.message.seq, 2);
-    // A replay of the log has the line.
-    let mut replayed = riff;
-    replayed.extend(changes);
-    let Given { mut state, now } = given(&replayed);
-    let lines = state.read(&ann(), &ThreadName::chat(), true, now).unwrap();
-    let bodies: Vec<&str> = lines.iter().map(|m| m.body.as_str()).collect();
-    assert_eq!(bodies, ["hi", line]);
-}
-
 /// A start from a checkpoint gives the people of a full replay, for a
-/// checkpoint at each position.
+/// checkpoint at each position. An old record of the owner role is in
+/// the log (01M7767T393P46VTNNE5SY203K).
 #[test]
 fn a_start_from_a_checkpoint_gives_the_people_of_a_full_replay() {
     let mut changes = vec![riff_made("r1"), riff_set(RiffState::Paused)];
@@ -913,6 +587,7 @@ fn a_start_from_a_checkpoint_gives_the_people_of_a_full_replay() {
         member_removed(CAROL),
         signins_ended("bob"),
         admin_set(CAROL, true),
+        owner_set(Some(DAN)),
     ]);
     let records: Vec<Record> = changes
         .iter()
@@ -931,7 +606,7 @@ fn a_start_from_a_checkpoint_gives_the_people_of_a_full_replay() {
     let now = Instant::now();
     let full = State::replay(records.clone(), now, 0);
     assert_eq!(full.riff_id().as_deref(), Some("r1"));
-    assert_eq!(full.asks().as_deref(), Some(BOB));
+    assert_eq!(full.people().members().admins, [ADA, BOB, CAROL, DAN]);
     for at in 0..=records.len() {
         let snapshot = State::replay(records[..at].to_vec(), now, 0).snapshot(now, 0);
         // The checkpoint is JSON in the store.
@@ -941,9 +616,85 @@ fn a_start_from_a_checkpoint_gives_the_people_of_a_full_replay() {
         assert!(loaded.same_log_state(&full), "a checkpoint at {at}");
         assert_eq!(loaded.signins_ended(), full.signins_ended(), "at {at}");
     }
-    // A riff whose owner is gone keeps that fact in the checkpoint.
+    // A riff whose old owner was gone keeps the old owner as an admin.
     let gone = given(&[owner_set(Some(ADA)), owner_set(None)]).apply(&[]);
     let loaded = State::load(Some(gone.snapshot(now, 0)), [], now, 0);
-    assert!(loaded.owned());
-    assert_eq!(loaded.people().members().owner, None);
+    assert!(loaded.has_admin());
+    assert_eq!(loaded.people().members().admins, [ADA]);
+}
+
+/// The people of a riff with the repository acme/app: ann and bob are
+/// admins, and the sessions of both are live.
+fn ann_and_bob(tail: &[Change]) -> Given {
+    let mut riff = team();
+    riff.extend([
+        person_joined("ann", "ann@acme.io"),
+        admin_set("ann@acme.io", true),
+        member_invited("bob@acme.io"),
+        admin_set("bob@acme.io", true),
+        person_joined("bob", "bob@acme.io"),
+    ]);
+    riff.extend_from_slice(tail);
+    given(&riff).live(&[ann(), bob()])
+}
+
+/// The records of a command that is not refused.
+fn made(when: When) -> Vec<Change> {
+    match when {
+        When(Ok(changes)) => changes,
+        When(Err(refused)) => panic!("refused: {refused}"),
+    }
+}
+
+/// The one post of a chunk: a line in the chat (01M76S6128EZRZS2D5CE2QCC05).
+/// The chunk posts no note to the thread of a repository, and no direct
+/// message. The line is from the server, has the kind `riff`, has no
+/// `to`, and wakes no session (01M77BSQQGGNE83ECS27YGVEP1).
+fn line_of(changes: &[Change]) -> String {
+    let posts: Vec<&Posted> = changes
+        .iter()
+        .filter_map(|change| match change {
+            Change::Posted(posted) => Some(&**posted),
+            _ => None,
+        })
+        .collect();
+    let [line] = &posts[..] else {
+        panic!("not one post: {changes:?}");
+    };
+    assert_eq!(line.thread, ThreadName::chat());
+    assert_eq!(
+        (&line.message.from, line.message.kind),
+        (&server(), Kind::Riff)
+    );
+    assert!(line.message.to.is_empty() && line.woken.is_empty());
+    line.message.body.clone()
+}
+
+/// An invite, a removal, a new admin and an admin who is a member again
+/// each post one line in the chat, and no note in the thread of a
+/// repository: the riff has the repository acme/app
+/// (01M76S6128EZRZS2D5CE2QCC05). A change of nothing posts no line.
+#[test]
+fn each_change_of_the_members_posts_one_line_in_the_chat() {
+    assert_eq!(ann_and_bob(&[]).state.repositories(), [repo()]);
+    let invited = made(ann_and_bob(&[]).when_person("ann", invite("cy@acme.io")));
+    assert_eq!(
+        line_of(&invited),
+        "members: ann invited cy@acme.io. cy@acme.io is a member now."
+    );
+    let cy = [member_invited("cy@acme.io")];
+    let removed = made(ann_and_bob(&cy).when_person("ann", remove("cy@acme.io")));
+    assert_eq!(
+        line_of(&removed),
+        "members: ann removed cy@acme.io. cy@acme.io is not a member now."
+    );
+    let added = made(ann_and_bob(&cy).when_person("bob", set_admin("cy@acme.io", true)));
+    assert_eq!(line_of(&added), "members: bob made cy@acme.io an admin.");
+    let dropped = made(ann_and_bob(&[]).when_person("ann", set_admin("bob@acme.io", false)));
+    assert_eq!(
+        line_of(&dropped),
+        "members: ann made bob@acme.io a member again, not an admin."
+    );
+    let again = made(ann_and_bob(&[]).when_person("ann", invite("bob@acme.io")));
+    assert!(again.is_empty(), "{again:?}");
 }

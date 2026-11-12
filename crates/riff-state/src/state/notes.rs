@@ -7,7 +7,7 @@
 //! | Who | Writes | Reads (01M59258NTXPMWV18TKRKWNTYN) |
 //! |---|---|---|
 //! | the person of the user, and a session of the user that is no worker | the notes of the user | the notes of the user |
-//! | the owner | no | the notes of each user |
+//! | each admin | no | the notes of each user |
 //! | each other member | no | no |
 //!
 //! [`permits`](super::permits) refuses a worker. `handle` refuses a text
@@ -78,15 +78,15 @@ impl Command for SetNotes {
     }
 }
 
-/// Says who reads the notes of `user`: the user of the caller, and the
-/// owner (01M59258NTXPMWV18TKRKWNTYN).
+/// Says who reads the notes of `user`: the user of the caller, and each
+/// admin (01M59258NTXPMWV18TKRKWNTYN, 01M77671TQ92487GSM24RJG82Z).
 pub fn may_read(caller: &Caller, user: &str) -> Result<(), Refused> {
-    if caller.who().user() == user || caller.role() >= Role::Owner {
+    if caller.who().user() == user || caller.role() >= Role::Admin {
         Ok(())
     } else {
         Err(Refused::new(
             Code::NotAllowed,
-            format!("only {user} and the owner can read the notes of the lead of {user}"),
+            format!("only {user} and an admin can read the notes of the lead of {user}"),
         ))
     }
 }

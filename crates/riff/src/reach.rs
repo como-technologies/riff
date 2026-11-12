@@ -84,8 +84,8 @@ use anyhow::{Result, anyhow};
 use riff_core::build::Build;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::wire::{
-    BotFact, HoldInfo, Kind, LogReply, MembersReply, Person, PullState, RiffOwner, RiffReply,
-    RiffState, SessionInfo, Status, StepChange, WhoReply,
+    BotFact, HoldInfo, Kind, LogReply, MembersReply, Person, PullState, RiffReply, RiffState,
+    SessionInfo, Status, StepChange, WhoReply,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -102,9 +102,7 @@ use riff_client::api::{Api, PauseScope};
 pub struct Roster {
     /// The USER of this session.
     pub user: String,
-    /// The owner of the riff.
-    pub owner: RiffOwner,
-    /// Each member of the riff.
+    /// Each member of the riff, with the role.
     pub people: Vec<Person>,
 }
 
@@ -137,13 +135,13 @@ impl WhoamiFacts {
     }
 }
 
-/// What `riff who` reads of the riff: the state of the pauses, the owner
-/// and the sessions (#1338, 01M5QW31TFA1W2GWPGRS2Y65GP).
+/// What `riff who` reads of the riff: the state of the pauses, the
+/// people and the sessions (#1338, 01M5QW31TFA1W2GWPGRS2Y65GP).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WhoFacts {
     /// The state of the riff for the place of the caller.
     pub pauses: RiffReply,
-    /// The owner and the sessions.
+    /// The people and the sessions.
     pub who: WhoReply,
 }
 
@@ -361,8 +359,7 @@ impl Reach {
         follow_pages(get, show).await
     }
 
-    /// The user of this session, and the owner and the people of the
-    /// riff.
+    /// The user of this session, and the people of the riff.
     pub async fn roster(&self) -> Result<Roster> {
         match self {
             Reach::Direct(server) => {
@@ -370,7 +367,6 @@ impl Reach {
                 let reply = api.roster(&me, false).await?;
                 Ok(Roster {
                     user: me.who().user().to_owned(),
-                    owner: reply.owner,
                     people: reply.people,
                 })
             }
@@ -436,7 +432,7 @@ impl Reach {
     }
 
     /// The records of the repository thread `repo`, for `riff audit`.
-    /// Only the owner and the admins can read them; through the socket,
+    /// Only the admins can read them; through the socket,
     /// only the lead can ask (#1338).
     pub async fn log(&self, repo: &ThreadName) -> Result<LogReply> {
         match self {
@@ -541,8 +537,8 @@ impl Reach {
 
     /// Holds `item` of the repository thread `thread` with `reason` as
     /// this session, and gives the line for the person (#1619,
-    /// 01M6QPQZ0FNEZFQ1F4Q9C7FEEQ). Only a lead of the thread, the owner
-    /// or an admin can: riff-server decides, also through the socket.
+    /// 01M6QPQZ0FNEZFQ1F4Q9C7FEEQ). Only a lead of the thread or an admin
+    /// can: riff-server decides, also through the socket.
     pub async fn plan_hold(&self, thread: &ThreadName, item: &str, reason: &str) -> Result<String> {
         match self {
             Reach::Direct(server) => {
@@ -1059,7 +1055,6 @@ pub const COMMANDS: &[InContainer] = &[
     host(&["admin", "add", "ada@example.com"]),
     host(&["admin", "remove", "ada@example.com"]),
     host(&["admin", "proof", "required"]),
-    host(&["owner", "--take"]),
     host(&["chat"]),
     host(&["tail"]),
     host(&["claim", "issue-12"]),
