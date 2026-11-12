@@ -12,6 +12,6 @@ publish = false
 [dependencies]
 assert_cmd.workspace = true
 getrandom.workspace = true
-nix = { workspace = true, features = ["resource"] }
+nix = { workspace = true, features = ["resource", "signal"] }
 tempfile.workspace = true
 tokio.workspace = true

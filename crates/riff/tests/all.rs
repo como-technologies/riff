@@ -57,6 +57,8 @@ mod lead_notes;
 mod lead_step;
 mod lead_whoami;
 mod leave;
+#[cfg(target_os = "linux")]
+mod leftovers;
 mod lifecycle;
 mod link;
 mod local_mode;

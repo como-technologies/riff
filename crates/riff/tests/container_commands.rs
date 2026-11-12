@@ -9,7 +9,7 @@ use std::process::{Command, Output, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use isolated::Isolated;
+use isolated::{Isolated, Span};
 use riff::reach::{COMMANDS, Way};
 use serde_json::{Value, json};
 
@@ -57,6 +57,17 @@ fn daemon(
         }
     });
     (dir, path.to_string_lossy().into_owned(), asked)
+}
+
+/// The number of asks in `asked`, after a wait for the first one. riff
+/// can end before the fake daemon reads its ask: `riff relay mcp` sends
+/// its hello, and ends at the end of its input.
+async fn asks(asked: &Asked) -> usize {
+    let span = Span::start();
+    while asked.lock().unwrap().is_empty() && span.within(Duration::from_secs(5)) {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    asked.lock().unwrap().len()
 }
 
 /// The names of the `server` calls of `asked`, in order.
@@ -418,7 +429,10 @@ async fn each_command_in_a_container_takes_the_socket_or_refuses() {
             .as_ref()
             .map(|out| format!("{}{}", text(&out.stdout), text(&out.stderr)))
             .unwrap_or_default();
-        let asked = asked.lock().unwrap().len();
+        let asked = match row.way {
+            Way::Socket => asks(&asked).await,
+            _ => asked.lock().unwrap().len(),
+        };
         if said.contains("cannot reach riff-server") || said.contains("127.0.0.1:7878") {
             faults.push(format!(
                 "{words} asks the riff-server of the machine: {said}"
