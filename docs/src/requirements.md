@@ -897,18 +897,18 @@
   Supersedes 01M49HAZ7P3JMWNCG1SWCMAXQP in part.
 - **01M5R13DE5XRWB13E0BQ17C80F** A check of the full check that ends
   `skipped` or `neutral` counts as a success, as on GitHub: `riff verify
-  pass`, `riff release verify`, the verify of the wave and the look at
-  `main` use one rule. A conclusion of `failure`, `timed_out`,
-  `cancelled`, `stale` or `action_required` is no success. Supersedes
-  01M5QYDE41FVFX26EC8K5QGYH4 in part.
+  pass`, the verify of the wave and the look at `main` use one rule. A
+  conclusion of `failure`, `timed_out`, `cancelled`, `stale` or
+  `action_required` is no success. Supersedes 01M5QYDE41FVFX26EC8K5QGYH4
+  in part.
 - **01M5RGM8HBVQMY25H5PYESK17J** Of the check runs of one name on a
   commit, riff reads only the newest: the latest started_at, then the
   latest completed_at, as gh pr checks and the merge rules of GitHub do.
   An older run of the name that failed does not count when a newer run
   passed, and an older run that passed does not count when a newer run
-  failed. Runs that tie all count. `riff verify pass`, `riff release
-  verify`, the verify of the wave and the look at `main` use one rule.
-  Supersedes 01M5QYDE41FVFX26EC8K5QGYH4 in part.
+  failed. Runs that tie all count. `riff verify pass`, the verify of the
+  wave and the look at `main` use one rule. Supersedes
+  01M5QYDE41FVFX26EC8K5QGYH4 in part.
 - **01M5RG6BZQC8T6SZ8NX9W8TT5M** A release goes on `main` only
   (01M5RG6BTXAJY8DV6MT315VZWF). CI runs on `main` and on each pull
   request to `main`. There is no branch `release/**`, no ruleset
@@ -2243,9 +2243,8 @@
   that is not a tag `vX.Y.Z` of the version of the crates.
 - **01M3NB3EWE2V9PCTMNTZAKEXMA** Each release has a GitHub release on
   its tag. GitHub generates the rest of its notes: each pull request
-  merged since the last release, except the pull requests with the label
-  `release`. The GitHub releases are the changelog. The repository has
-  no changelog file.
+  merged since the last release. The GitHub releases are the changelog.
+  The repository has no changelog file.
 - **01M40AB1D5KQ4SERC6M709Z3JF** The generated notes of a release put
   the pull requests in three groups, in this order: `Changes` (each
   pull request with neither the label `design` nor `internal`),
@@ -7896,18 +7895,6 @@ of this part when they merge.
 
 ### The release commands
 
-- **01M58B0HZYMAK1B2AJMWKHCXG0** A release pull request "Release
-  vX.Y.Z", as the cut of an older riff makes it, has the label
-  `release`, the wave of the release, auto-merge on, and a body with the
-  level line, the list "Waves in this release", and the items of each
-  wave since the last release tag. It says `Refs #N` and `Part of #N`
-  for the release issue, never `Closes #N`.
-- **01M593FVJRTCGD1RPWXYJP5BNH** The release issue has two parts. "Done
-  when" is the release: published, deployed, and checked after the
-  deploy. "Verify of the release pull request" is the verify of the pull
-  request: only the change of the version, the format of the body, and
-  the Gate. The verify of a pull request with the label `release` reads
-  that part, and not the line "Done when".
 - **01M58B0JEYNAW67NS226FMX5XH** `riff release status` shows, for each
   session: the version on `origin/main`, the last published release tag,
   and each CI run that waits for the environment `production`.
@@ -7930,24 +7917,12 @@ of this part when they merge.
   container is still refused. The container of the lead has `RIFF_USER`,
   so the riff commands find their user without a keyring, and
   `RIFF_CHECK` names a folder that it can write for `riff build`.
-- **01M5ND0ZNFFAPT1AWD3DP1Y77N** A release pull request needs no model
-  verify. `riff release verify N` checks that the pull request has the
-  label `release`, that its diff is only `Cargo.toml` and `Cargo.lock`,
-  that its body has the format of `riff release cut`, and that the full
-  check of its head commit passed. Then it sets the status
-  `riff/verify`. It refuses else, and sets nothing.
-- **01M5R13DK401K3TZ91E2QK2DYM** The refusal of `riff release verify`
-  for the full check of the head commit names the commit, the checks of
-  the full check and their state, as the line of `riff verify pass`
-  does. The full check is the same as for 01M5QYDE41FVFX26EC8K5QGYH4.
-  Supersedes 01M5ND0ZNFFAPT1AWD3DP1Y77N in part.
 - **01M5SMPX8NM75P8E38DGQ17W7B** Only a repository whose `riff.toml` has
   the table `[release]` has the release cycle of riff. Without it, each
   `riff release` subcommand but `hold`, `riff build` and the
   real-session test refuse with one line, "this repository has no
   release cycle of riff: riff.toml has no [release]", and touch nothing
-  on the forge. Then `riff wave end N` has no release gate, and the
-  verify start text has no part for a release pull request. The probe
+  on the forge. Then `riff wave end N` has no release gate. The probe
   for `deploy/release-check.sh` does not decide it. The `riff.toml` of
   riff has `[release]`. Supersedes 01M58KMMCZCE7HDNVT9PVHVZX2 in part.
 - **01M5TKEH5E2ZQ22PAN9FTT27VW** The daemon of a host decides the
@@ -8026,11 +8001,9 @@ of this part when they merge.
   X.Y.Z, or the version of `--next A.B.C`, which must be newer than
   X.Y.Z. The branch `release-next-vA.B.C` sets A.B.C in `Cargo.toml` and
   `Cargo.lock`, and passes `deploy/release-check.sh`. The pull request
-  has the label `release`, the wave of the release, and `Refs #N` and
-  `Part of #N` for the release issue. `riff release verify N` verifies
-  it (01M5ND0ZNFFAPT1AWD3DP1Y77N), and it merges as each other pull
-  request. It is the first commit of the next wave, so each commit of a
-  wave has the version of its release.
+  has the wave of the release, and `Refs #N` and `Part of #N` for the
+  release issue. It is the first commit of the next wave, so each commit
+  of a wave has the version of its release.
 - **01M7641T51JY09YVVKR4WGEE72** A second `riff release cut X.Y.Z`
   finishes a cut that stopped part way. When the tag vX.Y.Z exists and
   has no GitHub release, it makes the release and the pull request of
@@ -8052,13 +8025,6 @@ of this part when they merge.
   in full, and 01M58B0JSQMWNCMSNX19536XT8, 01M59269HHZ5C82DR3RG3QHAM3,
   01M58KMMF9WMH39ZMD0MKGRVZB, 01M58KMKR33P1FSCFDQRZ56A8P,
   01M5P21M7MSP503125GD2PJGRE and 01M74BPHQZHXFYYNXAJ1WFASQQ in part.
-- **01M7641T9XH5NAXHE8YKBR4JJY** The release issue lists the steps of
-  the release apart from its part "Verify of the release pull request":
-  the real-session test of the last commit of `main`, the tag and the
-  GitHub release, the deploy, and the checks after the deploy. The
-  verify of a pull request does not check them. `riff release test` or
-  `riff release cut` files the issue. Supersedes
-  01M593FVJRTCGD1RPWXYJP5BNH in part.
 - **01M765808DM2V10BRGAAPE8CCT** The notes of a release start with its
   level line: the level, and the reason of `riff release cut --why TEXT`
   in one line. Then come the commands that each person runs: each `--run
@@ -8066,15 +8032,36 @@ of this part when they merge.
   when the old `riff` cannot read the new server. The flag can come more
   than one time. Supersedes 01M3NB3EWE2V9PCTMNTZAKEXMA and
   01M3N73EGY4NQDQQP8Y185E9VZ in part.
+- **01M76SBEV64SNKCS1AE1KXWNFM** `riff release` has no `verify`, and no
+  pull request gets the label `release`: only a release issue has it.
+  Hygiene, CI and `.github/release.yml` have no rule of the label.
+  Before it opens the pull request of the next version, `riff release
+  cut` sets the status `riff/verify` of its one commit: riff wrote that
+  commit, and it changes only the version in `Cargo.toml` and
+  `Cargo.lock`. The Gate decides the merge, as for each other pull
+  request. riff finds the pull request of the next version by its title.
+  The notes of the cut and `riff wave end` leave it out. The generated
+  notes of GitHub list it. Supersedes 01M58B0HZYMAK1B2AJMWKHCXG0,
+  01M5ND0ZNFFAPT1AWD3DP1Y77N and 01M5R13DK401K3TZ91E2QK2DYM in full, and
+  01M7641T2JH2K6SYBCWQGM56FY, 01M58KMKR33P1FSCFDQRZ56A8P,
+  01M5R13DE5XRWB13E0BQ17C80F, 01M5RGM8HBVQMY25H5PYESK17J,
+  01M3NB3EWE2V9PCTMNTZAKEXMA and 01M5SMPX8NM75P8E38DGQ17W7B in part.
+- **01M76SBPDSGS0SATQV9RA1FRG1** The release issue has the line "Done
+  when" and the list of the steps of the release: the real-session test
+  of the last commit of `main`, the tag and the GitHub release, the
+  merge of the pull request of the next version, the deploy, and the
+  checks after the deploy. It has no part for the verify of a pull
+  request. `riff release test` or `riff release cut` files it.
+  Supersedes 01M593FVJRTCGD1RPWXYJP5BNH and 01M7641T9XH5NAXHE8YKBR4JJY
+  in full.
 
 ### The release cycle
 
 - **01M58KMKR33P1FSCFDQRZ56A8P** Each wave with a change that a person
   sees since the last release tag ends with one release. Each step of
-  the cycle is a riff command: `riff release test`, `cut`, `verify`,
-  `status`, `approve`, `check`, `retry` and `rollback`, `just
-  real-session`, and `riff wave end`. No session skips a release: only a
-  person skips one.
+  the cycle is a riff command: `riff release test`, `cut`, `status`,
+  `approve`, `check`, `retry` and `rollback`, `just real-session`, and
+  `riff wave end`. No session skips a release: only a person skips one.
 - **01M58KMKWRKSV1DR42FRH2K43X** Each command of the release cycle
   prints the next step in a line `next: …`, also in a refusal.
 - **01M58KMKZ2EG8NZG4F085S6NQX** `just real-session` sets the commit
@@ -8153,10 +8140,9 @@ of this part when they merge.
   result and the next step. The command that starts the operation
   registers the watch with the riff daemon of its host in the same call,
   so no session has to remember to wait. The operations are the merge of
-  a pull request of the version (`riff release verify`), the
-  real-session test (`riff release test`), the job `Deploy` (`riff
-  release approve`, `retry` and `rollback`), and the end of the current
-  wave.
+  a pull request of the version, the real-session test (`riff release
+  test`), the job `Deploy` (`riff release approve`, `retry` and
+  `rollback`), and the end of the current wave.
 - **01M5RGD0RTXYA7FF5K1TH72MGX** The daemon keeps its watches in
   `watches.json` of its folder, so a restart keeps them. It looks at
   each watch each minute, but at the watch of a wave alone
@@ -8238,12 +8224,6 @@ of this part when they merge.
   one time to the lead of the repository while the message is one of the
   last 200 of its thread. The text adds no dot after an error that ends
   with one. Supersedes 01M5RGD0RTXYA7FF5K1TH72MGX in part.
-- **01M6QBEJYHKS8G26CM46P4P077** The message of the watch for a release
-  pull request that merged names the next step after the merge: it takes
-  the merge as a fact, and not from a second read of the stage that can
-  lag behind it. When that read shows the release before the merge, or
-  no release, the next step is the one of a merged release that has no
-  test.
 - **01M6QB459TJVK6CS9FHWH6EVK2** A release command (`riff release …`,
   and the release gate of `riff wave end`) that meets a limit of GitHub
   (GraphQL or REST) makes no new try. It finds the reset of the counter
@@ -8318,6 +8298,14 @@ of this part when they merge.
   the next steps of the release. Supersedes 01M5RGCW5NCKQYA61RM63914TX,
   01M5RGD0XTR4X1MEV726HMCEGQ, 01M5SNV75DRFHR26BT2M8243VV,
   01M5TKDYAFA683KNAJTGYTQD5W and 01M5RGD12P0GZDDR9HWHP4N0KP in part.
+- **01M76SBPGH2218K3ED569T051D** The watch of the pull request of the
+  next version tells the lead when its Gate failed, with the failed
+  jobs, and when the pull request merged or closed. A Gate that passed
+  gets no message: the pull request merges by itself. After the merge,
+  the next step is the step of the release that the pull request
+  follows, from a read of its stage. Supersedes
+  01M6QBEJYHKS8G26CM46P4P077 in full, and 01M5RGCW5NCKQYA61RM63914TX in
+  part.
 
 ### The real-session test
 
@@ -9169,23 +9157,17 @@ that builds it merges.
 - **01M75R6FPVZA3JA5C48PQ26A85** From the cut to the check, the line of
   the open release in the TUI and in `riff who`
   (01M6XTS1GCW7PTWSMM1HKQTHSN) shows the step of `riff release status`
-  and who acts next: `vX.Y.Z: the full check of the release pull request
-  runs`, `vX.Y.Z: the full check of the release pull request failed: the
-  lead of OWNER/REPO runs the failed jobs again`, `vX.Y.Z: the full
-  check of the release pull request passed; it waits for the verify of
-  the lead of OWNER/REPO`, `vX.Y.Z: the verify of the release pull
-  request passed; it merges`, `vX.Y.Z: the real-session test runs`,
-  `vX.Y.Z: the real-session test failed: the lead of OWNER/REPO files
-  the bug in the wave`, and `vX.Y.Z: the CI run of the tag builds`. Then
-  the lines of the deploy and of the check follow. At each look, the
-  watch of the wave of each daemon reads the state of the newest release
-  issue of the current wave, as `riff release status` does, and gives
-  the release at its step to the facts of its host. Of one tag, the
-  latest step that a host saw wins. A checked release and a release
-  after a rollback have no line. When the cut makes the release issue of
-  the wave, the line of the release takes the place of the line of the
-  complete wave. This supersedes 01M75N6YNHQQHGS0VGKTKSNJTR in part: the
-  line after the cut.
+  and who acts next: `vX.Y.Z: the real-session test runs`, `vX.Y.Z: the
+  real-session test failed: the lead of OWNER/REPO files the bug in the
+  wave`, and `vX.Y.Z: the CI run of the tag builds`. Then the lines of
+  the deploy and of the check follow. At each look, the watch of the
+  wave of each daemon reads the state of the newest release issue of the
+  current wave, as `riff release status` does, and gives the release at
+  its step to the facts of its host. Of one tag, the latest step that a
+  host saw wins. A checked release and a release after a rollback have
+  no line. When the cut makes the release issue of the wave, the line of
+  the release takes the place of the line of the complete wave. This
+  supersedes 01M75N6YNHQQHGS0VGKTKSNJTR in part: the line after the cut.
 - **01M7642H27T4862WZENFAN4277** Before the tag, the line of the release
   in the TUI and in `riff who` (01M75R6FPVZA3JA5C48PQ26A85) is `vX.Y.Z:
   the release build passed; it waits for the real-session test of the
@@ -9195,6 +9177,11 @@ that builds it merges.
   release issue that `riff release test` or `riff release cut` makes
   starts the line of the release. Supersedes 01M75R6FPVZA3JA5C48PQ26A85
   in part.
+- **01M76SBPK34YSRSFCC97H8SFH7** The line of the open release in the TUI
+  and in `riff who` has no step of a release pull request. Before the
+  tag, it shows the steps of the last commit of `main`
+  (01M7642H27T4862WZENFAN4277). Supersedes 01M75R6FPVZA3JA5C48PQ26A85 in
+  part.
 
 ## The notes of the lead
 

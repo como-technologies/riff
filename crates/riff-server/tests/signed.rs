@@ -538,8 +538,9 @@ async fn riff_server_posts_the_line_of_riff_bot_for_a_fact() {
     };
     assert_eq!(bot(&person, &base, waits).await, 200);
     assert_eq!(bot(&person, &base, BotFact::LeadStarted).await, 200);
-    let cut = BotFact::ReleaseCut {
+    let cut = BotFact::ReleasePublished {
         tag: "v3.3.0".into(),
+        run: None,
     };
     assert_eq!(bot(&lead, &base, cut).await, 200, "the lead tells a cut");
 
@@ -568,7 +569,10 @@ async fn riff_server_posts_the_line_of_riff_bot_for_a_fact() {
         started.body
     );
     assert!(started.to.is_empty(), "{:?}", started.to);
-    assert!(cut.body.starts_with("@mike riff release v3.3.0 is cut."));
+    assert!(
+        cut.body
+            .starts_with("@mike riff release v3.3.0 is published.")
+    );
 }
 
 /// 01M74BPHQZHXFYYNXAJ1WFASQQ: a client cannot put its own words in a line
@@ -588,7 +592,10 @@ async fn a_client_that_sends_a_text_gets_no_line_of_riff_bot_with_it() {
         "kind": "riff",
     });
     assert_eq!(person.call(&base, "bot", &with_text).await.status(), 200);
-    let cut = BotFact::ReleaseCut { tag: words.into() };
+    let cut = BotFact::ReleasePublished {
+        tag: words.into(),
+        run: None,
+    };
     assert_eq!(bot(&person, &base, cut).await, 400);
     let unknown = serde_json::json!({ "me": MIKE_HERE, "fact": { "fact": "say", "body": words } });
     assert_eq!(person.call(&base, "bot", &unknown).await.status(), 422);
@@ -636,11 +643,15 @@ async fn a_tag_with_a_text_after_its_version_gets_no_line_of_riff_bot() {
             reminder: false,
         };
         assert_eq!(bot(&person, &base, waits).await, 400, "{tag}");
-        let cut = BotFact::ReleaseCut { tag: tag.clone() };
+        let cut = BotFact::ReleasePublished {
+            tag: tag.clone(),
+            run: None,
+        };
         assert_eq!(bot(&person, &base, cut).await, 400, "{tag}");
     }
-    let cut = BotFact::ReleaseCut {
+    let cut = BotFact::ReleasePublished {
         tag: "v3.3.0".into(),
+        run: None,
     };
     assert_eq!(bot(&person, &base, cut).await, 200);
 
@@ -651,8 +662,8 @@ async fn a_tag_with_a_text_after_its_version_gets_no_line_of_riff_bot() {
     assert_eq!(line.kind, Kind::Riff);
     assert_eq!(
         line.body,
-        "@mike riff release v3.3.0 is cut. riff tells you when its deploy waits for your \
-         approval."
+        "@mike riff release v3.3.0 is published. Its CI run builds: the CI run of the tag. riff \
+         tells you when its deploy waits for your approval."
     );
     assert!(!line.body.contains(words), "{}", line.body);
 }

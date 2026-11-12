@@ -752,16 +752,16 @@ fn the_deploy_and_the_stage_compile_nothing() {
 }
 
 /// The generated notes of the GitHub releases are the changelog: they
-/// leave out the release pull requests, no changelog file exists, and
-/// the book says where to read them (01M3NB3EWE2V9PCTMNTZAKEXMA).
+/// list each merged pull request, no changelog file exists, and the book
+/// says where to read them (01M3NB3EWE2V9PCTMNTZAKEXMA). No pull request
+/// has the label `release`, so the notes have no rule of it
+/// (01M76SBEV64SNKCS1AE1KXWNFM).
 #[test]
 fn the_release_notes_are_the_changelog() {
     let root = deploy().join("..");
     let config = fs::read_to_string(root.join(".github/release.yml")).unwrap();
-    assert!(
-        config.contains("changelog:\n  exclude:\n    labels:\n      - release\n"),
-        "{config}"
-    );
+    assert!(config.contains("changelog:\n  categories:\n"), "{config}");
+    assert!(!config.contains("- release\n"), "{config}");
     for name in ["CHANGELOG.md", "CHANGELOG", "docs/src/changelog.md"] {
         assert!(!root.join(name).exists(), "{name} exists");
     }

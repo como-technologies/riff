@@ -666,8 +666,8 @@ use crate::run::{self, Facts};
 use crate::runtime::Runtime;
 use crate::session_setup::Setup;
 use crate::{
-    changes, ghcalls, hooks, identity, kept, look, order, pr, release_config, repo_setup, rollout,
-    session_image, text, usage,
+    changes, ghcalls, hooks, identity, kept, look, order, pr, repo_setup, rollout, session_image,
+    text, usage,
 };
 use riff_client::api::{self, Api};
 use riff_client::link::STREAM_RETRY;
@@ -3249,9 +3249,7 @@ impl Live {
                 blocking(move || clone_at(&main_at, &at, pull_at, &commit_at)).await?;
                 let repo = wave.repo.clone();
                 let checks = blocking(move || repo_setup::full_check(&forge(&repo), &repo)).await?;
-                let main_at = main.clone();
-                let release = blocking(move || Ok(release_config::merged(&main_at))).await?;
-                text::wave_verify_start(&wave.repo, base, *issue, *pull, commit, &checks, release)
+                text::wave_verify_start(&wave.repo, base, *issue, *pull, commit, &checks)
             }
         };
         let existing = |p: PathBuf| p.exists().then_some(p);

@@ -3062,6 +3062,36 @@ Backlog (01M53NGWN190T2MYB1EZAD36VB).
   and has no published release. Only `--skip VERSION --reason TEXT`
   with that version lets it go on. The reason goes into the body of the
   new release pull request, and from there into its GitHub release.
+- **01M58B0HZYMAK1B2AJMWKHCXG0** A release pull request "Release
+  vX.Y.Z", as the cut of an older riff makes it, has the label
+  `release`, the wave of the release, auto-merge on, and a body with the
+  level line, the list "Waves in this release", and the items of each
+  wave since the last release tag. It says `Refs #N` and `Part of #N`
+  for the release issue, never `Closes #N`.
+- **01M593FVJRTCGD1RPWXYJP5BNH** The release issue has two parts. "Done
+  when" is the release: published, deployed, and checked after the
+  deploy. "Verify of the release pull request" is the verify of the pull
+  request: only the change of the version, the format of the body, and
+  the Gate. The verify of a pull request with the label `release` reads
+  that part, and not the line "Done when".
+- **01M5ND0ZNFFAPT1AWD3DP1Y77N** A release pull request needs no model
+  verify. `riff release verify N` checks that the pull request has the
+  label `release`, that its diff is only `Cargo.toml` and `Cargo.lock`,
+  that its body has the format of `riff release cut`, and that the full
+  check of its head commit passed. Then it sets the status
+  `riff/verify`. It refuses else, and sets nothing.
+- **01M5R13DK401K3TZ91E2QK2DYM** The refusal of `riff release verify`
+  for the full check of the head commit names the commit, the checks of
+  the full check and their state, as the line of `riff verify pass`
+  does. The full check is the same as for 01M5QYDE41FVFX26EC8K5QGYH4.
+  Supersedes 01M5ND0ZNFFAPT1AWD3DP1Y77N in part.
+- **01M7641T9XH5NAXHE8YKBR4JJY** The release issue lists the steps of
+  the release apart from its part "Verify of the release pull request":
+  the real-session test of the last commit of `main`, the tag and the
+  GitHub release, the deploy, and the checks after the deploy. The
+  verify of a pull request does not check them. `riff release test` or
+  `riff release cut` files the issue. Supersedes
+  01M593FVJRTCGD1RPWXYJP5BNH in part.
 
 ### The release cycle
 
@@ -3082,6 +3112,12 @@ Backlog (01M53NGWN190T2MYB1EZAD36VB).
   `riff chat`.
 - **01M58KMMKZ8T11KT3R3Z7D0RE1** HUMAN GATE 3: `riff release cut
   --skip` refuses in each agent session, and for a member.
+- **01M6QBEJYHKS8G26CM46P4P077** The message of the watch for a release
+  pull request that merged names the next step after the merge: it takes
+  the merge as a fact, and not from a second read of the stage that can
+  lag behind it. When that read shows the release before the merge, or
+  no release, the next step is the one of a merged release that has no
+  test.
 
 ## The UIs
 

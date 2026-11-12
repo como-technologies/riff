@@ -448,8 +448,9 @@ fn release_approve_help_says_who_may_approve() {
 
 /// 01M7641BHHND5JJA8DGJPFNAN7, 01M7641T7FX9416CYY1XKHTJE6: the help of
 /// `riff release cut` says that the ruleset `releases` decides the push of
-/// the tag, and asks for no `gh` of an admin. `riff release` has no
-/// `publish`.
+/// the tag, and asks for no `gh` of an admin. It passes the verify of the
+/// pull request of the next version (01M76SBEV64SNKCS1AE1KXWNFM). `riff
+/// release` has no `publish` and no `verify`.
 #[test]
 fn release_cut_help_says_that_the_ruleset_decides_the_tag() {
     let help = riff(&["release", "cut", "--help"]);
@@ -459,18 +460,20 @@ fn release_cut_help_says_that_the_ruleset_decides_the_tag() {
          repository and the lead App push it, so the lead pushes it from its container.",
         "The cut makes no version commit and builds nothing.",
         "Then it opens the pull request \"Set the next version A.B.C\", the next minor by default",
+        "The cut passes the verify of that one commit (riff/verify), so the pull request merges \
+         when its Gate passes.",
     ] {
         assert!(flat.contains(words), "{words:?} missing in {help}");
     }
     assert!(!flat.contains("with a gh of an admin"), "{help}");
     assert!(!flat.contains("--skip"), "{help}");
     let release = riff(&["release", "--help"]);
-    assert!(
-        !release
-            .lines()
-            .any(|l| l.trim_start().starts_with("publish ")),
-        "{release}"
-    );
+    for gone in ["publish ", "verify "] {
+        assert!(
+            !release.lines().any(|l| l.trim_start().starts_with(gone)),
+            "{gone}: {release}"
+        );
+    }
 }
 
 /// 01M5SMPX8NM75P8E38DGQ17W7B: the release gate of `riff wave end`

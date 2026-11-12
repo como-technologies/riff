@@ -332,23 +332,13 @@ pub struct Test {
 /// (01M75R6FPVZA3JA5C48PQ26A85), and the watch of the deploy, then the watch
 /// of the check of the lead, read the steps from the wait for the approve
 /// (01M6XTS7RGXB30MFM6DZ7PVZ75). The order of the variants is the order of
-/// the steps.
+/// the steps. No step is a step of a release pull request
+/// (01M76SBPK34YSRSFCC97H8SFH7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReleaseStep {
-    /// The full check of the release pull request of an older riff runs.
-    PullRuns,
-    /// The full check of the release pull request of an older riff failed.
-    PullFailed,
-    /// The full check of the release pull request of an older riff passed:
-    /// the lead verifies it next.
-    Verify,
-    /// The verify of the release pull request of an older riff passed: it
-    /// merges.
-    Merges,
     /// The last commit of `main` has its release build and a passed release
-    /// test, or the release pull request of an older riff merged: the lead
-    /// starts the real-session test next.
+    /// test: the lead starts the real-session test next.
     Merged,
     /// The real-session test runs.
     TestRuns,
@@ -409,10 +399,10 @@ pub struct Release {
 /// // The watch of the wave of one host read the stage of the release
 /// // before the watch of the wave of another host (01M75R6FPVZA3JA5C48PQ26A85).
 /// let hosts = [
-///     host("a", vec![of("o/r", "v3.3.0", ReleaseStep::Verify)]),
-///     host("b", vec![of("o/r", "v3.3.0", ReleaseStep::PullRuns)]),
+///     host("a", vec![of("o/r", "v3.3.0", ReleaseStep::TestRuns)]),
+///     host("b", vec![of("o/r", "v3.3.0", ReleaseStep::Merged)]),
 /// ];
-/// assert_eq!(release(&hosts), Some(of("o/r", "v3.3.0", ReleaseStep::Verify)));
+/// assert_eq!(release(&hosts), Some(of("o/r", "v3.3.0", ReleaseStep::TestRuns)));
 /// // A fix forward: the newer tag wins, also at an earlier step.
 /// let hosts = [
 ///     host("a", vec![of("o/r", "v3.3.0", ReleaseStep::CheckFailed)]),
@@ -926,10 +916,6 @@ mod tests {
     fn the_steps_from_the_cut_come_before_the_deploy_and_read_again() {
         use ReleaseStep::*;
         let steps = [
-            PullRuns,
-            PullFailed,
-            Verify,
-            Merges,
             Merged,
             TestRuns,
             TestFailed,
@@ -954,7 +940,7 @@ mod tests {
             ..Facts::default()
         };
         let line = facts.line();
-        assert!(line.contains(r#""step":"pull_runs""#), "{line}");
+        assert!(line.contains(r#""step":"merged""#), "{line}");
         assert!(line.contains(r#""step":"test_failed""#), "{line}");
         assert_eq!(Facts::parse(&line), Some(facts));
     }

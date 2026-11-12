@@ -1282,9 +1282,6 @@ pub struct BotPost {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "fact", rename_all = "snake_case")]
 pub enum BotFact {
-    /// The `riff release cut` of an older riff made the release pull
-    /// request of the version `tag`, `vX.Y.Z`.
-    ReleaseCut { tag: String },
     /// `riff release cut` tagged the version `tag`. `run` is the ID
     /// of the CI run of the tag on GitHub, when GitHub shows it.
     ReleasePublished {

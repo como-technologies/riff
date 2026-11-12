@@ -254,7 +254,7 @@ flowchart LR
 ```
 
 - A pull request builds the test binaries and the profile `dev`, with
-  a cache. It builds no release binary, also with the label `release`.
+  a cache. It builds no release binary.
 - A merge group takes no artifact of its pull request. It builds its
   tree and tests it once, as a pull request does, and keeps its
   artifacts and `gate-TREE`.
@@ -7051,8 +7051,7 @@ state of the release and the next step, for example
 The release cycle needs `[release]` in `riff.toml`. A repository with
 no `[release]` has no release cycle of riff: `riff release`, `riff
 build` and the real-session test refuse with one line, and touch
-nothing on GitHub. The verify of a pull request has no part for the
-label `release`. Only `riff release hold` works there: see
+nothing on GitHub. Only `riff release hold` works there: see
 [Hold a release](#hold-a-release). See
 [Turn on the release cycle](#turn-on-the-release-cycle), also for the
 release gate of `riff wave end`.
@@ -7071,10 +7070,10 @@ flowchart TD
     Q1 -- "dismiss it with the reason" --> Q
     Q1 -- "fix it in the code: the fix merges" --> C
     Q -- no --> G[riff release cut X.Y.Z: the tag on the last commit of main with the lead App, the GitHub release, chat line to the owner]
-    G --> P[The pull request of the next version A.B.C, auto-merge on]
-    P -- "wakes the lead: the Gate passed, or failed with its jobs" --> P1{Gate}
-    P1 -- FAIL --> P2[Run the failed jobs again] --> P
-    P1 -- PASS --> V[riff release verify N]
+    G --> P[The pull request of the next version A.B.C: riff/verify passed at the cut, auto-merge on]
+    P --> P1{Gate}
+    P1 -- "FAIL: wakes the lead: the Gate failed, with its jobs" --> P2[Run the failed jobs again] --> P
+    P1 -- PASS --> V[It merges by itself]
     V -- "wakes the lead: the pull request merged" --> V1[A.B.C on main: the first commit of the next wave]
     G --> T[The CI run of the tag takes the release build of the commit, and compiles nothing]
     T -- "wakes the lead and the owner when the job Deploy waits" --> H{{"HUMAN GATE 1: riff release approve vX.Y.Z, by a person in a terminal (pauses the riff, approves production)"}}
@@ -7101,7 +7100,6 @@ The gates:
 | Release build | CI, for each push to `main` | the release build and the release test of the commit set its artifacts and the status `riff/release-test` (see [The release build of each commit of main](#the-release-build-of-each-commit-of-main)) | `riff release test` and `cut` refuse |
 | Real session | the riff daemon of a host, or a person who wrote none of the items, on a host | `riff release test vX.Y.Z --host HOST`, or `just real-session`, sets the commit status `riff/real-session` | `riff release cut` refuses |
 | Alerts | the lead or a person: fix each alert, or dismiss it with the reason (see [Cut the release](#cut-the-release)) | `riff release cut X.Y.Z` checks them | `cut` refuses |
-| Verify | the lead, with no model session | `riff release verify N` of the pull request of the next version | the pull request of the next version waits |
 | HUMAN GATE 1: deploy | the owner or an admin, in a terminal. No session, also not the lead: a message in riff chat approves nothing | `riff release approve vX.Y.Z` | the release waits; the riff is not paused; the next `cut` refuses |
 | Hold | a lead of another repository, in a critical place | `riff release hold vX.Y.Z REASON` | `approve` refuses until the lead ends the hold, or a person passes `--over-holds` |
 | HUMAN GATE 2: rollback | the owner or an admin, in a terminal | `riff release approve vPREV` | the new release keeps serving; the riff stays paused |
@@ -7138,8 +7136,8 @@ Merge the change with a pull request. In a repository with no
 this repository has no release cycle of riff: riff.toml has no [release]
 ```
 
-`riff release cut`, `verify`, `status`, `approve`, `check`, `retry`,
-`test` and `rollback`, and `riff build` give this line. The daemon of
+`riff release cut`, `status`, `approve`, `check`, `retry`, `test` and
+`rollback`, and `riff build` give this line. The daemon of
 a host gives it too, for `riff build --host` and `riff release test
 --host`. `riff release hold` does not: the lead of another repository
 holds a release of riff, and that repository has no `[release]`.
@@ -7192,7 +7190,7 @@ sequenceDiagram
 
 | Step | The command registers | The lead gets one message when |
 |---|---|---|
-| The pull request of the next version | `riff release cut`, `riff release verify` | the Gate passed (next: `riff release verify`), the Gate failed (the failed jobs), the pull request merged (next: the next step of the release), or it closed with no merge (next: `riff release cut`) |
+| The pull request of the next version | `riff release cut` | the Gate failed (the failed jobs; the watch stays), the pull request merged (next: the next step of the release), or it closed with no merge (next: `riff release cut`). A Gate that passed gets no message: the pull request merges by itself |
 | The real-session test | `riff release test --host HOST` | the test passed (next: `riff release cut`), or failed |
 | The CI run of the tag | `riff release cut` | the job `Deploy` waits for a person (the owner gets the line in `riff chat`), or a job failed |
 | The job `Deploy` | `riff release approve`, `retry`, `rollback` | the job failed (the failed jobs), or it passed and your container runs the release (see [Wait for the new riff before the check](#wait-for-the-new-riff-before-the-check)) |
@@ -7201,7 +7199,7 @@ sequenceDiagram
 
 The message ends with `next:` and the command of the next step. A
 second command for the same operation, for example a second `riff
-release verify` of the same pull request, adds no second watch.
+release cut` of the same tag, adds no second watch of its deploy.
 
 The CI run of the tag runs the jobs before the job `Deploy` first, so
 the deploy does not wait yet. The watch posts the line "waits for your
@@ -7246,12 +7244,8 @@ The message of a merge names the step after the merge, not "wait for
 the merge". When the pull request of the next version merged, the
 release has its tag already: `next:` is the next step of that release,
 for example `a person runs riff release approve v3.3.0 in a terminal`.
-A release pull request of an older riff sets the version of its release
-on `main`: after its merge, `next:` is the release build of the last
-commit of `main`, then `riff release test`. GitHub can show the old
-state for a minute. The daemon reads the state of the release, and it
-does not trust a read that lags behind the merge: when the read shows
-no release, the release counts as `building`.
+When the daemon cannot read the release, `next:` is `riff release
+status`.
 
 A fault of the forge comes one time for each repository, also with
 more watches. The message holds the error of `gh` and the name of
@@ -7926,13 +7920,16 @@ riff release cut 3.3.0 --run "riff update --tag v3.3.0"
 After the GitHub release, riff opens the pull request "Set the next
 version 3.4.0" on the branch `release-next-v3.4.0`, from the tagged
 commit. It sets 3.4.0 in `Cargo.toml` and `Cargo.lock`, and runs
-`deploy/release-check.sh`. The pull request has the label `release`,
-the wave of the release, and auto-merge on. Its body says `Refs #7` and
-`Part of #7` for the release issue, never `Closes #7`: the release
-issue closes only when the checks after the deploy pass. Do not open
-such a pull request with `gh pr create`: `Hygiene` refuses a pull
-request with no wave. The release notes leave out the pull requests
-with the label `release`.
+`deploy/release-check.sh`. The pull request has the wave of the
+release, auto-merge on, and no label. Its body says `Refs #7` and `Part
+of #7` for the release issue, never `Closes #7`: the release issue
+closes only when the checks after the deploy pass. riff wrote its one
+commit, so riff sets the status `riff/verify` of that commit before it
+opens the pull request. No session verifies it: it merges when its Gate
+passes, as each other pull request. Do not open such a pull request
+with `gh pr create`: `Hygiene` refuses a pull request with no wave. The
+notes of the cut leave out each pull request of the next version. The
+notes that GitHub makes list it.
 
 The next version is the next minor. When the next wave needs another
 level, for example a major, name it with `--next`. It must be newer
@@ -7950,8 +7947,9 @@ The CI run of the tag: https://github.com/como-technologies/riff/actions/runs/9
 riff told the owner mike in riff chat.
 riff watches the deploy of v3.3.0. The lead gets one message when it ends.
 The pull request #1141 sets the next version 3.4.0 on main, for issue #7, with auto-merge on: https://github.com/como-technologies/riff/pull/1141
+riff passed the verify of its one commit: it merges when its Gate passes.
 riff watches the pull request #1141 of the release. The lead gets one message when it ends.
-next: riff release verify 1141 after its Gate passed; a person runs riff release approve v3.3.0 in a terminal when the deploy waits
+next: a person runs riff release approve v3.3.0 in a terminal when the deploy waits
 ```
 
 riff-bot writes one line in riff chat to the owner. It asks for
@@ -7968,7 +7966,7 @@ for `production`, the daemon posts the line "waits for your approval"
 to the owner, with `riff release approve v3.3.0`, and one message to
 the lead. When a job failed, it wakes the lead with the failed jobs. It
 also registers the watch of the pull request of the next version (see
-[Verify the pull request of the next version](#verify-the-pull-request-of-the-next-version)).
+[Watch the pull request of the next version](#watch-the-pull-request-of-the-next-version)).
 
 CI runs the job `Release check` for the tag. It fails when the tag is
 not the version of the crates. The tag takes the release build of its
@@ -7988,30 +7986,28 @@ When both jobs pass, the job `Deploy` waits for the approval of the
 environment `production`. See
 [Deploy the shared server at the end of a wave](#deploy-the-shared-server-at-the-end-of-a-wave).
 
-#### Verify the pull request of the next version
+#### Watch the pull request of the next version
 
 The pull request of the next version has no code to review. Its diff
-is the version. The daemon wakes the lead when its Gate ends:
-
-```text
-The Gate of the pull request #1141 of the release v3.3.0 passed. next: riff release verify 1141
-```
-
-When the Gate failed, the message names the failed jobs. Run them
-again. When the Gate of the head commit passed, run:
+is the version, and the cut passed its verify. It merges by itself when
+its Gate passes. See it in the line `pull request of the next version`,
+for example `#1141 sets 3.4.0`:
 
 ```sh
-riff release verify 1141
+riff release status
 ```
 
-riff checks the label `release`, the diff (only `Cargo.toml` and
-`Cargo.lock`), the format of the body, and the Gate. Then it sets the
-status `riff/verify`, and the auto-merge merges the pull request. It
-refuses else, and sets nothing. No model session verifies the pull
-request. After the status, riff registers the watch of the merge. The
-daemon wakes the lead when the pull request merges, with the next step
-of the release. When the pull request closes with no merge, the next
-step is `riff release cut 3.3.0`:
+The daemon wakes the lead when the Gate fails, with the failed jobs:
+
+```text
+The Gate of the pull request #1141 of the release v3.3.0 failed: Clippy. next: run the failed jobs again: the pull request merges when its Gate passes
+```
+
+Run the failed jobs again on the page of the CI run. The watch stays,
+and a new fail wakes the lead again. The daemon wakes the lead when the
+pull request merges, with the next step of the release. When the pull
+request closes with no merge, the next step is `riff release cut
+3.3.0`:
 
 ```text
 The pull request #1141 of the release v3.3.0 merged. next: a person runs riff release approve v3.3.0 in a terminal
@@ -8019,9 +8015,6 @@ The pull request #1141 of the release v3.3.0 merged. next: a person runs riff re
 
 The merge is the first commit of the next wave. So each commit of that
 wave has the version of its release, 3.4.0.
-
-`riff release verify` also verifies a release pull request "Release
-v3.3.0" that an older riff cut, in the same way.
 
 When a check of the pull request fails, for example `Hygiene`, the
 wave tells your lead once with the names of the checks: see [See a
@@ -8046,7 +8039,7 @@ riff release cut 3.3.0
 - While that pull request is open, riff refuses and names it:
 
 ```text
-riff release cut: the release v3.3.0 exists, and pull request #1141 sets the next version 3.4.0. riff changed nothing. next: riff release verify 1141 after its Gate passed
+riff release cut: the release v3.3.0 exists, and pull request #1141 sets the next version 3.4.0. riff changed nothing. next: wait for the Gate of pull request #1141: it merges when the Gate passes; when a job failed, run that job again
 ```
 
 When riff made the release but not the pull request of the next
@@ -8059,26 +8052,19 @@ riff release cut: riff made the release v3.3.0: https://github.com/como-technolo
 #### The release issue
 
 `riff release test` or the cut makes the release issue `Release
-v3.3.0` in the current wave, when there is none. The issue has two
-parts. The verify of the pull request of the next version reads only
-"Verify of the release pull request". A verifier of a pull request with
-the label `release` checks that part, and not "Done when": the pull
-request changes only the version, and the steps of the release are not
-in it.
+v3.3.0` in the current wave, when there is none. The issue has the
+line "Done when" and the steps of the release. No session builds or
+verifies it:
 
 ```text
 The release v3.3.0.
 
 Done when: the release is published, the deploy to the shared riff passed, and the checks after the deploy passed.
 
-Verify of the release pull request. The pull request has the label `release`. Its verify checks only this, and not the steps of the release:
-- The diff is only the change of the version in `Cargo.toml` and `Cargo.lock`.
-- The format of the body is right.
-- The Gate passed.
-
-Steps of the release. The verify of the pull request does not check these:
+Steps of the release:
 - The real-session test passed on the last commit of `main`.
 - The tag is on that commit, and the release is published.
+- The pull request of the next version merged.
 - The deploy to the shared riff passed.
 - The checks after the deploy passed.
 ```

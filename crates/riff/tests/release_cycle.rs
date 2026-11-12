@@ -163,10 +163,9 @@ impl Machine {
                  'issue list'*) printf '%s\n' '[]' ;;\n\
                  'issue create'*) printf '%s\n' 'https://github.com/como-technologies/riff/issues/7' ;;\n\
                  'pr list --state merged --base main'*) printf '%s\n' '{merged}' ;;\n\
-                 'pr list --state merged --label release'*) printf '%s\n' '[]' ;;\n\
                  'pr create'*) printf '%s\n' 'https://github.com/como-technologies/riff/pull/1140' ;;\n\
                  'run list --workflow CI --status waiting'*) printf '%s\n' '[]' ;;\n\
-                 'pr list --state open --label release'*) printf '%s\n' '[]' ;;\n\
+                 'pr list --state open --limit 100'*) printf '%s\n' '[]' ;;\n\
                  'run list --workflow CI --limit'*) printf '%s\n' '[]' ;;\n\
                  'api repos/{{owner}}/{{repo}}/commits/'*) printf '%s\n' '{{\"statuses\":[]}}' ;;\n\
                  esac\nexit 0\n"
@@ -356,7 +355,6 @@ async fn each_release_command_refuses_a_repository_with_no_release_table() {
     machine.serve();
     for args in [
         &["release", "cut", "3.3.0"][..],
-        &["release", "verify", "7"],
         &["release", "status"],
         &["release", "approve", "v3.3.0"],
         &["release", "check", "v3.3.0"],
@@ -510,10 +508,10 @@ async fn cut_tags_the_last_commit_builds_nothing_makes_the_release_and_opens_the
              riff watches the deploy of v3.3.0. The lead gets one message when it ends.\n\
              The pull request #1141 sets the next version 3.4.0 on main, for issue #7, with \
              auto-merge on: https://github.com/como-technologies/riff/pull/1141\n\
+             riff passed the verify of its one commit: it merges when its Gate passes.\n\
              riff watches the pull request #1141 of the release. The lead gets one message when \
              it ends.\n\
-             next: riff release verify 1141 after its Gate passed; a person runs riff release \
-             approve v3.3.0 in a terminal when the deploy waits\n"
+             next: a person runs riff release approve v3.3.0 in a terminal when the deploy waits\n"
         )
     );
     // Only the new tag is pushed: annotated, on the last commit of main.
@@ -558,9 +556,25 @@ async fn cut_tags_the_last_commit_builds_nothing_makes_the_release_and_opens_the
     assert!(
         log.contains(
             "gh pr create --head release-next-v3.4.0 --base main --title Set the next version \
-             3.4.0 --label release --milestone Wave 34: Release --body-file -\nRefs #7\n\nPart of \
-             #7: the next version after v3.3.0."
+             3.4.0 --milestone Wave 34: Release --body-file -\nRefs #7\n\nPart of #7: the next \
+             version after v3.3.0."
         ),
+        "{log}"
+    );
+    // The cut passed the verify of the one commit of the branch before it
+    // opened the pull request.
+    let next = git(&origin, &["rev-parse", "release-next-v3.4.0"]);
+    let verify = format!(
+        "gh api repos/{{owner}}/{{repo}}/statuses/{next} -f state=success -f \
+         context=riff/verify -f description={}\n",
+        riff::cycle::NEXT_VERIFY
+    );
+    let at = log
+        .find(&verify)
+        .unwrap_or_else(|| panic!("{verify}: {log}"));
+    assert!(at < log.find("gh pr create").unwrap(), "{log}");
+    assert!(
+        !log.contains("--label release --milestone Wave 34: Release --body-file -\nRefs"),
         "{log}"
     );
     assert!(!log.contains("Closes #7"), "{log}");
@@ -620,7 +634,7 @@ async fn cut_tags_the_last_commit_builds_nothing_makes_the_release_and_opens_the
     // is open.
     machine.fake_gh(&format!(
         "'release list'*) printf '%s\\n' '[{{\"tagName\":\"v3.3.0\"}},{{\"tagName\":\"v3.2.0\"}}]' ;;\n\
-         'pr list --state open --label release'*) printf '%s\\n' '[{{\"number\":1141,\"title\":\"Set the next version 3.4.0\"}}]' ;;\n\
+         'pr list --state open --limit 100'*) printf '%s\\n' '[{{\"number\":1141,\"title\":\"Set the next version 3.4.0\"}}]' ;;\n\
          {}",
         machine.ready(TESTED)
     ));
@@ -629,7 +643,8 @@ async fn cut_tags_the_last_commit_builds_nothing_makes_the_release_and_opens_the
     assert!(
         text(&out.stderr).contains(
             "the release v3.3.0 exists, and pull request #1141 sets the next version 3.4.0. riff \
-             changed nothing. next: riff release verify 1141 after its Gate passed"
+             changed nothing. next: wait for the Gate of pull request #1141: it merges when the \
+             Gate passes; when a job failed, run that job again"
         ),
         "{}",
         text(&out.stderr)
@@ -1852,7 +1867,8 @@ fn the_book_shows_the_release_cycle_with_its_gates_and_a_how_to_for_each_command
         // 01M5RGCW5NCKQYA61RM63914TX: the diagram says what wakes the lead
         // at each step, and a how-to says how the watches work.
         "wakes the lead: Wave N is complete",
-        "wakes the lead: the Gate passed, or failed with its jobs",
+        "FAIL: wakes the lead: the Gate failed, with its jobs",
+        "It merges by itself",
         "wakes the lead: the pull request merged",
         "riff release test: wakes the lead at the end of the test",
         "wakes the lead and the owner when the job Deploy waits",
@@ -1941,8 +1957,8 @@ fn the_book_shows_the_release_cycle_with_its_gates_and_a_how_to_for_each_command
             &make,
         ),
         (
-            "#### Verify the pull request of the next version",
-            "riff release verify 1141",
+            "#### Watch the pull request of the next version",
+            "riff release status",
             &make,
         ),
         (
@@ -1976,6 +1992,18 @@ fn the_book_shows_the_release_cycle_with_its_gates_and_a_how_to_for_each_command
             book::commands_in(&how_to).iter().any(|c| c == command),
             "{command} in {heading}"
         );
+    }
+    // #1983: the book names no release pull request, and no riff release
+    // verify (01M76SBEV64SNKCS1AE1KXWNFM).
+    let releases = section(&book::page("how-it-works.md"), "### Releases");
+    for part in [&cycle, &make, &releases] {
+        for gone in [
+            "release pull request",
+            "riff release verify",
+            "label `release`",
+        ] {
+            assert!(!part.contains(gone), "{gone} in the book");
+        }
     }
     for part in [&make, &again, &approve] {
         for raw in ["gh api", "git tag", "gh release", "gh workflow", "gh run"] {
@@ -2504,135 +2532,66 @@ async fn approve_in_the_lead_container_refuses_and_asks_the_daemon_nothing() {
     assert_eq!(machine.log(), "");
 }
 
-/// The body of a release pull request as the release cut of an older riff
-/// writes it: its link line, its line `Part of`, its level line and its
-/// trailers.
-const OLDER_BODY: &str = "Refs #7\\n\\nPart of #7: the release pull request.\\n\\nLevel: minor, 3.3.0.\\n\\nIssue: #7\\nMilestone: Wave 34\\n";
-
-/// The cases of `gh` for `riff release verify 1140`: an open release pull
-/// request with the version files, and a Gate that `gate` is.
-fn verify_cases(gate: &str) -> String {
-    verify_cases_of(1140, "Release v3.3.0", OLDER_BODY, gate)
-}
-
-/// The cases of `gh` for `riff release verify NUMBER`: the open pull
-/// request `number` with the title `title`, the body `body`, the label
-/// `release` and the version files, and a Gate that `gate` is.
-fn verify_cases_of(number: u64, title: &str, body: &str, gate: &str) -> String {
-    format!(
-        "'pr view {number} --json number,title,body,state,labels,milestone,headRefOid,files'*) printf '%s\\n' '{{\"number\":{number},\"title\":\"{title}\",\"body\":\"{body}\",\"state\":\"OPEN\",\"labels\":[{{\"name\":\"release\"}}],\"milestone\":{{\"title\":\"Wave 34: Release\"}},\"headRefOid\":\"h1\",\"files\":[{{\"path\":\"Cargo.toml\"}},{{\"path\":\"Cargo.lock\"}}]}}' ;;\n\
-         'api repos/{{owner}}/{{repo}}') printf '%s\\n' '{{\"default_branch\":\"main\"}}' ;;\n\
-         'api repos/{{owner}}/{{repo}}/rules/branches/main?per_page=100') printf '%s\\n' '[{{\"type\":\"required_status_checks\",\"parameters\":{{\"required_status_checks\":[{{\"context\":\"Gate\"}},{{\"context\":\"riff/verify\"}}]}}}}]' ;;\n\
-         'api repos/{{owner}}/{{repo}}/commits/h1/check-runs?check_name=Gate') printf '%s\\n' '{{\"check_runs\":[{gate}]}}' ;;"
-    )
-}
-
-/// 01M5RGCW5NCKQYA61RM63914TX: `riff release verify` sets the status
-/// `riff/verify` and registers the watch of the merge in the same call.
-#[tokio::test]
-async fn verify_registers_the_watch_of_the_merge() {
-    let machine = Machine::new().await;
-    machine.serve();
-    let passed = r#"{"status":"completed","conclusion":"success","head_sha":"h1"}"#;
-    machine.fake_gh(&verify_cases(passed));
-    let out = machine.ok(&[], &["release", "verify", "1140"]).await;
-    assert_eq!(
-        out,
-        "Pull request #1140 passed: the status riff/verify of h1 is a success.\n\
-         riff watches the pull request #1140 of the release. The lead gets one message when it \
-         ends.\nnext: the auto-merge merges pull request #1140\n"
-    );
-    assert!(
-        machine.log().contains("context=riff/verify"),
-        "{}",
-        machine.log()
-    );
-    let watches = machine.watches();
-    assert_eq!(watches.len(), 1, "{watches:?}");
-    assert_eq!(
-        watches[0].op,
-        riff::watches::Op::Pull {
-            tag: "v3.3.0".into(),
-            number: 1140
-        }
-    );
-
-    // The same pull request again: the watch is one watch.
-    let out = machine.ok(&[], &["release", "verify", "1140"]).await;
-    assert!(
-        out.contains("riff watches the pull request #1140 of the release already."),
-        "{out}"
-    );
-    assert_eq!(machine.watches().len(), 1);
-}
-
-/// A verify that refuses starts no operation: it registers no watch.
-#[tokio::test]
-async fn a_verify_that_refuses_registers_no_watch() {
-    let machine = Machine::new().await;
-    machine.serve();
-    let failed = r#"{"status":"completed","conclusion":"failure","head_sha":"h1"}"#;
-    machine.fake_gh(&verify_cases(failed));
-    let out = machine.run(&[], &["release", "verify", "1140"], "").await;
-    assert!(!out.status.success());
-    assert!(machine.watches().is_empty());
-}
-
-/// 01M5ND0ZNFFAPT1AWD3DP1Y77N, 01M7641T2JH2K6SYBCWQGM56FY: `riff release
-/// verify` passes the pull request of the next version, and its watch
-/// follows the release that the pull request comes after.
-#[tokio::test]
-async fn verify_passes_the_pull_request_of_the_next_version_and_watches_its_release() {
-    let machine = Machine::new().await;
-    machine.serve();
-    let passed = r#"{"status":"completed","conclusion":"success","head_sha":"h1"}"#;
-    let body = "Refs #7\\n\\nPart of #7: the next version after v3.3.0. The issue closes when the \
-                checks after the deploy pass.\\n\\nThis sets 3.4.0 in `Cargo.toml` and \
-                `Cargo.lock`.\\n\\nIssue: #7\\nMilestone: Wave 34\\n";
-    machine.fake_gh(&format!(
-        "'release list'*) printf '%s\\n' '[{{\"tagName\":\"v3.3.0\"}},{{\"tagName\":\"v3.2.0\"}}]' ;;\n{}",
-        verify_cases_of(1141, "Set the next version 3.4.0", body, passed)
-    ));
-    let out = machine.ok(&[], &["release", "verify", "1141"]).await;
-    assert!(
-        out.starts_with("Pull request #1141 passed: the status riff/verify of h1 is a success.\n"),
-        "{out}"
-    );
-    let watches = machine.watches();
-    assert_eq!(watches.len(), 1, "{watches:?}");
-    assert_eq!(
-        watches[0].op,
-        riff::watches::Op::Pull {
-            tag: "v3.3.0".into(),
-            number: 1141
-        }
-    );
-}
-
-/// #1949: the riff of the hosts can be older than this cut, and cut the
-/// release that brings it with a release pull request: the label
-/// `release`, and a diff of only `Cargo.toml` and `Cargo.lock`. That pull
-/// request still passes Hygiene and the Gate. Hygiene has no rule of the
-/// label, and the body of the older cut passes the issue hygiene. The Gate
-/// runs as for each pull request: the plan of CI reads no label, and the
-/// tree with the next version passes `deploy/release-check.sh`, with each
-/// crate of the workspace at that version in `Cargo.lock`, so the build
-/// with `--locked` takes the lock as it is. `riff release verify` passes it
-/// too: see [`verify_registers_the_watch_of_the_merge`].
+/// #1983, 01M76SBEV64SNKCS1AE1KXWNFM: the steps of the release pull
+/// request are gone. No workflow reads a label, the hygiene crate has no
+/// rule of a label, the notes of GitHub have no rule of the label
+/// `release`, and `riff release` has no `verify`.
 #[test]
-fn a_release_pull_request_of_an_older_riff_still_passes_hygiene_and_the_gate() {
+fn hygiene_and_ci_have_no_rule_of_the_label_release_and_riff_release_has_no_verify() {
+    let workflows = std::fs::read_dir(top().join(".github/workflows")).unwrap();
+    let mut read = 0;
+    for entry in workflows {
+        let path = entry.unwrap().path();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("label"), "{} reads a label", path.display());
+        read += 1;
+    }
+    assert!(read >= 2, "the workflows of CI and Hygiene");
+    for entry in std::fs::read_dir(top().join("crates/hygiene/src")).unwrap() {
+        let path = entry.unwrap().path();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !text.contains("label"),
+            "{} has a rule of a label",
+            path.display()
+        );
+    }
+    let notes = std::fs::read_to_string(top().join(".github/release.yml")).unwrap();
+    assert!(!notes.contains("- release\n"), "{notes}");
+    // The pull request of the next version passes the issue hygiene with
+    // no label: the check of a pull request reads none.
     let wave = "Wave 34: Release";
-    let body = OLDER_BODY.replace("\\n", "\n");
-    let pr = hygiene::PullRequest::new("Release v3.3.0", &body, Some(wave));
+    let body = "Refs #7\n\nPart of #7: the next version after v3.3.0.\n\nIssue: #7\nMilestone: \
+                Wave 34\n";
+    let pr = hygiene::PullRequest::new("Set the next version 3.4.0", body, Some(wave));
     let issue = hygiene::Issue::new(7, "OPEN", Some(wave));
     let errors = hygiene::check_pr(&pr, Some(&issue));
     assert!(errors.is_empty(), "{errors:?}");
-    for workflow in ["ci.yml", "hygiene.yml"] {
-        let text = std::fs::read_to_string(top().join(".github/workflows").join(workflow)).unwrap();
-        assert!(!text.contains("labels"), "{workflow} reads the labels");
-    }
-    // The diff of the older cut: the next version in Cargo.toml and
-    // Cargo.lock of this tree.
+
+    let riff = |args: &[&str]| Isolated::shared().riff().args(args).output().unwrap();
+    let help = riff(&["release", "--help"]);
+    assert!(help.status.success(), "{help:?}");
+    let help = text(&help.stdout);
+    assert!(help.contains("\n  cut "), "{help}");
+    assert!(!help.contains("verify"), "{help}");
+    // With no subcommand verify, clap reads `verify` as the ITEM of a
+    // claim, and refuses the word after it.
+    let verify = riff(&["release", "verify", "1141"]);
+    assert_eq!(verify.status.code(), Some(2), "{verify:?}");
+    assert!(
+        text(&verify.stderr).contains("the subcommand '1141' cannot be used with '<ITEM>'"),
+        "{}",
+        text(&verify.stderr)
+    );
+}
+
+/// 01M7641T2JH2K6SYBCWQGM56FY: the tree with the next version of this
+/// tree, as the cut writes it, passes `deploy/release-check.sh`, with each
+/// crate of the workspace at that version in `Cargo.lock`. So the build
+/// with `--locked` of the pull request of the next version takes the lock
+/// as it is.
+#[test]
+fn the_next_version_of_this_tree_passes_the_release_check() {
     let toml = std::fs::read_to_string(top().join("Cargo.toml")).unwrap();
     let lock = std::fs::read_to_string(top().join("Cargo.lock")).unwrap();
     let next = riff::cycle::next_minor(riff::cycle::cargo_version(&toml).unwrap());
