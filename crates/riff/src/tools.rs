@@ -566,7 +566,10 @@ waiting for your user. The next prompt of the person ends the block of the lead.
         Ok(text::posted(&posted))
     }
 
-    #[tool(description = "Read unread messages. Leave out the thread to read all your threads.")]
+    #[tool(
+        description = "Read unread messages. Leave out the thread to read all your threads: at most \
+20,000 characters in all. A line names each thread with more messages, and how to read them."
+    )]
     async fn read(&self, Parameters(a): Parameters<ReadArgs>) -> ToolResult {
         let me = self.here()?;
         let thread = match a.thread {

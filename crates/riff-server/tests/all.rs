@@ -32,6 +32,7 @@ mod names;
 mod notes;
 mod plan;
 mod proofs;
+mod read_threads;
 mod revoke;
 mod saved;
 mod session;

@@ -3547,6 +3547,20 @@
   issues of the last read of its repository, and says nothing.
 - **01M74E4D97PSHPVE4GC0EW0RMJ** The calls of `gh` of `riff chat` count
   as the caller `chat` in the tally of the riff daemon.
+- **01M76SB9ACMZWMY9Z6CC4WW3HD** The `read` tool of `riff mcp` with no
+  thread gives at most 20,000 characters in all: one page of each
+  thread, each direct thread first (01M58AG7Z2PETHBZG7X9QD8PK5). The
+  messages that woke the session get the room first
+  (01M588J4XNV1TXEPMGTKRVY9VK). Each thread with more messages gets a
+  line with the call that reads them. `riff read` reads each page, with
+  no bound.
+- **01M76SBCXR4A21D49WVKBGWMRY** Of the thread of another repository, a
+  lead reads as unread only each message that woke the lead or that has
+  a selector in its `to` that matches the lead. The thread of a
+  repository has the name `OWNER/REPO`. Of the thread of its own
+  repository, the chat, `release` and its direct threads, the lead
+  reads each message. The unread counts of `threads` do the same. A
+  read with `all` gives each kept message.
 
 ## Security
 

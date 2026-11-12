@@ -301,7 +301,8 @@ use riff_core::wire::{
     Threads, ThreadsReply, TokenError, TokenReply, TokenRequest, Unanswered, WhoReply, WhoRequest,
 };
 use riff_core::wire::{
-    Approve, ProofReply, ProofStart, ProofTicket, ProofWait, SetPolicy, UseProof,
+    Approve, ProofReply, ProofStart, ProofTicket, ProofWait, ReadThreads, ReadThreadsReply,
+    SetPolicy, UseProof,
 };
 use riff_core::wire::{BotPost, Names, NamesReply, SetMachine};
 use riff_core::wire::{Devices, KeyReply, KeyStart, KeyTicket, KeyWait, RemoveDevice};
@@ -2021,6 +2022,7 @@ impl Service {
             .route(Threads::PATH, post(threads))
             .route(Names::PATH, post(names))
             .route(Read::PATH, post(read))
+            .route(ReadThreads::PATH, post(read_threads))
             .route(RiffQuery::PATH, post(riff))
             .route(PlanSeen::PATH, post(plan_seen))
             .route(PlanShow::PATH, post(plan_show))
@@ -2888,7 +2890,8 @@ async fn read(
     let (page, read) = s
         .engine
         .query(&caller, |state| {
-            state.page(r.me.who(), &r.thread, r.all, r.after, state::PAGE)
+            let now = Instant::now();
+            state.page(r.me.who(), &r.thread, r.all, r.after, state::PAGE, now)
         })
         .await?
         .map_err(not_found)?;
@@ -2905,6 +2908,40 @@ async fn read(
         messages: page.messages,
         next: page.next,
         woken: page.woken,
+        keys,
+        trusted: s.config.trusted(),
+    }))
+}
+
+/// A read with no thread ([`State::pages`](riff_state::state::State::pages)):
+/// one page of each thread of the caller, with a bound of characters in
+/// all (01M76SB9ACMZWMY9Z6CC4WW3HD). The keys and the trusted mark are
+/// as in [`read`]. Each page moves the cursor of the caller in its
+/// thread: one signal each.
+async fn read_threads(
+    AxumState(s): AxumState<Shared>,
+    proof: Proof,
+    Json(r): Json<ReadThreads>,
+) -> Reply<ReadThreadsReply> {
+    let signed = proof.signed_in.is_some();
+    let caller = admit(&s, &proof, &r.me)?;
+    let (pages, reads) = s
+        .engine
+        .query(&caller, |state| {
+            state.pages(r.me.who(), r.all, Instant::now())
+        })
+        .await?;
+    for read in reads {
+        s.engine.signal(&caller, read).await?;
+    }
+    let keys = if signed {
+        let shown = pages.iter().flat_map(|p| p.messages.iter().chain(&p.woken));
+        s.keys(shown.map(|m| m.from.who().user()))
+    } else {
+        Keys::new()
+    };
+    Ok(Json(ReadThreadsReply {
+        pages,
         keys,
         trusted: s.config.trusted(),
     }))

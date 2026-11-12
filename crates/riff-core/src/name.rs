@@ -588,6 +588,25 @@ impl ThreadName {
         self.0.starts_with(DIRECT_PREFIX)
     }
 
+    /// True for the thread of a repository: its name is `OWNER/REPO`, as
+    /// [`Place::default_thread`] gives it.
+    ///
+    /// ```
+    /// use riff_core::name::ThreadName;
+    ///
+    /// let thread = |name: &str| name.parse::<ThreadName>().unwrap();
+    /// assert!(thread("como-technologies/riff").is_repository());
+    /// for name in ["chat", "release", "design", "a/b/c", "/riff", "owner/"] {
+    ///     assert!(!thread(name).is_repository(), "{name}");
+    /// }
+    /// ```
+    pub fn is_repository(&self) -> bool {
+        !self.is_direct()
+            && self.0.split_once('/').is_some_and(|(owner, name)| {
+                !owner.is_empty() && !name.is_empty() && !name.contains('/')
+            })
+    }
+
     /// The other session of a direct thread of `who`. `None` when this
     /// is not a direct thread of `who`.
     ///

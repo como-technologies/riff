@@ -130,7 +130,7 @@ use riff_core::wire::{
 use riff_core::wire::{
     Approve, PolicyReply, ProofStart, ProofStarted, ProofState, ProofWait, SetPolicy, UseProof,
 };
-use riff_core::wire::{BotFact, BotPost, SetMachine};
+use riff_core::wire::{BotFact, BotPost, ReadThreads, SetMachine};
 use riff_core::wire::{
     DeviceInfo, Devices, DevicesReply, KeyStart, KeyStarted, KeyState, KeyWait, RemoveDevice,
 };
@@ -1512,7 +1512,10 @@ impl Api {
     /// (01M6WBQQH3Y1K56FQEN161B0D9): a read of all marks each message up
     /// to the last one of its page (01M6WBQQEGZKVV49QWCQGTE4CY), and
     /// the seq of one thread would pass over the unread messages of
-    /// another.
+    /// another. With no thread, it is one call ([`ReadThreads`]): the
+    /// pages hold at most 20,000 characters in all, and a thread with
+    /// more messages can have no message in the read
+    /// (01M76SB9ACMZWMY9Z6CC4WW3HD).
     pub async fn inbox_page(
         &self,
         me: &SessionUri,
@@ -1523,7 +1526,43 @@ impl Api {
         if after.is_some() && thread.is_none() {
             bail!("after needs a thread: a message number is of one thread");
         }
+        if thread.is_none() {
+            return self.read_threads(me, all).await;
+        }
         self.inbox_pages(me, thread, all, after, false).await
+    }
+
+    /// The read with no thread of the server, each message checked as
+    /// in [`Api::read`].
+    async fn read_threads(&self, me: &SessionUri, all: bool) -> Result<Vec<Inbox>> {
+        let request = ReadThreads {
+            me: me.clone(),
+            all,
+        };
+        let reply = self.call(&request).await?;
+        let (keys, trusted) = (&reply.keys, reply.trusted);
+        let mut out: Vec<Inbox> = reply
+            .pages
+            .into_iter()
+            .map(|page| {
+                let thread = page.thread;
+                let check = |messages: Vec<Message>| {
+                    messages
+                        .into_iter()
+                        .map(|message| checked(&thread, message, keys, trusted))
+                        .collect()
+                };
+                Inbox {
+                    messages: check(page.messages),
+                    woken: check(page.woken),
+                    members: page.members,
+                    next: page.next,
+                    thread,
+                }
+            })
+            .collect();
+        crate::threads::direct_first(&mut out);
+        Ok(out)
     }
 
     async fn inbox_pages(
