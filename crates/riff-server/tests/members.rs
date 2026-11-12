@@ -409,7 +409,8 @@ fn old_log() -> Vec<Record> {
 }
 
 /// 01M7767T393P46VTNNE5SY203K: an old log with `owner_set` loads. The old owner
-/// is an admin, adds an admin, and the last admin stays.
+/// is an admin, adds an admin, and the last admin stays. After `riff admin
+/// remove`, the old owner is a member and signs in (01M3JY7T109BR860EQBSKEFDHY).
 #[tokio::test]
 async fn an_old_log_with_owner_set_loads_with_the_owner_as_an_admin() {
     let issuer = common::fake_provider().await;
@@ -429,6 +430,11 @@ async fn an_old_log_with_owner_set_loads_with_the_owner_as_an_admin() {
     let (status, body) = set_admin(&url, &bob, "bob@gmail.com", false).await;
     assert_eq!(status, 400, "{body}");
     assert!(body.contains("the last admin"), "{body}");
+
+    let list = members(&url, &bob).await;
+    assert_eq!(list.admins, ["bob@gmail.com"]);
+    assert_eq!(list.members, ["ada@gmail.com"]);
+    assert!(sign_in(&url, &issuer, "ada@gmail.com", None).await.is_ok());
 }
 
 /// An admin makes an admin of a person who is not a member. The person

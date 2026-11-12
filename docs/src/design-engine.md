@@ -908,7 +908,7 @@ The three rules of the store design stay. These rules come with them:
 | `riff_made` | A riff keeps its first ID: a second record changes nothing. | Yes. |
 | `person_joined` | The first email keeps a USER: a record for a USER that another email holds changes nothing. | Yes. |
 | `member_removed` | It finds each USER of the email, and keeps the position of the record for each: the end of their sign-ins. | Yes. |
-| `owner_set` | An email makes that email an admin, as `admin_set` does. With no email, it changes nothing (01M7767T393P46VTNNE5SY203K). | Yes. |
+| `owner_set` | An email makes that email an admin and a member. With no email, it changes nothing (01M7767T393P46VTNNE5SY203K). | Yes. |
 
 ### The checkpoint
 

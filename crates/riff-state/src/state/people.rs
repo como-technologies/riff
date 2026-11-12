@@ -11,12 +11,11 @@
 //!   `device_removed` and `proved`. Only they change the people: see
 //!   [`super::riff`]. The old kinds of the owner role stay readable
 //!   (01M7767T393P46VTNNE5SY203K): an `owner_set` with an email makes it an
-//!   admin, as an `admin_set` does, and each other record of the role changes
-//!   nothing.
+//!   admin and a member, and each other record of the role changes nothing.
 //! - Checkpoint: `Saved`, the fields `riff_id`, `users`, `members`,
 //!   `admins`, `signins_ended` and `keys`. A checkpoint from before
 //!   also has `owner`, `no_owner` and `owner_asked`: the load makes the
-//!   `owner` one more admin, and drops the other two.
+//!   `owner` one more admin and member, and drops the other two.
 //! - Commands: the wire types [`Invite`], [`Remove`], [`SetAdmin`] and
 //!   [`Revoke`], the command [`Admit`] of the token path, and the
 //!   command [`NameAdmins`] of the server. No client can send the last
@@ -206,11 +205,14 @@ impl People {
     }
 
     /// An old record of the owner role (01M7767T393P46VTNNE5SY203K): its email
-    /// is an admin, as with `admin_set`. A record with no email said that the
-    /// owner was gone: the old owner stayed an admin, so it changes nothing.
+    /// is an admin and a member. An old log has no `member_invited` of the
+    /// owner, so `riff admin remove` then leaves a member. A record with no
+    /// email said that the owner was gone: the old owner stayed an admin, so
+    /// it changes nothing.
     pub(super) fn owner_set(&mut self, set: &OwnerSet) -> Result<(), &'static str> {
         if let Some(email) = &set.email {
             self.admins.insert(email.clone());
+            self.members.insert(email.clone());
         }
         Ok(())
     }
@@ -382,8 +384,8 @@ impl People {
 ///
 /// The fields `owner`, `no_owner` and `owner_asked` come only from a
 /// checkpoint from before (01M7767T393P46VTNNE5SY203K). A read and a write of
-/// such a checkpoint keep its bytes. Its load makes the owner one more admin,
-/// and drops the other two. This build writes none of them.
+/// such a checkpoint keep its bytes. Its load makes the owner one more admin
+/// and member, and drops the other two. This build writes none of them.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub(super) struct Saved {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -395,7 +397,7 @@ pub(super) struct Saved {
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     admins: BTreeSet<String>,
     /// The owner of a checkpoint from before: the load makes it an
-    /// admin.
+    /// admin and a member.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     owner: Option<String>,
     /// A riff whose owner was gone, in a checkpoint from before.
@@ -416,7 +418,7 @@ impl Saved {
         let Saved {
             riff_id,
             users,
-            members,
+            mut members,
             mut admins,
             owner,
             no_owner: _,
@@ -424,6 +426,7 @@ impl Saved {
             signins_ended,
             keys,
         } = self;
+        members.extend(owner.clone());
         admins.extend(owner);
         People {
             riff_id,

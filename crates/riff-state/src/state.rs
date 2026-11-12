@@ -4502,7 +4502,7 @@ mod tests {
         assert_eq!(gaps, Vec::<String>::new());
 
         // The load makes the owner of a checkpoint from before one more
-        // admin, and drops the other fields of the owner role
+        // admin and member, and drops the other fields of the owner role
         // (01M7767T393P46VTNNE5SY203K).
         let now = Instant::now();
         let state = State::load(Some(full.state.clone()), [], now, T0);
@@ -4511,6 +4511,10 @@ mod tests {
         for old in ["owner", "no_owner", "owner_asked"] {
             fields.remove(old);
         }
+        fields.insert(
+            "members".into(),
+            serde_json::json!(["bob@acme.io", "dee@acme.io"]),
+        );
         fields.insert(
             "admins".into(),
             serde_json::json!(["cy@acme.io", "dee@acme.io"]),

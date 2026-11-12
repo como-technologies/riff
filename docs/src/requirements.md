@@ -2139,9 +2139,9 @@
   can run two times. The steps of a rollback say so.
 - **01M7767T393P46VTNNE5SY203K** A log and a checkpoint from before keep
   their records of the owner role, and load. `apply` of an `owner_set`
-  with an email makes that email an admin, as `admin_set` does. An
-  `owner_set` with no email, `owner_asked` and `owner_denied` change
-  nothing. The load of an old checkpoint makes its `owner` an admin, and
+  with an email makes that email an admin and a member. An `owner_set`
+  with no email, `owner_asked` and `owner_denied` change nothing. The
+  load of an old checkpoint makes its `owner` an admin and a member, and
   drops `no_owner` and `owner_asked`. No command writes these kinds. The
   names of the old commands `pass_owner`, `take_owner`, `deny_owner`,
   `grant_owner`, `end_owner` and `name_owner` stay in the list of the

@@ -411,7 +411,7 @@ fn the_last_admin_stays() {
         );
 }
 
-/// The log reads an old `owner_set` as an `admin_set` of its email
+/// The log reads an old `owner_set` as an admin and a member of its email
 /// (01M7767T393P46VTNNE5SY203K). Its other records of the owner role change
 /// nothing.
 #[test]
@@ -439,6 +439,45 @@ fn an_old_log_with_the_owner_role_loads_with_the_owner_as_an_admin() {
             &[member_invited(CAROL), admin_set(CAROL, true)],
             &["members: ada made carol@gmail.com an admin."],
         );
+}
+
+/// An old log has no `member_invited` of the owner. The old owner is a
+/// member too (01M77671TQ92487GSM24RJG82Z), so `riff admin remove` makes the
+/// old owner a member again (01M3JY7T109BR860EQBSKEFDHY), and the next
+/// sign-in lets the old owner in.
+#[test]
+fn riff_admin_remove_makes_an_old_owner_a_member_again() {
+    let mut old = vec![
+        person_joined("ada", ADA),
+        owner_set(Some(ADA)),
+        member_invited(BOB),
+        admin_set(BOB, true),
+        person_joined("bob", BOB),
+    ];
+    given(&old)
+        .when_person("bob", set_admin(ADA, false))
+        .then_chat(
+            &[admin_set(ADA, false)],
+            &["members: bob made ada@gmail.com a member again, not an admin."],
+        );
+    old.push(admin_set(ADA, false));
+    let state = given(&old).apply(&[]);
+    assert_eq!(state.role("ada"), Role::Member);
+    let members = state.people().members();
+    assert_eq!(members.admins, [BOB]);
+    assert_eq!(members.members, [ADA]);
+    given(&old).when_signs_in(ADA, false).then(&[]);
+    // The load of a checkpoint from before makes its owner a member too.
+    let now = Instant::now();
+    let joined = given(&old[..1]).apply(&[]).snapshot(now, 0);
+    let mut json = serde_json::to_value(&joined).unwrap();
+    let fields = json.as_object_mut().unwrap();
+    fields.insert("owner".into(), serde_json::json!(ADA));
+    let checkpoint: Snapshot = serde_json::from_value(json).unwrap();
+    let loaded = State::load(Some(checkpoint), [], now, 0);
+    assert_eq!(loaded.people().members().admins, [ADA]);
+    let saved = serde_json::to_value(loaded.snapshot(now, 0)).unwrap();
+    assert_eq!(saved["members"], serde_json::json!([ADA]));
 }
 
 /// The setting `--admin EMAIL` names each admin at each start
