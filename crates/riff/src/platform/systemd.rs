@@ -126,6 +126,44 @@ pub fn restarted(args: &[&str], out: &Output) -> Result<()> {
     Err(failed(args, out))
 }
 
+/// The arguments of `systemctl --user` that give the unit `unit` the CPU
+/// weight `weight`. With `--runtime`, systemd keeps the value in the
+/// runtime folder of the user, not in a file of the person
+/// (01M778VSP6Z29FCPGX5S76ME1T). A slice needs no unit file for it.
+///
+/// ```
+/// assert_eq!(
+///     riff::platform::systemd::weight_args("riff.slice", 1),
+///     ["set-property", "--runtime", "riff.slice", "CPUWeight=1"]
+/// );
+/// ```
+pub fn weight_args(unit: &str, weight: u16) -> [String; 4] {
+    [
+        "set-property".into(),
+        "--runtime".into(),
+        unit.into(),
+        format!("CPUWeight={weight}"),
+    ]
+}
+
+/// Gives the unit `unit` the CPU weight `weight`: `systemctl --user`
+/// with [`weight_args`]. An exit that is not 0 is an error that names
+/// the command.
+pub async fn set_cpu_weight(unit: &str, weight: u16) -> Result<()> {
+    let args = weight_args(unit, weight);
+    let out = tokio::process::Command::new("systemctl")
+        .arg("--user")
+        .args(&args)
+        .stdin(Stdio::null())
+        .output()
+        .await
+        .with_context(|| text::no_program("systemctl"))?;
+    if !out.status.success() {
+        return Err(failed(&args.each_ref().map(String::as_str), &out));
+    }
+    Ok(())
+}
+
 /// Writes `text` to `path`, through a new file and a rename.
 fn write_file(path: &Path, text: &str) -> Result<()> {
     let dir = path.parent().context("a unit file has a folder")?;

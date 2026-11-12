@@ -7,9 +7,10 @@
 //! the sign-ins, the git config, the Claude folder, the clone, the
 //! folder of the socket, the caps `--memory` and `--cpus`
 //! (01M5SMW28KT5D5HPRH7KAZ8TVC), and the lowest CPU priority
-//! (01M7755V17SGY2NW231WJ12WXN). It sets no variable and no volume of a
-//! language or a tool. The repository gives them in its `riff.toml`
-//! (01M5SMVVC4GQS310CVK3H9CMQ7), and the model of its sessions too
+//! (01M7755V17SGY2NW231WJ12WXN, 01M778VSP6Z29FCPGX5S76ME1T). It sets no
+//! variable and no volume of a language or a tool. The repository gives
+//! them in its `riff.toml` (01M5SMVVC4GQS310CVK3H9CMQ7), and the model
+//! of its sessions too
 //! (01M6VAQWECJ6N6VJF66KCMNYD1):
 //!
 //! ```toml
