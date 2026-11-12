@@ -921,7 +921,7 @@ checkpoint:
 - the riff ID;
 - the people: the email of each user, the members and the admins. An
   old checkpoint can have the owner too: the load makes it an admin
-  (01M7767T393P46VTNNE5SY203K);
+  and a member (01M7767T393P46VTNNE5SY203K);
 - the position of the last `member_removed` and `signins_ended` record
   of each user;
 - the worker mark, the MustClear mark and the time of the last fresh
@@ -1003,7 +1003,8 @@ records as one chunk, with `by` `server` and `command` `import`:
 1. `riff_made`, with the riff ID of today.
 2. `person_joined` for each user, with its email.
 3. `member_invited` and `admin_set`. The owner of the old objects is
-   one more admin (01M7767T393P46VTNNE5SY203K).
+   an admin and a member, and so is each admin of the old `tokens`
+   object (01M77VQJ5R4TQAHP14D0HARJJZ).
 4. `pause_set` for the riff, paused; `setting_changed`.
 5. The `posted` records: the last 200 messages of each thread, as the
    checkpoint keeps them. A direct thread with no session that did not
