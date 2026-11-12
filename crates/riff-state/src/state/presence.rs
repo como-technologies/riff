@@ -946,6 +946,20 @@ impl Session {
             }
     }
 
+    /// True while the session counts as a live lead
+    /// (01M776RT7JGCDZD1VNHFEDB1K2): it did not end, and its last sign of
+    /// life is less than [`GONE`] ago. A session with no sign of life
+    /// since the replay at `loaded` counts until [`GONE`] after it, so a
+    /// start of riff-server makes no wave wait for a lead.
+    pub(super) fn leads(&self, now: Instant, loaded: Option<Instant>) -> bool {
+        let within = |since: Instant| now.saturating_duration_since(since) < GONE;
+        !self.ended
+            && match self.alive {
+                Some(alive) => within(alive),
+                None => loaded.is_some_and(within),
+            }
+    }
+
     /// The last time that the session called, in milliseconds since the
     /// Unix epoch. A live session calls now.
     pub(super) fn seen_ms(&self, now: Instant, now_ms: u64) -> u64 {

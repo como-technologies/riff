@@ -216,6 +216,11 @@
 //! starts:
 //!
 //! - an item while the riff or the repository is paused;
+//! - an item while the repository has no live lead
+//!   ([`Look::no_lead`], 01M776RSYKJK9NETFAD8G0CCVQ). This wait starts no
+//!   session and stops none: the jobs that run go on to their end
+//!   (01M776RT1GW3N4MJDMPXZ8JAJE). A new lead of the repository is a
+//!   change of the plan, so the wave looks at once;
 //! - a held item (01M4ZV3B6M7PZRJ39XTXBZP3ZH);
 //! - a tracker issue, its build or its verify: it has no code of its
 //!   own ([`rollout::Issue::tracker`], 01M5ND16V2SVN8A9K7W90VC6X9);
@@ -653,8 +658,8 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 use riff_core::name::{Place, SessionUri, ThreadName};
 use riff_core::wire::{
-    BotFact, GitHubRenew, HoldInfo, Kind, PullState, RiffState, StartReason, WORKER_ALIVE_EVERY,
-    Wake,
+    BotFact, GitHubRenew, HoldInfo, Kind, PullState, RiffReply, RiffState, StartReason,
+    WORKER_ALIVE_EVERY, Wake,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Notify, mpsc};
@@ -1202,6 +1207,10 @@ pub struct Fixes {
 pub struct Look {
     /// True when the riff or the repository is paused.
     pub paused: bool,
+    /// True when the repository has no live lead: the wave waits for a
+    /// lead, and its word says why ([`text::wave_no_lead`],
+    /// 01M776RSYKJK9NETFAD8G0CCVQ). It is no pause.
+    pub no_lead: bool,
     /// The free work, in order ([`fixes`]): `verify-issue-N` and
     /// `issue-N`. An `issue-N` in `fixes.conflicts` is a rebase, and one
     /// in `fixes.failed` the fix of its checks.
@@ -1266,7 +1275,9 @@ fn verify_issue(item: &str) -> Option<u64> {
 ///     pick(&look, &none, &BTreeMap::new()),
 ///     Some(Work::Verify { issue: 9, pull: 40, commit: "1a2b".into() })
 /// );
-/// assert_eq!(pick(&Look { paused: true, ..look }, &none, &BTreeMap::new()), None);
+/// assert_eq!(pick(&Look { paused: true, ..look.clone() }, &none, &BTreeMap::new()), None);
+/// // A repository with no live lead: the wave waits for a lead.
+/// assert_eq!(pick(&Look { no_lead: true, ..look }, &none, &BTreeMap::new()), None);
 ///
 /// // The pull request of 14 has a conflict: one rebase for its head.
 /// let conflict = Conflict { pull: 54, commit: "5e6f".into() };
@@ -1303,7 +1314,7 @@ pub fn pick(
     running: &BTreeSet<String>,
     starts: &BTreeMap<String, u32>,
 ) -> Option<Work> {
-    if look.paused {
+    if look.paused || look.no_lead {
         return None;
     }
     let busy = |item: &str| running.contains(item) || look.claims.contains(item);
@@ -1925,8 +1936,9 @@ fn forge(repo: &str) -> pr::Gh {
 /// work (`picked` is false), and no session or job of the wave runs
 /// (`running` is false): it waits [`IDLE_LOOK_EVERY`], or the time of the
 /// safety look ([`hooks::SAFETY_LOOK_EVERY`], #1656) while the events of
-/// GitHub are on (`events`). Else it waits [`LOOK_EVERY`]. A paused wave
-/// calls no `gh`, and it starts at once on a resume, so it is never idle.
+/// GitHub are on (`events`). Else it waits [`LOOK_EVERY`]. A paused wave,
+/// and a wave that waits for a lead, call no `gh`, and start at once on a
+/// resume or a new lead, so they are never idle.
 /// An end of a session or of a job, a change of the plan on riff-server
 /// ([`World::plan_changes`]) and a wake of the GitHub App
 /// ([`World::github_wakes`]) wake the wave in each case.
@@ -1951,6 +1963,8 @@ fn forge(repo: &str) -> pr::Gh {
 /// // A paused wave looks each minute.
 /// let paused = Look { paused: true, ..Look::default() };
 /// assert_eq!(look_wait(&paused, Some(&paused), false, false, true), LOOK_EVERY);
+/// let no_lead = Look { no_lead: true, ..Look::default() };
+/// assert_eq!(look_wait(&no_lead, Some(&no_lead), false, false, true), LOOK_EVERY);
 /// ```
 pub fn look_wait(
     look: &Look,
@@ -1960,7 +1974,7 @@ pub fn look_wait(
     events: bool,
 ) -> Duration {
     match (
-        !picked && !running && !look.paused && last == Some(look),
+        !picked && !running && !look.paused && !look.no_lead && last == Some(look),
         events,
     ) {
         (true, true) => hooks::SAFETY_LOOK_EVERY,
@@ -2225,6 +2239,7 @@ pub(crate) async fn run<R: Runtime + 'static>(
                     && daemon.no_start_waits(&wave.repo).is_some();
                 say(match (&next, &fault) {
                     _ if look.paused => text::WAVE_PAUSED.into(),
+                    _ if look.no_lead => text::wave_no_lead(&wave.repo),
                     (Some(_), None) if no_token => text::WAVE_NO_TOKEN.into(),
                     (Some(_), Some(fault)) => text::wave_host_word(&fault.wave_text()),
                     (Some(work), None) => text::wave_started(&work.item()),
@@ -3836,6 +3851,7 @@ fn look_from(
     });
     Ok(Look {
         paused: false,
+        no_lead: false,
         free,
         claims,
         holds,
@@ -3946,6 +3962,35 @@ pub fn lanes(
         .collect()
 }
 
+/// The look of a wave of the repository `thread` that starts nothing, from
+/// the pauses of riff-server `pauses`: the riff or the repository is
+/// paused, or the repository has no live lead (01M776RSYKJK9NETFAD8G0CCVQ).
+/// `None` when the wave goes on with its look.
+///
+/// ```
+/// use riff::wave::{Look, stopped};
+/// use riff_core::wire::{RiffReply, RiffState};
+///
+/// let thread = "o/r".parse()?;
+/// let running = RiffReply::from(RiffState::Running);
+/// assert_eq!(stopped(&running, &thread), None);
+/// let paused = stopped(&RiffState::Paused.into(), &thread).unwrap();
+/// assert!(paused.paused && !paused.no_lead);
+/// let no_lead = RiffReply { no_lead: vec![thread.clone()], ..running };
+/// assert_eq!(stopped(&no_lead, &thread), Some(Look { no_lead: true, ..Look::default() }));
+/// assert_eq!(stopped(&no_lead, &"o/other".parse()?), None);
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn stopped(pauses: &RiffReply, thread: &ThreadName) -> Option<Look> {
+    let paused = pauses.state == RiffState::Paused;
+    let no_lead = pauses.waits_for_lead(thread);
+    (paused || no_lead).then(|| Look {
+        paused,
+        no_lead: !paused && no_lead,
+        ..Look::default()
+    })
+}
+
 /// The pull request of each verify among the free work `free` of `open`,
 /// with the full check of its head (01M5QYDHN27RC5SRHAB56PFKK0). The wave
 /// reads the full check of the repository one time, and only when a
@@ -3984,11 +4029,8 @@ impl World for Live {
             let person = identity::person(&wave.place(None)?, &wave.server)?;
             let thread = wave.thread()?;
             let api = Api::new(&wave.server).signed_in(None)?;
-            if api.pauses(&person).await?.state == RiffState::Paused {
-                return Ok(Look {
-                    paused: true,
-                    ..Look::default()
-                });
+            if let Some(look) = stopped(&api.pauses(&person).await?, &thread) {
+                return Ok(look);
             }
             let claims: BTreeSet<String> = api
                 .who(&person, false)
@@ -4688,6 +4730,9 @@ mod tests {
         /// The codes of the refusals of the next claims, in order, as
         /// riff-server gives them: for example `paused`.
         refusals: Vec<String>,
+        /// True while riff-server names the repository with no live lead
+        /// ([`Look::no_lead`]).
+        no_lead: bool,
         /// Each item whose claim riff-server refused.
         refused: Vec<String>,
         /// `claude` refused the token of the host.
@@ -4971,6 +5016,7 @@ mod tests {
                 let lanes = lanes(&open, &free, &HashMap::new(), files);
                 Ok(Look {
                     paused: false,
+                    no_lead: forge.no_lead,
                     free,
                     claims: forge.claims.keys().cloned().collect(),
                     holds: forge.holds.clone(),
@@ -5489,6 +5535,38 @@ mod tests {
             6,
             "one session for each item and each verify"
         );
+    }
+
+    /// 01M776RSYKJK9NETFAD8G0CCVQ, 01M776RT1GW3N4MJDMPXZ8JAJE: while
+    /// riff-server names the repository with no live lead, the wave starts
+    /// no session, and its word says why. The session that runs goes on to
+    /// the end of its item. A lead that starts ends the wait.
+    #[tokio::test]
+    async fn a_wave_with_no_lead_starts_no_session_and_the_sessions_go_on() {
+        let free = Arc::new(AtomicU64::new(64));
+        // Room for two: the loop looks while the session of issue-1 runs.
+        let here = Here::new(&[1], 2, free).await;
+        here.run();
+        here.until(2, |h| h.daemon.live_count() == 1).await;
+        let item = here.daemon.records()[0].live.item.clone();
+        // The lead ends: the next look names the wait.
+        here.forge().no_lead = true;
+        let word = text::wave_no_lead("o/r");
+        here.until(2, |h| h.daemon.waves_shown()[0].word == word)
+            .await;
+        here.idle(2).await;
+        assert!(here.running(&item).is_some(), "the session goes on");
+        assert!(!here.fake.calls().iter().any(|c| c.starts_with("stop ")));
+        here.end(&item).await;
+        here.until(2, |h| h.forge().finished.len() == 1).await;
+        here.idle(2).await;
+        assert_eq!(here.daemon.live_count(), 0, "no new session");
+        assert_eq!(here.forge().starts.len(), 1);
+        assert_eq!(here.daemon.waves_shown()[0].word, word);
+
+        // A lead starts: the wave goes on.
+        here.forge().no_lead = false;
+        here.until(2, |h| h.forge().starts.len() == 2).await;
     }
 
     /// The wait of a full host before a claim in

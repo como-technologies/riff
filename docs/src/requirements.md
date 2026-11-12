@@ -3261,6 +3261,11 @@
   and breaks again gives the lead three messages. A second look at the
   same run gives the same key. Supersedes 01M6FYH7BFFSZQ2TAJSX8A5QQV in
   part.
+- **01M776RT7JGCDZD1VNHFEDB1K2** riff-server counts a lead as ended when
+  its session ended, or when the session had no sign of life for 3
+  minutes (`GONE`): the host or its daemon is down. After a start of
+  riff-server, a lead with no sign of life since that start counts until
+  3 minutes after it.
 
 ## Threads
 
@@ -6250,6 +6255,12 @@ of this part when they merge.
   takeover, and the checks `stty`, `getent` and `stat` of the daemon.
   `podman exec` itself keeps the nice value of its caller. This
   supersedes 01M7755V17SGY2NW231WJ12WXN in part.
+- **01M776RT4CM1BVP3NNC7GVQ557** The daemon of a lead ends the session
+  of the lead on riff-server at once when the lead ends: when its
+  container ends (`/exit`, a crash, `riff lead stop`), and when the
+  daemon finds at its start a record of the lead with no container (a
+  reboot). A start again of the lead for an update keeps its session,
+  and is no end. The daemon starts no lead by itself.
 
 ### riff relay
 
@@ -6896,6 +6907,21 @@ of this part when they merge.
   message when the pull request merged, is in the merge queue, has
   auto-merge on or has another head commit, or when the call fails. The
   next look asks again.
+- **01M776RSYKJK9NETFAD8G0CCVQ** The wave of a repository starts no
+  session while no live lead of the repository runs. A live lead of any
+  person of the riff counts. The reply of riff-server to `/v1/riff`
+  names each repository of the riff with no live lead (`no_lead`). The
+  wave says why: `waits for a lead: run riff lead start in a clone of
+  OWNER/REPO`. `riff wave list`, `riff top`, `riff daemon status` and
+  the Waves tab of the TUI show it for a repository whose wave runs on a
+  host.
+- **01M776RT1GW3N4MJDMPXZ8JAJE** The wait for a lead starts no session
+  and stops none. The sessions that run go on to the end of their item,
+  and keep their claims. The wait is no pause of the riff or of the
+  repository: a resume with no lead takes effect, the wave still waits,
+  and the answer to `riff resume` says so. The wait ends when a lead of
+  the repository starts. The record `lead_set` is a change of the plan
+  of its repository, so each wave looks at once.
 
 ### The lead, the view and the takeover
 
@@ -9332,6 +9358,14 @@ that builds it merges.
   tag, it shows the steps of the last commit of `main`
   (01M7642H27T4862WZENFAN4277). Supersedes 01M75R6FPVZA3JA5C48PQ26A85 in
   part.
+- **01M776RTACYY4JTVQ4FNT81Q0T** In the Sessions tab of the TUI, the
+  group of a repository whose wave waits for a lead says `waits for a
+  lead · l starts it`, and its detail says why. On a host that runs the
+  wave of the repository, `l` on a row of that repository asks `Start
+  the lead of OWNER/REPO on HOST? y/N`. `y` starts the lead on this
+  machine as `riff lead start` does, from the main clone of the wave,
+  and attaches. On another host, the note says to run `riff lead start`
+  in a clone of the repository.
 
 ## The notes of the lead
 

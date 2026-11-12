@@ -162,6 +162,7 @@ impl Pauses {
             riff: self.riff.clone(),
             repositories,
             proof: Policy::Off,
+            no_lead: Vec::new(),
         }
     }
 }
@@ -468,12 +469,15 @@ fn set_pause(
 }
 
 /// The reply to a pause or a resume: the pauses of the written copy as
-/// the caller sees them, and whether the command changed one.
-fn riff_reply(caller: &Caller, view: &View<'_>, done: &Done) -> RiffReply {
+/// the caller sees them at `now`, whether the command changed one, and
+/// each repository with no live lead: a resume does not end the wait for
+/// a lead (01M776RT1GW3N4MJDMPXZ8JAJE).
+fn riff_reply(caller: &Caller, view: &View<'_>, done: &Done, now: Now) -> RiffReply {
     let thread = repository_of(caller, view);
     let the_riff = view.riff.the_riff();
     RiffReply {
         proof: the_riff.proof,
+        no_lead: view.no_lead(now.at),
         ..the_riff
             .pauses
             .reply(thread.as_ref(), !done.made.is_empty())
@@ -501,8 +505,8 @@ impl Command for Pause {
         set_pause(RiffState::Paused, self.riff, named, caller, view, now)
     }
 
-    fn reply(&self, caller: &Caller, view: &View<'_>, done: &Done, (): (), _: Now) -> RiffReply {
-        riff_reply(caller, view, done)
+    fn reply(&self, caller: &Caller, view: &View<'_>, done: &Done, (): (), now: Now) -> RiffReply {
+        riff_reply(caller, view, done, now)
     }
 
     /// The pause of the whole riff by a person or a session. The server
@@ -534,8 +538,8 @@ impl Command for Resume {
         set_pause(RiffState::Running, self.riff, named, caller, view, now)
     }
 
-    fn reply(&self, caller: &Caller, view: &View<'_>, done: &Done, (): (), _: Now) -> RiffReply {
-        riff_reply(caller, view, done)
+    fn reply(&self, caller: &Caller, view: &View<'_>, done: &Done, (): (), now: Now) -> RiffReply {
+        riff_reply(caller, view, done, now)
     }
 
     fn proof(&self, _: &Caller, _: &View<'_>, _: Now) -> Option<Action> {
@@ -600,8 +604,8 @@ impl Command for Approve {
         set_pause(RiffState::Paused, true, None, caller, view, now)
     }
 
-    fn reply(&self, caller: &Caller, view: &View<'_>, done: &Done, (): (), _: Now) -> RiffReply {
-        riff_reply(caller, view, done)
+    fn reply(&self, caller: &Caller, view: &View<'_>, done: &Done, (): (), now: Now) -> RiffReply {
+        riff_reply(caller, view, done, now)
     }
 
     fn proof(&self, _: &Caller, _: &View<'_>, _: Now) -> Option<Action> {

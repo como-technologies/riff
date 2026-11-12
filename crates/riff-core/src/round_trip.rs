@@ -878,6 +878,7 @@ mod tests {
                     pause: pause(),
                 }],
                 proof: crate::proof::Policy::Required,
+                no_lead: vec![thread()],
             });
         }
         c.trip(&IdleQuery { me: me() });

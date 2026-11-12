@@ -12,7 +12,7 @@
 //! - The rules of a lead for `handle`: `View::lead_of`,
 //!   `View::is_lead` and `View::new_lead`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
 use riff_core::name::{SessionUri, ThreadName, Who, check};
@@ -196,6 +196,32 @@ impl View<'_> {
             .and_then(|s| s.place.default_thread())
             .and_then(|thread| self.lead_of(&(who.user().to_owned(), thread), now))
             == Some(who)
+    }
+
+    /// Each repository of the riff ([`View::repositories`]) with no live
+    /// lead, in the order of the names: its wave waits for a lead
+    /// (01M776RSYKJK9NETFAD8G0CCVQ). The lead of any user counts while it
+    /// holds, works in the repository, and did not end or go
+    /// (01M776RT7JGCDZD1VNHFEDB1K2).
+    pub(super) fn no_lead(&self, now: Instant) -> Vec<ThreadName> {
+        let loaded = self.presence.loaded;
+        let led: BTreeSet<&ThreadName> = self
+            .riff
+            .work()
+            .leads
+            .keys()
+            .filter(|key| {
+                self.lead_of(key, now).is_some_and(|who| {
+                    let session = self.presence.sessions.get(who);
+                    session.is_some_and(|s| s.leads(now, loaded))
+                })
+            })
+            .map(|(_, thread)| thread)
+            .collect();
+        self.repositories()
+            .into_iter()
+            .filter(|thread| !led.contains(thread))
+            .collect()
     }
 
     /// The direct message of the server that tells `holder` that the

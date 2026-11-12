@@ -11762,6 +11762,26 @@ pub fn wave_full(full: crate::room::Full) -> String {
 /// The word of a wave while the riff or the repository is paused.
 pub const WAVE_PAUSED: &str = "paused: starts nothing";
 
+/// The start of [`wave_no_lead`]: the views say it in a few words.
+pub const WAITS_FOR_LEAD: &str = "waits for a lead";
+
+/// Why the wave of the repository `repo` starts no session: it has no
+/// live lead (01M776RSYKJK9NETFAD8G0CCVQ). The word of the wave in `riff
+/// daemon status`, and the line of `riff wave list` and `riff top`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::wave_no_lead("o/r"),
+///     "waits for a lead: run riff lead start in a clone of o/r"
+/// );
+/// ```
+pub fn wave_no_lead(repo: &str) -> String {
+    format!(
+        "{WAITS_FOR_LEAD}: run riff lead start in a clone of {}",
+        safe(repo)
+    )
+}
+
 /// The word of a wave with no free work.
 pub const WAVE_NO_WORK: &str = "no free work now";
 

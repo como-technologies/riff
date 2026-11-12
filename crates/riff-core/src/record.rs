@@ -645,11 +645,12 @@ impl Record {
 
     /// The repository thread whose free work this record changes, for the
     /// stream of the changes of the plan (#1729): a hold, the free of a
-    /// hold, the release of a claim, a plan and the end of a plan. `None`
-    /// for each other record.
+    /// hold, the release of a claim, a plan and the end of a plan. A new
+    /// lead ends the wait of the wave for a lead, so each wave looks at
+    /// once (01M776RT1GW3N4MJDMPXZ8JAJE). `None` for each other record.
     ///
     /// ```
-    /// use riff_core::record::{Change, Claimed, Envelope, ItemFreed, Record, Released};
+    /// use riff_core::record::{Change, Claimed, Envelope, ItemFreed, Member, Record, Released};
     ///
     /// let envelope = Envelope { position: 1, written_at_ms: 1, by: None, command: None, call: None };
     /// let record = |change| Record { envelope: envelope.clone(), change };
@@ -663,7 +664,9 @@ impl Record {
     /// };
     /// assert_eq!(record(Change::Released(Released::of(claim.clone()))).plan_thread(), Some(&thread));
     /// // A claim takes free work: the plan does not change.
-    /// assert_eq!(record(Change::Claimed(claim)).plan_thread(), None);
+    /// assert_eq!(record(Change::Claimed(claim.clone())).plan_thread(), None);
+    /// let lead = Member { session: claim.session, thread: thread.clone() };
+    /// assert_eq!(record(Change::LeadSet(lead)).plan_thread(), Some(&thread));
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn plan_thread(&self) -> Option<&ThreadName> {
@@ -673,6 +676,7 @@ impl Record {
             Change::Released(released) => Some(&released.thread),
             Change::PlanSet(set) => Some(&set.thread),
             Change::PlanEnded(ended) => Some(&ended.thread),
+            Change::LeadSet(lead) => Some(&lead.thread),
             _ => None,
         }
     }
