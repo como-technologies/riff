@@ -7055,6 +7055,15 @@ of this part when they merge.
   run`. At the end of the limit, riff stops `gh` and each process that
   it started. A `gh` that hangs stops no wave: the call fails, and the
   wave says why.
+- **01M77K0EGH1HF0WA7WZH8BP2BP** A head commit whose verify failed gets
+  a new verify from the wave only after a new verify request for it that
+  comes after its FAIL in the thread of the repository. Before the claim
+  of a verify, the wave reads the status `riff/verify` of the head
+  commit on GitHub. A failure with no such request starts no session,
+  and the start does not count. The wave then starts no verify of that
+  head while its look still shows the head as waiting for a verify, and
+  neither does it for a head whose FAIL the daemon put on the pull
+  request.
 
 ### The lead, the view and the takeover
 

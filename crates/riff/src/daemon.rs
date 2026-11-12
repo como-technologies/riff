@@ -2675,9 +2675,10 @@ pub struct Daemon<R> {
     /// ([`crate::hooks::Told`], #1656): the loop of the wave and its look
     /// share them, and `riff daemon status` shows them.
     told: Mutex<BTreeMap<String, Arc<crate::hooks::Told>>>,
-    /// The verifies whose head passed, by repository, as
-    /// [`crate::wave::Work::key`] ([`Daemon::verified`], #1960).
-    passed: Mutex<BTreeMap<String, BTreeSet<String>>>,
+    /// The verdicts of the heads of the verifies of each repository, and
+    /// the new verify requests of its last look ([`Daemon::verified`],
+    /// [`crate::wave::Verdicts`], #1960, #2019).
+    verdicts: Mutex<BTreeMap<String, crate::wave::Verdicts>>,
 }
 
 /// A pull of the session image that failed. [`Daemon::have_image`] gives
@@ -2818,7 +2819,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             no_tokens: Mutex::default(),
             renews: Mutex::default(),
             told: Mutex::default(),
-            passed: Mutex::default(),
+            verdicts: Mutex::default(),
         })
     }
 
@@ -3138,29 +3139,54 @@ impl<R: Runtime + 'static> Daemon<R> {
             .clone()
     }
 
-    /// Keeps the verify `work` of the wave of `repo` as passed: its head
-    /// has the status `riff/verify` success (01M75R717PH1NCQJ338ASVYT63).
-    /// The daemon put the PASS on the pull request, or the read before a
-    /// claim found it. The loop of the wave starts no verify of that head
-    /// ([`Daemon::drop_passed`]).
-    pub(crate) fn verified(&self, repo: &str, work: &crate::wave::Work) {
-        self.passed
+    /// Keeps the `verdict` of the head of the verify `work` of the wave of
+    /// `repo`: its status `riff/verify` (01M75R717PH1NCQJ338ASVYT63,
+    /// 01M77K0EGH1HF0WA7WZH8BP2BP). The daemon put the PASS or the FAIL on
+    /// the pull request, or the read before a claim found it. The loop of
+    /// the wave starts no verify of that head that the verdict stops
+    /// ([`Daemon::drop_verified`]).
+    pub(crate) fn verified(
+        &self,
+        repo: &str,
+        work: &crate::wave::Work,
+        verdict: crate::pr::Verdict,
+    ) {
+        self.verdicts
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .entry(repo.to_owned())
             .or_default()
-            .insert(work.key());
+            .heads
+            .insert(work.key(), verdict);
     }
 
-    /// Takes out of `look` each verify of `repo` whose head passed, and
-    /// forgets each that the look does not show as waiting
-    /// ([`crate::wave::drop_passed`]).
-    pub(crate) fn drop_passed(&self, repo: &str, look: &mut crate::wave::Look) {
-        let mut passed = self.passed.lock().unwrap_or_else(PoisonError::into_inner);
-        let keys = passed.entry(repo.to_owned()).or_default();
-        crate::wave::drop_passed(look, keys);
-        if keys.is_empty() {
-            passed.remove(repo);
+    /// True when the verify `work` of `repo`, whose head has `verdict`,
+    /// starts no session: a PASS, or a FAIL with no new verify request at
+    /// the last look ([`crate::wave::Verdicts::stops`]).
+    pub(crate) fn stops_verify(
+        &self,
+        repo: &str,
+        work: &crate::wave::Work,
+        verdict: crate::pr::Verdict,
+    ) -> bool {
+        let verdicts = self.verdicts.lock().unwrap_or_else(PoisonError::into_inner);
+        let none = crate::wave::Verdicts::default();
+        verdicts
+            .get(repo)
+            .unwrap_or(&none)
+            .stops(&work.key(), verdict)
+    }
+
+    /// Takes out of `look` each verify of `repo` whose verdict stops it,
+    /// keeps the new verify requests of the look, and forgets each head
+    /// that the look shows neither as waiting nor as claimed or held
+    /// ([`crate::wave::drop_verified`]).
+    pub(crate) fn drop_verified(&self, repo: &str, look: &mut crate::wave::Look) {
+        let mut verdicts = self.verdicts.lock().unwrap_or_else(PoisonError::into_inner);
+        let kept = verdicts.entry(repo.to_owned()).or_default();
+        crate::wave::drop_verified(look, kept);
+        if kept.is_empty() {
+            verdicts.remove(repo);
         }
     }
 

@@ -2387,6 +2387,27 @@ impl Verdict {
             Self::Fail => "failure",
         }
     }
+
+    /// The verdict of the state `state` of a status `riff/verify`
+    /// ([`verify_state`]): `success` is a PASS, and `failure` and `error`
+    /// are a FAIL, as for [`crate::rollout::Pull::verify`]. Each other
+    /// state, for example `pending`, is none.
+    ///
+    /// ```
+    /// use riff::pr::Verdict;
+    ///
+    /// assert_eq!(Verdict::of_state("success"), Some(Verdict::Pass));
+    /// assert_eq!(Verdict::of_state("failure"), Some(Verdict::Fail));
+    /// assert_eq!(Verdict::of_state("error"), Some(Verdict::Fail));
+    /// assert_eq!(Verdict::of_state("pending"), None);
+    /// ```
+    pub fn of_state(state: &str) -> Option<Self> {
+        match state {
+            "success" => Some(Self::Pass),
+            "failure" | "error" => Some(Self::Fail),
+            _ => None,
+        }
+    }
 }
 
 /// A pull request, as `gh pr view --json
@@ -3243,7 +3264,7 @@ fn closes_no_live_check(gh: &Gh, number: u64, body: &str) -> Result<()> {
 /// in `repo` on GitHub now, for example `success`: the newest status of
 /// that context, from the combined status of the commit. `None` when the
 /// commit has none. The wave reads it before the claim of a verify
-/// (#1960), with REST: it costs no GraphQL point.
+/// (#1960, #2019), with REST: it costs no GraphQL point.
 ///
 /// ```
 /// let dir = tempfile::tempdir()?;

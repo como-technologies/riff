@@ -264,13 +264,9 @@
 //!   default branch requires: the fix of the checks comes first (see "A
 //!   pull request that cannot merge", #1575). A failed check that it does
 //!   not require holds no verify (01M749P62T24VDPX20D40KRJEK);
-//! - a verify of a head whose verify passed (01M75R717PH1NCQJ338ASVYT63,
-//!   #1960). The look can show such a head as waiting for a short time:
-//!   before the event of its status comes, or after a verify of another
-//!   host. So the job reads the status `riff/verify` of the head before
-//!   the claim ([`World::passed`]): a success starts no session, and the
-//!   start does not count. The loop takes each head that passed out of
-//!   its looks until a look sees the status ([`drop_passed`]);
+//! - a verify of a head whose verify passed, or whose verify failed with
+//!   no new verify request after the FAIL (see "A look that does not see
+//!   the verdict yet");
 //! - a build or a verify of a head whose verify passed after a fail
 //!   (01M77JWXEGDDMB7TW97APGKW9W, #2014). riff posts the PASS in the
 //!   thread after it sets the status, so the look can still read the old
@@ -316,6 +312,42 @@
 //!   for each image, with the fix: make the package public, or run
 //!   `podman login REGISTRY` on each host of the wave
 //!   (01M5SMSB3H1E9NXMBDN8ZDJ6CD).
+//!
+//! # A look that does not see the verdict yet
+//!
+//! A head commit gets one verify that passes (01M75R717PH1NCQJ338ASVYT63,
+//! #1960). After a FAIL, it gets a new verify only for a new verify
+//! request that comes after the FAIL in the thread
+//! (01M77K0EGH1HF0WA7WZH8BP2BP, #2019): the lead asks for it. The look
+//! can still show the head as waiting for a verify for a short time:
+//! before the event of its status `riff/verify` comes, or after a verify
+//! of another host. So:
+//!
+//! - The daemon keeps the verdict of each head whose PASS or FAIL it put
+//!   on the pull request ([`Finish::verdict`]), or that the read before a
+//!   claim found. The loop takes each such verify out of its looks until
+//!   a look sees the status ([`drop_verified`]).
+//! - The job reads the status `riff/verify` of the head before the claim
+//!   ([`World::verdict`]). A success starts no session, and the start
+//!   does not count. So does a failure, unless the look shows a new
+//!   verify request of the head after its result ([`Waiting::again`],
+//!   [`asked_again`]).
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant G as GitHub
+//!     participant W as the loop of the wave
+//!     participant T as the thread
+//!     W->>G: the verify of c1 ends: FAIL, riff/verify failure
+//!     W->>T: verify result: FAIL for issue-12, commit c1
+//!     Note over W: the daemon keeps verify-issue-12@c1: FAIL
+//!     W->>W: a look before the event of the status: c1 waits for a verify
+//!     Note over W: drop_verified: no second verify
+//!     T->>W: the lead: verify request: issue-12, commit c1
+//!     W->>W: a look: a new request after the FAIL
+//!     W->>G: the read before the claim: failure, asked again
+//!     Note over W: claim verify-issue-12: a new verify of c1
+//! ```
 //!
 //! # A merge that leaves the issue open
 //!
@@ -1106,6 +1138,10 @@ pub struct Waiting {
     /// has a run, and each newest run is completed, with a success or not
     /// ([`pr::full_done`], 01M5QYDHN27RC5SRHAB56PFKK0).
     pub gate_done: bool,
+    /// True when a verify request for the head came after a verify result
+    /// for it in the thread ([`asked_again`]): a head whose verify failed
+    /// gets a new verify (01M77K0EGH1HF0WA7WZH8BP2BP).
+    pub again: bool,
 }
 
 /// A pull request with auto-merge on and a conflict with `main`.
@@ -1284,7 +1320,7 @@ fn verify_issue(item: &str) -> Option<u64> {
 ///     free: vec!["verify-issue-9".into(), "issue-12".into(), "issue-13".into()],
 ///     holds: ["issue-12".to_owned()].into(),
 ///     claims: ["issue-9".to_owned()].into(),
-///     pulls: [(9, Waiting { pull: 40, commit: "1a2b".into(), gate_done: true })].into(),
+///     pulls: [(9, Waiting { pull: 40, commit: "1a2b".into(), gate_done: true, again: false })].into(),
 ///     ..Look::default()
 /// };
 /// let none = BTreeSet::new();
@@ -1415,7 +1451,7 @@ pub fn pick(
 ///     asked: Some(asked),
 ///     ..Lane::default()
 /// };
-/// let waiting = |issue: u64| Waiting { pull: 40 + issue, commit: format!("c{issue}"), gate_done: true };
+/// let waiting = |issue: u64| Waiting { pull: 40 + issue, commit: format!("c{issue}"), gate_done: true, again: false };
 /// let look = Look {
 ///     free: vec!["verify-issue-1".into(), "verify-issue-2".into(), "verify-issue-3".into()],
 ///     pulls: [(1, waiting(1)), (2, waiting(2)), (3, waiting(3))].into(),
@@ -1580,8 +1616,8 @@ fn spent(look: &Look, running: &BTreeSet<String>, starts: &BTreeMap<String, u32>
 
 /// The verify of each head that waits for a verify in `look`: the
 /// `verify-issue-N` of its free work with the pull request of `N`, by
-/// issue, as [`Work::key`].
-fn waiting_keys(look: &Look) -> BTreeMap<u64, String> {
+/// issue, as [`Work::key`], with [`Waiting::again`].
+fn waiting_keys(look: &Look) -> BTreeMap<u64, (String, bool)> {
     look.free
         .iter()
         .filter_map(|item| {
@@ -1592,58 +1628,142 @@ fn waiting_keys(look: &Look) -> BTreeMap<u64, String> {
                 pull: waiting.pull,
                 commit: waiting.commit.clone(),
             };
-            Some((issue, verify.key()))
+            Some((issue, (verify.key(), waiting.again)))
         })
         .collect()
 }
 
-/// Takes out of `look` each verify of a head whose verify passed
-/// (`passed`, as [`Work::key`], 01M75R717PH1NCQJ338ASVYT63, #1960): the
-/// daemon put the PASS on the pull request ([`Finish::passed`]), or the
-/// read before a claim found the success ([`World::passed`]). Its item
-/// leaves the free work, and its pull request goes first in the order of
-/// the verifies ([`order()`]), as a pass does. A head gets one verify
-/// that passes. The look of the wave can show such a head as waiting for
-/// a short time still: the event of the status comes after the end of the
+/// What the daemon knows of the verifies of the heads of one repository
+/// (01M75R717PH1NCQJ338ASVYT63, 01M77K0EGH1HF0WA7WZH8BP2BP): see "A look
+/// that does not see the verdict yet".
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Verdicts {
+    /// The verdict of each head, as the [`Work::key`] of its verify: the
+    /// daemon put it on the pull request ([`Finish::verdict`]), or the read
+    /// before a claim found it ([`World::verdict`]).
+    pub heads: BTreeMap<String, Verdict>,
+    /// The verifies that the last look showed with a new verify request
+    /// after their result ([`Waiting::again`]), as [`Work::key`].
+    pub again: BTreeSet<String>,
+}
+
+impl Verdicts {
+    /// True when the verify `key` of a head with `verdict` starts no
+    /// session: a head gets one verify that passes, and a head whose
+    /// verify failed gets a new verify only for a new verify request after
+    /// the FAIL ([`Verdicts::again`]).
+    ///
+    /// ```
+    /// use riff::pr::Verdict;
+    /// use riff::wave::Verdicts;
+    ///
+    /// let mut verdicts = Verdicts::default();
+    /// assert!(verdicts.stops("verify-issue-1@c1", Verdict::Pass));
+    /// assert!(verdicts.stops("verify-issue-1@c1", Verdict::Fail));
+    /// verdicts.again.insert("verify-issue-1@c1".into());
+    /// assert!(verdicts.stops("verify-issue-1@c1", Verdict::Pass));
+    /// assert!(!verdicts.stops("verify-issue-1@c1", Verdict::Fail));
+    /// ```
+    pub fn stops(&self, key: &str, verdict: Verdict) -> bool {
+        stops(&self.again, key, verdict)
+    }
+
+    /// True when it keeps no verdict and no new verify request.
+    pub fn is_empty(&self) -> bool {
+        self.heads.is_empty() && self.again.is_empty()
+    }
+}
+
+/// [`Verdicts::stops`] with the new verify requests `again`.
+fn stops(again: &BTreeSet<String>, key: &str, verdict: Verdict) -> bool {
+    verdict == Verdict::Pass || !again.contains(key)
+}
+
+/// Takes out of `look` each verify of a head whose verdict in `verdicts`
+/// stops it ([`Verdicts::stops`]). Its item leaves the free work. After a
+/// PASS, its pull request goes first in the order of the verifies
+/// ([`order()`]), as a pass does. After a FAIL, it leaves the order, as a
+/// fail does. The look of the wave can show such a head as waiting for a
+/// short time still: the event of the status comes after the end of the
 /// verify ([`hooks::Told`]).
 ///
-/// Each key that the look does not show as waiting leaves `passed`: the
-/// look sees the status now.
+/// The verifies that the look shows with a new verify request after
+/// their result go into [`Verdicts::again`]. A head that the look does not
+/// show as waiting leaves [`Verdicts::heads`]: the look sees the status
+/// now. A head whose item the look shows as claimed or held stays: such a
+/// look cannot show the head as waiting, for example a look that read the
+/// claims while the verify ran. A FAIL with a new verify request leaves
+/// too: the lead asks for a new verify.
 ///
 /// ```
-/// use std::collections::BTreeSet;
-/// use riff::wave::{Look, Waiting, drop_passed, pick};
+/// use riff::pr::Verdict;
+/// use riff::wave::{Look, Verdicts, Waiting, drop_verified, pick};
 ///
-/// let waiting = |n: u64, commit: &str| Waiting { pull: 40 + n, commit: commit.into(), gate_done: true };
-/// let mut look = Look {
-///     free: vec!["verify-issue-1".into(), "verify-issue-2".into()],
-///     pulls: [(1, waiting(1, "c1")), (2, waiting(2, "c2"))].into(),
+/// let waiting = |n: u64, commit: &str| (n, Waiting { pull: 40 + n, commit: commit.into(), gate_done: true, again: false });
+/// let look = |waits: Vec<(u64, Waiting)>| Look {
+///     free: waits.iter().map(|(n, _)| format!("verify-issue-{n}")).collect(),
+///     pulls: waits.into_iter().collect(),
 ///     ..Look::default()
 /// };
-/// let mut passed: BTreeSet<String> = ["verify-issue-1@c1".to_owned(), "verify-issue-3@c3".to_owned()].into();
-/// drop_passed(&mut look, &mut passed);
-/// assert_eq!(look.free, ["verify-issue-2"]);
-/// assert!(!look.pulls.contains_key(&1));
-/// // The look shows no wait for the head of 3: it sees the status now.
-/// assert_eq!(passed, ["verify-issue-1@c1".to_owned()].into());
+/// let mut verdicts = Verdicts::default();
+/// verdicts.heads.insert("verify-issue-1@c1".into(), Verdict::Pass);
+/// verdicts.heads.insert("verify-issue-2@c2".into(), Verdict::Fail);
+/// verdicts.heads.insert("verify-issue-4@c4".into(), Verdict::Fail);
+/// verdicts.heads.insert("verify-issue-5@c5".into(), Verdict::Fail);
+/// let mut now = look(vec![waiting(1, "c1"), waiting(2, "c2"), waiting(3, "c3")]);
+/// // The verifier of 5 still holds its claim.
+/// now.claims.insert("verify-issue-5".into());
+/// drop_verified(&mut now, &mut verdicts);
+/// assert_eq!(now.free, ["verify-issue-3"]);
+/// assert_eq!(now.pulls.keys().collect::<Vec<_>>(), [&3]);
+/// // The look shows no wait for the head of 4: it sees the status now.
+/// assert!(!verdicts.heads.contains_key("verify-issue-4@c4"));
+/// assert!(verdicts.heads.contains_key("verify-issue-5@c5"));
+/// // The lead asks for a new verify of c2 after its FAIL.
+/// let (_, asked) = waiting(2, "c2");
+/// let mut now = look(vec![waiting(1, "c1"), (2, Waiting { again: true, ..asked })]);
+/// drop_verified(&mut now, &mut verdicts);
+/// assert_eq!(now.free, ["verify-issue-2"]);
+/// assert!(!verdicts.stops("verify-issue-2@c2", Verdict::Fail));
 /// // A new head of 1 gets its verify.
-/// let mut look = Look { free: vec!["verify-issue-1".into()], pulls: [(1, waiting(1, "c1b"))].into(), ..Look::default() };
-/// drop_passed(&mut look, &mut passed);
-/// assert!(pick(&look, &BTreeSet::new(), &Default::default()).is_some());
-/// assert!(passed.is_empty());
+/// let mut now = look(vec![waiting(1, "c1b")]);
+/// drop_verified(&mut now, &mut verdicts);
+/// assert!(pick(&now, &Default::default(), &Default::default()).is_some());
+/// assert!(verdicts.is_empty());
 /// ```
-pub fn drop_passed(look: &mut Look, passed: &mut BTreeSet<String>) {
+pub fn drop_verified(look: &mut Look, verdicts: &mut Verdicts) {
     let waits = waiting_keys(look);
-    passed.retain(|key| waits.values().any(|k| k == key));
-    for (issue, key) in waits {
-        if !passed.contains(&key) {
+    let Verdicts { heads, again } = verdicts;
+    *again = waits
+        .values()
+        .filter(|(_, again)| *again)
+        .map(|(key, _)| key.clone())
+        .collect();
+    // The item of a key: `verify-issue-N` of `verify-issue-N@COMMIT`.
+    let busy = |key: &str| {
+        let item = key.split_once('@').map_or(key, |(item, _)| item);
+        look.claims.contains(item) || look.holds.contains(item)
+    };
+    heads.retain(|key, verdict| {
+        let keep = waits.values().any(|(k, _)| k == key) || busy(key);
+        keep && stops(again, key, *verdict)
+    });
+    for (issue, (key, _)) in waits {
+        let Some(verdict) = heads.get(&key) else {
             continue;
-        }
+        };
         let item = format!("verify-issue-{issue}");
         look.free.retain(|free| *free != item);
         look.pulls.remove(&issue);
-        if let Some(lane) = look.lanes.get_mut(&issue) {
-            lane.passed = true;
+        match verdict {
+            Verdict::Pass => {
+                if let Some(lane) = look.lanes.get_mut(&issue) {
+                    lane.passed = true;
+                }
+            }
+            Verdict::Fail => {
+                look.lanes.remove(&issue);
+            }
         }
     }
 }
@@ -1687,13 +1807,14 @@ pub trait World: Send + Sync {
     /// the fault of the first that fails (01M57A7A1W2K9440WZA1QZ3M9T).
     fn host<'a>(&'a self, wave: &'a Wave) -> BoxFuture<'a, Result<(), run::HostFault>>;
 
-    /// True when the head commit of the verify `work` of `wave` has the
-    /// status `riff/verify` success on the forge now ([`pr::verify_state`],
-    /// 01M75R717PH1NCQJ338ASVYT63). The job reads it before the claim. A
-    /// fault of the read is no success: the verify starts. The default is
-    /// no success.
-    fn passed<'a>(&'a self, _wave: &'a Wave, _work: &'a Work) -> BoxFuture<'a, bool> {
-        Box::pin(async { false })
+    /// The verdict of the status `riff/verify` of the head commit of the
+    /// verify `work` of `wave` on the forge now ([`pr::verify_state`],
+    /// [`Verdict::of_state`]). The job reads it before the claim
+    /// (01M75R717PH1NCQJ338ASVYT63, 01M77K0EGH1HF0WA7WZH8BP2BP). A fault of
+    /// the read is no verdict: the verify starts. The default is no
+    /// verdict.
+    fn verdict<'a>(&'a self, _wave: &'a Wave, _work: &'a Work) -> BoxFuture<'a, Option<Verdict>> {
+        Box::pin(async { None })
     }
 
     /// True when the forge says now that the pull request `pull` of `wave`
@@ -2222,8 +2343,10 @@ pub(crate) async fn run<R: Runtime + 'static>(
                 None
             }
             Ok(Ok(mut look)) => {
-                // A head whose verify passed gets no new verify (#1960).
-                daemon.drop_passed(&wave.repo, &mut look);
+                // A head whose verify passed gets no new verify (#1960),
+                // and one whose verify failed only when the lead asks
+                // (#2019).
+                daemon.drop_verified(&wave.repo, &mut look);
                 say_merged(&*world, &wave, &look, &mut said).await;
                 let spent = spent(&look, &running(&daemon, &wave, &taken), &lock(&starts));
                 // `riff host join` cleared the starts of these items.
@@ -2472,7 +2595,7 @@ pub(crate) async fn job<R: Runtime + 'static>(
             // A verify with a PASS or FAIL on the pull request is no failed
             // start (#1651). The item is still taken: no start comes
             // between the end and the take back.
-            if finish(daemon.clone(), record, ended, held).await.reported || no_token.is_some() {
+            if finish(daemon.clone(), record, ended, held).await.reported() || no_token.is_some() {
                 take_back(&starts, &work);
             }
             if let Some(why) = daemon.no_start_untold(&wave.repo).filter(|_| !asked) {
@@ -2490,7 +2613,7 @@ pub(crate) async fn job<R: Runtime + 'static>(
             take_back(&starts, &work);
             Some(text::RUN_NOT_CLAIMED.to_owned())
         }
-        Err(ref e) if let Some(Passed(line)) = e.downcast_ref::<Passed>() => {
+        Err(ref e) if let Some(Verified(line)) = e.downcast_ref::<Verified>() => {
             println!("{line}");
             take_back(&starts, &work);
             Some(line.clone())
@@ -2553,20 +2676,21 @@ impl std::fmt::Display for Taken {
 impl std::error::Error for Taken {}
 
 /// The head of a verify has the status `riff/verify` success at the read
-/// before the claim ([`World::passed`], #1960), with the line for the log
-/// ([`text::wave_verify_passed`]). No session starts, the start does not
+/// before the claim ([`World::verdict`], #1960), or a failure with no new
+/// verify request after it (#2019), with the line for the log
+/// ([`text::wave_verify_done`]). No session starts, the start does not
 /// count, and the lead hears nothing. The loop starts no verify of that
-/// head again ([`drop_passed`]).
+/// head again ([`drop_verified`]).
 #[derive(Debug)]
-pub(crate) struct Passed(String);
+pub(crate) struct Verified(String);
 
-impl std::fmt::Display for Passed {
+impl std::fmt::Display for Verified {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
     }
 }
 
-impl std::error::Error for Passed {}
+impl std::error::Error for Verified {}
 
 /// The wait before the claim of `work` (#1729): the host with the most
 /// free room claims first. The host waits [`claim_wait`] for its live
@@ -2599,8 +2723,9 @@ async fn wait_to_claim<R: Runtime + 'static>(
 /// The steps of a job up to the end of its session: the wait before the
 /// claim ([`wait_to_claim`]) when the lead did not ask for the job
 /// (`asked`), the read of the status `riff/verify` of the head of a
-/// verify ([`World::passed`]: a success is the error [`Passed`]), the
-/// image that the wave pins, the steps before the start, and the session.
+/// verify ([`World::verdict`]: a verdict that stops the verify,
+/// [`Verdicts::stops`], is the error [`Verified`]), the image that the
+/// wave pins, the steps before the start, and the session.
 /// `None` when the claim failed. Hold [`Daemon::in_job`]
 /// of the item from before the call to the end of [`finish`]: the sweep
 /// then keeps the folder.
@@ -2615,14 +2740,16 @@ async fn start_job<R: Runtime + 'static>(
     if !asked {
         wait_to_claim(daemon, &*world, wave, work).await?;
     }
-    // The look can show a head as waiting after its verify passed: on
-    // another host, or before the event of the status (#1960).
+    // The look can show a head as waiting after its verify passed or
+    // failed: on another host, or before the event of the status (#1960,
+    // #2019).
     if let Work::Verify { commit, .. } = work
-        && world.passed(wave, work).await
+        && let Some(verdict) = world.verdict(wave, work).await
+        && daemon.stops_verify(&wave.repo, work, verdict)
     {
-        daemon.verified(&wave.repo, work);
-        let line = text::wave_verify_passed(&wave.repo, &work.item(), commit);
-        return Err(Passed(line).into());
+        daemon.verified(&wave.repo, work, verdict);
+        let line = text::wave_verify_done(&wave.repo, &work.item(), commit, verdict);
+        return Err(Verified(line).into());
     }
     let pinned = world.pinned(wave).await?;
     daemon
@@ -2688,20 +2815,25 @@ pub(crate) async fn after<R: Runtime + 'static>(
 pub struct Finish {
     /// The line of each step.
     pub lines: Vec<String>,
+    /// The PASS or FAIL that riff put on the pull request, for a verify:
+    /// the wave starts no new verify of that head that the verdict stops
+    /// ([`drop_verified`], #1960, #2019).
+    pub verdict: Option<Verdict>,
+}
+
+impl Finish {
     /// True for a verify whose PASS or FAIL riff put on the pull request.
     /// Such a start does not count toward [`STARTS`] (#1651).
-    pub reported: bool,
-    /// True for a verify whose PASS riff put on the pull request: the
-    /// wave starts no new verify of that head ([`drop_passed`], #1960).
-    pub passed: bool,
+    pub fn reported(&self) -> bool {
+        self.verdict.is_some()
+    }
 }
 
 impl From<Vec<String>> for Finish {
     fn from(lines: Vec<String>) -> Finish {
         Finish {
             lines,
-            reported: false,
-            passed: false,
+            verdict: None,
         }
     }
 }
@@ -2709,8 +2841,9 @@ impl From<Vec<String>> for Finish {
 /// The steps after the end of the session of `record`, as it `ended`.
 /// It gives the line of each step. The job `held` of the item ends after
 /// the last step: a step reads the folder of the session, so the sweep
-/// keeps it to then (01M53S7WDPQ2GWHJWJ6SZXZ5PN). A verify that passed
-/// goes into [`Daemon::verified`] before the job ends (#1960).
+/// keeps it to then (01M53S7WDPQ2GWHJWJ6SZXZ5PN). The verdict of a verify
+/// that riff reported goes into [`Daemon::verified`] before the job ends
+/// (#1960, #2019).
 pub(crate) async fn finish<R: Runtime + 'static>(
     daemon: Arc<Daemon<R>>,
     record: Record,
@@ -2721,8 +2854,15 @@ pub(crate) async fn finish<R: Runtime + 'static>(
     let end = crate::ends::End::of(&record, ended, &crate::run::Scrub::new([]));
     daemon.note_end(&record.live.item, end.reason());
     let done = daemon.world().finish(&record, ended).await;
-    if let (Ok(Finish { passed: true, .. }), Some(job)) = (&done, &record.job) {
-        daemon.verified(&job.wave.repo, &job.work);
+    if let (
+        Ok(Finish {
+            verdict: Some(verdict),
+            ..
+        }),
+        Some(job),
+    ) = (&done, &record.job)
+    {
+        daemon.verified(&job.wave.repo, &job.work, *verdict);
     }
     drop(held);
     daemon.tell_changed();
@@ -3094,7 +3234,7 @@ async fn no_verify(
 /// the folder, and the loop of the wave reports it after the reset
 /// ([`kept`], #1557). The lead gets a note.
 ///
-/// A report that works sets [`Finish::reported`]: the start of that verify
+/// A report that works sets [`Finish::verdict`]: the start of that verify
 /// does not count toward [`STARTS`] (#1651).
 ///
 /// With no PASS or FAIL, or a report that fails for another reason, the
@@ -3178,8 +3318,7 @@ async fn after_verify(
     post_report(api, me, &thread, (verdict, pull), &reported, &result).await?;
     Ok(Finish {
         lines: vec![line],
-        reported: true,
-        passed: verdict == Verdict::Pass,
+        verdict: Some(verdict),
     })
 }
 
@@ -3790,6 +3929,32 @@ pub fn said(bodies: &[&str]) -> HashMap<(u64, String), rollout::Verify> {
     said
 }
 
+/// The verify requests that come after a verify result of their head:
+/// the heads whose last word in `bodies` is a verify request ([`said`])
+/// and that have a verify result before it (01M77K0EGH1HF0WA7WZH8BP2BP,
+/// #2019). The lead asks for a new verify of a head whose verify failed.
+/// The first verify request of a head is not one: a look that read the
+/// thread before the result came sees only that request.
+///
+/// ```
+/// use riff::wave::asked_again;
+///
+/// let request = "verify request: issue-12, PR #40, branch worktree-issue-12, commit 1a2b3c4, from the riff daemon (session 65f510d7).";
+/// let result = "verify result: FAIL for issue-12, PR #40, commit 1a2b3c4d5e6f. PR comment https://c, riff/verify failure set.";
+/// assert!(asked_again(&[request]).is_empty());
+/// assert!(asked_again(&[request, result]).is_empty());
+/// assert!(asked_again(&[request, result, request]).contains(&(12, "1a2b3c4".into())));
+/// assert!(asked_again(&[request, result, request, result]).is_empty());
+/// ```
+pub fn asked_again(bodies: &[&str]) -> HashSet<(u64, String)> {
+    let results: HashSet<(u64, String)> = bodies.iter().filter_map(|b| result_of(b)).collect();
+    said(bodies)
+        .into_iter()
+        .filter(|(head, verify)| *verify == rollout::Verify::Asked && results.contains(head))
+        .map(|(head, _)| head)
+        .collect()
+}
+
 /// The start of a verify request in the thread.
 const VERIFY_REQUEST: &str = "verify request: ";
 
@@ -4036,7 +4201,13 @@ fn look_from(
     let (free, fixes) = fixes(&open, open.free_work(&claimed, &held));
     let no_done_when = open.no_done_when(&claimed, &held).into_iter().collect();
     let merged = open.unsaid();
-    let pulls = waiting(gh, repo, &free, &open)?;
+    let mut pulls = waiting(gh, repo, &free, &open)?;
+    // A new verify request after the result of the head (#2019).
+    let again = asked_again(&bodies);
+    for (issue, wait) in &mut pulls {
+        let commit: String = wait.commit.chars().take(7).collect();
+        wait.again = again.contains(&(*issue, commit));
+    }
     let lanes = lanes(&open, &free, &requests(&bodies), |pull| {
         order::files(gh, repo, pull.number, &pull.head).unwrap_or_default()
     });
@@ -4208,6 +4379,7 @@ fn waiting(
                 pull: pull.number,
                 commit: pull.head.clone(),
                 gate_done: pr::full_done(&states),
+                again: false,
             },
         );
     }
@@ -4276,18 +4448,16 @@ impl World for Live {
         })
     }
 
-    fn passed<'a>(&'a self, wave: &'a Wave, work: &'a Work) -> BoxFuture<'a, bool> {
+    fn verdict<'a>(&'a self, wave: &'a Wave, work: &'a Work) -> BoxFuture<'a, Option<Verdict>> {
         Box::pin(async move {
-            let Some(commit) = work.commit().map(str::to_owned) else {
-                return false;
-            };
+            let commit = work.commit()?.to_owned();
             let repo = wave.repo.clone();
             let state = blocking(move || pr::verify_state(&forge(&repo), &repo, &commit)).await;
             match state {
-                Ok(state) => state.as_deref() == Some("success"),
+                Ok(state) => state.as_deref().and_then(Verdict::of_state),
                 Err(e) => {
                     eprintln!("riff daemon: {}: {}: {e:#}", wave.repo, work.item());
-                    false
+                    None
                 }
             }
         })
@@ -5003,8 +5173,11 @@ mod tests {
         /// the look shows `pulls`.
         shown: BTreeMap<u64, Pr>,
         /// The reads of the status `riff/verify` of the head of a verify
-        /// before its claim ([`World::passed`]).
+        /// before its claim ([`World::verdict`]).
         status_reads: usize,
+        /// The messages of the thread of the repository, oldest first,
+        /// for a look that reads the fake `gh` of `reads`.
+        thread: Vec<Message>,
         /// The issues whose pull request has auto-merge off.
         manual: BTreeSet<u64>,
         /// The issues whose pull request reads `REVIEW_REQUIRED`: GitHub
@@ -5233,7 +5406,9 @@ mod tests {
                     let claims: BTreeSet<String> =
                         lock(&self.forge).claims.keys().cloned().collect();
                     let holds = lock(&self.forge).holds.clone();
-                    let look = blocking(move || look_told(&gh, "o/r", claims, holds, &[], &told));
+                    let thread = lock(&self.forge).thread.clone();
+                    let look =
+                        blocking(move || look_told(&gh, "o/r", claims, holds, &thread, &told));
                     let look = look.await;
                     lock(&self.forge).branch_reads += 1;
                     return look;
@@ -5263,6 +5438,9 @@ mod tests {
                                 pull: 40 + n,
                                 commit: forge.head(*n),
                                 gate_done: true,
+                                // A new verify request after the FAIL.
+                                again: forge.shown.get(n).unwrap_or(&forge.pulls[n])
+                                    == &Pr::Reasked,
                             };
                             (*n, waiting)
                         })
@@ -5311,14 +5489,28 @@ mod tests {
             Box::pin(async move { host })
         }
 
-        /// The forge as it is, not as the look shows it (`shown`).
-        fn passed<'a>(&'a self, _: &'a Wave, work: &'a Work) -> BoxFuture<'a, bool> {
+        /// The forge as it is, not as the look shows it (`shown`). With
+        /// `reads`, the status of the head that the fake `gh` gives
+        /// ([`pr::verify_state`]).
+        fn verdict<'a>(&'a self, _: &'a Wave, work: &'a Work) -> BoxFuture<'a, Option<Verdict>> {
+            let reads = lock(&self.reads).clone();
             let mut forge = lock(&self.forge);
             forge.status_reads += 1;
             let issue = work.issue();
-            let passed = forge.pulls.get(&issue) == Some(&Pr::Passed)
-                && work.commit() == Some(forge.head(issue).as_str());
-            Box::pin(async move { passed })
+            let head = work.commit() == Some(forge.head(issue).as_str());
+            let verdict = match forge.pulls.get(&issue) {
+                Some(Pr::Passed) if head => Some(Verdict::Pass),
+                Some(Pr::Failed | Pr::Reasked) if head => Some(Verdict::Fail),
+                _ => None,
+            };
+            let commit = work.commit().unwrap_or_default().to_owned();
+            Box::pin(async move {
+                let Some(gh) = reads else {
+                    return verdict;
+                };
+                let state = blocking(move || pr::verify_state(&gh, "o/r", &commit)).await;
+                state.ok().flatten().as_deref().and_then(Verdict::of_state)
+            })
         }
 
         /// The ask of the real loop to the fake `gh` of `reads`
@@ -5432,7 +5624,10 @@ mod tests {
                 let job = record.job.as_ref().expect("a job");
                 // A verify with a result reports it.
                 let reported = matches!(job.work, Work::Verify { .. }) && !forge.no_result;
-                let passed = reported && !forge.fails;
+                let verdict = reported.then_some(match forge.fails {
+                    true => Verdict::Fail,
+                    false => Verdict::Pass,
+                });
                 match job.work {
                     Work::Build { .. } if forge.no_pull => None,
                     Work::Build { issue } => forge.pulls.insert(issue, Pr::Asked),
@@ -5464,8 +5659,7 @@ mod tests {
                 forge.finished.push(record.live.item.clone());
                 Ok(Finish {
                     lines: Vec::new(),
-                    reported,
-                    passed,
+                    verdict,
                 })
             })
         }
@@ -6271,14 +6465,22 @@ mod tests {
     /// A fake `gh` for a look that reads the forge as the real look does
     /// (#1656): the lists and the items come from the files of its folder,
     /// and each call goes in `gh.log`. The queue is empty, and the ask for
-    /// one pull request ([`rollout::merge_off`]) gives the file `ask`.
+    /// one pull request ([`rollout::merge_off`]) gives the file `ask`. The
+    /// ruleset of `main` requires no check, and the state of the status
+    /// `riff/verify` of a head ([`pr::verify_state`]) is the file `status`.
     const READ_GH: &str = r#"#!/bin/sh
 dir=$(dirname "$0")
 printf '%s\n' "$*" >> "$dir/gh.log"
 show() { if [ -e "$dir/$1" ]; then cat "$dir/$1"; else echo '[]'; fi; }
 case "$1 $2" in
-  "api repos/o/r") echo main ;;
+  "api repos/o/r")
+    case "$*" in
+      *--jq*) echo main ;;
+      *) echo '{"default_branch":"main"}' ;;
+    esac ;;
+  "api repos/o/r/rules/branches/main"*) echo '[]' ;;
   "api repos/o/r/milestones"*) echo '[{"title":"Wave 1"}]' ;;
+  "api repos/o/r/commits/"*/status) if [ -e "$dir/status" ]; then cat "$dir/status"; fi ;;
   "api repos/o/r/commits/"*) echo 'a commit' ;;
   "api graphql")
     case "$*" in
@@ -6500,6 +6702,73 @@ esac
         let started: Vec<&str> = forge.starts.iter().map(|(i, _)| i.as_str()).collect();
         assert_eq!(started, ["issue-2"], "no build of the merged item");
         assert!(forge.merged_ins.is_empty(), "{:?}", forge.merged_ins);
+    }
+
+    /// 01M77K0EGH1HF0WA7WZH8BP2BP (#2019): a wave with a fake `gh` and the
+    /// events of GitHub on. The verify of the head `c1` of pull request #41
+    /// fails, and neither the event of its status nor its FAIL in the
+    /// thread comes to the look: each look still reads the head with no
+    /// status `riff/verify` and with only its first verify request. The
+    /// wave starts no second verify of `c1`, and reads the status of the
+    /// head only before the first claim. Then the FAIL comes, and the lead
+    /// sends a new verify request for `c1`: the read before the claim finds
+    /// the failure, the look shows the request after the FAIL, and the head
+    /// gets its second verify.
+    #[tokio::test]
+    async fn a_look_with_no_status_after_a_fail_starts_no_second_verify_until_the_lead_asks() {
+        let bin = tempfile::tempdir().unwrap();
+        let put = |name: &str, value: serde_json::Value| {
+            std::fs::write(bin.path().join(name), value.to_string()).unwrap();
+        };
+        // Pull request #41 waits for the verify of its head c1.
+        let mut pull = pull_41();
+        pull["statusCheckRollup"].as_array_mut().unwrap().remove(0);
+        put("issues", serde_json::json!([open_issue(1)]));
+        put("pulls", serde_json::json!([pull]));
+        let (here, _told) = reading(bin.path()).await;
+        let request = "verify request: issue-1, PR #41, branch worktree-issue-1, commit c1, from \
+                       the riff daemon (session 65f510d7).";
+        {
+            let mut forge = here.forge();
+            forge.fails = true;
+            forge.thread.push(posted(DAEMON, request));
+        }
+        here.run();
+        verified(&here, 1).await;
+        item_reads(bin.path());
+        // GitHub has the failure. No event of the status comes, and the
+        // looks read the thread from before the result.
+        std::fs::write(bin.path().join("status"), "failure\n").unwrap();
+        here.idle(3).await;
+        {
+            let forge = here.forge();
+            assert_eq!(forge.works, [verify("c1")], "one verify");
+            assert_eq!(forge.status_reads, 1, "one read, before the first claim");
+            assert!(forge.told.is_empty(), "{:?}", forge.told);
+        }
+        let reads = item_reads(bin.path());
+        assert!(
+            !reads.iter().any(|c| c.starts_with("pr list")),
+            "the look reads the kept list: {reads:?}"
+        );
+        // The FAIL comes, and the lead asks for a new verify of c1. It
+        // passes.
+        {
+            let mut forge = here.forge();
+            forge.fails = false;
+            forge.thread.push(posted(
+                DAEMON,
+                "verify result: FAIL for issue-1, PR #41, commit c1. PR comment https://c, \
+                 riff/verify failure set.",
+            ));
+            forge.thread.push(posted(LEAD, request));
+        }
+        verified(&here, 2).await;
+        here.idle(3).await;
+        let forge = here.forge();
+        assert_eq!(forge.works, [verify("c1"), verify("c1")]);
+        assert_eq!(forge.status_reads, 2);
+        assert!(forge.told.is_empty(), "{:?}", forge.told);
     }
 
     /// The reply of GitHub to the ask for #41 ([`rollout::merge_off`]):
@@ -7216,6 +7485,27 @@ esac
         }
     }
 
+    /// The riff daemon in the thread of `o/r`: it posts as the person, a
+    /// sender with no session ([`right_sender`]).
+    const DAEMON: &str = "riff://ann@heron/o/r";
+
+    /// The lead of `o/r` in its thread.
+    const LEAD: &str = "riff://ann@heron/o/r?session=l1&lead=true";
+
+    /// The message `body` from `from` in the thread of `o/r`.
+    fn posted(from: &str, body: &str) -> Message {
+        Message {
+            seq: 0,
+            from: from.parse().unwrap(),
+            to: Vec::new(),
+            body: body.into(),
+            at_ms: 0,
+            kind: Kind::Message,
+            sig: None,
+            payload: None,
+        }
+    }
+
     /// Waits for the verify of the item 1, and ends it: the `n`th end of a
     /// session in the fake forge.
     async fn verified(here: &Here, n: usize) {
@@ -7346,6 +7636,72 @@ esac
         assert!(here.running("verify-issue-1").is_none());
     }
 
+    /// 01M77K0EGH1HF0WA7WZH8BP2BP (#2019): after a FAIL, the look of the
+    /// wave can show the head as waiting still, before the event of the
+    /// status comes. The wave starts no second verify of that head, and it
+    /// reads the status of GitHub only before the first claim. Then the
+    /// lead sends a new verify request for the same head: it gets its
+    /// second verify.
+    #[tokio::test]
+    async fn a_head_whose_verify_failed_gets_no_second_verify_until_the_lead_asks() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 3, free).await;
+        {
+            let mut forge = here.forge();
+            forge.pulls.insert(1, Pr::Asked);
+            forge.fails = true;
+            // The look does not see the status of the verify yet.
+            forge.shown.insert(1, Pr::Asked);
+        }
+        here.run();
+        verified(&here, 1).await;
+        here.idle(3).await;
+        {
+            let forge = here.forge();
+            assert_eq!(forge.works, [verify("c1")], "one verify");
+            assert_eq!(forge.status_reads, 1, "one read, before the first claim");
+            assert!(forge.told.is_empty(), "{:?}", forge.told);
+        }
+        // The lead asks for a new verify of c1, and it passes.
+        {
+            let mut forge = here.forge();
+            forge.fails = false;
+            forge.shown.insert(1, Pr::Reasked);
+        }
+        verified(&here, 2).await;
+        here.idle(3).await;
+        let forge = here.forge();
+        assert_eq!(forge.works, [verify("c1"), verify("c1")]);
+        assert_eq!(forge.status_reads, 2);
+        assert!(forge.told.is_empty(), "{:?}", forge.told);
+    }
+
+    /// 01M77K0EGH1HF0WA7WZH8BP2BP (#2019): a head with the status
+    /// `riff/verify` failure gets no verify session while the look shows
+    /// it as waiting with no new verify request: for example a verify of
+    /// another host failed it, and the event of the status did not come
+    /// yet. The read before the claim finds the failure. No session
+    /// starts, the start does not count, the lead hears nothing, and the
+    /// wave reads the status one time.
+    #[tokio::test]
+    async fn a_head_with_a_verify_failure_gets_no_verify_session() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 3, free).await;
+        {
+            let mut forge = here.forge();
+            forge.pulls.insert(1, Pr::Failed);
+            forge.shown.insert(1, Pr::Asked);
+        }
+        here.run();
+        here.until(3, |h| h.forge().status_reads == 1).await;
+        here.idle(3).await;
+        let forge = here.forge();
+        assert!(forge.starts.is_empty(), "no claim: {:?}", forge.starts);
+        assert_eq!(forge.status_reads, 1);
+        assert!(forge.told.is_empty(), "{:?}", forge.told);
+        assert!(here.running("verify-issue-1").is_none());
+    }
+
     /// #1651: 3 verifies of one head that end with no result stop that
     /// head only, and the notice names it. A new head starts a new count.
     /// The notice is for the head of the pull request: the third verify
@@ -7398,6 +7754,7 @@ esac
             pull: 41,
             commit: commit.into(),
             gate_done: true,
+            again: false,
         };
         let look = |commit: &str| Look {
             free: vec!["verify-issue-1".into(), "issue-2".into()],
@@ -9323,6 +9680,7 @@ esac
             pull: 40,
             commit: "c".into(),
             gate_done,
+            again: false,
         };
         let look = Look {
             free: vec!["verify-issue-9".into(), "issue-12".into()],
@@ -9443,6 +9801,7 @@ esac
             pull: 40 + issue,
             commit: format!("c{issue}"),
             gate_done: true,
+            again: false,
         };
         let verify = |issue: u64| Work::Verify {
             issue,
@@ -9935,7 +10294,7 @@ esac
         let done = verify(record.clone()).await;
         let note = text::wave_no_result("verify-issue-12", 40, false);
         assert_eq!(done.lines, std::slice::from_ref(&note));
-        assert!(!done.passed);
+        assert_eq!(done.verdict, None);
         // A PASS whose report fails.
         let folder = tempfile::tempdir().unwrap();
         std::fs::write(
@@ -9956,7 +10315,7 @@ esac
             "{failed}"
         );
         assert!(failed.ends_with("The pull request is not open, so no verify waits."));
-        assert!(!done.reported && !done.passed, "{done:?}");
+        assert_eq!(done.verdict, None, "{done:?}");
         let thread = built.wave.thread().unwrap();
         let got: Vec<(Kind, String)> = built
             .api
@@ -10017,7 +10376,7 @@ esac
             let done = after_verify(gh, &built.api, &record, &built.wave, (40, head), ended)
                 .await
                 .unwrap();
-            assert!(!done.reported, "no PASS or FAIL: the start counts");
+            assert!(!done.reported(), "no PASS or FAIL: the start counts");
         }
         let records = crate::ends::read(&built.api, &built.lead).await.unwrap();
         let heads: Vec<&str> = records.iter().map(|r| r.tag("head")).collect();
@@ -10037,7 +10396,7 @@ esac
     }
 
     /// #1651: a verify whose FAIL is on the pull request is no failed
-    /// start: `Finish::reported` is true, and the job takes the start back.
+    /// start: `Finish::reported()` is true, and the job takes the start back.
     /// A verify whose report fails, here because the head moved, counts.
     #[tokio::test]
     async fn a_verify_counts_as_a_start_only_when_riff_did_not_report_its_result() {
@@ -10063,13 +10422,13 @@ esac
                 .unwrap()
         };
         let done = after(1, "1a2b3c4d5e").await;
-        assert!(done.reported, "{done:?}");
+        assert!(done.reported(), "{done:?}");
         assert!(
             done.lines[0].starts_with("Put FAIL for issue-12 on pull request #40"),
             "{done:?}"
         );
         let done = after(2, "ffffffffffff").await;
-        assert!(!done.reported, "{done:?}");
+        assert!(!done.reported(), "{done:?}");
         assert!(
             done.lines[0].contains("riff could not report the verify"),
             "{done:?}"

@@ -3044,10 +3044,14 @@ request with a squash when the checks `Gate` and `Hygiene` pass and
 the head commit has a `riff/verify` success. A new commit has no
 status, so it needs a new verify.
 
-A head commit gets one verify that passes. Before the riff daemon
-starts a verify, it reads the status `riff/verify` of the head commit
-on GitHub. When the status is a success, it starts no verify: a verify
-passed already, for example on another host.
+A head commit gets one verify that passes. After a FAIL, it gets a new
+verify only when a new verify request for it comes: see
+[Answer a failed verify with a new request](development.md#answer-a-failed-verify-with-a-new-request).
+Before the riff daemon starts a verify, it reads the status
+`riff/verify` of the head commit on GitHub. When the status is a
+success, it starts no verify: a verify passed already, for example on
+another host. When the status is a failure, it starts no verify unless
+a new verify request came after the FAIL.
 
 ```mermaid
 sequenceDiagram
