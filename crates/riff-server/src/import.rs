@@ -46,7 +46,9 @@
 //!   1. `riff_made`, with the riff ID of today.
 //!   2. `person_joined` for each USER, with its email.
 //!   3. `member_invited` and `admin_set`. The owner of v0.8.0 is an
-//!      admin of today (01M7767T393P46VTNNE5SY203K): one more `admin_set`.
+//!      admin of today, and each admin is a member too
+//!      (01M77VQJ5R4TQAHP14D0HARJJZ): the owner of v0.8.0 was in no list
+//!      of members, so `riff admin remove` then leaves a member.
 //!   4. `pause_set` for the riff, paused, and `setting_changed`.
 //!   5. The `posted` records: the last [`KEEP_MESSAGES`] messages of
 //!      each thread, with their old seq. A direct thread with no session
@@ -379,16 +381,14 @@ impl Old {
                 email: email.clone(),
             }));
         }
-        for email in &people.members {
+        let admins: BTreeSet<&String> = people.admins.iter().chain(&people.owner).collect();
+        let members: BTreeSet<&String> = people.members.iter().chain(admins.clone()).collect();
+        for email in members {
             changes.push(Change::MemberInvited(Email {
                 email: email.clone(),
             }));
         }
-        let owner = people
-            .owner
-            .iter()
-            .filter(|owner| !people.admins.contains(*owner));
-        for email in people.admins.iter().chain(owner) {
+        for email in admins {
             changes.push(Change::AdminSet(AdminSet {
                 email: email.clone(),
                 admin: true,
@@ -569,12 +569,19 @@ mod tests {
             state: RiffState::Paused,
         });
         assert!(changes.contains(&paused));
-        // The owner of v0.8.0 is an admin of today.
-        let owner = Change::AdminSet(AdminSet {
-            email: "mike@comotechnologies.io".into(),
+        // The owner of v0.8.0 is an admin of today, and a member, though
+        // the old object has the owner in no list of members.
+        let owner = "mike@comotechnologies.io";
+        assert!(!old().people.members.contains(owner));
+        let admin = Change::AdminSet(AdminSet {
+            email: owner.into(),
             admin: true,
         });
-        assert!(changes.contains(&owner));
+        assert!(changes.contains(&admin));
+        let member = Change::MemberInvited(Email {
+            email: owner.into(),
+        });
+        assert!(changes.contains(&member));
         // A removed person keeps its USER, and is no member.
         let joined: Vec<&str> = changes
             .iter()

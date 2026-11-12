@@ -5272,6 +5272,7 @@ mod tests {
             [
                 "riff_made",
                 "person_joined",
+                "member_invited",
                 "admin_set",
                 "pause_set",
                 "setting_changed"
@@ -5292,7 +5293,7 @@ mod tests {
         let again = Service::load(config(), store.clone()).await.unwrap();
         again.save().await.unwrap();
         assert_eq!(records(&store).await.len(), 1);
-        assert_eq!(position(&again), 5);
+        assert_eq!(position(&again), 6);
         assert_eq!(again.riff_id().as_deref(), Some("old-id"));
     }
 

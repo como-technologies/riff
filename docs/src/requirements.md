@@ -2147,6 +2147,8 @@
   `grant_owner`, `end_owner` and `name_owner` stay in the list of the
   kinds, and no new kind gets one. Supersedes 01M3XA87KQ6ESMQ4W1W1PTW766
   and 01M3XA875QZ584JBGA37853PWX in part.
+- **01M77VQJ5R4TQAHP14D0HARJJZ** The import makes the owner and each
+  admin of the old `tokens` object an admin and a member.
 
 ## Cloud
 
