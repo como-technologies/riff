@@ -377,6 +377,9 @@ pub struct Settings {
     pub build_account: String,
     /// The account that CI deploys as, or empty for no CI deploy.
     pub deploy_account: String,
+    /// The account that the CI job `Check the deploy` reads the log as,
+    /// or empty for none (01M76SSFX0QGPA4MTXV39JV5P3).
+    pub check_account: String,
     /// The GitHub repository whose CI deploys, or empty.
     pub github_repo: String,
     /// The GitHub environment of the CI job that deploys, for example
@@ -488,6 +491,7 @@ impl Settings {
             run_account: get("CLOUD_RUN_ACCOUNT"),
             build_account: get("CLOUD_BUILD_ACCOUNT"),
             deploy_account: get("CLOUD_DEPLOY_ACCOUNT"),
+            check_account: get("CLOUD_CHECK_ACCOUNT"),
             github_repo: get("CLOUD_GITHUB_REPO"),
             github_environment: get("CLOUD_GITHUB_ENVIRONMENT"),
             repository: get("CLOUD_REPOSITORY"),
@@ -531,6 +535,7 @@ impl Settings {
             run_account: format!("{name}-server"),
             build_account: format!("{name}-build"),
             deploy_account: String::new(),
+            check_account: String::new(),
             github_repo: String::new(),
             github_environment: String::new(),
             repository: "riff".into(),
@@ -571,6 +576,7 @@ impl Settings {
             ("CLOUD_RUN_ACCOUNT", self.run_account.clone()),
             ("CLOUD_BUILD_ACCOUNT", self.build_account.clone()),
             ("CLOUD_DEPLOY_ACCOUNT", self.deploy_account.clone()),
+            ("CLOUD_CHECK_ACCOUNT", self.check_account.clone()),
             ("CLOUD_GITHUB_REPO", self.github_repo.clone()),
             ("CLOUD_GITHUB_ENVIRONMENT", self.github_environment.clone()),
             ("CLOUD_REPOSITORY", self.repository.clone()),
@@ -1080,7 +1086,12 @@ pub fn create(gcloud: &Gcloud, s: &Settings, owner: Option<&str>) -> Result<()> 
     )?;
     println!("Bucket {}: versioning on, lifecycle rules set.", s.bucket);
 
-    for name in [&s.run_account, &s.build_account, &s.deploy_account] {
+    for name in [
+        &s.run_account,
+        &s.build_account,
+        &s.deploy_account,
+        &s.check_account,
+    ] {
         if name.is_empty() {
             continue;
         }
@@ -1429,6 +1440,67 @@ fn ci_deploy(gcloud: &Gcloud, s: &Settings, place: &[String]) -> Result<()> {
         "CI deploy: set, for a job in the GitHub environment {}.",
         s.github_environment
     );
+    ci_check(gcloud, s)
+}
+
+/// The only role of the check account on the project: it reads the log
+/// (01M76SSFX0QGPA4MTXV39JV5P3).
+pub const CHECK_ROLE: &str = "roles/logging.viewer";
+
+/// The sign-in of the CI job `Check the deploy` as the check account of
+/// `s` (01M76SSFX0QGPA4MTXV39JV5P3). The account has only [`CHECK_ROLE`]
+/// on the project. Only a job of a tag signs in as it ([`github_tag`]),
+/// and the provider lets in only `main` and the tags `v*`: so only a job
+/// of a tag `v*` does. No key exists.
+///
+/// ```mermaid
+/// flowchart LR
+///     job[job of the repository] --> pool{provider github:\nrepository, main or v*}
+///     pool -- no --> refused[no sign-in]
+///     pool -- yes --> kind{attribute.ref_type}
+///     kind -- tag --> account["check account:\nroles/logging.viewer"]
+///     kind -- branch --> refused
+/// ```
+fn ci_check(gcloud: &Gcloud, s: &Settings) -> Result<()> {
+    if s.check_account.is_empty() {
+        println!(
+            "CI check: none, because {}.env has no check account.",
+            s.name
+        );
+        return Ok(());
+    }
+    let project = s.project();
+    let with = |parts: &[&str]| {
+        let mut a = args(parts);
+        a.extend_from_slice(&project);
+        a
+    };
+    let account = s.account(&s.check_account);
+    gcloud.bind(&with(&[
+        "projects",
+        "add-iam-policy-binding",
+        &s.project,
+        "--member",
+        &format!("serviceAccount:{account}"),
+        "--role",
+        CHECK_ROLE,
+        "--condition",
+        "None",
+    ]))?;
+    gcloud.bind(&with(&[
+        "iam",
+        "service-accounts",
+        "add-iam-policy-binding",
+        &account,
+        "--member",
+        &github_tag(s),
+        "--role",
+        "roles/iam.workloadIdentityUser",
+    ]))?;
+    println!(
+        "CI check: set, for a job of a tag v*. {} only reads the log.",
+        s.check_account
+    );
     Ok(())
 }
 
@@ -1436,8 +1508,28 @@ fn ci_deploy(gcloud: &Gcloud, s: &Settings, place: &[String]) -> Result<()> {
 /// bind `attribute.environment` (01M49M8W30M2084QN4HX1FJFKS): the
 /// subject of a job can have the immutable form of GitHub, with the IDs
 /// of the owner and the repository, but the claim `environment` is the
-/// plain name.
-pub const GITHUB_MAPPING: &str = "google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref,attribute.environment=assertion.environment";
+/// plain name. The check account binds `attribute.ref_type`
+/// (01M76SSFX0QGPA4MTXV39JV5P3).
+pub const GITHUB_MAPPING: &str = "google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref,attribute.environment=assertion.environment,attribute.ref_type=assertion.ref_type";
+
+/// The member of the pool `github` for each job of a tag
+/// (01M76SSFX0QGPA4MTXV39JV5P3). The condition of the provider lets in
+/// only the repository of `s`, its `main` and its tags `v*`.
+///
+/// ```
+/// let s = riff::cloud::Settings::new("mine", "acme", "123", "europe-west1");
+/// assert_eq!(
+///     riff::cloud::github_tag(&s),
+///     "principalSet://iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/github/attribute.ref_type/tag"
+/// );
+/// assert!(riff::cloud::GITHUB_MAPPING.contains("attribute.ref_type=assertion.ref_type"));
+/// ```
+pub fn github_tag(s: &Settings) -> String {
+    format!(
+        "principalSet://iam.googleapis.com/projects/{}/locations/global/workloadIdentityPools/github/attribute.ref_type/tag",
+        s.project_number
+    )
+}
 
 /// The member of the pool `github` for each job in the GitHub
 /// environment of `s` (01M49M8W30M2084QN4HX1FJFKS). The condition of

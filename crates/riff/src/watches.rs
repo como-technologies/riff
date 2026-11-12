@@ -2043,7 +2043,9 @@ mod tests {
             url: "https://github.com/o/r/actions/runs/9".into(),
             state,
             at: String::new(),
+            ended: String::new(),
             failed: failed.iter().map(ToString::to_string).collect(),
+            by_hand: false,
         })
     }
 

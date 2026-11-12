@@ -116,10 +116,31 @@
 //! ```
 //!
 //! Each step goes through [`Forge`]. [`GitHub`] runs `gh` and `git`; a
-//! test gives a fake forge. The checks after a deploy read the Cloud Run
-//! log through [`CloudLog`]: [`RunLog`] runs `gcloud`, and in the container
-//! of the lead [`crate::reach::DaemonLog`] asks the riff daemon of the host
-//! to run it (#1247).
+//! test gives a fake forge. No person signs in to read the Cloud Run log
+//! after a deploy. The CI job `Check the deploy` of the run of the tag
+//! signs in as `riff-check`, which only reads the log. It runs `riff
+//! cloud check`: [`LogMeasures::read`] reads the log through [`RunLog`],
+//! and [`set_deploy_check`] sets the status [`DEPLOY_CHECK`] of the
+//! tagged commit (01M76SS6T89DPNV7S4SWY1R7F3). `riff release check`
+//! takes the four checks of the log from that status
+//! ([`Forge::deploy_check`], [`log_of`]), and runs no `gcloud`
+//! (01M76SSFTGW41RHHV445ZM5RHY).
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant D as the job Deploy
+//!     participant C as the job Check the deploy (riff-check)
+//!     participant G as Cloud Logging
+//!     participant H as GitHub
+//!     participant L as riff release check (the lead)
+//!     D->>C: the time before the deploy
+//!     Note over C: waits 5 minutes
+//!     C->>G: gcloud logging read, 4 filters
+//!     G-->>C: the lines
+//!     C->>H: the status riff/deploy-check of the tagged commit
+//!     L->>H: the status riff/deploy-check of the tag
+//!     H-->>L: the 4 checks of the log
+//! ```
 //!
 //! A command of the cycle calls `gh` through [`Gh::retrying`]: a 502, 503
 //! or 504 of GitHub runs the call again, up to 3 times
@@ -476,8 +497,33 @@ pub struct Deploy {
     pub state: DeployState,
     /// The start of the job `Deploy`, as RFC 3339, or empty.
     pub at: String,
+    /// The end of the job `Deploy`, as RFC 3339, or empty.
+    pub ended: String,
     /// The names of the jobs that failed.
     pub failed: Vec<String>,
+    /// True for a run by hand on `main` with the input `tag`, as of
+    /// `riff release rollback`: it has no job `Check the deploy`.
+    pub by_hand: bool,
+}
+
+/// A commit status of GitHub, as [`log_of`] reads it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CommitStatus {
+    /// `success`, `failure`, `error` or `pending`.
+    pub state: String,
+    /// Its description.
+    pub description: String,
+    /// The time of its last change, as RFC 3339.
+    pub at: String,
+}
+
+/// The status [`DEPLOY_CHECK`] of the commit of a release tag.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct DeployCheck {
+    /// The commit of the tag.
+    pub commit: String,
+    /// The status, or `None` when the commit has none.
+    pub status: Option<CommitStatus>,
 }
 
 /// A release issue: `Release vX.Y.Z` with the label [`LABEL`].
@@ -641,6 +687,9 @@ pub trait Forge {
     fn test_state(&self, commit: &str) -> Result<Option<TestState>>;
     /// The newest CI run that deploys `tag`, or `None`.
     fn deploy(&self, tag: &str) -> Result<Option<Deploy>>;
+    /// The commit of the release tag `tag` and its status [`DEPLOY_CHECK`]
+    /// (01M76SSFTGW41RHHV445ZM5RHY).
+    fn deploy_check(&self, tag: &str) -> Result<DeployCheck>;
     /// The release issue `title`, open or closed, or `None`.
     fn issue_of(&self, title: &str) -> Result<Option<ReleaseIssue>>;
     /// Writes the comment `body` on the issue `issue`.
@@ -1702,8 +1751,8 @@ pub struct LogLine {
     pub revision: String,
 }
 
-/// The log of the Cloud Run service of the shared riff. [`RunLog`] reads
-/// it with `gcloud logging read`. A test gives a fake.
+/// The log of the Cloud Run service of an instance of riff. [`RunLog`]
+/// reads it with `gcloud logging read`. A test gives a fake.
 pub trait CloudLog {
     /// Each line of the log that `filter` matches, the oldest first.
     fn lines(&self, filter: &str) -> Result<Vec<LogLine>>;
@@ -1813,38 +1862,315 @@ pub fn old_took_lease(serves: &[LogLine]) -> bool {
     serves[first..].iter().any(|l| l.revision != newest)
 }
 
-/// The filters of the checks of the log after the deploy at `at`.
-fn log_filter(at: &str, part: &str) -> String {
-    format!("timestamp>=\"{at}\" AND {part}")
+/// The commit status of the checks of the Cloud Run log after a deploy
+/// (01M76SS6T89DPNV7S4SWY1R7F3). The CI job `Check the deploy` sets it on
+/// the tagged commit with `riff cloud check`: `success` when each check
+/// of the log passed, `failure` when one failed, and `error` when it
+/// could not read the log. Its description holds the [`LogMeasures`].
+pub const DEPLOY_CHECK: &str = "riff/deploy-check";
+
+/// The minutes that the job `Check the deploy` waits after the job
+/// `Deploy` before it reads the log: Cloud Run moves the calls to the
+/// new revision in this time (01M76SS6T89DPNV7S4SWY1R7F3).
+pub const DEPLOY_CHECK_WAIT: i64 = 5;
+
+/// The minutes from the end of the job `Deploy` to the end of the job
+/// `Check the deploy`: its wait, and one minute for its other steps
+/// (01M76SSFTGW41RHHV445ZM5RHY).
+pub const DEPLOY_CHECK_END: i64 = DEPLOY_CHECK_WAIT + 1;
+
+/// The four checks of the Cloud Run log, in the order of [`checks`].
+pub const LOG_CHECKS: [&str; 4] = [
+    "no run of 503 longer than 20 s",
+    "no 500 of riff-server",
+    "no 401 or 429 of the token store",
+    "no old instance takes the lease",
+];
+
+/// What the four checks of the Cloud Run log after a deploy found
+/// (01M76SS6T89DPNV7S4SWY1R7F3). The description of the status
+/// [`DEPLOY_CHECK`] holds it, so `riff release check` makes the same
+/// verdicts from it.
+///
+/// ```
+/// use riff::cycle::{LogMeasures, Verdict};
+///
+/// let found = LogMeasures { longest_503: 25, ..LogMeasures::default() };
+/// let text = found.description();
+/// assert_eq!(text, "503 run: 25 s, 500: 0, token store: 0, old lease: no");
+/// assert_eq!(LogMeasures::parse(&text), Some(found));
+/// assert_eq!(found.verdicts()[0].1, Verdict::Failed("a run of 503 took 25 s".into()));
+/// assert!(!found.passed());
+/// assert!(LogMeasures::default().passed());
+/// assert_eq!(LogMeasures::parse("503 run: x s"), None);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct LogMeasures {
+    /// The seconds of the longest run of 503 ([`longest_run`]).
+    pub longest_503: i64,
+    /// The 500 replies that count ([`counted_500s`]).
+    pub replies_500: usize,
+    /// The lines of a 401 or a 429 of the token store.
+    pub token_store: usize,
+    /// True when an older revision served after the new one
+    /// ([`old_took_lease`]).
+    pub old_lease: bool,
 }
 
-/// The step of a check that could not read the Cloud Run log: it names the
-/// cause and its fix. Either `gcloud` is not on PATH (install it), or its
-/// sign-in ended (`gcloud auth login`).
-fn unreadable_log(e: &anyhow::Error, version: Semver) -> String {
-    let again = format!("then run: riff release check {}", tag(version));
-    if e.is::<NoGcloud>() {
+impl LogMeasures {
+    /// Reads the four checks from `log`, from the time `since`, as RFC
+    /// 3339. It fails on the first read that fails.
+    pub fn read(log: &dyn CloudLog, since: &str) -> Result<LogMeasures> {
+        let read = |part: &str| log.lines(&format!("timestamp>=\"{since}\" AND {part}"));
+        let serves = read("jsonPayload.message:\"riff-server serves\"")?;
+        let newest = serves.last().map(|l| l.revision.as_str());
+        let replies_500 =
+            read("httpRequest.status=500 AND NOT textPayload:\"no available instance\"")?;
+        let token_store = read(
+            "jsonPayload.message:\"token store\" AND (jsonPayload.message:\"401\" OR \
+             jsonPayload.message:\"429\")",
+        )?;
+        Ok(LogMeasures {
+            longest_503: longest_run(&read("httpRequest.status=503")?),
+            replies_500: counted_500s(&replies_500, newest),
+            token_store: token_store.len(),
+            old_lease: old_took_lease(&serves),
+        })
+    }
+
+    /// The text of the description of the status [`DEPLOY_CHECK`].
+    pub fn description(&self) -> String {
         format!(
-            "riff cannot read the Cloud Run log: gcloud is not on PATH. A person on the host \
-             installs gcloud or adds it to PATH, {again}"
+            "503 run: {} s, 500: {}, token store: {}, old lease: {}",
+            self.longest_503,
+            self.replies_500,
+            self.token_store,
+            if self.old_lease { "yes" } else { "no" }
         )
-    } else {
-        format!(
-            "riff cannot read the Cloud Run log: {e:#}. The sign-in of gcloud may have ended \
-             (check: gcloud auth list). A person on the host runs: gcloud auth login, {again}"
-        )
+    }
+
+    /// The measures of the description `text` of the status
+    /// [`DEPLOY_CHECK`], or `None` for a text of another form.
+    pub fn parse(text: &str) -> Option<LogMeasures> {
+        let rest = text.trim().strip_prefix("503 run: ")?;
+        let (longest, rest) = rest.split_once(" s, 500: ")?;
+        let (replies, rest) = rest.split_once(", token store: ")?;
+        let (store, lease) = rest.split_once(", old lease: ")?;
+        Some(LogMeasures {
+            longest_503: longest.parse().ok()?,
+            replies_500: replies.parse().ok()?,
+            token_store: store.parse().ok()?,
+            old_lease: match lease {
+                "yes" => true,
+                "no" => false,
+                _ => return None,
+            },
+        })
+    }
+
+    /// Each of the four checks of the log ([`LOG_CHECKS`]) and its
+    /// verdict.
+    pub fn verdicts(&self) -> Vec<(&'static str, Verdict)> {
+        let [runs, replies, store, lease] = LOG_CHECKS;
+        let count = |n: usize, what: &str| match n {
+            0 => Verdict::Passed,
+            n => Verdict::Failed(format!("{n} {what}")),
+        };
+        vec![
+            (
+                runs,
+                match self.longest_503 {
+                    s if s > LONGEST_503 => Verdict::Failed(format!("a run of 503 took {s} s")),
+                    _ => Verdict::Passed,
+                },
+            ),
+            (replies, count(self.replies_500, "replies 500")),
+            (store, count(self.token_store, "lines")),
+            (
+                lease,
+                if self.old_lease {
+                    Verdict::Failed("an older revision served after the new one".to_owned())
+                } else {
+                    Verdict::Passed
+                },
+            ),
+        ]
+    }
+
+    /// True when each of the four checks passed.
+    pub fn passed(&self) -> bool {
+        self.verdicts().iter().all(|(_, v)| *v == Verdict::Passed)
     }
 }
 
-/// The checks after the deploy of `version` at `at`
-/// (01M58KMM5ZPAQ289S2YJVQ5WW6, 01M58KMMP9FKRFYX58ESVRSZQX): each check by
-/// its name, and its verdict. A log that riff cannot read gives
-/// [`Verdict::Unknown`]: it says which check it could not do.
+/// The four checks of the Cloud Run log of `riff cloud check`, from the
+/// time `since` (01M76SSFZG959CQ1JHQTVTZCRA). A log that riff cannot
+/// read gives the reason.
+pub fn cloud_check(log: &dyn CloudLog, since: &str) -> Result<LogMeasures, String> {
+    LogMeasures::read(log, since).map_err(|e| {
+        if e.is::<NoGcloud>() {
+            text::cloud_log_unread("gcloud is not on PATH")
+        } else {
+            text::cloud_log_unread(&format!("{e:#}"))
+        }
+    })
+}
+
+/// The time from which `riff cloud check` reads the log: `given`, an RFC
+/// 3339 time, or 1 hour before `now` (01M76SSFZG959CQ1JHQTVTZCRA).
+///
+/// ```
+/// let now = chrono::DateTime::parse_from_rfc3339("2026-10-18T20:30:00Z")?.to_utc();
+/// assert_eq!(riff::cycle::since(None, now)?, "2026-10-18T19:30:00Z");
+/// assert_eq!(riff::cycle::since(Some("2026-10-18T20:00:00Z"), now)?, "2026-10-18T20:00:00Z");
+/// assert!(riff::cycle::since(Some("yesterday"), now).is_err());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn since(given: Option<&str>, now: DateTime<Utc>) -> Result<String> {
+    let at = match given {
+        Some(text) => DateTime::parse_from_rfc3339(text)
+            .map_err(|_| anyhow!(text::cloud_check_bad_since(text)))?
+            .to_utc(),
+        None => now - chrono::Duration::hours(1),
+    };
+    Ok(at.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+}
+
+/// The state and the description of the status [`DEPLOY_CHECK`] for what
+/// the checks of the log found: the description of an error is cut to
+/// the limit of GitHub.
+///
+/// ```
+/// use riff::cycle::{LogMeasures, deploy_check_status};
+///
+/// let (state, text) = deploy_check_status(&Ok(LogMeasures::default()));
+/// assert_eq!((state, text.as_str()), ("success", "503 run: 0 s, 500: 0, token store: 0, old lease: no"));
+/// let failed = LogMeasures { replies_500: 2, ..LogMeasures::default() };
+/// assert_eq!(deploy_check_status(&Ok(failed)).0, "failure");
+/// let (state, text) = deploy_check_status(&Err("x".repeat(200)));
+/// assert_eq!((state, text.len()), ("error", 130));
+/// ```
+pub fn deploy_check_status(found: &Result<LogMeasures, String>) -> (&'static str, String) {
+    match found {
+        Ok(m) if m.passed() => ("success", m.description()),
+        Ok(m) => ("failure", m.description()),
+        Err(why) => ("error", why.chars().take(130).collect()),
+    }
+}
+
+/// Sets the status [`DEPLOY_CHECK`] of `commit` from what the checks of
+/// the log found (01M76SSFZG959CQ1JHQTVTZCRA). It gives the state and the
+/// description.
+pub fn set_deploy_check(
+    gh: &Gh,
+    commit: &str,
+    found: &Result<LogMeasures, String>,
+) -> Result<(&'static str, String)> {
+    let (state, description) = deploy_check_status(found);
+    let body = serde_json::json!({
+        "state": state,
+        "context": DEPLOY_CHECK,
+        "description": description,
+    });
+    gh.send(
+        "POST",
+        &format!("repos/{{owner}}/{{repo}}/statuses/{commit}"),
+        &body,
+    )?;
+    Ok((state, description))
+}
+
+/// The four checks of the log for `riff release check` of `tag`, from
+/// the status [`DEPLOY_CHECK`] of `check` (01M76SSFTGW41RHHV445ZM5RHY). A
+/// status that is missing, or older than the start of the job `Deploy`
+/// of `deploy`, gives the step: when the job `Check the deploy` ends, or
+/// for a run by hand, the `riff cloud check` of a person. Each other
+/// state than `success` and `failure` gives its description.
+///
+/// ```
+/// use riff::cycle::{CommitStatus, Deploy, DeployCheck, DeployState, LogMeasures, log_of};
+///
+/// let deploy = Deploy {
+///     run: 9,
+///     url: "https://github.com/o/r/actions/runs/9".into(),
+///     state: DeployState::Passed,
+///     at: "2026-10-18T20:00:00Z".into(),
+///     ended: "2026-10-18T20:03:00Z".into(),
+///     failed: vec![],
+///     by_hand: false,
+/// };
+/// let status = |state: &str, at: &str| DeployCheck {
+///     commit: "c1".into(),
+///     status: Some(CommitStatus {
+///         state: state.into(),
+///         description: "503 run: 0 s, 500: 1, token store: 0, old lease: no".into(),
+///         at: at.into(),
+///     }),
+/// };
+/// let found = log_of("v3.3.0", &deploy, &status("failure", "2026-10-18T20:09:10Z"));
+/// assert_eq!(found, Ok(LogMeasures { replies_500: 1, ..LogMeasures::default() }));
+/// // A status of an older deploy counts as none.
+/// let old = log_of("v3.3.0", &deploy, &status("success", "2026-10-17T10:00:00Z"));
+/// assert!(old.unwrap_err().contains("ends at about 20:09 UTC"));
+/// let by_hand = Deploy { by_hand: true, ..deploy.clone() };
+/// let none = log_of("v3.3.0", &by_hand, &DeployCheck { commit: "c1".into(), status: None });
+/// assert!(none.unwrap_err().contains("riff cloud check shared --since 2026-10-18T20:00:00Z --commit c1"));
+/// assert!(log_of("v3.3.0", &deploy, &status("error", "2026-10-18T20:09:10Z")).is_err());
+/// ```
+pub fn log_of(tag: &str, deploy: &Deploy, check: &DeployCheck) -> Result<LogMeasures, String> {
+    let status = check.status.as_ref().filter(|s| !older(&s.at, &deploy.at));
+    let Some(status) = status else {
+        return Err(if deploy.by_hand {
+            text::deploy_check_by_hand(tag, &deploy.at, &check.commit)
+        } else {
+            text::deploy_check_missing(tag, &deploy.url, &check_end(&deploy.ended))
+        });
+    };
+    match status.state.as_str() {
+        "success" | "failure" => LogMeasures::parse(&status.description)
+            .ok_or_else(|| text::deploy_check_unread(tag, &status.description)),
+        _ => Err(text::deploy_check_error(tag, &status.description)),
+    }
+}
+
+/// True when the RFC 3339 time `at` is before `start`. A time that riff
+/// cannot read is not before.
+fn older(at: &str, start: &str) -> bool {
+    match (
+        DateTime::parse_from_rfc3339(at),
+        DateTime::parse_from_rfc3339(start),
+    ) {
+        (Ok(at), Ok(start)) => at < start,
+        _ => false,
+    }
+}
+
+/// When the job `Check the deploy` ends, after the job `Deploy` that
+/// ended at `ended` ([`DEPLOY_CHECK_END`]): `HH:MM UTC`, or the minutes
+/// after the end of the job `Deploy` when riff cannot read the time.
+///
+/// ```
+/// assert_eq!(riff::cycle::check_end("2026-10-18T20:03:00Z"), "20:09 UTC");
+/// assert_eq!(riff::cycle::check_end(""), "6 minutes after the end of the job Deploy");
+/// ```
+pub fn check_end(ended: &str) -> String {
+    match DateTime::parse_from_rfc3339(ended) {
+        Ok(at) => (at.to_utc() + chrono::Duration::minutes(DEPLOY_CHECK_END))
+            .format("%H:%M UTC")
+            .to_string(),
+        Err(_) => format!("{DEPLOY_CHECK_END} minutes after the end of the job Deploy"),
+    }
+}
+
+/// The checks after the deploy of `version` (01M58KMM5ZPAQ289S2YJVQ5WW6,
+/// 01M58KMMP9FKRFYX58ESVRSZQX): each check by its name, and its verdict.
+/// The four checks of the log come from `log`, the result of [`log_of`]:
+/// its reason makes each of them [`Verdict::Unknown`]
+/// (01M76SSFTGW41RHHV445ZM5RHY).
 pub fn checks(
     version: Semver,
-    at: &str,
     served: &Served,
-    log: &dyn CloudLog,
+    log: &Result<LogMeasures, String>,
 ) -> Vec<(&'static str, Verdict)> {
     let want = version.to_string();
     let mut out = Vec::new();
@@ -1864,55 +2190,7 @@ pub fn checks(
             Err(e) => Verdict::Unknown(format!("riff cannot ask the shared riff: {e}")),
         },
     ));
-    let read = |part: &str| log.lines(&log_filter(at, part));
-    let serves = read("jsonPayload.message:\"riff-server serves\"");
-    let newest = serves
-        .as_ref()
-        .ok()
-        .and_then(|lines| lines.last())
-        .map(|l| l.revision.clone());
-    let unknown = |e: anyhow::Error| Verdict::Unknown(unreadable_log(&e, version));
-    out.push((
-        "no run of 503 longer than 20 s",
-        match read("httpRequest.status=503") {
-            Ok(lines) => match longest_run(&lines) {
-                s if s > LONGEST_503 => Verdict::Failed(format!("a run of 503 took {s} s")),
-                _ => Verdict::Passed,
-            },
-            Err(e) => unknown(e),
-        },
-    ));
-    out.push((
-        "no 500 of riff-server",
-        match read("httpRequest.status=500 AND NOT textPayload:\"no available instance\"") {
-            Ok(lines) => match counted_500s(&lines, newest.as_deref()) {
-                0 => Verdict::Passed,
-                n => Verdict::Failed(format!("{n} replies 500")),
-            },
-            Err(e) => unknown(e),
-        },
-    ));
-    out.push((
-        "no 401 or 429 of the token store",
-        match read(
-            "jsonPayload.message:\"token store\" AND (jsonPayload.message:\"401\" OR \
-             jsonPayload.message:\"429\")",
-        ) {
-            Ok(lines) if lines.is_empty() => Verdict::Passed,
-            Ok(lines) => Verdict::Failed(format!("{} lines", lines.len())),
-            Err(e) => unknown(e),
-        },
-    ));
-    out.push((
-        "no old instance takes the lease",
-        match serves {
-            Ok(lines) if old_took_lease(&lines) => {
-                Verdict::Failed("an older revision served after the new one".to_owned())
-            }
-            Ok(_) => Verdict::Passed,
-            Err(e) => unknown(e),
-        },
-    ));
+    out.extend(log_verdicts(log));
     out.push((
         "each host takes the build",
         match &served.hosts {
@@ -1990,8 +2268,7 @@ pub fn log_read_args(service: &str, project: &str, filter: &str) -> Vec<String> 
 }
 
 /// The error of a [`CloudLog`] when `gcloud` does not run on this
-/// machine, for example in the container of the lead
-/// (01M5GVPND32X3R9MYXYB5SV83W).
+/// machine: [`cloud_check`] says that it is not on PATH.
 #[derive(Debug)]
 pub struct NoGcloud;
 
@@ -2114,7 +2391,19 @@ pub fn check_text(tag: &str, lines: &[(&'static str, Verdict)]) -> String {
         Step::CheckFailed => "failed",
         _ => "unknown",
     };
-    let mut out = format!("{}\n\n", check_mark(tag, result));
+    format!("{}\n\n{}", check_mark(tag, result), verdict_lines(lines))
+}
+
+/// One line `- NAME: VERDICT` for each check of `lines`.
+///
+/// ```
+/// use riff::cycle::{Verdict, verdict_lines};
+///
+/// let lines = [("a", Verdict::Failed("2 lines".into())), ("b", Verdict::Passed)];
+/// assert_eq!(verdict_lines(&lines), "- a: failed: 2 lines\n- b: passed\n");
+/// ```
+pub fn verdict_lines(lines: &[(&'static str, Verdict)]) -> String {
+    let mut out = String::new();
     for (name, verdict) in lines {
         let said = match verdict {
             Verdict::Passed => "passed".to_owned(),
@@ -2126,12 +2415,40 @@ pub fn check_text(tag: &str, lines: &[(&'static str, Verdict)]) -> String {
     out
 }
 
+/// The text of `riff cloud check` for what the checks of the log found
+/// (01M76SSFZG959CQ1JHQTVTZCRA): each check and its verdict.
+///
+/// ```
+/// use riff::cycle::{LogMeasures, cloud_check_text};
+///
+/// let text = cloud_check_text(&Ok(LogMeasures { token_store: 3, ..LogMeasures::default() }));
+/// assert!(text.contains("- no 401 or 429 of the token store: failed: 3 lines\n"), "{text}");
+/// let text = cloud_check_text(&Err("no log".into()));
+/// assert!(text.starts_with("- no run of 503 longer than 20 s: riff could not check it: no log\n"), "{text}");
+/// ```
+pub fn cloud_check_text(found: &Result<LogMeasures, String>) -> String {
+    verdict_lines(&log_verdicts(found))
+}
+
+/// The four checks of the log and their verdicts: the reason of an error
+/// makes each of them [`Verdict::Unknown`].
+fn log_verdicts(found: &Result<LogMeasures, String>) -> Vec<(&'static str, Verdict)> {
+    match found {
+        Ok(m) => m.verdicts(),
+        Err(why) => LOG_CHECKS
+            .map(|name| (name, Verdict::Unknown(why.clone())))
+            .to_vec(),
+    }
+}
+
 /// The checks after the deploy of `tag` (01M58KMM5ZPAQ289S2YJVQ5WW6). It
 /// refuses while the deploy did not end. After a failed job `Deploy`,
 /// it files an issue with the failed jobs and the run in the current
-/// wave. Else it runs [`checks`], and writes the result on the release
-/// issue. When each check passed, it closes the release issue. The
-/// caller resumes the riff after a failed deploy, and after a pass.
+/// wave. Else it runs [`checks`], with the four checks of the log from
+/// the status [`DEPLOY_CHECK`] of the tag ([`log_of`]), and writes the
+/// result on the release issue. When each check passed, it closes the
+/// release issue. The caller resumes the riff after a failed deploy, and
+/// after a pass. It runs no `gcloud` (01M76SSFTGW41RHHV445ZM5RHY).
 ///
 /// It gives the text of the result ([`check_text`]) to `show` before it
 /// writes the comment (01M6H12QRZFBDTT5D5VQ4FB4C1). So a fault of the
@@ -2141,7 +2458,6 @@ pub fn check(
     forge: &dyn Forge,
     tag_text: &str,
     served: &Served,
-    log: &dyn CloudLog,
     show: &mut dyn FnMut(&str),
 ) -> Result<Checked> {
     let version = tag_version(tag_text)?;
@@ -2182,7 +2498,8 @@ pub fn check(
             })
         }
         DeployState::Passed => {
-            let lines = checks(version, &deploy.at, served, log);
+            let log = log_of(&tag, &deploy, &forge.deploy_check(&tag)?);
+            let lines = checks(version, served, &log);
             let passed = lines.iter().all(|(_, v)| *v == Verdict::Passed);
             let result = check_text(&tag, &lines);
             show(&result);
@@ -2706,10 +3023,16 @@ struct GhOpenIssue {
 struct GhStatus {
     context: String,
     state: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    updated_at: String,
 }
 
 #[derive(Deserialize)]
 struct GhStatuses {
+    #[serde(default)]
+    sha: String,
     #[serde(default)]
     statuses: Vec<GhStatus>,
 }
@@ -2759,6 +3082,8 @@ struct GhJob {
     conclusion: String,
     #[serde(default)]
     started_at: String,
+    #[serde(default)]
+    completed_at: String,
 }
 
 #[derive(Deserialize)]
@@ -3224,8 +3549,30 @@ impl Forge for GitHub {
             url: text::forge(&run.url),
             state,
             at: job.map(|j| text::forge(&j.started_at)).unwrap_or_default(),
+            ended: job
+                .map(|j| text::forge(&j.completed_at))
+                .unwrap_or_default(),
             failed,
+            by_hand: tag_version(&run.head_branch).is_err(),
         }))
+    }
+
+    fn deploy_check(&self, tag: &str) -> Result<DeployCheck> {
+        let path = format!("repos/{{owner}}/{{repo}}/commits/{tag}/status");
+        let found: GhStatuses = self.gh.json(&["api", &path])?;
+        let status = found
+            .statuses
+            .into_iter()
+            .find(|s| s.context == DEPLOY_CHECK)
+            .map(|s| CommitStatus {
+                state: text::forge(&s.state),
+                description: text::forge(&s.description.unwrap_or_default()),
+                at: text::forge(&s.updated_at),
+            });
+        Ok(DeployCheck {
+            commit: text::forge(&found.sha),
+            status,
+        })
     }
 
     fn issue_of(&self, title: &str) -> Result<Option<ReleaseIssue>> {
@@ -3458,6 +3805,8 @@ pub(crate) mod tests {
         pub(crate) comment_fails: bool,
         /// True when the pull request of the next version fails.
         pub(crate) pr_fails: bool,
+        /// The status riff/deploy-check of the tag.
+        pub(crate) deploy_check: DeployCheck,
         /// The open and the dismissed alerts of the repository.
         pub(crate) alerts: Vec<Alert>,
         /// The error of the read of the alerts, when it fails.
@@ -3593,6 +3942,9 @@ pub(crate) mod tests {
         fn deploy(&self, _tag: &str) -> Result<Option<Deploy>> {
             Ok(self.deploy.clone())
         }
+        fn deploy_check(&self, _tag: &str) -> Result<DeployCheck> {
+            Ok(self.deploy_check.clone())
+        }
         fn issue_of(&self, title: &str) -> Result<Option<ReleaseIssue>> {
             if self
                 .checked
@@ -3676,11 +4028,13 @@ pub(crate) mod tests {
             url: "https://github.com/o/r/actions/runs/9".into(),
             state,
             at: "2026-10-18T20:00:00Z".into(),
+            ended: "2026-10-18T20:03:00Z".into(),
             failed: if state == DeployState::Failed {
                 vec!["Deploy".into()]
             } else {
                 vec![]
             },
+            by_hand: false,
         }
     }
 
@@ -4684,9 +5038,23 @@ pub(crate) mod tests {
         }
     }
 
-    #[test]
-    fn check_passes_writes_the_result_and_closes_the_release_issue() {
-        let forge = Fake {
+    /// The status riff/deploy-check of the commit c1 of the tag: `state`
+    /// with the measures `found`, set after the deploy of [`deploy`].
+    fn deploy_status(state: &str, found: LogMeasures) -> DeployCheck {
+        DeployCheck {
+            commit: "c1".into(),
+            status: Some(CommitStatus {
+                state: state.into(),
+                description: found.description(),
+                at: "2026-10-18T20:09:10Z".into(),
+            }),
+        }
+    }
+
+    /// The forge after a passed job Deploy of v3.3.0, with the open
+    /// release issue #7 and the status `check` of the tag.
+    fn deployed(check: DeployCheck) -> Fake {
+        Fake {
             tags: vec!["v3.3.0".into()],
             deploy: Some(deploy(DeployState::Passed)),
             issue: Some(ReleaseIssue {
@@ -4694,13 +5062,15 @@ pub(crate) mod tests {
                 open: true,
                 comments: vec![],
             }),
+            deploy_check: check,
             ..Fake::ready("3.3.0")
-        };
-        let log = Log(Ok(vec![(
-            "503",
-            vec![line(0, "new"), line(3, "new"), line(10, "new")],
-        )]));
-        let done = check(&forge, "v3.3.0", &served("3.3.0"), &log, &mut |_| {}).unwrap();
+        }
+    }
+
+    #[test]
+    fn check_passes_writes_the_result_and_closes_the_release_issue() {
+        let forge = deployed(deploy_status("success", LogMeasures::default()));
+        let done = check(&forge, "v3.3.0", &served("3.3.0"), &mut |_| {}).unwrap();
         let Checked::Ran { passed, issue, .. } = done else {
             panic!("{done:?}")
         };
@@ -4720,23 +5090,12 @@ pub(crate) mod tests {
     #[test]
     fn check_shows_the_result_before_it_writes_the_comment() {
         let ready = |comment_fails| Fake {
-            tags: vec!["v3.3.0".into()],
-            deploy: Some(deploy(DeployState::Passed)),
-            issue: Some(ReleaseIssue {
-                number: 7,
-                open: true,
-                comments: vec![],
-            }),
             comment_fails,
-            ..Fake::ready("3.3.0")
+            ..deployed(deploy_status("success", LogMeasures::default()))
         };
-        let log = Log(Ok(vec![(
-            "503",
-            vec![line(0, "new"), line(3, "new"), line(10, "new")],
-        )]));
         let forge = ready(false);
         let mut shown = Vec::new();
-        check(&forge, "v3.3.0", &served("3.3.0"), &log, &mut |text| {
+        check(&forge, "v3.3.0", &served("3.3.0"), &mut |text| {
             forge.write("show".into());
             shown.push(text.to_owned());
         })
@@ -4749,7 +5108,7 @@ pub(crate) mod tests {
 
         let forge = ready(true);
         let mut shown = Vec::new();
-        let error = check(&forge, "v3.3.0", &served("3.3.0"), &log, &mut |text| {
+        let error = check(&forge, "v3.3.0", &served("3.3.0"), &mut |text| {
             shown.push(text.to_owned())
         })
         .unwrap_err();
@@ -4766,46 +5125,48 @@ pub(crate) mod tests {
         assert!(forge.log().is_empty(), "{:?}", forge.log());
     }
 
+    /// 01M76SSFTGW41RHHV445ZM5RHY: the four checks of the log come from
+    /// the status riff/deploy-check, with the same verdicts as the job
+    /// Check the deploy.
     #[test]
     fn check_fails_on_each_bad_fact_and_keeps_the_issue_open() {
-        let ready = || Fake {
-            tags: vec!["v3.3.0".into()],
-            deploy: Some(deploy(DeployState::Passed)),
-            issue: Some(ReleaseIssue {
-                number: 7,
-                open: true,
-                comments: vec![],
-            }),
-            ..Fake::ready("3.3.0")
-        };
-        let run_503: Vec<LogLine> = (0..6).map(|i| line(i * 5, "new")).collect();
-        let cases: Vec<(Served, Log, &str)> = vec![
+        let none = LogMeasures::default();
+        let cases: Vec<(Served, LogMeasures, &str)> = vec![
             (
                 served("3.2.0"),
-                Log(Ok(vec![])),
+                none,
                 "riff server shows the build: failed: riff server shows 3.2.0, not 3.3.0",
             ),
             (
                 served("3.3.0"),
-                Log(Ok(vec![("503", run_503)])),
+                LogMeasures {
+                    longest_503: 25,
+                    ..none
+                },
                 "no run of 503 longer than 20 s: failed: a run of 503 took 25 s",
             ),
             (
                 served("3.3.0"),
-                Log(Ok(vec![("status=500", vec![line(0, "new")])])),
+                LogMeasures {
+                    replies_500: 1,
+                    ..none
+                },
                 "no 500 of riff-server: failed: 1 replies 500",
             ),
             (
                 served("3.3.0"),
-                Log(Ok(vec![("token store", vec![line(0, "new")])])),
+                LogMeasures {
+                    token_store: 1,
+                    ..none
+                },
                 "no 401 or 429 of the token store: failed: 1 lines",
             ),
             (
                 served("3.3.0"),
-                Log(Ok(vec![(
-                    "riff-server serves",
-                    vec![line(0, "new"), line(5, "old"), line(9, "new")],
-                )])),
+                LogMeasures {
+                    old_lease: true,
+                    ..none
+                },
                 "no old instance takes the lease: failed",
             ),
             (
@@ -4816,7 +5177,7 @@ pub(crate) mod tests {
                     )]),
                     ..served("3.3.0")
                 },
-                Log(Ok(vec![])),
+                none,
                 "each host takes the build: failed: bob@pangolin has 3.2.0 929605821e54",
             ),
             // 01M6YC3T3B8JKT5BSQJTYMXBKY: a riff-server that cannot read the secret of the
@@ -4828,15 +5189,16 @@ pub(crate) mod tests {
                     )),
                     ..served("3.3.0")
                 },
-                Log(Ok(vec![])),
+                none,
                 "riff-server reads the keys of the GitHub Apps: failed: riff-server cannot read the \
                  secret of the keys of the GitHub Apps: projects/como-riff/secrets/riff-github-apps: \
                  403 Forbidden. The riff is paused. An admin runs git pull, riff cloud create shared",
             ),
         ];
-        for (served, log, want) in cases {
-            let forge = ready();
-            let done = check(&forge, "v3.3.0", &served, &log, &mut |_| {}).unwrap();
+        for (served, found, want) in cases {
+            let state = if found.passed() { "success" } else { "failure" };
+            let forge = deployed(deploy_status(state, found));
+            let done = check(&forge, "v3.3.0", &served, &mut |_| {}).unwrap();
             assert!(matches!(done, Checked::Ran { passed: false, .. }), "{want}");
             let log = forge.log();
             assert!(
@@ -4848,53 +5210,91 @@ pub(crate) mod tests {
         }
     }
 
-    /// 01M5MQHDMBYG187T0Q622XWBMN: a 500 of an instance of the old
-    /// revision that stops in the switch does not fail the check. A 500
-    /// of the newest revision does.
+    /// 01M76SS6T89DPNV7S4SWY1R7F3: the read of the job Check the deploy
+    /// measures each check of the log from the time of the deploy.
     #[test]
-    fn check_counts_only_the_500s_of_the_newest_revision() {
-        let forge = || Fake {
-            tags: vec!["v3.3.0".into()],
-            deploy: Some(deploy(DeployState::Passed)),
-            issue: Some(ReleaseIssue {
-                number: 7,
-                open: true,
-                comments: vec![],
-            }),
-            ..Fake::ready("3.3.0")
-        };
+    fn the_read_measures_each_check_of_the_log() {
+        let run_503: Vec<LogLine> = (0..6).map(|i| line(i * 5, "new")).collect();
+        let log = Log(Ok(vec![
+            ("503", run_503),
+            ("token store", vec![line(0, "new")]),
+            (
+                "riff-server serves",
+                vec![line(0, "new"), line(5, "old"), line(9, "new")],
+            ),
+        ]));
+        let found = LogMeasures::read(&log, "2026-10-18T20:00:00Z").unwrap();
+        assert_eq!(
+            found,
+            LogMeasures {
+                longest_503: 25,
+                replies_500: 0,
+                token_store: 1,
+                old_lease: true,
+            }
+        );
+        assert_eq!(
+            deploy_check_status(&Ok(found)),
+            (
+                "failure",
+                "503 run: 25 s, 500: 0, token store: 1, old lease: yes".to_owned()
+            )
+        );
+        assert_eq!(
+            LogMeasures::read(&Log(Ok(vec![])), "t").unwrap(),
+            LogMeasures::default()
+        );
+    }
+
+    /// 01M5MQHDMBYG187T0Q622XWBMN: a 500 of an instance of the old
+    /// revision that stops in the switch does not count. A 500 of the
+    /// newest revision does.
+    #[test]
+    fn the_read_counts_only_the_500s_of_the_newest_revision() {
         let serves = vec![line(0, "old"), line(5, "new")];
-        for (on, passed) in [("old", true), ("new", false)] {
+        for (on, count) in [("old", 0), ("new", 1)] {
             let log = Log(Ok(vec![
                 ("riff-server serves", serves.clone()),
                 ("status=500", vec![line(40, on)]),
             ]));
-            let forge = forge();
-            let done = check(&forge, "v3.3.0", &served("3.3.0"), &log, &mut |_| {}).unwrap();
-            assert!(
-                matches!(done, Checked::Ran { passed: p, .. } if p == passed),
-                "a 500 of {on}: {done:?}"
-            );
-            let want = if passed {
-                "no 500 of riff-server: passed"
-            } else {
-                "no 500 of riff-server: failed: 1 replies 500"
-            };
-            assert!(forge.log()[0].contains(want), "{:?}", forge.log());
+            let found = LogMeasures::read(&log, "t").unwrap();
+            assert_eq!(found.replies_500, count, "a 500 of {on}");
         }
     }
 
-    /// The sign-in of gcloud is gone: check says which check it could
-    /// not do (01M58KMMP9FKRFYX58ESVRSZQX).
+    /// 01M76SSFZG959CQ1JHQTVTZCRA: a log that riff cannot read gives the
+    /// reason, also for a machine with no gcloud.
     #[test]
-    fn check_names_each_check_that_it_could_not_do() {
-        let forge = Fake {
-            tags: vec!["v3.3.0".into()],
-            deploy: Some(deploy(DeployState::Passed)),
-            ..Fake::ready("3.3.0")
+    fn the_check_of_a_log_that_riff_cannot_read_gives_the_reason() {
+        let found = cloud_check(&Log(Err("gcloud: PERMISSION_DENIED")), "t");
+        assert_eq!(
+            found,
+            Err("riff could not read the Cloud Run log: gcloud: PERMISSION_DENIED".into())
+        );
+        assert_eq!(deploy_check_status(&found).0, "error");
+        let log = RunLog {
+            gcloud: crate::cloud::Gcloud::at("/nonexistent/riff-test/gcloud"),
+            settings: crate::cloud::Settings::new("shared", "acme", "123", "europe-west1"),
         };
-        let log = Log(Err("gcloud: Reauthentication failed"));
-        let done = check(&forge, "v3.3.0", &served("3.3.0"), &log, &mut |_| {}).unwrap();
+        assert_eq!(
+            cloud_check(&log, "t"),
+            Err("riff could not read the Cloud Run log: gcloud is not on PATH".into())
+        );
+    }
+
+    /// 01M76SSFTGW41RHHV445ZM5RHY: before the job Check the deploy sets the
+    /// status, each check of the log is unknown, and names when the job
+    /// ends. The checks of riff-server still run, and riff closes nothing.
+    #[test]
+    fn check_names_when_the_job_ends_before_the_status_is_there() {
+        let forge = Fake {
+            issue: None,
+            ..deployed(DeployCheck {
+                commit: "c1".into(),
+                status: None,
+            })
+        };
+        let done = check(&forge, "v3.3.0", &served("3.3.0"), &mut |_| {}).unwrap();
         let Checked::Ran {
             lines,
             passed: false,
@@ -4905,6 +5305,18 @@ pub(crate) mod tests {
         };
         // No check failed: the other leads hear an unknown result.
         assert_eq!(check_step(lines), Step::CheckUnknown);
+        let why = text::deploy_check_missing(
+            "v3.3.0",
+            "https://github.com/o/r/actions/runs/9",
+            "20:09 UTC",
+        );
+        let names: Vec<&str> = lines
+            .iter()
+            .filter(|(_, v)| *v == Verdict::Unknown(why.clone()))
+            .map(|(name, _)| *name)
+            .collect();
+        assert_eq!(names, LOG_CHECKS, "{lines:?}");
+        assert!(lines.contains(&("riff server shows the build", Verdict::Passed)));
         let log = forge.log();
         // No release issue: check makes it.
         assert!(
@@ -4916,63 +5328,50 @@ pub(crate) mod tests {
             log[1].contains("riff release check v3.3.0: unknown\n"),
             "{log:?}"
         );
-        assert!(
-            log[1].contains(
-                "- no 500 of riff-server: riff could not check it: riff cannot read the Cloud Run \
-                 log: gcloud: Reauthentication failed. The sign-in of gcloud may have ended (check: gcloud auth list). A person on the host runs: gcloud auth login"
-            ),
-            "{log:?}"
-        );
-        assert!(
-            log[1].contains("- riff server shows the build: passed"),
-            "{log:?}"
-        );
+        assert!(!log.iter().any(|l| l.starts_with("close")), "{log:?}");
+        assert!(!log[1].contains("gcloud auth login"), "{log:?}");
     }
 
-    /// 01M5GVPND32X3R9MYXYB5SV83W: in the container of the lead, no
-    /// `gcloud` runs. Each check of the log names the step for a person
-    /// on the host, and the checks of riff-server still run.
+    /// 01M76SSFTGW41RHHV445ZM5RHY: a status of an older deploy counts as
+    /// none. A run by hand names the check of a person on a host. A
+    /// status `error` gives its description.
     #[test]
-    fn with_no_gcloud_each_check_of_the_log_names_the_step_on_the_host() {
-        let settings = crate::cloud::Settings::new("shared", "acme", "123", "europe-west1");
-        let log = RunLog {
-            gcloud: crate::cloud::Gcloud::at("/nonexistent/riff-test/gcloud"),
-            settings,
+    fn check_takes_only_a_status_of_this_deploy() {
+        let unknown = |forge: &Fake| -> Vec<String> {
+            let done = check(forge, "v3.3.0", &served("3.3.0"), &mut |_| {}).unwrap();
+            let Checked::Ran { lines, .. } = done else {
+                panic!("{done:?}");
+            };
+            lines
+                .into_iter()
+                .filter_map(|(_, v)| match v {
+                    Verdict::Unknown(why) => Some(why),
+                    _ => None,
+                })
+                .collect()
         };
-        let version = tag_version("v3.3.0").unwrap();
-        let lines = checks(version, "2026-10-22T00:00:00Z", &served("3.3.0"), &log);
-        let step = "riff cannot read the Cloud Run log: gcloud is not on PATH. A person on the \
-                    host installs gcloud or adds it to PATH, then run: riff release check v3.3.0";
-        let names: Vec<&str> = lines
-            .iter()
-            .filter(|(_, v)| *v == Verdict::Unknown(step.into()))
-            .map(|(name, _)| *name)
-            .collect();
-        assert_eq!(
-            names,
-            [
-                "no run of 503 longer than 20 s",
-                "no 500 of riff-server",
-                "no 401 or 429 of the token store",
-                "no old instance takes the lease",
-            ],
-            "{lines:?}"
-        );
-        assert!(lines.contains(&("riff server shows the build", Verdict::Passed)));
-        assert!(lines.contains(&("each host takes the build", Verdict::Passed)));
-        let text = check_text("v3.3.0", &lines);
-        assert!(!text.contains("gcloud auth login"), "{text}");
-    }
+        let mut old = deploy_status("success", LogMeasures::default());
+        old.status.as_mut().unwrap().at = "2026-10-17T10:00:00Z".into();
+        let why = unknown(&deployed(old.clone()));
+        assert_eq!(why.len(), 4, "{why:?}");
+        assert!(why[0].contains("did not set the status"), "{why:?}");
 
-    /// When the sign-in of gcloud ended, the step names `gcloud auth login`.
-    #[test]
-    fn a_failed_gcloud_names_the_sign_in() {
-        let version = tag_version("v3.3.0").unwrap();
-        let step = unreadable_log(&anyhow!("gcloud: reauthentication needed"), version);
-        assert!(step.contains("gcloud auth list"), "{step}");
-        assert!(
-            step.contains("gcloud auth login, then run: riff release check v3.3.0"),
-            "{step}"
+        let mut by_hand = deployed(old);
+        by_hand.deploy.as_mut().unwrap().by_hand = true;
+        let why = unknown(&by_hand);
+        assert_eq!(
+            why[0],
+            text::deploy_check_by_hand("v3.3.0", "2026-10-18T20:00:00Z", "c1")
+        );
+
+        let mut error = deploy_status("error", LogMeasures::default());
+        error.status.as_mut().unwrap().description =
+            "riff could not read the Cloud Run log: denied".into();
+        let why = unknown(&deployed(error));
+        assert_eq!(
+            why[0],
+            "the status riff/deploy-check of v3.3.0 says: riff could not read the Cloud Run log: \
+             denied"
         );
     }
 
@@ -4990,14 +5389,7 @@ pub(crate) mod tests {
             }),
             ..Fake::ready("3.3.0")
         };
-        let done = check(
-            &forge,
-            "v3.3.0",
-            &served("3.2.0"),
-            &Log(Ok(vec![])),
-            &mut |_| {},
-        )
-        .unwrap();
+        let done = check(&forge, "v3.3.0", &served("3.2.0"), &mut |_| {}).unwrap();
         assert!(
             matches!(done, Checked::DeployFailed { issue: 88, .. }),
             "{done:?}"
@@ -5039,27 +5431,15 @@ pub(crate) mod tests {
                 issue: Some(ReleaseIssue::default()),
                 ..Fake::ready("3.3.0")
             };
-            let error = check(
-                &forge,
-                "v3.3.0",
-                &served("3.3.0"),
-                &Log(Ok(vec![])),
-                &mut |_| {},
-            )
-            .unwrap_err()
-            .to_string();
+            let error = check(&forge, "v3.3.0", &served("3.3.0"), &mut |_| {})
+                .unwrap_err()
+                .to_string();
             assert!(error.contains(want), "{want}: {error}");
             assert!(forge.log().is_empty());
         }
-        let error = check(
-            &Fake::new(),
-            "v3.3.0",
-            &served("3.3.0"),
-            &Log(Ok(vec![])),
-            &mut |_| {},
-        )
-        .unwrap_err()
-        .to_string();
+        let error = check(&Fake::new(), "v3.3.0", &served("3.3.0"), &mut |_| {})
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("no CI run deploys v3.3.0"), "{error}");
     }
 
