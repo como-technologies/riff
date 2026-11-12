@@ -105,10 +105,19 @@ async fn who(api: &Api, me: &SessionUri) -> String {
     anstream::adapter::strip_str(&text).to_string()
 }
 
-/// The line of the session `id` in `shown`.
+/// The line of the session `id` in `shown`, not its fact `lead`.
 fn line_of<'a>(shown: &'a str, id: &str) -> &'a str {
     let name = format!("({id})");
-    shown.lines().find(|l| l.contains(&name)).unwrap()
+    shown
+        .lines()
+        .find(|l| l.contains(&name) && !l.starts_with("lead "))
+        .unwrap()
+}
+
+/// The line `n` of `shown`, after the facts `lead` of each project
+/// (01M77XYFZW86MCXD22GDCXMS00) go.
+fn nth_line(shown: &str, n: usize) -> Option<&str> {
+    shown.lines().filter(|l| !l.starts_with("lead ")).nth(n)
 }
 
 fn repo() -> ThreadName {
@@ -374,7 +383,7 @@ async fn who_shows_each_admin_as_a_person() {
     crate::common::name_lead(&namer, &a1).await;
 
     let shown = who(&ada, &a1).await;
-    let second = shown.lines().nth(1).unwrap();
+    let second = nth_line(&shown, 1).unwrap();
     assert!(second.starts_with("build  v"), "{shown}");
     assert!(!shown.contains("owner"), "{shown}");
     let line = line_of(&shown, "a1");
@@ -422,7 +431,7 @@ async fn who_on_a_riff_with_no_sign_in_names_no_owner() {
     let a1 = session("ada", "a1");
     api.register(&a1).await.unwrap();
     let shown = who(&api, &a1).await;
-    let second = shown.lines().nth(1).unwrap();
+    let second = nth_line(&shown, 1).unwrap();
     assert!(second.starts_with("build  v"), "{shown}");
     assert!(!shown.contains("owner"), "{shown}");
 }
@@ -479,7 +488,13 @@ fn the_book_shows_who_with_no_owner() {
     .unwrap();
     let (_, section) = page.split_once("## See who is in the riff").unwrap();
     let (section, _) = section.split_once("\n## ").unwrap();
-    assert!(section.contains("\nriff   running\nbuild  v"), "{section}");
+    // The facts `lead` of each project come before the build
+    // (01M77XYFZW86MCXD22GDCXMS00).
+    assert!(section.contains("\nriff   running\nlead   "), "{section}");
+    assert!(
+        section.contains("\nlead   como-technologies/strata: none\nbuild  v"),
+        "{section}"
+    );
     assert!(!section.contains("owner"), "{section}");
     assert!(section.contains("  you lead  working on #6\n"), "{section}");
     assert!(section.contains("  worker    working on #7  "), "{section}");

@@ -57,7 +57,7 @@ fn the_lead_names_each_part() {
         "(waves.md)",
         "### When a message of the lead counts",
         "### Name the lead",
-        "```sh\nriff lead --session 77e0a1b2\n```",
+        "```sh\nriff lead restart\n```",
         "### When you have no lead",
         "not the lead any more",
     ] {
@@ -242,6 +242,44 @@ fn the_book_says_how_to_select_text_and_that_the_terminal_comes_back_whole() {
             "whole again",
         ] {
             assert!(part.contains(words), "\"{heading}\" has no {words:?}");
+        }
+    }
+}
+
+/// #1793, 01M77Y6ZBV7C8Z332SAFKQCZ5A, 01M77Y6ZEQ4A6C6E0XZ56WRE89,
+/// 01M77Y6ZHM0V6YQ3XJEVJ8J5PC: "Start the lead" in `development.md` says
+/// that the daemon of a host that joined starts the lead, and shows what
+/// `riff lead start` says on another host. "Stop the lead" in
+/// `start-a-riff.md` has `riff lead restart` and `riff host join
+/// --no-lead`, each in a block of its own.
+#[test]
+fn the_book_starts_and_stops_the_lead_with_the_commands_of_today() {
+    let start = part("development.md", "Start the lead");
+    let lead = "riff://mike@thelio/como-technologies/riff?session=4e54d4e5&lead=true"
+        .parse()
+        .unwrap();
+    let there = riff::text::lead_not_here("como-technologies/riff", "pangolin", Some(&lead));
+    for words in [
+        "```sh\nriff host join\n```",
+        "```sh\nriff lead start\n```",
+        &format!("\n{there}\n"),
+        "(start-a-riff.md#stop-the-lead)",
+    ] {
+        assert!(start.contains(words), "\"Start the lead\" has no {words:?}");
+    }
+    let stop = part("start-a-riff.md", "Stop the lead");
+    for words in [
+        "```sh\nriff lead restart\n```",
+        "```sh\nriff host join --no-lead\n```",
+        "```sh\nriff host join --no-lead --host thelio\n```",
+        "workers, no lead",
+    ] {
+        assert!(stop.contains(words), "\"Stop the lead\" has no {words:?}");
+    }
+    for name in pages() {
+        let text = read(&name);
+        for words in ["riff lead stop", "riff lead --session"] {
+            assert!(!text.contains(words), "{name} names {words:?}");
         }
     }
 }

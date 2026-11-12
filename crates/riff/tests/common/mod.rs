@@ -199,6 +199,62 @@ pub async fn name_lead(api: &riff_client::api::Api, me: &riff_core::name::Sessio
     api.lead(&person, id).await.unwrap();
 }
 
+/// The person `user` names the session `id` the lead of the repository of
+/// the clone `dir` at the riff-server `url`, as the riff daemon does for a
+/// lead that it starts (01M77Y6ZMFZJGK2DM6RAM94C7Q): riff has no command
+/// for it. The place is on the host `host`. At a [`Signed`] server, the
+/// call has the sign-in of `user`. It gives the reply of riff-server, and
+/// panics with the error.
+pub async fn lead_by_person(
+    url: &str,
+    dir: &std::path::Path,
+    host: &str,
+    user: &str,
+    id: &str,
+) -> riff_core::wire::LeadReply {
+    let place = riff::identity::place_in(dir, host).unwrap();
+    let person =
+        riff_core::name::SessionUri::new(riff_core::name::Who::new(user, None).unwrap(), place);
+    let signed = sign_ins().lock().unwrap().contains_key(url);
+    let api = match signed {
+        true => api(url, user, None),
+        false => riff_client::api::Api::new(url),
+    };
+    api.lead(&person, id)
+        .await
+        .unwrap_or_else(|e| panic!("the lead {id} of {user}: {e:#}"))
+}
+
+/// Signs this process in as `email`, the user `user`, at the riff-server
+/// `service` that a test made at `url`, as [`start_signed`] does for its
+/// people: then [`api`] and [`lead_by_person`] work at that server.
+/// `allowed` is the allowed domain of [`riff_server::Service::admit`].
+pub async fn admit_process(
+    service: &riff_server::Service,
+    url: &str,
+    user: &str,
+    email: &str,
+    allowed: bool,
+) {
+    let key = riff_client::device::key(url).unwrap();
+    let pair = service
+        .admit(email, allowed, &key.thumbprint())
+        .await
+        .unwrap();
+    let sign_in = riff_client::login::SignIn {
+        user: pair.user,
+        access_token: pair.access_token,
+        refresh_token: pair.refresh_token,
+        expires_at: u64::MAX,
+        riff_id: service.riff_id(),
+    };
+    let mut all = sign_ins().lock().unwrap();
+    let (_, _, people) = all
+        .entry(url.to_owned())
+        .or_insert_with(|| (u64::MAX, key.to_secret(), HashMap::new()));
+    people.insert(user.to_owned(), serde_json::to_string(&sign_in).unwrap());
+}
+
 /// The person of the session `me`, at the place of `me`.
 pub fn person_of(me: &riff_core::name::SessionUri) -> riff_core::name::SessionUri {
     let who = riff_core::name::Who::new(me.who().user(), None).unwrap();

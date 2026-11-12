@@ -1,8 +1,8 @@
 //! `riff lead move HOST` (#1163, 01M596DH64SQ5AJ4Y6BETGTPSK,
 //! 01M596DH8G4A5XQFHJFBX1X379): the handover, the daemon of the host,
-//! the new lead and the message to the old lead. The notes step of `riff
-//! lead stop` (#1644, 01M6QVSWTARPKP59X8AJBBK69X) is here too. The old lead
-//! and the daemon of `thelio` are tasks on a real riff-server.
+//! the new lead and the message to the old lead. The first steps of `riff
+//! lead restart` (#1793, 01M77Y6ZEQ4A6C6E0XZ56WRE89) are here too. The old
+//! lead and the daemon of `thelio` are tasks on a real riff-server.
 
 use std::process::Command;
 use std::sync::{Arc, Mutex};
@@ -282,17 +282,20 @@ async fn a_host_with_no_daemon_or_the_same_host_fails_and_the_old_lead_stays() {
     assert!(got.lock().unwrap().is_empty());
 }
 
-/// #1644, 01M6QVSWTARPKP59X8AJBBK69X: the notes step of `riff lead stop`.
-/// The lead on the host writes its notes when asked, and the step ends
-/// after them.
+/// #1793, 01M77Y6ZEQ4A6C6E0XZ56WRE89: the first steps of `riff lead
+/// restart`. riff finds the lead of the project on another host, the lead
+/// writes its notes when asked, and the step ends after them.
 #[tokio::test]
-async fn the_stop_asks_the_lead_on_the_host_for_its_notes_and_waits_for_them() {
+async fn the_restart_finds_the_lead_on_another_host_and_waits_for_its_notes() {
     let w = world().await;
     let lead = w.session("thelio", "l1", true).await;
-    let got = w.old_lead(lead, false);
-    let person = w.uri("mike", "thelio", None);
+    let got = w.old_lead(lead.clone(), false);
+    let person = w.uri("mike", "pangolin", None);
 
-    riff::lead::stop_notes(&w.api(None), &person, "thelio", WAIT)
+    let found = riff::lead::to_restart(&w.api(None), &person).await.unwrap();
+    assert_eq!(found.who().session(), Some("l1"));
+    assert_eq!(found.place().host(), "thelio");
+    riff::lead::restart_notes(&w.api(None), &person, &found, WAIT)
         .await
         .unwrap();
 
@@ -304,42 +307,40 @@ async fn the_stop_asks_the_lead_on_the_host_for_its_notes_and_waits_for_them() {
     assert_eq!(notes.text, "Handover: wave 36 runs.");
     assert_eq!(
         got.lock().unwrap().as_slice(),
-        [riff::text::lead_stop_ask()]
+        [riff::text::lead_restart_ask()]
     );
     assert_eq!(w.leads(&person).await, ["l1"]);
 }
 
-/// A lead that writes no notes in time does not stop the stop.
+/// A lead that writes no notes in time does not stop the restart.
 #[tokio::test]
-async fn a_lead_that_writes_no_notes_in_time_is_stopped_with_the_notes_as_they_are() {
+async fn a_lead_that_writes_no_notes_in_time_is_restarted_with_the_notes_as_they_are() {
     let w = world().await;
     let lead = w.session("thelio", "l1", true).await;
-    w.old_lead(lead, true);
+    w.old_lead(lead.clone(), true);
     let person = w.uri("mike", "thelio", None);
 
     let started = std::time::Instant::now();
-    riff::lead::stop_notes(&w.api(None), &person, "thelio", Duration::from_millis(600))
+    let wait = Duration::from_millis(600);
+    riff::lead::restart_notes(&w.api(None), &person, &lead, wait)
         .await
         .unwrap();
 
-    assert!(started.elapsed() >= Duration::from_millis(600));
+    assert!(started.elapsed() >= wait);
 }
 
-/// The lead that runs the command asks nobody, and the lead on another
-/// host is not asked for the container of this host: the container there
-/// may be a lead that a move left behind, and the notes are those of the
-/// new lead.
+/// The lead that runs the command finds itself, and asks nobody: it wrote
+/// its notes first.
 #[tokio::test]
-async fn the_stop_asks_nobody_when_the_lead_runs_it_or_runs_on_another_host() {
+async fn the_restart_asks_nobody_when_the_lead_runs_it() {
     let w = world().await;
     let lead = w.session("pangolin", "l1", true).await;
     let got = w.old_lead(lead.clone(), false);
 
-    riff::lead::stop_notes(&w.api(lead.who().session()), &lead, "pangolin", WAIT)
-        .await
-        .unwrap();
-    let person = w.uri("mike", "pangolin", None);
-    riff::lead::stop_notes(&w.api(None), &person, "thelio", WAIT)
+    let api = w.api(lead.who().session());
+    let found = riff::lead::to_restart(&api, &lead).await.unwrap();
+    assert_eq!(found.who().session(), Some("l1"));
+    riff::lead::restart_notes(&api, &lead, &found, WAIT)
         .await
         .unwrap();
 
@@ -347,19 +348,35 @@ async fn the_stop_asks_nobody_when_the_lead_runs_it_or_runs_on_another_host() {
     assert!(got.lock().unwrap().is_empty());
 }
 
-/// A session that is not the lead cannot stop the lead.
+/// A session that is not the lead cannot restart the lead, a project with
+/// no lead has nothing to restart, and the lead of another user is the
+/// business of that user: riff asks no lead for its notes.
 #[tokio::test]
-async fn a_session_that_is_not_the_lead_cannot_stop_the_lead() {
+async fn the_restart_refuses_a_worker_no_lead_and_the_lead_of_another_user() {
     let w = world().await;
-    let lead = w.session("thelio", "l1", true).await;
-    let got = w.old_lead(lead, false);
-    let worker = w.session("thelio", "w1", false).await;
-
-    let err = riff::lead::stop_notes(&w.api(worker.who().session()), &worker, "thelio", WAIT)
+    let person = w.uri("mike", "pangolin", None);
+    let repo = "como-technologies/riff";
+    let err = riff::lead::to_restart(&w.api(None), &person)
         .await
         .unwrap_err();
+    assert_eq!(format!("{err:#}"), riff::text::lead_restart_none(repo));
 
-    assert_eq!(format!("{err:#}"), riff::text::LEAD_STOP_NOT_LEAD);
+    let lead = w.session("thelio", "l1", true).await;
+    let got = w.old_lead(lead.clone(), false);
+    let worker = w.session("thelio", "w1", false).await;
+    let err = riff::lead::to_restart(&w.api(worker.who().session()), &worker)
+        .await
+        .unwrap_err();
+    assert_eq!(format!("{err:#}"), riff::text::LEAD_RESTART_NOT_LEAD);
+
+    let brett = w.uri("brett", "heron", None);
+    let err = riff::lead::to_restart(&w.server.api("brett", None), &brett)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        format!("{err:#}"),
+        riff::text::lead_restart_other_user(repo, &lead)
+    );
     tokio::time::sleep(Duration::from_millis(400)).await;
     assert!(got.lock().unwrap().is_empty());
 }

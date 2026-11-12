@@ -136,7 +136,7 @@ async fn a_pipe_gets_no_color_unless_asked() {
     let dir = repo();
     let dir = dir.path();
     output(riff(&server, dir, Some("a1"), &["whoami"])).await;
-    output(riff(&server, dir, Some(""), &["lead", "--session", "a1"])).await;
+    common::lead_by_person(&server, dir, "pangolin", "mike", "a1").await;
 
     let auto = output(riff(&server, dir, None, &["who"])).await;
     assert!(
@@ -166,7 +166,7 @@ async fn a_blocked_session_is_red() {
     let dir = dir.path();
     let blocked = ["blocked", "waits for a review"];
     output(riff(&server, dir, Some("a1"), &["whoami"])).await;
-    output(riff(&server, dir, Some(""), &["lead", "--session", "a1"])).await;
+    common::lead_by_person(&server, dir, "pangolin", "mike", "a1").await;
     output(riff(&server, dir, Some("a1"), &["resume", "--riff"])).await;
     output(riff(&server, dir, Some("b2"), &blocked)).await;
     // A watch makes b2 live, so its state is blocked.
@@ -188,9 +188,10 @@ async fn a_blocked_session_is_red() {
 /// as one space and each age in seconds as `Ns`.
 async fn row(server: &str, dir: &Path, id: &str) -> String {
     let who = output(riff(server, dir, None, &["who", "--color", "never"])).await;
+    // The row of the session, not the fact `lead`.
     let line = who
         .lines()
-        .find(|l| l.contains(&format!("({id})")))
+        .find(|l| l.contains(&format!("({id})")) && !l.starts_with("lead "))
         .unwrap_or_else(|| panic!("{id}: {who}"));
     let words: Vec<String> = line
         .split_whitespace()
@@ -205,6 +206,79 @@ async fn row(server: &str, dir: &Path, id: &str) -> String {
     words.join(" ")
 }
 
+/// The facts `lead` of `riff who` (01M77XYFZW86MCXD22GDCXMS00), with each
+/// run of spaces as one space.
+fn leads(who: &str) -> Vec<String> {
+    who.lines()
+        .filter(|line| line.starts_with("lead "))
+        .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
+        .collect()
+}
+
+/// 01M77XYFZW86MCXD22GDCXMS00: `riff who` names the lead of each project
+/// and the host where it runs, and `none` for a repository with no live
+/// lead. The `who` tool of a session shows the same facts, plain.
+#[tokio::test(flavor = "multi_thread")]
+async fn who_names_the_lead_of_each_project_and_its_host() {
+    use riff::tools::Tools;
+    use rmcp::ServiceExt;
+    use rmcp::model::CallToolRequestParams;
+
+    let server = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    // The lead a1 of mike on pangolin, and a session of strata on thelio:
+    // strata has no lead.
+    let a1 = uri("a1");
+    server.api("mike", Some("a1")).register(&a1).await.unwrap();
+    common::name_lead(&server.api("mike", None), &a1).await;
+    let b2: SessionUri = "riff://mike@thelio/o/strata?session=b2".parse().unwrap();
+    let api_b2 = server.api("mike", Some("b2"));
+    api_b2.register(&b2).await.unwrap();
+
+    let who = output(riff(&server, dir, None, &["who", "--color", "never"])).await;
+    let want = [
+        "lead como-technologies/riff on pangolin: mike@pangolin:riff (a1)",
+        "lead o/strata: none",
+    ];
+    assert_eq!(leads(&who), want, "{who}");
+    // The facts come before the table of the sessions.
+    let (facts, _) = who.split_once("\n\n").unwrap();
+    assert_eq!(leads(facts), want, "{who}");
+    // In a terminal, `none` is yellow.
+    let who = output(riff(&server, dir, None, &["who", "--color", "always"])).await;
+    let yellow = style::WARNING;
+    assert!(
+        who.contains(&format!("{yellow}o/strata: none{yellow:#}")),
+        "{who:?}"
+    );
+
+    // The `who` tool of the session b2.
+    let (server_io, client_io) = tokio::io::duplex(64 * 1024);
+    let tools = Tools::new(api_b2, b2);
+    tokio::spawn(async move {
+        tools
+            .serve(server_io)
+            .await
+            .unwrap()
+            .waiting()
+            .await
+            .unwrap();
+    });
+    let client = ().serve(client_io).await.unwrap();
+    let result = client
+        .call_tool(CallToolRequestParams::new("who"))
+        .await
+        .unwrap();
+    let text: String = result
+        .content
+        .iter()
+        .filter_map(|c| c.as_text().map(|t| t.text.clone()))
+        .collect();
+    assert_eq!(leads(&text), want, "{text}");
+    assert!(!text.contains('\x1b'), "{text:?}");
+}
+
 /// A lead that calls only the command line has no watch. It shows with
 /// its status, not `offline` (01M48VDGQ5KETKPM4G6TKTC2MB).
 #[tokio::test(flavor = "multi_thread")]
@@ -213,7 +287,7 @@ async fn a_lead_on_the_command_line_shows_with_its_status() {
     let dir = repo();
     let dir = dir.path();
     output(riff(&server, dir, Some("a1"), &["whoami"])).await;
-    output(riff(&server, dir, Some(""), &["lead", "--session", "a1"])).await;
+    common::lead_by_person(&server, dir, "pangolin", "mike", "a1").await;
     output(riff(&server, dir, Some("a1"), &["resume", "--riff"])).await;
     output(riff(&server, dir, Some("a1"), &["status", "plan the wave"])).await;
     output(riff(&server, dir, Some("b2"), &["status", "tests"])).await;
@@ -245,7 +319,7 @@ async fn the_state_of_a_lead_comes_from_its_facts() {
     let api = server.api("mike", Some("a1"));
     let a1 = uri("a1");
     output(riff(&server, dir, Some("a1"), &["whoami"])).await;
-    output(riff(&server, dir, Some(""), &["lead", "--session", "a1"])).await;
+    common::lead_by_person(&server, dir, "pangolin", "mike", "a1").await;
     output(riff(&server, dir, Some("a1"), &["resume", "--riff"])).await;
     let _watch = api.watch(&a1).await.unwrap();
     assert_eq!(
@@ -303,7 +377,7 @@ async fn a_long_step_shows_and_a_failed_step_wakes_the_lead() {
         server.api("mike", Some("b2")),
     );
     output(riff(&server, dir, Some("a1"), &["whoami"])).await;
-    output(riff(&server, dir, Some(""), &["lead", "--session", "a1"])).await;
+    common::lead_by_person(&server, dir, "pangolin", "mike", "a1").await;
     output(riff(&server, dir, Some("a1"), &["resume", "--riff"])).await;
     let (a1, b2) = (uri("a1"), uri("b2"));
     let _watch = api_b2.watch(&b2).await.unwrap();
@@ -387,6 +461,7 @@ async fn the_block_of_a_host_names_the_repository_that_it_is_leaving() {
             parts: Parts {
                 workers: true,
                 lead: false,
+                no_lead: false,
             },
         }],
         leaving: vec![Leaving {

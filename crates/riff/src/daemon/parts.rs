@@ -4,9 +4,10 @@
 //!
 //! A host has two parts in a repository: it gives workers (its daemon
 //! runs the wave: the work items and the verifies), and it runs the lead
-//! of a person ([`Parts`]). The daemon keeps the parts of each
-//! repository in [`FILE`] in its folder, so a join and a leave hold over
-//! its restarts and over an update. A repository with no part has no
+//! of the project ([`Parts`]). A host that gives workers can keep the
+//! lead off: `riff host join --no-lead` ([`Parts::no_lead`]). The daemon
+//! keeps the parts of each repository in [`FILE`] in its folder, so a join
+//! and a leave hold over its restarts and over an update. A repository with no part has no
 //! entry. The daemon sends the parts in its facts, so `riff who` shows
 //! them for each host ([`riff_client::daemons::Facts::parts`]), and
 //! `riff daemon status` shows them too.
@@ -27,6 +28,7 @@
 //! | Step | Parts |
 //! |---|---|
 //! | `riff host join` | the host gets `workers`, and the daemon serves the repository |
+//! | `riff host join --no-lead` | the host gets `workers` and `no_lead`: the daemon runs the wave and no lead loop, so it claims no lead of the project ([`crate::lead_host`], 01M77Y6ZHM0V6YQ3XJEVJ8J5PC). A join with no `--no-lead` takes `no_lead` away |
 //! | `riff host leave` | the host loses `workers`: the daemon starts no new session there |
 //! | A lead starts on the host | the host gets `lead` |
 //! | The lead ends | the host loses `lead` |
@@ -184,7 +186,7 @@ pub fn shown(dir: &Path) -> Vec<RepoParts> {
 /// use riff::daemon::parts::leaving;
 /// use riff_client::daemons::{Parts, RepoParts};
 ///
-/// let parts = [RepoParts { repo: "o/s".into(), parts: Parts { workers: true, lead: false } }];
+/// let parts = [RepoParts { repo: "o/s".into(), parts: Parts { workers: true, lead: false, no_lead: false } }];
 /// let sessions = [
 ///     ("o/r", "riff-issue-12-1a2b3c4d"),
 ///     ("o/s", "riff-issue-7-2b3c4d5e"),

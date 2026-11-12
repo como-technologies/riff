@@ -9,7 +9,7 @@
 //! [1 Sessions]  2 Chat•2  3 Waves•  4 Machines  5 Devices  6 Reports
 //!  riff running · build 10df8a4 · link ok 2s
 //!  6 sessions: 1 blocked · 1 done · 3 busy · 1 idle · 1 to update         by repo
-//!  ▼ riff › mike  admin  online                                        4 sessions
+//!  ▼ riff  lead thelio  › mike  admin  online                          4 sessions
 //!  > ! 3a3f8d5d  #994   worker     thelio   blocked 32m  which of two designs?
 //!    ✓ 8f1c2d3e  #1599  container  thelio   done         waits for a verify of PR
 //!    ● 5b1e2a90  #1590  container  thelio   busy 12m     Bash: just check
@@ -48,10 +48,13 @@
 //!   tree of `riff top` keeps the host as a level. A row with one row
 //!   under it takes that row after `›`, as in `riff top`. A group row
 //!   ends with the counts of its sessions, or the count of its sessions
-//!   with no room for each. The group of a repository whose wave waits
-//!   for a lead says [`text::GROUP_NO_LEAD`] after its name, and its
-//!   detail says why ([`text::group_no_lead`],
-//!   01M776RTACYY4JTVQ4FNT81Q0T).
+//!   with no room for each. In the wide layout, the group of a repository
+//!   with a live lead names the host of the lead after its name, muted
+//!   ([`text::group_lead_on`]), and its detail names the lead
+//!   ([`text::group_lead`]). The group of a repository whose wave waits
+//!   for a lead says [`text::WAITS_FOR_LEAD`] after its name, and its
+//!   detail says why and gives the step ([`text::group_no_lead`],
+//!   01M77XYN04KX35QZ06NDPSXHRP).
 //! - **The order** (01M6VAZKRTVZTY73PQV5GE2WY6,
 //!   01M6VGGWAAKQ3HPXZ7JX5FE7B0): in a group, the worst mark first, then
 //!   the session ID. The groups by their worst row: `!`, a session that
@@ -97,7 +100,7 @@
 //! | `↑` `↓` `j` `k`, `PgUp` `PgDn`, `g` `G`, `Home` `End` | Select a row. |
 //! | `←` `→`, `Space` | Fold or open a group. `←` on a session selects its group. |
 //! | `Enter` | A group: fold or open. A lead of this machine: attach. A worker in a container of a daemon of yours: its Session log in the Reports tab, and with no detail pane, its detail on the whole screen first. Each other session: its detail on the whole screen. |
-//! | `l` | Attach to the lead of the repository of the row, else to the first lead of this machine. On the lead of another host: a note with the step there. On a repository whose wave waits for a lead: on a host that runs that wave, `Start the lead of OWNER/REPO on HOST? y/N`, and `y` starts the lead as `riff lead start` does, then attaches; on another host, a note with the step (01M776RTACYY4JTVQ4FNT81Q0T). |
+//! | `l` | Attach to the lead of the repository of the row when it runs on this machine, else to the first lead of this machine. When the lead of the repository of the row runs on another host: a note that names the host and the step there. On a repository whose wave waits for a lead: a note with why and the step. `l` starts no lead (01M77XYN04KX35QZ06NDPSXHRP). |
 //! | `t` | Take over the selected session, after `y` (`riff takeover NAME`). On another host: a note with the step there. |
 //! | `x` | End the selected session of the daemon, after `y` (`riff daemon end NAME`, on another host with `--host HOST`). On the row of a daemon: the host stops taking work for the repository, after `y` (`riff host leave --host HOST`). |
 //! | `p`, `P` | Pause or resume the repository of the row, or the whole riff, after `y`. |
@@ -1089,27 +1092,31 @@ impl State {
 
     /// True when the wave of the repository `repo` waits for a lead at the
     /// last look ([`crate::view::waits_for_lead`],
-    /// 01M776RTACYY4JTVQ4FNT81Q0T).
+    /// 01M77XYN04KX35QZ06NDPSXHRP).
     fn waits_for_lead(&self, repo: &str) -> bool {
         self.last_look().is_some_and(|(look, _)| {
             crate::view::waits_for_lead(&look.pauses, &look.who.sessions, repo)
         })
     }
 
-    /// True when the riff daemon of this machine runs the wave of `repo`.
-    fn runs_wave_here(&self, repo: &str) -> bool {
-        matches!(&self.daemon, Some(Ok(status)) if status.waves.iter().any(|w| w.repo == repo))
+    /// The live lead of the project `repo` on riff-server
+    /// ([`crate::view::leads`], 01M77XYN04KX35QZ06NDPSXHRP): its URI names
+    /// its host.
+    fn lead_of(&self, repo: &str) -> Option<&SessionInfo> {
+        crate::view::leads(self.model.on_server()).remove(repo)
     }
 
-    /// `l`: the attach to the lead of the repository of the row, else to
-    /// the first lead of this machine (01M51PD7M04HZR2PVVJA4WCBK5). On
-    /// the lead of another host, the note names the step there
-    /// (01M6WMAXEVZB2XJN4XPR879J6W). On a repository whose wave waits for
-    /// a lead, it asks, then starts the lead here when this machine runs
-    /// that wave; else the note says to start it in a clone
-    /// (01M776RTACYY4JTVQ4FNT81Q0T).
+    /// `l`: the attach to the lead of the repository of the row when it
+    /// runs in a container of this machine, else to the first lead of this
+    /// machine (01M51PD7M04HZR2PVVJA4WCBK5). On the lead of another host,
+    /// and on each row of a repository whose lead runs on another host, the
+    /// note names that host and the step there ([`text::lead_there`],
+    /// 01M6WMAXEVZB2XJN4XPR879J6W). On a repository whose wave waits for
+    /// a lead, `l` starts no lead: the note says why and gives the step
+    /// ([`text::group_no_lead`], 01M77XYN04KX35QZ06NDPSXHRP).
     fn lead(&mut self) -> Option<Action> {
         let picked = self.picked();
+        let here = self.me.place().host().to_owned();
         if let Some(Picked {
             session:
                 Some(Picked1 {
@@ -1120,7 +1127,7 @@ impl State {
                 }),
             repo,
         }) = &picked
-            && host != self.me.place().host()
+            && *host != here
         {
             self.note(text::lead_there(host, repo.as_deref()));
             return None;
@@ -1150,15 +1157,19 @@ impl State {
         if let Some(name) = of_repo {
             return Some(Action::Attach(name));
         }
-        if let Some(repo) = repo.filter(|repo| self.waits_for_lead(repo)) {
-            let host = self.me.place().host().to_owned();
-            if self.runs_wave_here(&repo) {
-                let ask = text::ask_start_lead(&repo, &host);
-                self.ask(Question::new(ask, Action::StartLead(repo)));
-            } else {
-                self.note(text::lead_start_in_clone(&repo, &host));
+        if let Some(repo) = repo {
+            if self.waits_for_lead(&repo) {
+                self.note(text::group_no_lead(&repo));
+                return None;
             }
-            return None;
+            let there = self
+                .lead_of(&repo)
+                .map(|lead| lead.uri.place().host().to_owned())
+                .filter(|host| *host != here);
+            if let Some(host) = there {
+                self.note(text::lead_there(&host, Some(&repo)));
+                return None;
+            }
         }
         match leads.first().map(|(_, name)| name.clone()) {
             Some(name) => Some(Action::Attach(name)),
@@ -1474,7 +1485,8 @@ pub fn body(
     if area.height == 0 {
         return (placed, hits, 0, 0);
     }
-    let row = |y: u16| Rect::new(area.x + margin, area.y + y, area.width - margin, 1);
+    let width = area.width - margin;
+    let row = |y: u16| Rect::new(area.x + margin, area.y + y, width, 1);
     let tree = state.tree();
     let rows = state.rows(&tree);
     let at = state.at(&rows);
@@ -1489,7 +1501,7 @@ pub fn body(
 
     if full {
         if let Some(shown) = at.and_then(|at| rows.get(at)) {
-            let (title, lines) = detail(state, shown, now_ms);
+            let (title, lines) = detail(state, shown, now_ms, width);
             placed.push(Placed {
                 area: Rect::new(area.x, area.y, area.width, 1),
                 line: rule(&title, area.width),
@@ -1507,9 +1519,8 @@ pub fn body(
     });
     placed.push(Placed {
         area: row(0),
-        line: summary(state, layout, place, area.width - margin),
+        line: summary(state, layout, place, width),
     });
-    let width = area.width - margin;
     let hosts = host_cols(&tree, layout, area.width);
     for ((i, shown), y) in rows.iter().enumerate().skip(top).zip(1..).take(fit) {
         let selected = Some(i) == at;
@@ -1537,7 +1548,7 @@ pub fn body(
     }
     if pane && let Some(shown) = at.and_then(|at| rows.get(at)) {
         let first = area.height - PANE;
-        let (title, lines) = detail(state, shown, now_ms);
+        let (title, lines) = detail(state, shown, now_ms, width);
         placed.push(Placed {
             area: Rect::new(area.x, area.y + first, area.width, 1),
             line: rule(&title, area.width),
@@ -1708,19 +1719,23 @@ fn label(state: &State, group: &Group, layout: Layout) -> Vec<Span<'static>> {
             );
             parts
         }
-        // A repository whose wave waits for a lead says so, and names the
-        // key that starts it (01M776RTACYY4JTVQ4FNT81Q0T).
-        Level::Repo if state.waits_for_lead(&group.key) => {
-            let word = match layout {
-                Layout::Wide => text::GROUP_NO_LEAD,
-                _ => text::WAITS_FOR_LEAD,
-            };
-            vec![
-                Span::raw(name(state, group)),
-                Span::styled(word, style_of(crate::style::WARNING)),
-            ]
+        // A repository whose wave waits for a lead says so. In the wide
+        // layout, a repository with a live lead names the host of its lead
+        // (01M77XYN04KX35QZ06NDPSXHRP).
+        Level::Repo => {
+            let mut parts = vec![Span::raw(name(state, group))];
+            if state.waits_for_lead(&group.key) {
+                let warning = style_of(crate::style::WARNING);
+                parts.push(Span::styled(text::WAITS_FOR_LEAD, warning));
+            } else if layout == Layout::Wide
+                && let Some(lead) = state.lead_of(&group.key)
+            {
+                let host = text::group_lead_on(lead.uri.place().host());
+                parts.push(Span::styled(host, muted()));
+            }
+            parts
         }
-        Level::Host | Level::Repo => vec![Span::raw(name(state, group))],
+        Level::Host => vec![Span::raw(name(state, group))],
     }
 }
 
@@ -1986,11 +2001,12 @@ fn pad(text: &str, cols: u16) -> String {
     )
 }
 
-/// The title and the lines of the detail of the row `row` at `now_ms`.
-fn detail(state: &State, row: &Row, now_ms: i64) -> (String, Vec<Line<'static>>) {
+/// The title and the lines of the detail of the row `row` at `now_ms`, in
+/// `cols` columns.
+fn detail(state: &State, row: &Row, now_ms: i64, cols: u16) -> (String, Vec<Line<'static>>) {
     match row {
         Row::Session { item, .. } => session_detail(state, item, now_ms),
-        Row::Group { chain, .. } => group_detail(state, chain),
+        Row::Group { chain, .. } => group_detail(state, chain, cols),
     }
 }
 
@@ -2057,9 +2073,21 @@ fn session_detail(state: &State, item: &Item, now_ms: i64) -> (String, Vec<Line<
     (head.join(" · "), lines)
 }
 
-/// The detail of a group: its name, its counts, and for a repository its
-/// pause. The facts of a host are in the Machines tab.
-fn group_detail(state: &State, chain: &[&Group]) -> (String, Vec<Line<'static>>) {
+/// `text` in `style`, wrapped to `cols` between two words.
+fn wrapped(text: &str, cols: u16, style: Style) -> Vec<Line<'static>> {
+    let options = textwrap::Options::new(usize::from(cols.max(1)))
+        .word_splitter(textwrap::WordSplitter::NoHyphenation);
+    textwrap::wrap(text, options)
+        .into_iter()
+        .map(|part| Line::styled(part.into_owned(), style))
+        .collect()
+}
+
+/// The detail of a group in `cols` columns: its name, its counts, and for
+/// a repository its lead with its host, its pause, or why its wave waits
+/// for a lead and the step (01M77XYN04KX35QZ06NDPSXHRP). The facts of a
+/// host are in the Machines tab.
+fn group_detail(state: &State, chain: &[&Group], cols: u16) -> (String, Vec<Line<'static>>) {
     let end = last(chain);
     let title: Vec<String> = chain
         .iter()
@@ -2077,21 +2105,24 @@ fn group_detail(state: &State, chain: &[&Group]) -> (String, Vec<Line<'static>>)
         let counts = Counts::of(&items, &state.sessions.seen, state.server());
         lines.push(Line::raw(counts.line()));
     }
-    for group in chain {
-        if group.level == Level::Repo
-            && let Some((look, _)) = state.last_look()
+    let warning = style_of(crate::style::WARNING);
+    for group in chain.iter().filter(|group| group.level == Level::Repo) {
+        let waits = state.waits_for_lead(&group.key);
+        if !waits && let Some(lead) = state.lead_of(&group.key) {
+            let host = lead.uri.place().host();
+            let line = text::group_lead(&group.key, host, &text::name(&lead.uri));
+            lines.extend(wrapped(&line, cols, Style::new()));
+        }
+        if let Some((look, _)) = state.last_look()
             && let Ok(thread) = group.key.parse::<ThreadName>()
             && (look.pauses.riff.is_some() || look.pauses.repository(&thread).is_some())
         {
             lines.push(Line::styled(
                 format!("{} is paused", safe(&group.key)),
-                style_of(crate::style::WARNING),
+                warning,
             ));
-        } else if group.level == Level::Repo && state.waits_for_lead(&group.key) {
-            lines.push(Line::styled(
-                text::group_no_lead(&group.key),
-                style_of(crate::style::WARNING),
-            ));
+        } else if waits {
+            lines.extend(wrapped(&text::group_no_lead(&group.key), cols, warning));
         }
     }
     (title.join(" › "), lines)
@@ -2164,7 +2195,7 @@ pub fn help_keys() -> Vec<(&'static str, &'static str)> {
             "Enter",
             "fold, attach to a lead, or open a session or its log",
         ),
-        ("l", "attach to the lead, or start it after y"),
+        ("l", "attach to the lead, or say where it runs"),
         ("t", "take over the session, after y"),
         (
             "x",

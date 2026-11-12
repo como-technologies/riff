@@ -217,7 +217,7 @@ fn the_sessions_tab_at_80_x_24_is_the_mock_up() {
         " riff running · build 10df8a4 · link ok 2s".to_owned(),
         " 6 sessions: 1 blocked · 1 done · 3 busy · 1 idle · 1 to update         by repo"
             .to_owned(),
-        " ▼ riff › mike  admin  online                                        4 sessions"
+        " ▼ riff  lead thelio  › mike  admin  online                          4 sessions"
             .to_owned(),
         " > ! 3a3f8d5d  #994   worker     thelio   blocked 32m  which of two designs?".to_owned(),
         "   ✓ 8f1c2d3e  #1599  container  thelio   done         waits for a verify of PR"
@@ -325,7 +325,7 @@ fn b_puts_the_person_at_the_top() {
         [
             " 6 sessions: 1 blocked · 1 done · 3 busy · 1 idle · 1 to update       by person",
             " ▼ mike  admin  online        5 sessions · 1 blocked · 1 done · 2 busy · 1 idle",
-            "   ▼ riff                     4 sessions · 1 blocked · 1 done · 1 busy · 1 idle",
+            "   ▼ riff  lead thelio        4 sessions · 1 blocked · 1 done · 1 busy · 1 idle",
             " >   ! 3a3f8d5d  #994   worker     thelio   blocked 32m  which of two designs?",
             "     ✓ 8f1c2d3e  #1599  container  thelio   done         waits for a verify of P",
             "     ● 5b1e2a90  #1590  container  thelio   busy 12m     Bash: just check",
@@ -358,7 +358,7 @@ fn b_puts_the_person_at_the_top() {
     // `b` again: the repository at the top.
     state.on_key(Key::Char('b'));
     assert!(drawn(&state, 80, 24)[2].ends_with("by repo"));
-    assert!(drawn(&state, 80, 24)[3].starts_with(" ▼ riff › mike"));
+    assert!(drawn(&state, 80, 24)[3].starts_with(" ▼ riff  lead thelio  › mike"));
 }
 
 /// 01M6VAZKNXZV1RTG7MT0GMHKT3: the filter `host:pangolin` at 80 x 24
@@ -425,15 +425,21 @@ fn the_detail_shows_the_container_of_this_machine() {
         "{text}"
     );
 
-    // The group riff › mike: its counts.
+    // The group riff › mike: its counts, and the lead of riff with its
+    // host (01M77XYN04KX35QZ06NDPSXHRP).
     state.on_key(Key::First);
     let rows = drawn(&state, 80, 24);
-    assert!(rows[3].starts_with(" ▼ riff › mike"), "{rows:#?}");
+    assert!(
+        rows[3].starts_with(" ▼ riff  lead thelio  › mike"),
+        "{rows:#?}"
+    );
     assert_eq!(
-        rows[12..14],
+        rows[12..15],
         [
-            rule("──riff › mike · admin · online ", 80),
+            rule("──riff · lead thelio › mike · admin · online ", 80),
             " 4 sessions · 1 blocked · 1 waiting · 1 busy · 1 idle".to_owned(),
+            " The lead of como-technologies/riff runs on thelio: mike@thelio:riff (4e54d4e5)."
+                .to_owned(),
         ]
     );
 }
@@ -465,7 +471,7 @@ fn the_keys_select_fold_and_open() {
     );
     let rows = drawn(&state, 80, 24);
     assert!(
-        rows[3].starts_with(" ▶ riff › mike  admin  online · thelio "),
+        rows[3].starts_with(" ▶ riff  lead thelio  › mike  admin  online · thelio "),
         "{rows:#?}"
     );
     assert!(rows[4].starts_with(" ▶ strata"), "{rows:#?}");
@@ -603,9 +609,9 @@ fn l_and_enter_attach_to_the_lead() {
 }
 
 /// [`mock_up`] after the end of the lead of riff: riff-server names riff
-/// with no live lead, and the riff daemon of thelio runs its wave. With
-/// `here`, the status of the daemon of this machine names the wave too.
-fn with_no_lead(here: bool) -> State {
+/// with no live lead, and the riff daemon of thelio runs its wave, also
+/// in the status of the daemon of this machine.
+fn with_no_lead() -> State {
     let mut state = mock_up();
     let (look, at) = state.last_look().unwrap();
     let mut look = look.clone();
@@ -631,63 +637,63 @@ fn with_no_lead(here: bool) -> State {
         Some(Ok(status)) => status.clone(),
         _ => status(Vec::new()),
     };
-    daemon.waves = if here {
-        vec![crate::daemon::WaveShown {
-            repo: "como-technologies/riff".into(),
-            word: text::wave_no_lead("como-technologies/riff"),
-            waits: Default::default(),
-        }]
-    } else {
-        Vec::new()
-    };
+    daemon.waves = vec![crate::daemon::WaveShown {
+        repo: "como-technologies/riff".into(),
+        word: text::wave_no_lead("como-technologies/riff"),
+        waits: Default::default(),
+    }];
     state.daemon_looked(Ok(daemon));
     state
 }
 
-/// 01M776RTACYY4JTVQ4FNT81Q0T: the group of a repository whose wave waits
-/// for a lead says why and names `l`, and its detail says how to start the
-/// lead. On this machine, which runs the wave, `l` asks, and `y` starts the
-/// lead and attaches. On a machine that runs no wave of the repository,
-/// the note says to start the lead in a clone. The narrow layout says the
-/// wait in a few words.
+/// The rows of the detail pane of `rows` at 80 x 24, after its rule, as
+/// one text: a long line of the detail wraps between two words.
+fn pane_text(rows: &[String]) -> String {
+    rows[13..22]
+        .iter()
+        .map(|row| row.trim())
+        .filter(|row| !row.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// 01M77XYN04KX35QZ06NDPSXHRP: the group of a repository whose wave waits
+/// for a lead says so, and its detail says why and gives the step: the
+/// riff daemon of a host that joined the project starts the lead. `l`
+/// starts no lead, also on the host that runs the wave: on each row of
+/// the repository, the note gives the step. The narrow layout says the
+/// wait in the same words.
 #[test]
-fn the_group_with_no_lead_says_why_and_l_starts_the_lead() {
-    let mut state = with_no_lead(true);
+fn the_group_with_no_lead_says_why_and_l_gives_the_step() {
+    let mut state = with_no_lead();
     let rows = drawn(&state, 80, 24);
     assert!(
-        rows[3].starts_with(" ▼ riff  waits for a lead · l starts it  › mike  admin  online"),
+        rows[3].starts_with(" ▼ riff  waits for a lead  › mike  admin  online"),
         "{rows:#?}"
     );
     // The detail of the group.
     state.on_key(Key::Char('g'));
     let rows = drawn(&state, 80, 24);
     assert!(
-        rows[12].starts_with("──riff · waits for a lead · l starts it › mike"),
+        rows[12].starts_with("──riff · waits for a lead › mike"),
         "{rows:#?}"
     );
+    let step = text::group_no_lead("como-technologies/riff");
+    assert!(pane_text(&rows).contains(&step), "{rows:#?}");
     assert!(
-        rows.iter()
-            .any(|row| row.starts_with(" The wave of como-technologies/riff waits for a lead.")),
+        rows[14].starts_with(" The wave of como-technologies/riff waits for a lead."),
         "{rows:#?}"
     );
-    // `l` asks first, and `y` starts the lead.
+    // `l` asks nothing and starts nothing: the note gives the step.
     assert_eq!(state.on_key(Key::Char('l')), None);
-    assert_eq!(
-        drawn(&state, 80, 24)[22],
-        " Start the lead of como-technologies/riff on thelio? y/N"
-    );
-    assert_eq!(
-        state.on_key(Key::Char('y')),
-        Some(Action::StartLead("como-technologies/riff".into()))
-    );
-    // `n` starts nothing.
-    state.on_key(Key::Char('l'));
-    assert_eq!(state.on_key(Key::Char('n')), None);
-    assert_eq!(state.shown_note(), Some(crate::tui::NOTHING_CHANGED));
-    // A session row of the repository asks too.
+    assert_eq!(state.asked(), None);
+    assert_eq!(state.shown_note(), Some(step.as_str()));
+    // A session row of the repository gives the same note.
+    state.note("");
     state.on_key(Key::Down);
     assert_eq!(state.on_key(Key::Char('l')), None);
-    assert!(state.asked().is_some());
+    assert_eq!(state.asked(), None);
+    assert_eq!(state.shown_note(), Some(step.as_str()));
     state.on_key(Key::Esc);
     // The narrow layout.
     assert!(
@@ -695,13 +701,94 @@ fn the_group_with_no_lead_says_why_and_l_starts_the_lead() {
         "{:#?}",
         drawn(&state, 40, 24)
     );
+}
 
-    // This machine runs no wave of riff: a note with the step.
-    let mut state = with_no_lead(false);
+/// [`mock_up`] with the lead of riff on pangolin, not on thelio, the host
+/// of the TUI.
+fn with_lead_on_pangolin() -> State {
+    let mut state = mock_up();
+    let (look, at) = state.last_look().unwrap();
+    let mut look = look.clone();
+    let lead = look.who.sessions.iter_mut().find(|s| s.uri.lead()).unwrap();
+    lead.uri = "riff://mike@pangolin/como-technologies/riff?session=4e54d4e5&lead=true"
+        .parse()
+        .unwrap();
+    state.looked(look, at);
+    state
+}
+
+/// The screen test of a project whose lead runs on another host
+/// (01M77XYN04KX35QZ06NDPSXHRP): the group of the repository names the
+/// host of its lead, muted, and its detail names the lead. `l` on the
+/// group, on a worker of the repository and on the lead gives the note
+/// that names that host and the step there. The narrow layout has no host
+/// in the group.
+#[test]
+fn the_group_names_the_host_of_its_lead_and_l_names_the_step_there() {
+    let mut state = with_lead_on_pangolin();
+    let rows = drawn(&state, 80, 24);
+    assert_eq!(
+        rows[3],
+        " ▼ riff  lead pangolin  › mike  admin  online                        4 sessions"
+    );
+    assert!(
+        rows[7].starts_with("   ○ 4e54d4e5  ↑      lead       pangolin idle 2h"),
+        "{rows:#?}"
+    );
+    // The host of the lead is muted.
+    let area = Rect::new(0, 0, 80, 24);
+    let mut buffer = Buffer::empty(area);
+    render(&compute_view(&state, area, NOW), &mut buffer);
+    let at = rows[3].find("lead pangolin").unwrap();
+    let x = u16::try_from(rows[3][..at].chars().count()).unwrap();
+    assert_eq!(Some(buffer[(x, 3)].fg), muted().fg);
+
+    // The detail of the group names the lead and its host.
+    state.on_key(Key::Char('g'));
+    let rows = drawn(&state, 80, 24);
+    assert!(
+        rows[12].starts_with("──riff · lead pangolin › mike · admin · online "),
+        "{rows:#?}"
+    );
+    let line = text::group_lead(
+        "como-technologies/riff",
+        "pangolin",
+        "mike@pangolin:riff (4e54d4e5)",
+    );
+    assert!(pane_text(&rows).contains(&line), "{rows:#?}");
+    assert!(
+        rows[14].starts_with(" The lead of como-technologies/riff runs on pangolin:"),
+        "{rows:#?}"
+    );
+    // The book shows the group row and its detail.
+    let shown = [&rows[3], &rows[12], &rows[13], &rows[14], &rows[15]].map(String::clone);
+    let heading = "### See where the lead of a project runs";
+    assert_eq!(book(heading, " ▼ riff"), shown, "{rows:#?}");
+
+    // `l` on the group: the note names pangolin and the step there.
+    let there = text::lead_there("pangolin", Some("como-technologies/riff"));
+    assert!(there.starts_with("The lead runs on pangolin: ssh pangolin"));
     assert_eq!(state.on_key(Key::Char('l')), None);
     assert_eq!(state.asked(), None);
-    let note = text::lead_start_in_clone("como-technologies/riff", "thelio");
-    assert_eq!(state.shown_note(), Some(note.as_str()));
+    assert_eq!(state.shown_note(), Some(there.as_str()));
+    assert!(
+        drawn(&state, 80, 24)[22].starts_with(" The lead runs on pangolin: ssh pangolin"),
+        "{:#?}",
+        drawn(&state, 80, 24)
+    );
+    // On a worker of the repository, and on the lead.
+    for id in ["3a3f8d5d", "4e54d4e5"] {
+        state.note("");
+        state.on_key(Key::Row(row_of(&state, id)));
+        assert_eq!(state.on_key(Key::Char('l')), None, "{id}");
+        assert_eq!(state.shown_note(), Some(there.as_str()), "{id}");
+    }
+    // The narrow layout has no host in the group.
+    assert!(
+        drawn(&state, 40, 24)[3].starts_with("▼ riff › mike "),
+        "{:#?}",
+        drawn(&state, 40, 24)
+    );
 }
 
 /// `t` and `x` ask `y` or `n` first, then take over or end the selected

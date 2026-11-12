@@ -313,7 +313,7 @@ mod tests {
                 host: host(),
                 repo: text("acme/app"),
             },
-            Action::LeadStop {
+            Action::LeadRestart {
                 host: host(),
                 repo: text("acme/app"),
             },

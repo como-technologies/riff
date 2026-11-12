@@ -128,9 +128,16 @@ impl Machine {
     /// as `session`.
     async fn claim(&self, session: &str, item: &str) {
         self.ok(session, &["whoami"]).await;
-        self.ok("", &["lead", "--session", session]).await;
+        self.name_lead(session).await;
         self.ok(session, &["resume", "--riff"]).await;
         self.ok(session, &["claim", item]).await;
+    }
+
+    /// The person mike names the session `session` the lead, as the riff
+    /// daemon does for a lead that it starts (01M77Y6ZMFZJGK2DM6RAM94C7Q).
+    async fn name_lead(&self, session: &str) {
+        let dir = self.repo.path();
+        crate::common::lead_by_person(&self.server, dir, "thelio", "mike", session).await;
     }
 
     /// Sets the riff config of the clone: `None` removes the file.
@@ -576,7 +583,7 @@ async fn verify_pass_reports_nothing_when_the_squash_message_does_not_go() {
 async fn a_verify_result_wakes_the_lead_when_no_session_holds_the_item() {
     let machine = Machine::new(VERIFY).await;
     machine.ok("lead", &["whoami"]).await;
-    machine.ok("", &["lead", "--session", "lead"]).await;
+    machine.name_lead("lead").await;
     machine.ok("lead", &["resume", "--riff"]).await;
     let result = machine.write("result.md", "1. The wave does not show.\n");
     let verify = [
@@ -608,7 +615,7 @@ async fn a_verify_result_wakes_the_lead_when_no_session_holds_the_item() {
 async fn a_verify_from_a_terminal_in_another_folder_wakes_the_lead_of_the_repository() {
     let machine = Machine::new(VERIFY).await;
     machine.ok("lead", &["whoami"]).await;
-    machine.ok("", &["lead", "--session", "lead"]).await;
+    machine.name_lead("lead").await;
     machine.ok("lead", &["resume", "--riff"]).await;
     let terminal = repo();
     let result = machine.write("result.md", "1. The wave shows.\n");
@@ -679,7 +686,7 @@ async fn a_claim_names_the_pull_request_of_the_item_and_its_verify() {
     ] {
         let machine = Machine::new(&pulls(&status)).await;
         machine.ok("lead", &["whoami"]).await;
-        machine.ok("", &["lead", "--session", "lead"]).await;
+        machine.name_lead("lead").await;
         machine.ok("lead", &["resume", "--riff"]).await;
 
         // No pushed branch: riff does not ask `gh`.

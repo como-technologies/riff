@@ -365,7 +365,7 @@ pub fn common_dir(dir: &Path) -> Option<std::path::PathBuf> {
 /// an answer of git makes a place. A fault of git, after [`GIT_TRIES`]
 /// tries, is an error of the command, with the reason of git
 /// ([`reading`]). So a session never registers at a place that a failed
-/// `git` call made up, and `riff lead --session ID` finds it (#1401).
+/// `git` call made up, and the call `lead` of its person finds it (#1401).
 pub fn place_in(dir: &Path, host: &str) -> Result<Place> {
     let (repo, worktree) = match asked(dir, &["rev-parse", "--show-toplevel"], &NOT_GIT)? {
         Some(top) => (

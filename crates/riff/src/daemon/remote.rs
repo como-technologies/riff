@@ -411,12 +411,13 @@ pub fn remove_clone(dir: &Path, data: &Path, wave: &Wave) -> Vec<String> {
 ///     "daemon end riff-issue-12-1a2b3c4d",
 ///     "daemon restart",
 ///     "join o/r",
+///     "join o/r --no-lead",
 ///     "leave o/r",
 ///     "leave o/r --now",
 ///     "release test 0123abc v3.3.0",
 ///     "build",
 ///     "lead move",
-///     "lead stop",
+///     "lead restart",
 /// ] {
 ///     assert_eq!(body.parse::<Request>().unwrap().to_string(), body);
 /// }
@@ -430,13 +431,15 @@ pub fn remove_clone(dir: &Path, data: &Path, wave: &Wave) -> Vec<String> {
 /// assert!("daemon events n --after 7 --notes x".parse::<Request>().is_err());
 /// assert!("daemon cache 20G".parse::<Request>().is_err());
 /// assert!("daemon cache 20G --clear".parse::<Request>().is_err());
-/// assert_eq!("join o/r".parse(), Ok(Request::Join { repo: "o/r".into() }));
+/// assert_eq!("join o/r".parse(), Ok(Request::Join { repo: "o/r".into(), no_lead: false }));
+/// assert_eq!("join o/r --no-lead".parse(), Ok(Request::Join { repo: "o/r".into(), no_lead: true }));
+/// assert!("lead stop".parse::<Request>().is_err());
 /// assert_eq!(
 ///     "leave o/r --now".parse(),
 ///     Ok(Request::Leave { repo: "o/r".into(), now: true })
 /// );
 /// for bad in [
-///     "join", "join o", "join o/r/s", "join ../r", "join -o/r", "join o/r --now",
+///     "join", "join o", "join o/r/s", "join ../r", "join -o/r", "join o/r --now", "join o/r --lead",
 ///     "leave", "leave o", "leave ../r", "leave o/r --go", "leave --now",
 /// ] {
 ///     assert!(bad.parse::<Request>().is_err(), "{bad}");
@@ -489,6 +492,9 @@ pub enum Request {
     Join {
         /// The repository, as `OWNER/REPO`.
         repo: String,
+        /// True for `--no-lead`: the host claims no lead of the project
+        /// (#1793).
+        no_lead: bool,
     },
     /// `riff host leave`: the host gives no more workers to `repo`, and with
     /// `now` ends its sessions (#1643).
@@ -513,9 +519,10 @@ pub enum Request {
     /// `riff lead move`: start the lead here, and make it the lead
     /// (01M596DH8G4A5XQFHJFBX1X379).
     LeadMove,
-    /// `riff lead stop --host`: end the container of the lead of the
-    /// repository here, and the host loses the part lead (#1644).
-    LeadStop,
+    /// `riff lead restart` of a lead on this host: end the container of the
+    /// lead of the repository here, and the host loses the part lead. A
+    /// host that joined the project starts a new lead (#1793).
+    LeadRestart,
 }
 
 impl FromStr for Request {
@@ -555,6 +562,11 @@ impl FromStr for Request {
             ["daemon", "restart"] => Ok(Request::Restart),
             ["join", repo] if is_repo(repo) => Ok(Request::Join {
                 repo: repo.to_owned(),
+                no_lead: false,
+            }),
+            ["join", repo, "--no-lead"] if is_repo(repo) => Ok(Request::Join {
+                repo: repo.to_owned(),
+                no_lead: true,
             }),
             ["leave", repo] if is_repo(repo) => Ok(Request::Leave {
                 repo: repo.to_owned(),
@@ -565,7 +577,7 @@ impl FromStr for Request {
                 now: true,
             }),
             ["lead", "move"] => Ok(Request::LeadMove),
-            ["lead", "stop"] => Ok(Request::LeadStop),
+            ["lead", "restart"] => Ok(Request::LeadRestart),
             ["build"] => Ok(Request::Build),
             ["release", "test", commit, tag]
                 if super::release_test::is_commit(commit)
@@ -653,11 +665,18 @@ impl fmt::Display for Request {
             }
             Request::End(name) => write!(f, "daemon end {name}"),
             Request::Restart => write!(f, "daemon restart"),
-            Request::Join { repo } => write!(f, "join {repo}"),
+            Request::Join {
+                repo,
+                no_lead: false,
+            } => write!(f, "join {repo}"),
+            Request::Join {
+                repo,
+                no_lead: true,
+            } => write!(f, "join {repo} --no-lead"),
             Request::Leave { repo, now: false } => write!(f, "leave {repo}"),
             Request::Leave { repo, now: true } => write!(f, "leave {repo} --now"),
             Request::LeadMove => write!(f, "lead move"),
-            Request::LeadStop => write!(f, "lead stop"),
+            Request::LeadRestart => write!(f, "lead restart"),
             Request::Build => write!(f, "build"),
             Request::ReleaseTest { commit, tag } => write!(f, "release test {commit} {tag}"),
         }
@@ -707,7 +726,7 @@ impl fmt::Display for Request {
 /// assert_eq!(judge(&from(lead, "d1", "hello", true), &daemon), None);
 /// // The lead of another repository joins its own repository on this host.
 /// let join = "join como-technologies/other";
-/// let request = Request::Join { repo: "como-technologies/other".into() };
+/// let request = Request::Join { repo: "como-technologies/other".into(), no_lead: false };
 /// assert_eq!(judge(&from(other_repo, "d1", join, true), &daemon), Some(Ok(request)));
 /// assert!(judge(&from(lead, "d1", join, true), &daemon).unwrap().is_err());
 /// assert!(judge(&from(other_repo, "d1", "join como-technologies/riff", true), &daemon).unwrap().is_err());
@@ -737,7 +756,7 @@ pub fn judge(checked: &Checked, me: &SessionUri) -> Option<std::result::Result<R
     // #1643).
     let lead = from.lead()
         && match &request {
-            Request::Join { repo } | Request::Leave { repo, .. } => {
+            Request::Join { repo, .. } | Request::Leave { repo, .. } => {
                 from.place().repo_text() == *repo
             }
             _ => from.place().repo() == me.place().repo(),
@@ -907,22 +926,24 @@ pub fn is_repo(text: &str) -> bool {
         .is_some_and(|(owner, name)| part(owner) && part(name))
 }
 
-/// The [`Request::Join`] for `repo`, or the error when `repo` is no
-/// `OWNER/REPO` that the daemon takes.
+/// The [`Request::Join`] for `repo`, with `--no-lead` when `no_lead`, or
+/// the error when `repo` is no `OWNER/REPO` that the daemon takes.
 ///
 /// ```
 /// use riff::daemon::remote::{join_request, Request};
 ///
-/// assert_eq!(join_request("o/r")?, Request::Join { repo: "o/r".into() });
-/// assert!(join_request("o/../r").is_err());
+/// assert_eq!(join_request("o/r", false)?, Request::Join { repo: "o/r".into(), no_lead: false });
+/// assert_eq!(join_request("o/r", true)?.to_string(), "join o/r --no-lead");
+/// assert!(join_request("o/../r", false).is_err());
 /// # Ok::<(), anyhow::Error>(())
 /// ```
-pub fn join_request(repo: &str) -> Result<Request> {
+pub fn join_request(repo: &str, no_lead: bool) -> Result<Request> {
     if !is_repo(repo) {
         bail!("{}", text::daemon_bad_repo(repo));
     }
     Ok(Request::Join {
         repo: repo.to_owned(),
+        no_lead,
     })
 }
 
@@ -965,9 +986,12 @@ pub fn leave_request(repo: &str, now: bool) -> Result<Request> {
 ///     s
 /// };
 /// let sessions = [daemon("riff://mike@thelio/o/other?session=d2")];
-/// let join = Request::Join { repo: "o/r".into() };
+/// let join = Request::Join { repo: "o/r".into(), no_lead: false };
 /// assert_eq!(route(&sessions, "mike", "o/r", "thelio", &join), Some(("d2", join.clone())));
-/// let other = Request::Join { repo: "o/other".into() };
+/// // The other daemon gets the flag --no-lead too.
+/// let off = Request::Join { repo: "o/r".into(), no_lead: true };
+/// assert_eq!(route(&sessions, "mike", "o/r", "thelio", &off), Some(("d2", off.clone())));
+/// let other = Request::Join { repo: "o/other".into(), no_lead: false };
 /// assert_eq!(route(&sessions, "mike", "o/other", "thelio", &other), Some(("d2", other)));
 /// // A host that does not serve the repository has nothing to leave.
 /// let leave = Request::Leave { repo: "o/r".into(), now: false };
@@ -987,11 +1011,11 @@ pub fn route<'a>(
     if let Some(to) = find(sessions, user, repo, host) {
         return Some((to, request.clone()));
     }
-    if !matches!(request, Request::Join { .. }) {
+    let Request::Join { no_lead, .. } = request else {
         return None;
-    }
+    };
     let to = find_any(sessions, user, host)?;
-    Some((to, join_request(repo).ok()?))
+    Some((to, join_request(repo, *no_lead).ok()?))
 }
 
 /// Asks the daemon of `host` for `request` as `me`, in the repository
@@ -1050,7 +1074,7 @@ pub async fn ask(
 
 /// [`ask`], with a proof of presence when the request is a step that can
 /// lose work and riff-server asks for one (01M75WKSJTB28ZQV8ADPBQ86WE): `daemon end
-/// NAME`, `leave REPO --now`, `lead stop`, and `daemon sweep --remove
+/// NAME`, `leave REPO --now`, `lead restart`, and `daemon sweep --remove
 /// NAME --force`. The action names the host and the repository of the
 /// request, as riff-server reads them from the post ([`of_step`]).
 /// `asker` asks for the proof.
@@ -1152,7 +1176,7 @@ pub async fn answer(
         }
         Request::End(name) => lines_of(dir, Ask::End { name: name.clone() }).await,
         Request::Restart => lines_of(dir, Ask::Restart).await,
-        Request::Join { repo } => join(dir, served, repo).await,
+        Request::Join { repo, no_lead } => join(dir, served, repo, *no_lead).await,
         Request::Leave { repo, now } => {
             let ask = Ask::Leave {
                 repo: repo.clone(),
@@ -1161,7 +1185,7 @@ pub async fn answer(
             lines_of(dir, ask).await
         }
         Request::LeadMove => crate::lead::take(dir, &served.wave).await,
-        Request::LeadStop => {
+        Request::LeadRestart => {
             let ask = Ask::StopLead {
                 repo: served.wave.repo.clone(),
             };
@@ -1198,11 +1222,13 @@ pub async fn answer(
 }
 
 /// The join of the repository of `wave` in its main clone: the daemon
-/// gets the session image, serves the repository, and runs its wave.
-async fn wave_run(dir: &Path, wave: &Wave) -> Result<String> {
+/// gets the session image, serves the repository, and runs its wave. With
+/// `no_lead`, the host claims no lead of the project (#1793).
+async fn wave_run(dir: &Path, wave: &Wave, no_lead: bool) -> Result<String> {
     let here = wave.place(None)?;
     let mut lines = Vec::new();
-    let repo = crate::wave::ask_with(dir, wave.main.clone(), &here, &wave.server, |line| {
+    let main = wave.main.clone();
+    let repo = crate::wave::ask_with(dir, main, &here, &wave.server, Some(no_lead), |line| {
         lines.push(line.to_owned());
     })
     .await?;
@@ -1214,8 +1240,9 @@ async fn wave_run(dir: &Path, wave: &Wave) -> Result<String> {
 /// `dir` serves `repo` and runs its wave. A repository that it serves
 /// keeps its main clone. Else the daemon makes a main clone with
 /// [`clone_main`] and serves that one, with the riff-server and the host
-/// name of `served`: the request came through that riff-server.
-async fn join(dir: &Path, served: &Served, repo: &str) -> Result<String> {
+/// name of `served`: the request came through that riff-server. With
+/// `no_lead`, the host claims no lead of the project (#1793).
+async fn join(dir: &Path, served: &Served, repo: &str, no_lead: bool) -> Result<String> {
     let mut lines = Vec::new();
     // No clone for a repository that may run no wave here (#1863).
     let place = crate::identity::place_from_text(&format!("{}/{repo}", served.wave.host))?;
@@ -1244,7 +1271,7 @@ async fn join(dir: &Path, served: &Served, repo: &str) -> Result<String> {
             }
         }
     };
-    lines.push(wave_run(dir, &wave).await?);
+    lines.push(wave_run(dir, &wave, no_lead).await?);
     Ok(lines.join("\n"))
 }
 

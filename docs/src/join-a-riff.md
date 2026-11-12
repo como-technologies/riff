@@ -71,8 +71,9 @@ List the sessions of the riff. It shows the sessions of each machine:
 riff who
 ```
 
-Then start your lead from that terminal, in your clone of the
-project: `riff lead start`. Ask: *"Who else is in the riff?"*
+Then attach to the lead of the project from that terminal, in your
+clone of the project: `riff lead start`. The riff daemon of a host that
+joined starts the lead. Ask: *"Who else is in the riff?"*
 
 ## Update riff
 

@@ -209,7 +209,8 @@ impl Machine {
     /// Makes the riff run, with `session` as the lead.
     async fn resume(&self, session: &str) {
         self.ok(session, &["whoami"]).await;
-        self.ok("", &["lead", "--session", session]).await;
+        let dir = self.repo.path();
+        crate::common::lead_by_person(&self.server, dir, "thelio", "mike", session).await;
         self.ok(session, &["resume", "--riff"]).await;
     }
 

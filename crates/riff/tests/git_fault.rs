@@ -1,6 +1,7 @@
 //! A fault of `git` does not make a place (#1401,
-//! 01M5R9S69W7QEMNKV3JRNV0RNB). `riff whoami` of a session, and then
-//! `riff lead --session ID` of its person, are the race of #1401: the
+//! 01M5R9S69W7QEMNKV3JRNV0RNB). `riff whoami` of a session, and then the
+//! call `lead` of its person, as the riff daemon makes it for a lead that
+//! it starts, are the race of #1401: the
 //! second call finds the session only when the first call registered it
 //! in the place of its repository. A `git` that fails once made the
 //! first call register the session in a place that riff made up.
@@ -172,8 +173,7 @@ async fn the_lead_finds_a_session_whose_whoami_lost_any_one_git_call() {
         let uri = format!("riff://mike@pangolin/como-technologies/riff?session={id}");
         assert!(whoami.stdout.contains(&uri), "call {n}: {}", whoami.stdout);
 
-        let lead = riff(&server, dir, None, None, &["lead", "--session", &id]).await;
-        assert_eq!(lead.code, 0, "call {n}: {}{}", lead.stdout, lead.stderr);
+        common::lead_by_person(&server, dir, "pangolin", "mike", &id).await;
     }
 }
 
@@ -215,12 +215,15 @@ async fn a_git_that_always_fails_stops_whoami_and_registers_no_session() {
     // No session is in the riff, and the lead has none to name.
     let who = riff(&server, dir, None, None, &["who", "--all", "--long"]).await;
     assert!(!who.stdout.contains("lead1"), "{}", who.stdout);
-    let lead = riff(&server, dir, None, None, &["lead", "--session", "lead1"]).await;
-    assert_eq!(lead.code, 1, "{}{}", lead.stdout, lead.stderr);
+    let place = riff::identity::place_in(dir, "pangolin").unwrap();
+    let person =
+        riff_core::name::SessionUri::new(riff_core::name::Who::new("mike", None).unwrap(), place);
+    let refused = common::api(&server, "mike", None)
+        .lead(&person, "lead1")
+        .await
+        .unwrap_err();
     assert!(
-        lead.stderr
-            .contains("mike has no session lead1 in como-technologies/riff"),
-        "{}",
-        lead.stderr
+        format!("{refused:#}").contains("mike has no session lead1 in como-technologies/riff"),
+        "{refused:#}"
     );
 }

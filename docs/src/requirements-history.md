@@ -2152,6 +2152,37 @@ page [Requirements](requirements.md) holds the rules of today.
   checks of the guard and of the lead App: the daemon reads them with
   the sign-in of the person on the host (#1733).
   Superseded by 01M76SHAZK2PSMET0HRYM0J7VN.
+- **01M5NJ87NXF6077Y9W32840BR8** riff lead start refuses to start the
+  lead on a host with no claude token of riff claude-token. It names the
+  step: claude setup-token, then riff claude-token, on that host.
+  Superseded by 01M77Y6ZQ76DTX470STN8ATTA9.
+- **01M6QVSJC4V3Z3NB6MJW4XGJSR** `riff lead start` starts the lead of
+  the repository on the host and attaches, and the host gets the part
+  `lead`. It starts no wave, no worker and no session of an item, and it
+  does not join the host: the host gives workers only after `riff host
+  join`. When the host has no part `workers`, a new lead gets one line
+  that names `riff host join`. This supersedes
+  01M5515CJ7QDJ639VGR7SJTE08 in full, and 01M53NGVE839TRH7XB7CDPQNZE and
+  01M5QY976MTPRX5J4N1MKXAGDK in part.
+  Superseded by 01M77Y6ZBV7C8Z332SAFKQCZ5A.
+- **01M6QVSWTARPKP59X8AJBBK69X** `riff lead stop` ends the lead on this
+  host, and `riff lead stop --host HOST` asks the daemon of HOST through
+  riff-server. First riff asks the lead on that host to write its notes,
+  and waits up to 5 minutes for a change of the notes, as `riff lead
+  move` does. A lead that writes no notes in that time gets a warning,
+  and the stop goes on. The lead that runs the command asks nobody: it
+  writes its notes first. Then the daemon stops the container of the
+  lead and waits for its end. The session of the lead leaves
+  riff-server, and the host loses the part `lead`. A host with no other
+  part stops serving the repository (01M6QRDBG1JTX5NV1C8TB7AG36). A host
+  with no lead of the repository fails with a line. Only the person and
+  the lead of the person act on it. In a lead container, `riff lead
+  stop` needs `--host`.
+  Superseded by 01M77Y6ZEQ4A6C6E0XZ56WRE89.
+- **01M6QVSWYXKZ2MJ54AFK62SZAY** `riff daemon end` keeps its refusal of
+  the lead (01M579Z9VRD12FRK6DSYVKDHQB), and its text names `riff lead
+  stop`.
+  Superseded by 01M77Y6ZMFZJGK2DM6RAM94C7Q.
 
 ### The first run
 
@@ -3259,6 +3290,15 @@ Backlog (01M53NGWN190T2MYB1EZAD36VB).
   wakes, `wakes` and `resolve`, are in `riff-client`. `riff chat` and
   the Chat tab of the TUI share them. Superseded by
   01M6Y1A5PTCVZ6GRJ0FXMART2T.
+- **01M776RTACYY4JTVQ4FNT81Q0T** In the Sessions tab of the TUI, the
+  group of a repository whose wave waits for a lead says `waits for a
+  lead · l starts it`, and its detail says why. On a host that runs the
+  wave of the repository, `l` on a row of that repository asks `Start
+  the lead of OWNER/REPO on HOST? y/N`. `y` starts the lead on this
+  machine as `riff lead start` does, from the main clone of the wave,
+  and attaches. On another host, the note says to run `riff lead start`
+  in a clone of the repository.
+  Superseded by 01M77XYN04KX35QZ06NDPSXHRP.
 
 ## The notes of the lead
 

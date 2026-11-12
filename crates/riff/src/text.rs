@@ -17,9 +17,9 @@ use crate::style::{BOLD, DIM, ERROR, GOOD, MUTED, WARNING, styled};
 use riff_client::api::{Claimed, Inbox, Told};
 use riff_client::threads::{Line, Names, RIFF_BOT, Thread};
 use riff_core::wire::{
-    AdminSet, DeviceInfo, DevicesReply, FreeReply, GitHubRole, HoldReply, Invited, Kind, LeadReply,
-    PauseInfo, Posted, ProjectInitReply, ProjectsReply, ReleaseReply, Removed, Revoked, RiffReply,
-    RiffState, SessionInfo, StepChange, ThreadInfo, Wake,
+    AdminSet, DeviceInfo, DevicesReply, FreeReply, GitHubRole, HoldReply, Invited, Kind, PauseInfo,
+    Posted, ProjectInitReply, ProjectsReply, ReleaseReply, Removed, Revoked, RiffReply, RiffState,
+    SessionInfo, StepChange, ThreadInfo, Wake,
 };
 
 /// Tells the reader how to act on a message (R10). The start hook and
@@ -594,41 +594,6 @@ pub fn claimed(reply: &Claimed, thread: &ThreadName, item: &str) -> String {
     }
 }
 
-/// The refusal of `riff lead` with no session to name.
-pub const LEAD_NAME_SESSION: &str = "riff: name the new lead: riff lead --session ID. riff who \
-    shows the session IDs. To start a lead in a container, run riff lead start.";
-
-/// The answer to `riff lead --session`: the new lead, and the old lead
-/// when there was one.
-///
-/// ```
-/// use riff_core::wire::LeadReply;
-///
-/// let reply = LeadReply {
-///     lead: "riff://mike@pangolin/como-technologies/riff?session=b2&lead=true#api".parse()?,
-///     replaced: Some("riff://mike@pangolin/como-technologies/riff?session=a1".parse()?),
-/// };
-/// assert_eq!(
-///     riff::text::led(&reply),
-///     "mike@pangolin:riff#api (b2) is the lead of mike in como-technologies/riff. \
-///      mike@pangolin:riff (a1) is not the lead now."
-/// );
-/// # Ok::<(), riff_core::name::NameError>(())
-/// ```
-pub fn led(reply: &LeadReply) -> String {
-    let lead = &reply.lead;
-    let mut out = format!(
-        "{} is the lead of {} in {}.",
-        name(lead),
-        lead.who().user(),
-        lead.place().repo_text()
-    );
-    if let Some(old) = &reply.replaced {
-        let _ = write!(out, " {} is not the lead now.", name(old));
-    }
-    out
-}
-
 /// The answer to a post. It names each session that woke, and each
 /// selector that matched no session.
 ///
@@ -835,8 +800,8 @@ pub fn build_line(server: Option<&Build>) -> String {
 /// assert_eq!(
 ///     riff::text::riff_set(Some(&riff), RiffState::Running, &no_lead, &[]),
 ///     "The repository como-technologies/riff is running now. No other session woke. No lead \
-///      of como-technologies/riff runs, so its wave starts no session: run riff lead start in a \
-///      clone of como-technologies/riff."
+///      of como-technologies/riff runs, so its wave starts no session: a host that joined \
+///      como-technologies/riff starts the lead (riff host join)."
 /// );
 /// // A resume of the whole riff while a repository has a pause of its own:
 /// // its lead hears it, and no worker of it wakes.
@@ -898,8 +863,8 @@ pub fn riff_set(
             let repo = safe(&repository.to_string());
             let _ = write!(
                 out,
-                " No lead of {repo} runs, so its wave starts no session: run riff lead start in a \
-                 clone of {repo}."
+                " No lead of {repo} runs, so its wave starts no session: a host that joined {repo} \
+                 starts the lead (riff host join)."
             );
         }
         if repository.is_none() && !reply.repositories.is_empty() {
@@ -1542,7 +1507,7 @@ pub fn setup_check(path: &std::path::Path, left: &Rules) -> String {
 /// let text = riff::text::waves_list(&milestones, Some(&waits));
 /// assert!(text.starts_with(
 ///     "Wave 27: Cloud  current  runs on thelio  3 open, 20 closed\n\
-///      \x20 waits for a lead: run riff lead start in a clone of o/r\n\
+///      \x20 waits for a lead: a host that joined o/r starts it (riff host join)\n\
 ///      \x20 held: #7"
 /// ));
 /// assert!(text.contains("Wave 28  1 open, 0 closed\n  free: #30\n"), "{text}");
@@ -8661,8 +8626,8 @@ pub fn daemon_facts(
 /// use riff_client::daemons::{Parts, RepoParts};
 ///
 /// let parts = [
-///     RepoParts { repo: "o/r".into(), parts: Parts { workers: true, lead: false } },
-///     RepoParts { repo: "o/s".into(), parts: Parts { workers: true, lead: true } },
+///     RepoParts { repo: "o/r".into(), parts: Parts { workers: true, lead: false, no_lead: false } },
+///     RepoParts { repo: "o/s".into(), parts: Parts { workers: true, lead: true, no_lead: false } },
 /// ];
 /// assert_eq!(riff::text::parts_line(&parts), "parts o/r workers, o/s workers and lead");
 /// ```
@@ -9918,16 +9883,16 @@ pub fn init_config_on(repo: &str, branch: &str) -> String {
 }
 
 /// The branch `branch` of the repository `repo` has no `riff.toml`:
-/// `riff lead start` stops.
+/// riff starts no lead and no wave there.
 ///
 /// ```
 /// assert_eq!(
 ///     riff::text::init_config_off("o/r", "main"),
-///     "main of o/r has no riff.toml, so riff lead start stops"
+///     "main of o/r has no riff.toml, so riff starts no lead and no wave"
 /// );
 /// ```
 pub fn init_config_off(repo: &str, branch: &str) -> String {
-    format!("{branch} of {repo} has no riff.toml, so riff lead start stops")
+    format!("{branch} of {repo} has no riff.toml, so riff starts no lead and no wave")
 }
 
 /// The fix when `branch` has no `riff.toml`.
@@ -11493,16 +11458,21 @@ pub fn daemon_facts_status(sent: &crate::daemon::facts::Sent, now_ms: i64) -> Op
     })
 }
 
-/// The refusal of `riff daemon end` for the lead.
+/// The refusal of `riff daemon end` for the lead
+/// (01M77Y6ZMFZJGK2DM6RAM94C7Q).
 ///
 /// ```
 /// assert_eq!(
 ///     riff::text::daemon_end_lead("riff-lead-o-r"),
-///     "The session in the container riff-lead-o-r is the lead. End it with riff lead stop."
+///     "The session in the container riff-lead-o-r is the lead. End it with riff lead restart: \
+///      a new lead starts."
 /// );
 /// ```
 pub fn daemon_end_lead(name: &str) -> String {
-    format!("The session in the container {name} is the lead. End it with riff lead stop.")
+    format!(
+        "The session in the container {name} is the lead. End it with riff lead restart: a new \
+         lead starts."
+    )
 }
 
 /// The item of a session that a person ends is free
@@ -11655,8 +11625,8 @@ pub fn daemon_serves_no_more(repo: &str) -> String {
 /// use riff_client::daemons::{Parts, RepoParts};
 ///
 /// let parts = [
-///     RepoParts { repo: "o/r".into(), parts: Parts { workers: true, lead: true } },
-///     RepoParts { repo: "o/s".into(), parts: Parts { workers: false, lead: true } },
+///     RepoParts { repo: "o/r".into(), parts: Parts { workers: true, lead: true, no_lead: false } },
+///     RepoParts { repo: "o/s".into(), parts: Parts { workers: false, lead: true, no_lead: false } },
 /// ];
 /// assert_eq!(
 ///     riff::text::parts_first(&parts),
@@ -11698,17 +11668,19 @@ pub const WAITS_FOR_LEAD: &str = "waits for a lead";
 
 /// Why the wave of the repository `repo` starts no session: it has no
 /// live lead (01M776RSYKJK9NETFAD8G0CCVQ). The word of the wave in `riff
-/// daemon status`, and the line of `riff wave list` and `riff top`.
+/// daemon status`, and the line of `riff wave list` and `riff top`. It
+/// names the step that gets a lead: a host that joined the project starts
+/// it (01M77Y6ZQ76DTX470STN8ATTA9).
 ///
 /// ```
 /// assert_eq!(
 ///     riff::text::wave_no_lead("o/r"),
-///     "waits for a lead: run riff lead start in a clone of o/r"
+///     "waits for a lead: a host that joined o/r starts it (riff host join)"
 /// );
 /// ```
 pub fn wave_no_lead(repo: &str) -> String {
     format!(
-        "{WAITS_FOR_LEAD}: run riff lead start in a clone of {}",
+        "{WAITS_FOR_LEAD}: a host that joined {} starts it (riff host join)",
         safe(repo)
     )
 }
@@ -13654,62 +13626,174 @@ pub fn lead_move_done(host: &str, session: &str) -> String {
     )
 }
 
-/// `riff lead stop`: the direct message to the lead. It writes its notes
-/// before riff ends its container (#1644).
+/// `riff lead restart`: the direct message to the lead. It writes its
+/// notes before riff ends its container, and the new lead reads them
+/// (#1793, 01M77Y6ZEQ4A6C6E0XZ56WRE89).
 ///
 /// ```
-/// let text = riff::text::lead_stop_ask();
-/// assert!(text.contains("stops your container"));
+/// let text = riff::text::lead_restart_ask();
+/// assert!(text.contains("ends your container"));
 /// assert!(text.contains("notes tool"));
 /// ```
-pub fn lead_stop_ask() -> String {
-    "Your person stops this lead. riff stops your container when you write your notes. Write \
-     your notes now with the notes tool: the open items, what waits for the person, and the \
-     next steps. Keep the rules and the state that the notes hold already. Write nothing else, \
-     and do not start new work."
+pub fn lead_restart_ask() -> String {
+    "Your person restarts the lead. riff ends your container when you write your notes, and a \
+     new lead starts with them. Write your notes now with the notes tool: the open items, what \
+     waits for the person, and the next steps. Keep the rules and the state that the notes hold \
+     already. Write nothing else, and do not start new work."
         .to_owned()
 }
 
-/// `riff lead stop`: the refusal for a session that is not the lead.
-pub const LEAD_STOP_NOT_LEAD: &str =
-    "riff: only the lead stops the lead. This session is not the lead of its repository.";
+/// `riff lead restart`: the refusal for a session that is not the lead.
+pub const LEAD_RESTART_NOT_LEAD: &str =
+    "riff: only the lead restarts the lead. This session is not the lead of its repository.";
 
-/// `riff lead stop` in the container of a lead, with no `--host`: the
-/// container has no daemon of the host.
-pub const LEAD_STOP_IN_CONTAINER: &str = "riff: a lead container cannot stop a lead with no \
-     host. Write your notes, then run riff lead stop --host HOST. HOST is the host of the \
-     lead: riff whoami shows it.";
-
-/// `riff lead stop`: the lead wrote no notes in `wait`. riff stops the
+/// `riff lead restart`: the lead wrote no notes in `wait`. riff ends the
 /// lead with the notes as they are.
 ///
 /// ```
 /// use std::time::Duration;
-/// let text = riff::text::lead_stop_no_notes(Duration::from_secs(300));
+/// let text = riff::text::lead_restart_no_notes(Duration::from_secs(300));
 /// assert!(text.contains("wrote no notes in 5m"));
 /// ```
-pub fn lead_stop_no_notes(wait: std::time::Duration) -> String {
+pub fn lead_restart_no_notes(wait: std::time::Duration) -> String {
     format!(
-        "riff: the lead wrote no notes in {}. riff stops the lead with the notes as they are.",
+        "riff: the lead wrote no notes in {}. riff ends the lead with the notes as they are.",
         ago(wait.as_secs())
     )
 }
 
-/// `riff lead stop`: the end, on `host`.
+/// `riff lead restart`: the end of the lead on `host`. A host that joined
+/// the project starts a new lead (#1793).
 ///
 /// ```
-/// let text = riff::text::lead_stop_done("thelio");
+/// let text = riff::text::lead_restart_done("thelio");
 /// assert_eq!(
 ///     text,
-///     "The lead on thelio ended. To start a lead there again, run riff lead start on thelio."
+///     "The lead on thelio ended. The riff daemon of a host that joined the project starts a \
+///      new lead, and the new lead reads the notes. riff who shows where it runs."
 /// );
 /// ```
-pub fn lead_stop_done(host: &str) -> String {
-    format!("The lead on {host} ended. To start a lead there again, run riff lead start on {host}.")
+pub fn lead_restart_done(host: &str) -> String {
+    format!(
+        "The lead on {} ended. The riff daemon of a host that joined the project starts a new \
+         lead, and the new lead reads the notes. riff who shows where it runs.",
+        safe(host)
+    )
 }
 
-/// The daemon runs no lead of `repo`: `riff lead stop` has nothing to
-/// end.
+/// `riff lead restart` in the repository `repo` while no session holds the
+/// claim lead: there is no lead to end (#1793).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::lead_restart_none("o/r"),
+///     "riff: no lead of o/r runs, so riff lead restart ends nothing. A host that joined o/r \
+///      starts the lead (riff host join)."
+/// );
+/// ```
+pub fn lead_restart_none(repo: &str) -> String {
+    let repo = safe(repo);
+    format!(
+        "riff: no lead of {repo} runs, so riff lead restart ends nothing. A host that joined \
+         {repo} starts the lead (riff host join)."
+    )
+}
+
+/// `riff lead restart` by a person whose user is not the user of the lead
+/// `lead` of `repo`: only the person of the lead and the lead itself act
+/// on the daemon of its host (#1793, 01M579Z9PZZCVWQKG7V8WZ5KRB).
+///
+/// ```
+/// let lead = "riff://brett@heron/o/r?session=77e0a1b2&lead=true".parse()?;
+/// assert_eq!(
+///     riff::text::lead_restart_other_user("o/r", &lead),
+///     "riff: the lead of o/r is brett@heron:r (77e0a1b2), a session of brett. Only brett, or \
+///      that lead, can restart it."
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn lead_restart_other_user(repo: &str, lead: &SessionUri) -> String {
+    let user = safe(lead.who().user());
+    format!(
+        "riff: the lead of {} is {}, a session of {user}. Only {user}, or that lead, can restart \
+         it.",
+        safe(repo),
+        name(lead)
+    )
+}
+
+/// `riff lead start` on the host `here` with no container of the lead of
+/// `repo` (#1793, 01M77Y6ZBV7C8Z332SAFKQCZ5A): `riff lead start` starts no
+/// lead. `lead` is the holder of the claim lead of the project. On another
+/// host, the text names that host and the step there. On this host, the
+/// daemon here runs no container of it now. With no lead, a host that
+/// joined the project starts it.
+///
+/// ```
+/// let there = "riff://mike@thelio/o/r?session=4e54d4e5&lead=true".parse()?;
+/// assert_eq!(
+///     riff::text::lead_not_here("o/r", "pangolin", Some(&there)),
+///     "riff: the lead of o/r runs on thelio, not on this host, and riff lead start starts no \
+///      lead. To attach to it: ssh thelio, then riff lead start in a clone of o/r. To move it \
+///      here: riff lead move pangolin."
+/// );
+/// assert_eq!(
+///     riff::text::lead_not_here("o/r", "thelio", Some(&there)),
+///     "riff: the lead of o/r is mike@thelio:r (4e54d4e5) on this host, but the riff daemon \
+///      here runs no container of it now. riff daemon status shows the sessions of the daemon."
+/// );
+/// assert_eq!(
+///     riff::text::lead_not_here("o/r", "pangolin", None),
+///     "riff: no lead of o/r runs, and riff lead start starts no lead. The riff daemon of a host \
+///      that joined o/r starts it: riff host join."
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn lead_not_here(repo: &str, here: &str, lead: Option<&SessionUri>) -> String {
+    let repo = safe(repo);
+    match lead {
+        Some(lead) if lead.place().host() == here => format!(
+            "riff: the lead of {repo} is {} on this host, but the riff daemon here runs no \
+             container of it now. riff daemon status shows the sessions of the daemon.",
+            name(lead)
+        ),
+        Some(lead) => {
+            let host = safe(lead.place().host());
+            format!(
+                "riff: the lead of {repo} runs on {host}, not on this host, and riff lead start \
+                 starts no lead. To attach to it: ssh {host}, then riff lead start in a clone of \
+                 {repo}. To move it here: riff lead move {}.",
+                safe(here)
+            )
+        }
+        None => format!(
+            "riff: no lead of {repo} runs, and riff lead start starts no lead. The riff daemon \
+             of a host that joined {repo} starts it: riff host join."
+        ),
+    }
+}
+
+/// `riff host join --no-lead` on a host that runs the lead of `repo`: the
+/// lead goes on, and `riff lead restart` ends it (#1793,
+/// 01M77Y6ZHM0V6YQ3XJEVJ8J5PC).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::join_lead_goes_on("o/r"),
+///     "The lead of o/r runs on this host, and goes on. This host claims no new lead. To start \
+///      a new lead on a host that claims it, run riff lead restart."
+/// );
+/// ```
+pub fn join_lead_goes_on(repo: &str) -> String {
+    format!(
+        "The lead of {} runs on this host, and goes on. This host claims no new lead. To start a \
+         new lead on a host that claims it, run riff lead restart.",
+        safe(repo)
+    )
+}
+
+/// The daemon runs no lead of `repo`: `riff lead restart` has nothing to
+/// end on this host.
 ///
 /// ```
 /// assert_eq!(
@@ -13904,19 +13988,6 @@ pub fn takeover_session_ended(name: &str) -> String {
     format!("The session in the container {name} ended before a takeover.")
 }
 
-/// `riff lead start`: the host gives no workers to `repo`. The lead
-/// starts all the same (#1644).
-///
-/// ```
-/// assert_eq!(
-///     riff::text::lead_gives_no_workers("o/r"),
-///     "This host gives no workers to o/r. To give workers, run riff host join."
-/// );
-/// ```
-pub fn lead_gives_no_workers(repo: &str) -> String {
-    format!("This host gives no workers to {repo}. To give workers, run riff host join.")
-}
-
 /// `riff lead start`: the lead of the repository runs already.
 pub fn lead_runs(repo: &str, name: &str) -> String {
     format!("The lead of {repo} runs in the container {name}. riff attaches to it.")
@@ -13974,8 +14045,8 @@ pub fn not_lead(lead: Option<&SessionUri>) -> String {
     )
 }
 
-/// `riff lead start`: the new session is the lead. `replaced` is the
-/// session that was the lead before (#1301).
+/// The start of a new lead: the new session is the lead. `replaced` is
+/// the session that was the lead before (#1301).
 ///
 /// ```
 /// let old = "riff://mike@pangolin/como-technologies/riff?session=94adc2ec".parse()?;
@@ -13994,23 +14065,24 @@ pub fn lead_made(repo: &str, replaced: Option<&SessionUri>) -> String {
     out
 }
 
-/// `riff lead start`: the lead starts.
+/// The start of a new lead: the lead starts.
 pub fn lead_starts(repo: &str, name: &str, session: &str) -> String {
     format!("The lead of {repo} starts in the container {name}: session {session}.")
 }
 
-/// `riff lead start` on a host with no claude token: it starts no lead
-/// (01M5NJ87NXF6077Y9W32840BR8).
+/// The start of a lead on a host with no claude token: it starts no lead
+/// (01M77Y6ZQ76DTX470STN8ATTA9). The daemon starts it at its next look
+/// after the step.
 ///
 /// ```
 /// let text = riff::text::LEAD_NEEDS_TOKEN;
 /// assert!(text.contains("claude token: not set"), "{text}");
 /// assert!(text.contains("claude setup-token, then riff claude-token"), "{text}");
 /// ```
-pub const LEAD_NEEDS_TOKEN: &str = "riff lead start needs the claude token of this machine: riff \
-     daemon status says \"claude token: not set\". The lead runs for hours, and the next sign-in \
-     of claude on this machine stops it. Run claude setup-token, then riff claude-token, on this \
-     machine. Then run riff lead start again.";
+pub const LEAD_NEEDS_TOKEN: &str = "The lead needs the claude token of this machine: riff daemon \
+     status says \"claude token: not set\". The lead runs for hours, and the next sign-in of \
+     claude on this machine stops it. Run claude setup-token, then riff claude-token, on this \
+     machine. Then the riff daemon of this machine starts the lead.";
 
 /// The sign-in of `claude` in the lead `name` is stale: the host
 /// replaced the sign-in file that the lead holds
@@ -14020,15 +14092,15 @@ pub const LEAD_NEEDS_TOKEN: &str = "riff lead start needs the claude token of th
 /// let text = riff::text::lead_sign_in_stale("riff-lead-o-r");
 /// assert!(text.contains("riff-lead-o-r") && text.contains("stale"), "{text}");
 /// assert!(text.contains("claude setup-token, then riff claude-token"), "{text}");
-/// assert!(text.ends_with("riff lead start"), "{text}");
+/// assert!(text.ends_with("starts it again with the token."), "{text}");
 /// ```
 pub fn lead_sign_in_stale(name: &str) -> String {
     format!(
         "The sign-in of claude in the lead {name} is stale: claude on this machine signed in \
          again, and the lead holds the old sign-in file. The lead will fail with \"OAuth token \
-         revoked\", and /login in it cannot save. Type /exit in the lead. Then run claude \
-         setup-token, then riff claude-token, on this machine, and start the lead again: riff \
-         lead start"
+         revoked\", and /login in it cannot save. Run claude setup-token, then riff \
+         claude-token, on this machine. Then type /exit in the lead: the riff daemon starts it \
+         again with the token."
     )
 }
 
@@ -14156,17 +14228,19 @@ pub fn lead_again_waits(name: &str, why: &str) -> String {
 
 /// The daemon stopped the lead `name` to start it again on the new riff,
 /// and the start failed (01M5TC29A4Q94NJP7HFC75XCF3). The lead is not
-/// there: the person starts it.
+/// there: its session ends, and a host that joined the project starts a
+/// new lead (01M77Y6ZQ76DTX470STN8ATTA9).
 ///
 /// ```
 /// let text = riff::text::lead_again_failed("riff-lead-o-r", "podman run failed");
 /// assert!(text.contains("the start failed: podman run failed"));
-/// assert!(text.ends_with("run riff lead start, then /resume."));
+/// assert!(text.ends_with("a host that joined the project starts a new lead (riff host join)."));
 /// ```
 pub fn lead_again_failed(name: &str, why: &str) -> String {
     format!(
         "riff stopped the lead {name} to start it again on the new riff, and the start failed: \
-         {why}. The lead is not there: run riff lead start, then /resume."
+         {why}. The lead is not there: a host that joined the project starts a new lead (riff \
+         host join)."
     )
 }
 
@@ -14285,7 +14359,7 @@ pub fn lead_start_waits(wait: std::time::Duration) -> String {
 }
 
 /// A start of the lead of `repo` waits for another start of the lead on
-/// this host (#2032, [`crate::lead::one_start`]): then it attaches to that
+/// this host (#2032, [`crate::lead::one_start`]): then it uses that
 /// lead, or starts one.
 ///
 /// ```
@@ -14339,15 +14413,19 @@ pub fn lead_detached(name: &str) -> String {
 }
 
 /// `riff lead start` and the TUI after the end of the lead
-/// (01M51PD7Q24N252V66NFEHY49N).
+/// (01M51PD7Q24N252V66NFEHY49N): its daemon starts it again, or a host
+/// that joined the project starts a new lead (#1791, #1793).
 ///
 /// ```
 /// let line = riff::text::lead_ended("riff-lead-o-r");
 /// assert!(line.starts_with("The lead in the container riff-lead-o-r ended."));
-/// assert!(line.ends_with("Start it again in a clone: riff lead start"));
+/// assert!(line.ends_with("Then riff lead start attaches to it."));
 /// ```
 pub fn lead_ended(name: &str) -> String {
-    format!("The lead in the container {name} ended. Start it again in a clone: riff lead start")
+    format!(
+        "The lead in the container {name} ended. Its riff daemon starts it again, or a host that \
+         joined the project starts a new lead. Then riff lead start attaches to it."
+    )
 }
 
 /// `riff lead start` after the end of the lead: `claude` printed a
@@ -14369,74 +14447,56 @@ pub fn lead_no_redraw(error: &str) -> String {
     )
 }
 
-/// The Sessions tab of the TUI: no lead runs on this machine.
-pub const NO_LEAD_HERE: &str = "No lead runs on this machine. Start it in a clone: riff lead start";
+/// The Sessions tab of the TUI: `l` finds no lead on this machine, and no
+/// lead of the repository of the row on another host
+/// (01M77XYN04KX35QZ06NDPSXHRP).
+pub const NO_LEAD_HERE: &str = "No lead runs on this machine. The riff daemon of a host that \
+     joined a project starts its lead: riff host join";
 
 /// The word of the group of a repository in the Sessions tab of the TUI
-/// whose wave waits for a lead: why, and the key that starts the lead
-/// (01M776RTACYY4JTVQ4FNT81Q0T).
-pub const GROUP_NO_LEAD: &str = "waits for a lead · l starts it";
+/// whose lead runs on `host` (01M77XYN04KX35QZ06NDPSXHRP).
+///
+/// ```
+/// assert_eq!(riff::text::group_lead_on("thelio"), "lead thelio");
+/// ```
+pub fn group_lead_on(host: &str) -> String {
+    format!("lead {}", safe(host))
+}
 
 /// The line in the detail of the group of the repository `repo` whose
-/// wave waits for a lead (01M776RTACYY4JTVQ4FNT81Q0T).
+/// lead `name` ([`name`]) runs on `host` (01M77XYN04KX35QZ06NDPSXHRP).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::group_lead("o/r", "thelio", "mike@thelio:r (4e54d4e5)"),
+///     "The lead of o/r runs on thelio: mike@thelio:r (4e54d4e5)."
+/// );
+/// ```
+pub fn group_lead(repo: &str, host: &str, name: &str) -> String {
+    format!(
+        "The lead of {} runs on {}: {}.",
+        safe(repo),
+        safe(host),
+        safe(name)
+    )
+}
+
+/// The line in the detail of the group of the repository `repo` whose
+/// wave waits for a lead, and the note of `l` on a row of it: why, and
+/// the step. `l` starts no lead (01M77XYN04KX35QZ06NDPSXHRP).
 ///
 /// ```
 /// assert_eq!(
 ///     riff::text::group_no_lead("o/r"),
-///     "The wave of o/r waits for a lead. Press l to start it, or run riff lead start in a clone of o/r."
+///     "The wave of o/r waits for a lead. The riff daemon of a host that joined o/r starts it: \
+///      run riff host join in a clone of o/r."
 /// );
 /// ```
 pub fn group_no_lead(repo: &str) -> String {
     let repo = safe(repo);
     format!(
-        "The wave of {repo} waits for a lead. Press l to start it, or run riff lead start in a \
-         clone of {repo}."
-    )
-}
-
-/// The question of `l` in the Sessions tab of the TUI on a repository
-/// whose wave waits for a lead, on a host that runs that wave
-/// (01M776RTACYY4JTVQ4FNT81Q0T). The note line adds `y/N`.
-///
-/// ```
-/// assert_eq!(riff::text::ask_start_lead("o/r", "thelio"), "Start the lead of o/r on thelio?");
-/// ```
-pub fn ask_start_lead(repo: &str, host: &str) -> String {
-    format!("Start the lead of {} on {}?", safe(repo), safe(host))
-}
-
-/// The note of `l` in the Sessions tab of the TUI on a repository whose
-/// wave waits for a lead, on a host that runs no wave of it
-/// (01M776RTACYY4JTVQ4FNT81Q0T).
-///
-/// ```
-/// assert_eq!(
-///     riff::text::lead_start_in_clone("o/r", "pangolin"),
-///     "pangolin runs no wave of o/r. Start its lead in a clone of o/r: riff lead start"
-/// );
-/// ```
-pub fn lead_start_in_clone(repo: &str, host: &str) -> String {
-    let repo = safe(repo);
-    format!(
-        "{} runs no wave of {repo}. Start its lead in a clone of {repo}: riff lead start",
-        safe(host)
-    )
-}
-
-/// The error of the start of a lead from the TUI when the daemon of this
-/// machine runs no wave of `repo` (01M776RTACYY4JTVQ4FNT81Q0T).
-///
-/// ```
-/// assert_eq!(
-///     riff::text::lead_no_wave_here("o/r"),
-///     "The riff daemon of this machine runs no wave of o/r. Start the lead in a clone of o/r: riff lead start"
-/// );
-/// ```
-pub fn lead_no_wave_here(repo: &str) -> String {
-    let repo = safe(repo);
-    format!(
-        "The riff daemon of this machine runs no wave of {repo}. Start the lead in a clone of \
-         {repo}: riff lead start"
+        "The wave of {repo} waits for a lead. The riff daemon of a host that joined {repo} starts \
+         it: run riff host join in a clone of {repo}."
     )
 }
 
@@ -14478,8 +14538,9 @@ pub const PICK_A_REPOSITORY: &str =
 pub const NO_CONTAINER_HERE: &str = "This session runs in no container of the riff daemon of \
      this machine: t and x work only on such a session.";
 
-/// The Sessions tab: `l` or `t` on the lead of another host, in the
-/// repository `repo`: the step there (01M6WMAXEVZB2XJN4XPR879J6W).
+/// The Sessions tab: `l` on a row of the repository `repo` whose lead
+/// runs on `host`, or `t` on the lead of another host: the step there
+/// (01M6WMAXEVZB2XJN4XPR879J6W, 01M77XYN04KX35QZ06NDPSXHRP).
 ///
 /// ```
 /// assert_eq!(

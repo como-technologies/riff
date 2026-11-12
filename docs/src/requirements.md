@@ -3211,17 +3211,14 @@
 - **01M5NJAXTQ0YKN7Q7XN0A7ZMPF** Only a person names the lead: the
   command `lead` of a person names the session ID of the new lead, or
   its start. riff-server refuses `lead` from a session, also for itself,
-  so `riff lead` in a session fails, and the riff tools have no `lead`
-  tool. A worker cannot be the lead. Supersedes R177.
+  and the riff tools have no `lead` tool. A worker cannot be the lead.
+  Supersedes R177.
 - **01M5NJAY3FTR005TDJJY1TMGNX** No session becomes the lead by itself:
   a `register` or a `start` never makes a lead, also for the first
   session of a person in a repository. Supersedes R176 and
   01M3X9XA3H6YF0QCYSNB2P0CT2.
-- **01M5NJAYC7MXS13TA3VJB4N6RP** `riff lead start` and the daemon for
-  `lead move` make the new session the lead as the person, with no
-  session ID. A person in a terminal with no session ID names a lead
-  with `riff lead --session ID`, for example a session on the host when
-  the lead container ended.
+- **01M5NJAYC7MXS13TA3VJB4N6RP** The daemon for `lead move` makes the
+  new session the lead as the person, with no session ID.
 - **01M5NJAYMYF50B9WXH5RF9W737** When the lead changes, riff-server
   sends the old lead a direct message: it is not the lead now, and the
   session that is. A gone old lead gets none.
@@ -3343,11 +3340,10 @@
   an update, and the messages of the wave and of its look. The lead
   looks at the blocks of the sessions of each person in its repository.
   With no live lead, a verify request wakes a free session of any person
-  in the repository. `riff lead start` names the lead of the project
-  before it, of any person. Only the lead of the project passes the
-  check of the lead of `riff cloud`, of `riff release cut` and of
-  `release_for`. A verified request of the lead of the project is the
-  one exception to advice. This supersedes R10, R179,
+  in the repository. Only the lead of the project passes the check of
+  the lead of `riff cloud`, of `riff release cut` and of `release_for`.
+  A verified request of the lead of the project is the one exception to
+  advice. This supersedes R10, R179,
   01M3JY1TBPQHH6WPPBTF42T64H, 01M3N7JJKBME6VSNTHD8VPN3K9,
   01M3WRD9MGSC3FTBAANT4ZSMKY, 01M3Z9N70J4H79VJN4ZKKH3G6S,
   01M41FZPGEK4TNPSM2051W4VMS, 01M41FZQ545HQ9Q75CSKX8HF8H,
@@ -4078,11 +4074,11 @@
   of the deploy of a release, the answer to a decision that waits for
   the person (riff questions --answered N), an invite, a removal, a
   change of an admin, the pause and the resume of the whole riff, the
-  end of a session, riff host leave --now, riff lead stop, riff daemon
-  sweep --remove NAME --force, a take-over, the add of a second key,
-  the removal of a device, and the change of the policy. Each runs on
-  this host or on another one with --host. The accept of an outside
-  pull request joins the list when riff has it.
+  end of a session, riff host leave --now, riff daemon sweep --remove
+  NAME --force, a take-over, the add of a second key, the removal of a
+  device, and the change of the policy. Each runs on this host or on
+  another one with --host. The accept of an outside pull request joins
+  the list when riff has it.
 - **01M75WKSFX84BHHGFX8VJ37DC6** With required, riff-server refuses each
   action of the list with no proof, with the code needs_proof and the
   status 403. The text names the action and says how to add an
@@ -4096,9 +4092,7 @@
   daemon in a post to the session of the daemon. riff-server reads the
   request of each post to a session. With required, it refuses a step
   that can lose work with no proof, before the daemon gets it. The
-  action names the host of the daemon. riff lead stop --host asks for
-  the proof after the wait for the notes of the lead. In an agent
-  session with required, it refuses before that wait.
+  action names the host of the daemon.
 - **01M75WKSNREGG95CK40W2A5JPQ** riff asks riff-server through POST
   /v1/proof/use before a step that riff-server does not do itself: a
   step of the daemon of this host, a take-over, and an answer on GitHub.
@@ -5513,12 +5507,11 @@ of this part when they merge.
 - **01M4Z7SPC20RWG218EWPEGYZTF** `riff image` prints the session image
   that the riff config of the repository of the current folder pins.
 - **01M51STPHXSSZMHF9T7Z85097R** The merged pin of a main clone is the
-  session image that `riff.toml` pins on the default branch of
-  `origin`, the branch of `origin/HEAD`. riff fetches that branch
-  first. The wave of the daemon, `riff host join`, `riff run`,
-  `riff lead start` and the image step of an update use only the
-  merged pin. So an edit of `riff.toml` that is not merged never
-  chooses the image that riff pulls and runs.
+  session image that `riff.toml` pins on the default branch of `origin`,
+  the branch of `origin/HEAD`. riff fetches that branch first. The wave
+  of the daemon, `riff host join`, `riff run` and the image step of an
+  update use only the merged pin. So an edit of `riff.toml` that is not
+  merged never chooses the image that riff pulls and runs.
 - **01M51STPMEM62Z8B26YM2CH6QH** When `riff.toml` in the working tree of
   the main clone pins another image, or no good image, riff says so in
   one line, and uses the merged pin.
@@ -5549,9 +5542,7 @@ of this part when they merge.
   `origin` has no `riff.toml` has no merged pin: riff stops, and the
   error names `riff.toml`, the branch and the fix. The fix adds
   `riff.toml` with the key `image` in the table `[session]`, and points
-  to the how-to "Add another repository to the riff". `riff lead start`
-  checks the merged pin before it prints that the lead starts: with no
-  merged pin, it prints no line that the lead starts.
+  to the how-to "Add another repository to the riff".
 - **01M5SMVVC4GQS310CVK3H9CMQ7** The table `[session.env]` of
   `riff.toml` gives the variables of the environment of a session, and
   the table `[session.volumes]` gives its named volumes: the key is the
@@ -7033,8 +7024,7 @@ of this part when they merge.
   session while no live lead of the repository runs. A live lead of any
   person of the riff counts. The reply of riff-server to `/v1/riff`
   names each repository of the riff with no live lead (`no_lead`). The
-  wave says why: `waits for a lead: run riff lead start in a clone of
-  OWNER/REPO`. `riff wave list`, `riff top`, `riff daemon status` and
+  wave says why. `riff wave list`, `riff top`, `riff daemon status` and
   the Waves tab of the TUI show it for a repository whose wave runs on a
   host.
 - **01M776RT1GW3N4MJDMPXZ8JAJE** The wait for a lead starts no session
@@ -7118,11 +7108,10 @@ of this part when they merge.
 
 ### The lead, the view and the takeover
 
-- **01M501P9MXNAP5QXNVBVF5JJFN** `riff lead start` in a clone starts the
-  lead of the repository of the clone through the daemon, when it does
-  not run, in the container `riff-lead-OWNER-REPO`. Then it attaches the
-  terminal of the person to it. When the lead runs already, it only
-  attaches. Ctrl-P Ctrl-Q detaches, and the lead runs on.
+- **01M501P9MXNAP5QXNVBVF5JJFN** The lead of the repository of a clone
+  runs in the container `riff-lead-OWNER-REPO`. `riff lead start` in the
+  clone attaches the terminal of the person to it. Ctrl-P Ctrl-Q
+  detaches, and the lead runs on.
 - **01M51PD7M04HZR2PVVJA4WCBK5** Before each attach to the lead from
   `riff lead start`, riff sets the terminal of the container to a size
   that is not the size of the terminal of the person. The attach then
@@ -7245,14 +7234,9 @@ of this part when they merge.
   wave end --move-open-to-backlog read the claims of riff-server through
   the riff daemon, as riff wave list does. No riff wave command calls
   riff-server straight when RIFF_SOCKET is set and no server is named.
-- **01M5NG4Z0XS1B4QYXFJBW9CWGX** `riff lead start` makes the new lead
-  session the lead in the repository, and prints which session was the
-  lead before; that session is not the lead any more. In
-  a lead container, `whoami` says in its first line when the session is
-  not the lead, and names the lead (#1301).
-- **01M5NJ87NXF6077Y9W32840BR8** riff lead start refuses to start the
-  lead on a host with no claude token of riff claude-token. It names the
-  step: claude setup-token, then riff claude-token, on that host.
+- **01M5NG4Z0XS1B4QYXFJBW9CWGX** In a lead container, `whoami` says in
+  its first line when the session is not the lead, and names the lead
+  (#1301).
 - **01M5NJ87YEHHGJBANM7CRYV56Z** When the lead runs with the sign-in
   file of claude of the host and the host replaced that file, riff tells
   the person that the sign-in of the lead is stale, with the step to fix
@@ -7320,7 +7304,7 @@ of this part when they merge.
   again, it tells the person one time in riff chat. A fault before the
   stop leaves the lead on the old riff, and the daemon tries again at
   the next look. A start that fails after the stop ends the lead: the
-  daemon ends its session, and the line says `riff lead start`.
+  daemon ends its session.
 - **01M6QB89JJEM9Z1V3RVZYHKYT0** The daemon starts a lead again on the
   new riff with no wave of its repository. With a wave, the main clone
   of the start is the main clone of the wave. With no wave, it is the
@@ -7338,40 +7322,15 @@ of this part when they merge.
   session. riff-server still lets only a lead of the repository thread
   and an admin hold and free, and gives a work session `not_allowed`
   (#1619).
-- **01M6QVSJC4V3Z3NB6MJW4XGJSR** `riff lead start` starts the lead of
-  the repository on the host and attaches, and the host gets the part
-  `lead`. It starts no wave, no worker and no session of an item, and it
-  does not join the host: the host gives workers only after `riff host
-  join`. When the host has no part `workers`, a new lead gets one line
-  that names `riff host join`. This supersedes
-  01M5515CJ7QDJ639VGR7SJTE08 in full, and 01M53NGVE839TRH7XB7CDPQNZE and
-  01M5QY976MTPRX5J4N1MKXAGDK in part.
 - **01M6QVSWQZE41BMQ6YN2963C4V** While a lead runs on a host, the daemon
   of the host serves the repository of the lead (`served.json`), also
   when the host gave no workers. The main clone of the repository is the
   main clone that the clone of the lead links to. A repository that the
   daemon serves already keeps its main clone. So `riff who` shows the
   host, and the commands with `--host` reach it.
-- **01M6QVSWTARPKP59X8AJBBK69X** `riff lead stop` ends the lead on this
-  host, and `riff lead stop --host HOST` asks the daemon of HOST through
-  riff-server. First riff asks the lead on that host to write its notes,
-  and waits up to 5 minutes for a change of the notes, as `riff lead
-  move` does. A lead that writes no notes in that time gets a warning,
-  and the stop goes on. The lead that runs the command asks nobody: it
-  writes its notes first. Then the daemon stops the container of the
-  lead and waits for its end. The session of the lead leaves
-  riff-server, and the host loses the part `lead`. A host with no other
-  part stops serving the repository (01M6QRDBG1JTX5NV1C8TB7AG36). A host
-  with no lead of the repository fails with a line. Only the person and
-  the lead of the person act on it. In a lead container, `riff lead
-  stop` needs `--host`.
 - **01M6QVSWWM3EA4ZS47XCKV38D0** An update restarts the lead on each
   host with the part `lead`, with or without the part `workers`
-  (01M6QB89JJEM9Z1V3RVZYHKYT0). A lead that `riff lead stop` ended has
-  no container and no record, so no update starts it again.
-- **01M6QVSWYXKZ2MJ54AFK62SZAY** `riff daemon end` keeps its refusal of
-  the lead (01M579Z9VRD12FRK6DSYVKDHQB), and its text names `riff lead
-  stop`.
+  (01M6QB89JJEM9Z1V3RVZYHKYT0).
 - **01M6VD1NSHTJQGR31VZ4689S8J** The terminal of `riff takeover NAME`
   runs `claude --resume ID --model MODEL --permission-mode auto`. MODEL
   is the model of `claude --model` of the session: the daemon keeps it
@@ -7442,11 +7401,11 @@ of this part when they merge.
   the machine (#1733).
 - **01M74A8CXVRD352VRJ9FH54HJ1** In a container, riff login, riff
   logout, riff invite, riff remove, riff admin, riff chat, riff tail,
-  riff claim, riff release ITEM, riff lead --session, riff lead start,
-  riff lead move, riff lead notes, riff questions --answered, riff
-  server, riff update and riff cloud refuse before each call. The
-  refusal says that the command needs the host, and that the commands of
-  a session work in the container (#1733).
+  riff claim, riff release ITEM, riff lead start, riff lead move, riff
+  lead notes, riff questions --answered, riff server, riff update and
+  riff cloud refuse before each call. The refusal says that the command
+  needs the host, and that the commands of a session work in the
+  container (#1733).
 - **01M74A8D1GV6TCPXV2XEPVA53A** Through the socket of a session, each
   session can post, tell, read, set its status, say that it is blocked,
   and start, end or fail a long step, as with its riff tools. Only the
@@ -7469,14 +7428,13 @@ of this part when they merge.
   container it takes no socket, and the table riff::reach::COMMANDS
   gives it no riff-server. Supersedes 01M74A84SA5KCBVGVW7M9ETJ3A in
   part: `riff init` through the socket.
-- **01M77FHTT8BZ2YN1SV7H1X3NG8** `riff lead start` and `riff lead move`
-  start a lead only for a project of the riff. For a repository that is
-  no project, riff starts no session on riff-server and no container,
-  and names the fix: `riff project init` in a clone of the repository,
-  by an admin of the riff who is an admin of the repository on GitHub. A
-  lead that runs already stays, and `riff lead start` attaches to it.
-  The hosts of a project are for its wave only: a lead runs on each
-  host.
+- **01M77FHTT8BZ2YN1SV7H1X3NG8** `riff lead move` starts a lead only for
+  a project of the riff. For a repository that is no project, riff
+  starts no session on riff-server and no container, and names the fix:
+  `riff project init` in a clone of the repository, by an admin of the
+  riff who is an admin of the repository on GitHub. A lead that runs
+  already stays, and `riff lead start` attaches to it. The hosts of a
+  project are for its wave only: a lead runs on each host.
 - **01M77FHTXBCWA4FG793TEB5XCY** A session in a repository that is no
   project of the riff works for the chat and the messages only: the
   daemon runs no wave of the repository (01M77FHMTD5Y5FXRD903S2ZGCX),
@@ -7488,20 +7446,20 @@ of this part when they merge.
   refused. A call with `if_free`, as the riff daemon of a host makes it,
   gets the refusal `held` while a live session holds the claim, and the
   refusal names the holder and its host. A call with no `if_free`, as
-  `riff lead start`, `riff lead move` and `riff lead --session` make it,
-  takes the claim from its holder. A new start of a session keeps its
-  claim `lead`, as it keeps its lead. The URI of the lead shows
-  `lead=true`, and no `claim=lead`. The plan of the thread names the
-  holder, and the host of the last lead while the claim is free.
+  `riff lead move` makes it, takes the claim from its holder. A new
+  start of a session keeps its claim `lead`, as it keeps its lead. The
+  URI of the lead shows `lead=true`, and no `claim=lead`. The plan of
+  the thread names the holder, and the host of the last lead while the
+  claim is free.
 - **01M77PT9TNP97MA89SYZPBJ6QY** The riff daemon of each host that runs
   the wave of a project looks at the claim `lead` of the project at each
   change of the plan of its thread, and each minute. When the claim is
   free, the daemon claims it and starts the lead in
-  `riff-lead-OWNER-REPO`, as `riff lead start` does, from the main clone
-  of the wave. Before the start, it waits 10 s × its live sessions /
-  its limit, and 1 s more when it is not the host of the last lead. Then
-  it claims only when the claim is still free. A lead of the host that
-  runs with no claim takes the claim at once.
+  `riff-lead-OWNER-REPO`, from the main clone of the wave. Before the
+  start, it waits 10 s × its live sessions / its limit, and 1 s more
+  when it is not the host of the last lead. Then it claims only when the
+  claim is still free. A lead of the host that runs with no claim takes
+  the claim at once.
 - **01M77PT9XXCBBP1Z73F30RYCNH** When the claim `lead` of a project
   ends, riff-server wakes the riff daemon of each host of the project
   with a change of the plan of its thread: at the end of the session of
@@ -7514,16 +7472,15 @@ of this part when they merge.
   `lead` or nobody holds it. Its session ends at once instead, and a
   host of the project starts a new lead, when another session holds the
   claim, when the lead ended less than a minute after its start, or when
-  3 starts fail. A stop of the lead by the daemon, for example `riff
-  lead stop`, ends its session at once. A start again for an update
-  keeps the session, and is no end. This supersedes
-  01M501P9XWXWDBSXP4QRTHTZ4P and 01M501P9Q51AYN9GBPWKVHA229 in part.
+  3 starts fail. A stop of the lead by the daemon ends its session at
+  once. A start again for an update keeps the session, and is no end.
+  This supersedes 01M501P9XWXWDBSXP4QRTHTZ4P and
+  01M501P9Q51AYN9GBPWKVHA229 in part.
 - **01M77PTJRNASXZ2SWD8HMSV681** The riff daemon stops each lead of its
   host while another session holds the claim `lead` of its project: at a
   change of the plan of the project, and at its look at its leads each
   minute. The session of the old lead ends. So a host that comes back
-  stops its old lead, and `riff lead move` and `riff lead --session`
-  move the lead.
+  stops its old lead, and `riff lead move` moves the lead.
 - **01M77PTJW94PSRCHFC999MK990** When no host can run the lead of a
   project, no lead starts, and the project stays paused: its wave waits
   for a lead (01M776RSYKJK9NETFAD8G0CCVQ) until a host claims `lead`.
@@ -7535,7 +7492,7 @@ of this part when they merge.
   host whose session ends because it ended less than a minute after its
   start, or because 3 starts again failed. A lead of the host that runs
   for a minute ends the row. In the wait, another host of the project
-  can claim the lead. `riff lead start` does not wait.
+  can claim the lead.
 - **01M77Y2BD66Z3VZD4A0B1Y60H1** At the first fault of a row
   (01M77Y24FEQM5246G3CBXYWW62), the riff daemon tells riff-server the
   fact `lead_cannot_start` with the fault: the start failed, or the lead
@@ -7544,13 +7501,77 @@ of this part when they merge.
   daemon on the host has the cause, and the waits. The row gets no other
   line.
 - **01M77Y2BG12SEVF4ZEZ673QBFZ** One start of the lead of a project runs
-  at a time on a host. `riff lead start`, `l` in the Sessions tab, `riff
-  lead move`, the start of a new lead by the riff daemon and its start
-  again of a lead hold the lock `start.lock` in the folder of the lead.
-  Under the lock, a start that finds the lead running starts nothing:
-  `riff lead start` and `l` attach to it, `riff lead move` names it the
-  lead, and the daemon claims the lead for it. A start again that finds
-  a new lead ends the session of the old lead.
+  at a time on a host. `riff lead move`, the start of a new lead by the
+  riff daemon and its start again of a lead hold the lock `start.lock`
+  in the folder of the lead. Under the lock, a start that finds the lead
+  running starts nothing: `riff lead move` names it the lead, and the
+  daemon claims the lead for it. A start again that finds a new lead
+  ends the session of the old lead.
+- **01M77Y6ZBV7C8Z332SAFKQCZ5A** `riff lead start` starts no lead. When
+  the lead of the project runs in a container of this host, it attaches
+  to it. Else it exits with 1 and says where the lead is: on another
+  host, it names that host and the step there, `ssh HOST`, then `riff
+  lead start` in a clone of the repository, or `riff lead move` with the
+  name of this host; with no lead, it says that the riff daemon of a
+  host that joined the project starts the lead, and names `riff host
+  join`. This supersedes 01M501P9MXNAP5QXNVBVF5JJFN,
+  01M5NG4Z0XS1B4QYXFJBW9CWGX, 01M5QY976MTPRX5J4N1MKXAGDK,
+  01M51STPHXSSZMHF9T7Z85097R, 01M77FHTT8BZ2YN1SV7H1X3NG8,
+  01M596DH8G4A5XQFHJFBX1X379, 01M77Y24FEQM5246G3CBXYWW62,
+  01M77Y2BG12SEVF4ZEZ673QBFZ and 01M78A9FSHE9XEPGC3SJAB7PMX in part, and
+  01M6QVSJC4V3Z3NB6MJW4XGJSR in full (#1793).
+- **01M77Y6ZEQ4A6C6E0XZ56WRE89** `riff lead restart` ends the lead of
+  the project, and a new lead starts. riff finds the lead, the holder of
+  the claim `lead`, and asks it to write its notes. It waits up to 5
+  minutes for a change of the notes, as `riff lead move` does: a lead
+  that writes none gets a warning, and the restart goes on. Then the
+  riff daemon of the host of the lead stops its container and waits for
+  its end. The session of the lead ends, the host loses the part `lead`,
+  and no update starts the old lead again. The claim `lead` is free, so
+  the riff daemon of a host that joined the project starts a new lead,
+  and the new lead reads the notes. Only the person of the lead and the
+  lead itself act on it. The lead runs it in its container on the word
+  of its person, and writes its notes first. `riff lead restart` is in
+  the list of the actions of the proof of presence: with required, riff
+  asks for the proof after the wait for the notes, and in an agent
+  session it refuses before that wait. This supersedes
+  01M6QVSWTARPKP59X8AJBBK69X in full, and 01M6QVSWWM3EA4ZS47XCKV38D0,
+  01M75WKSD5A66RHQMMM5CMKWJB, 01M75WKSJTB28ZQV8ADPBQ86WE and
+  01M77PTJN73R68Z2SRQP0F6V9T in part (#1793).
+- **01M77Y6ZHM0V6YQ3XJEVJ8J5PC** `riff host join --no-lead` gives
+  workers from the host and keeps the lead of the project off it: its
+  riff daemon runs the wave and no lead loop, so it claims the lead of
+  the project no more and starts no lead. The host keeps the choice in
+  its parts (`parts.json`), over a restart of the daemon and over an
+  update, and `riff who` and `riff daemon status` show the parts
+  `workers, no lead`. The rollout of a lead keeps the choice. `riff host
+  join` with no `--no-lead` lets the host claim the lead again. A lead
+  that runs on the host already goes on: the join says so, and names
+  `riff lead restart`. `--host HOST` asks the daemon of HOST, as for
+  `riff host join`. This supersedes 01M77PT9TNP97MA89SYZPBJ6QY in part
+  (#1793).
+- **01M77Y6ZMFZJGK2DM6RAM94C7Q** riff has no command that names a lead
+  by its session ID, and no command that stops the lead: `riff lead
+  --session` and `riff lead stop` are gone. The riff daemon names the
+  lead with the call `lead` of the person: for a lead that it starts,
+  and for `riff lead move`. `riff daemon end` refuses the lead, and its
+  text names `riff lead restart`. This supersedes
+  01M6QVSWYXKZ2MJ54AFK62SZAY in full, and 01M5NJAXTQ0YKN7Q7XN0A7ZMPF,
+  01M5NJAYC7MXS13TA3VJB4N6RP, 01M74A8CXVRD352VRJ9FH54HJ1,
+  01M77PT9QAECENTY1WS616P5E2 and 01M77PTJRNASXZ2SWD8HMSV681 in part
+  (#1793).
+- **01M77Y6ZQ76DTX470STN8ATTA9** Each text that tells a person how to
+  get a lead names the riff daemon of a host that joined the project,
+  and `riff host join`: the word of a wave that waits for a lead is
+  `waits for a lead: a host that joined OWNER/REPO starts it (riff host
+  join)`, the answer to `riff resume` for a repository with no lead
+  names the same step, and so does the line of a start again on a new
+  riff that failed after the stop. A lead starts only on a host with the
+  claude token of `riff claude-token`: on a host with none, the riff
+  daemon starts no lead, and the line of its log names the step, `claude
+  setup-token`, then `riff claude-token`, on that host. This supersedes
+  01M776RSYKJK9NETFAD8G0CCVQ and 01M5TC29A4Q94NJP7HFC75XCF3 in part, and
+  01M5NJ87NXF6077Y9W32840BR8 in full (#1793).
 
 ### The first run
 
@@ -9633,20 +9654,29 @@ that builds it merges.
   tag, it shows the steps of the last commit of `main`
   (01M7642H27T4862WZENFAN4277). Supersedes 01M75R6FPVZA3JA5C48PQ26A85 in
   part.
-- **01M776RTACYY4JTVQ4FNT81Q0T** In the Sessions tab of the TUI, the
-  group of a repository whose wave waits for a lead says `waits for a
-  lead · l starts it`, and its detail says why. On a host that runs the
-  wave of the repository, `l` on a row of that repository asks `Start
-  the lead of OWNER/REPO on HOST? y/N`. `y` starts the lead on this
-  machine as `riff lead start` does, from the main clone of the wave,
-  and attaches. On another host, the note says to run `riff lead start`
-  in a clone of the repository.
 - **01M77F7R7RERVQH7XS39GWJJKF** The Waves tab of the TUI shows a board
   for each project of the person: the projects that `riff questions`
   reads (01M77F889Q3D6VCEDNNNXSWGNK). A repository of a session that is
   no project gets no board.
   With no such project, the tab says that none of your repositories is a
   project of the riff. Supersedes 01M6VFG882T794B1CTHK5AKPDG in part.
+- **01M77XYFZW86MCXD22GDCXMS00** `riff who` and `riff top` show a fact
+  `lead` for each project with a live lead, after the facts of the
+  pauses: `OWNER/REPO on HOST: NAME`, with the name and the short
+  session ID of the lead. Each repository with no live lead
+  (01M776RSYKJK9NETFAD8G0CCVQ) has the fact `lead` `OWNER/REPO: none`,
+  in yellow. The `who` tool of a session shows the same facts, plain.
+- **01M77XYN04KX35QZ06NDPSXHRP** In the Sessions tab of the TUI, the
+  group of a repository with a live lead shows `lead HOST` in a muted
+  style in the wide layout, and its detail says `The lead of OWNER/REPO
+  runs on HOST: NAME.` The group of a repository whose wave waits for a
+  lead says `waits for a lead`, and its detail says why and the step:
+  the riff daemon of a host that joined the project starts the lead,
+  after `riff host join` in a clone of the repository. `l` on a row of a
+  repository attaches to its lead when the lead runs on this machine.
+  When the lead runs on another host, the note names that host and the
+  step there. On a repository that waits for a lead, `l` starts no lead:
+  the note gives the step.
 
 ## The notes of the lead
 
@@ -9694,11 +9724,10 @@ that builds it merges.
   cannot answer its own message.
 - **01M596DH8G4A5XQFHJFBX1X379** The request `lead move` to the daemon
   of a host (`remote::Request::LeadMove`) starts the lead of the
-  repository there, as `riff lead start` does and with no attach, when
-  none runs. Its first prompt sends the lead to the handover in the
-  notes (`text::lead_moved`). The daemon then makes the new session the
-  lead (R177) and replies with its session ID. Only the person and the
-  lead of the person act on it.
+  repository there, with no attach, when none runs. Its first prompt
+  sends the lead to the handover in the notes (`text::lead_moved`). The
+  daemon then makes the new session the lead (R177) and replies with its
+  session ID. Only the person and the lead of the person act on it.
 - **01M5A5HXKZTDP5M5HY2FHCEBZA** A session of a wave that ends with no
   open pull request leaves one record as a note in the thread `ends` on
   riff-server (`ends::post`). The first line has the tags `item`,

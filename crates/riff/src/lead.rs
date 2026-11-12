@@ -1,29 +1,32 @@
-//! `riff lead start`: the lead of a repository in a container with a
-//! terminal (#720, 01M4Z60B81RTZT71PN5HV0GZHX).
+//! The lead of a project in a container with a terminal (#720,
+//! 01M4Z60B81RTZT71PN5HV0GZHX), and `riff lead start` and `riff lead
+//! restart` (#1793).
 //!
 //! # Design
 //!
 //! The lead is a session of the riff daemon, as a worker is, but with a
 //! terminal: `podman run -d -i -t`. conmon holds the terminal, so the
 //! lead runs on when the person detaches with Ctrl-P Ctrl-Q, and when
-//! the daemon stops. `riff lead start` and the Sessions tab of the TUI
-//! attach to it
-//! ([`crate::runtime::Runtime::attach`]).
+//! the daemon stops. The daemon of a host that joined the project starts
+//! the lead ([`crate::lead_host`], [`claim_start`]). `riff lead start`
+//! and the Sessions tab of the TUI attach to it
+//! ([`crate::runtime::Runtime::attach`]). `riff lead start` starts no
+//! lead: on a host that runs no lead of the project, it names the host of
+//! the lead and the step there ([`start`]).
 //!
 //! ```mermaid
 //! sequenceDiagram
-//!     participant P as riff lead start (the person)
+//!     participant D as riff daemon of a host that joined
 //!     participant S as riff-server
-//!     participant D as riff daemon
 //!     participant C as container riff-lead-OWNER-REPO
-//!     P->>D: status: does the lead run?
-//!     P->>S: start the session of the lead
-//!     P->>D: start SPEC with a terminal
+//!     participant P as riff lead start (the person)
+//!     D->>S: the claim lead is free: claim it
+//!     D->>S: start the session of the lead
 //!     D->>C: podman run -d -i -t: riff relay --terminal -- claude
-//!     D-->>P: done: the container runs
+//!     D->>S: keep the session of the lead alive
+//!     P->>D: status: does the lead run here?
 //!     P->>C: podman exec stty: another size, so claude draws again
 //!     P->>C: podman attach (Ctrl-P Ctrl-Q detaches)
-//!     D->>S: keep the session of the lead alive
 //! ```
 //!
 //! | Part | Value | Requirement |
@@ -40,12 +43,12 @@
 //! | The wakes | `/opt/riff/riff relay watch --follow` in the Monitor tool, started once | 01M501PA04NP79RJQEDP4D7YTM, 01M59235BBXEKPZBRH23C39574 |
 //! | The attach | [`crate::runtime::Runtime::redraw`], then [`crate::runtime::Runtime::attach`] ([`attach`]): `claude` draws its screen at each attach | 01M51PD7M04HZR2PVVJA4WCBK5 |
 //! | After the attach | [`Left`]: a detach, or the end of the lead when its container does not run; the line says which. First riff writes the reset of the modes of the terminal ([`crate::runtime::reset_terminal`]) | 01M51PD7Q24N252V66NFEHY49N, 01M6XVBRQMBMK68K8GCDRZ5GJ5 |
-//! | The sign-in of `claude` | the token of `riff claude-token` only ([`needs_token`]); a lead from an older riff with the sign-in file of the host gets a word when the host replaced that file ([`stale`], [`crate::daemon::Daemon::stale_leads`]) | 01M5NJ87NXF6077Y9W32840BR8, 01M5NJ87YEHHGJBANM7CRYV56Z |
+//! | The sign-in of `claude` | the token of `riff claude-token` only ([`needs_token`]); a lead from an older riff with the sign-in file of the host gets a word when the host replaced that file ([`stale`], [`crate::daemon::Daemon::stale_leads`]) | 01M77Y6ZQ76DTX470STN8ATTA9, 01M5NJ87YEHHGJBANM7CRYV56Z |
 //! | A new riff | after `riff update`, the daemon stops an old lead (the bind of its riff has no link: [`old`]) when it is idle ([`idle`]: the `Stop` hook ended its turn, and its transcript got no write after the tail of the turn, [`between_turns`]; or its transcript got no write for 5 minutes, [`quiet`]) and the daemon itself runs the riff on disk, and starts it again with `claude --resume ID` ([`spec_again`], [`again`]): the same session, clone and Claude folder, no new session on riff-server; the main clone is that of the wave, and with no wave the one that the clone of the lead links to ([`linked_main`]); the person gets one line in riff chat ([`crate::daemon::Daemon::leads_again`]), and an attached terminal one line, then the attach to the new container ([`attach`], [`Again`]) | 01M5TC24PB3YC2CC8BA275WSEN, 01M6XTS7V47RFX1G37FRGRBWCY, 01M6WBX2FQEHW92Y1A5HM4H8BM, 01M6WBX2FT7Y9FV9VGGPDBKAHM, 01M5TC2919TB9XPF42YFNJBP79, 01M5TC29A4Q94NJP7HFC75XCF3, 01M6QB89JJEM9Z1V3RVZYHKYT0 |
-//! | The project | `riff lead start` and `riff lead move` start a lead only for a project of the riff ([`crate::project::lead_refused`], #1863): else riff names the fix, `riff project init`, and starts no session and no container | 01M77FHTT8BZ2YN1SV7H1X3NG8, 01M77FHTXBCWA4FG793TEB5XCY |
-//! | The workers | none: `riff lead start` does not join the host, so it starts no wave. A host gives workers after `riff host join`, and `riff lead start` says so when it starts a lead on a host with no part workers ([`gives_workers`]) | 01M6QVSJC4V3Z3NB6MJW4XGJSR |
+//! | The project | `riff lead move` and the daemon start a lead only for a project of the riff ([`crate::project::lead_refused`], #1863): else riff names the fix, `riff project init`, and starts no session and no container | 01M77FHTT8BZ2YN1SV7H1X3NG8, 01M77FHTXBCWA4FG793TEB5XCY |
+//! | The start | `riff lead start` starts no lead (#1793): it attaches to the lead of the project when its container runs on this host. Else it names the host of the lead and the step there, or says that the daemon of a host that joined the project starts the lead ([`start`], [`text::lead_not_here`]) | 01M77Y6ZBV7C8Z332SAFKQCZ5A |
 //! | The repository | the daemon serves it while the lead runs, so `riff who` and the commands with `--host` reach the host (`Daemon::serve_lead`) | 01M6QVSWQZE41BMQ6YN2963C4V |
-//! | The stop | `riff lead stop`: the lead writes its notes ([`stop_notes`]), then the daemon ends its container ([`crate::daemon::Daemon::stop_lead`]); the host loses the part lead, and an update starts the lead no more | 01M6QVSWTARPKP59X8AJBBK69X, 01M6QVSWWM3EA4ZS47XCKV38D0 |
+//! | The restart | `riff lead restart`: riff finds the lead of the project ([`to_restart`]), the lead writes its notes ([`restart_notes`]), then the daemon of its host ends its container ([`crate::daemon::Daemon::stop_lead`]); the host loses the part lead, an update starts the old lead no more, and a host that joined the project starts a new lead ([`crate::lead_host`]) | 01M77Y6ZEQ4A6C6E0XZ56WRE89, 01M6QVSWWM3EA4ZS47XCKV38D0 |
 //!
 //! The clone and the Claude folder stay between the starts of the lead:
 //! the lead keeps the history of its conversations, and a dialog of
@@ -268,31 +271,6 @@ pub fn runs(status: &Status, name: &str) -> bool {
     status.sessions.iter().any(|s| s.name == name)
 }
 
-/// True when the host of the daemon of `status` has the part workers in
-/// `repo` (#1644): `riff host join` gave it. `riff lead start` gives none.
-///
-/// ```
-/// use riff::daemon::Status;
-/// use riff_client::daemons::{Parts, RepoParts};
-///
-/// let mut status = Status {
-///     pid: 1, build: "b".into(), since_ms: 0, dir: "/d".into(), sessions: vec![],
-///     limit: None, waiting: vec![], waves: vec![], parts: vec![], leaving: vec![], jobs: 0, test: None, mcp: vec![],
-///     claude_token: Default::default(), watches: vec![], complete: vec![], releases: vec![], lost: vec![], github: Default::default(), no_starts: vec![], no_tokens: vec![], writes: vec![], sends: vec![], events: vec![],
-/// };
-/// assert!(!riff::lead::gives_workers(&status, "o/r"));
-/// let part = |repo: &str, workers, lead| RepoParts { repo: repo.into(), parts: Parts { workers, lead } };
-/// status.parts = vec![part("o/r", false, true), part("o/s", true, false)];
-/// assert!(!riff::lead::gives_workers(&status, "o/r"));
-/// assert!(riff::lead::gives_workers(&status, "o/s"));
-/// ```
-pub fn gives_workers(status: &Status, repo: &str) -> bool {
-    status
-        .parts
-        .iter()
-        .any(|p| p.repo == repo && p.parts.workers)
-}
-
 /// What [`fresh_clone`] did with the clone of the lead.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Fresh {
@@ -373,7 +351,7 @@ impl Left {
 }
 
 /// Refuses a lead with the sign-in file of `claude` of the host
-/// (01M5NJ87NXF6077Y9W32840BR8): the lead runs for hours, and the next
+/// (01M77Y6ZQ76DTX470STN8ATTA9): the lead runs for hours, and the next
 /// sign-in of `claude` on the host replaces that file. Only the token of
 /// `riff claude-token` lives as long as the lead.
 ///
@@ -698,13 +676,24 @@ async fn attach_here(runtime: &impl Runtime, name: &str, folder: &Path) -> Resul
     Ok(())
 }
 
-/// `riff lead start` in the repository of `here`: it starts the lead
-/// with the daemon of this machine when it does not run, and attaches to
-/// it. `api` is the sign-in of riff for the riff-server `server`. It starts
-/// no wave and no worker, and does not join the host: when the host has
-/// no part workers, it says that `riff host join` gives them (#1644). It
-/// starts a lead only for a project of the riff (#1863). On a host that is
-/// not Linux, it starts nothing.
+/// `riff lead start` in the repository of `here` (#1793,
+/// 01M77Y6ZBV7C8Z332SAFKQCZ5A): it attaches to the lead of the project when
+/// the daemon of this machine runs its container. It starts no lead: the
+/// daemon of a host that joined the project does ([`crate::lead_host`]).
+/// Else the error says where the lead is ([`text::lead_not_here`]): it
+/// reads the holder of the claim lead on riff-server, with the sign-in
+/// `api` of the person at the riff-server `server`. On a host that is not
+/// Linux, it attaches to nothing.
+///
+/// ```mermaid
+/// flowchart TD
+///     S["riff lead start"] --> R{"the container of the lead<br/>runs on this host?"}
+///     R -- yes --> A["attach"]
+///     R -- no --> C{"the claim lead"}
+///     C -- "a session on another host" --> H["exit 1: ssh HOST, then riff lead start,<br/>or riff lead move with this host"]
+///     C -- "a session on this host" --> D["exit 1: the daemon runs<br/>no container of it now"]
+///     C -- free --> N["exit 1: a host that joined<br/>starts the lead: riff host join"]
+/// ```
 pub async fn start(api: Api, here: &Place, server: &str) -> Result<()> {
     #[cfg(target_os = "linux")]
     {
@@ -725,77 +714,30 @@ pub async fn start_with(
     here: &Place,
     server: &str,
 ) -> Result<()> {
+    let Some(thread) = here.default_thread() else {
+        bail!("{}", text::RUN_NO_REPO);
+    };
     let repo = here.repo_text();
     let name = name_of(&repo);
-    let folder = folder_of(&run::data_dir()?, &repo);
-    let status = daemon::status(dir).await?;
-    // A lead with no merged pin does not start (01M5QY976MTPRX5J4N1MKXAGDK):
-    // no line says that the lead starts.
-    let clone = if runs(&status, &name) {
-        None
-    } else {
-        let (main, common) = run::main_clone(&identity::working_dir()?)?;
-        session_image::merged(&main, |_| {})?;
-        Some((main, common))
-    };
-    let Some((main, common)) = clone else {
+    // With no daemon here, no lead runs here: riff says where it runs.
+    let status = daemon::status(dir).await;
+    if status.is_ok_and(|status| runs(&status, &name)) {
         println!("{}", text::lead_runs(&repo, &name));
+        let folder = folder_of(&run::data_dir()?, &repo);
         return attach_here(runtime, &name, &folder).await;
-    };
-    let start = text::lead_start(&repo);
-    match launch(dir, api, here, server, (&main, &common), &start, false).await? {
-        Launched::New(_) if !gives_workers(&status, &repo) => {
-            println!("{}", text::lead_gives_no_workers(&repo));
-        }
-        Launched::New(_) => {}
-        // Another start made the lead while this one waited (#2032).
-        Launched::Runs(_) => println!("{}", text::lead_runs(&repo, &name)),
     }
-    attach_here(runtime, &name, &folder).await
-}
-
-/// The start of the lead of the repository `repo` (`OWNER/REPO`) with `l`
-/// in the Sessions tab of the TUI (01M776RTACYY4JTVQ4FNT81Q0T): as
-/// [`start`] does, from the main clone of the wave of `repo` that the
-/// daemon in the folder `dir` runs, when no lead of `repo` runs there. It
-/// gives the name of the container of the lead, for the attach. A daemon
-/// that runs no wave of `repo` starts nothing: the error is
-/// [`text::lead_no_wave_here`]. It starts no wave and no worker.
-pub async fn start_of_wave(dir: &Path, repo: &str) -> Result<String> {
-    let name = name_of(repo);
-    let status = daemon::status(dir).await?;
-    if runs(&status, &name) {
-        println!("{}", text::lead_runs(repo, &name));
-        return Ok(name);
-    }
-    let wave = crate::wave::read_waves(dir)?
-        .remove(repo)
-        .ok_or_else(|| anyhow::anyhow!("{}", text::lead_no_wave_here(repo)))?;
-    let here = wave.place(None)?;
-    let (main, common) = run::main_clone(&wave.main)?;
-    session_image::merged(&main, |_| {})?;
-    let api = Api::new(&wave.server);
-    let start = text::lead_start(repo);
-    let launched = launch(
-        dir,
-        api,
-        &here,
-        &wave.server,
-        (&main, &common),
-        &start,
-        false,
+    let me = identity::person(here, server)?;
+    let plan = api.signed_in(None)?.plan_show(&me, &thread).await?;
+    bail!(
+        "{}",
+        text::lead_not_here(&repo, here.host(), plan.lead.as_ref())
     )
-    .await?;
-    if let Launched::Runs(_) = launched {
-        println!("{}", text::lead_runs(repo, &name));
-    }
-    Ok(name)
 }
 
 /// The start of a new lead by the daemon in the folder `dir` for the
 /// project of `wave` (#1791): the claim lead was free. It starts the lead
-/// as [`start_of_wave`] does, from the main clone of the wave, and asks
-/// for the claim lead only when it is free. False when another session
+/// in its container from the main clone of the wave, and asks for the
+/// claim lead only when it is free. False when another session
 /// got the claim first: the new session ends, and no container starts.
 /// False too when another start on this host made the lead first
 /// ([`one_start`]): the next look claims for that lead.
@@ -904,10 +846,10 @@ pub enum Launched {
 /// One start of the lead of `repo` at a time on this host (#2032): `start`
 /// runs under the lock of the starts of the lead in the folder `folder` of
 /// the lead ([`start_lock`]), and only when the daemon in the folder `dir`
-/// runs no lead of `repo` then. `riff lead start`, `l` in the Sessions tab,
-/// `riff lead move` and the start of the daemon ([`claim_start`]) go
-/// through it, and the daemon holds the lock to start a lead again
-/// (`Daemon::lead_back`). So two starts at once make one container.
+/// runs no lead of `repo` then. `riff lead move` and the start of the
+/// daemon ([`claim_start`]) go through it, and the daemon holds the lock
+/// to start a lead again (`Daemon::lead_back`). So two starts at once make
+/// one container.
 pub async fn one_start(
     dir: &Path,
     folder: &Path,
@@ -1355,72 +1297,83 @@ async fn await_notes(
     }
 }
 
-/// The first step of `riff lead stop` on `host` as `me` (#1644,
-/// 01M6QVSWTARPKP59X8AJBBK69X): the person, or the lead of the person. It
-/// asks the lead that runs on `host` to write its notes, and waits up to
-/// `wait` for them, as [`move_to`] does for the handover. Then the caller
-/// asks the daemon of `host` to end the container of the lead
-/// ([`stop_here`], or [`daemon::remote::Request::LeadStop`]).
+/// The first step of `riff lead restart` as `me` (#1793,
+/// 01M77Y6ZEQ4A6C6E0XZ56WRE89): the person, or the lead itself. It gives
+/// the lead of the project: the holder of the claim lead of the repository
+/// thread of `me` on riff-server ([`riff_core::wire::PlanReply::lead`]).
+/// The daemon of its host ends it. It refuses when no session holds the
+/// claim ([`text::lead_restart_none`]), when the lead is a session of
+/// another user ([`text::lead_restart_other_user`]): only its person and
+/// the lead itself act on the daemon of its host
+/// (01M579Z9PZZCVWQKG7V8WZ5KRB), and when `me` is a session that is not
+/// the lead ([`text::LEAD_RESTART_NOT_LEAD`]).
+pub async fn to_restart(api: &Api, me: &SessionUri) -> Result<SessionUri> {
+    let Some(thread) = me.default_thread() else {
+        bail!("{}", text::RUN_NO_REPO);
+    };
+    let repo = me.place().repo_text();
+    let Some(lead) = api.plan_show(me, &thread).await?.lead else {
+        bail!("{}", text::lead_restart_none(&repo));
+    };
+    if lead.who().user() != me.who().user() {
+        bail!("{}", text::lead_restart_other_user(&repo, &lead));
+    }
+    if let Some(own) = me.who().session()
+        && lead.who().session() != Some(own)
+    {
+        bail!("{}", text::LEAD_RESTART_NOT_LEAD);
+    }
+    Ok(lead)
+}
+
+/// The notes step of `riff lead restart` as `me` (#1793,
+/// 01M77Y6ZEQ4A6C6E0XZ56WRE89): it asks the lead `lead` ([`to_restart`]) to
+/// write its notes, and waits up to `wait` for them, as [`move_to`] does
+/// for the handover. Then the caller asks the daemon of the host of the
+/// lead to end its container ([`stop_here`], or
+/// [`daemon::remote::Request::LeadRestart`]), and a host that joined the
+/// project starts a new lead ([`crate::lead_host`]).
 ///
 /// ```mermaid
 /// sequenceDiagram
-///     participant S as riff lead stop
-///     participant L as the lead on the host
-///     participant D as daemon of the host
-///     S->>L: write your notes
-///     L->>S: the notes change (at most `wait`)
-///     S->>D: lead stop
+///     participant R as riff lead restart
+///     participant L as the lead
+///     participant D as daemon of the host of the lead
+///     participant H as daemon of a host that joined
+///     R->>L: write your notes
+///     L->>R: the notes change (at most `wait`)
+///     R->>D: lead restart
 ///     D->>D: stop the container, take the part lead
-///     D-->>S: done
+///     D-->>R: done
+///     H->>H: the claim lead is free: start a new lead
 /// ```
 ///
-/// A session that is not the lead refuses. A lead that writes no notes in
-/// `wait` gets a warning, and the stop goes on with the notes as they
-/// are. It asks nobody when no live lead of the user runs on `host`: the
-/// container there may be a lead that a move left behind, and its notes
-/// are those of the new lead. When the caller is the lead itself, it
-/// cannot answer its own message, so it writes its notes first.
-pub async fn stop_notes(
+/// A lead that writes no notes in `wait` gets a warning, and the restart
+/// goes on with the notes as they are. When the caller is the lead
+/// itself, it asks nobody: it cannot answer its own message, so it writes
+/// its notes first.
+pub async fn restart_notes(
     api: &Api,
     me: &SessionUri,
-    host: &str,
+    lead: &SessionUri,
     wait: std::time::Duration,
 ) -> Result<()> {
     let Some(thread) = me.default_thread() else {
         bail!("{}", text::RUN_NO_REPO);
     };
-    let repo = me.place().repo_text();
-    let user = me.who().user();
-    let sessions = api.who(me, false).await?;
-    let leads: Vec<&SessionInfo> = sessions
-        .iter()
-        .filter(|s| s.live && s.uri.lead())
-        .filter(|s| s.uri.who().user() == user && s.uri.place().repo_text() == repo)
-        .collect();
-    let own = me.who().session();
-    if own.is_some() && !leads.iter().any(|s| s.uri.who().session() == own) {
-        bail!("{}", text::LEAD_STOP_NOT_LEAD);
-    }
-    let on_host = leads
-        .iter()
-        .find(|s| s.uri.place().host() == host)
-        .and_then(|s| s.uri.who().session());
-    if let Some(lead) = on_host.filter(|id| Some(*id) != own) {
-        let ask = text::lead_stop_ask();
-        await_notes(
-            api,
-            me,
-            &thread,
-            lead,
-            &ask,
-            (wait, text::lead_stop_no_notes),
-        )
-        .await?;
-    }
-    Ok(())
+    let Some(id) = lead
+        .who()
+        .session()
+        .filter(|id| Some(*id) != me.who().session())
+    else {
+        return Ok(());
+    };
+    let ask = text::lead_restart_ask();
+    let no_notes = (wait, text::lead_restart_no_notes as fn(_) -> _);
+    await_notes(api, me, &thread, id, &ask, no_notes).await
 }
 
-/// The last step of `riff lead stop` on this host (#1644): the daemon in
+/// The last step of `riff lead restart` on this host (#1793): the daemon in
 /// the folder `dir` ends the container of the lead of `repo`, and the host
 /// loses the part lead ([`daemon::Daemon::stop_lead`]). It prints each
 /// line of the daemon.
@@ -1933,7 +1886,7 @@ mod tests {
         }
     }
 
-    /// 01M5NJ87NXF6077Y9W32840BR8
+    /// 01M77Y6ZQ76DTX470STN8ATTA9
     #[test]
     fn a_lead_needs_the_token_of_the_host() {
         assert!(needs_token(&run::ClaudeSignIn::Token).is_ok());

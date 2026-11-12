@@ -106,7 +106,12 @@ async fn the_tools_carry_a_conversation() {
     let (who, _) = call(&mike, "who", serde_json::json!({})).await;
     assert!(who.contains(MIKE_LEAD), "{who}");
     // A lead with no watch is not offline (01M48VDGQ5KETKPM4G6TKTC2MB).
-    let lead = who.lines().find(|line| line.contains("(a1)")).unwrap();
+    // The row of the session, not the fact `lead` of the project
+    // (01M77XYFZW86MCXD22GDCXMS00).
+    let lead = who
+        .lines()
+        .find(|line| line.contains("(a1)") && !line.starts_with("lead "))
+        .unwrap();
     assert!(lead.contains("(a1) paused (you) lead"), "{who}");
     assert!(!lead.contains("offline"), "{who}");
     // brett is no lead: with no watch, it is offline.
