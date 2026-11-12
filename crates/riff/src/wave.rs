@@ -3373,6 +3373,32 @@ pub(crate) async fn post_report(
     Ok(())
 }
 
+/// Ends the session `me` of the daemon on riff-server. A failed end call
+/// logs one line with the error, and the daemon tries it one more time.
+/// When that try fails too, it logs that the session stays until
+/// riff-server finds it gone (01M78VWTRY5XX9JPQHE3CMH6T2). True when the
+/// session ended.
+pub(crate) async fn end_session(api: &Api, me: &SessionUri) -> bool {
+    let Err(e) = api.end(me).await else {
+        return true;
+    };
+    let session = me.to_string();
+    eprintln!(
+        "riff daemon: {}",
+        text::end_failed(&session, &format!("{e:#}"))
+    );
+    match api.end(me).await {
+        Ok(()) => true,
+        Err(e) => {
+            eprintln!(
+                "riff daemon: {}",
+                text::end_stays(&session, &format!("{e:#}"))
+            );
+            false
+        }
+    }
+}
+
 impl Live {
     /// Starts the keep-alive of the claim of the session `me`, a session
     /// in a container: it is live while the keep-alive comes
@@ -3397,7 +3423,7 @@ impl Live {
         {
             task.abort();
         }
-        let _ = api.end(me).await;
+        end_session(api, me).await;
     }
 
     /// The steps before the start after the claim: the clone, the
@@ -4506,12 +4532,12 @@ impl World for Live {
             let claimed = match api.claim(&me, &thread, &item).await {
                 Ok(claimed) => claimed,
                 Err(e) => {
-                    let _ = api.end(&me).await;
+                    end_session(&api, &me).await;
                     return Err(e);
                 }
             };
             if !claimed.granted {
-                let _ = api.end(&me).await;
+                end_session(&api, &me).await;
                 return Ok(None);
             }
             self.keep_alive(api.clone(), me.clone(), &session);
@@ -4644,7 +4670,7 @@ impl World for Live {
             }
             match Api::new(&record.server).signed_in(Some(&record.live.session)) {
                 Ok(api) => {
-                    let _ = api.end(&record.me).await;
+                    end_session(&api, &record.me).await;
                 }
                 Err(e) => eprintln!("riff daemon: {}: {e:#}", record.live.name),
             }
@@ -6094,6 +6120,67 @@ mod tests {
         let starts = forge.starts.iter().filter(|(item, _)| item == "issue-4");
         assert_eq!(starts.count(), 1, "{forge:?}");
         assert_eq!(busy.daemon.live_count(), 3);
+    }
+
+    /// 01M78VWTRY5XX9JPQHE3CMH6T2: a real riff-server fails the first end
+    /// call of a session with a 503. The client has one try for each
+    /// call, so that call fails. [`end_session`] tries it again: the
+    /// session ended, and `riff who` of another session does not show it.
+    #[tokio::test]
+    async fn a_failed_end_call_gets_one_more_try() {
+        use std::sync::atomic::AtomicUsize;
+
+        use axum::response::IntoResponse;
+        use riff_core::wire::Call;
+
+        let ends = Arc::new(AtomicUsize::new(0));
+        let counted = ends.clone();
+        let fails_first = axum::middleware::from_fn(
+            move |request: axum::extract::Request, next: axum::middleware::Next| {
+                let counted = counted.clone();
+                async move {
+                    let end = request.uri().path() == riff_core::wire::End::PATH;
+                    if end && counted.fetch_add(1, Ordering::SeqCst) == 0 {
+                        return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
+                    }
+                    next.run(request).await
+                }
+            },
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let server = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let router = riff_server::router().layer(fails_first);
+            axum::serve(listener, router).await.unwrap();
+        });
+        let api = Api::new(&server).one_try(Duration::from_secs(20));
+        let place = crate::identity::place_from_text("thelio/o/r").unwrap();
+        let job = |id| {
+            SessionUri::new(
+                riff_core::name::Who::new("mike", Some(id)).unwrap(),
+                place.clone(),
+            )
+        };
+        let (me, other) = (job("w1"), job("w2"));
+        api.start(&me, StartReason::Process, true).await.unwrap();
+        api.start(&other, StartReason::Process, true).await.unwrap();
+
+        assert!(end_session(&api, &me).await);
+        assert_eq!(ends.load(Ordering::SeqCst), 2);
+        let who = api.who(&other, false).await.unwrap();
+        assert!(!who.iter().any(|s| s.uri.who() == me.who()), "{who:?}");
+    }
+
+    /// 01M78VWTRY5XX9JPQHE3CMH6T2: with no riff-server, each end call
+    /// fails. [`end_session`] says that the session did not end.
+    #[tokio::test]
+    async fn an_end_with_no_riff_server_says_that_the_session_stays() {
+        let place = crate::identity::place_from_text("thelio/o/r").unwrap();
+        let me = SessionUri::new(
+            riff_core::name::Who::new("mike", Some("w1")).unwrap(),
+            place,
+        );
+        assert!(!end_session(&Api::new("http://127.0.0.1:9"), &me).await);
     }
 
     /// #1729: a free on riff-server wakes an idle wave at once. The lead

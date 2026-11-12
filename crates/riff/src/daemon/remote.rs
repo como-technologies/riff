@@ -278,10 +278,11 @@ pub fn unserve_in_file(dir: &Path, repo: &str) -> Result<Option<Served>> {
 
 /// Ends the session of `served` on riff-server: the daemon serves the
 /// repository no more, or a new join made a new session for it (#1643).
-/// A fault changes nothing: the session goes stale by itself.
+/// A fault changes nothing: the session goes stale by itself. The log
+/// has the fault, and the end gets one more try.
 pub async fn end_served(dir: PathBuf, served: Served) {
     if let Ok(session) = Session::new(&dir, &served) {
-        let _ = session.api.end(&session.me).await;
+        crate::wave::end_session(&session.api, &session.me).await;
     }
 }
 
@@ -1618,7 +1619,7 @@ pub async fn serve(dir: PathBuf, served: Served, news: News, sends: Sends, every
                 gone += 1;
                 if gone >= 2 {
                     println!("{}", text::daemon_serves_no_more(&repo));
-                    let _ = session.api.end(&session.me).await;
+                    crate::wave::end_session(&session.api, &session.me).await;
                     return;
                 }
             }
