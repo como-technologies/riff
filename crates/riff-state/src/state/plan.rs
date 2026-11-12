@@ -107,8 +107,9 @@ struct Part {
     holds: BTreeMap<String, HoldInfo>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     plan: Option<Current>,
-    /// The texts of the notes of each lead, by the user, the oldest
-    /// first: the last is the notes now (01M59258K3TYR09HC4AWHWZPEX).
+    /// The texts of the notes of the project, by the user of the writer,
+    /// the oldest first (01M59258K3TYR09HC4AWHWZPEX). [`Part::texts`]
+    /// puts them in one list.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     notes: BTreeMap<String, Vec<NotesVersion>>,
 }
@@ -116,6 +117,16 @@ struct Part {
 impl Part {
     fn is_empty(&self) -> bool {
         self.holds.is_empty() && self.plan.is_none() && self.notes.is_empty()
+    }
+
+    /// Each text of the notes of the project, of each user, the oldest
+    /// first: the last is the notes now, the newest text of the project
+    /// (01M77XMZBJ6DRGJTGEEE0EDECP). Two texts of the same time keep the
+    /// order of the users.
+    fn texts(&self) -> Vec<&NotesVersion> {
+        let mut texts: Vec<&NotesVersion> = self.notes.values().flatten().collect();
+        texts.sort_by_key(|version| version.at_ms);
+        texts
     }
 }
 
@@ -259,14 +270,14 @@ impl Plans {
         }
     }
 
-    /// The notes of the lead of `user` in `thread` now, when it wrote
-    /// some (01M59258K3TYR09HC4AWHWZPEX).
-    pub fn notes(&self, thread: &ThreadName, user: &str) -> Option<&NotesVersion> {
-        self.plans.get(thread)?.notes.get(user)?.last()
+    /// The notes of the project `thread` now: its newest text, of any
+    /// user (01M77XMZBJ6DRGJTGEEE0EDECP). `None` when nobody wrote some.
+    pub fn notes(&self, thread: &ThreadName) -> Option<&NotesVersion> {
+        self.plans.get(thread)?.texts().pop()
     }
 
-    /// Each thread where `user` has notes now: the text now is not
-    /// empty (#1666).
+    /// Each thread where `user` wrote a text of the notes that is not
+    /// empty, and is the last text of `user` there (#1666).
     pub fn notes_threads<'a>(&'a self, user: &'a str) -> impl Iterator<Item = &'a ThreadName> {
         self.plans.iter().filter_map(move |(thread, part)| {
             let now = part.notes.get(user)?.last()?;
@@ -274,31 +285,27 @@ impl Plans {
         })
     }
 
-    /// Each thread where a user has notes now: the text now is not empty
+    /// Each thread with notes now: the text now is not empty
     /// (01M76SG8NCSAP69Y5AX455BJQM).
     pub(super) fn noted(&self) -> impl Iterator<Item = &ThreadName> {
         self.plans.iter().filter_map(|(thread, part)| {
-            let noted = part
-                .notes
-                .values()
-                .any(|texts| texts.last().is_some_and(|now| !now.text.is_empty()));
+            let noted = part.texts().pop().is_some_and(|now| !now.text.is_empty());
             noted.then_some(thread)
         })
     }
 
-    /// Each text of the notes of `user` in `thread` before the text now,
-    /// the oldest first.
-    pub fn notes_before(&self, thread: &ThreadName, user: &str) -> &[NotesVersion] {
-        let all = self
-            .plans
-            .get(thread)
-            .and_then(|part| part.notes.get(user))
-            .map_or(&[][..], Vec::as_slice);
-        all.split_last().map_or(&[][..], |(_, before)| before)
+    /// Each text of the notes of the project `thread` before the text
+    /// now, of each user, the oldest first (01M77XMZBJ6DRGJTGEEE0EDECP).
+    pub fn notes_before(&self, thread: &ThreadName) -> Vec<NotesVersion> {
+        let mut texts = self.plans.get(thread).map(Part::texts).unwrap_or_default();
+        texts.pop();
+        texts.into_iter().cloned().collect()
     }
 
-    /// The text of the record is the notes of its user now. It keeps the
-    /// `by` and the time of the record, and each old text.
+    /// The text of the record is the notes of the project now. The part
+    /// keeps it with the texts of the user of the record: the checkpoint
+    /// keeps its form. It keeps the `by` and the time of the record, and
+    /// each old text.
     pub(super) fn notes_set(
         &mut self,
         set: &NotesSet,

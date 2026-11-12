@@ -16,7 +16,7 @@
 //! | the deploy waits, the deploy passed, the deploy failed | the watch of the daemon, as the person ([`crate::watches`]) |
 //! | the daemon starts again on a new riff | the daemon, to the leads on its host ([`crate::daemon::Daemon::tell_leads_restart`]) |
 //!
-//! The lead of the user and the repository that runs the step gets no
+//! The lead of the repository that runs the step gets no
 //! note: it knows the step, and the watches wake it.
 //!
 //! ```mermaid
@@ -94,8 +94,8 @@ pub enum Step {
 }
 
 /// The selectors of the leads of the riff that a note goes to: one for
-/// each lead in `sessions`. With `except`, the lead of the same user in
-/// the same repository gets none.
+/// each project with a lead in `sessions` (01M77XMS645VZNTP22DTCB7RXE).
+/// With `except`, the lead of the repository of `except` gets none.
 ///
 /// ```
 /// use riff::hold::leads;
@@ -111,23 +111,18 @@ pub enum Step {
 ///     session("riff://nate@pangolin/n8behavior/sens-o-matic?session=l2", true),
 ///     session("riff://nate@pangolin/n8behavior/sens-o-matic?session=w1#issue-3", false),
 /// ];
-/// let mike: SessionUri = "riff://mike@thelio/como-technologies/riff?session=l1".parse().unwrap();
+/// let nate: SessionUri = "riff://nate@pangolin/como-technologies/riff?session=n9".parse().unwrap();
 /// assert_eq!(leads(&sessions, None).len(), 2);
-/// let others = leads(&sessions, Some(&mike));
+/// let others = leads(&sessions, Some(&nate));
 /// assert_eq!(others.len(), 1);
-/// assert_eq!(others[0].to_string(), "user=nate,repo=n8behavior/sens-o-matic,lead=true");
+/// assert_eq!(others[0].to_string(), "repo=n8behavior/sens-o-matic,lead=true");
 /// ```
 pub fn leads(sessions: &[SessionInfo], except: Option<&SessionUri>) -> Vec<Selector> {
     let mut to: Vec<Selector> = sessions
         .iter()
         .filter(|s| s.uri.lead())
-        .filter(|s| {
-            except.is_none_or(|me| {
-                s.uri.who().user() != me.who().user()
-                    || s.uri.place().repo_text() != me.place().repo_text()
-            })
-        })
-        .map(|s| Selector::lead(s.uri.who().user(), &s.uri.place().repo_text()))
+        .filter(|s| except.is_none_or(|me| s.uri.place().repo_text() != me.place().repo_text()))
+        .map(|s| Selector::lead(&s.uri.place().repo_text()))
         .collect();
     to.sort_by_key(ToString::to_string);
     to.dedup();
@@ -135,10 +130,9 @@ pub fn leads(sessions: &[SessionInfo], except: Option<&SessionUri>) -> Vec<Selec
 }
 
 /// Posts `body` as a message in the thread [`THREAD`] to each lead of
-/// the riff. With `skip_own`, the lead of the user and the repository of
-/// `me` is not woken: it runs the step. It gives the sessions that the
-/// post woke; with no other lead, it posts nothing
-/// (01M5SNV75DRFHR26BT2M8243VV).
+/// the riff. With `skip_own`, the lead of the repository of `me` is not
+/// woken: it runs the step. It gives the sessions that the post woke;
+/// with no other lead, it posts nothing (01M5SNV75DRFHR26BT2M8243VV).
 pub async fn tell_leads(
     api: &Api,
     me: &SessionUri,

@@ -1,6 +1,7 @@
 //! The names of the chat over HTTP (01M6XZ27XV8RAC8B72DCM937ST,
-//! 01M6XZ280AMTAMPD6R4212YC2T): the query `names`, and the resolve of
-//! each name of a post, on a real server with no sign-in.
+//! 01M6XZ280AMTAMPD6R4212YC2T, 01M77XW0X8Z4M3EXGRDEXV6S2B): the query
+//! `names`, and the resolve of each name of a post, on a real server with
+//! no sign-in.
 
 use crate::common;
 
@@ -55,7 +56,7 @@ fn woken(posted: &Posted) -> Vec<String> {
 /// Two projects with the name `riff`, and a project with the name of
 /// the person `brett`: each of them has `OWNER/REPO`. The other names
 /// are the user and the name after the slash. A project is online with
-/// a live lead of the caller.
+/// a live lead.
 #[tokio::test]
 async fn the_names_have_owner_repo_for_each_project_of_a_clash() {
     let (_service, base) = common::start(false, &[]).await;
@@ -86,12 +87,12 @@ async fn the_names_have_owner_repo_for_each_project_of_a_clash() {
     );
 }
 
-/// `@brett @riff` wakes the terminals of brett and the lead of the
-/// sender in riff: not the lead of brett in riff, and not the lead of
-/// the sender in another project. A line with no name wakes no one. A
-/// line with an unknown name goes, and wakes no one.
+/// `@brett @riff` wakes the terminals of brett and the one lead of riff,
+/// of any person: the session of brett that took the lead last, and not
+/// the lead of the sender in another project. A line with no name wakes
+/// no one. A line with an unknown name goes, and wakes no one.
 #[tokio::test]
-async fn a_post_wakes_the_person_and_the_lead_of_the_sender_in_the_project() {
+async fn a_post_wakes_the_person_and_the_lead_of_the_project() {
     let (_service, base) = common::start(false, &[]).await;
     lead(&base, "mike", "como-technologies/riff", "m1").await;
     lead(&base, "brett", "como-technologies/riff", "b1").await;
@@ -99,7 +100,7 @@ async fn a_post_wakes_the_person_and_the_lead_of_the_sender_in_the_project() {
     let _: Value = ok(&base, "/v1/register", json!({ "me": BRETT })).await;
 
     let both = chat(&base, &["brett", "riff"], "@brett @riff is #12 done?").await;
-    assert_eq!(woken(&both), ["brett:person", "mike:m1"]);
+    assert_eq!(woken(&both), ["brett:person", "brett:b1"]);
     assert!(both.unmatched.is_empty(), "{:?}", both.unmatched);
 
     let plain = chat(&base, &[], "the release is out").await;

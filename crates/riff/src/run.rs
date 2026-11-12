@@ -2355,7 +2355,7 @@ async fn work(
                 &pull.head_ref_oid,
                 short(session),
             );
-            let to = [Selector::lead(me.who().user(), &repo)];
+            let to = [Selector::lead(&repo)];
             let ending = api.with_budget(END_BUDGET);
             let ask = async {
                 let gh = pr::Gh::here("run");

@@ -1693,7 +1693,7 @@ impl Session {
         let Some(thread) = self.me.default_thread() else {
             return;
         };
-        let to = [Selector::lead(self.me.who().user(), &thread.to_string())];
+        let to = [Selector::lead(&thread.to_string())];
         let post = self
             .api
             .post(&self.me, Some(&thread), &to, note, Kind::Note);

@@ -39,18 +39,18 @@ async fn addresses_and_direct_messages_wake_a_watching_session() {
     let (mike, brett, thread) = (mike(), brett(), repo());
     api(&mike).register(&mike).await.unwrap();
     api(&brett).register(&brett).await.unwrap();
+    // The person of mike names the one lead of the project.
     common::name_lead(&server.api("mike", None), &mike).await;
-    common::name_lead(&server.api("brett", None), &brett).await;
 
     let api_brett = api(&brett);
     let mut wakes = Box::pin(api_brett.watch(&brett).await.unwrap());
     let api_brett = api(&brett);
     let mut tail = Box::pin(api_brett.tail(&brett, &thread).await.unwrap());
 
-    // The person of each user named it the lead.
-    let (mike_lead, brett_lead) = (mike.clone().with_lead(true), brett.clone().with_lead(true));
+    // brett watches: a session with a watch is live.
+    let mike_lead = mike.clone().with_lead(true);
     let who = api(&mike).who(&mike, false).await.unwrap();
-    assert!(who.iter().any(|s| s.uri == brett_lead && s.live));
+    assert!(who.iter().any(|s| s.uri == brett && s.live));
     // A lead with no watch is live while it is not gone
     // (01M48VDGQ5KETKPM4G6TKTC2MB).
     assert!(who.iter().any(|s| s.uri == mike_lead && s.live));
@@ -79,7 +79,7 @@ async fn addresses_and_direct_messages_wake_a_watching_session() {
         )
         .await
         .unwrap();
-    assert_eq!(posted.woken, vec![brett_lead]);
+    assert_eq!(posted.woken, vec![brett.clone()]);
     let wake = isolated::in_time(WAIT, wakes.next())
         .await
         .unwrap()

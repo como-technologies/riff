@@ -115,20 +115,19 @@ fn chars(text: &str) -> usize {
 }
 
 /// True when `stored` picks `who`: it woke `who`, or a selector of its
-/// `to` matches `who` now. A name stands for what it names for the
-/// sender ([`View::named`]). A note wakes nobody, so only its `to` picks.
+/// `to` matches `who` now. A name stands for what it names
+/// ([`View::named`]). A note wakes nobody, so only its `to` picks.
 fn picks(view: &View<'_>, who: &Who, stored: &Stored, now: Instant) -> bool {
     if stored.woken.contains(who) {
         return true;
     }
     let uri = view.uri(who, now);
-    let from = stored.message.from.who();
     stored
         .message
         .to
         .iter()
         .any(|selector| match &selector.name {
-            Some(name) => view.named(from, name).is_some_and(|s| s.matches(&uri)),
+            Some(name) => view.named(name).is_some_and(|s| s.matches(&uri)),
             None => selector.matches(&uri),
         })
 }

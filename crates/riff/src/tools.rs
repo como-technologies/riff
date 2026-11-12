@@ -503,7 +503,7 @@ or says \"join the riff\". Then start the watch and follow \"Start routine\" in 
     #[tool(
         description = "Post a message to a thread. Only the sessions that `to` selects wake. A selector \
 names fields (user, session, host, repo, worktree, claim, lead, person, name); `person: true` picks the terminals of a person and no agent session. A session matches when each named field \
-matches. `name` stands alone: a name of the chat, a person (`brett`) or a project (`riff`, the lead of your user there)."
+matches. `name` stands alone: a name of the chat, a person (`brett`) or a project (`riff`, the lead of that project)."
     )]
     async fn post(&self, Parameters(a): Parameters<PostArgs>) -> ToolResult {
         let thread = self.thread(a.thread)?;
@@ -533,7 +533,7 @@ wakes you, answer with this tool. Do not post a reply. When you cannot go on, us
 
     #[tool(
         description = "Say that you cannot go on with no decision of a person. One call does both: \
-riff shows you as blocked, and the message `blocked: REASON` wakes the lead of your user. The block \
+riff shows you as blocked, and the message `blocked: REASON` wakes the lead of your project. The block \
 of a worker ends at its next work after an answer. Do not use it to wait for a verify, a merge or a \
 need: riff shows that wait by itself. When you are the lead, it sends no message: riff shows you as \
 waiting for your user. The next prompt of the person ends the block of the lead."
@@ -549,7 +549,7 @@ waiting for your user. The next prompt of the person ends the block of the lead.
 
     #[tool(
         description = "Send a direct message to one session. It wakes that session. Use the session \
-`lead` to ask the lead of your user in your repository."
+`lead` to ask the lead of your project, a session of any person."
     )]
     async fn tell(&self, Parameters(a): Parameters<TellArgs>) -> ToolResult {
         let me = self.here()?;
@@ -671,9 +671,9 @@ does not end a claim. Each other session can still claim the item, with a warnin
     }
 
     #[tool(
-        description = "Only the lead: read or write the notes of the lead. The notes are text \
-that riff keeps for your user and your repository: the running state, what waits for the person, \
-and the choices of the person and of the host. Read them at each start, resume and compaction. \
+        description = "Only the lead: read or write the notes of the lead. The notes are one text \
+that riff keeps for your project: the running state, what waits for each person, and the choices \
+of the people and of the hosts. Read them at each start, resume and compaction. \
 With `text`, replace the whole text and keep the old text in the history. Without `text`, read \
 the notes; `history` true reads also the old texts. 64 KiB at most. Never put a secret in the \
 notes."
@@ -688,7 +688,7 @@ notes."
         }
         let reply = self
             .api
-            .notes_show(&me, &thread, None, a.history.unwrap_or(false))
+            .notes_show(&me, &thread, a.history.unwrap_or(false))
             .await
             .map_err(err)?;
         Ok(text::notes_shown(&reply, &thread))

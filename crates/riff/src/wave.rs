@@ -2956,7 +2956,7 @@ pub(crate) async fn post_as_person(
     let api = Api::new(&wave.server).signed_in(None)?;
     let to = match item {
         Some(item) => format!("claim={item},repo={}", wave.repo).parse()?,
-        None => riff_core::selector::Selector::lead(person.who().user(), &wave.repo),
+        None => riff_core::selector::Selector::lead(&wave.repo),
     };
     api.post_keyed(&person, Some(&wave.thread()?), &[to], body, kind, key)
         .await?;
@@ -3064,10 +3064,7 @@ async fn after_build(
     })
     .await?;
     let me = &record.me;
-    let to = [riff_core::selector::Selector::lead(
-        me.who().user(),
-        &wave.repo,
-    )];
+    let to = [riff_core::selector::Selector::lead(&wave.repo)];
     let thread = wave.thread()?;
     let item = &record.live.item;
     let pull = match read {
@@ -3251,10 +3248,7 @@ async fn after_verify(
 ) -> Result<Finish> {
     let me = &record.me;
     let thread = wave.thread()?;
-    let lead = [riff_core::selector::Selector::lead(
-        me.who().user(),
-        &wave.repo,
-    )];
+    let lead = [riff_core::selector::Selector::lead(&wave.repo)];
     let item = &record.live.item;
     let found = last_result(&record.folder.join(crate::daemon::EVENTS));
     let Some((verdict, result)) = found.as_deref().and_then(verdict) else {
@@ -3363,7 +3357,7 @@ pub(crate) async fn post_report(
         Verdict::Fail => PullState::Failed,
     };
     look::tell_fact(api, me, reported.issue, pull, state).await;
-    let to = pr::result_to(reported.issue, me, thread, &api.who(me, false).await?);
+    let to = pr::result_to(reported.issue, thread, &api.who(me, false).await?);
     let body = text::verify_post(verdict, pull, reported, result);
     api.post(me, Some(thread), &to, &body, Kind::Message)
         .await?;

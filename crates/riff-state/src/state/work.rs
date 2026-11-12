@@ -3,7 +3,9 @@
 //! of each command is its command type.
 //!
 //! - Part of the riff: [`Work`]. The holder of each claimed item, and
-//!   the lead of each user in each repository thread (R175).
+//!   the lead of each user in each repository thread. Only one of them
+//!   is the lead of the project: the holder of the claim [`LEAD_CLAIM`]
+//!   while it lives (01M77XMS645VZNTP22DTCB7RXE).
 //! - `apply`: `Work::claimed`, `Work::released` and
 //!   `Work::lead_set` for the records of these names. `Work::left`
 //!   for a `left_thread` record, and `Work::forgotten` for a
@@ -32,7 +34,8 @@ use super::view::View;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Work {
     pub(super) claims: BTreeMap<(ThreadName, String), Who>,
-    /// The lead of each user in each repository thread (R175).
+    /// The lead of each user in each repository thread (R175,
+    /// 01M77XMS645VZNTP22DTCB7RXE).
     pub(super) leads: BTreeMap<(String, ThreadName), Who>,
 }
 
@@ -178,10 +181,14 @@ impl Saved {
 
 impl View<'_> {
     /// The lead of a user in a repository thread, while it holds and
-    /// works in that repository.
+    /// works in that repository. While another live session holds the
+    /// claim [`LEAD_CLAIM`] of the thread, the lead of the user is not
+    /// the lead: the project has one lead (01M77XMS645VZNTP22DTCB7RXE).
     pub(super) fn lead_of(&self, key: &(String, ThreadName), now: Instant) -> Option<&Who> {
+        let project = self.project_lead(&key.1, now);
         self.riff.work().leads.get(key).filter(|who| {
             self.holds(who, now)
+                && project.is_none_or(|holder| holder == *who)
                 && self
                     .presence
                     .sessions
@@ -483,8 +490,9 @@ impl Command for Release {
     }
 }
 
-/// The lead of a user frees the claim of another session of that user
-/// (01M3WG243BW7P6E1ME0DFNQF8C). `session` is the session ID of the
+/// The lead of the project frees the claim of another session in its
+/// repository, of any user (01M3WG243BW7P6E1ME0DFNQF8C,
+/// 01M77XMS645VZNTP22DTCB7RXE). `session` is the session ID of the
 /// holder, or the start of it. The holder can be live, gone or ended.
 ///
 /// The command also makes the note of the server in the thread of the
@@ -526,20 +534,17 @@ impl Command for ReleaseFor {
         }
         let sessions = &view.presence.sessions;
         let repo = |who: &Who| sessions.get(who).map(|s| s.place.default_thread());
-        if holder.user() != who.user() || repo(holder) != repo(who) {
+        if repo(holder) != repo(who) {
             return Err(Refused::new(
                 Code::NotAllowed,
-                format!(
-                    "{item} is held by {held_by}. Only the lead of its user in its \
-                     repository frees it."
-                ),
+                format!("{item} is held by {held_by}. Only the lead of its repository frees it."),
             ));
         }
         if holder != who && !view.is_lead(who, now.at) {
             return Err(Refused::new(
                 Code::NotAllowed,
                 format!(
-                    "{item} is held by {held_by}. Only the lead of your user frees the \
+                    "{item} is held by {held_by}. Only the lead of the project frees the \
                      claim of another session. Tell the lead."
                 ),
             ));
@@ -615,7 +620,13 @@ impl Command for Lead {
         let mut changes = view.lead_claim(&who, &thread, self.if_free, now)?;
         let key = (who.user().to_owned(), thread.clone());
         let lead = view.lead_of(&key, now.at);
-        let old = lead.filter(|old| **old != who).cloned();
+        // The old lead of the project, of any user, else the old lead of
+        // the user.
+        let old = view
+            .project_lead(&thread, now.at)
+            .or(lead)
+            .filter(|old| **old != who)
+            .cloned();
         if lead != Some(&who) {
             changes.push(Change::LeadSet(Member {
                 session: view.plain(&who),
@@ -748,8 +759,8 @@ impl View<'_> {
     }
 }
 
-/// The text of the message to an old lead: the person made `lead` the
-/// lead.
+/// The text of the message to an old lead of the project: a person made
+/// `lead` the lead.
 ///
 /// ```
 /// use riff_core::name::SessionUri;
@@ -758,15 +769,15 @@ impl View<'_> {
 /// let lead: SessionUri = "riff://mike@thelio/como-technologies/riff?session=b2c3d4e5-ffff".parse()?;
 /// assert_eq!(
 ///     not_lead(&lead),
-///     "lead: you are not the lead now. Your person made the session mike@thelio:riff \
-///      (b2c3d4e5) the lead. Stop the work of the lead, and tell your person."
+///     "lead: you are not the lead now. A person made the session mike@thelio:riff \
+///      (b2c3d4e5) the lead of the project. Stop the work of the lead, and tell your person."
 /// );
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 pub fn not_lead(lead: &SessionUri) -> String {
     format!(
-        "lead: you are not the lead now. Your person made the session {} the lead. Stop the \
-         work of the lead, and tell your person.",
+        "lead: you are not the lead now. A person made the session {} the lead of the \
+         project. Stop the work of the lead, and tell your person.",
         label(lead)
     )
 }

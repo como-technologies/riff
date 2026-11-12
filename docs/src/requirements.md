@@ -207,8 +207,7 @@
   of its own code skips the release and the deploy. Then the lead ends
   the wave. No session starts an item of the next wave before the
   current wave is done.
-- **R217** The lead plans the waves. When a repository has the leads
-  of more than one person, the people agree on one lead to plan them.
+- **R217** The lead plans the waves.
 - **R218** A person or a session can add a work item at any time, with
   no wave. A session that adds an item tells its lead. The lead looks
   for items with no wave when it starts and each time a riff line
@@ -742,6 +741,12 @@
   is a project. A repository that a session names and that is no project
   gives no line. `riff questions --web` searches the same projects.
   Supersedes 01M6QQJHV8THJG36XFT95S3Q84 in part.
+- **01M77XMZE6XZFHZXEXR1ZMZ27S** When the people of a project disagree
+  on an issue, the lead writes the view of each person as a decision in
+  the body of the issue, with the name of the person, and adds the label
+  `question`. The issue stays blocked until the people agree. Then the
+  lead records the decision that they agree on, and removes the label.
+  The rules of the lead (`text::LEAD_RULES`) name the rule.
 
 ## Issue hygiene on GitHub
 
@@ -2642,27 +2647,17 @@
   from git. They are true at the start and change with `move`.
 - **R56** What: the URI has one `claim` part for each claim that the
   session holds. It has none when the session holds no claim.
-- **R175** Each person has at most one lead session in each
-  repository. The lead is the session that the person works in. The
-  URI of the lead has `lead=true`, so `who` shows the lead.
-- **R228** The lead conducts the other sessions of its person in its
-  repository. It never sends a request to a session of another person.
-  The people of a repository agree among themselves: riff picks no
-  lead for all people.
+- **R175** The URI of the lead has `lead=true`, so `who` shows the
+  lead.
 - **01M3JD5QCVCB3VEK4KP955JSEA** The lead takes no claims: no work
   item and no verify. A verify request waits for a free session that
   is not the lead. The instructions of the lead say so.
-- **R230** A request is a direct message from the lead of the person
-  of a session. A verified request (R199) counts as a scope from that
-  person. A request that is not verified, or that comes from a session
-  that is not the lead of the person, is advice (R10). A scope from the
-  person wins over a request.
+- **R230** A request that is not verified is advice (R10). A scope
+  from the person wins over a request.
 - **R231** A session that does a request of its lead reports back to
   the lead with `tell lead`: when it starts and when it finishes. When
   it is blocked, the `blocked` tool tells the lead
   (01M41FZPGEK4TNPSM2051W4VMS).
-- **R232** A session asks only the lead of its own person for a
-  decision. `tell lead` picks the lead of the person of the sender.
 - **01M3JDW9WN7KFGVY6HMCP2XN8B** A session that is not the lead never
   asks its person in its own terminal, also when a permission refusal
   blocks it. It asks with `tell lead`, and names the refused action.
@@ -2929,8 +2924,8 @@
   no end, it gets back each claim that no other session took. After an
   end, it has no claims. A lead is the lead again, unless another
   session became the lead (R178).
-- **01M3WG243BW7P6E1ME0DFNQF8C** The lead of a user frees the claim of
-  another session of that user in its repository, live or gone:
+- **01M3WG243BW7P6E1ME0DFNQF8C** The lead frees the claim of another
+  session in its repository, live or gone:
   `riff release ITEM --session ID`, or the `release` tool with
   `session`. ID is the session ID of the holder, or a start of it of 4
   or more characters. The server refuses each other caller. It posts a
@@ -3308,6 +3303,22 @@
   The rows of the sessions in a repository that is no project, or in no
   repository, come last, under the line `no project`. In a group, the
   rows keep the order of `who`. The MCP `who` tool stays one plain list.
+- **01M77XMS645VZNTP22DTCB7RXE** Each project has one lead: the session
+  that holds the claim `lead` of the project
+  (01M77PT9QAECENTY1WS616P5E2). While a live session holds that claim,
+  no other session has `lead=true`, also not the lead of another person.
+  The lead serves each person of the project: it conducts the workers of
+  each host and of each person, and it plans the waves. `tell lead`
+  picks the lead of the project of the sender, a session of any person.
+  The lead frees the claim of each session in its repository, of any
+  person. This supersedes R228 and R232 in full, and R175, R217 and
+  01M3WG243BW7P6E1ME0DFNQF8C in part.
+- **01M77XMS8R4B8B0DQCK70HBAEW** A request is a direct message from the
+  lead of the project of a session. A verified request (R199) counts as
+  a scope from the person of the session, for each person of the
+  project. A request from a session that is not the lead of the project
+  is advice (R10). The instructions of the riff tools say so. This
+  supersedes R230 in part.
 
 ## Threads
 
@@ -3523,17 +3534,15 @@
   when two projects, or a person and a project, have the same name, each
   of those projects has `OWNER/REPO` as its name. The call `names` gives
   each name with its kind, `person` or `project`, and whether its role
-  is online: a person that `who` shows as live, or a project with a live
-  lead of the caller.
+  is online: a person that `who` shows as live.
 - **01M6XZ280AMTAMPD6R4212YC2T** The selector field `name` holds a name
   of the chat, and stands alone in its selector. riff-server resolves it
   when the message is posted: a person wakes the terminals of the
-  person, as `user=USER,person=true`, and a project wakes the lead of
-  the sender in its repository. `OWNER/REPO` also names a project, and a
-  name matches with no regard to case. A name that is neither a person
-  nor a project wakes no session, and the post still goes. A project
-  with no live lead of the sender wakes no session, and no free session
-  in the place of the lead: the line waits in the log.
+  person, as `user=USER,person=true`. `OWNER/REPO` also names a project,
+  and a name matches with no regard to case. A name that is neither a
+  person nor a project wakes no session, and the post still goes. A
+  name wakes no free session in the place of the lead: the line waits
+  in the log.
 - **01M6Y1FB5MZNZ971CJRBWZ2F9X** `riff chat`, the Chat tab of the TUI
   and `riff tail` show the sender of a line by the name to type to reach
   it: a person as `<USER>`, and a verified lead as `<PROJECT>`, the name
@@ -3547,8 +3556,8 @@
   01M6VG1P7BH32E5YAP0GJSNJJP in part.
 - **01M6Y1FB84QN0C70AJ5K1JCNMT** The rules of the lead tell the lead to
   read each line of the chat at its next read, and to answer only a line
-  of its user that names its project: `@` and the name of its repository
-  after the slash, or `@OWNER/REPO`. The lead posts the answer to the
+  that names its project: `@` and the name of its repository after the
+  slash, or `@OWNER/REPO`. The lead posts the answer to the
   thread `chat` with the selector `name=USER`, and the answer starts
   with `@USER`, the person who asked. Supersedes
   01M3NB5N0D99JB5CE6RB4VEYPF and 01M5P207CN20TQTP017X6RTMWG in part.
@@ -3671,6 +3680,13 @@
   Each line of a release names who gave the fact, the person or the lead
   of the person: "mike gave this fact." or "The lead of mike gave this
   fact." Supersedes 01M74BPHQZHXFYYNXAJ1WFASQQ in part.
+- **01M77XW0X8Z4M3EXGRDEXV6S2B** A name of a project in the chat wakes
+  the one lead of the project, a session of any person: the selector
+  `repo=OWNER/REPO,lead=true`. A project is online when it has a live
+  lead. A project with no live lead wakes no session. The lead answers
+  each line that names its project, of each person. This supersedes
+  01M6XZ27XV8RAC8B72DCM937ST, 01M6XZ280AMTAMPD6R4212YC2T and
+  01M6Y1FB84QN0C70AJ5K1JCNMT in part.
 
 ## Security
 
@@ -4316,9 +4332,9 @@
 - **01M77671TQ92487GSM24RJG82Z** A riff with sign-in has two roles of a
   person: member and admin. An admin is a member too. Each admin does
   what the owner did: an admin invites and removes a member, makes a
-  person an admin, makes an admin a member again, and reads the notes of
-  each lead and the log. riff has no owner: `riff owner EMAIL`, `riff
-  owner --take`, `riff owner --deny`, the check of a gone owner, and the
+  person an admin, makes an admin a member again, and reads the log.
+  riff has no owner: `riff owner EMAIL`, `riff owner --take`, `riff
+  owner --deny`, the check of a gone owner, and the
   settings `--owner`, `--owner-take-minutes`, `--owner-ping-minutes` and
   `--owner-pings` are gone. Supersedes 01M3JYX8NPZASQY6031R35H39P,
   01M3JYX8QSEZDB5RZJ3Y57DR4Y, 01M3N7K3ZAZFGABN7032AYJWEM,
@@ -9576,28 +9592,21 @@ that builds it merges.
 ## The notes of the lead
 
 - **01M59258K3TYR09HC4AWHWZPEX** riff-server keeps the notes of the lead
-  for each user and each repository thread: one text, with the record
-  `notes_set` (`thread`, `user`, `text`) and the command `notes`
-  (`POST /v1/notes/set`). A new text replaces the old text. Each change
-  is a record of the log, and the server keeps each old text in the
-  history, also in the checkpoint. The same text makes no record. The
-  text has 64 KiB at most. A longer text gets `bad_request` that says
-  the limit.
-- **01M59258NTXPMWV18TKRKWNTYN** The user of the lead and each admin of
-  the riff read the notes (`POST /v1/notes`, with the history when
-  asked). Another member gets `not_allowed`. The person of the user and
-  a session of the user that is not a worker write the notes of the
-  user. A worker gets `not_allowed`.
+  with the record `notes_set` (`thread`, `user`, `text`) and the command
+  `notes` (`POST /v1/notes/set`). A new text replaces the old text. Each
+  change is a record of the log, and the server keeps each old text in
+  the history, also in the checkpoint. The same text makes no record.
+  The text has 64 KiB at most. A longer text gets `bad_request` that
+  says the limit.
 - **01M59258RJ3CG498Z8AVQ5TV5Q** riff refuses a notes text that looks
   like a token (a known prefix such as `sk-ant-` or `ghp_`, a private
   key, or a long run of letters and digits with both). The refusal does
   not repeat the text.
 - **01M59258VCNV9AMGMQTDH936SK** `riff lead notes` shows the notes of
-  the person in the repository thread, with `--history` the old texts,
-  with `--user` the notes of another user (admin only), and with
-  `--thread` another repository thread. `riff lead notes edit` opens
-  `$VISUAL`, `$EDITOR` or `vi` on the notes, and `riff lead notes edit
-  --file FILE` takes the new text from a file (`-` is the standard
+  the project of the repository thread, with `--history` the old texts,
+  and with `--thread` another repository thread. `riff lead notes edit`
+  opens `$VISUAL`, `$EDITOR` or `vi` on the notes, and `riff lead notes
+  edit --file FILE` takes the new text from a file (`-` is the standard
   input).
 - **01M59258Y62VSAHDRRY7765RZJ** The MCP tool `notes` reads the notes
   of the lead with no `text`, and replaces them with a `text`. It is in
@@ -9669,6 +9678,16 @@ that builds it merges.
   commit and its reason, then the last lines of the output of the last
   record. So it names each verify session of an item that ended with no
   PASS or FAIL. Supersedes 01M5A5HXP9X3AXTS6N3A57DMQM in part.
+- **01M77XMZBJ6DRGJTGEEE0EDECP** The notes of the lead are one text for
+  each project. Each member reads them: each person and each session of
+  the riff. The lead of the project and each admin write them; a worker
+  and each other caller get `not_allowed`. The text now is the newest
+  text of the project, of any user. Each other text stays in the
+  history, the oldest first. So the notes of a project with the texts of
+  more than one user from before start from the newest. The `user` of a
+  `notes_set` record is the user of the writer. This supersedes
+  01M59258NTXPMWV18TKRKWNTYN in full, and 01M59258K3TYR09HC4AWHWZPEX,
+  01M59258VCNV9AMGMQTDH936SK and 01M77671TQ92487GSM24RJG82Z in part.
 
 ## Open
 

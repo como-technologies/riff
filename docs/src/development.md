@@ -2460,14 +2460,14 @@ git log -F --author='riff-como-technologies[bot]' origin/worktree-issue-12
 
 The riff tools of a session of the daemon act on the riff-server of
 the session. Each session of `riff run`, of a wave and
-of `riff lead start` has your riff-server. So the lead of your user
+of `riff lead start` has your riff-server. So the lead of the project
 sees each post of a session, and `riff relay watch` of that session
 wakes on a message of riff-server.
 
 ```mermaid
 flowchart LR
     S["a session of the daemon: post, read, tell, status"] --> D["the riff daemon"]
-    D -- "as the worker session of the item" --> R["your riff-server: the lead of your user sees it"]
+    D -- "as the worker session of the item" --> R["your riff-server: the lead of the project sees it"]
     R -- "a message to the session" --> W["riff relay watch of that session wakes"]
 ```
 
@@ -4799,8 +4799,8 @@ names the fix, `riff project init`, and starts nothing (see
 [A wave and a lead only for a project](how-it-works.md#a-wave-and-a-lead-only-for-a-project)).
 The daemon starts the lead of the repository in the container
 `riff-lead-OWNER-REPO`, and riff attaches your terminal to it. A new
-lead is the lead of your user at once: `riff lead start` names it, and
-riff tells the old lead. When the lead runs already, riff only
+lead is the lead of the project at once: `riff lead start` names it,
+and riff tells the old lead. When the lead runs already, riff only
 attaches. At each attach, `claude` draws its screen at once: riff
 first gives the terminal of the container another size, and the
 attach gives it the size of your terminal again.
@@ -4880,7 +4880,7 @@ instructions of its riff tools tell it to start the watch again when the
 Monitor ends, and only then. See
 [Wake the lead in a container with no restart](how-it-works.md#wake-the-lead-in-a-container-with-no-restart).
 It plans the waves with `/opt/riff/riff wave`: see
-[Waves](waves.md). `riff lead start` names it the lead of your user,
+[Waves](waves.md). `riff lead start` names it the lead of the project,
 and riff tells the old lead. See
 [Name the lead](how-it-works.md#name-the-lead).
 

@@ -1,10 +1,12 @@
-//! The lead conducts the sessions of its user (R228-R232), over real
-//! HTTP: it gives two sessions two items, each claims its item and
-//! reports back, and a blocked session gets a new item. A question goes
-//! only to the lead of the user of its sender.
+//! The lead of the project conducts the workers of each person and of
+//! each host (01M77XMS645VZNTP22DTCB7RXE, 01M77XMS8R4B8B0DQCK70HBAEW,
+//! R231), over real HTTP: it gives two workers two items, each claims its
+//! item and reports back, and a blocked worker gets a new item. A worker
+//! of another person tells the lead of the project, and the verified
+//! request of the lead reaches it.
 
 use crate::common::{self, Signed};
-use riff_client::api::Api;
+use riff_client::api::{Api, Checked};
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::wire::{Kind, RiffState, Status};
 
@@ -16,50 +18,46 @@ fn repo() -> ThreadName {
     "como-technologies/riff".parse().unwrap()
 }
 
-/// Mike's lead, two other sessions of mike, and brett's lead.
+/// The lead of the project, a session of brett; two workers of mike on
+/// two hosts; a worker of brett.
 struct Riff {
     server: Signed,
     lead: SessionUri,
     a: SessionUri,
     b: SessionUri,
-    brett: SessionUri,
+    c: SessionUri,
 }
 
 async fn riff() -> Riff {
     let server = common::start_signed().await;
     let riff = Riff {
-        lead: uri("riff://mike@pangolin/como-technologies/riff?session=l1"),
+        lead: uri("riff://brett@heron/como-technologies/riff?session=l1"),
         a: uri("riff://mike@pangolin/como-technologies/riff?session=a1#a"),
         b: uri("riff://mike@thelio/como-technologies/riff?session=b2#b"),
-        brett: uri("riff://brett@heron/como-technologies/riff?session=x9"),
+        c: uri("riff://brett@heron/como-technologies/riff?session=c3#c"),
         server,
     };
     let api = |me: &SessionUri| common::api_of(&riff.server, me);
-    for me in [&riff.lead, &riff.brett, &riff.a, &riff.b] {
+    for me in [&riff.lead, &riff.a, &riff.b, &riff.c] {
         api(me).register(me).await.unwrap();
     }
-    // The person of each user names its lead (01M5NJAXTQ0YKN7Q7XN0A7ZMPF).
-    for me in [&riff.lead, &riff.brett] {
-        let person = riff.server.api(me.who().user(), None);
-        common::name_lead(&person, me).await;
-    }
+    // The person of brett names the one lead of the project
+    // (01M5NJAXTQ0YKN7Q7XN0A7ZMPF).
+    let person = riff.server.api("brett", None);
+    common::name_lead(&person, &riff.lead).await;
     // A new riff is paused. The lead resumes it.
     api(&riff.lead)
         .set_riff(&riff.lead, RiffState::Running)
         .await
         .unwrap();
-    api(&riff.lead)
-        .inbox(&riff.lead, None, false)
-        .await
-        .unwrap();
-    for me in [&riff.brett, &riff.a, &riff.b] {
+    for me in [&riff.lead, &riff.a, &riff.b, &riff.c] {
         api(me).inbox(me, None, false).await.unwrap();
     }
     riff
 }
 
-/// The bodies of the unread direct messages to `me`, with their senders.
-async fn direct(api: &Api, me: &SessionUri) -> Vec<(String, String)> {
+/// The unread direct messages to `me`, from other sessions.
+async fn direct(api: &Api, me: &SessionUri) -> Vec<Checked> {
     api.inbox(me, None, false)
         .await
         .unwrap()
@@ -67,9 +65,16 @@ async fn direct(api: &Api, me: &SessionUri) -> Vec<(String, String)> {
         .filter(|inbox| inbox.thread.is_direct())
         .flat_map(|inbox| inbox.messages)
         .filter(|c| c.message.from.who() != me.who())
+        .collect()
+}
+
+/// The sender ID and the body of each message of `messages`.
+fn bodies(messages: &[Checked]) -> Vec<(String, String)> {
+    messages
+        .iter()
         .map(|c| {
             let from = c.message.from.who().session().unwrap().to_owned();
-            (from, c.message.body)
+            (from, c.message.body.clone())
         })
         .collect()
 }
@@ -79,25 +84,25 @@ fn id(me: &SessionUri) -> &str {
 }
 
 #[tokio::test]
-async fn the_lead_gives_two_sessions_two_items_and_each_reports_back() {
+async fn the_lead_gives_the_workers_of_each_person_items_and_each_reports_back() {
     let Riff {
         server, lead, a, b, ..
     } = riff().await;
     let api = |me: &SessionUri| common::api_of(&server, me);
 
-    // The lead asks its sessions for their status, then gives each one
-    // item.
+    // The lead asks each session of the project for its status, of each
+    // person, then gives two workers of mike one item each.
     let ask = api(&lead)
         .post(
             &lead,
             Some(&repo()),
-            &["user=mike,repo=como-technologies/riff".parse().unwrap()],
+            &["repo=como-technologies/riff".parse().unwrap()],
             "",
             Kind::Status,
         )
         .await
         .unwrap();
-    assert_eq!(ask.woken.len(), 2, "only the sessions of mike wake");
+    assert_eq!(ask.woken.len(), 3, "the workers of mike and of brett wake");
     for (me, item) in [(&a, "issue-12"), (&b, "issue-7")] {
         let posted = api(&lead)
             .tell(&lead, id(me), &format!("request: claim {item}"))
@@ -106,9 +111,10 @@ async fn the_lead_gives_two_sessions_two_items_and_each_reports_back() {
         assert_eq!(posted.woken[0].who(), me.who());
     }
 
-    // Each session reads the request, claims its item and reports back.
+    // Each worker reads the request, claims its item and reports back to
+    // the lead of the project, a session of brett.
     for (me, item) in [(&a, "issue-12"), (&b, "issue-7")] {
-        let requests = direct(&api(me), me).await;
+        let requests = bodies(&direct(&api(me), me).await);
         assert_eq!(
             requests,
             [(id(&lead).to_owned(), format!("request: claim {item}"))]
@@ -140,7 +146,7 @@ async fn the_lead_gives_two_sessions_two_items_and_each_reports_back() {
 }
 
 #[tokio::test]
-async fn a_blocked_session_tells_the_lead_and_gets_a_new_item() {
+async fn a_blocked_worker_tells_the_lead_and_gets_a_new_item() {
     let Riff {
         server, lead, b, ..
     } = riff().await;
@@ -152,7 +158,7 @@ async fn a_blocked_session_tells_the_lead_and_gets_a_new_item() {
         riff_client::api::Told::Lead
     );
 
-    let reports = direct(&api(&lead), &lead).await;
+    let reports = bodies(&direct(&api(&lead), &lead).await);
     assert_eq!(reports[0].1, "blocked: issue-7 needs issue-5");
     api(&lead)
         .tell(&lead, id(&b), "request: release issue-7, claim issue-9")
@@ -160,7 +166,7 @@ async fn a_blocked_session_tells_the_lead_and_gets_a_new_item() {
         .unwrap();
 
     assert_eq!(
-        direct(&api(&b), &b).await[0].1,
+        bodies(&direct(&api(&b), &b).await)[0].1,
         "request: release issue-7, claim issue-9"
     );
     api(&b).release(&b, &repo(), "issue-7").await.unwrap();
@@ -170,14 +176,13 @@ async fn a_blocked_session_tells_the_lead_and_gets_a_new_item() {
     assert_eq!(s.uri.claims(), ["issue-9"]);
 }
 
+/// The test of #1792: a worker of mike tells the lead of the project, a
+/// session of brett. The answer of the lead is a verified request with
+/// `lead=true`: it counts for mike too.
 #[tokio::test]
-async fn a_question_goes_only_to_the_lead_of_its_own_user() {
+async fn a_worker_of_another_person_tells_the_lead_of_the_project() {
     let Riff {
-        server,
-        lead,
-        a,
-        brett,
-        ..
+        server, lead, a, c, ..
     } = riff().await;
     let api = |me: &SessionUri| common::api_of(&server, me);
     let asked = api(&a)
@@ -186,10 +191,26 @@ async fn a_question_goes_only_to_the_lead_of_its_own_user() {
         .unwrap();
     assert_eq!(asked.woken.len(), 1);
     assert_eq!(asked.woken[0].who(), lead.who());
-    assert!(direct(&api(&brett), &brett).await.is_empty());
+    assert!(direct(&api(&c), &c).await.is_empty(), "no other session");
 
-    // Brett's lead is the lead of brett, not of mike.
-    let brett_asks = api(&brett).tell(&brett, "lead", "who leads?").await;
-    let error = brett_asks.unwrap_err().to_string();
-    assert!(error.contains("Ask your own user"), "{error}");
+    let question = direct(&api(&lead), &lead).await;
+    assert_eq!(
+        bodies(&question),
+        [(
+            id(&a).to_owned(),
+            "merge now, or wait for issue-5?".to_owned()
+        )]
+    );
+    api(&lead)
+        .tell(&lead, id(&a), "request: wait for issue-5")
+        .await
+        .unwrap();
+    let request = direct(&api(&a), &a).await;
+    let [answer] = &request[..] else {
+        panic!("one request: {request:?}");
+    };
+    assert_eq!(answer.message.body, "request: wait for issue-5");
+    assert!(answer.verified, "the request of the lead is verified");
+    assert!(answer.message.from.lead(), "it comes from the lead");
+    assert_eq!(answer.message.from.who(), lead.who());
 }

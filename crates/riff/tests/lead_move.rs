@@ -189,7 +189,7 @@ async fn the_move_makes_the_new_session_the_lead_and_tells_the_old_lead() {
     assert_eq!(w.leads(&person).await, ["n1"]);
     let notes = w
         .api(None)
-        .notes_show(&person, &person.default_thread().unwrap(), None, false)
+        .notes_show(&person, &person.default_thread().unwrap(), false)
         .await
         .unwrap();
     assert_eq!(notes.text, "Handover: wave 36 runs.");
@@ -298,7 +298,7 @@ async fn the_stop_asks_the_lead_on_the_host_for_its_notes_and_waits_for_them() {
 
     let notes = w
         .api(None)
-        .notes_show(&person, &person.default_thread().unwrap(), None, false)
+        .notes_show(&person, &person.default_thread().unwrap(), false)
         .await
         .unwrap();
     assert_eq!(notes.text, "Handover: wave 36 runs.");

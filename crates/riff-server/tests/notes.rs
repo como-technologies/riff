@@ -1,6 +1,6 @@
-//! The notes of the lead over HTTP (01M59258K3TYR09HC4AWHWZPEX): the
-//! command `notes/set` and the query `notes`, on a real server with no
-//! sign-in.
+//! The notes of the lead over HTTP (01M59258K3TYR09HC4AWHWZPEX,
+//! 01M77XMZBJ6DRGJTGEEE0EDECP): the command `notes/set` and the query
+//! `notes`, on a real server with no sign-in.
 
 use crate::common;
 
@@ -36,7 +36,7 @@ async fn the_notes_go_through_each_route_with_their_history() {
     let show = json!({"me": ANN, "thread": "acme/app", "history": true});
 
     let none: NotesReply = ok(&base, "/v1/notes", show.clone()).await;
-    assert_eq!((none.user.as_str(), none.text.as_str()), ("ann", ""));
+    assert_eq!(none.text, "");
 
     let first: SetNotesReply = ok(&base, "/v1/notes/set", set("Wave 36 runs.")).await;
     assert!(first.changed);
@@ -53,6 +53,13 @@ async fn the_notes_go_through_each_route_with_their_history() {
     let plain = json!({"me": ANN, "thread": "acme/app"});
     let plain: NotesReply = ok(&base, "/v1/notes", plain).await;
     assert!(plain.history.is_empty());
+
+    // A session of another user reads the same notes: one text for
+    // each project (01M77XMZBJ6DRGJTGEEE0EDECP).
+    let bob = "riff://bob@kite/acme/app?session=b1";
+    let _: Value = ok(&base, "/v1/register", json!({"me": bob})).await;
+    let bobs: NotesReply = ok(&base, "/v1/notes", json!({"me": bob, "thread": "acme/app"})).await;
+    assert_eq!(bobs.text, "Wave 37 runs.");
 }
 
 #[tokio::test]

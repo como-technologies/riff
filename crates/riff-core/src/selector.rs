@@ -203,10 +203,10 @@ impl Selector {
         }
     }
 
-    /// A selector for the lead of `user` in the repository `repo`.
-    pub fn lead(user: &str, repo: &str) -> Self {
+    /// A selector for the one lead of the project `repo`: a session of
+    /// any person.
+    pub fn lead(repo: &str) -> Self {
         Self {
-            user: Some(user.to_owned()),
             repo: Some(repo.to_owned()),
             lead: Some(true),
             ..Self::default()
@@ -397,15 +397,15 @@ mod tests {
         assert!(!sel("lead=true").matches(&u));
         assert!(sel("lead=false").matches(&u));
         assert!(!sel("lead=false").matches(&lead));
-        let s = Selector::lead("mike", "como-technologies/riff");
-        assert_eq!(
-            s.to_string(),
-            "user=mike,repo=como-technologies/riff,lead=true"
-        );
+        let s = Selector::lead("como-technologies/riff");
+        assert_eq!(s.to_string(), "repo=como-technologies/riff,lead=true");
         assert!(s.matches(&lead));
+        let brett = uri("riff://brett@thelio/como-technologies/riff?session=b2");
+        assert!(s.matches(&brett.with_lead(true)), "the lead of any person");
+        assert!(!s.matches(&u));
         assert_eq!(
             serde_json::to_string(&s).unwrap(),
-            r#"{"user":"mike","repo":"como-technologies/riff","lead":true}"#
+            r#"{"repo":"como-technologies/riff","lead":true}"#
         );
     }
 

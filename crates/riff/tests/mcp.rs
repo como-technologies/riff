@@ -18,13 +18,13 @@ fn of(server: &crate::common::Signed, me: impl std::fmt::Display) -> Api {
     crate::common::api_of(server, &me.to_string().parse().unwrap())
 }
 
-/// Connects an MCP client to the tools of `me`. The person names [`MIKE`]
-/// and [`BRETT`] the lead.
+/// Connects an MCP client to the tools of `me`. The person of mike names
+/// [`MIKE`] the one lead of the project (01M77XMS645VZNTP22DTCB7RXE).
 async fn connect(server: &crate::common::Signed, me: &str) -> RunningService<RoleClient, ()> {
     let me: SessionUri = me.parse().unwrap();
     let api = of(server, &me);
     api.register(&me).await.unwrap();
-    if [MIKE, BRETT].contains(&me.to_string().as_str()) {
+    if me.to_string() == MIKE {
         crate::common::name_lead(&server.api(me.who().user(), None), &me).await;
     }
     serve(api, me).await
@@ -67,7 +67,6 @@ const MIKE: &str = "riff://mike@pangolin/como-technologies/riff?session=a1#api";
 const BRETT: &str = "riff://brett@heron/como-technologies/riff?session=b2#tests";
 // The person of each user names it the lead in [`connect`].
 const MIKE_LEAD: &str = "riff://mike@pangolin/como-technologies/riff?session=a1&lead=true#api";
-const BRETT_LEAD: &str = "riff://brett@heron/como-technologies/riff?session=b2&lead=true#tests";
 
 #[tokio::test]
 async fn the_tools_carry_a_conversation() {
@@ -105,10 +104,15 @@ async fn the_tools_carry_a_conversation() {
     );
 
     let (who, _) = call(&mike, "who", serde_json::json!({})).await;
-    assert!(who.contains(BRETT_LEAD), "{who}");
+    assert!(who.contains(MIKE_LEAD), "{who}");
     // A lead with no watch is not offline (01M48VDGQ5KETKPM4G6TKTC2MB).
-    assert!(who.contains("(b2) paused lead  "), "{who}");
-    assert!(!who.contains("offline"), "{who}");
+    let lead = who.lines().find(|line| line.contains("(a1)")).unwrap();
+    assert!(lead.contains("(a1) paused (you) lead"), "{who}");
+    assert!(!lead.contains("offline"), "{who}");
+    // brett is no lead: with no watch, it is offline.
+    assert!(who.contains(BRETT), "{who}");
+    let brett_line = who.lines().find(|line| line.contains("(b2)")).unwrap();
+    assert!(brett_line.contains("offline"), "{who}");
     // The who tool keeps plain text for agents (01M3Q63MVZ74WPNBA3QJYQGHFG).
     assert!(!who.contains('\x1b'), "{who:?}");
     let (all, _) = call(&mike, "who", serde_json::json!({ "all": true })).await;
@@ -171,8 +175,8 @@ async fn the_tools_carry_a_conversation() {
     let (again, _) = call(&brett, "read", serde_json::json!({})).await;
     assert_eq!(again, "No unread messages.");
 
-    // A new riff is paused. Brett's session is the lead of brett, so it
-    // can resume it; the state is one for the whole riff.
+    // A new riff is paused. The session of mike is the lead of the
+    // project, so it can resume it; the state is one for the whole riff.
     let (refused, is_error) = call(&mike, "claim", serde_json::json!({ "item": "issue-12" })).await;
     assert!(is_error, "{refused}");
     assert!(refused.contains("the riff is paused"), "{refused}");
@@ -186,17 +190,14 @@ async fn the_tools_carry_a_conversation() {
     );
     assert!(me.ends_with(&riff::text::build_line(None)), "{me}");
     // With no argument, the tool names the repository of the lead.
-    let (resumed, _) = call(&brett, "resume", serde_json::json!({})).await;
+    let (resumed, _) = call(&mike, "resume", serde_json::json!({})).await;
     assert_eq!(
         resumed,
         "The repository como-technologies/riff was running already. The whole riff is still \
          paused: an admin resumes it with `riff resume --riff`."
     );
-    let (resumed, _) = call(&brett, "resume", serde_json::json!({ "riff": true })).await;
-    assert_eq!(
-        resumed,
-        "The riff is running now. Woke mike@pangolin:riff#api (a1)."
-    );
+    let (resumed, _) = call(&mike, "resume", serde_json::json!({ "riff": true })).await;
+    assert!(resumed.starts_with("The riff is running now."), "{resumed}");
     let (who, _) = call(&mike, "who", serde_json::json!({})).await;
     assert!(who.starts_with("The riff is running.\n"), "{who}");
 
@@ -474,13 +475,14 @@ async fn a_status_request_gets_an_answer_with_the_status_tool() {
     // With a watch, brett is live, so the server gives its state. The
     // riff is paused: paused wins, with the step it stopped at
     // (01M3QB6CJ1XCQG5B1BVR8AF3B4).
-    let uri: riff_core::name::SessionUri = BRETT_LEAD.parse().unwrap();
+    let uri: riff_core::name::SessionUri = BRETT.parse().unwrap();
     let watcher = of(&api, &uri);
     let _watch = watcher.watch(&uri).await.unwrap();
     let (who, _) = call(&mike, "who", serde_json::json!({})).await;
-    assert!(who.contains("(b2) paused lead  "), "{who}");
+    let line = who.lines().find(|line| line.contains("(b2)")).unwrap();
+    assert!(line.contains("(b2) paused "), "{who}");
     assert!(
-        who.contains(&format!("{BRETT_LEAD}\n  stopped at: merge\n")),
+        who.contains(&format!("{BRETT}\n  stopped at: merge\n")),
         "{who}"
     );
 
@@ -875,26 +877,13 @@ async fn a_lead_with_no_memory_gets_its_state_from_the_notes() {
     let (still, _) = call(&lead, "notes", serde_json::json!({})).await;
     assert!(still.contains("Wave 37 runs."), "{still}");
 
-    // A member that is not an admin does not read the notes of mike;
-    // the admin brett does (01M77671TQ92487GSM24RJG82Z). A worker cannot write
-    // them.
-    let bob: SessionUri = "riff://bob@kite/como-technologies/riff?session=c3"
-        .parse()
-        .unwrap();
-    of(&api, &bob).register(&bob).await.unwrap();
-    let thread = bob.default_thread().unwrap();
-    let error = of(&api, &bob)
-        .notes_show(&bob, &thread, Some("mike"), false)
-        .await;
-    let error = format!("{:#}", error.unwrap_err());
-    assert!(error.contains("only mike and an admin"), "{error}");
+    // Another user reads the same notes: one text for each project
+    // (01M77XMZBJ6DRGJTGEEE0EDECP). A worker cannot write them.
     let brett: SessionUri = BRETT.parse().unwrap();
     of(&api, &brett).register(&brett).await.unwrap();
-    let read = of(&api, &brett)
-        .notes_show(&brett, &thread, Some("mike"), false)
-        .await
-        .unwrap();
-    assert!(format!("{read:?}").contains("Wave 37 runs."), "{read:?}");
+    let thread = brett.default_thread().unwrap();
+    let read = of(&api, &brett).notes_show(&brett, &thread, false).await;
+    assert_eq!(read.unwrap().text, "Wave 37 runs.");
     let worker: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=w1#w1"
         .parse()
         .unwrap();

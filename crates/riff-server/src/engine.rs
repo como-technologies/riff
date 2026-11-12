@@ -1012,14 +1012,8 @@ impl Engine {
     /// (01M3X4Z6G0TG0B4FT2N1FSPDHS): an admin in a riff with no sign-in
     /// ([`SignIns::trusted`]), else a member.
     fn with_role(&self, admitted: &Admitted, state: &State) -> Caller {
-        self.role_from(admitted, |user| state.role(user))
-    }
-
-    /// The caller of `admitted` with the role that `role_of` gives its
-    /// user, for a caller with a token. See [`Engine::with_role`].
-    fn role_from(&self, admitted: &Admitted, role_of: impl FnOnce(&str) -> Role) -> Caller {
         let role = match &admitted.key {
-            Some(_) => role_of(admitted.who().user()),
+            Some(_) => state.role(admitted.who().user()),
             None if self.0.sign_ins.trusted() => Role::Admin,
             None => Role::Member,
         };
@@ -1348,25 +1342,6 @@ impl Engine {
         let place = caller.caller.me().place().clone();
         self.signal(caller, Signal::Called { place }).await?;
         Ok(read(&self.core().state))
-    }
-
-    /// A query that reads as the caller with its role: for a read that
-    /// only some roles may make, for example the notes of another user
-    /// (01M59258NTXPMWV18TKRKWNTYN, 01M77671TQ92487GSM24RJG82Z). The role of a
-    /// caller with a token comes from the people of the written copy, as each
-    /// query reads them (01M3XA87F70CD3WH4STADSCW6S). A caller with no token
-    /// is an admin in a riff with no sign-in, else a member.
-    pub async fn query_as<T>(
-        &self,
-        caller: &Admitted,
-        read: impl FnOnce(&State, &Caller) -> T,
-    ) -> Result<T, Failed> {
-        let place = caller.caller.me().place().clone();
-        self.signal(caller, Signal::Called { place }).await?;
-        let core = self.core();
-        let state = &core.state;
-        let role = |user: &str| state.people().role_of(user);
-        Ok(read(state, &self.role_from(caller, role)))
     }
 
     /// A read for a caller that is not a call of it: it sets no signal,

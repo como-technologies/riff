@@ -341,7 +341,7 @@ pub async fn answered(
     })
     .await??;
     let user = me.who().user();
-    let to = [Selector::lead(user, &name)];
+    let to = [Selector::lead(&name)];
     let body = text::questions_answered_message(user, &name, number);
     let posted = api.post(me, Some(repo), &to, &body, Kind::Message).await?;
     Ok(text::questions_answered(&name, number, &posted))

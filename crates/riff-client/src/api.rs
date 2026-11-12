@@ -197,15 +197,15 @@ pub fn server_url(value: &str) -> Result<String, String> {
 }
 
 /// The word that [`Api::tell`] takes in place of a session: the lead of
-/// your user in your repository (R179).
+/// your project, of any person (R179).
 pub const LEAD: &str = "lead";
 
 /// Who got the message of a block or of a failed step.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Told {
-    /// The lead of the user.
+    /// The lead of the project.
     Lead,
-    /// Nobody: the user has no lead.
+    /// Nobody: the project has no lead.
     Nobody,
     /// The session is the lead: its own person reads its terminal.
     You,
@@ -1157,7 +1157,7 @@ impl Api {
     }
 
     /// Says that `me` cannot go on with no decision, in one command
-    /// (01M41FZPGEK4TNPSM2051W4VMS): it tells the lead of its user
+    /// (01M41FZPGEK4TNPSM2051W4VMS): it tells the lead of its project
     /// `blocked: REASON`, and sets the block. With no lead, the block
     /// holds, and the session asks its own user. The lead itself tells
     /// nobody: it waits for its own person (01M48VDSB4CHQS9P6XVDJ6FMKS).
@@ -1187,7 +1187,7 @@ impl Api {
     }
 
     /// Changes the long step of `me` (01M48VDGTD40P8RBZMS0XB5M9N). A
-    /// failed step also tells the lead of its user `step failed: NAME:
+    /// failed step also tells the lead of its project `step failed: NAME:
     /// REASON` (01M48VDS663X064YS5ZGCCZSTB), unless `me` is the lead.
     /// It gives who got the message.
     pub async fn step(&self, me: &SessionUri, change: StepChange) -> Result<Told> {
@@ -1439,11 +1439,11 @@ impl Api {
     }
 
     /// Sends a direct message (R62). `session` is a session ID, a full
-    /// session URI, or [`LEAD`] for the lead of the user of `me` in its
-    /// repository (R179).
+    /// session URI, or [`LEAD`] for the lead of the project of `me`, a
+    /// session of any person (R179, 01M77XMS645VZNTP22DTCB7RXE).
     pub async fn tell(&self, me: &SessionUri, session: &str, body: &str) -> Result<Posted> {
         let to = if session == LEAD {
-            Selector::lead(me.who().user(), &me.place().repo_text())
+            Selector::lead(&me.place().repo_text())
         } else {
             match session.parse::<SessionUri>() {
                 Ok(uri) => match uri.who().session() {
@@ -1733,10 +1733,11 @@ impl Api {
         }
     }
 
-    /// Writes the notes of the lead of the user of `me` in the repository
-    /// thread `thread` (01M59258K3TYR09HC4AWHWZPEX). The text replaces the
-    /// old text. The server refuses a text over 64 KiB and a text that
-    /// looks like a token (01M59258RJ3CG498Z8AVQ5TV5Q).
+    /// Writes the notes of the project of the repository thread `thread`
+    /// (01M59258K3TYR09HC4AWHWZPEX). The text replaces the old text. Only
+    /// the lead of the project and an admin can
+    /// (01M77XMZBJ6DRGJTGEEE0EDECP). The server refuses a text over 64
+    /// KiB and a text that looks like a token (01M59258RJ3CG498Z8AVQ5TV5Q).
     pub async fn notes_set(
         &self,
         me: &SessionUri,
@@ -1751,20 +1752,17 @@ impl Api {
         self.call(&set).await
     }
 
-    /// The notes of the lead of `user` in `thread`, or of the user of
-    /// `me` when `user` is `None`; with `history`, also the old texts
-    /// (01M59258NTXPMWV18TKRKWNTYN). Only that user and an admin can.
+    /// The notes of the project of `thread`; with `history`, also the old
+    /// texts. Each member can read them (01M77XMZBJ6DRGJTGEEE0EDECP).
     pub async fn notes_show(
         &self,
         me: &SessionUri,
         thread: &ThreadName,
-        user: Option<&str>,
         history: bool,
     ) -> Result<NotesReply> {
         let show = NotesShow {
             me: me.clone(),
             thread: thread.clone(),
-            user: user.map(str::to_owned),
             history,
         };
         self.call(&show).await
@@ -1864,7 +1862,7 @@ impl Api {
     }
 
     /// Frees the claim of the session `holder` (its session ID, or the
-    /// start of it) for it. Only the lead of the user of the holder can
+    /// start of it) for it. Only the lead of the project of the holder can
     /// (01M3WG243BW7P6E1ME0DFNQF8C).
     pub async fn release_for(
         &self,
