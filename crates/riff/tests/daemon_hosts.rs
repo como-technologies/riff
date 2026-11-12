@@ -163,7 +163,8 @@ impl Drop for Host {
 
 /// A riff-server whose GitHub is a fake, where the repositories of the
 /// tests are projects that allow each host: a wave runs only for a
-/// project (#1863).
+/// project (#1863), and riff-server takes the fact of a release only for
+/// a project (01M77F60MR8WZTMFJ5CF2295Q6).
 async fn start_server() -> crate::common::Signed {
     let github = crate::common::fake_github::FakeGitHub::start().await;
     let settings = riff_server::github::Settings {
@@ -583,6 +584,17 @@ impl Host {
         );
         std::fs::write(dir.join(".credentials.json"), file).unwrap();
     }
+
+    /// The lines of the daemon of this host about a call for `repo` that
+    /// failed: for example a fact of a release that riff-server refused.
+    fn failed_calls(&self, repo: &str) -> Vec<String> {
+        let start = format!("riff daemon: {repo}: ");
+        self.output()
+            .lines()
+            .filter(|line| line.starts_with(&start) && line.contains(" failed ("))
+            .map(str::to_owned)
+            .collect()
+    }
 }
 
 impl Riff {
@@ -599,6 +611,38 @@ impl Riff {
             .map(|m| m.message.body)
             .filter(|body| body.starts_with(start))
             .collect()
+    }
+
+    /// The bodies of the lines of riff-bot in `riff chat`: riff-server
+    /// posts them itself, with the kind `riff`.
+    async fn bot_lines(&self) -> Vec<String> {
+        let chat = riff::chat::thread();
+        let read = match self.api(&self.lead).read(&self.lead, &chat, true).await {
+            Ok(read) => read,
+            // The chat comes with its first line.
+            Err(e) if e.to_string().contains("no thread named chat") => Vec::new(),
+            Err(e) => panic!("{e:#}"),
+        };
+        read.into_iter()
+            .filter(|m| m.message.kind == Kind::Riff && m.message.from == SessionUri::server())
+            .map(|m| m.message.body)
+            .collect()
+    }
+
+    /// Waits until riff chat has the line of riff-bot `line`. A failed call
+    /// of the daemon of `a`, for example a fact that riff-server refused,
+    /// fails the test at once with the line of the daemon.
+    async fn bot_line(&self, line: &str) {
+        let repo = self.lead.place().repo_text();
+        until("the line of riff-bot", || async {
+            assert_eq!(self.a.failed_calls(&repo), Vec::<String>::new());
+            self.bot_lines()
+                .await
+                .iter()
+                .any(|l| l == line)
+                .then_some(())
+        })
+        .await;
     }
 
     /// The bodies of the notes of the daemons to the lead that start
@@ -1936,7 +1980,10 @@ async fn watch_deploy(dir: &Path, repo: &str) {
 /// 01M5SNV75DRFHR26BT2M8243VV: the watch of the daemon gives the lead of
 /// another repository one note when the job `Deploy` waits, one when it
 /// passes and one when it fails, with a real riff-server. The lead of the
-/// release gets its own message, and none of the notes.
+/// release gets its own message, and none of the notes. The repository is
+/// a project, so riff-server takes the fact of the wait, and each admin
+/// gets one line of riff-bot (01M77F60MR8WZTMFJ5CF2295Q6). No call of the
+/// daemon fails.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_watch_of_a_deploy_gives_the_other_lead_one_note_for_each_step() {
     let tmp = tempfile::tempdir().unwrap();
@@ -2000,6 +2047,9 @@ async fn the_watch_of_a_deploy_gives_the_other_lead_one_note_for_each_step() {
         (!r.messages(&lead("waits for a person")).await.is_empty()).then_some(())
     })
     .await;
+    // Each admin gets the line of riff-bot of the wait in riff chat.
+    let waits = waits_line(&repo);
+    r.bot_line(&waits).await;
 
     // The job passes: one more note, and the watch goes.
     isolated::write_whole(
@@ -2042,6 +2092,8 @@ async fn the_watch_of_a_deploy_gives_the_other_lead_one_note_for_each_step() {
     );
     assert_eq!(r.messages(&lead("passed")).await.len(), 1);
     assert_eq!(r.messages(&lead("failed")).await.len(), 1);
+    assert_eq!(r.bot_lines().await, [waits], "one line of riff-bot");
+    assert_eq!(r.a.failed_calls(&repo), Vec::<String>::new());
 }
 
 /// The file `status` of [`fake_deploy`]: the status `riff/deploy-check` of
@@ -2049,6 +2101,18 @@ async fn the_watch_of_a_deploy_gives_the_other_lead_one_note_for_each_step() {
 fn deploy_status(state: &str, description: &str) -> String {
     format!(
         r#"{{"sha":"abc","statuses":[{{"context":"riff/deploy-check","state":"{state}","description":"{description}","updated_at":"2026-10-18T20:09:10Z"}}]}}"#
+    )
+}
+
+/// The line of riff-bot while the job `Deploy` of the run 9 of `TAG` of
+/// `repo` waits (01M74BPHQZHXFYYNXAJ1WFASQQ): it names each admin, brett
+/// and mike (01M7767T5VSWN9EYDVSTCEJ8AM), and the giver, mike: the daemon
+/// of mike gives the fact as the person (01M77F60MR8WZTMFJ5CF2295Q6).
+fn waits_line(repo: &str) -> String {
+    format!(
+        "@brett @mike riff release {TAG} waits for your approval: \
+         https://github.com/{repo}/actions/runs/9. mike gave this fact. In a terminal, run: \
+         riff release approve {TAG}"
     )
 }
 
@@ -2060,7 +2124,8 @@ const LOG_PASSED: &str = "503 run: 0 s, 500: 0, token store: 0, old lease: no";
 /// watch of a deploy that passed gives the lead the step of the check, and
 /// the other lead its note, only after the job Check the deploy set the
 /// status `riff/deploy-check`. A status `error`, and a job that failed with
-/// no status, wake the lead with the reason.
+/// no status, wake the lead with the reason. The job `Deploy` never waits,
+/// so riff chat has no line of riff-bot, and no call of the daemon fails.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_watch_of_a_deploy_gives_the_step_of_the_check_only_after_the_job_check_the_deploy() {
     let tmp = tempfile::tempdir().unwrap();
@@ -2158,13 +2223,16 @@ async fn the_watch_of_a_deploy_gives_the_step_of_the_check_only_after_the_job_ch
         riff::text::deploy_check_none("https://github.com/o/r/actions/runs/9", Some("cancelled"))
     );
     assert_eq!(told(none).await, 3);
+    assert!(r.bot_lines().await.is_empty(), "the job never waited");
+    assert_eq!(r.a.failed_calls(&repo), Vec::<String>::new());
 }
 
 /// 01M6XTS7RGXB30MFM6DZ7PVZ75: `riff who` says the state of an open release
 /// at each step, in the same line as the header of the TUI. The watch of the
 /// deploy, then the watch of the check, give the step to the facts of the
 /// host, with a real riff-server and a fake `gh`. With no open release, `riff
-/// who` has no line `release`.
+/// who` has no line `release`. The wait gives each admin one line of riff-bot
+/// (01M77F60MR8WZTMFJ5CF2295Q6), and no call of the daemon fails.
 #[tokio::test(flavor = "multi_thread")]
 async fn riff_who_says_the_state_of_an_open_release_at_each_step() {
     let tmp = tempfile::tempdir().unwrap();
@@ -2203,6 +2271,8 @@ async fn riff_who_says_the_state_of_an_open_release_at_each_step() {
         "{TAG}: the deploy waits for a person (riff release approve {TAG})"
     )))
     .await;
+    let waits = waits_line(&repo);
+    r.bot_line(&waits).await;
 
     // A person approves: the riff is paused, and the job runs.
     lead.set_riff(&r.lead, RiffState::Paused).await.unwrap();
@@ -2244,6 +2314,8 @@ async fn riff_who_says_the_state_of_an_open_release_at_each_step() {
         .then_some(())
     })
     .await;
+    assert_eq!(r.bot_lines().await, [waits], "one line of riff-bot");
+    assert_eq!(r.a.failed_calls(&repo), Vec::<String>::new());
 }
 
 /// A fake `gh` on the PATH for the watch of a wave: the open wave `Wave 41`
