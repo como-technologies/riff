@@ -678,6 +678,21 @@ mod tests {
             keys: keys(),
             trusted: true,
         });
+        c.trip(&ReadThreads {
+            me: me(),
+            all: true,
+        });
+        c.trip(&ReadThreadsReply {
+            pages: vec![ThreadPage {
+                thread: thread(),
+                members: vec![me()],
+                messages: vec![message()],
+                next: Some(1),
+                woken: vec![message()],
+            }],
+            keys: keys(),
+            trusted: true,
+        });
         c.trip(&Claim {
             me: me(),
             thread: thread(),

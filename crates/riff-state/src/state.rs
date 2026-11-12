@@ -30,6 +30,7 @@
 //! | [`view`] | [`View`]: one copy of the riff with the presence, read only. `handle` and each query read it. |
 //! | [`command`] | The trait [`Command`] with `handle` and `reply`, the [`Caller`], [`permits`], and the [`Refused`] of a refusal. |
 //! | [`names`] | The names of the chat, `@person` and `@project`: the list, and the resolve of each name of a post. |
+//! | [`read`] | The pages of a read: the rule of the messages that a read shows, also for the unread counts, and the bound of a read with no thread. |
 //! | [`snapshot`] | [`Snapshot`]: the parts of each group in one checkpoint. |
 //! | `state/rules.rs` | The given/when/then tests of `handle` and `apply`. |
 //!
@@ -266,7 +267,7 @@ use riff_core::wire::{
     SetStep, Start, StartReason, Status, StatusInfo, StepChange, StepInfo, Tailed, ThreadInfo,
     Waits, Wake,
 };
-use riff_core::wire::{ChatName, MachineInfo, NotesReply, SetMachine};
+use riff_core::wire::{ChatName, MachineInfo, NotesReply, SetMachine, ThreadPage};
 
 /// A blocked session that the look of the lead found, with its reason
 /// ([`State::look_blocks`]).
@@ -281,6 +282,7 @@ pub mod people;
 pub mod plan;
 pub mod presence;
 pub mod proof;
+pub mod read;
 pub mod riff;
 pub mod sessions;
 pub mod snapshot;
@@ -2476,7 +2478,8 @@ impl State {
     }
 
     /// The threads that the session `who` joined, with its unread
-    /// counts. It changes nothing.
+    /// counts: the messages that an unread read shows ([`read`]). It
+    /// changes nothing.
     pub fn threads_of(&self, who: &Who, now: Instant) -> Vec<ThreadInfo> {
         let view = self.written_view();
         view.riff
@@ -2484,17 +2487,10 @@ impl State {
             .by_name
             .iter()
             .filter(|(_, t)| t.members.contains(who))
-            .map(|(thread, t)| {
-                let read = self.presence.cursor(who, thread);
-                ThreadInfo {
-                    thread: thread.clone(),
-                    members: t.members.iter().map(|m| view.uri(m, now)).collect(),
-                    unread: t
-                        .messages
-                        .iter()
-                        .filter(|m| m.message.seq > read && m.message.from.who() != who)
-                        .count(),
-                }
+            .map(|(thread, t)| ThreadInfo {
+                thread: thread.clone(),
+                members: t.members.iter().map(|m| view.uri(m, now)).collect(),
+                unread: self.unread(who, thread, t, now),
             })
             .collect()
     }
@@ -2853,82 +2849,77 @@ impl State {
         now: Instant,
     ) -> Result<Page, String> {
         let who = self.arrive(me, now);
-        let (page, read) = self.page(&who, thread, all, after, limit)?;
+        let (page, read) = self.page(&who, thread, all, after, limit, now)?;
         if let Some(read) = read {
             self.signal(&who, read, now);
         }
         Ok(page)
     }
 
-    /// The page of [`State::read_page`] for the session `who`, and the
-    /// signal that moves its read cursor to the end of the page. It
-    /// changes nothing.
-    pub fn page(
-        &self,
-        who: &Who,
-        thread: &ThreadName,
-        all: bool,
-        after: Option<u64>,
-        limit: usize,
-    ) -> Result<(Page, Option<Signal>), String> {
-        let not_found = || format!("no thread named {thread}");
-        if !may_read(who, thread) {
-            return Err(not_found());
+    /// The read with no thread ([`State::pages`]), and it marks its
+    /// pages as read. It gives at most [`read::READ_CHARS`] characters in
+    /// all, and each thread with more messages has a `next`
+    /// (01M76SB9ACMZWMY9Z6CC4WW3HD). An unread read again gives the next
+    /// page of each thread:
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::name::SessionUri;
+    /// use riff_core::wire::Post;
+    /// use riff_state::state::State;
+    /// use riff_state::state::read::{READ_CHARS, read_len};
+    ///
+    /// let ann: SessionUri = "riff://ann@heron/acme/app?session=a1".parse()?;
+    /// let bob: SessionUri = "riff://bob@kite/acme/app?session=b1".parse()?;
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// state.register(&bob, now);
+    /// let thread = ann.default_thread().unwrap();
+    /// for _ in 0..30 {
+    ///     state.post(Post::new(&ann, Some(thread.clone()), vec![], &"x".repeat(1000)), now, 0).unwrap();
+    /// }
+    /// let pages = state.read_threads(&bob, false, now);
+    /// assert!(read_len(&pages) <= READ_CHARS);
+    /// assert_eq!(pages[0].next, Some(pages[0].messages.len() as u64));
+    /// let pages = state.read_threads(&bob, false, now);
+    /// assert_eq!((pages[0].messages.len(), pages[0].next), (13, None));
+    /// assert!(state.read_threads(&bob, false, now).is_empty());
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    ///
+    /// A lead reads as unread of the thread of another repository only
+    /// the messages that pick it (01M76SBCXR4A21D49WVKBGWMRY):
+    ///
+    /// ```
+    /// # use std::time::Instant;
+    /// # use riff_core::name::SessionUri;
+    /// # use riff_core::wire::Post;
+    /// # use riff_state::state::State;
+    /// let lead: SessionUri = "riff://mike@thelio/acme/app?session=l1".parse()?;
+    /// let brett: SessionUri = "riff://brett@heron/acme/web?session=b1".parse()?;
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// state.register(&lead, now);
+    /// state.lead(&lead, now).unwrap();
+    /// let web = brett.default_thread().unwrap();
+    /// state.join(&lead, &web, now);
+    /// state.post(Post::new(&brett, Some(web.clone()), vec![], "board of web"), now, 0).unwrap();
+    /// let to = vec!["user=mike,lead=true".parse().unwrap()];
+    /// state.post(Post::new(&brett, Some(web.clone()), to, "mike?"), now, 0).unwrap();
+    /// let pages = state.read_threads(&lead, false, now);
+    /// let bodies: Vec<&str> = pages[0].messages.iter().map(|m| m.body.as_str()).collect();
+    /// assert_eq!(bodies, ["mike?"]);
+    /// // A read of the thread with all gives each kept message.
+    /// assert_eq!(state.read(&lead, &web, true, now).unwrap().len(), 2);
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn read_threads(&mut self, me: &SessionUri, all: bool, now: Instant) -> Vec<ThreadPage> {
+        let who = self.arrive(me, now);
+        let (pages, reads) = self.pages(&who, all, now);
+        for read in reads {
+            self.signal(&who, read, now);
         }
-        let threads = &self.written.threads().by_name;
-        let t = threads.get(thread).ok_or_else(not_found)?;
-        let cursor = self.presence.cursor(who, thread);
-        let from = if all { after.unwrap_or(0) } else { cursor };
-        let mut shown = t
-            .messages
-            .iter()
-            .filter(|m| m.message.seq > from && (all || m.message.from.who() != who))
-            .map(|m| m.message.clone());
-        let messages: Vec<Message> = shown.by_ref().take(limit.max(1)).collect();
-        let next = if shown.next().is_some() {
-            messages.last().map(|m| m.seq)
-        } else {
-            None
-        };
-        // An unread page also gives each message after it that woke the
-        // reader and that no read showed (01M588J4XNV1TXEPMGTKRVY9VK).
-        let seen = self.presence.seen_woken(who, thread);
-        let woken: Vec<Message> = match next {
-            Some(end) if !all => t
-                .messages
-                .iter()
-                .filter(|m| m.message.seq > end.max(seen) && m.woken.contains(who))
-                .filter(|m| m.message.from.who() != who)
-                .map(|m| m.message.clone())
-                .collect(),
-            _ => Vec::new(),
-        };
-        // A read of all marks each message up to the last one that it
-        // returns, also the ones before `after`. A read of all that
-        // returns none marks none (01M6WBQQEGZKVV49QWCQGTE4CY).
-        let read = if all {
-            messages.last().map(|last| Signal::Read {
-                thread: thread.clone(),
-                seq: last.seq,
-                all,
-                woken: 0,
-            })
-        } else {
-            t.messages.back().map(|last| Signal::Read {
-                thread: thread.clone(),
-                seq: next.unwrap_or(last.message.seq),
-                all,
-                woken: woken.last().map_or(0, |m| m.seq),
-            })
-        };
-        Ok((
-            Page {
-                messages,
-                next,
-                woken,
-            },
-            read,
-        ))
+        pages
     }
 
     /// Takes a claim if nobody holds it, or if its holder stopped more than

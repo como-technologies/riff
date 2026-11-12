@@ -42,6 +42,7 @@
 //! | `/v1/who` | [`WhoRequest`] | [`WhoReply`] | query |
 //! | `/v1/threads` | [`Threads`] | [`ThreadsReply`] | query |
 //! | `/v1/read` | [`Read`] | [`ReadReply`] | query |
+//! | `/v1/read/threads` | [`ReadThreads`] | [`ReadThreadsReply`] | query |
 //! | `/v1/riff` | [`RiffQuery`] | [`RiffReply`] | query |
 //! | `/v1/idle` | [`IdleQuery`] | [`Idle`] | query |
 //! | `/v1/plan/show` | [`PlanShow`] | [`PlanReply`] | query |
@@ -286,6 +287,7 @@ calls! {
     Threads => "/v1/threads", ThreadsReply;
     Names => "/v1/names", NamesReply;
     Read => "/v1/read", ReadReply;
+    ReadThreads => "/v1/read/threads", ReadThreadsReply;
     RiffQuery => "/v1/riff", RiffReply;
     IdleQuery => "/v1/idle", Idle;
     Revoke => "/v1/revoke", Revoked;
@@ -1765,6 +1767,47 @@ pub struct ReadReply {
     /// True from a riff with no sign-in: it trusts each caller (R211).
     #[serde(default)]
     pub trusted: bool,
+}
+
+/// `POST /v1/read/threads`: a read with no thread. It returns one page
+/// of each thread of `me` that has messages to show, and marks them as
+/// read, as [`Read`] does for one thread. The pages hold at most
+/// 20,000 characters in all, and each thread with more messages has
+/// [`ThreadPage::next`] (01M76SB9ACMZWMY9Z6CC4WW3HD). In an unread
+/// read, a lead gets of the thread of another repository only the
+/// messages that pick it (01M76SBCXR4A21D49WVKBGWMRY).
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ReadThreads {
+    pub me: SessionUri,
+    #[serde(default)]
+    pub all: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ReadThreadsReply {
+    /// Each direct thread first, then the other threads by name.
+    pub pages: Vec<ThreadPage>,
+    /// The keys of the user of each sender, as in [`ReadReply::keys`].
+    #[serde(default, skip_serializing_if = "Keys::is_empty")]
+    pub keys: Keys,
+    /// True from a riff with no sign-in: it trusts each caller (R211).
+    #[serde(default)]
+    pub trusted: bool,
+}
+
+/// One thread of a [`ReadThreadsReply`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ThreadPage {
+    pub thread: ThreadName,
+    pub members: Vec<SessionUri>,
+    pub messages: Vec<Message>,
+    /// When more messages follow: the seq after which [`Read`] with
+    /// `all` gives them. An unread read of the thread gives them too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next: Option<u64>,
+    /// As [`ReadReply::woken`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub woken: Vec<Message>,
 }
 
 /// The thumbprints of the device keys of each user, by user: the keys

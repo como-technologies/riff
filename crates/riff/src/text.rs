@@ -3287,6 +3287,27 @@ pub fn action(from: &SessionUri, body: &str) -> Option<String> {
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 ///
+/// A read with no thread has a bound (01M76SB9ACMZWMY9Z6CC4WW3HD). A
+/// thread with no room in it still shows, with the call that reads it:
+///
+/// ```
+/// # use riff_client::api::Inbox;
+/// # use riff_core::name::SessionUri;
+/// let me: SessionUri = "riff://brett@heron/o/r?session=b7d0".parse()?;
+/// let inbox = Inbox {
+///     thread: "o/r".parse()?,
+///     members: vec![],
+///     messages: vec![],
+///     next: Some(40),
+///     woken: vec![],
+/// };
+/// assert!(riff::text::inbox(&[inbox], &me).ends_with(
+///     "\no/r\nThis read has no room for its messages. Read the thread o/r. With all, set \
+///      after to 40.\n"
+/// ));
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+///
 /// Each unread message after a page that woke the reader comes first,
 /// in its own part (01M588J4XNV1TXEPMGTKRVY9VK):
 ///
@@ -3335,7 +3356,7 @@ pub fn inbox(list: &[Inbox], me: &SessionUri) -> String {
         out.push('\n');
     }
     for t in &threads {
-        if t.lines.is_empty() {
+        if t.lines.is_empty() && t.next.is_none() {
             continue;
         }
         let _ = writeln!(out, "{}", label(t));
@@ -3343,11 +3364,20 @@ pub fn inbox(list: &[Inbox], me: &SessionUri) -> String {
             let _ = writeln!(out, "{}", message(line));
         }
         if let Some(next) = t.next {
-            let _ = writeln!(
-                out,
-                "More messages follow. Read the thread {} again. With all, set after to {next}.",
-                thread_to_read(&t.name, me)
-            );
+            let name = thread_to_read(&t.name, me);
+            let _ = if t.lines.is_empty() {
+                writeln!(
+                    out,
+                    "This read has no room for its messages. Read the thread {name}. With all, \
+                     set after to {next}."
+                )
+            } else {
+                writeln!(
+                    out,
+                    "More messages follow. Read the thread {name} again. With all, set after to \
+                     {next}."
+                )
+            };
         }
     }
     out
