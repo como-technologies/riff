@@ -153,10 +153,10 @@ pub fn every() -> Duration {
 ///     "watches": [
 ///         {"repo": "o/r", "what": "the deploy of v4.1.1", "since_ms": 0,
 ///          "release": {"repo": "o/r", "tag": "v4.1.1", "step": "waits"}},
-///         {"repo": "o/r", "what": "the release pull request #9", "since_ms": 0},
+///         {"repo": "o/r", "what": "the pull request #9 of the release", "since_ms": 0},
 ///     ],
 ///     "complete": [{"repo": "o/q", "wave": 41, "waits": "main_failed"}],
-///     "releases": [{"repo": "o/s", "tag": "v2.0.0", "step": "pull_runs"}],
+///     "releases": [{"repo": "o/s", "tag": "v2.0.0", "step": "test_runs"}],
 /// }))?;
 /// let facts = of_status(&status);
 /// assert_eq!((facts.build.as_str(), facts.limit, facts.floor_gb), ("3.1.0", 4, 8));
@@ -179,7 +179,7 @@ pub fn every() -> Duration {
 /// // (01M75R6FPVZA3JA5C48PQ26A85).
 /// assert_eq!(facts.releases.len(), 2);
 /// assert_eq!(facts.releases[0].step, riff_client::daemons::ReleaseStep::Waits);
-/// assert_eq!(facts.releases[1].step, riff_client::daemons::ReleaseStep::PullRuns);
+/// assert_eq!(facts.releases[1].step, riff_client::daemons::ReleaseStep::TestRuns);
 /// // The complete wave of each watch of a wave (01M75N6YNHQQHGS0VGKTKSNJTR).
 /// assert_eq!(facts.complete[0].wave, 41);
 /// assert_eq!(facts.complete[0].waits, Some(riff_client::daemons::CutWaits::MainFailed));

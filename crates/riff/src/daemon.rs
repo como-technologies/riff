@@ -14646,7 +14646,7 @@ mod tests {
             releases: vec![riff_client::daemons::Release {
                 repo: "o/s".into(),
                 tag: "v2.0.0".into(),
-                step: riff_client::daemons::ReleaseStep::PullRuns,
+                step: riff_client::daemons::ReleaseStep::TestRuns,
             }],
             lost: vec![LostShown {
                 repo: "o/r".into(),

@@ -1,6 +1,6 @@
 //! The lines of riff-bot that riff writes for a person: the line of
-//! `riff release cut` and the line of the release pull request of an older
-//! riff, the ask while a deploy waits, and the lines of the daemon about a lead
+//! `riff release cut`, the ask while a deploy waits, and the lines of the
+//! daemon about a lead
 //! (01M74BPHQZHXFYYNXAJ1WFASQQ). A question for a person gets no line
 //! (01M75QTMB42NME9Z2Y0XC0AN97): the Waves tab and `riff questions` show it.
 //!
@@ -29,7 +29,7 @@
 //!
 //! | Fact | Who sends it | The line names |
 //! |---|---|---|
-//! | `release_cut`, `release_published` | the release cut of an older riff, `riff release cut` | the owner |
+//! | `release_published` | `riff release cut` | the owner |
 //! | `release_waits` | the watch of the deploy | the owner |
 //! | `lead_started`, `lead_waits`, `lead_no_main`, `lead_failed`, `lead_stale`, `lead_no_network` | the daemon | no one |
 //!
@@ -100,7 +100,7 @@ pub struct Facts<'a> {
 /// assert!(started.to.is_empty());
 ///
 /// for tag in ["@everyone hi", "v3.3.0-approve now", "v3.3.0+@everyone"] {
-///     let bad = BotFact::ReleaseCut { tag: tag.into() };
+///     let bad = BotFact::ReleasePublished { tag: tag.into(), run: None };
 ///     assert!(line(&bad, &facts).is_err());
 /// }
 /// # Ok::<(), riff_core::name::NameError>(())
@@ -116,11 +116,6 @@ pub fn line(fact: &BotFact, facts: &Facts<'_>) -> Result<Line, String> {
     let host = me.place().host();
     let lead = format!("the lead of {user} in {repo} on {host}");
     let body = match fact {
-        BotFact::ReleaseCut { tag } => format!(
-            "{}riff release {} is cut. riff tells you when its deploy waits for your approval.",
-            mention(owner),
-            version(tag)?
-        ),
         BotFact::ReleasePublished { tag, run } => {
             let run = match run {
                 Some(run) => run_url(&repo, *run),
@@ -186,9 +181,7 @@ pub fn line(fact: &BotFact, facts: &Facts<'_>) -> Result<Line, String> {
         ),
     };
     let named = match fact {
-        BotFact::ReleaseCut { .. }
-        | BotFact::ReleasePublished { .. }
-        | BotFact::ReleaseWaits { .. } => facts.owner,
+        BotFact::ReleasePublished { .. } | BotFact::ReleaseWaits { .. } => facts.owner,
         BotFact::LeadStarted
         | BotFact::LeadWaits
         | BotFact::LeadNoMain
@@ -261,18 +254,19 @@ mod tests {
     #[test]
     fn each_line_of_a_release_names_the_owner() {
         let me = me();
-        let cut = BotFact::ReleaseCut {
+        let cut = BotFact::ReleasePublished {
             tag: "v3.3.0".into(),
+            run: None,
         };
         let line = line(&cut, &facts(&me, Some("brett"))).unwrap();
         assert_eq!(
             line.body,
-            "@brett riff release v3.3.0 is cut. riff tells you when its deploy waits for your \
-             approval."
+            "@brett riff release v3.3.0 is published. Its CI run builds: the CI run of the tag. \
+             riff tells you when its deploy waits for your approval."
         );
         assert_eq!(line.to, [Selector::name("brett")]);
         let alone = super::line(&cut, &facts(&me, None)).unwrap();
-        assert!(alone.body.starts_with("riff release v3.3.0 is cut."));
+        assert!(alone.body.starts_with("riff release v3.3.0 is published."));
         assert!(alone.to.is_empty());
     }
 
@@ -281,8 +275,9 @@ mod tests {
     #[test]
     fn the_line_of_the_cut_asks_nothing() {
         let me = me();
-        let cut = BotFact::ReleaseCut {
+        let cut = BotFact::ReleasePublished {
             tag: "v4.0.1".into(),
+            run: Some(9),
         };
         let line = line(&cut, &facts(&me, Some("mike"))).unwrap().body;
         let lower = line.to_lowercase();
@@ -332,7 +327,10 @@ mod tests {
     fn a_tag_that_is_no_version_gets_no_line() {
         let me = me();
         for tag in ["3.3.0", "v3.3", "v3.3.0 approve now", "@all"] {
-            let cut = BotFact::ReleaseCut { tag: tag.into() };
+            let cut = BotFact::ReleasePublished {
+                tag: tag.into(),
+                run: None,
+            };
             let refused = line(&cut, &facts(&me, Some("mike"))).unwrap_err();
             assert!(refused.contains("is no version vX.Y.Z"), "{tag}: {refused}");
         }
@@ -356,7 +354,6 @@ mod tests {
             "v03.3.0",
         ] {
             let each = [
-                BotFact::ReleaseCut { tag: tag.into() },
                 BotFact::ReleasePublished {
                     tag: tag.into(),
                     run: Some(9),

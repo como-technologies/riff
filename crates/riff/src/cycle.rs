@@ -1,6 +1,6 @@
 //! The release cycle in riff commands: `riff release test`, `cut`,
-//! `verify`, `status`, `approve`, `check`, `retry` and `rollback` (#671,
-//! #1104, #1949).
+//! `status`, `approve`, `check`, `retry` and `rollback` (#671, #1104,
+//! #1949, #1983).
 //!
 //! # Design
 //!
@@ -26,7 +26,6 @@
 //! |---|---|---|
 //! | `riff release test vX.Y.Z --host HOST` | the lead or a person; not a worker | the real-session test of the last commit of `origin/main` on the daemon of a host, and the release issue ([`test_target`], [`crate::daemon::release_test`], 01M76428TRD7KWC4C8V5NNPNC7) |
 //! | `riff release cut X.Y.Z` | the owner or an admin of the riff, or its lead; the ruleset `releases` lets the admin role and the lead App push the tag | the tag on the last commit of `origin/main`, the GitHub release, the pull request of the next version, the chat line to the owner, when each alert has a review ([`cut`], [`crate::alerts`], 01M7641BHHND5JJA8DGJPFNAN7, 01M7641T7FX9416CYY1XKHTJE6) |
-//! | `riff release verify N` | each session; no model | the status `riff/verify` of a pull request of the version, after the checks of its label, diff, body and Gate ([`verify`], 01M5ND0ZNFFAPT1AWD3DP1Y77N) |
 //! | `riff release status` | each session | the versions, what waits, the state and the next step ([`status`], 01M76428NPN7HZCNFCJW8H67RS) |
 //! | `riff release approve vX.Y.Z` | only a person in a terminal: never a session, also not the lead (01M6WZ40SFVZ6CRQ1H4Z27CWP4) | the pause of the riff, then the approval of `production`; it refuses while a lead holds the version, unless a person passes `--over-holds` ([`approve`], 01M58KMM3NFGJRW4CCV50KJQB2, 01M5SNV7E775DRY9QY60E8JPJR) |
 //! | `riff release hold vX.Y.Z REASON` | the lead of any user, also of a member | the hold of the version: each other lead hears it, `riff release status` shows it ([`crate::hold`], 01M5SNV78EBAYY4SZ891DM2MQG) |
@@ -70,7 +69,10 @@
 //! (01M7641T51JY09YVVKR4WGEE72). The pull request of the next version
 //! says `Refs #N` and `Part of #N` for the release issue, never
 //! `Closes #N`: the release issue closes only when the checks after the
-//! deploy pass.
+//! deploy pass. It has no label: riff finds it by its title
+//! ([`next_title`]). The cut wrote its one commit, so the cut sets its
+//! status `riff/verify`, and the Gate decides its merge, as for each other
+//! pull request (01M76SBEV64SNKCS1AE1KXWNFM).
 //!
 //! ```mermaid
 //! flowchart TD
@@ -82,7 +84,9 @@
 //!     A -- no --> R
 //!     A -- yes --> T["the tag v3.3.0 on that commit:<br/>CI takes its release build"]
 //!     T --> G["the GitHub release, with the notes"]
-//!     G --> P["the pull request: Set the next version 3.4.0"]
+//!     G --> B["the branch release-next-v3.4.0:<br/>one commit, riff/verify passed"]
+//!     B --> P["the pull request: Set the next version 3.4.0,<br/>auto-merge on"]
+//!     P --> M["the Gate passes: it merges"]
 //! ```
 //!
 //! Each step also posts one note to each other lead of the riff
@@ -151,9 +155,8 @@ use crate::hold::{Hold, Step};
 use crate::pr::{self, Gh};
 use crate::text;
 
-/// The label of a release issue, of the pull request of the next version,
-/// and of a release pull request of an older riff. The notes of a release
-/// leave out the pull requests with it.
+/// The label of a release issue. No pull request has it
+/// (01M76SBEV64SNKCS1AE1KXWNFM).
 pub const LABEL: &str = "release";
 
 /// The GitHub environment of the deploy to the shared riff.
@@ -228,8 +231,7 @@ pub fn tag(version: Semver) -> String {
     format!("v{version}")
 }
 
-/// The title of the release issue, and of a release pull request of an
-/// older riff.
+/// The title of the release issue.
 pub fn title(version: Semver) -> String {
     format!("Release {}", tag(version))
 }
@@ -274,31 +276,27 @@ pub fn next_minor(version: Semver) -> Semver {
     }
 }
 
-/// The body of the release issue of `version`. The verify of the pull
-/// request of the next version reads its part "Verify of the release pull
-/// request". The issue lists the steps of the release apart
-/// (01M593FVJRTCGD1RPWXYJP5BNH, 01M7641T9XH5NAXHE8YKBR4JJY).
+/// The body of the release issue of `version`: the line "Done when" and
+/// the steps of the release, with no part for the verify of a pull request
+/// (01M76SBPDSGS0SATQV9RA1FRG1).
 ///
 /// ```
 /// let body = riff::cycle::issue_body(riff::cycle::version("3.3.0").unwrap());
 /// assert!(body.starts_with("The release v3.3.0.\n"));
 /// assert!(body.contains("Done when: the release is published"));
-/// assert!(body.contains("Verify of the release pull request"));
 /// assert!(body.contains("- The real-session test passed on the last commit of `main`.\n"));
+/// assert!(body.contains("- The pull request of the next version merged.\n"));
+/// assert!(!body.contains("verify"));
 /// ```
 pub fn issue_body(version: Semver) -> String {
     format!(
         "The release {}.\n\n\
          Done when: the release is published, the deploy to the shared riff passed, and the \
          checks after the deploy passed.\n\n\
-         Verify of the release pull request. The pull request has the label `release`. Its \
-         verify checks only this, and not the steps of the release:\n\
-         - The diff is only the change of the version in `Cargo.toml` and `Cargo.lock`.\n\
-         - The format of the body is right.\n\
-         - The Gate passed.\n\n\
-         Steps of the release. The verify of the pull request does not check these:\n\
+         Steps of the release:\n\
          - The real-session test passed on the last commit of `main`.\n\
          - The tag is on that commit, and the release is published.\n\
+         - The pull request of the next version merged.\n\
          - The deploy to the shared riff passed.\n\
          - The checks after the deploy passed.\n",
         tag(version)
@@ -418,36 +416,22 @@ pub struct Merged {
     pub wave: Option<String>,
     /// The issue of its trailer `Issue:`.
     pub issue: Option<u64>,
-    /// True for a pull request with the label [`LABEL`]: a pull request of
-    /// the next version, or a release pull request.
-    pub release: bool,
+    /// True for a pull request of the next version: its title is a
+    /// [`next_title`] (01M76SBEV64SNKCS1AE1KXWNFM).
+    pub next: bool,
     /// Its merge commit.
     pub commit: String,
 }
 
-/// A pull request as `riff release verify` reads it.
+/// The pull request of the next version, as its watch reads it
+/// ([`crate::watches`], 01M76SBPGH2218K3ED569T051D).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct Candidate {
-    /// Its title.
-    pub title: String,
-    /// Its body.
-    pub body: String,
+pub struct Pull {
     /// Its state: `OPEN`, `CLOSED` or `MERGED`.
     pub state: String,
-    /// Its labels.
-    pub labels: Vec<String>,
-    /// The title of its wave.
-    pub milestone: Option<String>,
     /// Its head commit.
     pub head: String,
-    /// The path of each file that it changes.
-    pub files: Vec<String>,
 }
-
-/// The files that a pull request of the version may change: the pull
-/// request of the next version, and a release pull request of an older
-/// riff (01M5ND0ZNFFAPT1AWD3DP1Y77N).
-pub const VERSION_FILES: [&str; 2] = ["Cargo.toml", "Cargo.lock"];
 
 /// A CI run that waits for the approval of [`PRODUCTION`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -620,18 +604,16 @@ pub trait Forge {
     /// Makes the branch of the next version `version` from `origin/main`,
     /// with the version in each file, checks it with [`CHECK`], and
     /// pushes it (01M7641T2JH2K6SYBCWQGM56FY). Returns the name of the
-    /// branch.
-    fn push_branch(&self, version: Semver) -> Result<String>;
-    /// Opens the pull request of `branch`, with the label [`LABEL`],
-    /// and turns on auto-merge. Returns its number and its URL.
+    /// branch and its one commit.
+    fn push_branch(&self, version: Semver) -> Result<(String, String)>;
+    /// Opens the pull request of `branch`, with no label, and turns on
+    /// auto-merge. Returns its number and its URL.
     fn open_pr(&self, branch: &str, title: &str, wave: &str, body: &str) -> Result<(u64, String)>;
-    /// The open pull request of the next version ([`next_title`]): its
-    /// number and its version.
+    /// The open pull request of the next version, by its title
+    /// ([`next_title`]): its number and its version.
     fn next_pr(&self) -> Result<Option<(u64, Semver)>>;
-    /// True when the status `riff/verify` of `commit` is a success.
-    fn verify_passed(&self, commit: &str) -> Result<bool>;
-    /// The pull request `number`, for its verify.
-    fn candidate(&self, number: u64) -> Result<Candidate>;
+    /// The pull request `number`, for its watch.
+    fn pull(&self, number: u64) -> Result<Pull>;
     /// The checks of the full check of the repository: each check that the
     /// ruleset of its default branch requires, but `riff/verify`
     /// (01M5QYDE41FVFX26EC8K5QGYH4).
@@ -1078,32 +1060,6 @@ pub fn next(stage: &Stage) -> String {
     }
 }
 
-/// The stage of a release after a pull request of it merged
-/// (01M6QBEJYHKS8G26CM46P4P077). The merge is a fact that the caller has,
-/// and [`stage`] can lag behind it: before the fetch of the merge, the
-/// version of a release pull request is not on `origin/main` yet. So a
-/// `stage` that reads no release gives way to the state
-/// [`State::Building`]: a merged release with no test. A `stage` that
-/// reads the release stays, for example the published release of a pull
-/// request of the next version.
-///
-/// ```
-/// use riff::cycle::{Stage, State, after_merge, next, version};
-///
-/// let v = version("3.3.0")?;
-/// assert_eq!(
-///     next(&after_merge(None, v)),
-///     "wait for the release build of the last commit of origin/main in the CI run of its push \
-///      to main; when a job of it failed, run that job again"
-/// );
-/// let published = Stage::at(v, State::Published);
-/// assert_eq!(after_merge(Some(published.clone()), v), published);
-/// # Ok::<(), anyhow::Error>(())
-/// ```
-pub fn after_merge(read: Option<Stage>, version: Semver) -> Stage {
-    read.unwrap_or_else(|| Stage::at(version, State::Building))
-}
-
 /// The lines `release:` and `next:` of `stage`.
 ///
 /// ```
@@ -1185,10 +1141,10 @@ pub struct Cut {
 }
 
 /// The waves of `merged`, in the order of their numbers, each with its
-/// pull requests. A pull request with the label [`LABEL`] is left out.
+/// pull requests. A pull request of the next version is left out.
 fn waves(merged: &[Merged]) -> Vec<(String, Vec<&Merged>)> {
     let mut waves: Vec<(String, Vec<&Merged>)> = Vec::new();
-    for m in merged.iter().filter(|m| !m.release) {
+    for m in merged.iter().filter(|m| !m.next) {
         let wave = m.wave.clone().unwrap_or_else(|| "No wave".to_owned());
         match waves.iter_mut().find(|(w, _)| *w == wave) {
             Some((_, list)) => list.push(m),
@@ -1323,8 +1279,16 @@ fn next_body(issue: u64, release: Semver, next: Semver, wave: &str) -> Result<St
     Ok(body)
 }
 
+/// The description of the status `riff/verify` that the cut sets on the
+/// commit of the pull request of the next version
+/// (01M76SBEV64SNKCS1AE1KXWNFM).
+pub const NEXT_VERIFY: &str = "pass: riff release cut wrote this commit, the next version only";
+
 /// Opens the pull request of the next version `next` after the release
-/// `release` (01M7641T2JH2K6SYBCWQGM56FY).
+/// `release` (01M7641T2JH2K6SYBCWQGM56FY). The cut wrote its one commit,
+/// so it sets the status `riff/verify` of that commit before it opens the
+/// pull request, and the Gate decides the merge
+/// (01M76SBEV64SNKCS1AE1KXWNFM).
 fn open_next(
     forge: &dyn Forge,
     release: Semver,
@@ -1333,7 +1297,8 @@ fn open_next(
     wave: &str,
 ) -> Result<(u64, String)> {
     let body = next_body(issue, release, next, wave)?;
-    let branch = forge.push_branch(next)?;
+    let (branch, commit) = forge.push_branch(next)?;
+    forge.pass_verify(&commit, NEXT_VERIFY)?;
     forge.open_pr(&branch, &next_title(next), wave, &body)
 }
 
@@ -1417,8 +1382,8 @@ pub fn cut(forge: &dyn Forge, new: Semver, next: Option<Semver>, words: &Words) 
         if let Some((number, version)) = forge.next_pr()? {
             bail!(
                 "riff release cut: the release {tag} exists, and pull request #{number} sets the \
-                 next version {version}. riff changed nothing. next: riff release verify {number} \
-                 after its Gate passed"
+                 next version {version}. riff changed nothing. next: {}",
+                wait_next(number)
             );
         }
         // The pull request refers to the release issue, so it stays open.
@@ -1507,103 +1472,22 @@ pub fn cut(forge: &dyn Forge, new: Semver, next: Option<Semver>, words: &Words) 
     })
 }
 
-/// The verify of the pull request `number` of the version with no model
-/// session (01M5ND0ZNFFAPT1AWD3DP1Y77N): the pull request of the next
-/// version of [`cut`], or a release pull request of an older riff
-/// (01M7641T2JH2K6SYBCWQGM56FY). The pull request is open and has the
-/// label [`LABEL`], the body passes the issue hygiene, the
-/// diff is only [`VERSION_FILES`], and the full check of the head commit
-/// passed (each check that the ruleset requires, but `riff/verify`:
-/// [`crate::repo_setup::full_check`], 01M5R13DK401K3TZ91E2QK2DYM). Then it
-/// sets the status `riff/verify` of the head commit. Else it refuses, and
-/// sets nothing. The refusal for the full check names the checks
-/// ([`text::release_gate_not_passed`]). Returns the head commit.
-pub fn verify(forge: &dyn Forge, number: u64) -> Result<String> {
-    let refuse = |why: String| {
-        anyhow!(
-            "riff release verify: pull request #{number} {why}. next: fix it, then riff release \
-             verify {number}"
-        )
-    };
-    let pr = forge.candidate(number)?;
-    if pr.state != "OPEN" {
-        return Err(refuse(format!("is {}, not open", pr.state.to_lowercase())));
-    }
-    if !pr.labels.iter().any(|l| l == LABEL) {
-        return Err(refuse(format!(
-            "has no label {LABEL}. A pull request with code needs the verify of a session"
-        )));
-    }
-    let extra: Vec<&str> = pr
-        .files
-        .iter()
-        .map(String::as_str)
-        .filter(|f| !VERSION_FILES.contains(f))
-        .collect();
-    if !extra.is_empty() || pr.files.is_empty() {
-        let changed = if extra.is_empty() {
-            "no file".to_owned()
-        } else {
-            extra.join(", ")
-        };
-        return Err(refuse(format!(
-            "changes {changed}, and a release changes only {}",
-            VERSION_FILES.join(" and ")
-        )));
-    }
-    let errors = hygiene::check_pr(
-        &hygiene::PullRequest::new(&pr.title, &pr.body, pr.milestone.as_deref()),
-        None,
-    );
-    if !errors.is_empty() {
-        let lines: Vec<String> = errors.iter().map(ToString::to_string).collect();
-        return Err(refuse(format!(
-            "breaks issue hygiene:\n{}",
-            lines.join("\n")
-        )));
-    }
-    let checks = forge.full_check()?;
-    let gate = forge.gate(&checks, &pr.head)?;
-    if gate != pr::Gate::Passed {
-        bail!(
-            "{}",
-            text::release_gate_not_passed(number, &pr.head, &checks, &gate)
-        );
-    }
-    forge.pass_verify(&pr.head, "pass: release pull request, full check and diff")?;
-    Ok(pr.head)
-}
-
-/// The tag of the release that the pull request with the title `title`
-/// follows, for its watch (01M76428R8GY6J323AWG3JV8HA): `vX.Y.Z` for a
-/// release pull request `Release vX.Y.Z` of an older riff ([`title`]), and
-/// the newest release of `releases` before A.B.C for the pull request of
-/// the next version `Set the next version A.B.C` ([`next_title`]).
+/// The next step while the pull request `number` of the next version is
+/// open: the cut passed its verify, so it merges by itself when its Gate
+/// passes (01M76SBEV64SNKCS1AE1KXWNFM).
 ///
 /// ```
-/// use riff::cycle::{tag_of_pull, version};
-///
-/// let releases = [version("3.2.0")?, version("3.3.0")?];
-/// assert_eq!(tag_of_pull("Release v3.3.0", &releases)?, "v3.3.0");
-/// assert_eq!(tag_of_pull("Set the next version 3.4.0", &releases)?, "v3.3.0");
-/// assert!(tag_of_pull("Fix the line", &releases).is_err());
-/// assert!(tag_of_pull("Set the next version 3.2.0", &[]).is_err());
-/// # Ok::<(), anyhow::Error>(())
+/// assert_eq!(
+///     riff::cycle::wait_next(1141),
+///     "wait for the Gate of pull request #1141: it merges when the Gate passes; when a job \
+///      failed, run that job again"
+/// );
 /// ```
-pub fn tag_of_pull(title: &str, releases: &[Semver]) -> Result<String> {
-    if let Some(next) = next_of_title(title) {
-        return releases
-            .iter()
-            .copied()
-            .filter(|r| *r < next)
-            .max()
-            .map(tag)
-            .ok_or_else(|| anyhow!("no published release comes before {next}"));
-    }
-    let version = title.strip_prefix("Release ").ok_or_else(|| {
-        anyhow!("\"{title}\" is no title of a pull request of the version of a release")
-    })?;
-    Ok(tag(tag_version(version)?))
+pub fn wait_next(number: u64) -> String {
+    format!(
+        "wait for the Gate of pull request #{number}: it merges when the Gate passes; when a job \
+         failed, run that job again"
+    )
 }
 
 /// The ID of the CI run at the page `url` on GitHub, for the fact of
@@ -2420,7 +2304,7 @@ pub fn wave_gate(forge: &dyn Forge, number: u64, no_release: Option<&str>) -> Re
     let merged: Vec<Merged> = forge
         .merged_since(None)?
         .into_iter()
-        .filter(|m| !m.release && m.wave.as_deref() == Some(wave.as_str()))
+        .filter(|m| !m.next && m.wave.as_deref() == Some(wave.as_str()))
         .collect();
     let mut checked: Vec<(Semver, Option<Stage>)> = Vec::new();
     let mut unreleased = Vec::new();
@@ -2797,20 +2681,11 @@ struct GhPr {
     #[serde(default)]
     milestone: Option<GhMilestone>,
     #[serde(default)]
-    labels: Vec<GhLabel>,
-    #[serde(default)]
     merge_commit: Option<GhCommit>,
     #[serde(default)]
     head_ref_oid: String,
     #[serde(default)]
     state: String,
-    #[serde(default)]
-    files: Vec<GhFile>,
-}
-
-#[derive(Deserialize)]
-struct GhFile {
-    path: String,
 }
 
 #[derive(Deserialize)]
@@ -3014,7 +2889,7 @@ impl Forge for GitHub {
             "--limit",
             "300",
             "--json",
-            "number,title,body,milestone,labels,mergeCommit",
+            "number,title,body,milestone,mergeCommit",
         ])?;
         Ok(list
             .into_iter()
@@ -3025,16 +2900,16 @@ impl Forge for GitHub {
             })
             .map(|p| Merged {
                 number: p.number,
+                next: next_of_title(&p.title).is_some(),
                 title: text::forge(&p.title),
                 wave: p.milestone.map(|m| text::forge(&m.title)),
                 issue: pr::trailer_issue(&p.body),
-                release: p.labels.iter().any(|l| l.name == LABEL),
                 commit: p.merge_commit.map(|c| c.oid).unwrap_or_default(),
             })
             .collect())
     }
 
-    fn push_branch(&self, version: Semver) -> Result<String> {
+    fn push_branch(&self, version: Semver) -> Result<(String, String)> {
         let branch = format!("release-next-{}", tag(version));
         let tree = tempfile::Builder::new()
             .prefix("riff-release-")
@@ -3054,11 +2929,14 @@ impl Forge for GitHub {
             // A cut that stopped can leave the branch: the new commit
             // replaces it.
             let refspec = format!("+HEAD:refs/heads/{branch}");
-            self.git_in(&path, &["push", "-q", "origin", &refspec])
+            self.git_in(&path, &["push", "-q", "origin", &refspec])?;
+            Ok(self
+                .git_in(&path, &["rev-parse", "HEAD"])?
+                .trim()
+                .to_owned())
         });
         let _ = self.git(&["worktree", "remove", "--force", &path_text]);
-        done?;
-        Ok(branch)
+        Ok((branch, done?))
     }
 
     fn open_pr(&self, branch: &str, title: &str, wave: &str, body: &str) -> Result<(u64, String)> {
@@ -3072,8 +2950,6 @@ impl Forge for GitHub {
                 "main",
                 "--title",
                 title,
-                "--label",
-                LABEL,
                 "--milestone",
                 wave,
                 "--body-file",
@@ -3145,8 +3021,8 @@ impl Forge for GitHub {
             "list",
             "--state",
             "open",
-            "--label",
-            LABEL,
+            "--limit",
+            "100",
             "--json",
             "number,title",
         ])?;
@@ -3155,32 +3031,14 @@ impl Forge for GitHub {
             .find_map(|p| Some((p.number, next_of_title(&p.title)?))))
     }
 
-    fn verify_passed(&self, commit: &str) -> Result<bool> {
-        let path = format!("repos/{{owner}}/{{repo}}/commits/{commit}/status");
-        let status: GhStatuses = self.gh.json(&["api", &path])?;
-        Ok(status
-            .statuses
-            .iter()
-            .any(|s| s.context == pr::VERIFY_CONTEXT && s.state == "success"))
-    }
-
-    fn candidate(&self, number: u64) -> Result<Candidate> {
+    fn pull(&self, number: u64) -> Result<Pull> {
         let n = number.to_string();
-        let pr: GhPr = self.gh.json(&[
-            "pr",
-            "view",
-            &n,
-            "--json",
-            "number,title,body,state,labels,milestone,headRefOid,files",
-        ])?;
-        Ok(Candidate {
-            title: pr.title,
-            body: pr.body,
+        let pr: GhPr = self
+            .gh
+            .json(&["pr", "view", &n, "--json", "number,state,headRefOid"])?;
+        Ok(Pull {
             state: pr.state,
-            labels: pr.labels.into_iter().map(|l| l.name).collect(),
-            milestone: pr.milestone.map(|m| m.title),
             head: pr.head_ref_oid,
-            files: pr.files.into_iter().map(|f| f.path).collect(),
         })
     }
 
@@ -3572,8 +3430,8 @@ pub(crate) mod tests {
         pub(crate) release_test: Option<TestState>,
         /// The open pull request of the next version.
         pub(crate) next_pr: Option<(u64, &'static str)>,
-        pub(crate) verify: bool,
-        pub(crate) candidate: Candidate,
+        /// The pull request that the watch reads.
+        pub(crate) pull: Pull,
         /// The checks of the full check.
         pub(crate) checks: Vec<String>,
         pub(crate) gate: pr::Gate,
@@ -3615,7 +3473,6 @@ pub(crate) mod tests {
                 releases: vec!["3.0.0", "3.2.0"],
                 commit: "c1",
                 release_test: Some(TestState::Passed),
-                verify: true,
                 ..Fake::default()
             }
         }
@@ -3667,9 +3524,9 @@ pub(crate) mod tests {
         fn release_test(&self, _commit: &str) -> Result<Option<TestState>> {
             Ok(self.release_test)
         }
-        fn push_branch(&self, version: Semver) -> Result<String> {
+        fn push_branch(&self, version: Semver) -> Result<(String, String)> {
             self.write(format!("branch {version}"));
-            Ok(format!("release-next-v{version}"))
+            Ok((format!("release-next-v{version}"), "n1".into()))
         }
         fn open_pr(
             &self,
@@ -3687,11 +3544,8 @@ pub(crate) mod tests {
         fn next_pr(&self) -> Result<Option<(u64, Semver)>> {
             self.next_pr.map(|(n, v)| Ok((n, version(v)?))).transpose()
         }
-        fn verify_passed(&self, _commit: &str) -> Result<bool> {
-            Ok(self.verify)
-        }
-        fn candidate(&self, _number: u64) -> Result<Candidate> {
-            Ok(self.candidate.clone())
+        fn pull(&self, _number: u64) -> Result<Pull> {
+            Ok(self.pull.clone())
         }
         fn full_check(&self) -> Result<Vec<String>> {
             Ok(self.checks.clone())
@@ -3834,6 +3688,9 @@ pub(crate) mod tests {
     /// tags the last commit of origin/main, makes the release with the
     /// notes of the merged pull requests, and opens the pull request of the
     /// next minor. It makes no branch and no commit of its own version.
+    /// 01M76SBEV64SNKCS1AE1KXWNFM: the cut passes the verify of the one
+    /// commit of that pull request before it opens it, and the notes leave
+    /// out a pull request of the next version by its title.
     #[test]
     fn cut_tags_the_last_commit_makes_the_release_and_opens_the_next_version() {
         let mut forge = Fake::ready("3.3.0");
@@ -3850,7 +3707,7 @@ pub(crate) mod tests {
                 title: "Set the next version 3.3.0".into(),
                 wave: Some("Wave 33".into()),
                 issue: Some(6),
-                release: true,
+                next: true,
                 ..Merged::default()
             },
         ];
@@ -3874,7 +3731,7 @@ pub(crate) mod tests {
             }
         );
         let log = forge.log();
-        assert_eq!(log.len(), 6, "{log:#?}");
+        assert_eq!(log.len(), 7, "{log:#?}");
         assert!(
             log[0].starts_with("issue Release v3.3.0 in Wave 34: Release\nThe release v3.3.0.\n"),
             "{}",
@@ -3882,12 +3739,12 @@ pub(crate) mod tests {
         );
         for part in [
             "Done when: the release is published",
-            "Verify of the release pull request.",
-            "The Gate passed.",
-            "Steps of the release.",
+            "Steps of the release:",
+            "- The pull request of the next version merged.",
         ] {
             assert!(log[0].contains(part), "{part}: {}", log[0]);
         }
+        assert!(!log[0].contains("verify"), "{}", log[0]);
         assert_eq!(log[1], "merged since Some(\"v3.2.0\")");
         assert_eq!(log[2], "tag v3.3.0 c1");
         let release = &log[3];
@@ -3905,7 +3762,8 @@ pub(crate) mod tests {
         );
         assert!(!release.contains("#40"), "{release}");
         assert_eq!(log[4], "branch 3.4.0");
-        let pr = &log[5];
+        assert_eq!(log[5], format!("verify n1 {NEXT_VERIFY}"));
+        let pr = &log[6];
         assert!(
             pr.starts_with(
                 "pr release-next-v3.4.0 Set the next version 3.4.0 Wave 34: Release\nRefs #7\n"
@@ -4094,9 +3952,10 @@ pub(crate) mod tests {
         let cut2 = cut(&forge, v("3.3.0"), None, &Words::default()).unwrap();
         assert_eq!((cut2.release, cut2.issue, cut2.number), (None, 7, 1141));
         let log = forge.log();
-        assert_eq!(log.len(), 2, "{log:#?}");
+        assert_eq!(log.len(), 3, "{log:#?}");
         assert_eq!(log[0], "branch 3.4.0");
-        assert!(log[1].starts_with("pr release-next-v3.4.0 "), "{log:#?}");
+        assert_eq!(log[1], format!("verify n1 {NEXT_VERIFY}"));
+        assert!(log[2].starts_with("pr release-next-v3.4.0 "), "{log:#?}");
         // With no open release issue, the pull request has no issue: the cut
         // refuses.
         let closed = Fake {
@@ -4124,7 +3983,8 @@ pub(crate) mod tests {
         assert!(
             error.contains(
                 "the release v3.3.0 exists, and pull request #1141 sets the next version 3.4.0. \
-                 riff changed nothing. next: riff release verify 1141 after its Gate passed"
+                 riff changed nothing. next: wait for the Gate of pull request #1141: it merges \
+                 when the Gate passes; when a job failed, run that job again"
             ),
             "{error}"
         );
@@ -4284,115 +4144,6 @@ pub(crate) mod tests {
             .unwrap_err()
             .to_string();
         assert_eq!(error, limit);
-    }
-
-    fn release_candidate() -> Candidate {
-        Candidate {
-            title: "Release v3.3.0".into(),
-            body: "Refs #7\n\nPart of #7: x.\n\nLevel: minor, 3.3.0.\n\nIssue: #7\nMilestone: Wave 34\n"
-                .into(),
-            state: "OPEN".into(),
-            labels: vec!["release".into()],
-            milestone: Some("Wave 34: Release".into()),
-            head: "h1".into(),
-            files: vec!["Cargo.toml".into(), "Cargo.lock".into()],
-        }
-    }
-
-    /// A release pull request with the version files and a passed Gate
-    /// gets the status riff/verify (01M5ND0ZNFFAPT1AWD3DP1Y77N).
-    #[test]
-    fn verify_passes_a_release_pull_request() {
-        let forge = Fake {
-            candidate: release_candidate(),
-            gate: pr::Gate::Passed,
-            ..Fake::new()
-        };
-        assert_eq!(verify(&forge, 1140).unwrap(), "h1");
-        let log = forge.log();
-        assert_eq!(log.len(), 1, "{log:?}");
-        assert!(log[0].starts_with("verify h1 pass"), "{log:?}");
-    }
-
-    #[test]
-    fn verify_refuses_an_extra_file() {
-        let mut candidate = release_candidate();
-        candidate.files.push("crates/riff/src/main.rs".into());
-        let forge = Fake {
-            candidate,
-            gate: pr::Gate::Passed,
-            ..Fake::new()
-        };
-        let e = verify(&forge, 1140).unwrap_err().to_string();
-        assert!(e.contains("crates/riff/src/main.rs"), "{e}");
-        assert!(forge.log().is_empty());
-    }
-
-    #[test]
-    fn verify_refuses_a_failed_gate_and_a_pull_request_with_no_label() {
-        let forge = Fake {
-            candidate: release_candidate(),
-            gate: pr::Gate::Ended("failure".into()),
-            ..Fake::new()
-        };
-        let e = verify(&forge, 1140).unwrap_err().to_string();
-        assert!(
-            e.contains("the full check of commit h1 (Gate) ended with failure."),
-            "{e}"
-        );
-        assert!(e.contains("next: wait for the checks, then riff release verify 1140"));
-        let mut candidate = release_candidate();
-        candidate.labels.clear();
-        let forge = Fake {
-            candidate,
-            gate: pr::Gate::Passed,
-            ..Fake::new()
-        };
-        let e = verify(&forge, 1140).unwrap_err().to_string();
-        assert!(e.contains("no label release"), "{e}");
-        assert!(forge.log().is_empty());
-    }
-
-    /// #1393, 01M5R13DK401K3TZ91E2QK2DYM: a repository whose ruleset
-    /// requires `checks / test` and `checks / docs` has no check `Gate`.
-    /// The refusal names these checks, and a pass sets the status.
-    #[test]
-    fn verify_refuses_with_the_names_of_the_checks_of_the_repository() {
-        let checks = vec!["checks / test".to_owned(), "checks / docs".to_owned()];
-        let forge = Fake {
-            candidate: release_candidate(),
-            checks: checks.clone(),
-            gate: pr::Gate::Running,
-            ..Fake::new()
-        };
-        let e = verify(&forge, 1140).unwrap_err().to_string();
-        assert!(
-            e.contains("the full check of commit h1 (checks / test, checks / docs) runs still."),
-            "{e}"
-        );
-        assert!(!e.contains("Gate"), "{e}");
-        assert!(forge.log().is_empty());
-        let forge = Fake {
-            candidate: release_candidate(),
-            checks,
-            gate: pr::Gate::Passed,
-            ..Fake::new()
-        };
-        assert_eq!(verify(&forge, 1140).unwrap(), "h1");
-    }
-
-    #[test]
-    fn verify_refuses_a_body_without_the_format() {
-        let mut candidate = release_candidate();
-        candidate.body = "A release.".into();
-        let forge = Fake {
-            candidate,
-            gate: pr::Gate::Passed,
-            ..Fake::new()
-        };
-        let e = verify(&forge, 1140).unwrap_err().to_string();
-        assert!(e.contains("hygiene"), "{e}");
-        assert!(forge.log().is_empty());
     }
 
     fn run(tag: &str) -> Waiting {
@@ -5429,13 +5180,13 @@ pub(crate) mod tests {
             );
         }
 
-        // Each item in a checked release, and a release pull request of
-        // the wave that counts for nothing.
+        // Each item in a checked release, and a pull request of the next
+        // version in the wave that counts for nothing.
         let forge = Fake {
             merged: vec![
                 wave_item(41, "c41"),
                 Merged {
-                    release: true,
+                    next: true,
                     ..wave_item(42, "c42")
                 },
                 Merged {

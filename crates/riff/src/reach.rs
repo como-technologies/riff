@@ -1000,7 +1000,6 @@ pub const COMMANDS: &[InContainer] = &[
     socket(&["lead", "stop", "--host", "thelio"]),
     socket(&["build", "--host", "thelio"]),
     socket(&["release", "cut", "3.4.0"]),
-    socket(&["release", "verify", "40"]),
     socket(&["release", "status"]),
     socket(&["release", "approve", "v3.4.0"]),
     socket(&["release", "hold", "v3.4.0", "a reading at 19:40"]),

@@ -577,9 +577,6 @@ mod tests {
             }],
         });
         for fact in [
-            BotFact::ReleaseCut {
-                tag: text("v3.3.0"),
-            },
             BotFact::ReleasePublished {
                 tag: text("v3.3.0"),
                 run: Some(9),

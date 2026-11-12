@@ -248,8 +248,7 @@ enum Command {
     /// another session of its user with `--session`, for example a
     /// session that is gone or that does not answer. Then the next
     /// session can claim the item. The subcommands make a release of
-    /// riff: test, cut, verify, status, approve, hold, check, retry and
-    /// rollback.
+    /// riff: test, cut, status, approve, hold, check, retry and rollback.
     /// They need the table [release] in riff.toml, but hold: the lead of
     /// another repository holds a release.
     #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
@@ -1143,19 +1142,20 @@ enum ReleaseCommand {
     /// wave since the last release, marked as the latest. Then it opens the
     /// pull request "Set the next version A.B.C", the next minor by
     /// default: its branch sets A.B.C in Cargo.toml and Cargo.lock and runs
-    /// deploy/release-check.sh, and it has the label release and auto-merge
-    /// on. Verify it with riff release verify. The cut refuses while a
-    /// deploy waits for the approval of production, and while an alert of
-    /// the repository has no review: an open alert of code scanning, secret
-    /// scanning or Dependabot, or a dismissed alert with no comment. It
-    /// lists each one. A revoked secret and a Dependabot alert that a rule
-    /// dismissed need no comment. No flag skips a check. Only the owner or
-    /// an admin of the riff in a terminal, or the lead of one, may cut, also
-    /// the lead in its container. It refuses a worker and a work session in
-    /// a container. The ruleset releases of GitHub decides the push of the
-    /// tag: it lets an admin of the repository and the lead App push it, so
-    /// the lead pushes it from its container. Run the cut again after a cut
-    /// that stopped: it does the steps that are not done.
+    /// deploy/release-check.sh, and it has auto-merge on. The cut passes the
+    /// verify of that one commit (riff/verify), so the pull request merges
+    /// when its Gate passes. The cut refuses while a deploy waits for the
+    /// approval of production, and while an alert of the repository has no
+    /// review: an open alert of code scanning, secret scanning or
+    /// Dependabot, or a dismissed alert with no comment. It lists each one.
+    /// A revoked secret and a Dependabot alert that a rule dismissed need no
+    /// comment. No flag skips a check. Only the owner or an admin of the
+    /// riff in a terminal, or the lead of one, may cut, also the lead in its
+    /// container. It refuses a worker and a work session in a container.
+    /// The ruleset releases of GitHub decides the push of the tag: it lets
+    /// an admin of the repository and the lead App push it, so the lead
+    /// pushes it from its container. Run the cut again after a cut that
+    /// stopped: it does the steps that are not done.
     Cut {
         /// The version of the release, for example 3.3.0.
         version: String,
@@ -1172,18 +1172,6 @@ enum ReleaseCommand {
         /// Give it one time for each command.
         #[arg(long, value_name = "COMMAND")]
         run: Vec<String>,
-    },
-    /// Verify the pull request of the next version
-    ///
-    /// For a pull request with the label release: the pull request of the
-    /// next version, or a release pull request. It checks that the diff
-    /// is only Cargo.toml and Cargo.lock, that the body passes the issue
-    /// hygiene, and that the full check of the head commit passed (see
-    /// riff verify). Then it sets the status riff/verify. Else it refuses
-    /// and sets nothing. No model session runs.
-    Verify {
-        /// The number of the pull request.
-        number: u64,
     },
     /// Show the release cycle
     ///
@@ -3830,35 +3818,16 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
                  auto-merge on: {}",
                 cut.number, cut.next, cut.issue, cut.url
             );
+            // The cut wrote the one commit (01M76SBEV64SNKCS1AE1KXWNFM).
+            println!("riff passed the verify of its one commit: it merges when its Gate passes.");
             let op = Op::Pull {
                 tag: tag.clone(),
                 number: cut.number,
             };
             watch_started(reach, &here, op).await;
             println!(
-                "next: riff release verify {} after its Gate passed; a person runs riff release \
-                 approve {tag} in a terminal when the deploy waits",
-                cut.number
+                "next: a person runs riff release approve {tag} in a terminal when the deploy waits"
             );
-        }
-        ReleaseCommand::Verify { number } => {
-            let forge = forge()?;
-            let head = cycle::verify(&forge, *number)?;
-            println!(
-                "Pull request #{number} passed: the status riff/verify of {head} is a success."
-            );
-            let title = forge.candidate(*number)?.title;
-            let tag = cycle::tag_of_pull(&title, &forge.releases()?)?;
-            watch_started(
-                reach,
-                &here,
-                Op::Pull {
-                    tag,
-                    number: *number,
-                },
-            )
-            .await;
-            println!("next: the auto-merge merges pull request #{number}");
         }
         ReleaseCommand::Status => {
             let forge = forge()?;

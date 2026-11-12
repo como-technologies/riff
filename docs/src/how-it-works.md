@@ -711,11 +711,17 @@ flowchart TD
     M["the last commit of main"] --> B["the CI run of the push to main:<br/>the release build and the release test"]
     B --> T["riff release test vX.Y.Z --host HOST:<br/>the real-session test on the release binaries"]
     T --> C["riff release cut X.Y.Z:<br/>the tag on that commit, and the GitHub release"]
-    C --> N["the pull request of the next version:<br/>the first commit of the next wave"]
+    C --> N["the pull request of the next version:<br/>riff passed its verify, auto-merge on"]
+    N --> G["its Gate passes: it merges,<br/>the first commit of the next wave"]
     C --> R["the CI run of the tag takes the release build,<br/>and compiles nothing"]
     R --> D["the job Deploy waits for production"]
     D --> P["a person runs riff release approve vX.Y.Z"]
 ```
+
+The cut writes the one commit of the pull request of the next version:
+the version in `Cargo.toml` and `Cargo.lock`. So the cut passes its
+verify, and no session verifies it. It merges when its Gate passes, as
+each other pull request.
 
 The lead sees the state of the release, tests the last commit of
 `main`, and cuts the release:

@@ -2070,9 +2070,7 @@ async fn riff_who_says_the_state_of_an_open_release_at_each_step() {
 /// A fake `gh` on the PATH for the watch of a wave: the open wave `Wave 41`
 /// with no open item, the release issues of the wave from the file
 /// `released`, the required check `Gate` of `main`, and its check runs from
-/// the file `main`. The open release pull requests come from the file
-/// `pulls`: #1140 has the head `abc`, with the check runs of the file `head`
-/// and no status.
+/// the file `main`.
 fn fake_wave(dir: &Path) -> Vec<(String, String)> {
     let bin = dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
@@ -2082,21 +2080,14 @@ fn fake_wave(dir: &Path) -> Vec<(String, String)> {
          'api repos/{{owner}}/{{repo}}/milestones'*)\n\
            echo '[{{\"number\":41,\"title\":\"Wave 41\",\"open_issues\":0,\"closed_issues\":3}}]' ;;\n\
          'issue list --state all'*) cat {released} 2>/dev/null || echo '[]' ;;\n\
-         'pr list --state open'*) cat {pulls} 2>/dev/null || echo '[]' ;;\n\
-         'pr view 1140'*)\n\
-           echo '{{\"number\":1140,\"title\":\"Release v9.9.9\",\"state\":\"OPEN\",\"headRefOid\":\"abc\"}}' ;;\n\
          'api repos/{{owner}}/{{repo}}/rules/'*)\n\
            echo '[{{\"type\":\"required_status_checks\",\"parameters\":{{\"required_status_checks\":[{{\"context\":\"Gate\"}}]}}}}]' ;;\n\
          'api repos/{{owner}}/{{repo}}/commits/main/check-runs'*) cat {main} ;;\n\
-         'api repos/{{owner}}/{{repo}}/commits/abc/check-runs'*) cat {head} ;;\n\
-         'api repos/{{owner}}/{{repo}}/commits/abc/status') echo '{{\"statuses\":[]}}' ;;\n\
          'api repos/{{owner}}/{{repo}}') echo '{{\"default_branch\":\"main\"}}' ;;\n\
          *) echo '[]' ;;\n\
          esac\n",
         released = dir.join("released").display(),
         main = dir.join("main").display(),
-        pulls = dir.join("pulls").display(),
-        head = dir.join("head").display(),
     );
     isolated::write_program(bin.join("gh"), body);
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());

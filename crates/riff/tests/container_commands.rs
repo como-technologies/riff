@@ -373,14 +373,10 @@ async fn the_look_of_the_tui_goes_through_the_socket() {
 /// The rows of [`COMMANDS`] that this test does not run, and where a
 /// test shows their way: each asks riff-server only after its steps on
 /// GitHub, or after a hook keeps its input.
-const RUN_ELSEWHERE: [(&[&str], &str); 4] = [
+const RUN_ELSEWHERE: [(&[&str], &str); 3] = [
     (
         &["release", "cut", "3.4.0"],
         "release_cycle::cut_in_the_lead_container_tells_the_chat_through_the_socket",
-    ),
-    (
-        &["release", "verify", "40"],
-        "release_cycle: the watch of the release pull request goes through the socket",
     ),
     (
         &["release", "status"],

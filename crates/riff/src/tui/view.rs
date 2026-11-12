@@ -1162,37 +1162,14 @@ mod tests {
         );
     }
 
-    /// 01M75R6FPVZA3JA5C48PQ26A85, 01M7642H27T4862WZENFAN4277: for the steps
-    /// of a release pull request of an older riff, and for the steps before
-    /// the tag, the rows under the header say the step of the release and who
-    /// acts next at 80 x 24, on two rows at most. The body of the tab starts
-    /// under them.
+    /// 01M75R6FPVZA3JA5C48PQ26A85, 01M7642H27T4862WZENFAN4277,
+    /// 01M76SBPK34YSRSFCC97H8SFH7: for the steps before the tag, the rows
+    /// under the header say the step of the release and who acts next at 80 x
+    /// 24, on two rows at most. The body of the tab starts under them.
     #[test]
     fn the_header_says_each_step_of_a_release_before_the_tag_at_80_x_24() {
         use riff_client::daemons::ReleaseStep;
-        let steps: [(ReleaseStep, &[&str]); 9] = [
-            (
-                ReleaseStep::PullRuns,
-                &[" v3.3.0: the full check of the release pull request runs"],
-            ),
-            (
-                ReleaseStep::PullFailed,
-                &[
-                    " v3.3.0: the full check of the release pull request failed: the lead of",
-                    " como-technologies/riff runs the failed jobs again",
-                ],
-            ),
-            (
-                ReleaseStep::Verify,
-                &[
-                    " v3.3.0: the full check of the release pull request passed; it waits for the",
-                    " verify of the lead of como-technologies/riff",
-                ],
-            ),
-            (
-                ReleaseStep::Merges,
-                &[" v3.3.0: the verify of the release pull request passed; it merges"],
-            ),
+        let steps: [(ReleaseStep, &[&str]); 5] = [
             (
                 ReleaseStep::Merged,
                 &[

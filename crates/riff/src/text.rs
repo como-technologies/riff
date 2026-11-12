@@ -310,34 +310,6 @@ pub fn verify_pin_bad(why: &str) -> String {
     format!("riff verify pass: {}. Nothing is reported.", forge(why))
 }
 
-/// The line of a `riff release verify` that the full check `checks` of the
-/// head commit stops (01M5R13DK401K3TZ91E2QK2DYM). It names the checks.
-///
-/// ```
-/// use riff::pr::Gate;
-/// let checks = ["Gate".to_owned(), "Hygiene".to_owned()];
-/// assert_eq!(
-///     riff::text::release_gate_not_passed(1140, "1a2b3c4d5e6f", &checks, &Gate::Running),
-///     "riff release verify: the full check of commit 1a2b3c4 (Gate, Hygiene) runs still. \
-///      Nothing is reported. next: wait for the checks, then riff release verify 1140"
-/// );
-/// let one = ["checks / test".to_owned()];
-/// assert!(riff::text::release_gate_not_passed(1140, "1a2b3c4", &one, &Gate::Ended("failure".into()))
-///     .contains("the full check of commit 1a2b3c4 (checks / test) ended with failure."));
-/// ```
-pub fn release_gate_not_passed(
-    number: u64,
-    commit: &str,
-    checks: &[String],
-    gate: &crate::pr::Gate,
-) -> String {
-    let state = full_check_state(commit, checks, gate);
-    format!(
-        "riff release verify: {state}. Nothing is reported. next: wait for the checks, then riff \
-         release verify {number}"
-    )
-}
-
 /// The one line of a `riff watch --once` that ends with no wake, before
 /// the harness stops its task (01M3Z64J08GW6N1H42AR2FZQZ4). It never
 /// says "Do not start the watch again now".
@@ -2513,26 +2485,8 @@ pub fn release_refused(command: &str, refusal: crate::cycle::Refusal) -> String 
 ///
 /// let at = |step| Release { repo: "o/r".into(), tag: "v3.3.0".into(), step };
 /// let line = |step, paused| release_line(&at(step), paused);
-/// // The steps of a release pull request of an older riff, then the steps
-/// // before the tag (01M75R6FPVZA3JA5C48PQ26A85, 01M7642H27T4862WZENFAN4277).
-/// assert_eq!(
-///     line(ReleaseStep::PullRuns, false).unwrap(),
-///     "v3.3.0: the full check of the release pull request runs"
-/// );
-/// assert_eq!(
-///     line(ReleaseStep::PullFailed, false).unwrap(),
-///     "v3.3.0: the full check of the release pull request failed: the lead of o/r runs the \
-///      failed jobs again"
-/// );
-/// assert_eq!(
-///     line(ReleaseStep::Verify, false).unwrap(),
-///     "v3.3.0: the full check of the release pull request passed; it waits for the verify of \
-///      the lead of o/r"
-/// );
-/// assert_eq!(
-///     line(ReleaseStep::Merges, false).unwrap(),
-///     "v3.3.0: the verify of the release pull request passed; it merges"
-/// );
+/// // The steps before the tag (01M75R6FPVZA3JA5C48PQ26A85,
+/// // 01M7642H27T4862WZENFAN4277, 01M76SBPK34YSRSFCC97H8SFH7).
 /// assert_eq!(
 ///     line(ReleaseStep::Merged, false).unwrap(),
 ///     "v3.3.0: the release build passed; it waits for the real-session test of the lead of o/r"
@@ -2577,18 +2531,7 @@ pub fn release_refused(command: &str, refusal: crate::cycle::Refusal) -> String 
 pub fn release_line(release: &riff_client::daemons::Release, paused: bool) -> Option<String> {
     use riff_client::daemons::ReleaseStep;
     let (tag, repo) = (safe(&release.tag), safe(&release.repo));
-    let pull = "the full check of the release pull request";
     let state = match (release.step, paused) {
-        (ReleaseStep::PullRuns, _) => format!("{pull} runs"),
-        (ReleaseStep::PullFailed, _) => {
-            format!("{pull} failed: the lead of {repo} runs the failed jobs again")
-        }
-        (ReleaseStep::Verify, _) => {
-            format!("{pull} passed; it waits for the verify of the lead of {repo}")
-        }
-        (ReleaseStep::Merges, _) => {
-            "the verify of the release pull request passed; it merges".to_owned()
-        }
         (ReleaseStep::Merged, _) => format!(
             "the release build passed; it waits for the real-session test of the lead of {repo}"
         ),
@@ -12604,20 +12547,18 @@ pub fn wave_checks_rerun(
 /// test build of CI ([`VERIFY_CI_TESTS`], 01M75NDGTPJGFSZMTJV04ZFR1D).
 /// It sends the verifier to the rules of the repository for
 /// agents, when it has them (01M5R580VCRCHJM8FY7NT485R1,
-/// 01M5RN89WH3PHV3BHMJ25T3SX4). It has the part for a release pull
-/// request only when the repository has `release`, the table
-/// `[release]` of its riff config (01M5SMPX8NM75P8E38DGQ17W7B).
+/// 01M5RN89WH3PHV3BHMJ25T3SX4). It has no part for a release pull request
+/// (01M76SBPDSGS0SATQV9RA1FRG1).
 ///
 /// ```
 /// let checks = ["CI".to_owned()];
-/// let text = riff::text::wave_verify_start("o/r", "master", 12, 40, "1a2b3c4d5e6f", &checks, true);
+/// let text = riff::text::wave_verify_start("o/r", "master", 12, 40, "1a2b3c4d5e6f", &checks);
 /// assert!(text.contains("git diff origin/master...HEAD"));
 /// assert!(!text.contains("origin/main"));
 /// assert!(text.contains("pull request #40"));
 /// assert!(text.contains("gh issue view 12 --comments"));
 /// assert!(text.contains("commit 1a2b3c4d5e6f"));
 /// assert!(text.contains("The first line is PASS or FAIL"));
-/// assert!(text.contains("Verify of the release pull request"));
 /// assert!(text.contains("when the full check of the commit was done: the check CI."));
 /// assert!(text.contains("Read the rules of the repository for agents when it has them, for example CLAUDE.md or AGENTS.md, and obey the rules for a verify"));
 /// assert!(!text.contains("CLAUDE.md names"));
@@ -12630,17 +12571,15 @@ pub fn wave_checks_rerun(
 /// // A test runs from the test build of CI (01M75NDGTPJGFSZMTJV04ZFR1D).
 /// assert!(text.contains(riff::text::VERIFY_CI_TESTS));
 /// let two = ["Lint".to_owned(), "Test".to_owned()];
-/// let text = riff::text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4d5e6f", &two, true);
+/// let text = riff::text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4d5e6f", &two);
 /// assert!(text.contains("was done: the checks Lint, Test."));
-///
-/// // A repository with no `[release]` has no release pull request.
-/// let text = riff::text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4d5e6f", &two, false);
+/// // No part for a release pull request.
 /// assert!(!text.contains("release pull request"));
 /// assert!(!text.contains("`release`"));
 /// assert!(text.contains("Find its \"Done when\" line or heading: a line \"Done when:\", or a heading \"## Done when\".\n2. Read the rules"));
 ///
 /// // No CI (01M5SMNKDWBD1J6Y18ENQG87CK): no check to wait for, and none ran.
-/// let none = riff::text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4d5e6f", &[], true);
+/// let none = riff::text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4d5e6f", &[]);
 /// assert!(none.contains("The repository has no CI: riff/verify is its only check"));
 /// assert!(none.contains("Run the tests that the criteria name."));
 /// assert!(!none.contains("the full check of the commit was done"));
@@ -12653,16 +12592,7 @@ pub fn wave_verify_start(
     pull: u64,
     commit: &str,
     checks: &[String],
-    release: bool,
 ) -> String {
-    let release = if release {
-        "   When the pull request has the label `release`, verify it against the part \"Verify of \
-         the release pull request\" of its issue, and not against the \"Done when\" line or \
-         heading: the pull request changes only the version, and the steps of the release are \
-         not in it.\n"
-    } else {
-        ""
-    };
     let ran = if checks.is_empty() {
         "The repository has no CI: riff/verify is its only check, and no check ran on the commit. \
          Run the tests that the criteria name."
@@ -12689,7 +12619,6 @@ pub fn wave_verify_start(
          1. Read the issue and its comments: gh issue view {issue} --comments\n   \
          Find its \"Done when\" line or heading: a line \"Done when:\", or a heading \
          \"## Done when\".\n\
-         {release}\
          2. {READ_RULES}, and obey the rules for a verify.\n\
          3. Read the pull request and its diff: gh pr view {pull} --comments, and git diff \
          origin/{base}...HEAD\n\
@@ -14334,7 +14263,7 @@ mod tests {
         for text in [
             wave_rebase_start("o/r", "main", 12, 40, "1a2b3c4", "b", "1a"),
             wave_checks_start("o/r", "main", 12, 40, "1a2b3c4", &checks, "b", "1a"),
-            wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &checks, true),
+            wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &checks),
         ] {
             assert!(!text.contains("plain sentences"), "{text}");
         }
@@ -14369,13 +14298,13 @@ mod tests {
     /// #1633 (01M6QFZ9JHR19Y8F1PWH2HVQ07): the start text of a verify
     /// names both forms of a "Done when" line, so a verify of an issue
     /// with a heading `## Done when` does not read the line as missing.
-    /// The text names the two forms in step 1 and in the part for a
-    /// release pull request, and the intro does not name one form only.
+    /// The text names the two forms in step 1, and the intro does not name
+    /// one form only.
     #[test]
     fn the_start_text_of_a_verify_names_the_heading_of_done_when() {
         let checks = ["CI".to_owned()];
-        for (checks, release) in [(&checks[..], true), (&checks[..], false), (&[][..], true)] {
-            let text = wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", checks, release);
+        for checks in [&checks[..], &[][..]] {
+            let text = wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", checks);
             let step = text
                 .split("\n2. ")
                 .next()
@@ -14389,11 +14318,7 @@ mod tests {
                 "{text}"
             );
             assert!(!text.contains("its \"Done when:\" line"), "{text}");
-            assert_eq!(
-                text.contains("not against the \"Done when\" line or heading"),
-                release,
-                "{text}"
-            );
+            assert!(!text.contains("release pull request"), "{text}");
         }
     }
 
@@ -14413,31 +14338,29 @@ mod tests {
                 .to_owned()
         };
         let checks = ["CI".to_owned()];
-        for release in [true, false] {
-            let text = wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &checks, release);
-            let five = step(&text);
-            assert!(
-                five.starts_with("Check each criterion: review the code"),
-                "{five}"
-            );
-            assert!(
-                five.contains(
-                    "run that test by its name when you must.\n   When the rules of the \
-                     repository name a command that runs a test from the test build that CI \
-                     made for the commit, run each test with it, and build nothing."
-                ),
-                "{five}"
-            );
-            assert!(
-                five.ends_with(
-                    "When CI kept no test build of the commit, say so in your result, and only \
-                     then build the test."
-                ),
-                "{five}"
-            );
-            assert_eq!(text.matches(VERIFY_CI_TESTS).count(), 1, "{text}");
-        }
-        let none = wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &[], true);
+        let text = wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &checks);
+        let five = step(&text);
+        assert!(
+            five.starts_with("Check each criterion: review the code"),
+            "{five}"
+        );
+        assert!(
+            five.contains(
+                "run that test by its name when you must.\n   When the rules of the \
+                 repository name a command that runs a test from the test build that CI \
+                 made for the commit, run each test with it, and build nothing."
+            ),
+            "{five}"
+        );
+        assert!(
+            five.ends_with(
+                "When CI kept no test build of the commit, say so in your result, and only \
+                 then build the test."
+            ),
+            "{five}"
+        );
+        assert_eq!(text.matches(VERIFY_CI_TESTS).count(), 1, "{text}");
+        let none = wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &[]);
         let five = step(&none);
         assert!(
             five.ends_with("run that test by its name when you must."),
@@ -14492,7 +14415,7 @@ mod tests {
             ),
             (
                 "verify",
-                wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &checks, true),
+                wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &checks),
             ),
             (
                 "failed verify",

@@ -12,7 +12,7 @@
 //!
 //! ```mermaid
 //! flowchart LR
-//!     C["riff release test, cut, verify,<br/>approve, retry, rollback"] -- "register" --> F["watches.json<br/>in the folder of the daemon"]
+//!     C["riff release test, cut,<br/>approve, retry, rollback"] -- "register" --> F["watches.json<br/>in the folder of the daemon"]
 //!     W["riff join"] -- "one watch for the wave" --> F
 //!     D["riff daemon:<br/>a look each minute"] -- "read" --> F
 //!     D -- "gh, git" --> G["the forge"]
@@ -22,14 +22,14 @@
 //!
 //! | Command | [`Op`] | Ends when |
 //! |---|---|---|
-//! | `riff release cut`, `riff release verify` | [`Op::Pull`] | the Gate of the pull request of the next version ends, or it merges or closes |
+//! | `riff release cut` | [`Op::Pull`] | the pull request of the next version merges or closes; a failed Gate gets a message, and the watch stays (01M76SBPGH2218K3ED569T051D) |
 //! | `riff release test --host HOST` | [`Op::Test`] | the real-session test passes or fails |
 //! | `riff release cut`, `approve`, `retry`, `rollback` | [`Op::Deploy`] | the job `Deploy` of the tag passes or fails |
 //! | `riff join` | [`Op::Wave`] | never: it posts each time the last open item of the current wave closes |
 //! | the end of the watch of a deploy | [`Op::Check`] | the check of the lead ends the release, or another deploy follows (see "The check" below) |
 //!
-//! The same watch is one watch: a second `riff release verify` of the
-//! same pull request registers nothing new ([`Registered::Kept`]).
+//! The same watch is one watch: a second command that registers the watch
+//! of the same operation registers nothing new ([`Registered::Kept`]).
 //!
 //! A wave can run on more hosts, and the daemon of each host has the
 //! watch of the wave. Its message "Wave N is complete" has a key
@@ -496,10 +496,9 @@ pub struct Stale {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Op {
-    /// The pull request `number` of the version of the release `tag`: its
-    /// Gate, then its merge (`riff release cut`, `riff release verify`,
-    /// 01M76428R8GY6J323AWG3JV8HA). The cut watches its pull request of the
-    /// next version.
+    /// The pull request `number` of the next version after the release
+    /// `tag`: its Gate, then its merge (`riff release cut`,
+    /// 01M76428R8GY6J323AWG3JV8HA, 01M76SBPGH2218K3ED569T051D).
     Pull {
         /// The tag of the release, `vX.Y.Z`.
         tag: String,
@@ -593,8 +592,9 @@ impl Op {
 pub struct Seen {
     /// [`Op::Deploy`]: the state moved from [`Stale`].
     pub moved: bool,
-    /// [`Op::Pull`]: the lead got the news that the Gate passed.
-    pub gate: bool,
+    /// [`Op::Pull`]: the lead got the news that the Gate failed, until the
+    /// Gate runs again.
+    pub gate_failed: bool,
     /// [`Op::Deploy`]: the job `Deploy` waits, and the lead got the news.
     pub waits: bool,
     /// [`Op::Deploy`]: the last line to the owner, in milliseconds since
@@ -1351,20 +1351,6 @@ fn next_of(forge: &dyn Forge, tag: &str, fallback: &str) -> String {
         .map_or_else(|| fallback.to_owned(), |stage| cycle::next(&stage))
 }
 
-/// The next step after the pull request `number` of the release `tag`
-/// merged (01M6QBEJYHKS8G26CM46P4P077, 01M76428R8GY6J323AWG3JV8HA). The
-/// merge is a fact: a read of the stage that lags behind it, or that fails,
-/// does not name the step before it ([`cycle::after_merge`]). For the pull
-/// request of the next version, the release has its tag, and its step
-/// stays. A `tag` with no version gets `riff release status`.
-fn next_after_merge(forge: &dyn Forge, tag: &str) -> String {
-    let Ok(version) = cycle::tag_version(tag) else {
-        return "riff release status".to_owned();
-    };
-    let read = cycle::stage(forge, version).ok().flatten();
-    cycle::next(&cycle::after_merge(read, version))
-}
-
 /// The failed jobs for a line: `: A, B`, or a text for no name.
 fn jobs_text(names: &[String], ended: &str) -> String {
     match names.is_empty() {
@@ -1461,11 +1447,18 @@ fn then_check(outcome: Outcome, forge: &dyn Forge, tag: &str, deployed: bool) ->
     }
 }
 
+/// The watch of the pull request `number` of the next version after the
+/// release `tag` (01M76SBPGH2218K3ED569T051D). The cut passed its verify,
+/// so it merges by itself when its Gate passes: a passed Gate gets no
+/// message. A failed Gate gets one message, with the failed jobs, and the
+/// watch stays: the lead runs the jobs again, and a new fail gets a new
+/// message. The merge and the close end the watch. After the merge, the
+/// next step is the step of the release at its stage now.
 fn look_pull(forge: &dyn Forge, seen: &mut Seen, tag: &str, number: u64) -> Result<Outcome> {
-    let pull = forge.candidate(number)?;
+    let pull = forge.pull(number)?;
     match pull.state.as_str() {
         "MERGED" => {
-            let next = next_after_merge(forge, tag);
+            let next = next_of(forge, tag, "riff release status");
             return Ok(say(
                 format!("The pull request #{number} of the release {tag} merged. next: {next}"),
                 true,
@@ -1488,31 +1481,23 @@ fn look_pull(forge: &dyn Forge, seen: &mut Seen, tag: &str, number: u64) -> Resu
     }
     let checks = forge.full_check()?;
     match forge.gate(&checks, &pull.head)? {
-        Gate::Ended(conclusion) => {
+        Gate::Ended(conclusion) if !seen.gate_failed => {
+            seen.gate_failed = true;
             let jobs = forge.failed_jobs(&checks, &pull.head)?;
             Ok(say(
                 format!(
                     "The Gate of the pull request #{number} of the release {tag} failed{}. next: \
-                     run the failed jobs again, then riff release verify {number}",
+                     run the failed jobs again: the pull request merges when its Gate passes",
                     jobs_text(&jobs, &conclusion)
-                ),
-                true,
-            ))
-        }
-        Gate::Passed if !seen.gate => {
-            seen.gate = true;
-            if forge.verify_passed(&pull.head)? {
-                return Ok(Outcome::default());
-            }
-            Ok(say(
-                format!(
-                    "The Gate of the pull request #{number} of the release {tag} passed. next: \
-                     riff release verify {number}"
                 ),
                 false,
             ))
         }
-        _ => Ok(Outcome::default()),
+        Gate::Ended(_) => Ok(Outcome::default()),
+        _ => {
+            seen.gate_failed = false;
+            Ok(Outcome::default())
+        }
     }
 }
 
@@ -1846,7 +1831,7 @@ mod tests {
 
     use super::*;
     use crate::cycle::tests::Fake;
-    use crate::cycle::{Candidate, Deploy};
+    use crate::cycle::{Deploy, Pull};
 
     const REPO: &str = "o/r";
 
@@ -2028,27 +2013,28 @@ mod tests {
         }
     }
 
-    /// A forge with an open pull request of the version whose Gate runs.
+    /// A forge with an open pull request of the next version whose Gate
+    /// runs.
     fn open_pull() -> Fake {
         Fake {
-            candidate: Candidate {
+            pull: Pull {
                 state: "OPEN".into(),
                 head: "h1".into(),
-                ..Candidate::default()
             },
             checks: vec!["Gate".into()],
             gate: Gate::Running,
-            verify: false,
             ..Fake::new()
         }
     }
 
-    /// The release pull request of 3.3.0 of an older riff merged: the last
-    /// commit c1 of origin/main has 3.3.0, its release build and a passed
-    /// release test.
+    /// The pull request of the next version 3.4.0 merged after the cut of
+    /// 3.3.0: the deploy of v3.3.0 waits for a person.
     fn merged(fake: &mut Fake) {
-        fake.candidate.state = "MERGED".into();
-        fake.main = "3.3.0".into();
+        fake.pull.state = "MERGED".into();
+        fake.main = "3.4.0".into();
+        fake.releases = vec!["3.0.0", "3.2.0", "3.3.0"];
+        fake.tags = vec!["v3.3.0".into()];
+        fake.deploy = deploy(DeployState::Waiting, &[]);
     }
 
     fn deploy(state: DeployState, failed: &[&str]) -> Option<Deploy> {
@@ -2061,8 +2047,13 @@ mod tests {
         })
     }
 
+    /// 01M76SBPGH2218K3ED569T051D, 01M76428R8GY6J323AWG3JV8HA: the cut
+    /// passed the verify of the pull request of the next version, so a
+    /// Gate that passes gets no message: the pull request merges by itself.
+    /// The merge names the next step of the release that it follows, here
+    /// the approval of the deploy, and the watch goes.
     #[tokio::test]
-    async fn the_gate_passes_and_the_pull_request_merges_with_one_message_each() {
+    async fn the_gate_passes_with_no_message_and_the_merge_names_the_step_of_the_release() {
         let dir = daemon_dir();
         let ground = Ground::new(open_pull());
         watch(dir.path(), pull());
@@ -2072,101 +2063,44 @@ mod tests {
 
         ground.forge(|f| f.gate = Gate::Passed);
         look(dir.path(), &ground, 2 * MINUTE).await;
-        assert_eq!(
-            ground.told(),
-            [
-                "The Gate of the pull request #1140 of the release v3.3.0 passed. next: riff \
-                 release verify 1140"
-            ]
-        );
-        look(dir.path(), &ground, 3 * MINUTE).await;
-        assert!(ground.told().is_empty(), "no second message for the Gate");
+        assert!(ground.told().is_empty(), "it merges by itself");
         assert_eq!(kept(dir.path()), [pull()]);
 
-        // The lead verified, and the pull request merged.
         ground.forge(merged);
-        look(dir.path(), &ground, 4 * MINUTE).await;
+        look(dir.path(), &ground, 3 * MINUTE).await;
         assert_eq!(
             ground.told(),
             [
-                "The pull request #1140 of the release v3.3.0 merged. next: riff release test \
-                 v3.3.0 --host HOST, or just real-session on origin/main"
+                "The pull request #1140 of the release v3.3.0 merged. next: a person runs riff \
+                 release approve v3.3.0 in a terminal"
             ]
         );
-        look(dir.path(), &ground, 5 * MINUTE).await;
+        look(dir.path(), &ground, 4 * MINUTE).await;
         assert!(ground.told().is_empty(), "no second message for the merge");
         assert!(kept(dir.path()).is_empty(), "the watch goes");
     }
 
-    /// 01M6QBEJYHKS8G26CM46P4P077: the merge is a fact. While the fetch of
-    /// origin/main does not hold it yet, the stage has no release, and the
-    /// message names the step of a merged release with no test.
+    /// 01M76SBPGH2218K3ED569T051D: a merge whose release riff cannot read
+    /// names riff release status.
     #[tokio::test]
-    async fn a_merge_names_the_next_step_while_the_read_lags() {
+    async fn a_merge_with_no_release_to_read_names_the_status() {
         let dir = daemon_dir();
         let ground = Ground::new(open_pull());
         watch(dir.path(), pull());
-        ground.forge(|f| f.candidate.state = "MERGED".into());
+        ground.forge(|f| f.pull.state = "MERGED".into());
         look(dir.path(), &ground, MINUTE).await;
         assert_eq!(
             ground.told(),
-            [
-                "The pull request #1140 of the release v3.3.0 merged. next: wait for the release \
-                 build of the last commit of origin/main in the CI run of its push to main; when \
-                 a job of it failed, run that job again"
-            ]
+            ["The pull request #1140 of the release v3.3.0 merged. next: riff release status"]
         );
         assert!(kept(dir.path()).is_empty(), "the watch goes");
     }
 
+    /// 01M76SBPGH2218K3ED569T051D: a failed Gate tells the failed jobs one
+    /// time, and the watch stays. After the jobs run again, a new fail
+    /// gets a new message, and the merge ends the watch.
     #[tokio::test]
-    async fn a_merge_keeps_the_next_step_of_a_stage_that_is_ahead() {
-        let dir = daemon_dir();
-        let ground = Ground::new(open_pull());
-        watch(dir.path(), pull());
-        // A fast test passed on the last commit before the first look.
-        ground.forge(|f| {
-            merged(f);
-            f.real = vec![("c1", true)];
-        });
-        look(dir.path(), &ground, MINUTE).await;
-        assert_eq!(
-            ground.told(),
-            ["The pull request #1140 of the release v3.3.0 merged. next: riff release cut 3.3.0"]
-        );
-    }
-
-    /// 01M76428R8GY6J323AWG3JV8HA: the pull request of the next version
-    /// merges after the cut. Its message names the next step of the release
-    /// that it follows, here the approval of the deploy.
-    #[tokio::test]
-    async fn the_merge_of_the_next_version_names_the_step_of_its_release() {
-        let dir = daemon_dir();
-        let ground = Ground::new(open_pull());
-        let op = Op::Pull {
-            tag: "v3.3.0".into(),
-            number: 1141,
-        };
-        watch(dir.path(), op);
-        ground.forge(|f| {
-            f.candidate.state = "MERGED".into();
-            f.main = "3.4.0".into();
-            f.releases = vec!["3.0.0", "3.2.0", "3.3.0"];
-            f.tags = vec!["v3.3.0".into()];
-            f.deploy = deploy(DeployState::Waiting, &[]);
-        });
-        look(dir.path(), &ground, MINUTE).await;
-        assert_eq!(
-            ground.told(),
-            [
-                "The pull request #1141 of the release v3.3.0 merged. next: a person runs riff \
-                 release approve v3.3.0 in a terminal"
-            ]
-        );
-    }
-
-    #[tokio::test]
-    async fn a_gate_that_fails_tells_the_failed_jobs_once() {
+    async fn a_gate_that_fails_tells_the_failed_jobs_once_and_the_watch_stays() {
         let dir = daemon_dir();
         let ground = Ground::new(open_pull());
         ground.forge(|f| {
@@ -2174,25 +2108,34 @@ mod tests {
             f.failed = vec!["Clippy".into(), "Tests 1/4".into()];
         });
         watch(dir.path(), pull());
+        let failed = "The Gate of the pull request #1140 of the release v3.3.0 failed: Clippy, \
+                      Tests 1/4. next: run the failed jobs again: the pull request merges when \
+                      its Gate passes";
 
         look(dir.path(), &ground, MINUTE).await;
-        assert_eq!(
-            ground.told(),
-            [
-                "The Gate of the pull request #1140 of the release v3.3.0 failed: Clippy, Tests \
-                 1/4. next: run the failed jobs again, then riff release verify 1140"
-            ]
-        );
+        assert_eq!(ground.told(), [failed]);
         look(dir.path(), &ground, 2 * MINUTE).await;
         assert!(ground.told().is_empty());
-        assert!(kept(dir.path()).is_empty());
+        assert_eq!(kept(dir.path()), [pull()]);
+
+        ground.forge(|f| f.gate = Gate::Running);
+        look(dir.path(), &ground, 3 * MINUTE).await;
+        assert!(ground.told().is_empty(), "the jobs run again");
+        ground.forge(|f| f.gate = Gate::Ended("failure".into()));
+        look(dir.path(), &ground, 4 * MINUTE).await;
+        assert_eq!(ground.told(), [failed]);
+
+        ground.forge(merged);
+        look(dir.path(), &ground, 5 * MINUTE).await;
+        assert_eq!(ground.told().len(), 1);
+        assert!(kept(dir.path()).is_empty(), "the watch goes");
     }
 
     #[tokio::test]
     async fn a_pull_request_that_closes_with_no_merge_tells_the_lead() {
         let dir = daemon_dir();
         let ground = Ground::new(open_pull());
-        ground.forge(|f| f.candidate.state = "CLOSED".into());
+        ground.forge(|f| f.pull.state = "CLOSED".into());
         watch(dir.path(), pull());
         look(dir.path(), &ground, MINUTE).await;
         assert_eq!(
@@ -2203,23 +2146,6 @@ mod tests {
             ]
         );
         assert!(kept(dir.path()).is_empty());
-    }
-
-    #[tokio::test]
-    async fn a_gate_that_passed_after_the_verify_tells_nothing_new() {
-        let dir = daemon_dir();
-        let ground = Ground::new(open_pull());
-        // `riff release verify` registers after it set the status.
-        ground.forge(|f| {
-            f.gate = Gate::Passed;
-            f.verify = true;
-        });
-        watch(dir.path(), pull());
-        look(dir.path(), &ground, MINUTE).await;
-        assert!(ground.told().is_empty());
-        ground.forge(merged);
-        look(dir.path(), &ground, 2 * MINUTE).await;
-        assert_eq!(ground.told().len(), 1);
     }
 
     fn test_op() -> Op {
@@ -3319,7 +3245,7 @@ mod tests {
 
         // The forge answers again: the watch ends as it does with no fault.
         *ground.fault.lock().unwrap() = None;
-        ground.forge(|f| f.candidate.state = "CLOSED".into());
+        ground.forge(|f| f.pull.state = "CLOSED".into());
         look(dir.path(), &ground, 3 * MINUTE).await;
         assert_eq!(ground.told().len(), 1);
         assert!(kept(dir.path()).is_empty());
@@ -3446,7 +3372,7 @@ mod tests {
     async fn a_message_that_does_not_go_out_stays_for_the_next_look() {
         let dir = daemon_dir();
         let ground = Ground::new(open_pull());
-        ground.forge(|f| f.candidate.state = "CLOSED".into());
+        ground.forge(|f| f.pull.state = "CLOSED".into());
         watch(dir.path(), pull());
 
         ground.down.store(true, Ordering::SeqCst);
@@ -3568,22 +3494,14 @@ mod tests {
         let pass = |f: &mut Fake| f.deploy = deploy(DeployState::Passed, &[]);
         let fail = |f: &mut Fake| f.deploy = deploy(DeployState::Failed, &["Deploy"]);
         vec![
+            // A failed Gate keeps the watch of the pull request: see
+            // a_gate_that_fails_tells_the_failed_jobs_once_and_the_watch_stays.
             Case {
                 command: "riff release cut",
                 op: pull(),
                 ok: (Box::new(merged), "of the release v3.3.0 merged"),
                 bad: (
-                    Box::new(|f| f.gate = Gate::Ended("failure".into())),
-                    "Gate of the pull request #1140 of the release v3.3.0 failed",
-                ),
-                stays_on_ok: false,
-            },
-            Case {
-                command: "riff release verify",
-                op: pull(),
-                ok: (Box::new(merged), "of the release v3.3.0 merged"),
-                bad: (
-                    Box::new(|f| f.candidate.state = "CLOSED".into()),
+                    Box::new(|f| f.pull.state = "CLOSED".into()),
                     "closed with no merge",
                 ),
                 stays_on_ok: false,

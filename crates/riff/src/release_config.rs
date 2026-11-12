@@ -22,7 +22,6 @@
 //! | `riff release SUBCOMMAND` but `hold`, `riff build`, `riff release test` | the working tree: [`require`] | refuses with [`NO_RELEASE`](crate::text::NO_RELEASE) before it touches the forge |
 //! | the request `build` and the request `release test` of the daemon | the merged file, after a fetch: [`require_merged`] | the same refusal |
 //! | `riff wave end N`, the hint of the end of a wave | the working tree: [`of_folder`] | no release gate; the hint is `riff wave end N` |
-//! | the verify start text of the wave | the merged file: [`merged`] | no part for a release pull request |
 //!
 //! ```mermaid
 //! flowchart TD
@@ -152,11 +151,11 @@ pub fn require(dir: &Path) -> Result<()> {
 /// of the main clone `main` has no table [`TABLE`]
 /// (01M5TKEH5E2ZQ22PAN9FTT27VW). The merged file is the one on the
 /// default branch of `origin`, the branch of `origin/HEAD`, after a fetch
-/// of that branch: the working tree of `main` counts for nothing, as
-/// [`merged`] has it. A branch with no [`FILE`] has no table. An error
-/// when `main` has no `origin/HEAD`, when the fetch fails, or when the
-/// file is not TOML: each names its cause. The fetch makes the answer
-/// current, so a host with an old clone does not refuse a merged table.
+/// of that branch: the working tree of `main` counts for nothing. A
+/// branch with no [`FILE`] has no table. An error when `main` has no
+/// `origin/HEAD`, when the fetch fails, or when the file is not TOML: each
+/// names its cause. The fetch makes the answer current, so a host with an
+/// old clone does not refuse a merged table.
 ///
 /// ```
 /// use std::process::Command;
@@ -223,59 +222,6 @@ pub fn require_merged(main: &Path) -> Result<()> {
         bail!("{}", text::NO_RELEASE);
     }
     Ok(())
-}
-
-/// True when [`FILE`] on the default branch of `origin` in the main clone
-/// `main`, the branch of `origin/HEAD`, has the table [`TABLE`]. A clone
-/// with no such file or no good file has no opt-in: the wave texts then
-/// have no release part.
-///
-/// ```
-/// use std::process::Command;
-/// use riff::release_config::merged;
-/// use riff::session_image::FILE;
-///
-/// let git = |dir: &std::path::Path, args: &[&str]| {
-///     let status = Command::new("git")
-///         .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
-///         .arg("-C")
-///         .arg(dir)
-///         .args(args)
-///         .env("GIT_CONFIG_GLOBAL", "/dev/null")
-///         .status()
-///         .unwrap();
-///     assert!(status.success(), "git {args:?}");
-/// };
-/// let dir = tempfile::tempdir()?;
-/// let (origin, main) = (dir.path().join("origin.git"), dir.path().join("main"));
-/// git(dir.path(), &["init", "-q", "--bare", "-b", "main", origin.to_str().unwrap()]);
-/// git(dir.path(), &["init", "-q", "-b", "main", main.to_str().unwrap()]);
-/// git(&main, &["remote", "add", "origin", origin.to_str().unwrap()]);
-/// std::fs::write(main.join(FILE), "[session]\nimage = \"x\"\n")?;
-/// git(&main, &["add", FILE]);
-/// git(&main, &["commit", "-q", "-m", "pin"]);
-/// git(&main, &["push", "-q", "origin", "main"]);
-/// git(&main, &["remote", "set-head", "origin", "main"]);
-/// assert!(!merged(&main));
-///
-/// // An edit that is not merged opts in nothing.
-/// std::fs::write(main.join(FILE), "[release]\n")?;
-/// assert!(!merged(&main));
-///
-/// git(&main, &["commit", "-q", "-a", "-m", "release"]);
-/// git(&main, &["push", "-q", "origin", "main"]);
-/// assert!(merged(&main));
-/// # Ok::<(), anyhow::Error>(())
-/// ```
-pub fn merged(main: &Path) -> bool {
-    let from_origin = || -> Result<bool> {
-        let head = git(
-            main,
-            &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
-        )?;
-        in_config(&git(main, &["show", &format!("{head}:{FILE}")])?)
-    };
-    from_origin().unwrap_or(false)
 }
 
 #[cfg(test)]
