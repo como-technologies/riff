@@ -6373,6 +6373,15 @@ of this part when they merge.
   link of an older unit to the new target. A write of the unit after an
   update keeps its target. Supersedes 01M4ZDTVK74596M0ZA46N51NKV in
   part.
+- **01M78TQ48B5JQXGRSDBGWMZDS7** systemd-run --scope sets
+  `INVOCATION_ID` in its command. So in a unit, the scope of each
+  `podman run` starts `env -u INVOCATION_ID nice -n 19 podman run`, and
+  podman gets no `INVOCATION_ID` (01M4ZDTW00B7N6T9P3MK066KA7). podman
+  then puts the conmon of each session container in
+  `libpod-conmon-ID.scope` in riff.slice, for a start in a unit, as from
+  the daemon, and for a start out of a unit, as from a terminal
+  (01M778VSP6Z29FCPGX5S76ME1T). A live test finds conmon by its PID, for
+  a worker and a lead, each way.
 
 ### riff relay
 

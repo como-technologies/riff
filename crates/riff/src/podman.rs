@@ -11,7 +11,7 @@
 //! | Part of the spec | The argument of `podman run` |
 //! |---|---|
 //! | (each spec) | the start is `nice -n 19 podman run ...`: each process of the container gets nice 19 from podman ([`start_command`], [`NICE`]) |
-//! | (the daemon in a unit) | the start is `systemd-run --user --scope --slice riff.slice --collect --quiet -- nice -n 19 podman run ...`: pasta runs in a scope of its own, in [`SLICE`] ([`start_command`], 01M5RG2AS2CYJPWGKTV7N2HNYP) |
+//! | (the daemon in a unit) | the start is `systemd-run --user --scope --slice riff.slice --collect --quiet -- env -u INVOCATION_ID nice -n 19 podman run ...`: pasta runs in a scope of its own, in [`SLICE`] ([`start_command`], [`NO_INVOCATION_ID`], 01M5RG2AS2CYJPWGKTV7N2HNYP) |
 //! | (each spec) | `--sig-proxy=false` |
 //! | `name` | `--name NAME` |
 //! | The user | `--userns=keep-id` |
@@ -67,10 +67,11 @@
 //! - Each container runs in [`SLICE`], a slice of the manager of the user
 //!   next to `app.slice`, where the manager runs the programs of the
 //!   person (01M778VSP6Z29FCPGX5S76ME1T). `--cgroup-parent` puts the
-//!   container and its conmon there, and `systemd-run --slice` the scope
-//!   of `podman run` and pasta. Before each start, [`set_cpu_weight`]
-//!   gives the slice the CPU weight [`SLICE_WEIGHT`]. The default weight
-//!   of a cgroup is 100.
+//!   container and its conmon there, each in a scope of its own, for a
+//!   start in a unit and out of it. `systemd-run --slice` puts the scope
+//!   of `podman run` and pasta there. Before each start,
+//!   [`set_cpu_weight`] gives the slice the CPU weight [`SLICE_WEIGHT`].
+//!   The default weight of a cgroup is 100.
 //!
 //! riff writes none of them in a file of the person. A login over SSH
 //! runs in a scope of the system manager, beside the manager of the user:
@@ -92,9 +93,11 @@
 //!
 //! - riff starts each `podman` with no `INVOCATION_ID`. systemd sets it
 //!   in each process of a unit, and with it podman keeps conmon in the
-//!   cgroup of the unit of the daemon. With no `INVOCATION_ID`, podman
-//!   puts conmon in a scope of its own, so a stop of the unit does not
-//!   end it.
+//!   cgroup of its caller. With no `INVOCATION_ID`, podman puts conmon in
+//!   a scope of its own, `libpod-conmon-ID.scope` in [`SLICE`], so a stop
+//!   of the unit does not end it. `systemd-run --scope` sets
+//!   `INVOCATION_ID` in its command too, so in a scope riff starts podman
+//!   with `env -u INVOCATION_ID` ([`NO_INVOCATION_ID`]).
 //! - pasta, the network process of podman, stays in the cgroup of the
 //!   process that ran `podman run`. So when the daemon runs in a unit
 //!   (it has an `INVOCATION_ID`), [`start_command`] runs each `podman
@@ -111,9 +114,9 @@
 //! flowchart TD
 //!     U["riff.service"] --> D["riff daemon"]
 //!     D -- "systemd-run --user --scope --slice riff.slice" --> S["scope run-pNNN.scope"]
-//!     S --> P["nice -n 19 podman run"]
+//!     S --> P["env -u INVOCATION_ID nice -n 19 podman run"]
 //!     S --> N["pasta: the network"]
-//!     P -- "conmon, in a scope of its own, at nice 19" --> C["the container:<br/>nice 19, cpu.weight 1"]
+//!     P -- "conmon, in libpod-conmon-ID.scope, at nice 19" --> C["the container:<br/>nice 19, cpu.weight 1"]
 //! ```
 
 use std::ffi::OsString;
@@ -529,6 +532,12 @@ pub const SCOPE: [&str; 7] = [
     "--",
 ];
 
+/// The words after [`SCOPE`] that start a program with no
+/// [`INVOCATION_ID`]. `systemd-run --scope` sets it in its command, and
+/// with it podman keeps conmon in the scope of `podman run`, not in a
+/// scope of its own (01M4ZDTW00B7N6T9P3MK066KA7).
+pub const NO_INVOCATION_ID: [&str; 3] = ["env", "-u", INVOCATION_ID];
+
 /// True when this process runs in a systemd unit: systemd sets
 /// [`INVOCATION_ID`] in each process of a unit.
 fn in_unit() -> bool {
@@ -546,7 +555,10 @@ fn starter(in_unit: bool) -> &'static str {
 /// it starts in a systemd scope of its own, in [`SLICE`]: pasta, the
 /// network process of podman, is then not in the cgroup of the unit, and
 /// a stop of the unit leaves the network of the container
-/// (01M5RG2AS2CYJPWGKTV7N2HNYP, 01M778VSP6Z29FCPGX5S76ME1T).
+/// (01M5RG2AS2CYJPWGKTV7N2HNYP, 01M778VSP6Z29FCPGX5S76ME1T). In the
+/// scope, `env` removes the [`INVOCATION_ID`] of `systemd-run`
+/// ([`NO_INVOCATION_ID`]). So podman puts conmon in a scope of its own
+/// in [`SLICE`], in a unit and out of it.
 ///
 /// ```
 /// use riff::podman::{run_args, start_command, terminal_args};
@@ -576,8 +588,8 @@ fn starter(in_unit: bool) -> &'static str {
 /// let worker = start_command(&run_args(&spec)?, true);
 /// assert!(
 ///     words(&worker).starts_with(
-///         "systemd-run --user --scope --slice riff.slice --collect --quiet -- nice -n 19 podman \
-///          run --rm -i --sig-proxy=false "
+///         "systemd-run --user --scope --slice riff.slice --collect --quiet -- \
+///          env -u INVOCATION_ID nice -n 19 podman run --rm -i --sig-proxy=false "
 ///     ),
 ///     "{}",
 ///     words(&worker)
@@ -586,8 +598,8 @@ fn starter(in_unit: bool) -> &'static str {
 /// let lead = start_command(&terminal_args(&spec)?, true);
 /// assert!(
 ///     words(&lead).starts_with(
-///         "systemd-run --user --scope --slice riff.slice --collect --quiet -- nice -n 19 podman \
-///          run --rm -d -i -t "
+///         "systemd-run --user --scope --slice riff.slice --collect --quiet -- \
+///          env -u INVOCATION_ID nice -n 19 podman run --rm -d -i -t "
 ///     ),
 ///     "{}",
 ///     words(&lead)
@@ -606,7 +618,7 @@ fn starter(in_unit: bool) -> &'static str {
 pub fn start_command(args: &[OsString], in_unit: bool) -> tokio::process::Command {
     let mut command = tokio::process::Command::new(starter(in_unit));
     if in_unit {
-        command.args(SCOPE).arg(NICE[0]);
+        command.args(SCOPE).args(NO_INVOCATION_ID).arg(NICE[0]);
     }
     command
         .args(&NICE[1..])
@@ -738,31 +750,9 @@ impl Runtime for Podman {
             .with_context(|| format!("{program} in {image} prints no UTF-8"))
     }
 
-    /// Only the `podman` child gets the values of the host, in its
-    /// environment (01M58B7H2HMYT6VTY0B8T2G0KW). Before it, [`SLICE`]
-    /// gets the CPU weight [`SLICE_WEIGHT`]: a start fails when systemd
-    /// does not set it (01M778VSP6Z29FCPGX5S76ME1T).
+    /// [`Podman::start_as`], in a unit when this process runs in one.
     async fn start(&self, spec: &SessionSpec, values: &[(String, String)]) -> Result<Running> {
-        spec.check_values(values)?;
-        set_cpu_weight(SLICE, SLICE_WEIGHT).await?;
-        let in_unit = in_unit();
-        let mut child = start_command(&run_args(spec)?, in_unit)
-            .envs(values.iter().map(|(name, value)| (name, value)))
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .with_context(|| text::no_program(starter(in_unit)))?;
-        let input = child.stdin.take().context("the stdin of podman")?;
-        let events = child.stdout.take().context("the stdout of podman")?;
-        let errors = child.stderr.take().context("the stderr of podman")?;
-        Ok(Running {
-            name: spec.name.clone(),
-            input: Box::new(input),
-            events: Box::new(events),
-            errors: Box::new(errors),
-            end: End::new(async move { Ok(Exit::from(child.wait().await?)) }),
-        })
+        self.start_as(spec, values, in_unit()).await
     }
 
     async fn stop(&self, name: &str) -> Result<()> {
@@ -826,41 +816,10 @@ impl Runtime for Podman {
         Ok(())
     }
 
-    /// Only the `podman` child gets the values of the host. The end is
-    /// `podman wait`: no exit code when it cannot say, for example when
-    /// the container went before the wait. As [`Runtime::start`], it
-    /// first gives [`SLICE`] its weight.
+    /// [`Podman::start_terminal_as`], in a unit when this process runs in
+    /// one.
     async fn start_terminal(&self, spec: &SessionSpec, values: &[(String, String)]) -> Result<End> {
-        spec.check_values(values)?;
-        set_cpu_weight(SLICE, SLICE_WEIGHT).await?;
-        let in_unit = in_unit();
-        let out = start_command(&terminal_args(spec)?, in_unit)
-            .envs(values.iter().map(|(name, value)| (name, value)))
-            .stdin(Stdio::null())
-            .output()
-            .await
-            .with_context(|| text::no_program(starter(in_unit)))?;
-        if !out.status.success() {
-            bail!(
-                "podman run {}: {}",
-                spec.name,
-                String::from_utf8_lossy(&out.stderr).trim()
-            );
-        }
-        let name = spec.name.clone();
-        Ok(End::new(async move {
-            let out = podman()
-                .args(["wait", &name])
-                .stdin(Stdio::null())
-                .stderr(Stdio::null())
-                .output()
-                .await
-                .with_context(|| text::no_program(PODMAN))?;
-            let code = String::from_utf8_lossy(&out.stdout).trim().parse().ok();
-            Ok(Exit {
-                code: code.filter(|_| out.status.success()),
-            })
-        }))
+        self.start_terminal_as(spec, values, in_unit()).await
     }
 
     /// `podman exec -it NAME nice -n 19 COMMAND` ([`exec_args`]).
@@ -947,6 +906,83 @@ impl Runtime for Podman {
             );
         }
         Ok(crate::ps::parse_top(&String::from_utf8_lossy(&out.stdout)))
+    }
+}
+
+impl Podman {
+    /// [`Runtime::start`], with the start of a unit (`in_unit`) or not,
+    /// whatever the environment of this process says ([`start_command`]).
+    /// Only the `podman` child gets the values of the host, in its
+    /// environment (01M58B7H2HMYT6VTY0B8T2G0KW). Before it, [`SLICE`]
+    /// gets the CPU weight [`SLICE_WEIGHT`]: a start fails when systemd
+    /// does not set it (01M778VSP6Z29FCPGX5S76ME1T).
+    pub async fn start_as(
+        &self,
+        spec: &SessionSpec,
+        values: &[(String, String)],
+        in_unit: bool,
+    ) -> Result<Running> {
+        spec.check_values(values)?;
+        set_cpu_weight(SLICE, SLICE_WEIGHT).await?;
+        let mut child = start_command(&run_args(spec)?, in_unit)
+            .envs(values.iter().map(|(name, value)| (name, value)))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .with_context(|| text::no_program(starter(in_unit)))?;
+        let input = child.stdin.take().context("the stdin of podman")?;
+        let events = child.stdout.take().context("the stdout of podman")?;
+        let errors = child.stderr.take().context("the stderr of podman")?;
+        Ok(Running {
+            name: spec.name.clone(),
+            input: Box::new(input),
+            events: Box::new(events),
+            errors: Box::new(errors),
+            end: End::new(async move { Ok(Exit::from(child.wait().await?)) }),
+        })
+    }
+
+    /// [`Runtime::start_terminal`], with the start of a unit (`in_unit`)
+    /// or not, as [`Podman::start_as`]. Only the `podman` child gets the
+    /// values of the host. The end is `podman wait`: no exit code when it
+    /// cannot say, for example when the container went before the wait.
+    /// As [`Podman::start_as`], it first gives [`SLICE`] its weight.
+    pub async fn start_terminal_as(
+        &self,
+        spec: &SessionSpec,
+        values: &[(String, String)],
+        in_unit: bool,
+    ) -> Result<End> {
+        spec.check_values(values)?;
+        set_cpu_weight(SLICE, SLICE_WEIGHT).await?;
+        let out = start_command(&terminal_args(spec)?, in_unit)
+            .envs(values.iter().map(|(name, value)| (name, value)))
+            .stdin(Stdio::null())
+            .output()
+            .await
+            .with_context(|| text::no_program(starter(in_unit)))?;
+        if !out.status.success() {
+            bail!(
+                "podman run {}: {}",
+                spec.name,
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
+        let name = spec.name.clone();
+        Ok(End::new(async move {
+            let out = podman()
+                .args(["wait", &name])
+                .stdin(Stdio::null())
+                .stderr(Stdio::null())
+                .output()
+                .await
+                .with_context(|| text::no_program(PODMAN))?;
+            let code = String::from_utf8_lossy(&out.stdout).trim().parse().ok();
+            Ok(Exit {
+                code: code.filter(|_| out.status.success()),
+            })
+        }))
     }
 }
 
@@ -1090,8 +1126,14 @@ mod tests {
                 "--",
             ];
             assert_eq!(words[..scope.len()], scope, "{words:?}");
-            let podman = scope.len() + NICE.len();
-            assert_eq!(words[scope.len()..podman], NICE, "{words:?}");
+            let nice = scope.len() + NO_INVOCATION_ID.len();
+            assert_eq!(
+                words[scope.len()..nice],
+                ["env", "-u", "INVOCATION_ID"],
+                "{words:?}"
+            );
+            let podman = nice + NICE.len();
+            assert_eq!(words[nice..podman], NICE, "{words:?}");
             assert_eq!(words[podman], "podman", "{words:?}");
             let args: Vec<String> = args.iter().map(|a| a.to_string_lossy().into()).collect();
             assert_eq!(words[podman + 1..], args, "{words:?}");
@@ -1207,13 +1249,21 @@ mod tests {
         );
     }
 
+    /// 01M78TQ48B5JQXGRSDBGWMZDS7: `systemd-run --scope` sets an
+    /// `INVOCATION_ID` in its command, so in a unit `env` removes it again
+    /// right before podman.
     #[test]
     fn podman_starts_with_no_invocation_id_in_a_unit_or_out_of_it() {
-        let args = run_args(&spec()).unwrap();
-        for in_unit in [true, false] {
-            let command = start_command(&args, in_unit);
-            let envs: Vec<_> = command.as_std().get_envs().collect();
-            assert!(envs.contains(&("INVOCATION_ID".as_ref(), None)), "{envs:?}");
+        for args in [run_args(&spec()).unwrap(), terminal_args(&spec()).unwrap()] {
+            for in_unit in [true, false] {
+                let command = start_command(&args, in_unit);
+                let envs: Vec<_> = command.as_std().get_envs().collect();
+                assert!(envs.contains(&("INVOCATION_ID".as_ref(), None)), "{envs:?}");
+                let words = words(&command);
+                let nice = words.iter().position(|w| w == "nice").unwrap();
+                let unset = words[..nice].ends_with(&NO_INVOCATION_ID.map(str::to_owned));
+                assert_eq!(unset, in_unit, "{words:?}");
+            }
         }
     }
 

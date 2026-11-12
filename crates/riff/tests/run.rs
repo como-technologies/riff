@@ -293,14 +293,16 @@ fi
 }
 
 /// A fake `systemd-run` that logs each call to `bin/systemd-run.log`, and
-/// runs the command after the `--` in its place, as `systemd-run --scope`
-/// does (01M5RG2AS2CYJPWGKTV7N2HNYP).
+/// runs the command after the `--` in its place, with the
+/// `INVOCATION_ID` of its scope, as `systemd-run --scope` does
+/// (01M5RG2AS2CYJPWGKTV7N2HNYP, 01M78TQ48B5JQXGRSDBGWMZDS7).
 fn fake_systemd_run(bin: &Path) {
     let body = r#"#!/bin/sh
 dir=$(dirname "$0")
 echo "systemd-run $*" >> "$dir/systemd-run.log"
 while [ "$1" != -- ]; do shift; done
 shift
+export INVOCATION_ID=riff-test-scope
 exec "$@"
 "#;
     script(&bin.join("systemd-run"), body);
@@ -1208,8 +1210,9 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         "{asked}"
     );
     assert_eq!(asked["permissions"]["contents"], "write", "{asked}");
-    // The daemon runs podman with no INVOCATION_ID of systemd, so
-    // conmon is not in the cgroup of the daemon.
+    // The daemon runs podman with no INVOCATION_ID of systemd, also not
+    // the one of its scope, so conmon is in a scope of its own
+    // (01M78TQ48B5JQXGRSDBGWMZDS7).
     assert_eq!(machine.read("run.invocation"), "");
     // 01M5RG2AS2CYJPWGKTV7N2HNYP: the daemon runs in a unit, so it starts
     // podman in a scope of its own. Else pasta, the network of the
@@ -1217,8 +1220,8 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
     assert_eq!(
         machine.read("systemd-run.log").lines().next().unwrap(),
         format!(
-            "systemd-run --user --scope --slice riff.slice --collect --quiet -- nice -n 19 \
-             podman {}",
+            "systemd-run --user --scope --slice riff.slice --collect --quiet -- \
+             env -u INVOCATION_ID nice -n 19 podman {}",
             args.join(" ")
         )
     );
@@ -3013,15 +3016,18 @@ async fn the_daemon_starts_the_lead_with_a_terminal_and_riff_lead_start_attaches
     let args: Vec<&str> = args.lines().collect();
     assert_eq!(args[..5], ["run", "--rm", "-d", "-i", "-t"]);
     // 01M5RG2AS2CYJPWGKTV7N2HNYP: in a scope of its own, so a stop of the
-    // unit leaves the network of the lead.
+    // unit leaves the network of the lead. 01M78TQ48B5JQXGRSDBGWMZDS7:
+    // podman gets no INVOCATION_ID of the scope, so its conmon is in a
+    // scope of its own too.
     assert_eq!(
         machine.read("systemd-run.log").trim_end(),
         format!(
-            "systemd-run --user --scope --slice riff.slice --collect --quiet -- nice -n 19 \
-             podman {}",
+            "systemd-run --user --scope --slice riff.slice --collect --quiet -- \
+             env -u INVOCATION_ID nice -n 19 podman {}",
             args.join(" ")
         )
     );
+    assert_eq!(machine.read("run.invocation"), "");
     // 01M7755V17SGY2NW231WJ12WXN: the lead runs at nice 19, with the
     // lowest CPU weight.
     assert_eq!(machine.read("run.nice").trim(), "19");
