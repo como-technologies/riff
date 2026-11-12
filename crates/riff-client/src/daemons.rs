@@ -237,16 +237,24 @@ pub struct Wave {
 }
 
 /// What a host does in one repository: it gives workers (the daemon runs
-/// the wave), it runs the lead of a person, both, or none (#1643).
+/// the wave), it runs the lead of the project, both, or none (#1643). A
+/// host that joined with `riff host join --no-lead` gives workers and
+/// claims no lead of the project (#1793).
 ///
 /// ```
 /// use riff_client::daemons::Parts;
 ///
-/// assert_eq!(Parts { workers: true, lead: false }.word(), "workers");
-/// assert_eq!(Parts { workers: false, lead: true }.word(), "lead");
-/// assert_eq!(Parts { workers: true, lead: true }.word(), "workers and lead");
+/// let parts = |workers, lead, no_lead| Parts { workers, lead, no_lead };
+/// assert_eq!(parts(true, false, false).word(), "workers");
+/// assert_eq!(parts(false, true, false).word(), "lead");
+/// assert_eq!(parts(true, true, false).word(), "workers and lead");
+/// assert_eq!(parts(true, false, true).word(), "workers, no lead");
+/// // A lead that ran on the host before the join with --no-lead goes on.
+/// assert_eq!(parts(true, true, true).word(), "workers and lead, no new lead");
 /// assert!(Parts::default().none());
 /// assert_eq!(Parts::default().word(), "none");
+/// // No part: the mark of no lead alone is no part.
+/// assert!(parts(false, false, true).none());
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Parts {
@@ -254,9 +262,13 @@ pub struct Parts {
     /// items and the verifies.
     #[serde(default)]
     pub workers: bool,
-    /// The host runs the lead of a person in the repository.
+    /// The host runs the lead of the project.
     #[serde(default)]
     pub lead: bool,
+    /// The daemon of the host claims no lead of the project: `riff host
+    /// join --no-lead` (#1793).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_lead: bool,
 }
 
 impl Parts {
@@ -267,11 +279,13 @@ impl Parts {
 
     /// The parts in words.
     pub fn word(self) -> &'static str {
-        match (self.workers, self.lead) {
-            (true, true) => "workers and lead",
-            (true, false) => "workers",
-            (false, true) => "lead",
-            (false, false) => "none",
+        match (self.workers, self.lead, self.no_lead) {
+            (true, true, false) => "workers and lead",
+            (true, true, true) => "workers and lead, no new lead",
+            (true, false, false) => "workers",
+            (true, false, true) => "workers, no lead",
+            (false, true, _) => "lead",
+            (false, false, _) => "none",
         }
     }
 }
@@ -828,6 +842,7 @@ mod tests {
                 parts: Parts {
                     workers: true,
                     lead: false,
+                    no_lead: false,
                 },
             }],
             leaving: vec![Leaving {
@@ -998,6 +1013,7 @@ mod tests {
                     parts: Parts {
                         workers: true,
                         lead: true,
+                        no_lead: false,
                     },
                 },
                 RepoParts {
@@ -1005,6 +1021,7 @@ mod tests {
                     parts: Parts {
                         workers: false,
                         lead: true,
+                        no_lead: false,
                     },
                 },
             ],

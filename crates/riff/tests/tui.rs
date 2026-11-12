@@ -374,6 +374,7 @@ async fn the_machines_tab_shows_the_hosts_and_sets_the_limit() {
             parts: Parts {
                 workers: true,
                 lead: false,
+                no_lead: false,
             },
         }],
         waiting: vec!["riff-issue-7-1a2b3c4d".into()],
@@ -1056,6 +1057,7 @@ async fn the_machines_tab_filters_the_hosts() {
             parts: Parts {
                 workers: true,
                 lead: false,
+                no_lead: false,
             },
         }],
         ..Facts::default()

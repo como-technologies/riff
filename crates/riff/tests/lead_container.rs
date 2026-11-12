@@ -387,18 +387,48 @@ async fn leave_in_a_container_names_the_host_flag() {
     assert!(common::call_names(&asked).is_empty());
 }
 
-/// #1644: `riff lead stop` in the container of the lead, with no `--host`,
-/// stops nothing: the container has no daemon of the host. It names
-/// `--host`, and asks the daemon nothing.
+/// #1793, 01M77Y6ZEQ4A6C6E0XZ56WRE89: `riff lead restart` in the container
+/// of the lead finds the host of the lead in the sessions of the riff, and
+/// asks the daemon of that host through the socket. It asks no lead for
+/// its notes: the lead wrote them first. With no lead, it asks no daemon.
 #[tokio::test(flavor = "multi_thread")]
-async fn lead_stop_in_a_container_names_the_host_flag() {
+async fn lead_restart_in_a_container_asks_the_daemon_of_the_host_of_the_lead() {
     let container = Container::new();
-    let (_dir, socket, asked) =
-        common::session_socket(|call| Err(format!("unexpected call {call}")));
-    let out = container.riff(&socket, &["lead", "stop"]).await;
+    let lead = "riff://mike@pangolin/como-technologies/riff?session=c1&lead=true";
+    let sessions = json!([{"uri": lead, "live": true, "container": true}]);
+    let (_dir, socket, asked) = common::session_socket(move |call| match call["call"].as_str() {
+        Some("who") => Ok(json!({"sessions": sessions})),
+        Some("host") => {
+            assert_eq!(call["host"], "pangolin", "{call}");
+            assert_eq!(call["request"], "lead restart", "{call}");
+            Ok(Value::String(riff::text::lead_stopped("riff-lead-x")))
+        }
+        _ => Err(format!("unexpected call {call}")),
+    });
+    let out = container.riff(&socket, &["lead", "restart"]).await;
+    assert!(out.status.success(), "{out:?}");
+    let shown = text(&out.stdout);
+    assert!(
+        shown.contains(&riff::text::lead_stopped("riff-lead-x")),
+        "{shown}"
+    );
+    assert!(
+        shown.contains(&riff::text::lead_restart_done("pangolin")),
+        "{shown}"
+    );
+    assert_eq!(common::call_names(&asked), ["who", "host"]);
+
+    let (_dir, socket, asked) = common::session_socket(|call| match call["call"].as_str() {
+        Some("who") => Ok(json!({"sessions": []})),
+        _ => Err(format!("unexpected call {call}")),
+    });
+    let out = container.riff(&socket, &["lead", "restart"]).await;
     assert_eq!(out.status.code(), Some(1), "{out:?}");
-    assert_eq!(text(&out.stderr).trim(), riff::text::LEAD_STOP_IN_CONTAINER);
-    assert!(common::call_names(&asked).is_empty());
+    assert_eq!(
+        text(&out.stderr).trim(),
+        riff::text::lead_restart_none("como-technologies/riff")
+    );
+    assert_eq!(common::call_names(&asked), ["who"]);
 }
 
 #[tokio::test(flavor = "multi_thread")]

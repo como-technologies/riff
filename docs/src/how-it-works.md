@@ -1368,9 +1368,10 @@ each policy, an action that comes with a proof is marked in the log.
   `riff resume --riff`).
 - The steps that can lose work, on this host or on another one with
   `--host`: end a session (`riff daemon end NAME`, and `x` in the
-  Sessions tab), `riff host leave --now`, `riff lead stop`, the removal
-  of a folder with its work (`riff daemon sweep --remove NAME --force`),
-  and a take-over (`riff takeover`, and `t` in the Sessions tab).
+  Sessions tab), `riff host leave --now`, `riff lead restart`, the
+  removal of a folder with its work
+  (`riff daemon sweep --remove NAME --force`), and a take-over
+  (`riff takeover`, and `t` in the Sessions tab).
 - Your keys: the add of a second key, and the removal of a device. Your
   first key needs no proof: it rests on your sign-in.
 - The change of the policy, with each policy.
@@ -1418,8 +1419,8 @@ sequenceDiagram
   reach `riff-server`, it warns, and the step goes on.
 - When the browser does not open, open the URL that `riff` prints. In
   the TUI, the note line shows the URL.
-- `riff lead stop --host` asks for the proof after it waits for the
-  notes of the lead.
+- `riff lead restart` asks for the proof after it waits for the notes of
+  the lead.
 
 ### Add an authenticator
 
@@ -1560,9 +1561,13 @@ riff-server holds.
 riff who
 ```
 
-The first lines are facts: the state of the riff and the build. Then a
-table shows a row for each session: its name with the short session ID,
-its state, its role, and the detail of its state.
+The first lines are facts: the state of the riff, the lead of each
+project, and the build. A row `lead` names the lead of a project and
+the host where it runs. `none`, in yellow, says that the project has
+no live lead: its wave starts no session (see
+[The wave waits for its lead](#the-wave-waits-for-its-lead)). Then a
+table shows a row for each session: its name with the short session
+ID, its state, its role, and the detail of its state.
 
 The rows group by project (see
 [The projects of the riff](#the-projects-of-the-riff)). A bold line
@@ -1573,6 +1578,8 @@ that is no project, or in no repository, come last, under the dim line
 
 ```text
 riff   running
+lead   como-technologies/riff on pangolin: mike@pangolin:riff#issue-6 (a6cf)
+lead   como-technologies/strata: none
 build  v0.7.0  (f45be4d, 2026-09-29)
 
 SESSION                            STATE    ROLE      DETAIL
@@ -1986,7 +1993,7 @@ riff
 [1 Sessions]  2 Chat•2  3 Waves•  4 Machines  5 Devices  6 Reports
  riff running · build 10df8a4 · link ok 2s
  6 sessions: 1 blocked · 1 done · 3 busy · 1 idle · 1 to update         by repo
- ▼ riff › mike  admin  online                                        4 sessions
+ ▼ riff  lead thelio  › mike  admin  online                          4 sessions
  > ! 3a3f8d5d  #994   worker     thelio   blocked 32m  which of two designs?
    ✓ 8f1c2d3e  #1599  container  thelio   done         waits for a verify of PR
    ● 5b1e2a90  #1590  container  thelio   busy 12m     Bash: just check
@@ -2006,6 +2013,9 @@ riff
   one row under it takes that row after a `›`. A group row ends with
   the counts of its sessions. The tree of `riff top` below has the
   host as a level too.
+- The group row of a repository names the host of its lead:
+  `lead thelio`. See
+  [See where the lead of a project runs](#see-where-the-lead-of-a-project-runs).
 - A session row has its mark, its short session ID, its item, its tag,
   its host (`HOST`), its state with its age, and its last words: the
   reason of a block, what it waits for, or its last step.
@@ -2051,7 +2061,7 @@ riff
 | `PgUp` `PgDn` `g` `G` | Move a page, or to the first or the last row. |
 | `←` `→` `Space` | Fold or open a group. `←` on a session selects its group. |
 | `Enter` | A group: fold or open it. A lead: attach to it. A worker in a container of a daemon of yours: its events in the Reports tab, see [See the events in the TUI](development.md#see-the-events-in-the-tui). In a smaller terminal, the detail on the whole screen first. Another session: its detail on the whole screen. |
-| `l` | Attach to the lead of the repository of the row, else to the first lead of this machine. On the lead of another host: a note with the step there. On a repository whose wave waits for a lead: start the lead on this machine, after `y`, and attach. See [The wave waits for its lead](#the-wave-waits-for-its-lead). |
+| `l` | Attach to the lead of the repository of the row when it runs on this machine, else to the first lead of this machine. When the lead of the repository runs on another host: a note that names that host and the step there. On a repository whose wave waits for a lead: a note with the step. `l` starts no lead. See [See where the lead of a project runs](#see-where-the-lead-of-a-project-runs). |
 | `t` | Take over the selected session, as `riff takeover` does. On another host: a note with the step there. |
 | `x` | End the selected session of the daemon, and free its item, as `riff daemon end` does, also on another host. On the row of a daemon: the host stops taking work for the repository, as `riff host leave --host HOST` does. |
 | `p`, `P` | Pause or resume the repository of the row, or the whole riff. |
@@ -2079,6 +2089,54 @@ flowchart LR
     T --> P["the detail of the selected row"]
 ```
 
+### See where the lead of a project runs
+
+Each project has one lead, on one host. `riff who`, `riff top` and the
+Sessions tab of the TUI name that host. Start the TUI:
+
+```sh
+riff
+```
+
+The group row of a repository names the host of its lead, in gray.
+Select the group row: its detail names the lead:
+
+```text
+ ▼ riff  lead pangolin  › mike  admin  online                        4 sessions
+──riff · lead pangolin › mike · admin · online ─────────────────────────────────
+ 4 sessions · 1 blocked · 1 done · 1 busy · 1 idle
+ The lead of como-technologies/riff runs on pangolin: mike@pangolin:riff
+ (4e54d4e5).
+```
+
+Press `l` on a row of the repository. When the lead runs on this
+machine, `l` attaches to it. When it runs on another host, the row
+before the last names that host and the step there:
+
+```text
+ The lead runs on pangolin: ssh pangolin, then riff lead start in a clone of como-technologies/riff.
+```
+
+When the wave of a repository waits for a lead, the group row says
+`waits for a lead`, and its detail and `l` give the step. `l` starts
+no lead: the riff daemon of a host that joined the project starts it.
+In a clone of the repository, on a host that can run the lead, run:
+
+```sh
+riff host join
+```
+
+See [Where the lead runs](#where-the-lead-runs) and
+[The wave waits for its lead](#the-wave-waits-for-its-lead).
+
+```mermaid
+flowchart TD
+    L["l on a row of a repository"] --> W{"where does its lead run?"}
+    W -- "on this machine" --> A["attach to the lead"]
+    W -- "on another host" --> N["a note: ssh HOST,<br/>then riff lead start"]
+    W -- "no lead: the wave waits" --> J["a note: riff host join<br/>in a clone of the repository"]
+```
+
 ### Put the people at the top of the tab
 
 In the Sessions tab, press `b`. The tree turns to person, repository
@@ -2093,7 +2151,7 @@ riff
 ```text
  6 sessions: 1 blocked · 1 done · 3 busy · 1 idle · 1 to update       by person
  ▼ mike  admin  online        5 sessions · 1 blocked · 1 done · 2 busy · 1 idle
-   ▼ riff                     4 sessions · 1 blocked · 1 done · 1 busy · 1 idle
+   ▼ riff  lead thelio        4 sessions · 1 blocked · 1 done · 1 busy · 1 idle
  >   ! 3a3f8d5d  #994   worker     thelio   blocked 32m  which of two designs?
      ✓ 8f1c2d3e  #1599  container  thelio   done         waits for a verify of P
      ● 5b1e2a90  #1590  container  thelio   busy 12m     Bash: just check
@@ -2122,7 +2180,8 @@ Select the row, and press the key:
 | A session of another host | `x`, then `y` | Ends the session and frees its item, as `riff daemon end NAME --host HOST` does. The row before the last shows the reply of the daemon there. `n` sends nothing. |
 | The row of a daemon, with the tag `daemon` | `x`, then `y` | The host stops taking work for the repository of the row, as `riff host leave --host HOST` does. Its sessions go on to their end. Press `x` on each one to end it now. |
 | A session of another host | `t` | A note with the step there: `ssh HOST`, then `riff takeover NAME`. |
-| The lead of another host | `l` or `t` | A note with the step there: `ssh HOST`, then `riff lead start`. |
+| The lead of another host, or a row of a project whose lead runs on another host | `l` | A note that names the host and the step there: `ssh HOST`, then `riff lead start`. |
+| The lead of another host | `t` | The same note. |
 
 `p` and `P` go to riff-server, so they work on each host. The question
 of `x` on the row of a daemon is, for example:
@@ -2193,11 +2252,12 @@ thread. Ctrl-C stops it:
 riff top
 ```
 
-The header shows the state of the riff and the build, as in
-`riff who`. A board comes next for each project with a live session,
-and for the repository where you run `riff top` when it is a project
-(see [The projects of the riff](#the-projects-of-the-riff)). A
-repository that is no project gets no board. A board has the current
+The header shows the state of the riff, the lead of each project with
+its host, and the build, as in `riff who`. A board comes next for each
+project with a live session, and for the repository where you run
+`riff top` when it is a project (see
+[The projects of the riff](#the-projects-of-the-riff)). A repository
+that is no project gets no board. A board has the current
 wave with its repository, one line for the `free` items, one for the
 `held` items, one for the `claimed` items, one for the items in
 `verify`, and one for the `stuck` items. An item is in `verify` when a
@@ -2223,6 +2283,8 @@ session has a line:
 
 ```text
 riff   running
+lead   como-technologies/riff on thelio: mike@thelio:riff (4e54d4e5)
+lead   como-technologies/strata on thelio: mike@thelio:strata (6d2b7c1a)
 build  v1.0.0  (10df8a4, 2026-10-04)
 
 blocked  3a3f8d5d issue-8, 32m, the lead gave no answer: which of two designs?
@@ -6173,7 +6235,7 @@ flowchart LR
     H -- "yes" --> W["the wave runs"]
 ```
 
-`riff host join` and `riff lead start` ask riff-server first. In a
+`riff host join` and `riff lead move` ask riff-server first. In a
 repository that is no project, both name the fix and start nothing:
 
 ```text
@@ -6313,13 +6375,14 @@ flowchart TB
 - There is one lead for each project, on all machines together, for
   all people: see [Where the lead runs](#where-the-lead-runs).
 - No session becomes the lead by itself, also the first. The riff
-  daemon of a host of the project starts the lead, or a person names
-  it: see [Name the lead](#name-the-lead). A session cannot make itself
-  the lead. A worker is never the lead: see [When you have no
+  daemon of a host of the project starts the lead: see
+  [Name the lead](#name-the-lead). A session cannot make itself the
+  lead. A worker is never the lead: see [When you have no
   lead](#when-you-have-no-lead).
-- The URI of the lead has `lead=true`. `riff who` shows it. While the
-  lead holds the claim `lead`, no other session has `lead=true`, also
-  not an older lead of another person.
+- The URI of the lead has `lead=true`. `riff who` shows it, and the
+  host of the lead of each project. While the lead holds the claim
+  `lead`, no other session has `lead=true`, also not an older lead of
+  another person.
 - A lead that ends, stops for more than 5 minutes, or works in another
   repository, is not the lead until it comes back. A lead that leaves
   the thread is not the lead any more. With no lead, each session asks
@@ -6380,10 +6443,9 @@ project, and each minute:
   does not start again: its session ends, and a host claims the lead
   again. A lead that fails to start makes its host wait: see
   [When the lead fails to start](#when-the-lead-fails-to-start).
-- One start of the lead runs at a time on a host: `riff lead start`, `l`
-  in the Sessions tab, `riff lead move` and the riff daemon share a
-  lock. A start that comes while another start runs waits for it, then
-  uses the lead of that start: `riff lead start` attaches to it.
+- One start of the lead runs at a time on a host: `riff lead move` and
+  the riff daemon share a lock. A start that comes while another start
+  runs waits for it, then uses the lead of that start.
 - When the host of the lead goes, the claim ends 5 minutes after the
   last sign of life of the lead. riff-server then wakes the riff daemon
   of each host of the project, and the next host starts a new lead. The
@@ -6392,6 +6454,9 @@ project, and each minute:
   [What a new lead reads](#what-a-new-lead-reads)).
 - A host that comes back stops its old lead: another session holds the
   claim now.
+- A host that joined with `riff host join --no-lead` gives only
+  workers: its daemon claims no lead. See
+  [Stop the lead](start-a-riff.md#stop-the-lead).
 - When no host can run a lead, no lead starts, and the project is
   paused: its wave waits for a lead. See
   [The wave waits for its lead](#the-wave-waits-for-its-lead).
@@ -6417,15 +6482,19 @@ sequenceDiagram
     A->>A: stop the old lead
 ```
 
-To see the host of the lead, find the session with the tag `lead`:
+To see the lead of each project and its host:
 
 ```sh
 riff who
 ```
 
-`riff lead start`, `riff lead move` and `riff lead --session` name a
-lead by hand. The new lead takes the claim, and the riff daemon of the
-old lead stops the old lead.
+The first lines of `riff who` have a fact `lead` for each project: see
+[See who is in the riff](#see-who-is-in-the-riff). `riff lead start`
+starts no lead: it attaches to the lead when the lead runs on this
+host, and else names the host of the lead. `riff lead move` moves the
+lead by hand: the new lead takes the claim, and the riff daemon of the
+old lead stops the old lead. `riff lead restart` ends the lead, and the
+daemon of a host that joined starts a new one.
 
 #### When the lead fails to start
 
@@ -6465,37 +6534,33 @@ the wait. To find the cause, run this on the host:
 journalctl --user -u riff | grep 'The next start of a lead'
 ```
 
-When you fixed the cause, start the lead at once. `riff lead start`
-does not wait:
+When you fixed the cause, the daemon starts the lead at the end of the
+wait. `riff lead start` starts no lead. To start the lead at once,
+restart the riff daemon on the host: the new daemon has no wait.
 
 ```sh
-riff lead start
+riff daemon restart
 ```
 
 ### Name the lead
 
-Only a person, or the riff daemon of a host of the project (see
-[Where the lead runs](#where-the-lead-runs)), names the lead of the
-project. `riff lead start` starts a lead in a container and names it
-the lead: see [Start the lead](development.md#start-the-lead). To name
-another session the lead, for example a session on the host when the
-lead container ended, find its session ID:
+No command names the lead by its session ID. riff-server makes a
+session the lead at the call `lead` of a person, and only the riff
+daemon makes that call: for a lead that it starts (see
+[Where the lead runs](#where-the-lead-runs)), and for `riff lead move`
+(see [Move the lead to another host](#move-the-lead-to-another-host)).
+To get a new lead, for example when the lead does not answer, run this
+in a clone of the repository:
 
 ```sh
-riff who --long
+riff lead restart
 ```
 
-Then run this in a terminal in the repository, not in an agent
-session. Use the session ID, or its first 4 characters or more:
-
-```sh
-riff lead --session 77e0a1b2
-```
-
-The new lead replaces the old lead, and takes the claim `lead`. riff
-sends the old lead a message: it is not the lead now. When the riff
-daemon of a host runs the old lead, it stops it. In an agent session,
-`riff lead` fails: `a session cannot name the lead, also not itself.` A
+See [Stop the lead](start-a-riff.md#stop-the-lead). The new lead
+replaces the old lead, and takes the claim `lead`. riff sends the old
+lead a message when it still runs: it is not the lead now. When the
+riff daemon of a host runs the old lead, it stops it. A session cannot
+make the call: `a session cannot name the lead, also not itself.` A
 worker cannot be the lead: `a worker cannot be the lead. Make another
 session the lead.`
 
@@ -6515,8 +6580,9 @@ flowchart TD
 A new lead does not find the kept history of each thread unread. It
 takes the read marks of the lead before it, in each thread that both
 joined. So its unread messages are the messages that the old lead did
-not read. This holds after each `riff lead start`, and after each
-`riff lead --session ID`.
+not read. This holds for each new lead: after `riff lead move`, after
+`riff lead restart`, and when a host starts a new lead after the end
+of the old one.
 
 ```mermaid
 sequenceDiagram
@@ -6544,10 +6610,11 @@ riff read --all
 ### When you have no lead
 
 When no session is the lead of the project, for example when no host
-of the project runs one and no person names one, the project has no
-lead. This is what you see:
+of the project runs one, the project has no lead. This is what you
+see:
 
-- `riff who` shows no session of the project with the tag `lead`.
+- `riff who` shows no session of the project with the tag `lead`, and
+  the fact `lead OWNER/REPO: none`.
 - A `tell` to `lead` fails, and says to ask your own user. So a
   session asks you in its own terminal.
 - A verify request goes to each live session of the project with no
@@ -6555,9 +6622,13 @@ lead. This is what you see:
 - No session of the project can pause or resume the riff. You can,
   from a terminal.
 
-To get a lead, start one with `riff lead start`, or name a session
-that is not a worker with `riff lead --session ID`. See
-[Name the lead](#name-the-lead).
+To get a lead, give workers from a host in a clone of the repository:
+its riff daemon claims the lead and starts it. See
+[Where the lead runs](#where-the-lead-runs).
+
+```sh
+riff host join
+```
 
 ### The wave waits for its lead
 
@@ -6570,8 +6641,8 @@ item.
 
 A lead ends in these cases:
 
-- `riff lead stop` ends its container. Its riff daemon tells riff-server
-  at once.
+- `riff lead restart` ends its container. Its riff daemon tells
+  riff-server at once, and a host that joined starts a new lead.
 - It ends less than a minute after its start, or it cannot start again.
   Its riff daemon tells riff-server at once.
 - riff-server gets no sign of life of the lead for 3 minutes: its host
@@ -6583,7 +6654,7 @@ wait. Nor does it wait for a start again of the lead on a new riff (see
 [The lead starts again on the new riff](#the-lead-starts-again-on-the-new-riff)).
 When the claim `lead` is free, the riff daemon of a host of the project
 starts a new lead (see [Where the lead runs](#where-the-lead-runs)).
-With no such host, the wave waits until you start a lead.
+With no such host, the wave waits until a host joins the project.
 
 ```mermaid
 sequenceDiagram
@@ -6591,7 +6662,7 @@ sequenceDiagram
     participant D as riff daemon
     participant S as riff-server
     participant W as the wave
-    L->>D: riff lead stop ends the container
+    L->>D: riff lead restart ends the container
     D->>S: end the session of the lead
     W->>S: a look: the pauses
     S-->>W: no lead in OWNER/REPO
@@ -6607,32 +6678,27 @@ it under the current wave, and `riff top` on the line of the wave:
 
 ```text
 Wave 56: the projects  current  runs on thelio  7 open, 2 closed
-  waits for a lead: run riff lead start in a clone of como-technologies/riff
+  waits for a lead: a host that joined como-technologies/riff starts it (riff host join)
   free: #1993 #1994
 ```
 
 The Waves tab of the TUI says `waits for a lead` on the line of the
-repository. The Sessions tab says `waits for a lead · l starts it` on
-the group of the repository.
+repository. The Sessions tab says `waits for a lead` on the group of the
+repository, and its detail gives the step. `l` there starts no lead:
+its note gives the step too.
 
-Start the lead in a clone of the repository:
+To get a lead, give workers from a host in a clone of the repository:
+its riff daemon claims the lead and starts it.
 
 ```sh
-riff lead start
+riff host join
 ```
-
-Or press `l` on a row of the repository in the Sessions tab, on a host
-that runs the wave of the repository. The TUI asks
-`Start the lead of OWNER/REPO on HOST? y/N`. Press `y`: the TUI starts
-the lead on this machine from the main clone of the wave, as
-`riff lead start` does, and attaches. On another host, the row before
-the last says to run `riff lead start` in a clone.
 
 The new lead ends the wait, and the wave looks at once. The wait is no
 pause: `riff resume` works, and its answer says that no lead runs:
 
 ```text
-The repository como-technologies/riff is running now. No other session woke. No lead of como-technologies/riff runs, so its wave starts no session: run riff lead start in a clone of como-technologies/riff.
+The repository como-technologies/riff is running now. No other session woke. No lead of como-technologies/riff runs, so its wave starts no session: a host that joined como-technologies/riff starts the lead (riff host join).
 ```
 
 ### Ask the lead
@@ -7146,8 +7212,9 @@ riff tail
 
 ## Run the lead
 
-The riff daemon runs the workers in containers. Start the lead by
-hand, as in [Start a Riff](start-a-riff.md).
+The riff daemon runs the workers in containers, and the lead too: the
+daemon of a host that joined starts it, as in
+[Start a Riff](start-a-riff.md).
 ### How long a command waits for the server
 
 Each call of `riff` to the server has a budget: the longest time from
@@ -7189,8 +7256,9 @@ Error: cannot reach riff-server at http://127.0.0.1:7878
 
 ### Start the lead
 
-Start the lead in a container, in your clone of the repository (see
-[Start the lead](development.md#start-the-lead)):
+The riff daemon of a host that joined starts the lead in a container
+(see [Start the lead](development.md#start-the-lead)). Attach to it in
+your clone of the repository:
 
 ```sh
 riff lead start
@@ -7227,6 +7295,7 @@ These commands work in the container:
 | `riff audit`, `riff questions`, `riff session why`, `riff denials` | Only the lead: find out about a wave. |
 | `riff release test`, `cut`, `verify`, `status`, `hold`, `check`, `retry` and `rollback` | Only the lead: the release cycle. |
 | `riff daemon status`, `riff daemon events`, `riff ps`, and each command with `--host`, for example `riff build --host` | Only the lead: the daemons of your hosts. |
+| `riff lead restart` | Only the lead, on the word of its person: it writes its notes first, then the daemon of its host ends it, and a new lead starts. |
 | `riff project list` | Read the projects of the riff. |
 | `riff init --check` | The checks of the session image and the riff binary. |
 | `riff`, the TUI | The tabs of the riff. |
@@ -7249,9 +7318,9 @@ A step of a person, a claim, and a command that needs a program of the
 host refuse in the container before each call: `riff login`, `riff
 logout`, `riff invite`, `riff remove`, `riff admin`,
 `riff chat`, `riff tail`, `riff claim`, `riff release ITEM`, `riff
-lead --session`, `riff lead start`, `riff lead move`, `riff lead
-notes`, `riff questions --answered`, `riff server`, `riff update` and
-`riff cloud`. Run them in a terminal on the host:
+lead start`, `riff lead move`, `riff lead notes`, `riff questions
+--answered`, `riff server`, `riff update` and `riff cloud`. Run them in
+a terminal on the host:
 
 ```sh
 riff claim issue-12
@@ -7262,9 +7331,8 @@ riff: riff claim does not run in a container session. It needs the host: the sig
 ```
 
 `riff github`, `riff device`, `riff project init`, `riff project
-remove`, `riff host leave` and `riff lead stop` with no `--host` refuse
-in the container with words of their own: each names the step on the
-host.
+remove` and `riff host leave` with no `--host` refuse in the container
+with words of their own: each names the step on the host.
 
 ### Watch the riff on another machine
 
@@ -7724,7 +7792,7 @@ When riff-server gives a session no token of a GitHub App, riff names
 the reason, its fix, and a prompt for `claude` on the host:
 
 - in the lines `GitHub:` of `riff daemon status` on the host;
-- in the output of `riff lead start`, before the lead starts;
+- in the log of the riff daemon, before the lead starts;
 - at the end of the first prompt of the lead: the lead tells you the
   fix and the prompt first;
 - in a message of the wave to the lead, when a worker or a verify did
@@ -7733,7 +7801,7 @@ the reason, its fix, and a prompt for `claude` on the host:
 
 ```mermaid
 flowchart LR
-    S["riff-server: no token of an App, and why"] --> D["riff daemon status<br/>riff lead start<br/>the first prompt of the lead<br/>the message of the wave"]
+    S["riff-server: no token of an App, and why"] --> D["riff daemon status<br/>the log of the riff daemon<br/>the first prompt of the lead<br/>the message of the wave"]
     D --> F{"can the lead do the fix?"}
     F -- "no: riff refuses the fix in a session" --> C["you: claude on the host,<br/>with the prompt"]
     C --> T["the commands for your terminal"]

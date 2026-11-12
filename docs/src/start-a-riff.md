@@ -60,20 +60,23 @@ flowchart TD
 ## Use it
 
 In your project, run these two commands. The first gives workers: the
-riff daemon of this machine runs each work item in a container. The
-second starts your lead, in a container too:
+riff daemon of this machine runs each work item in a container. When
+the project has no lead, the daemon starts the lead in a container
+too. The second attaches your terminal to the lead:
 
 ```sh
 riff host join
 riff lead start
 ```
 
-`riff lead start` gives no workers. When the project has no lead, the
-riff daemon of a host that joined starts it: see
-[Where the lead runs](how-it-works.md#where-the-lead-runs). Then
-`riff lead start` attaches to it. Ask the lead: *"Who else is in the
-riff?"* The sessions ask their questions there. See
-[The lead](how-it-works.md#the-lead). The lead starts at effort xhigh.
+The daemon needs a few seconds to start the lead. When
+`riff lead start` says that no lead runs, run it again.
+`riff lead start` starts no lead: when the lead runs on another host,
+it names that host.
+See [Where the lead runs](how-it-works.md#where-the-lead-runs). Ask the
+lead: *"Who else is in the riff?"* The sessions ask their questions
+there. See [The lead](how-it-works.md#the-lead). The lead starts at
+effort xhigh.
 
 ## Detach from the lead
 
@@ -383,18 +386,18 @@ Then, when the current wave has free work, the riff daemon of the host
 runs each free item and each verify in a container, in the limit of the
 machine. The lead gets a note.
 
-To run your lead in a container too, run this in your clone of the
-project. The lead needs the claude token of this machine: see
-[Start the lead](development.md#start-the-lead).
+The riff daemon of a host that joined also starts the lead of the
+project, in a container, when no lead runs. The lead needs the claude
+token of this machine: see
+[Start the lead](development.md#start-the-lead). To attach to the lead,
+run this in your clone of the project:
 
 ```sh
 riff lead start
 ```
 
-`riff lead start` gives no workers, and it does not join the host. It
-says so when the host gave no workers. A host gives workers after
-`riff host join`: see
-[Give workers to a repository from a host](#give-workers-to-a-repository-from-a-host).
+`riff lead start` starts no lead, and it does not join the host. When
+the lead runs on another host, it names that host and the step there.
 
 `riff lead start` attaches your terminal to the lead. Select text with
 the mouse, then copy and paste, as in a plain terminal: the `claude` of
@@ -404,12 +407,9 @@ detach or the end of the lead, riff turns off each mode that a program
 in the container can leave on in your terminal, for example the mouse
 reports. So your terminal is whole again.
 
-When another session is the lead of the project, of you or of another
-person, `riff lead start` makes the new session the lead, and the riff
-daemon of the old lead stops it. It prints which session was the lead
-before. In the lead container,
-`whoami` says in its first line when the session is not the lead. To
-see which session is the lead:
+A project has one lead. In the lead container, `whoami` says in its
+first line when the session is not the lead. To see the lead of each
+project and its host:
 
 ```sh
 riff who
@@ -428,8 +428,9 @@ A second machine takes work when it joined too: see
 
 A host has two parts in a repository. It gives workers: its riff daemon
 runs the wave, which is the work items and the verifies. It runs the
-lead of the project. `riff host join` gives this host the part workers.
-Run it in your clone of the project:
+lead of the project. `riff host join` gives this host the part workers,
+and its daemon starts the lead when the project has none. Run it in
+your clone of the project:
 
 ```sh
 riff host join
@@ -472,9 +473,10 @@ clone of the project:
 riff host leave
 ```
 
-The daemon starts no new session for the repository on this host. The
-sessions that run go on to their end. The lead on this host goes on,
-and the rollout of the lead asks for no wave there. To end the
+The daemon starts no new session for the repository on this host, and
+claims no new lead. The sessions that run go on to their end. The lead
+on this host goes on, and the rollout of the lead asks for no wave
+there. To end the
 sessions that run, and free their items:
 
 ```sh
@@ -488,49 +490,65 @@ for another host of yours. See
 
 ### Stop the lead
 
-To end the lead on this host, run this in your clone of the project:
+A project always has one lead: riff has no stop that leaves it with
+none. To end the lead and get a new one, run this in your clone of the
+project, on any host:
 
 ```sh
-riff lead stop
+riff lead restart
 ```
 
-riff asks the lead to write its notes, and waits up to 5 minutes for
-them. Then the riff daemon ends the container of the lead, and the host
-loses the part lead. An update starts the lead no more. The workers of
-the host go on: `riff lead stop` does not take the part workers. The
-claim `lead` of the project is free then, so the riff daemon of a host
-that joined the project starts a new lead. To start the lead again on
-this host:
-
-```sh
-riff lead start
-```
+riff finds the lead of the project, on any host, and asks it to write
+its notes. It waits up to 5 minutes for them. Then the riff daemon of
+the host of the lead ends its container, and that host loses the part
+lead. An update starts the old lead no more. The claim `lead` of the
+project is free then, so the riff daemon of a host that joined the
+project starts a new lead, and the new lead reads the notes. The
+workers of each host go on.
 
 ```mermaid
 sequenceDiagram
-    participant P as you: riff lead stop
+    participant P as you: riff lead restart
     participant L as the lead
-    participant D as the riff daemon
+    participant D as the riff daemon of the host of the lead
+    participant H as the riff daemon of a host that joined
     P->>L: write your notes
     L->>P: the notes change (5 minutes at most)
     P->>D: end the container of the lead
     D-->>P: done: the host has no part lead
+    H->>H: the claim lead is free: start a new lead
 ```
 
-To stop the lead on another host of yours, with no login there:
+The lead can run `riff lead restart` in its container on your word. It
+writes its notes first.
+
+To keep the lead off this host, give it only workers:
 
 ```sh
-riff lead stop --host thelio
+riff host join --no-lead
+```
+
+The riff daemon of this host claims the lead of the project no more. A
+lead that runs here goes on, and `riff host join` says so: run
+`riff lead restart`, and a host that claims the lead starts a new one.
+With no such host, the wave of the project waits for a lead. The host
+keeps the choice over a restart of the daemon and over an update.
+`riff who` shows its parts as `workers, no lead`. To let the host claim
+the lead again:
+
+```sh
+riff host join
+```
+
+To keep the lead off another host of yours, with no login there:
+
+```sh
+riff host join --no-lead --host thelio
 ```
 
 Only you in a terminal and your lead in this repository can use
 `--host`. The daemon of HOST refuses each other session, for example a
-worker. In the container of the lead, name the host with `--host`, and
-write your notes first.
-
-When the host has no other part in the repository, its daemon stops
-serving it. To take the part workers too, see
-[Take the workers from a host](#take-the-workers-from-a-host).
+worker.
 
 ### Get the static riff
 
@@ -812,7 +830,7 @@ is not set up for riff. The answer to the question is `y`. A line with
 
 ```text
 riff checks the repository of this clone on GitHub:
-  step  riff.toml on main: main of acme/app has no riff.toml, so riff lead start stops. Step: make riff.toml on main with a pull request
+  step  riff.toml on main: main of acme/app has no riff.toml, so riff starts no lead and no wave. Step: make riff.toml on main with a pull request
   step  auto-merge and squash merge: acme/app allows no auto-merge. Step: allow auto-merge and squash merge
   step  the ruleset of main: no ruleset of main requires the check riff/verify, so a merge does not wait for the verify. Step: make the ruleset riff on main
   step  the milestone Backlog: acme/app has no open milestone Backlog. Step: make the milestone Backlog
@@ -930,11 +948,12 @@ CI, see [A repository with no CI](#a-repository-with-no-ci).
 
 Each repository of the riff has the file `riff.toml` at its root, on
 its default branch. Its key `image` pins the session image. Without
-the file on the default branch of `origin`, `riff lead start` stops
-with the error `riff.toml is not on origin/main`. It starts no lead and
-no wave. The base image of riff, `riff-base`, has `claude`, `git` and
-`gh`, and no language. A project adds its toolchain in an image of its
-own: see [Build the image of a project](#build-the-image-of-a-project).
+the file on the default branch of `origin`, `riff host join` stops
+with the error `riff.toml is not on origin/main`. riff starts no lead
+and no wave. The base image of riff, `riff-base`, has `claude`, `git`
+and `gh`, and no language. A project adds its toolchain in an image of
+its own: see
+[Build the image of a project](#build-the-image-of-a-project).
 
 riff sets no cache and no variable of a tool in a session. A project
 that wants a build cache adds the tables `[session.env]` and

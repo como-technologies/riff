@@ -228,15 +228,15 @@ pub fn line(fact: &BotFact, facts: &Facts<'_>) -> Result<Line, String> {
         ),
         BotFact::LeadFailed => format!(
             "riff stopped {lead} to start it again on the new riff, and the start failed: the \
-             log of the riff daemon on {host} has the cause. The lead is not there: run riff \
-             lead start, then /resume."
+             log of the riff daemon on {host} has the cause. The lead is not there: a host that \
+             joined the project starts a new lead (riff host join)."
         ),
         BotFact::LeadStale => format!(
             "The sign-in of claude in {lead} is stale: claude on {host} signed in again, and \
              the lead holds the old sign-in file. The lead will fail with \"OAuth token \
-             revoked\", and /login in it cannot save. Type /exit in the lead. Then run claude \
-             setup-token, then riff claude-token, on {host}, and start the lead again: riff \
-             lead start"
+             revoked\", and /login in it cannot save. Run claude setup-token, then riff \
+             claude-token, on {host}. Then type /exit in the lead: the riff daemon starts it \
+             again with the token."
         ),
         BotFact::LeadNoNetwork => format!(
             "{} lost its network at the restart of the daemon: run podman stop {}, then riff \

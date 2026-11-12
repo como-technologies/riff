@@ -99,7 +99,9 @@ async fn who_row(server: &str, dir: &Path, id: &str) -> String {
         .unwrap();
     assert!(out.status.success(), "{out:?}");
     let out = String::from_utf8(out.stdout).unwrap();
-    let row = out.lines().find(|l| l.contains(&format!("({id})")));
+    let row = out
+        .lines()
+        .find(|l| l.contains(&format!("({id})")) && !l.starts_with("lead "));
     row.unwrap_or_else(|| panic!("no row of {id}: {out}"))
         .to_owned()
 }

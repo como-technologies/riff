@@ -306,24 +306,15 @@ enum Command {
         #[command(subcommand)]
         command: SessionCommand,
     },
-    /// Name the lead of the project: riff lead --session ID
+    /// Attach to, restart or move the lead of this repository
     ///
-    /// A project has one lead, for each person of the project. The other
-    /// sessions of the project send their questions to the lead. `riff
-    /// lead --session ID` makes the session ID the lead of the project of
-    /// this directory. It replaces the old lead, and riff tells the old
-    /// lead. Run it in a terminal with no session, not in an agent
-    /// session: a session cannot name the lead, also not itself. `riff
-    /// lead start` names its new lead too. The new lead takes the claim
-    /// lead, and the riff daemon of the old lead stops it.
-    #[command(args_conflicts_with_subcommands = true)]
+    /// A project has one lead. The riff daemon of a host that joined the
+    /// project starts it in a container, and riff-server makes it the
+    /// lead. The other sessions send their questions to the lead. `riff
+    /// who` shows the lead of each project and its host.
     Lead {
-        /// The session ID of the new lead, or its start: at least 4
-        /// characters. `riff who` shows it.
-        #[arg(long)]
-        session: Option<String>,
         #[command(subcommand)]
-        command: Option<LeadCommand>,
+        command: LeadCommand,
     },
     /// Pause your repository, or the whole riff
     ///
@@ -1622,7 +1613,7 @@ enum DaemonCommand {
     ///
     /// The daemon frees the claim of the session on riff-server, then
     /// stops its container. riff daemon status shows the names. It
-    /// refuses the lead: stop it with riff lead stop.
+    /// refuses the lead: end it with riff lead restart.
     End {
         /// The name of the container, for example riff-issue-12-1a2b3c4d.
         name: String,
@@ -1777,10 +1768,11 @@ enum HostCommand {
     /// workers until riff host leave, also over a restart of the daemon
     /// and over an update. The host can also run the lead of the project:
     /// when no lead runs, the daemon of a host that joined claims the lead
-    /// and starts it, the host with the most free room first. With --host,
-    /// the daemon of HOST does it in its own main clone of the repository.
-    /// When HOST does not serve the repository yet, its daemon clones it
-    /// first, with the gh of your user there.
+    /// and starts it, the host with the most free room first. With
+    /// --no-lead, the host gives only workers: it claims no lead. With
+    /// --host, the daemon of HOST does it in its own main clone of the
+    /// repository. When HOST does not serve the repository yet, its daemon
+    /// clones it first, with the gh of your user there.
     ///
     /// The repository must be a project of the riff, and the project must
     /// allow the host. Else riff host join names the fix, riff project
@@ -1794,6 +1786,13 @@ enum HostCommand {
         /// other session, for example a worker.
         #[arg(long)]
         host: Option<String>,
+        /// Give only workers: the host claims no lead of the project, and
+        /// starts none. A lead that runs on the host goes on: riff lead
+        /// restart ends it, and a host that claims the lead starts a new
+        /// one. riff host join with no --no-lead lets the host claim the
+        /// lead again.
+        #[arg(long)]
+        no_lead: bool,
     },
     /// Stop the workers of this host in this repository
     ///
@@ -1820,41 +1819,32 @@ enum HostCommand {
 
 #[derive(Subcommand)]
 enum LeadCommand {
-    /// Start the lead of this repository in a container
+    /// Attach to the lead of this repository
     ///
-    /// The riff daemon starts claude with a terminal in a container of
-    /// the session image, with a clone and a Claude folder of its own
-    /// that stay between starts. When the lead runs already, riff
-    /// attaches to it. Ctrl-P Ctrl-Q detaches: the lead runs on. The
-    /// Sessions tab of riff shows it and attaches to it too.
+    /// The riff daemon of a host that joined the project starts the lead:
+    /// claude with a terminal in a container of the session image, with a
+    /// clone and a Claude folder of its own that stay between starts.
+    /// When the lead runs on this host, riff attaches to it. Ctrl-P Ctrl-Q
+    /// detaches: the lead runs on. The Sessions tab of riff shows it and
+    /// attaches to it too.
     ///
-    /// This command starts no workers and does not join the host: the
-    /// host gives workers after riff host join. It starts a lead only for
-    /// a project of the riff: see riff project list. A project has one
-    /// lead: the new lead takes the claim lead, and the riff daemon of the
-    /// old lead stops it. The daemon of a host that joined starts the lead
-    /// by itself when no lead runs. After a start of the lead that failed,
-    /// the daemon waits longer before each next start; this command does
-    /// not wait. While another start of the lead runs on this host, riff
-    /// waits for it, then attaches to its lead.
+    /// This command starts no lead. When the lead runs on another host, it
+    /// names that host and the step there: ssh HOST, then riff lead start,
+    /// or riff lead move with this host. With no lead, it says that the
+    /// daemon of a host that joined starts the lead: riff host join. Then
+    /// it exits with 1.
     Start,
-    /// Stop the lead of this repository, and end its container
+    /// End the lead of this repository, and get a new lead
     ///
-    /// riff asks the lead to write its notes, and waits for them for 5
-    /// minutes. Then the riff daemon ends the container of the lead, and
-    /// the host loses the part lead. An update starts the lead no more.
-    /// The claim lead of the project is free then: the riff daemon of a
-    /// host that joined the project starts a new lead. To start it again
-    /// here, run riff lead start. The lead can run this command on your
-    /// word, with --host. Only the lead and you can run it.
-    Stop {
-        /// Ask the riff daemon of HOST, through riff-server. riff waits
-        /// for its reply. Only you in a terminal and your lead in this
-        /// repository can use --host. The daemon of HOST refuses each
-        /// other session, for example a worker. The default is this host.
-        #[arg(long)]
-        host: Option<String>,
-    },
+    /// riff finds the lead of the project, on any host, and asks it to
+    /// write its notes. It waits for them for 5 minutes. Then the riff
+    /// daemon of the host of the lead ends its container, and the host
+    /// loses the part lead. An update starts the old lead no more. The
+    /// claim lead of the project is free then: the riff daemon of a host
+    /// that joined the project starts a new lead, and the new lead reads
+    /// the notes. The lead can run this command on your word, and writes
+    /// its notes first. Only the lead and you can run it.
+    Restart,
     /// Move the lead of this repository to another host
     ///
     /// riff asks the old lead to write its handover to the notes of the
@@ -2404,16 +2394,20 @@ async fn cli() -> Result<()> {
         std::process::exit(code);
     }
     if let Command::Lead {
-        command: Some(LeadCommand::Start),
-        ..
+        command: LeadCommand::Start,
     } = &command
     {
+        // `riff lead start` starts no lead: it names the host of the lead,
+        // and exits with 1 when it does not attach (01M77Y6ZBV7C8Z332SAFKQCZ5A).
         let server = api.base().to_owned();
-        return riff::lead::start(api, &here, &server).await;
+        if let Err(e) = riff::lead::start(api, &here, &server).await {
+            eprintln!("{e:#}");
+            std::process::exit(1);
+        }
+        return Ok(());
     }
     if let Command::Lead {
-        command: Some(LeadCommand::Move { host }),
-        ..
+        command: LeadCommand::Move { host },
     } = &command
     {
         let (api, me) = daemon_asker(&here, api.base())?;
@@ -2430,12 +2424,11 @@ async fn cli() -> Result<()> {
     }
     if let Command::Lead {
         command:
-            Some(LeadCommand::Notes {
+            LeadCommand::Notes {
                 command,
                 thread,
                 history,
-            }),
-        ..
+            },
     } = &command
     {
         let thread = thread_or_default(thread.clone(), &here)?;
@@ -2447,16 +2440,15 @@ async fn cli() -> Result<()> {
         return riff::lead::notes(&api, &me, &thread, *history, file).await;
     }
     if let Command::Lead {
-        command: Some(LeadCommand::Stop { host }),
-        ..
+        command: LeadCommand::Restart,
     } = &command
     {
-        return lead_stop_command(host.as_deref(), &here, &reach, api.base()).await;
+        return lead_restart_command(&here, &reach, api.base()).await;
     }
     if let Command::Host { command } = &command {
         return match command {
-            HostCommand::Join { host } => {
-                join_command(host.as_deref(), &here, &reach, api.base()).await
+            HostCommand::Join { host, no_lead } => {
+                join_command(host.as_deref(), *no_lead, &here, &reach, api.base()).await
             }
             HostCommand::Leave { host, now } => {
                 leave_command(host.as_deref(), *now, &here, &reach).await
@@ -2652,21 +2644,6 @@ async fn cli() -> Result<()> {
                 }
             }
         }
-        Command::Lead {
-            command: None,
-            session,
-        } => {
-            let Some(session) = session else {
-                anyhow::bail!(text::LEAD_NAME_SESSION);
-            };
-            // A session sends its own URI: riff-server refuses it
-            // (01M5NJAXTQ0YKN7Q7XN0A7ZMPF). A person sends the repository.
-            let me = match me.who().session() {
-                Some(_) => me,
-                None => identity::person(&here, api.base())?,
-            };
-            println!("{}", text::led(&api.lead(&me, &session).await?));
-        }
         Command::Pr {
             command:
                 Pr::Open {
@@ -2800,16 +2777,7 @@ async fn cli() -> Result<()> {
         | Command::Daemon { .. }
         | Command::Init { .. }
         | Command::Relay { .. }
-        | Command::Lead {
-            command:
-                Some(
-                    LeadCommand::Start
-                    | LeadCommand::Stop { .. }
-                    | LeadCommand::Notes { .. }
-                    | LeadCommand::Move { .. },
-                ),
-            ..
-        }
+        | Command::Lead { .. }
         | Command::Takeover { .. }
         | Command::Ps
         | Command::Pr {
@@ -2836,8 +2804,8 @@ async fn cli() -> Result<()> {
 /// ([`riff::reach::Way::Host`], 01M74A8CXVRD352VRJ9FH54HJ1): the sign-in
 /// of a person, a claim, or a program of the host. In a container session
 /// it refuses at once. `riff github`, `riff device`, `riff project init`, `riff project remove`,
-/// `riff host leave` and `riff lead stop` with no `--host` refuse there with
-/// words of their own.
+/// and `riff host leave` with no `--host` refuse there with words of their
+/// own.
 fn needs_the_host(command: &Command) -> Option<&'static str> {
     Some(match command {
         Command::Login => "riff login",
@@ -2849,18 +2817,14 @@ fn needs_the_host(command: &Command) -> Option<&'static str> {
         Command::Tail { .. } => "riff tail",
         Command::Claim { .. } => "riff claim",
         Command::Release { cycle: None, .. } => "riff release ITEM",
-        Command::Lead { command: None, .. } => "riff lead --session",
         Command::Lead {
-            command: Some(LeadCommand::Start),
-            ..
+            command: LeadCommand::Start,
         } => "riff lead start",
         Command::Lead {
-            command: Some(LeadCommand::Move { .. }),
-            ..
+            command: LeadCommand::Move { .. },
         } => "riff lead move",
         Command::Lead {
-            command: Some(LeadCommand::Notes { .. }),
-            ..
+            command: LeadCommand::Notes { .. },
         } => "riff lead notes",
         Command::Questions {
             answered: Some(_), ..
@@ -4427,13 +4391,20 @@ async fn wave_end_moving(
 
 /// `riff host join` (#1643): the daemon of this host gives workers to the
 /// repository of the folder, or with `host` the daemon of that host does,
-/// through riff-server. In a lead container, with no `host`, there is no
-/// daemon of the host: it names the hosts of the user that give no workers
-/// (#1430, 01M5SN566ZH5ZQ52NYT24WYA4P).
-async fn join_command(host: Option<&str>, here: &Place, reach: &Reach, server: &str) -> Result<()> {
+/// through riff-server. With `no_lead`, the host claims no lead of the
+/// project (#1793, 01M77Y6ZHM0V6YQ3XJEVJ8J5PC). In a lead container, with
+/// no `host`, there is no daemon of the host: it names the hosts of the
+/// user that give no workers (#1430, 01M5SN566ZH5ZQ52NYT24WYA4P).
+async fn join_command(
+    host: Option<&str>,
+    no_lead: bool,
+    here: &Place,
+    reach: &Reach,
+    server: &str,
+) -> Result<()> {
     match (host, reach) {
         (Some(host), _) => {
-            let request = join_request_of(here)?;
+            let request = join_request_of(here, no_lead)?;
             ask_daemon(host, &request, here, reach).await
         }
         (None, Reach::Daemon(_)) => {
@@ -4446,79 +4417,80 @@ async fn join_command(host: Option<&str>, here: &Place, reach: &Reach, server: &
             std::process::exit(1);
         }
         (None, Reach::Direct(_)) => {
-            riff::wave::ask_join(&riff::daemon::dir()?, here, server).await?;
+            riff::wave::ask_join(&riff::daemon::dir()?, here, server, no_lead).await?;
             Ok(())
         }
     }
 }
 
-/// `riff lead stop` (#1644): the lead on this host, or with `host` the lead
-/// on that host, writes its notes, and the daemon ends its container.
-/// In a lead container there is no daemon of the host, and the lead is the
-/// caller: it names `host`, and riff asks nobody for notes, because the
-/// lead wrote them first (01M6QVSWTARPKP59X8AJBBK69X).
-async fn lead_stop_command(
-    host: Option<&str>,
-    here: &Place,
-    reach: &Reach,
-    server: &str,
-) -> Result<()> {
+/// `riff lead restart` (#1793, 01M77Y6ZEQ4A6C6E0XZ56WRE89): riff finds the
+/// lead of the project, the lead writes its notes, and the daemon of its
+/// host ends its container. Then a host that joined the project starts a
+/// new lead. In the container of the lead, the lead is the caller: riff
+/// asks nobody for notes, because the lead wrote them first, and it finds
+/// the host of the lead in the sessions of the riff.
+async fn lead_restart_command(here: &Place, reach: &Reach, server: &str) -> Result<()> {
     if here.default_thread().is_none() {
         anyhow::bail!("{}", text::RUN_NO_REPO);
     }
-    let request = riff::daemon::remote::Request::LeadStop;
-    let named = host.unwrap_or_else(|| here.host());
-    match (host, reach) {
-        (None, Reach::Daemon(_)) => {
-            eprintln!("{}", text::LEAD_STOP_IN_CONTAINER);
+    let request = riff::daemon::remote::Request::LeadRestart;
+    let repo = here.repo_text();
+    if let Reach::Daemon(_) = reach {
+        let sessions = reach.who(false).await?;
+        let lead = sessions
+            .iter()
+            .find(|s| s.live && s.uri.lead() && s.uri.place().repo_text() == repo);
+        let Some(lead) = lead else {
+            eprintln!("{}", text::lead_restart_none(&repo));
+            std::process::exit(1);
+        };
+        let host = lead.uri.place().host().to_owned();
+        ask_daemon(&host, &request, here, reach).await?;
+        println!("{}", text::lead_restart_done(&host));
+        return Ok(());
+    }
+    let (api, me) = daemon_asker(here, server)?;
+    let lead = match riff::lead::to_restart(&api, &me).await {
+        Ok(lead) => lead,
+        Err(e) => {
+            eprintln!("{e:#}");
             std::process::exit(1);
         }
-        (Some(host), Reach::Daemon(_)) => ask_daemon(host, &request, here, reach).await?,
-        (_, Reach::Direct(_)) => {
-            let (api, me) = daemon_asker(here, server)?;
-            // The stop waits for the notes of the lead: a session learns
-            // first that it cannot stop the lead with the policy required,
-            // and on this host the check comes first
-            // (01M75WKSJTB28ZQV8ADPBQ86WE, 01M75WKSNREGG95CK40W2A5JPQ).
-            let action = Action::LeadStop {
-                host: named.to_owned(),
-                repo: here.repo_text(),
-            };
-            let asker = Asker::terminal();
-            match host {
-                Some(_) => proof::refuse_in_session(&api, &me, &action, &asker).await?,
-                None => proof::gate(&api, &action, &asker).await?,
-            }
-            let wait = riff::lead::HANDOVER_WAIT;
-            if let Err(e) = riff::lead::stop_notes(&api, &me, named, wait).await {
-                eprintln!("{e:#}");
-                std::process::exit(1);
-            }
-            match host {
-                Some(host) => {
-                    let wait = riff::daemon::remote::REPLY_WAIT;
-                    let asked = riff::daemon::remote::ask_with_proof(
-                        &api, &me, host, &request, wait, &asker,
-                    );
-                    match asked.await {
-                        Ok(reply) => println!("{reply}"),
-                        Err(e) => {
-                            eprintln!("{e:#}");
-                            std::process::exit(1);
-                        }
-                    }
-                }
-                None => {
-                    let (dir, repo) = (riff::daemon::dir()?, here.repo_text());
-                    if let Err(e) = riff::lead::stop_here(&dir, &repo).await {
-                        eprintln!("{e:#}");
-                        std::process::exit(1);
-                    }
-                }
-            }
-        }
+    };
+    let host = lead.place().host().to_owned();
+    let here_host = host == here.host();
+    // The restart waits for the notes of the lead: a session learns first
+    // that it cannot end the lead with the policy required, and on this
+    // host the check comes first (01M75WKSJTB28ZQV8ADPBQ86WE,
+    // 01M75WKSNREGG95CK40W2A5JPQ).
+    let action = Action::LeadRestart {
+        host: host.clone(),
+        repo: repo.clone(),
+    };
+    let asker = Asker::terminal();
+    match here_host {
+        true => proof::gate(&api, &action, &asker).await?,
+        false => proof::refuse_in_session(&api, &me, &action, &asker).await?,
     }
-    println!("{}", text::lead_stop_done(named));
+    let wait = riff::lead::HANDOVER_WAIT;
+    if let Err(e) = riff::lead::restart_notes(&api, &me, &lead, wait).await {
+        eprintln!("{e:#}");
+        std::process::exit(1);
+    }
+    let ended = match here_host {
+        true => riff::lead::stop_here(&riff::daemon::dir()?, &repo).await,
+        false => {
+            let wait = riff::daemon::remote::REPLY_WAIT;
+            let asked =
+                riff::daemon::remote::ask_with_proof(&api, &me, &host, &request, wait, &asker);
+            asked.await.map(|reply| println!("{reply}"))
+        }
+    };
+    if let Err(e) = ended {
+        eprintln!("{e:#}");
+        std::process::exit(1);
+    }
+    println!("{}", text::lead_restart_done(&host));
     Ok(())
 }
 
@@ -4554,12 +4526,13 @@ async fn leave_command(host: Option<&str>, now: bool, here: &Place, reach: &Reac
     }
 }
 
-/// The request `riff host join --host` sends for the repository of `here`.
-fn join_request_of(here: &Place) -> Result<riff::daemon::remote::Request> {
+/// The request `riff host join --host` sends for the repository of `here`,
+/// with `--no-lead` when `no_lead`.
+fn join_request_of(here: &Place, no_lead: bool) -> Result<riff::daemon::remote::Request> {
     if here.default_thread().is_none() {
         anyhow::bail!("{}", text::RUN_NO_REPO);
     }
-    riff::daemon::remote::join_request(&here.repo_text())
+    riff::daemon::remote::join_request(&here.repo_text(), no_lead)
 }
 
 /// `riff wave list`: the open milestones from `gh`, with the items and
@@ -4887,13 +4860,7 @@ mod tests {
         use clap::Parser;
         use riff::reach::Way;
         // These refuse in a container with words of their own.
-        let own: [&[&str]; 5] = [
-            &["github"],
-            &["device"],
-            &["project"],
-            &["host", "leave"],
-            &["lead", "stop"],
-        ];
+        let own: [&[&str]; 4] = [&["github"], &["device"], &["project"], &["host", "leave"]];
         for row in riff::reach::COMMANDS {
             let words = std::iter::once("riff").chain(row.args.iter().copied());
             let command = Cli::try_parse_from(words).unwrap().command.unwrap();

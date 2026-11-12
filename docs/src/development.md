@@ -1139,7 +1139,7 @@ riff image
 
 The sessions use only the merged pin: the image that `riff.toml` pins
 on the default branch of `origin`. riff fetches that branch first. The
-waves of the daemon, `riff host join`, `riff run`, `riff lead start`
+waves of the daemon, `riff host join`, `riff run`, the start of a lead
 and the update steps of the daemon use the merged pin. An edit of
 `riff.toml` that is not merged changes no session, also an edit in the
 main clone. When `riff.toml` of the main clone pins another image, riff
@@ -2091,8 +2091,8 @@ sequenceDiagram
 - Only the lead can ask. The daemon refuses a worker.
 - `--image` works only on the host. The daemon takes the image that the
   repository pins.
-- The daemon must know the repository: run `riff lead start` once, or
-  `riff host join` in the clone on the host.
+- The daemon must know the repository: run `riff host join` in the
+  clone on the host, or let a lead run there.
 - When the job does not start, for example when a hold keeps the item,
   the riff is paused, or a fact of the host fails, the lead gets a
   message with the reason. The item stays free.
@@ -2489,7 +2489,7 @@ git log -F --author='riff-como-technologies[bot]' origin/worktree-issue-12
 
 The riff tools of a session of the daemon act on the riff-server of
 the session. Each session of `riff run`, of a wave and
-of `riff lead start` has your riff-server. So the lead of the project
+of a lead has your riff-server. So the lead of the project
 sees each post of a session, and `riff relay watch` of that session
 wakes on a message of riff-server.
 
@@ -3878,7 +3878,7 @@ machine to run the wave of the repository. It asks only when the host
 has the part workers (`riff host join`) and no wave of the repository
 runs there. On a host that never joined, or that left, the rollout asks
 nothing and says nothing: a lead on it only watches. `riff lead start`
-starts no wave.
+starts no wave and no lead.
 
 ```mermaid
 flowchart LR
@@ -4544,8 +4544,9 @@ riff daemon end riff-issue-12-1a2b3c4d
 
 `riff daemon status` shows the names. The daemon frees the claim of
 the session on riff-server, then stops its container. The item is free
-work again at once. riff refuses the lead: stop it with
-`riff lead stop` (see [Stop the lead](start-a-riff.md#stop-the-lead)).
+work again at once. riff refuses the lead: end it with
+`riff lead restart`, and a new lead starts (see
+[Stop the lead](start-a-riff.md#stop-the-lead)).
 Add `--host HOST` to end a session on another host (see
 [Manage the daemon of another host](#manage-the-daemon-of-another-host)).
 
@@ -4804,12 +4805,15 @@ Get ready as for `riff run` (see
 
 ### Start the lead
 
-The lead needs the claude token of this machine. The lead runs for
-hours, and the next sign-in of `claude` on this machine replaces the
-sign-in file that a lead with no token holds. Then that lead fails, and
-`/login` in it cannot save. So with no token, `riff daemon status`
-says `claude token: not set`, and `riff lead start` starts no lead. Do
-this one time on this machine (see
+You start no lead by hand: the riff daemon of a host that joined the
+project starts it (see
+[Where the lead runs](how-it-works.md#where-the-lead-runs)). The lead
+needs the claude token of the host. The lead runs for hours, and the
+next sign-in of `claude` on the host replaces the sign-in file that a
+lead with no token holds. Then that lead fails, and `/login` in it
+cannot save. So with no token, `riff daemon status` says
+`claude token: not set`, and the daemon starts no lead: the line of its
+log names the step. Do this one time on this machine (see
 [Give the container sessions a long-lived sign-in of claude](#give-the-container-sessions-a-long-lived-sign-in-of-claude)):
 
 ```sh
@@ -4817,40 +4821,52 @@ claude setup-token
 riff claude-token
 ```
 
-Then, in your clone of the repository:
+Then give workers from this machine, in your clone of the repository.
+When the project has no lead, the daemon claims the lead and starts it:
+
+```sh
+riff host join
+```
+
+The repository must be a project of the riff: else `riff host join`
+names the fix, `riff project init`, and starts nothing (see
+[A wave and a lead only for a project](how-it-works.md#a-wave-and-a-lead-only-for-a-project)).
+The daemon starts the lead of the repository in the container
+`riff-lead-OWNER-REPO`, and riff-server makes it the lead. To attach
+your terminal to it:
 
 ```sh
 riff lead start
 ```
 
-The repository must be a project of the riff: else `riff lead start`
-names the fix, `riff project init`, and starts nothing (see
-[A wave and a lead only for a project](how-it-works.md#a-wave-and-a-lead-only-for-a-project)).
-The daemon starts the lead of the repository in the container
-`riff-lead-OWNER-REPO`, and riff attaches your terminal to it. A new
-lead is the lead of the project at once: `riff lead start` names it,
-and riff tells the old lead. When the lead runs already, riff only
-attaches. At each attach, `claude` draws its screen at once: riff
-first gives the terminal of the container another size, and the
-attach gives it the size of your terminal again.
-When riff cannot change the size, it says why. Then change the size of
-your terminal to see the lead.
+`riff lead start` starts no lead. When the lead runs on another host,
+it exits with 1, and names that host and the step there:
+
+```text
+riff: the lead of como-technologies/riff runs on thelio, not on this host, and riff lead start starts no lead. To attach to it: ssh thelio, then riff lead start in a clone of como-technologies/riff. To move it here: riff lead move pangolin.
+```
+
+With no lead, it says that the riff daemon of a host that joined starts
+it, and names `riff host join`. At each attach, `claude` draws its
+screen at once: riff first gives the terminal of the container another
+size, and the attach gives it the size of your terminal again. When
+riff cannot change the size, it says why. Then change the size of your
+terminal to see the lead.
 
 To leave the terminal of the lead, press Ctrl-P, then Ctrl-Q. The lead
 runs on, and riff says that you left the terminal of the container.
 
-`riff lead start` starts no workers, and it does not join the host. A
-host that gave no workers gets one line that names `riff host join`. The
-daemon serves the repository while the lead runs, so `riff who` shows
-the host. To end the lead with its notes, run `riff lead stop` (see
-[Stop the lead](start-a-riff.md#stop-the-lead)). When you type `/exit`
-in it, its container ends, and the riff daemon starts the lead again
-with `claude --resume`, as the same session (see
+The daemon serves the repository while the lead runs, so `riff who`
+shows the host. To end the lead with its notes and get a new lead, run
+`riff lead restart` (see
+[Stop the lead](start-a-riff.md#stop-the-lead)).
+When you type `/exit` in it, its container ends, and the riff daemon
+starts the lead again with `claude --resume`, as the same session (see
 [Where the lead runs](how-it-works.md#where-the-lead-runs)). Your
 terminal leaves the lead, and riff prints:
 
 ```text
-The lead in the container riff-lead-OWNER-REPO ended. Start it again in a clone: riff lead start
+The lead in the container riff-lead-OWNER-REPO ended. Its riff daemon starts it again, or a host that joined the project starts a new lead. Then riff lead start attaches to it.
 The command claude --resume that claude shows works only in the container of the lead. In a new lead, /resume shows the old conversations.
 ```
 
@@ -4862,14 +4878,16 @@ A lead of an older riff can run with no token: it holds the sign-in
 file of `claude` of this machine. When `claude` on this machine signs
 in again, it replaces that file, and the sign-in of the lead is stale.
 riff tells you at each attach of `riff lead start` and of the TUI,
-and the riff daemon tells you once in riff chat. Type `/exit` in the
-lead, then run this on the machine of the lead:
+and the riff daemon tells you once in riff chat. Run this on the
+machine of the lead:
 
 ```sh
 claude setup-token
 riff claude-token
-riff lead start
 ```
+
+Then type `/exit` in the lead: the riff daemon starts it again with the
+token.
 
 The lead runs `claude` with `--dangerously-skip-permissions`. The
 container is the sandbox, so the auto mode checker of Claude Code does
@@ -4909,8 +4927,8 @@ instructions of its riff tools tell it to start the watch again when the
 Monitor ends, and only then. See
 [Wake the lead in a container with no restart](how-it-works.md#wake-the-lead-in-a-container-with-no-restart).
 It plans the waves with `/opt/riff/riff wave`: see
-[Waves](waves.md). `riff lead start` names it the lead of the project,
-and riff tells the old lead. See
+[Waves](waves.md). riff-server makes it the lead of the project, and
+riff tells the old lead. See
 [Name the lead](how-it-works.md#name-the-lead).
 
 #### Update the lead on a host that runs no wave of the repository
@@ -4923,8 +4941,8 @@ workers. It needs no wave of the repository. So a host that must not
 run the wave of a repository updates its lead too, for example when the
 other person of the repository has a rule that its waves run on other
 hosts only. `riff host leave` took the part workers from the host, or no
-person ran `riff host join` there. A lead that `riff lead stop` ended is
-gone: no update starts it again.
+person ran `riff host join` there. A lead that `riff lead restart` ended
+is gone: no update starts it again.
 
 ```mermaid
 flowchart TD
@@ -9157,18 +9175,17 @@ riff resume
 
 ### Make the state of a real riff
 
-Each command runs as one session: `RIFF_SESSION` names it. Make a
-lead, signed posts, a status request, unread
-messages and a direct thread, in two repositories.
+Each command runs as one session: `RIFF_SESSION` names it. Make signed
+posts, a status request, unread messages and a direct thread, in two
+repositories.
 
 In the terminal of `ann`, in `~/stage/ann/app`:
 
 ```sh
 cd ~/stage/ann/app
-RIFF_SESSION=ann-lead riff whoami
-riff lead --session ann-lead
-RIFF_SESSION=ann-lead riff post --kind status --to user=ann
-RIFF_SESSION=ann-lead riff post --to user=bob "a message that bob does not read"
+RIFF_SESSION=ann-1 riff whoami
+RIFF_SESSION=ann-1 riff post --kind status --to user=ann
+RIFF_SESSION=ann-1 riff post --to user=bob "a message that bob does not read"
 cd ~/stage/ann/web
 RIFF_SESSION=ann-web riff post "a post in a second repository"
 ```
@@ -9178,14 +9195,14 @@ In the terminal of `bob`, in `~/stage/bob/app`:
 ```sh
 cd ~/stage/bob/app
 RIFF_SESSION=bob-1 riff claim issue-3
-RIFF_SESSION=bob-1 riff post --to user=ann,lead=true "a question for the lead of ann"
+RIFF_SESSION=bob-1 riff post --to user=ann "a question for ann"
 ```
 
 Keep a copy of the state before the deploy:
 
 ```sh
-RIFF_SESSION=ann-lead riff who > ~/stage/who-before.txt
-RIFF_SESSION=ann-lead riff read --all > ~/stage/read-before.txt
+RIFF_SESSION=ann-1 riff who > ~/stage/who-before.txt
+RIFF_SESSION=ann-1 riff read --all > ~/stage/read-before.txt
 ```
 
 ### Keep posts and claims going during the deploy
@@ -9216,7 +9233,7 @@ In the terminal of each person, check:
 
 - No `riff login` is necessary: each command works with no new
   sign-in.
-- `riff who` shows the same sessions, leads, workers and claims as
+- `riff who` shows the same sessions, workers and claims as
   `who-before.txt`.
 - `riff read --all` shows the same messages as `read-before.txt`, and
   each signed message is still verified.
@@ -9232,12 +9249,12 @@ In the terminal of each person, check:
 - `riff resume` lets the work go on: a new claim and a new post work.
 
 ```sh
-RIFF_SESSION=ann-lead riff who
-RIFF_SESSION=ann-lead riff read --all
-RIFF_SESSION=ann-lead riff whoami
+RIFF_SESSION=ann-1 riff who
+RIFF_SESSION=ann-1 riff read --all
+RIFF_SESSION=ann-1 riff whoami
 riff server
 riff resume
-RIFF_SESSION=ann-lead riff post "the work goes on"
+RIFF_SESSION=ann-1 riff post "the work goes on"
 ```
 
 Put the results on the issue of the release.

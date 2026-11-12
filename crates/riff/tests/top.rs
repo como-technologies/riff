@@ -133,17 +133,11 @@ async fn output(mut cmd: Command) -> String {
 }
 
 /// The person mike names the session `id` the lead, after a first call
-/// of the session (01M5NJAXTQ0YKN7Q7XN0A7ZMPF).
+/// of the session (01M5NJAXTQ0YKN7Q7XN0A7ZMPF), as the riff daemon does
+/// for a lead that it starts (01M77Y6ZMFZJGK2DM6RAM94C7Q).
 async fn name_lead(server: &str, dir: &Path, path: &Path, id: &str) {
     output(riff(server, dir, Some(id), path, &["whoami"])).await;
-    output(riff(
-        server,
-        dir,
-        Some(""),
-        path,
-        &["lead", "--session", id],
-    ))
-    .await;
+    common::lead_by_person(server, dir, "pangolin", "mike", id).await;
 }
 
 /// Opens a watch for the session `id` of mike on `host`, so that the
@@ -503,7 +497,7 @@ async fn a_worker_of_another_host_shows_worker() {
     let who = output(riff(&server, dir, Some("a1"), bin.path(), &who)).await;
     let line = |id: &str| {
         who.lines()
-            .find(|l| l.contains(&format!("({id})")))
+            .find(|l| l.contains(&format!("({id})")) && !l.starts_with("lead "))
             .unwrap_or_else(|| panic!("{id}: {who}"))
             .to_owned()
     };
@@ -619,7 +613,7 @@ async fn each_kind_of_session_has_its_tag_and_the_host_line_counts_them() {
     let who = output(riff(&server, dir, Some("a1"), bin.path(), &who)).await;
     let line = |id: &str| {
         who.lines()
-            .find(|l| l.contains(&format!("({id})")))
+            .find(|l| l.contains(&format!("({id})")) && !l.starts_with("lead "))
             .unwrap_or_else(|| panic!("{id}: {who}"))
             .to_owned()
     };
@@ -1874,7 +1868,10 @@ async fn a_session_with_no_status_is_idle() {
     assert_eq!(detail(&top, "a1"), ["monitoring work for Ns"], "{top}");
     let who = ["who", "--color", "never"];
     let who = output(riff(&server, dir, Some("a1"), bin.path(), &who)).await;
-    let a1 = who.lines().find(|l| l.contains("(a1)")).unwrap();
+    let a1 = who
+        .lines()
+        .find(|l| l.contains("(a1)") && !l.starts_with("lead "))
+        .unwrap();
     assert!(a1.contains("  idle  "), "{who}");
     assert!(secs(a1).ends_with("  monitoring work for Ns"), "{who}");
 

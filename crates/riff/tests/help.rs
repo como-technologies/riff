@@ -178,34 +178,48 @@ fn the_help_lists_host_join_and_leave_and_not_join_leave_wave_run_wave_stop_or_d
     }
 }
 
-/// #1644: `riff lead --help` lists `stop`, with `start`, `move` and
-/// `notes`. The help of `riff lead stop` says what it does, and
-/// `riff daemon end` names it in its help.
+/// #1793, 01M77Y6ZBV7C8Z332SAFKQCZ5A, 01M77Y6ZEQ4A6C6E0XZ56WRE89,
+/// 01M77Y6ZMFZJGK2DM6RAM94C7Q: `riff lead --help` lists `start`, `restart`,
+/// `move` and `notes`, and no `stop`. `riff lead stop` and `riff lead
+/// --session` are no commands. The help of each says what it does, and
+/// `riff daemon end` names `riff lead restart` in its help.
 #[test]
-fn the_help_of_lead_lists_stop() {
+fn the_help_of_lead_lists_restart_and_no_stop() {
     let help = riff(&["lead", "--help"]);
     for line in [
-        "  start  Start the lead of this repository in a container\n",
-        "  stop   Stop the lead of this repository, and end its container\n",
-        "  move   Move the lead of this repository to another host\n",
+        "  start    Attach to the lead of this repository\n",
+        "  restart  End the lead of this repository, and get a new lead\n",
+        "  move     Move the lead of this repository to another host\n",
     ] {
         assert!(help.contains(line), "{line}: {help}");
     }
-    let stop = words(&riff(&["lead", "stop", "--help"]));
+    assert!(
+        !help.lines().any(|l| l.trim_start().starts_with("stop ")),
+        "{help}"
+    );
+    for args in [&["lead", "stop"][..], &["lead", "--session", "a1"]] {
+        let out = Isolated::shared().riff().args(args).output().unwrap();
+        assert_eq!(out.status.code(), Some(2), "riff {args:?}: {out:?}");
+    }
+    let restart = words(&riff(&["lead", "restart", "--help"]));
     for word in [
-        "--host <HOST>",
         "write its notes",
         "part lead",
-        "riff lead start",
+        "starts a new lead",
+        "reads the notes",
     ] {
-        assert!(stop.contains(word), "{word}: {stop}");
+        assert!(restart.contains(word), "{word}: {restart}");
     }
     let start = words(&riff(&["lead", "start", "--help"]));
-    for word in ["starts no workers", "riff host join"] {
+    for word in ["This command starts no lead", "ssh HOST", "riff host join"] {
         assert!(start.contains(word), "{word}: {start}");
     }
     let end = words(&riff(&["daemon", "end", "--help"]));
-    assert!(end.contains("stop it with riff lead stop"), "{end}");
+    assert!(end.contains("end it with riff lead restart"), "{end}");
+    let join = words(&riff(&["host", "join", "--help"]));
+    for word in ["--no-lead", "claims no lead", "riff lead restart"] {
+        assert!(join.contains(word), "{word}: {join}");
+    }
 }
 
 #[test]
@@ -253,10 +267,9 @@ fn the_help_has_no_command_and_no_flag_of_the_riff_of_peers() {
     assert!(!help.contains("--forge"), "{help}");
 }
 
-/// 01M6VGHPP3ZT5TTMSGAXV3ZK7W, 01M6QVSJC4V3Z3NB6MJW4XGJSR: riff has no
+/// 01M6VGHPP3ZT5TTMSGAXV3ZK7W, 01M77Y6ZBV7C8Z332SAFKQCZ5A: riff has no
 /// command `riff view`, also not with `--host`, and `riff --help` and
-/// `riff lead start --help` name none. `riff lead start` asks the riff
-/// daemon for no wave.
+/// `riff lead start --help` name none. `riff lead start` starts no lead.
 #[test]
 fn riff_view_is_gone_and_the_help_of_lead_start_says_what_it_does() {
     // The words, with no line breaks of the wrap.
@@ -272,10 +285,7 @@ fn riff_view_is_gone_and_the_help_of_lead_start_says_what_it_does() {
     );
     assert!(!help.contains("riff view"), "{help}");
     let lead = words(&["lead", "start", "--help"]);
-    assert!(
-        lead.contains("starts no workers and does not join the host"),
-        "{lead}"
-    );
+    assert!(lead.contains("This command starts no lead"), "{lead}");
     assert!(!lead.contains("run the wave"), "{lead}");
     assert!(!lead.contains("riff view"), "{lead}");
 }
@@ -395,7 +405,6 @@ fn the_help_and_the_book_say_who_can_use_each_host_flag() {
         (&["daemon", "restart"], daemon),
         (&["host", "join"], daemon),
         (&["host", "leave"], daemon),
-        (&["lead", "stop"], daemon),
     ] {
         for flag in ["--help", "-h"] {
             let help = words(&riff(&[args, &[flag]].concat()));

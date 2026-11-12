@@ -3,6 +3,7 @@
 //! server.
 
 use isolated::Isolated;
+use riff_core::name::{SessionUri, Who};
 use std::path::Path;
 use std::process::Command as Git;
 
@@ -83,14 +84,13 @@ async fn run(
     )
 }
 
-/// The person `user` names the session `id` the lead, in a shell, after
-/// a first call of the session (01M5NJAXTQ0YKN7Q7XN0A7ZMPF).
-async fn lead(server: &str, dir: &Path, user: &str, id: &str) -> String {
+/// The person `user` names the session `id` the lead, after a first call
+/// of the session (01M5NJAXTQ0YKN7Q7XN0A7ZMPF), as the riff daemon does
+/// for a lead that it starts (01M77Y6ZMFZJGK2DM6RAM94C7Q).
+async fn lead(server: &str, dir: &Path, user: &str, id: &str) -> riff_core::wire::LeadReply {
     let (out, code) = agent(server, dir, user, id, &["whoami"]).await;
     assert_eq!(code, 0, "{out}");
-    let (out, code) = riff(server, dir, user, &["lead", "--session", id]).await;
-    assert_eq!(code, 0, "{out}");
-    out
+    common::lead_by_person(server, dir, "pangolin", user, id).await
 }
 
 /// Resumes the new riff as the person mike, in a shell.
@@ -119,8 +119,8 @@ async fn a_new_riff_is_paused_and_refuses_each_claim() {
         out,
         "The repository como-technologies/riff was running already. The whole riff is still \
          paused: an admin resumes it with `riff resume --riff`. No lead of \
-         como-technologies/riff runs, so its wave starts no session: run riff lead start in a \
-         clone of como-technologies/riff.\n"
+         como-technologies/riff runs, so its wave starts no session: a host that joined \
+         como-technologies/riff starts the lead (riff host join).\n"
     );
     let (_, code) = riff(&server, dir, "mike", &["claim", "issue-12"]).await;
     assert_ne!(code, 0, "the riff is still paused");
@@ -503,23 +503,29 @@ async fn lead_marks_the_lead_and_tell_lead_reaches_it() {
     assert!(out.contains("?session=a1&lead=true  "), "{out}");
     assert!(out.contains("?session=b2  "), "{out}");
 
-    // A session cannot take the lead role (01M5NJAXTQ0YKN7Q7XN0A7ZMPF).
-    for (id, args) in [
-        ("b2", &["lead", "--session", "b2"]),
-        ("a1", &["lead", "--session", "b2"]),
-    ] {
-        let (out, code) = agent(&server, dir, "mike", id, args).await;
-        assert_ne!(code, 0, "{id}: {out}");
+    // A session cannot take the lead role (01M5NJAXTQ0YKN7Q7XN0A7ZMPF), and
+    // riff has no command that names a lead (01M77Y6ZMFZJGK2DM6RAM94C7Q).
+    let place = riff::identity::place_in(dir, "pangolin").unwrap();
+    for (id, named) in [("b2", "b2"), ("a1", "b2")] {
+        let me = SessionUri::new(Who::new("mike", Some(id)).unwrap(), place.clone());
+        let refused = common::api(&server, "mike", Some(id))
+            .lead(&me, named)
+            .await
+            .unwrap_err();
+        assert!(
+            format!("{refused:#}").contains(riff_state::state::LEAD_BY_PERSON),
+            "{id}: {refused:#}"
+        );
     }
-    let (_, code) = riff(&server, dir, "mike", &["lead"]).await;
-    assert_ne!(code, 0, "riff lead names a session");
+    for args in [&["lead"][..], &["lead", "--session", "b2"]] {
+        let (_, code) = riff(&server, dir, "mike", args).await;
+        assert_eq!(code, 2, "{args:?} is no command");
+    }
 
-    let out = lead(&server, dir, "mike", "b2").await;
-    assert_eq!(
-        out,
-        "mike@pangolin:riff (b2) is the lead of mike in como-technologies/riff. \
-         mike@pangolin:riff (a1) is not the lead now.\n"
-    );
+    let reply = lead(&server, dir, "mike", "b2").await;
+    assert_eq!(reply.lead.who().session(), Some("b2"));
+    let old = reply.replaced.as_ref().and_then(|old| old.who().session());
+    assert_eq!(old, Some("a1"));
     // The old lead has a message (01M5NJAYMYF50B9WXH5RF9W737).
     let (out, _) = agent(&server, dir, "mike", "a1", &["read"]).await;
     assert!(out.contains("lead: you are not the lead now"), "{out}");
@@ -698,7 +704,11 @@ async fn a_person_asks_for_status_and_who_shows_each_answer() {
     // checks that the age is there, not its number: a machine under
     // load takes more than a second.
     let row = |id: &str| -> String {
-        let row = out.lines().find(|l| l.contains(id)).unwrap();
+        // The row of the session, not the fact `lead`.
+        let row = out
+            .lines()
+            .find(|l| l.contains(id) && !l.starts_with("lead "))
+            .unwrap();
         let Some(end) = row.rfind("s ago") else {
             return row.to_owned();
         };

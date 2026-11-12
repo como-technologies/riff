@@ -474,7 +474,7 @@ pub fn stopping_sign_ins(facts: &Facts) -> Vec<String> {
 /// use riff::tui::machines::marks;
 /// use riff_client::daemons::{Facts, Leaving, Parts, RepoParts};
 ///
-/// let workers = Parts { workers: true, lead: false };
+/// let workers = Parts { workers: true, lead: false, no_lead: false };
 /// let gives = Facts {
 ///     parts: vec![RepoParts { repo: "n8behavior/sens-o-matic".into(), parts: workers }],
 ///     ..Facts::default()
@@ -494,7 +494,7 @@ pub fn stopping_sign_ins(facts: &Facts) -> Vec<String> {
 ///     marks(&Facts { parts: vec![], ..leaving }),
 ///     ["leaving riff: 3 to end", "takes no work"]
 /// );
-/// let lead = Parts { workers: false, lead: true };
+/// let lead = Parts { workers: false, lead: true, no_lead: false };
 /// let lead = Facts { parts: vec![RepoParts { repo: "o/r".into(), parts: lead }], ..Facts::default() };
 /// assert_eq!(marks(&lead), ["takes no work"]);
 /// ```
@@ -1791,6 +1791,7 @@ mod tests {
             parts: Parts {
                 workers: true,
                 lead: false,
+                no_lead: false,
             },
         }
     }

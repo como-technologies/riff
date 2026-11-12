@@ -1953,8 +1953,8 @@ mod tests {
         let line = |github: &Github, at: usize| lines(github).swap_remove(at);
         assert_eq!(
             line(&no_config, 0),
-            "fail  riff.toml on main: main of acme/app has no riff.toml, so riff lead start \
-             stops. Fix: put riff.toml with the session image on main. See \"Add another \
+            "fail  riff.toml on main: main of acme/app has no riff.toml, so riff starts no \
+             lead and no wave. Fix: put riff.toml with the session image on main. See \"Add another \
              repository to the riff\" in the book"
         );
         assert_eq!(

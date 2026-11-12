@@ -352,8 +352,8 @@ async fn riff_project_init_check_names_the_github_fix_of_each_fact_that_fails() 
     assert_eq!(
         failed_lines(&stdout),
         [
-            "  fail  riff.toml on main: main of acme/app has no riff.toml, so riff lead start \
-             stops. Fix: put riff.toml with the session image on main. See \"Add another \
+            "  fail  riff.toml on main: main of acme/app has no riff.toml, so riff starts no \
+             lead and no wave. Fix: put riff.toml with the session image on main. See \"Add another \
              repository to the riff\" in the book",
             "  fail  auto-merge and squash merge: acme/app allows no auto-merge. Fix: allow \
              them: gh api -X PATCH repos/acme/app -F allow_auto_merge=true -F \
@@ -771,8 +771,8 @@ async fn riff_project_init_without_a_terminal_names_the_steps_and_does_none() {
     assert_eq!(steps.len(), 5, "{stdout}");
     assert_eq!(
         steps[0],
-        "  step  riff.toml on main: main of acme/app has no riff.toml, so riff lead start \
-         stops. Step: make riff.toml on main with a pull request"
+        "  step  riff.toml on main: main of acme/app has no riff.toml, so riff starts no lead \
+         and no wave. Step: make riff.toml on main with a pull request"
     );
     assert_eq!(
         steps[2],

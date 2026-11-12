@@ -152,17 +152,14 @@ impl Machine {
     }
 
     /// The person names the session `session` the lead, in `dir`, after a
-    /// first call of the session (01M5NJAXTQ0YKN7Q7XN0A7ZMPF).
+    /// first call of the session (01M5NJAXTQ0YKN7Q7XN0A7ZMPF), as the riff
+    /// daemon does for a lead that it starts (01M77Y6ZMFZJGK2DM6RAM94C7Q).
     async fn lead_in(&self, dir: &Path, session: &str) {
-        for (id, args) in [
-            (session, &["whoami"][..]),
-            ("", &["lead", "--session", session]),
-        ] {
-            let mut cmd = self.riff(id, args);
-            cmd.current_dir(dir);
-            let out = output(cmd).await;
-            assert!(out.status.success(), "{}", text(&out.stderr));
-        }
+        let mut cmd = self.riff(session, &["whoami"]);
+        cmd.current_dir(dir);
+        let out = output(cmd).await;
+        assert!(out.status.success(), "{}", text(&out.stderr));
+        crate::common::lead_by_person(&self.server, dir, "pangolin", "mike", session).await;
     }
 
     /// [`Machine::lead_in`] in the repository.

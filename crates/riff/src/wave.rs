@@ -848,9 +848,12 @@ pub fn write_waves(dir: &Path, waves: &BTreeMap<String, Wave>) -> Result<()> {
 /// `riff host join`: asks the daemon in the folder `dir` to serve the
 /// repository of the place `here`, to give the host the part workers, and
 /// to run the current wave, on the riff-server `server`
-/// (01M4ZV3B6J89KJQ0F14YWTZMJQ, #1643).
-pub async fn ask_join(dir: &Path, here: &Place, server: &str) -> Result<()> {
-    let repo = ask(dir, here, server, |line| println!("{line}")).await?;
+/// (01M4ZV3B6J89KJQ0F14YWTZMJQ, #1643). With `no_lead`, the host claims no
+/// lead of the project; with no `no_lead`, it claims it again (#1793).
+pub async fn ask_join(dir: &Path, here: &Place, server: &str, no_lead: bool) -> Result<()> {
+    let work = identity::working_dir()?;
+    let show = |line: &str| println!("{line}");
+    let repo = ask_with(dir, work, here, server, Some(no_lead), show).await?;
     println!("{}", text::wave_asked(&repo));
     Ok(())
 }
@@ -869,19 +872,23 @@ pub async fn ask_join(dir: &Path, here: &Place, server: &str) -> Result<()> {
 /// cannot, the daemon gets no ask of the wave: a machine that cannot
 /// start a container runs no wave (01M558EYAJFZK7Y822NVWGBS9H). The git
 /// steps of the pin block, so they run on a thread that may block: they
-/// stop no task of `riff mcp`.
+/// stop no task of `riff mcp`. The host keeps its choice of the lead
+/// (`riff host join --no-lead`, #1793).
 pub async fn ask(dir: &Path, here: &Place, server: &str, show: impl FnMut(&str)) -> Result<String> {
-    ask_with(dir, identity::working_dir()?, here, server, show).await
+    ask_with(dir, identity::working_dir()?, here, server, None, show).await
 }
 
 /// [`ask`] for the clone of the folder `work`: the daemon of a host
 /// asks it for the lead of another host, in its main clone
-/// ([`crate::daemon::remote`]).
+/// ([`crate::daemon::remote`]). `no_lead` is the choice of the lead of the
+/// host ([`crate::daemon::Ask::Join`]): `None` keeps the choice that the
+/// host has.
 pub async fn ask_with(
     dir: &Path,
     work: PathBuf,
     here: &Place,
     server: &str,
+    no_lead: Option<bool>,
     mut show: impl FnMut(&str),
 ) -> Result<String> {
     if here.default_thread().is_none() {
@@ -909,7 +916,8 @@ pub async fn ask_with(
         server: server.to_owned(),
         host: here.host().to_owned(),
     };
-    crate::daemon::ask_done(dir, crate::daemon::Ask::Join { wave }, show).await?;
+    let ask = crate::daemon::Ask::Join { wave, no_lead };
+    crate::daemon::ask_done(dir, ask, show).await?;
     Ok(repo)
 }
 

@@ -6,7 +6,10 @@
 //! # Design
 //!
 //! The daemon of each host that joined a project runs a lead loop
-//! ([`run`], 01M77PT9TNP97MA89SYZPBJ6QY) next to the loop of its wave ([`crate::wave`]). Each look
+//! ([`run`], 01M77PT9TNP97MA89SYZPBJ6QY) next to the loop of its wave
+//! ([`crate::wave`]). A host that joined with `riff host join --no-lead`
+//! runs no lead loop, so it claims no lead (01M77Y6ZHM0V6YQ3XJEVJ8J5PC,
+//! `Daemon::claims_lead`). Each look
 //! ([`look`]) reads the plan of the repository thread on riff-server
 //! ([`riff_core::wire::PlanReply`]): the session that holds the claim
 //! lead, and the host of the last lead.
@@ -70,9 +73,8 @@
 //!
 //! One start of the lead of a project runs at a time on a host
 //! ([`crate::lead::one_start`], 01M77Y2BG12SEVF4ZEZ673QBFZ): the start of
-//! the daemon, `riff lead start`, `l` in the Sessions tab, `riff lead
-//! move` and the start again of the daemon share a lock in the folder of
-//! the lead.
+//! the daemon, `riff lead move` and the start again of the daemon share a
+//! lock in the folder of the lead.
 //!
 //! # A lead that fails to start
 //!
@@ -435,7 +437,7 @@ pub(crate) async fn follow<R: Runtime + 'static>(daemon: Arc<Daemon<R>>, wave: W
 
 /// The [`Ground`] of the riff daemon: the plan and the claim on
 /// riff-server as the person of the wave, the leads and the load of the
-/// daemon, and the start of a lead as `riff lead start` does it
+/// daemon, and the start of a lead in its container
 /// ([`crate::lead::claim_start`]).
 pub struct Hosted<R>(pub Arc<Daemon<R>>);
 

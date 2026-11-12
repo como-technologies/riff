@@ -300,7 +300,7 @@ pub async fn look(dir: &Path, wave: &Wave, api: &Api) -> anyhow::Result<Facts> {
 /// left(&mut facts, "o/r");
 /// assert_eq!(facts.leaving.len(), 1);
 /// // A host with a part in the repository did not leave it.
-/// let lead = Parts { workers: false, lead: true };
+/// let lead = Parts { workers: false, lead: true, no_lead: false };
 /// let mut facts = Facts { parts: vec![RepoParts { repo: "o/r".into(), parts: lead }], ..Facts::default() };
 /// left(&mut facts, "o/r");
 /// assert!(facts.leaving.is_empty());

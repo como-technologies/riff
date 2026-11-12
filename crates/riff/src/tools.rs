@@ -421,8 +421,12 @@ your repository) and who set it."
         let pauses = self.api.pauses(&me).await.map_err(err)?;
         let mut who = self.api.roster(&me, all).await.map_err(err)?;
         crate::state::fill(&mut who.sessions, pauses.state);
+        // The lead of each project, as in `riff who`, plain
+        // (01M77XYFZW86MCXD22GDCXMS00).
+        let leads = crate::view::facts(&crate::view::lead_facts(&pauses, &who.sessions, false));
+        let leads = anstream::adapter::strip_str(&leads).to_string();
         Ok(format!(
-            "{}\n{}\n{}",
+            "{}\n{leads}{}\n{}",
             text::riff_state(&pauses, me.default_thread().as_ref()),
             text::build_line(riff_client::link::server_build().as_ref()),
             text::who(&who.sessions, &me)

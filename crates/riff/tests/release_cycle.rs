@@ -276,20 +276,17 @@ impl Machine {
     }
 
     /// The person names the session of `vars` the lead, after a first
-    /// call of the session (01M5NJAXTQ0YKN7Q7XN0A7ZMPF). The person has
-    /// the other `vars`.
+    /// call of the session (01M5NJAXTQ0YKN7Q7XN0A7ZMPF), as the riff daemon
+    /// does for a lead that it starts (01M77Y6ZMFZJGK2DM6RAM94C7Q). The
+    /// person is the user of `vars`, else mike, at the server of `vars`,
+    /// else the server of the machine.
     async fn name_lead(&self, vars: &[(&str, &str)]) {
-        let id = vars
-            .iter()
-            .find(|(key, _)| *key == "RIFF_SESSION")
-            .unwrap()
-            .1;
+        let var = |name: &str| vars.iter().find(|(key, _)| *key == name).map(|v| v.1);
+        let id = var("RIFF_SESSION").unwrap();
         self.ok(vars, &["whoami"]).await;
-        let person: Vec<(&str, &str)> = vars
-            .iter()
-            .map(|&(key, value)| (key, if key == "RIFF_SESSION" { "" } else { value }))
-            .collect();
-        self.ok(&person, &["lead", "--session", id]).await;
+        let server = var("RIFF_SERVER").unwrap_or(&self.server);
+        let user = var("RIFF_USER").unwrap_or("mike");
+        crate::common::lead_by_person(server, &self.clone(), "thelio", user, id).await;
     }
 
     /// The socket path of a container session in the temp folder of
@@ -2359,6 +2356,9 @@ async fn cut_refuses_a_member_and_the_lead_of_a_member() {
     .await;
     let member = Machine::new().await;
     sign_in(&service, &url, &member.env, "bob@comotechnologies.io", true).await;
+    // This process names the leads as each person, as the riff daemon does.
+    crate::common::admit_process(&service, &url, "mike", "mike@comotechnologies.io", false).await;
+    crate::common::admit_process(&service, &url, "bob", "bob@comotechnologies.io", true).await;
     let lead = [
         ("RIFF_SESSION", "b1"),
         ("RIFF_SERVER", url.as_str()),

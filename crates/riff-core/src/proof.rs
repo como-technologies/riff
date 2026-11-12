@@ -144,8 +144,9 @@ pub enum Action {
     /// The end of each session of `repo` on `host` now: `riff host leave
     /// --now`.
     Leave { host: String, repo: String },
-    /// The stop of the lead of `repo` on `host`.
-    LeadStop { host: String, repo: String },
+    /// The end of the lead of `repo` on `host`, for a new lead: `riff lead
+    /// restart`.
+    LeadRestart { host: String, repo: String },
     /// The removal of the folder `name` on `host`, with the work in its
     /// clone: `riff daemon sweep --remove NAME --force`.
     Sweep { host: String, name: String },
@@ -213,8 +214,8 @@ impl Action {
             Action::Leave { host, repo } => {
                 format!("end the sessions of {repo} on the host {host} now")
             }
-            Action::LeadStop { host, repo } => {
-                format!("stop the lead of {repo} on the host {host}")
+            Action::LeadRestart { host, repo } => {
+                format!("end the lead of {repo} on the host {host}, for a new lead")
             }
             Action::Sweep { host, name } => {
                 format!("remove the folder {name} on the host {host}, with its work")
@@ -231,9 +232,9 @@ impl Action {
 /// The action of a request to the riff daemon of `host`, when the
 /// request is a step that can lose work. The body is the text of the
 /// request, as `riff ... --host HOST` posts it to the daemon: `daemon
-/// end NAME`, `leave REPO --now`, `lead stop`, or `daemon sweep --remove
+/// end NAME`, `leave REPO --now`, `lead restart`, or `daemon sweep --remove
 /// NAME --force`. `repo` is the repository of the daemon, as
-/// `OWNER/REPO`: `lead stop` stops its lead. The daemon reads the words
+/// `OWNER/REPO`: `lead restart` ends its lead. The daemon reads the words
 /// of a request, so this reads them the same way. Each other body gives
 /// `None`.
 ///
@@ -259,7 +260,7 @@ pub fn of_step(body: &str, host: &str, repo: &str) -> Option<Action> {
             host,
             repo: repo.to_owned(),
         }),
-        ["lead", "stop"] => Some(Action::LeadStop {
+        ["lead", "restart"] => Some(Action::LeadRestart {
             host,
             repo: repo.to_owned(),
         }),
@@ -320,7 +321,7 @@ mod tests {
                 host: host(),
                 repo: "acme/app".into(),
             },
-            Action::LeadStop {
+            Action::LeadRestart {
                 host: host(),
                 repo: "acme/app".into(),
             },
@@ -369,8 +370,8 @@ mod tests {
             })
         );
         assert_eq!(
-            step("lead stop"),
-            Some(Action::LeadStop {
+            step("lead restart"),
+            Some(Action::LeadRestart {
                 host: "pangolin".into(),
                 repo: "acme/app".into()
             })
@@ -383,7 +384,9 @@ mod tests {
             "daemon end",
             "daemon end a b",
             "join acme/app",
+            "join acme/app --no-lead",
             "lead move",
+            "lead stop",
             "hello",
             "",
         ] {

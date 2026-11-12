@@ -537,7 +537,7 @@ pub const RESTART_DELAY: Duration = Duration::from_secs(5);
 /// container yet: it starts one, and the daemon ends it (#1643).
 pub const LEAVE_WAIT: Duration = Duration::from_secs(20);
 
-/// How long `riff lead stop` waits for the container of the lead to end
+/// How long `riff lead restart` waits for the container of the lead to end
 /// ([`Daemon::stop_lead`], #1644).
 pub const LEAD_STOP_WAIT: Duration = Duration::from_secs(30);
 
@@ -962,6 +962,12 @@ pub enum Ask {
     Join {
         /// The repository, its main clone, its riff-server and this host.
         wave: Wave,
+        /// The choice of the lead of the host (#1793): `Some(true)` for
+        /// `riff host join --no-lead`, the host claims no lead of the
+        /// project; `Some(false)` for `riff host join`, it claims it again;
+        /// `None`, as the rollout of a lead asks, keeps the choice.
+        #[serde(default)]
+        no_lead: Option<bool>,
     },
     /// `riff host leave`: the host gives no more workers to the repository
     /// `repo`. The daemon starts no new session for it. The sessions that
@@ -974,9 +980,10 @@ pub enum Ask {
         #[serde(default)]
         now: bool,
     },
-    /// `riff lead stop`: the daemon ends the container of the lead of the
-    /// repository `repo`, and the host loses the part lead
-    /// ([`Daemon::stop_lead`], #1644).
+    /// `riff lead restart`: the daemon ends the container of the lead of
+    /// the repository `repo`, and the host loses the part lead
+    /// ([`Daemon::stop_lead`], #1644). A host that joined the project
+    /// starts a new lead (#1793).
     StopLead {
         /// The repository, as `OWNER/REPO`.
         repo: String,
@@ -3039,7 +3046,7 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// Ends the session in the container `name` for a person: it frees
     /// the item of the session on riff-server at once, then stops the
     /// container (01M579Z9VRD12FRK6DSYVKDHQB). It refuses the lead: a
-    /// person stops it with `riff lead stop` ([`Daemon::stop_lead`]). It
+    /// person ends it with `riff lead restart` ([`Daemon::stop_lead`]). It
     /// gives a line for each step.
     pub async fn end_session(&self, name: &str) -> Result<Vec<String>> {
         let Some(owned) = self.lock().get(name).cloned() else {
@@ -3058,7 +3065,7 @@ impl<R: Runtime + 'static> Daemon<R> {
         Ok(vec![freed, text::daemon_ends(name)])
     }
 
-    /// `riff lead stop` for `repo` (#1644): the daemon stops the container
+    /// `riff lead restart` for `repo` (#1644, #1793): the daemon stops the container
     /// of the lead of the repository, and waits up to [`LEAD_STOP_WAIT`]
     /// for its end. The lead leaves riff-server, and the host loses the
     /// part lead. The daemon starts the lead no more, also after an
@@ -3084,15 +3091,26 @@ impl<R: Runtime + 'static> Daemon<R> {
         // A lead that this daemon took up has no end of its own: it looks.
         owned.look.notify_one();
         let until = tokio::time::Instant::now() + LEAD_STOP_WAIT;
-        while self.lock().contains_key(&name) {
+        // The new lead of the project can start in a container of the same
+        // name, as a new session (#1793): the wait is for the old session.
+        let old = record.live.session.clone();
+        let runs = || {
+            self.lock()
+                .get(&name)
+                .is_some_and(|owned| owned.lock().record.live.session == old)
+        };
+        while runs() {
             if tokio::time::Instant::now() >= until {
                 bail!("{}", text::lead_stop_slow(&name, LEAD_STOP_WAIT));
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
         // The task of the lead takes the part too. It does so after it
-        // closed the session, so the reply waits for it here.
-        self.lead_part(&record, false);
+        // closed the session, so the reply waits for it here. A new lead of
+        // the project on this host keeps the part.
+        if self.lead_session(repo).is_none() {
+            self.lead_part(&record, false);
+        }
         let mut lines = vec![text::lead_stopped(&name)];
         lines.extend(self.retire(repo));
         Ok(lines)
@@ -4474,14 +4492,28 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// another main clone, starts again with the new facts. Its jobs go
     /// on. A loop that runs with the same facts goes on, and the starts
     /// of each item go back to 0 (01M57A7A48A70Y7PTD95A3MBYC).
+    ///
+    /// The lead loop of the wave ([`crate::lead_host`]) runs only on a host
+    /// that claims the lead of the project: not after `riff host join
+    /// --no-lead` ([`Daemon::claims_lead`], #1793). A loop that runs with
+    /// the same facts starts or ends its lead loop when that choice
+    /// changed.
     fn spawn_wave(self: &Arc<Self>, wave: Wave) {
+        let leads = self.claims_lead(&wave.repo);
         let mut running = self.waves_lock();
-        let taken = match running.get(&wave.repo) {
+        let taken = match running.get_mut(&wave.repo) {
             Some(old) if old.wave == wave && !old.task.is_finished() => {
                 old.starts
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
                     .clear();
+                let runs = old.lead.as_ref().is_some_and(|lead| !lead.is_finished());
+                if !leads && let Some(lead) = old.lead.take() {
+                    lead.abort();
+                } else if leads && !runs {
+                    let follow = crate::lead_host::follow(self.clone(), wave.clone());
+                    old.lead = Some(tokio::spawn(follow));
+                }
                 drop(running);
                 self.tell_changed();
                 return;
@@ -4504,10 +4536,8 @@ impl<R: Runtime + 'static> Daemon<R> {
             waits.clone(),
         ));
         let look = tokio::spawn(crate::wave::watch(self.clone(), wave.clone()));
-        let lead = self
-            .world
-            .leads()
-            .then(|| tokio::spawn(crate::lead_host::follow(self.clone(), wave.clone())));
+        let lead =
+            leads.then(|| tokio::spawn(crate::lead_host::follow(self.clone(), wave.clone())));
         running.insert(
             wave.repo.clone(),
             Running {
@@ -4583,11 +4613,42 @@ impl<R: Runtime + 'static> Daemon<R> {
 
     /// `riff host join` for `wave` (#1643): the host gets the part workers,
     /// the daemon runs the wave, and serves the repository
-    /// ([`Daemon::serve_repo`]).
-    pub fn join_repo(self: &Arc<Self>, wave: Wave) -> Result<()> {
-        parts::set(&self.dir, &wave.repo, |p| p.workers = true)?;
+    /// ([`Daemon::serve_repo`]). `no_lead` is the choice of the lead of the
+    /// host (#1793): `Some(true)` keeps the lead of the project off the
+    /// host, `Some(false)` lets the host claim it again, and `None` keeps
+    /// the choice. A lead of the project that runs on the host already goes
+    /// on: the line for the person, [`text::join_lead_goes_on`], says so,
+    /// and names `riff lead restart`.
+    pub fn join_repo(self: &Arc<Self>, wave: Wave, no_lead: Option<bool>) -> Result<Vec<String>> {
+        let parts = parts::set(&self.dir, &wave.repo, |p| {
+            p.workers = true;
+            if let Some(no_lead) = no_lead {
+                p.no_lead = no_lead;
+            }
+        })?;
         self.run_wave(wave.clone())?;
-        self.serve_repo(&wave)
+        self.serve_repo(&wave)?;
+        let runs = self.lead_session(&wave.repo).is_some();
+        Ok(match parts.no_lead && runs {
+            true => vec![text::join_lead_goes_on(&wave.repo)],
+            false => Vec::new(),
+        })
+    }
+
+    /// True when the daemon of this host claims the lead of `repo`
+    /// (#1791): its world runs the lead loops, and the host did not join
+    /// with `riff host join --no-lead` (#1793).
+    pub(crate) fn claims_lead(&self, repo: &str) -> bool {
+        self.world.leads() && !parts::of(&self.dir, repo).no_lead
+    }
+
+    /// True when the lead loop of the wave of `repo` runs, for a test.
+    #[cfg(test)]
+    fn lead_loop_runs(&self, repo: &str) -> bool {
+        self.waves_lock()
+            .get(repo)
+            .and_then(|running| running.lead.as_ref())
+            .is_some_and(|lead| !lead.is_finished())
     }
 
     /// `riff host leave` for `repo` (#1643): the host loses the part workers,
@@ -4782,17 +4843,13 @@ impl<R: Runtime + 'static> Daemon<R> {
                 Ok(Ask::Image { image }) => self.image(&image, &out).await,
                 Ok(Ask::Start(start)) => self.start(*start, lines, &out).await,
                 Ok(Ask::Follow { name, after }) => self.follow(&name, after, lines, &out),
-                Ok(Ask::Join { wave }) => {
+                Ok(Ask::Join { wave, no_lead }) => {
                     let repo = wave.repo.clone();
-                    out.say(match self.join_repo(wave) {
-                        Ok(()) => {
-                            println!("{}", text::wave_runs(&repo));
-                            Say::Done
-                        }
-                        Err(e) => Say::Failed {
-                            error: format!("{e:#}"),
-                        },
-                    });
+                    let joined = self.join_repo(wave, no_lead);
+                    if joined.is_ok() {
+                        println!("{}", text::wave_runs(&repo));
+                    }
+                    say_lines(&out, joined);
                 }
                 Ok(Ask::Leave { repo, now }) => {
                     let left = self.leave_repo(&repo, now).await;
@@ -5528,7 +5585,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             failed: failed || stopped || !exited,
         };
         println!("{}", text::daemon_session_ends(&owned.name, code));
-        // A stop of the lead by the daemon, for example `riff lead stop`,
+        // A stop of the lead by the daemon, for example `riff lead restart`,
         // ends its session on riff-server at once, so the claim lead of its
         // project is free. A lead that ends by itself starts again with
         // `claude --resume`, as the same session (#1791,
@@ -9247,6 +9304,8 @@ mod tests {
         /// A real riff-server: [`World::leave`] ends the session of the lead
         /// there too ([`Server::with_riff`]).
         riff: Option<riff_client::api::Api>,
+        /// True runs the lead loop of each wave ([`World::leads`]).
+        leads: bool,
     }
 
     /// The answer of a fake riff-server to the ask `n` of a token.
@@ -9454,6 +9513,10 @@ mod tests {
     }
 
     impl World for Server {
+        fn leads(&self) -> bool {
+            self.leads
+        }
+
         fn github_token<'a>(
             &'a self,
             _: &'a str,
@@ -10621,12 +10684,13 @@ mod tests {
         }
     }
 
-    /// The test of #2032: `riff lead start` and the start of the daemon at
-    /// once make one container. Both go through the lock of the starts of
-    /// the lead ([`crate::lead::one_start`]): the second finds the lead of
-    /// the first under the lock, and starts nothing.
+    /// The test of #2032: two starts of the lead at once, as `riff lead
+    /// move` and the start of the daemon, make one container. Both go
+    /// through the lock of the starts of the lead
+    /// ([`crate::lead::one_start`]): the second finds the lead of the first
+    /// under the lock, and starts nothing.
     #[tokio::test]
-    async fn a_start_of_the_daemon_and_riff_lead_start_at_once_make_one_container() {
+    async fn two_starts_of_the_lead_at_once_make_one_container() {
         let world: Arc<dyn World> = Arc::new(Server::default());
         let fake = Fake::default().with_image(IMAGE);
         let here = Here::with_world(fake, QUIET_LIMIT, Some(world)).await;
@@ -10890,8 +10954,8 @@ mod tests {
         until(|| parts::of(&here.dir, repo).none()).await;
     }
 
-    /// #1644, 01M6QVSWTARPKP59X8AJBBK69X: `riff lead stop` ends the
-    /// container of the lead and waits for its end. The lead leaves
+    /// #1644, 01M77Y6ZEQ4A6C6E0XZ56WRE89: the last step of `riff lead
+    /// restart` ends the container of the lead and waits for its end. The lead leaves
     /// riff-server, the host loses the part lead, and an update starts no
     /// lead again. With no lead to stop, the daemon says so.
     #[tokio::test]
@@ -11030,7 +11094,7 @@ mod tests {
         crate::room::set(&here.dir, none).unwrap();
         let made = here.dir.join(remote::CLONES).join("o/r");
         std::fs::create_dir_all(made.join(".git")).unwrap();
-        here.daemon.join_repo(wave_of("o/r", &made)).unwrap();
+        here.daemon.join_repo(wave_of("o/r", &made), None).unwrap();
         assert_eq!(parts::of(&here.dir, "o/r").word(), "workers");
         assert!(
             crate::wave::read_waves(&here.dir)
@@ -11071,7 +11135,7 @@ mod tests {
         crate::room::set(&here.dir, none).unwrap();
         let mine = here.root.path().join("mine");
         std::fs::create_dir_all(mine.join(".git")).unwrap();
-        here.daemon.join_repo(wave_of("o/r", &mine)).unwrap();
+        here.daemon.join_repo(wave_of("o/r", &mine), None).unwrap();
         parts::set(&here.dir, "o/r", |p| p.lead = true).unwrap();
         let lines = here.daemon.leave_repo("o/r", false).await.unwrap();
         assert_eq!(lines, [text::leave_stops("o/r")]);
@@ -11083,6 +11147,62 @@ mod tests {
         assert_eq!(here.daemon.retire("o/r"), [text::retire_stops("o/r")]);
         assert!(remote::read_served(&here.dir).unwrap().is_empty());
         assert!(mine.exists());
+    }
+
+    /// #1793, 01M77Y6ZHM0V6YQ3XJEVJ8J5PC: `riff host join --no-lead` runs the
+    /// wave and no lead loop, and the host keeps the choice in its parts.
+    /// The rollout of a lead, with no choice, keeps it. `riff host join`
+    /// starts the lead loop again. A lead that runs on the host goes on
+    /// after `--no-lead`, and the join says so.
+    #[tokio::test]
+    async fn a_join_with_no_lead_runs_the_wave_and_no_lead_loop() {
+        let server = Arc::new(Server {
+            leads: true,
+            ..Server::default()
+        });
+        let world: Arc<dyn World> = server.clone();
+        let fake = Fake::default().with_image(IMAGE);
+        let here = Here::with_world(fake, QUIET_LIMIT, Some(world)).await;
+        let none = crate::room::Change {
+            sessions: Some(0),
+            ..crate::room::Change::default()
+        };
+        crate::room::set(&here.dir, none).unwrap();
+        let repo = "como-technologies/riff";
+        let main = here.root.path().join("main");
+        std::fs::create_dir_all(main.join(".git")).unwrap();
+        let join = |no_lead| {
+            here.daemon
+                .join_repo(wave_of(repo, &main), no_lead)
+                .unwrap()
+        };
+
+        assert!(join(Some(true)).is_empty());
+        assert_eq!(parts::of(&here.dir, repo).word(), "workers, no lead");
+        assert_eq!(status(&here.dir).await.unwrap().waves[0].repo, repo);
+        assert!(!here.daemon.claims_lead(repo));
+        assert!(!here.daemon.lead_loop_runs(repo));
+        join(None);
+        assert!(!here.daemon.lead_loop_runs(repo), "the rollout keeps it");
+
+        assert!(join(Some(false)).is_empty());
+        assert_eq!(parts::of(&here.dir, repo).word(), "workers");
+        assert!(here.daemon.claims_lead(repo));
+        assert!(here.daemon.lead_loop_runs(repo));
+        join(None);
+        assert!(here.daemon.lead_loop_runs(repo));
+
+        let mut start = here.start(LEAD, "lead");
+        start.terminal = true;
+        let (_client, _) = here.started(start).await;
+        assert_eq!(join(Some(true)), [text::join_lead_goes_on(repo)]);
+        assert!(!here.daemon.lead_loop_runs(repo));
+        assert_eq!(
+            parts::of(&here.dir, repo).word(),
+            "workers and lead, no new lead"
+        );
+        let status = status(&here.dir).await.unwrap();
+        assert!(status.sessions.iter().any(|s| s.name == LEAD), "it goes on");
     }
 
     /// #1643, 01M6QRDB7KVR8954B00RTETEK4: `riff host leave --now` ends the
@@ -15091,6 +15211,7 @@ mod tests {
                 parts: riff_client::daemons::Parts {
                     workers: true,
                     lead: true,
+                    no_lead: false,
                 },
             }],
             leaving: vec![riff_client::daemons::Leaving {

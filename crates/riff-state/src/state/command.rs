@@ -694,9 +694,9 @@ enum Workers {
 }
 
 /// The refusal of `lead` from a session (01M5NJAXTQ0YKN7Q7XN0A7ZMPF).
-pub const LEAD_BY_PERSON: &str = "a session cannot name the lead, also not itself. Your \
-    person names the lead: riff lead start, or riff lead --session ID in a terminal with no \
-    session ID.";
+pub const LEAD_BY_PERSON: &str = "a session cannot name the lead, also not itself. The riff \
+    daemon of a host that joined the project starts the lead, and your person moves it with riff \
+    lead move HOST.";
 
 // ANCHOR: permits
 /// Says if `caller` can send a command of `kind` that needs the role
