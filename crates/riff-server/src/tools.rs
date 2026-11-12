@@ -184,6 +184,11 @@ impl From<StoreError> for ToolError {
 ///     must_clear: true,
 /// });
 /// assert!(show(&record).contains(&format!("released  issue-7 in acme/app by {session}, must clear")));
+/// record.change = Change::ProjectEnrolled(riff_core::record::ProjectEnrolled {
+///     repo: "acme/app".parse()?,
+///     hosts: vec!["heron".into(), "thelio".into()],
+/// });
+/// assert!(show(&record).contains("project_enrolled  acme/app for heron, thelio"));
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 pub fn show(record: &Record) -> String {
@@ -264,6 +269,11 @@ pub fn show(record: &Record) -> String {
         Change::DeviceRemoved(d) => format!("device_removed  {} of {}", d.name, d.user),
         Change::PolicySet(set) => format!("policy_set  proof {}", set.proof),
         Change::Proved(p) => format!("proved  {} with {} of {}", p.action, p.name, p.user),
+        Change::ProjectEnrolled(p) => match p.hosts.as_slice() {
+            [] => format!("project_enrolled  {} for each host", p.repo),
+            hosts => format!("project_enrolled  {} for {}", p.repo, hosts.join(", ")),
+        },
+        Change::ProjectRemoved(p) => format!("project_removed  {}", p.repo),
     };
     format!(
         "{}  {}  {facts}  ({})",
@@ -298,6 +308,8 @@ fn thread_of(record: &Record) -> Option<String> {
         Change::PlanSet(s) => Some(s.thread.to_string()),
         Change::PlanEnded(e) => Some(e.thread.to_string()),
         Change::NotesSet(n) => Some(n.thread.to_string()),
+        Change::ProjectEnrolled(p) => Some(p.repo.to_string()),
+        Change::ProjectRemoved(p) => Some(p.repo.to_string()),
         Change::PauseSet(s) => match &s.scope {
             Scope::Repository(thread) => Some(thread.to_string()),
             Scope::Riff | Scope::Other => None,

@@ -349,16 +349,8 @@ impl Command for FindProjects {
     type Note = ();
 
     fn handle(&self, _: &Caller, view: &View<'_>, _: Now) -> Result<(Vec<Change>, ()), Refused> {
-        let riff = view.riff;
-        if riff.projects().known() {
-            return Ok((Vec::new(), ()));
-        }
-        let leads = riff.work().leads.keys().map(|(_, thread)| thread);
-        let found: BTreeSet<&ThreadName> = leads
-            .chain(riff.plans().noted())
-            .filter(|thread| repository(thread).is_ok())
-            .collect();
-        let changes = found
+        let changes = view
+            .to_find()
             .into_iter()
             .map(|repo| {
                 Change::ProjectEnrolled(ProjectEnrolled {
@@ -426,6 +418,21 @@ impl View<'_> {
             hosts: project.hosts.clone(),
             leads: leads.into_iter().collect(),
         })
+    }
+
+    /// The repositories that the search at a start enrolls
+    /// (01M76SG8NCSAP69Y5AX455BJQM): with no record of a project in the
+    /// log, each repository thread with a lead or the notes of a lead.
+    pub(super) fn to_find(&self) -> BTreeSet<&ThreadName> {
+        let riff = self.riff;
+        if riff.projects().known() {
+            return BTreeSet::new();
+        }
+        let leads = riff.work().leads.keys().map(|(_, thread)| thread);
+        leads
+            .chain(riff.plans().noted())
+            .filter(|thread| repository(thread).is_ok())
+            .collect()
     }
 
     /// Each project of the riff, in the order of the repository

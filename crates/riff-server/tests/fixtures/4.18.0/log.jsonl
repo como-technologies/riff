@@ -1,0 +1,8 @@
+{"format":1,"first":1}
+{"position":1,"written_at_ms":1794200001000,"by":"server","command":"make_riff","change":{"riff_made":{"riff_id":"4c1d2e3f-6a7b-4c8d-9e0f-1a2b3c4d5e6f"}}}
+{"position":2,"written_at_ms":1794200002000,"by":"server","command":"find_projects","change":{"project_enrolled":{"repo":"acme/app"}}}
+{"position":3,"written_at_ms":1794200003000,"by":"server","command":"find_projects","change":{"project_enrolled":{"repo":"acme/web"}}}
+{"position":4,"written_at_ms":1794200004000,"by":{"person":"mike"},"command":"enroll_project","change":{"project_enrolled":{"repo":"acme/app","hosts":["thelio"]}}}
+{"position":5,"written_at_ms":1794200005000,"by":{"person":"ann"},"command":"enroll_project","change":{"project_enrolled":{"repo":"acme/docs","hosts":["heron","pangolin"]}}}
+{"position":6,"written_at_ms":1794200006000,"by":{"person":"mike"},"command":"remove_project","change":{"project_removed":{"repo":"acme/web"}}}
+{"position":7,"written_at_ms":1794200007000,"command":"enroll_project","change":{"project_enrolled":{"repo":"acme/tools"}}}

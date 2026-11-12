@@ -147,6 +147,9 @@
 //!   (01M3WRD99M99PNGP8ME50KC6WS). A start on a store with the objects
 //!   of a riff-server from before the log, and no log, is the import of
 //!   go-live (01M3Z8MRDZEKTXSKZTDTDSCZ3W): see [`import`].
+//! - A start with no record of a project in the log sends the command
+//!   `find_projects` when it serves, and tells the owner in the chat
+//!   (01M76SG8NCSAP69Y5AX455BJQM): see [`projects`].
 //! - [`Service::load`] loads the newest checkpoint of a [`store::Store`],
 //!   and replays the log after it (R30). A timer writes a checkpoint, and
 //!   deletes the old checkpoints and the chunks that no kept checkpoint
@@ -263,6 +266,7 @@ pub mod lease;
 pub mod listen;
 pub mod logline;
 pub mod oidc;
+pub mod projects;
 pub mod proofs;
 pub mod renew;
 pub mod token;
@@ -305,6 +309,7 @@ use riff_core::wire::{
     SetPolicy, UseProof,
 };
 use riff_core::wire::{BotPost, Names, NamesReply, SetMachine};
+use riff_core::wire::{ProjectInit, ProjectRemove, ProjectsQuery};
 use riff_core::wire::{Devices, KeyReply, KeyStart, KeyTicket, KeyWait, RemoveDevice};
 use riff_state::owner::{Check, Checks};
 use riff_state::state::{
@@ -1588,6 +1593,7 @@ impl Service {
         service.forget_sessions();
         service.watch_owner();
         service.read_keys();
+        service.find_projects();
         service
     }
 
@@ -1613,6 +1619,37 @@ impl Service {
                 if server.serving() {
                     // A fault has its own log line in apps_of.
                     let _ = github::apps_of(&server).await;
+                    return;
+                }
+            }
+        });
+    }
+
+    /// The search of the projects, one time, when the server serves
+    /// (01M76SG8NCSAP69Y5AX455BJQM): only with no record of a project in
+    /// the log, and a repository thread with a lead or the notes of a
+    /// lead ([`projects::find`]). A server with no async runtime starts
+    /// no task.
+    fn find_projects(&self) {
+        if !self.0.engine.read(State::projects_to_find) {
+            return;
+        }
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let server = Arc::downgrade(&self.0);
+        runtime.spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_millis(100));
+            loop {
+                tick.tick().await;
+                let Some(server) = server.upgrade() else {
+                    return;
+                };
+                if server.is_stopped() {
+                    return;
+                }
+                if server.serving() {
+                    projects::find(&server).await;
                     return;
                 }
             }
@@ -2027,6 +2064,10 @@ impl Service {
             .route(PlanSeen::PATH, post(plan_seen))
             .route(PlanShow::PATH, post(plan_show))
             .route(NotesShow::PATH, post(notes_show))
+            // The projects of the riff (01M76SG8GBXFYXKWMQHPCNEXBN, 01M76SG8JVHTKY6N62FQG7XAE6).
+            .route(ProjectInit::PATH, post(projects::init))
+            .route(ProjectRemove::PATH, post(projects::remove))
+            .route(ProjectsQuery::PATH, post(projects::list))
             // A step that riff-server does not do itself (01M75WKSNREGG95CK40W2A5JPQ).
             .route(UseProof::PATH, post(proofs::use_proof))
             .route("/v1/me", get(me))
@@ -3922,6 +3963,10 @@ mod tests {
             send(&service, named(&me)).await.unwrap();
         }
         send(&service, Resume::whole(mike())).await.unwrap();
+        // The repository of the leads is a project, as in a riff of this
+        // build: a later start looks for no project
+        // (01M76SG8NCSAP69Y5AX455BJQM).
+        service.0.engine.find_projects().await.unwrap();
         service
     }
 

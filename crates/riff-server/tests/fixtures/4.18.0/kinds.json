@@ -1,0 +1,11 @@
+{
+  "records": [
+    "project_enrolled",
+    "project_removed"
+  ],
+  "commands": [
+    "enroll_project",
+    "remove_project",
+    "find_projects"
+  ]
+}

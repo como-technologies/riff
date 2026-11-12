@@ -55,6 +55,12 @@
 //!   resumes, and an approval pauses it. So `replayed.json` has the part
 //!   `keys` of three persons, with a counter and a new last use, and the
 //!   policy.
+//! - `fixtures/4.18.0`: the projects of the riff
+//!   (01M76SG2E9RPV4B7CYSZPGGZ3P). `log.jsonl` has the search of the
+//!   server, which enrolls two repositories, then a person sets the
+//!   hosts of one, another person enrolls a third, the first removes
+//!   one, and the last record, with no caller, enrolls a fourth. So
+//!   `replayed.json` has three projects and the mark `projects_known`.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -79,8 +85,11 @@ const NOTES: &str = "3.4.0";
 /// The release of the fixtures of the keys of a person.
 const KEYS: &str = "4.17.0";
 
+/// The release of the fixtures of the projects of the riff.
+const PROJECTS: &str = "4.18.0";
+
 /// Each release with a directory of its own and a `kinds.json`.
-const RELEASES: [&str; 5] = ["1.0.0", HOLDS, PLANS, NOTES, KEYS];
+const RELEASES: [&str; 6] = ["1.0.0", HOLDS, PLANS, NOTES, KEYS, PROJECTS];
 
 fn bytes(name: &str) -> Vec<u8> {
     bytes_of("1.0.0", name)
@@ -200,7 +209,7 @@ fn the_list_of_the_release_has_no_riff_state_set() {
 #[test]
 fn the_fixture_log_has_a_record_of_each_kind() {
     let mut all = BTreeSet::new();
-    for release in [HOLDS, PLANS, NOTES, KEYS] {
+    for release in [HOLDS, PLANS, NOTES, KEYS, PROJECTS] {
         let log = records_of(release, "log.jsonl");
         let new: Kinds = serde_json::from_slice(&bytes_of(release, "kinds.json")).unwrap();
         let found = set(log.iter().map(|record| record.change.kind()));
@@ -575,6 +584,49 @@ fn the_log_of_the_keys_gives_its_checkpoint_at_each_position() {
     assert_eq!(ann[0].used_ms, 1_794_100_007_000);
     assert_eq!(full.keys("ann")[0].1.counter, 4);
     assert_eq!(full.policy(), riff_core::proof::Policy::Required);
+
+    for at in 0..=records.len() {
+        let (before, after) = records.split_at(at);
+        let state = State::replay(before.to_vec(), now, 0);
+        let saved = checkpoint::decode(&written(&state, &expected)).unwrap();
+        let alone = State::load(Some(saved.state.clone()), [], now, 0);
+        assert!(alone.same_log_state(&state), "the checkpoint at {at}");
+        let loaded = State::load(Some(saved.state), after.to_vec(), now, 0);
+        assert!(loaded.same_log_state(&full), "a start from {at}");
+    }
+}
+
+/// The log of the projects: this build writes its bytes, a replay gives
+/// `replayed.json` with each project, who enrolled it and when, its
+/// hosts and the mark, and a load of the checkpoint at each position
+/// gives the state of a replay (01M76SG2E9RPV4B7CYSZPGGZ3P).
+#[test]
+fn the_log_of_the_projects_gives_its_checkpoint_at_each_position() {
+    let records = records_of(PROJECTS, "log.jsonl");
+    assert_eq!(log::encode(&records), bytes_of(PROJECTS, "log.jsonl"));
+    let expected = checkpoint::decode(&bytes_of(PROJECTS, "replayed.json")).unwrap();
+    assert_eq!(
+        checkpoint::encode(&expected),
+        bytes_of(PROJECTS, "replayed.json")
+    );
+
+    let now = Instant::now();
+    let full = State::replay(records.clone(), now, 0);
+    assert_eq!(
+        written(&full, &expected),
+        bytes_of(PROJECTS, "replayed.json")
+    );
+    let projects = full.projects(now).projects;
+    let repos: Vec<String> = projects.iter().map(|p| p.repo.to_string()).collect();
+    assert_eq!(repos, ["acme/app", "acme/docs", "acme/tools"]);
+    // A later enrollment sets the hosts; who and when stay.
+    assert_eq!(projects[0].by, Some(By::Server));
+    assert_eq!(projects[0].at_ms, 1_794_200_002_000);
+    assert_eq!(projects[0].hosts, ["thelio"]);
+    assert_eq!(projects[1].hosts, ["heron", "pangolin"]);
+    // A record with no cause.
+    assert_eq!(projects[2].by, None);
+    assert!(full.projects_known() && !full.projects_to_find());
 
     for at in 0..=records.len() {
         let (before, after) = records.split_at(at);

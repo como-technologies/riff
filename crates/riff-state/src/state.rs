@@ -2286,6 +2286,14 @@ impl State {
         self.written.projects().known()
     }
 
+    /// True when the search of the projects at a start enrolls a
+    /// repository: the log has no record of a project, and a repository
+    /// thread has a lead or the notes of a lead
+    /// (01M76SG8NCSAP69Y5AX455BJQM).
+    pub fn projects_to_find(&self) -> bool {
+        !self.written_view().to_find().is_empty()
+    }
+
     /// Each repository thread of `user` (#1666): each one with a session
     /// of the user, live or gone, a lead of the user, or the notes of a
     /// lead of the user. A forgotten session takes its lead with it, and

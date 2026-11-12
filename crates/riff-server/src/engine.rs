@@ -36,8 +36,13 @@
 //! - The server is a caller too. The engine has one function for each
 //!   command of the server: [`Engine::make_riff`], [`Engine::announce`],
 //!   [`Engine::forget`], [`Engine::import`], [`Engine::name_owner`],
-//!   [`Engine::grant_owner`] and [`Engine::end_owner`]. No HTTP call
-//!   can send them.
+//!   [`Engine::grant_owner`], [`Engine::end_owner`] and
+//!   [`Engine::find_projects`]. No HTTP call can send them.
+//! - The calls of a project send the command `enroll_project` or
+//!   `remove_project` after a check on GitHub
+//!   ([`Engine::enroll_project`], [`Engine::remove_project`],
+//!   01M76SG8GBXFYXKWMQHPCNEXBN). The caller is the caller of the `me`
+//!   of the call.
 //! - The token path sends the command `admit` for the first step of a
 //!   sign-in ([`Engine::sign_in`], 01M3XA877YZQ649SWB5TN60V5P). Its
 //!   caller is the sign-in: the verified email of the provider.
@@ -192,8 +197,9 @@ use riff_core::wire::{
 use riff_state::log::Written;
 use riff_state::state::{
     AddKey, Admit, Admitted as SignedInAs, Announce, Arrive, Caller, Cause, Check, Code, Command,
-    CommandKind, Delivery, Done, EndOwner, Forget, GrantOwner, Import, Imported, Key, MakeRiff,
-    NameOwner, OwnerChange, Prove, Refused, Role, Signal, State,
+    CommandKind, Delivery, Done, EndOwner, EnrollProject, FindProjects, Forget, GrantOwner, Import,
+    Imported, Key, MakeRiff, NameOwner, OwnerChange, Prove, Refused, RemoveProject, Role, Signal,
+    State,
 };
 use tokio::sync::{Notify, broadcast, oneshot};
 
@@ -1054,6 +1060,55 @@ impl Engine {
     pub fn name_owner(&self, email: &str) {
         let email = email.to_owned();
         drop(self.send(Engine::as_server(NameOwner { email })));
+    }
+
+    /// The search of the projects at a start (01M76SG8NCSAP69Y5AX455BJQM):
+    /// the command `find_projects` of the server. Gives each repository
+    /// that it enrolled: none when the log has a record of a project.
+    pub async fn find_projects(&self) -> Result<Vec<ThreadName>, Failed> {
+        self.dispatch(Engine::as_server(FindProjects)).await
+    }
+
+    /// The enrollment of a project, or a change of its hosts, after the
+    /// check of riff-server on GitHub: the command `enroll_project`
+    /// (01M76SG8GBXFYXKWMQHPCNEXBN). The caller is the caller that
+    /// [`Engine::admit`] gave for the `me` of the call.
+    pub async fn enroll_project(
+        &self,
+        admitted: Admitted,
+        enroll: EnrollProject,
+    ) -> Result<riff_core::wire::ProjectInitReply, Failed> {
+        self.dispatch(Authenticated {
+            admitted,
+            command: enroll,
+            call: None,
+            ticket: None,
+        })
+        .await
+    }
+
+    /// The removal of a project after the check of riff-server on
+    /// GitHub: the command `remove_project` (01M76SG8GBXFYXKWMQHPCNEXBN).
+    /// Gives the project that went.
+    pub async fn remove_project(
+        &self,
+        admitted: Admitted,
+        remove: RemoveProject,
+    ) -> Result<riff_core::wire::ProjectFacts, Failed> {
+        self.dispatch(Authenticated {
+            admitted,
+            command: remove,
+            call: None,
+            ticket: None,
+        })
+        .await
+    }
+
+    /// The role of the caller of `admitted` now, as the check of a
+    /// command reads it ([`Engine::check`]).
+    pub fn role(&self, admitted: &Admitted) -> Role {
+        let core = self.core();
+        self.with_role(admitted, &core.state).role()
     }
 
     /// Grants a request for the owner role whose time ended: the command
