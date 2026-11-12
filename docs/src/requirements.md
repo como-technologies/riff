@@ -5964,10 +5964,10 @@ of this part when they merge.
 - **01M5RG2AS2CYJPWGKTV7N2HNYP** A stop or a restart of the daemon
   leaves the network of each container that runs
   (01M4ZDTW00B7N6T9P3MK066KA7). When the daemon has an `INVOCATION_ID`,
-  it runs in a systemd unit, and it starts each `podman run` as
-  `systemd-run --user --scope --collect --quiet -- podman run ...`. So
-  pasta, the network process of podman, runs in a scope of its own, not
-  in the cgroup of the unit, and a stop of the unit does not end it.
+  it runs in a systemd unit, and it starts each `podman run` with
+  `systemd-run --user --scope`. So pasta, the network process of podman,
+  runs in a scope of its own, not in the cgroup of the unit, and a stop
+  of the unit does not end it.
   With no `INVOCATION_ID`, the daemon starts `podman run` itself.
 - **01M5SN561BM9SK24SS0AVJ3P5J** `riff join --host HOST` for a
   repository that no daemon of the user on HOST serves goes to the
@@ -6172,12 +6172,28 @@ of this part when they merge.
 - **01M7755V17SGY2NW231WJ12WXN** Each process of a session container
   runs at nice 19, the lowest CPU priority. The daemon starts the
   `podman run` of each worker, verify and lead with `nice -n 19`, so
-  each process of the container gets the value from podman. A takeover
-  starts its command in the container with `nice -n 19`. Each container
-  also gets `--cgroup-conf cpu.weight=1`: the lowest CPU weight of
-  cgroup v2, below the default weight 100 of the cgroups of the person.
-  riff writes neither of them in a file of the person. This supersedes
-  01M5SMW28KT5D5HPRH7KAZ8TVC in part.
+  each process of the container gets the value from podman. Each
+  container also gets `--cgroup-conf cpu.weight=1`: the lowest CPU
+  weight of cgroup v2. riff writes neither of them in a file of the
+  person. This supersedes 01M5SMW28KT5D5HPRH7KAZ8TVC in part.
+- **01M778VSP6Z29FCPGX5S76ME1T** Each session container runs in
+  riff.slice, a slice of the manager of the user next to app.slice, the
+  slice of the programs of the person. riff.slice has the CPU weight 1,
+  the lowest of cgroup v2, so a build in a session yields the CPU to the
+  programs of the person. Each container gets `--cgroup-parent
+  riff.slice`: podman puts the container and its conmon in the slice. In
+  a unit, the scope of each `podman run` gets `--slice riff.slice`, so
+  podman and pasta run in the slice too. Before each start of a
+  container, riff runs `systemctl --user set-property --runtime
+  riff.slice CPUWeight=1`: systemd keeps the value in the runtime folder
+  of the user, and riff writes it in no file of the person. A start
+  fails when that command fails. This supersedes
+  01M7755V17SGY2NW231WJ12WXN and 01M5RG2AS2CYJPWGKTV7N2HNYP in part.
+- **01M778VZCT30WV6VBP2GY1HNBD** Each `podman exec` of riff in a session
+  container starts its command with `nice -n 19`: the command of a
+  takeover, and the checks `stty`, `getent` and `stat` of the daemon.
+  `podman exec` itself keeps the nice value of its caller. This
+  supersedes 01M7755V17SGY2NW231WJ12WXN in part.
 
 ### riff relay
 

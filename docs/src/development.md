@@ -2278,7 +2278,8 @@ another host, add `--host thelio`.
 - The caps of the host: `--cpus` and `--memory`. The defaults are 8
   CPUs and 8 GB. See
   [Set the caps of a container](#set-the-caps-of-a-container).
-- The lowest CPU priority: nice 19 and the CPU weight 1. See
+- The lowest CPU priority: nice 19, and the CPU weight 1 in
+  `riff.slice`. See
   [The priority of a session](#the-priority-of-a-session).
 - The folder of its own socket of the daemon at `/run/riff`, with
   write, and `RIFF_SOCKET=/run/riff/riff.sock`.
@@ -4234,19 +4235,51 @@ at its start. A session that runs keeps its caps. riff refuses 0.
 #### The priority of a session
 
 Each process of a session container runs at the lowest CPU priority,
-so a build in a session does not slow your own programs. The daemon
-starts each worker, verify and lead with `nice -n 19`, and each process
-of the container gets nice 19. A takeover runs its command in the
-container with `nice -n 19` too. A nice value counts only inside its
-own cgroup, so each container also gets `--cgroup-conf cpu.weight=1`:
-the lowest CPU weight. The default weight of a cgroup is 100. The
-priority has no setting, and riff writes it in no file of yours.
+so a build in a session yields the CPU to the programs of your
+desktop. A nice value counts only against the processes of its own
+cgroup, and a CPU weight only against the other cgroups of its level.
+So riff sets each of them:
+
+- The daemon starts each worker, verify and lead with `nice -n 19`,
+  and each process of the container gets nice 19. Each `podman exec`
+  of riff runs its command in the container with `nice -n 19` too: a
+  takeover, and the short checks of the daemon.
+- Each container runs in `riff.slice`, a slice of the systemd manager
+  of your user. The slice is next to `app.slice`, where your desktop
+  starts your programs. Before each start, the daemon gives the slice
+  the CPU weight 1, the lowest. The default weight is 100. So when
+  your programs and the sessions all want the CPU, your programs get
+  100 parts and the sessions 1.
+- Each container also gets `--cgroup-conf cpu.weight=1`: in the slice,
+  it yields to podman and its network.
+
+The priority has no setting. riff writes it in no file of yours:
+systemd keeps the weight of the slice in the runtime folder of your
+user.
 
 ```mermaid
-flowchart LR
-    D["riff daemon"] -- "nice -n 19 podman run<br/>--cgroup-conf cpu.weight=1" --> C["a session container:<br/>each process at nice 19"]
-    C --- G["its cgroup: cpu.weight 1"]
-    Y["your programs: nice 0"] --- W["your cgroups: cpu.weight 100"]
+flowchart TD
+    M["user@UID.service:<br/>the systemd manager of your user"] --> A["app.slice: weight 100<br/>your programs"]
+    M --> R["riff.slice: weight 1"]
+    R --> C["each session container:<br/>cpu.weight 1, each process at nice 19"]
+```
+
+To see the CPU weight of `riff.slice` and of each slice next to it:
+
+```sh
+grep . /sys/fs/cgroup/user.slice/user-$(id -u).slice/user@$(id -u).service/*/cpu.weight
+```
+
+The line of `riff.slice` ends with `:1`, and the line of `app.slice`
+with `:100`.
+
+A login over SSH runs in a scope of the system, next to the manager of
+your user, not in it. The weight of `riff.slice` does not count against
+it: a build of the login and the sessions get one half of the CPU each.
+To give a build of an SSH login the lead, start it in `app.slice`:
+
+```sh
+systemd-run --user --scope -- cargo build
 ```
 
 To see the nice value of each process of each session container:
@@ -4264,8 +4297,8 @@ container, for example `riff-issue-12-21c026a1`:
 podman exec riff-issue-12-21c026a1 cat /sys/fs/cgroup/cpu.weight
 ```
 
-It shows `1`. A session that an older riff started keeps nice 0 and the
-weight 100 until it ends.
+It shows `1`. A session that an older riff started keeps its old
+priority and its old slice until it ends.
 
 ### Set the effort of the sessions
 

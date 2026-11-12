@@ -41,6 +41,7 @@
 //! | [`cgroups`]: the cgroup controllers that podman needs | `/sys/fs/cgroup` | none |
 //! | [`Socket`]: the path of a socket in a long folder | `/proc/self/fd/N/NAME` | the plain path, of at most [`SOCKET_MOST`] bytes (01M6Z49RD4F6EX4K9FF2Z0CET9) |
 //! | [`service_manager`]: the manager of the daemon | systemd, `systemctl --user` | launchd, `launchctl` ([`launchd`], 01M6Z49H6CHSPV0FJZWY2MYHEM) |
+//! | The CPU weight of the slice of the sessions | `systemctl --user set-property --runtime` ([`systemd::set_cpu_weight`], 01M778VSP6Z29FCPGX5S76ME1T) | none: no session runs on macOS |
 //!
 //! ```mermaid
 //! flowchart LR
