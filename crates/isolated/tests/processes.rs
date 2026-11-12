@@ -13,20 +13,27 @@ use isolated::{Isolated, MARK, Span};
 /// parent ends at once. It ignores a SIGTERM, and it starts a child.
 const DAEMON: &str = "sh -c \"trap '' TERM; sleep 600 & sleep 600\" > /dev/null 2>&1 &";
 
-/// Waits until the environment of the dir `dir` has `count` processes,
-/// and gives their commands.
-fn wait_for_processes(dir: &Path, count: usize) -> Vec<String> {
+/// The commands of the processes of [`DAEMON`] when it runs, in order.
+const RUNNING: [&str; 3] = [
+    "sh -c trap '' TERM; sleep 600 & sleep 600",
+    "sleep 600",
+    "sleep 600",
+];
+
+/// Waits until the environment of the dir `dir` runs [`DAEMON`]: each
+/// child of a `sh` is a copy of the `sh` until it runs its program.
+fn wait_for_daemon(dir: &Path) {
     let span = Span::start();
     loop {
         let found = isolated::marked(MARK, dir);
-        // The copy of the first sh, before it runs the second one, has the
-        // redirect of its command.
-        if found.len() == count && found.iter().all(|p| !p.command.contains("/dev/null")) {
-            return found.into_iter().map(|p| p.command).collect();
+        let mut commands: Vec<&str> = found.iter().map(|p| p.command.as_str()).collect();
+        commands.sort_unstable();
+        if commands == RUNNING {
+            return;
         }
         assert!(
             span.within(Duration::from_secs(10)),
-            "not {count} processes: {found:?}"
+            "the daemon does not run: {found:?}"
         );
         std::thread::sleep(Duration::from_millis(10));
     }
@@ -56,17 +63,8 @@ fn the_drop_ends_each_process_of_the_environment_and_no_other() {
         assert!(status.success());
     }
     let (dir, other_dir) = (env.path().to_owned(), other.path().to_owned());
-    let mut commands = wait_for_processes(&dir, 3);
-    commands.sort();
-    assert_eq!(
-        commands,
-        [
-            "sh -c trap '' TERM; sleep 600 & sleep 600",
-            "sleep 600",
-            "sleep 600"
-        ]
-    );
-    wait_for_processes(&other_dir, 3);
+    wait_for_daemon(&dir);
+    wait_for_daemon(&other_dir);
 
     drop(env);
     assert_eq!(isolated::marked(MARK, &dir), []);

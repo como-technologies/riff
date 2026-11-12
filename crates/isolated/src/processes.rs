@@ -28,7 +28,10 @@
 //!
 //! [`end_marked`] sends a SIGKILL: a `riff relay` catches a SIGTERM. It
 //! looks again until it finds no process with the mark, so a child that
-//! a process starts while it ends also ends. The shared environment
+//! a process starts while it ends also ends. A process that starts a
+//! program (`exec`) has an empty environment for a moment, so a look
+//! does not find its mark. While such a process lives, [`end_marked`]
+//! looks again, for up to [`SETTLE`]. The shared environment
 //! ([`Isolated::shared`](crate::Isolated::shared)) never drops: a test
 //! that starts a process that can outlive the test, or a child of such a
 //! process, uses an environment of its own.
@@ -64,9 +67,23 @@ pub struct Marked {
     pub command: String,
 }
 
+/// The time for which [`end_marked`] waits for a process that starts a
+/// program, when it finds no process with the mark.
+pub const SETTLE: Duration = Duration::from_millis(200);
+
+/// One look at the processes: each process but this one with the mark,
+/// and the number of the processes that start a program at this moment.
+#[derive(Debug, Default)]
+struct Look {
+    marked: Vec<Marked>,
+    starting: usize,
+}
+
 /// Each process but this one whose environment has the variable `name`
 /// with the value `value`. A process that ended, also one that waits for
 /// its parent to read its exit, has no environment, so it does not come.
+/// Neither does a process that starts a program at this moment (`exec`):
+/// its environment is empty until the program runs.
 ///
 /// ```
 /// use std::process::Command;
@@ -85,53 +102,104 @@ pub struct Marked {
 /// # Ok::<(), std::io::Error>(())
 /// ```
 pub fn marked(name: &str, value: impl AsRef<OsStr>) -> Vec<Marked> {
-    #[cfg(target_os = "linux")]
-    {
-        use std::os::unix::ffi::OsStrExt;
-        let mut entry = name.as_bytes().to_vec();
-        entry.push(b'=');
-        entry.extend_from_slice(value.as_ref().as_bytes());
-        let me = std::process::id();
-        let Ok(procs) = std::fs::read_dir("/proc") else {
-            return Vec::new();
+    look(name, value.as_ref()).marked
+}
+
+/// The [`Look`] for the variable `name` with the value `value`.
+#[cfg(target_os = "linux")]
+fn look(name: &str, value: &OsStr) -> Look {
+    use std::os::unix::ffi::OsStrExt;
+    let mut entry = name.as_bytes().to_vec();
+    entry.push(b'=');
+    entry.extend_from_slice(value.as_bytes());
+    let me = std::process::id();
+    let mut look = Look::default();
+    let Ok(procs) = std::fs::read_dir("/proc") else {
+        return look;
+    };
+    for proc in procs.flatten() {
+        let Some(pid) = proc
+            .file_name()
+            .to_str()
+            .and_then(|n| n.parse::<i32>().ok())
+        else {
+            continue;
         };
-        let mut found: Vec<Marked> = procs
-            .flatten()
-            .filter_map(|proc| {
-                let pid: i32 = proc.file_name().to_str()?.parse().ok()?;
-                if pid.unsigned_abs() == me {
-                    return None;
-                }
-                let environ = std::fs::read(proc.path().join("environ")).ok()?;
-                if !environ.split(|b| *b == 0).any(|var| var == entry) {
-                    return None;
-                }
-                let line = std::fs::read(proc.path().join("cmdline")).unwrap_or_default();
-                let args: Vec<_> = line
-                    .split(|b| *b == 0)
-                    .filter(|arg| !arg.is_empty())
-                    .map(String::from_utf8_lossy)
-                    .collect();
-                Some(Marked {
-                    pid,
-                    command: args.join(" "),
-                })
-            })
+        if pid.unsigned_abs() == me {
+            continue;
+        }
+        // An error: the process ended, or it is of another user.
+        let Ok(environ) = std::fs::read(proc.path().join("environ")) else {
+            continue;
+        };
+        if environ.is_empty() {
+            let stat = std::fs::read_to_string(proc.path().join("stat")).unwrap_or_default();
+            look.starting += usize::from(starts_a_program(&stat));
+            continue;
+        }
+        if !environ.split(|b| *b == 0).any(|var| var == entry) {
+            continue;
+        }
+        let line = std::fs::read(proc.path().join("cmdline")).unwrap_or_default();
+        let args: Vec<_> = line
+            .split(|b| *b == 0)
+            .filter(|arg| !arg.is_empty())
+            .map(String::from_utf8_lossy)
             .collect();
-        found.sort_by_key(|p| p.pid);
-        found
+        look.marked.push(Marked {
+            pid,
+            command: args.join(" "),
+        });
     }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = (name, value);
-        Vec::new()
-    }
+    look.marked.sort_by_key(|p| p.pid);
+    look
+}
+
+/// On an OS other than Linux, a look finds no process.
+#[cfg(not(target_os = "linux"))]
+fn look(name: &str, value: &OsStr) -> Look {
+    let _ = (name, value);
+    Look::default()
+}
+
+/// True when `stat`, the text of `/proc/PID/stat` of a process whose
+/// environment reads empty, says that the process starts a program: it
+/// lives, and it is no kernel thread. A process that ended waits for its
+/// parent (`Z`), or is dead (`X`). The fields come after the name in
+/// parentheses: the state first, and the flags seventh.
+///
+/// ```
+/// use isolated::processes::starts_a_program;
+///
+/// assert!(starts_a_program("42 (sh) R 1 42 42 0 -1 4194560 0 0"));
+/// // A name with a space and a parenthesis.
+/// assert!(starts_a_program("42 (a) b) S 1 42 42 0 -1 4194560 0 0"));
+/// assert!(!starts_a_program("42 (sh) Z 1 42 42 0 -1 4227332 0 0"));
+/// // A kernel thread: the flag 0x00200000.
+/// assert!(!starts_a_program("2 (kthreadd) S 0 0 0 0 -1 2129984 0 0"));
+/// assert!(!starts_a_program(""));
+/// ```
+pub fn starts_a_program(stat: &str) -> bool {
+    /// The flag of a kernel thread in the flags of `stat`.
+    const KERNEL_THREAD: u64 = 0x0020_0000;
+    // The name can hold a space or a parenthesis: the fields start after
+    // the last one.
+    let Some((_, fields)) = stat.rsplit_once(") ") else {
+        return false;
+    };
+    let fields: Vec<&str> = fields.split_whitespace().collect();
+    let Some(flags) = fields.get(6).and_then(|f| f.parse::<u64>().ok()) else {
+        return false;
+    };
+    !matches!(fields.first(), Some(&"Z" | &"X")) && flags & KERNEL_THREAD == 0
 }
 
 /// Ends each process of [`marked`] with a SIGKILL, and looks again until
-/// it finds none, or for [`HANG`](crate::HANG). Gives each process that it
-/// ended, once. It never panics: an environment calls it when it drops,
-/// also in a test that failed.
+/// it finds none, or for [`HANG`](crate::HANG). While a look finds no
+/// process with the mark and a process starts a program, it looks again
+/// for up to [`SETTLE`]: that process can have the mark. Gives each
+/// process that it ended, once. It never panics: an environment calls it
+/// when it drops, also in a test that failed.
 ///
 /// ```
 /// use std::process::Command;
@@ -154,12 +222,23 @@ pub fn end_marked(name: &str, value: impl AsRef<OsStr>) -> Vec<Marked> {
     let value = value.as_ref();
     let start = Instant::now();
     let mut ended: Vec<Marked> = Vec::new();
+    // The start of the looks that found no process with the mark.
+    let mut quiet: Option<Instant> = None;
     loop {
-        let found = marked(name, value);
-        if found.is_empty() || start.elapsed() >= crate::HANG {
+        let look = look(name, value);
+        if start.elapsed() >= crate::HANG {
             return ended;
         }
-        for process in found {
+        if look.marked.is_empty() {
+            let since = *quiet.get_or_insert_with(Instant::now);
+            if look.starting == 0 || since.elapsed() >= SETTLE {
+                return ended;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+            continue;
+        }
+        quiet = None;
+        for process in look.marked {
             // A process that ended in the meantime fails the kill.
             let _ = kill(Pid::from_raw(process.pid), Signal::SIGKILL);
             if !ended.iter().any(|p| p.pid == process.pid) {

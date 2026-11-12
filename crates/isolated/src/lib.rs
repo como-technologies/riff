@@ -152,15 +152,18 @@ impl Drop for Isolated {
     /// (01M77HHYZWY1WWK1T6W6KX2SHV).
     ///
     /// ```
+    /// use std::os::unix::process::ExitStatusExt;
+    ///
     /// let env = isolated::Isolated::new();
-    /// // sh ends at once, and its child sleep gets another parent.
-    /// let status = env.command("sh").args(["-c", "sleep 60 > /dev/null 2>&1 &"]).status()?;
-    /// assert!(status.success());
-    /// let dir = env.path().to_owned();
-    /// let left = isolated::marked(isolated::MARK, &dir);
-    /// assert_eq!(left.len(), usize::from(cfg!(target_os = "linux")));
+    /// let mut sleep = env.command("sleep").arg("60").spawn()?;
     /// drop(env);
-    /// assert!(isolated::marked(isolated::MARK, &dir).is_empty());
+    /// if cfg!(target_os = "linux") {
+    ///     // The drop ended it with a SIGKILL.
+    ///     assert_eq!(sleep.wait()?.signal(), Some(9));
+    /// } else {
+    ///     sleep.kill()?;
+    ///     sleep.wait()?;
+    /// }
     /// # Ok::<(), std::io::Error>(())
     /// ```
     fn drop(&mut self) {
