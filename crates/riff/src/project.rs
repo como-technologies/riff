@@ -58,6 +58,26 @@
 //! 01M76SHB4SAWFW3S5Y7X9KC6E4): in a container, through the socket of the
 //! session ([`crate::reach::Reach::projects`]).
 //!
+//! # A wave and a lead only for a project
+//!
+//! The daemon of a host runs the wave of a repository only for a project
+//! that allows the host ([`wave_refused`], #1863). `riff host join` asks
+//! riff-server for the projects before each other step, and refuses with
+//! the fix ([`wave_allowed`]). The loop of the wave asks at each look, so
+//! a host that the project no longer allows starts no new session, and
+//! `riff daemon status` gives the reason ([`Refused::word`]). A lead
+//! starts only for a project ([`lead_refused`]). So a session in a
+//! repository that is no project has the chat and the messages only.
+//!
+//! ```mermaid
+//! flowchart LR
+//!     J["riff host join,<br/>a look of the wave"] --> P{"a project?"}
+//!     P -- "no" --> N["no wave, no lead:<br/>riff project init"]
+//!     P -- "yes" --> H{"no hosts,<br/>or this host?"}
+//!     H -- "no" --> M["no new session here:<br/>riff project init --host HOST"]
+//!     H -- "yes" --> W["the daemon runs the wave"]
+//! ```
+//!
 //! ```
 //! use riff::project::{Facts, checks};
 //!
@@ -77,6 +97,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use riff_client::api::Api;
 use riff_core::name::{Place, ThreadName};
+use riff_core::wire::ProjectFacts;
 
 use crate::first_run::{Check, Mode, Question};
 use crate::repo_setup::{self, Forge, Github};
@@ -506,6 +527,147 @@ pub async fn remove(server: &str, repo: &str) -> Result<String> {
     let token = gh_token(&here)?;
     let gone = api.project_remove(&me, &repo, &token).await?;
     Ok(text::project_removed(&gone.repo))
+}
+
+/// Why a host runs no wave of a repository, or a repository gets no lead
+/// (#1863): the repository is no project of the riff, or the project does
+/// not allow the host. Its text names the fix: `riff project init` with
+/// the hosts, by an admin. Its [`Refused::word`] is the word of the wave
+/// in `riff daemon status`.
+///
+/// ```
+/// use riff::project::Refused;
+///
+/// let none = Refused::NoProject { repo: "o/r".into() };
+/// assert!(none.to_string().contains("runs riff project init in a clone of o/r"), "{none}");
+/// assert!(none.word().contains("no project of the riff"), "{}", none.word());
+/// let host = Refused::Host { repo: "o/r".into(), host: "thelio".into(), hosts: vec!["b".into()] };
+/// assert!(host.to_string().contains("riff project init --host b --host thelio"), "{host}");
+/// assert!(host.word().contains("does not allow the host thelio"), "{}", host.word());
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Refused {
+    /// The repository `repo` is no project of the riff.
+    NoProject {
+        /// The repository, as `OWNER/REPO`.
+        repo: String,
+    },
+    /// The project `repo` allows only `hosts`, and not `host`.
+    Host {
+        /// The repository, as `OWNER/REPO`.
+        repo: String,
+        /// The host that the project does not allow.
+        host: String,
+        /// The hosts of the project.
+        hosts: Vec<String>,
+    },
+}
+
+impl Refused {
+    /// The word of the wave in `riff daemon status`.
+    pub fn word(&self) -> String {
+        match self {
+            Refused::NoProject { .. } => text::WAVE_NO_PROJECT.into(),
+            Refused::Host { host, .. } => text::wave_host_not_allowed(host),
+        }
+    }
+}
+
+impl std::fmt::Display for Refused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&match self {
+            Refused::NoProject { repo } => text::no_project(repo),
+            Refused::Host { repo, host, hosts } => text::host_not_allowed(repo, host, hosts),
+        })
+    }
+}
+
+impl std::error::Error for Refused {}
+
+/// Why the host `host` runs no wave of `repo` (`OWNER/REPO`), with the
+/// projects `projects` of the riff (#1863): `None` when `repo` is a
+/// project that allows `host`. A project with no hosts allows each host.
+///
+/// ```
+/// use riff::project::{Refused, wave_refused};
+/// use riff_core::wire::ProjectFacts;
+///
+/// let project = |hosts: &[&str]| ProjectFacts {
+///     repo: "o/r".parse().unwrap(),
+///     by: None,
+///     at_ms: 5,
+///     hosts: hosts.iter().map(|h| h.to_string()).collect(),
+///     leads: vec![],
+/// };
+/// assert_eq!(wave_refused(&[project(&[])], "o/r", "thelio"), None);
+/// assert_eq!(wave_refused(&[project(&["thelio"])], "o/r", "thelio"), None);
+/// assert!(matches!(
+///     wave_refused(&[project(&["pangolin"])], "o/r", "thelio"),
+///     Some(Refused::Host { hosts, .. }) if hosts == ["pangolin"]
+/// ));
+/// assert!(matches!(wave_refused(&[], "o/r", "thelio"), Some(Refused::NoProject { .. })));
+/// assert!(matches!(
+///     wave_refused(&[project(&[])], "o/other", "thelio"),
+///     Some(Refused::NoProject { .. })
+/// ));
+/// ```
+pub fn wave_refused(projects: &[ProjectFacts], repo: &str, host: &str) -> Option<Refused> {
+    let project = projects.iter().find(|p| p.repo.to_string() == repo);
+    let Some(project) = project else {
+        return lead_refused(projects, repo);
+    };
+    let allowed = project.hosts.is_empty() || project.hosts.iter().any(|h| h == host);
+    (!allowed).then(|| Refused::Host {
+        repo: repo.to_owned(),
+        host: host.to_owned(),
+        hosts: project.hosts.clone(),
+    })
+}
+
+/// Why `repo` (`OWNER/REPO`) gets no lead, with the projects `projects`
+/// of the riff (#1863): `None` when it is a project. The hosts of a
+/// project are for its wave: a lead runs on each host.
+///
+/// ```
+/// use riff::project::{Refused, lead_refused};
+/// use riff_core::wire::ProjectFacts;
+///
+/// let project = ProjectFacts {
+///     repo: "o/r".parse().unwrap(),
+///     by: None,
+///     at_ms: 5,
+///     hosts: vec!["pangolin".into()],
+///     leads: vec![],
+/// };
+/// assert_eq!(lead_refused(&[project.clone()], "o/r"), None);
+/// assert_eq!(
+///     lead_refused(&[project], "o/other"),
+///     Some(Refused::NoProject { repo: "o/other".into() })
+/// );
+/// ```
+pub fn lead_refused(projects: &[ProjectFacts], repo: &str) -> Option<Refused> {
+    let known = projects.iter().any(|p| p.repo.to_string() == repo);
+    (!known).then(|| Refused::NoProject {
+        repo: repo.to_owned(),
+    })
+}
+
+/// Each project of the riff on `server`, as the person of the host of
+/// `here` (01M76SG8JVHTKY6N62FQG7XAE6).
+pub async fn projects_of(here: &Place, server: &str) -> Result<Vec<ProjectFacts>> {
+    let me = identity::person(&Place::host_only(here.host())?, server)?;
+    let api = Api::new(server).signed_in(None)?;
+    Ok(api.projects(&me).await?.projects)
+}
+
+/// Fails with the [`Refused`] of [`wave_refused`] when the host of `here`
+/// may run no wave of the repository of `here` on `server` (#1863).
+pub async fn wave_allowed(here: &Place, server: &str) -> Result<()> {
+    let projects = projects_of(here, server).await?;
+    match wave_refused(&projects, &here.repo_text(), here.host()) {
+        Some(refused) => Err(refused.into()),
+        None => Ok(()),
+    }
 }
 
 #[cfg(test)]

@@ -861,7 +861,7 @@ fn x_on_another_host_asks_its_daemon_and_t_and_l_name_the_step_there() {
     assert_eq!(state.on_key(Key::Char('x')), None);
     assert_eq!(
         state.asked().as_deref(),
-        Some("pangolin stops taking work for como-technologies/strata (riff leave): y/N")
+        Some("pangolin stops taking work for como-technologies/strata (riff host leave): y/N")
     );
     assert_eq!(
         state.on_key(Key::Char('y')),

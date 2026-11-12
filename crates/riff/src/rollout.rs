@@ -7,7 +7,7 @@
 //! step. Once each [`INTERVAL`], it looks at the riff, and asks the riff
 //! daemon of its machine to run the wave of the repository
 //! ([`crate::wave`], 01M53NGVE839TRH7XB7CDPQNZE), only when the host
-//! has the part workers in the repository (`riff join`, #1643). The
+//! has the part workers in the repository (`riff host join`, #1643). The
 //! daemon runs each item in a container.
 //!
 //! ```mermaid
@@ -18,7 +18,7 @@
 //!     R -- "no: paused" --> T
 //!     R -- yes --> D["the daemon of this machine, at most 5 s:<br/>does a wave of the repository run?<br/>does the host have the part workers?"]
 //!     D -- "it runs" --> T
-//!     D -- "no part workers: riff leave, or no riff join" --> T
+//!     D -- "no part workers: riff host leave, or no riff host join" --> T
 //!     D -- "part workers, and no wave" --> W["free work (gh): a fix item of a broken main first,<br/>pull requests that wait for a verify,<br/>free items of the current wave, no held item"]
 //!     W --> I{"free work?"}
 //!     I -- no --> T
@@ -91,7 +91,7 @@
 //!   the sessions of a person from one item
 //!   (01M53NGWTNC3655ZZJ76M1R5R7). The limit of the containers is the
 //!   limit of the daemon (01M4ZV3B6HAFTSC2K63FMC5FYA). A second machine
-//!   runs its own wave with `riff join` (01M53NGVH8A19QS3CQ79ENVVXT).
+//!   runs its own wave with `riff host join` (01M53NGVH8A19QS3CQ79ENVVXT).
 //!   A host with no part workers ([`WaveState::NoWorkers`]) gets no ask
 //!   and no note: the lead on it only watches.
 //! - **A machine that cannot run a container**
@@ -107,8 +107,8 @@
 //!   gets one note with the reason ([`text::rollout_no_wave`]), and the
 //!   rollout asks again at each look. The next note comes for a new
 //!   reason, or after an ask that worked.
-//! - **A leave** (#1643). `riff leave` takes the part workers from the
-//!   host. The rollout asks for no wave there, at no look, until `riff
+//! - **A leave** (#1643). `riff host leave` takes the part workers from the
+//!   host. The rollout asks for no wave there, at no look, until `riff host
 //!   join`. To stop the work on each host, pause the repository.
 //! - **Pause** (01M3Q5QEBTNM90SPYXNVTT7RJA). A pause stops the rollout
 //!   within one look. A look that started before the pause can ask for

@@ -356,7 +356,7 @@ async fn a_long_step_shows_and_a_failed_step_wakes_the_lead() {
     );
 }
 
-/// 01M6WJYQJ58MHQF1XPXXZW2ET6: after `riff leave`, the block of the host
+/// 01M6WJYQJ58MHQF1XPXXZW2ET6: after `riff host leave`, the block of the host
 /// in `riff who` names the repository that the host is leaving and the
 /// sessions that go on to their end, under its parts. A host that left
 /// shows `left REPO`.

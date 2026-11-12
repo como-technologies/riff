@@ -99,7 +99,7 @@
 //! | `Enter` | A group: fold or open. A lead of this machine: attach. A worker in a container of a daemon of yours: its Session log in the Reports tab, and with no detail pane, its detail on the whole screen first. Each other session: its detail on the whole screen. |
 //! | `l` | Attach to the lead of the repository of the row, else to the first lead of this machine. On the lead of another host: a note with the step there. On a repository whose wave waits for a lead: on a host that runs that wave, `Start the lead of OWNER/REPO on HOST? y/N`, and `y` starts the lead as `riff lead start` does, then attaches; on another host, a note with the step (01M776RTACYY4JTVQ4FNT81Q0T). |
 //! | `t` | Take over the selected session, after `y` (`riff takeover NAME`). On another host: a note with the step there. |
-//! | `x` | End the selected session of the daemon, after `y` (`riff daemon end NAME`, on another host with `--host HOST`). On the row of a daemon: the host stops taking work for the repository, after `y` (`riff leave --host HOST`). |
+//! | `x` | End the selected session of the daemon, after `y` (`riff daemon end NAME`, on another host with `--host HOST`). On the row of a daemon: the host stops taking work for the repository, after `y` (`riff host leave --host HOST`). |
 //! | `p`, `P` | Pause or resume the repository of the row, or the whole riff, after `y`. |
 //! | `e` | Open each group, or fold the groups that need no look. |
 //! | `b` | Put the person at the top of the tree, or the repository again. |
@@ -125,7 +125,7 @@
 //! | Row | `x`, then `y` | `t`, `l` |
 //! |---|---|---|
 //! | A session of another host | `daemon end NAME` to the daemon of its host: NAME is the container that the facts of that daemon name | A note: `ssh HOST`, then `riff takeover NAME`, or `riff lead start` for a lead |
-//! | The session of a daemon | `leave REPO`: `HOST stops taking work for REPO (riff leave)`. Its sessions go on to their end | as for each other session |
+//! | The session of a daemon | `leave REPO`: `HOST stops taking work for REPO (riff host leave)`. Its sessions go on to their end | as for each other session |
 //!
 //! `p` and `P` go to riff-server, on each host. The TUI asks as the
 //! person in the repository of the row. In a container, it asks through
@@ -1220,7 +1220,7 @@ impl State {
     /// (01M579Z9VRD12FRK6DSYVKDHQB): on this machine through its socket,
     /// on another host through riff-server (01M6WMAXEVZB2XJN4XPR879J6W).
     /// On the row of a daemon of the person, it asks, then the host stops
-    /// taking work for the repository, as `riff leave --host HOST` does.
+    /// taking work for the repository, as `riff host leave --host HOST` does.
     fn end(&mut self) {
         let Some((session, repo)) = self.session() else {
             return;
@@ -2166,7 +2166,10 @@ pub fn help_keys() -> Vec<(&'static str, &'static str)> {
         ),
         ("l", "attach to the lead, or start it after y"),
         ("t", "take over the session, after y"),
-        ("x", "end the session, or riff leave on a daemon, after y"),
+        (
+            "x",
+            "end the session, or riff host leave on a daemon, after y",
+        ),
         (
             "p, P",
             "pause or resume the repository, or the riff, after y",

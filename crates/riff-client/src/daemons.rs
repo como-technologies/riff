@@ -25,7 +25,7 @@
 //! daemon serves: `workers`, `lead`, both or none (#1643). `riff who` shows
 //! them as the line `parts`. A daemon of an older build sends none. They
 //! carry the [`Leaving`] of each repository where the host takes no new claim
-//! and still runs sessions, for example after a `riff leave`
+//! and still runs sessions, for example after a `riff host leave`
 //! (01M6WJYQJ58MHQF1XPXXZW2ET6): `riff who` and the Machines tab of the TUI
 //! show it. They carry the [`Caps`] of each new container of the host too:
 //! the Machines tab shows them. They carry the [`Release`] of each watch of a
@@ -287,7 +287,7 @@ pub struct RepoParts {
 }
 
 /// A repository where the host takes no new claim, and still runs
-/// sessions of it: they go on to their end after a `riff leave`
+/// sessions of it: they go on to their end after a `riff host leave`
 /// (01M6WJYQJ58MHQF1XPXXZW2ET6). A leaving with no session is a
 /// repository that the daemon stopped serving at the look before its
 /// last one.

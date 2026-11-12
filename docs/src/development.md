@@ -1042,7 +1042,7 @@ riff image
 
 The sessions use only the merged pin: the image that `riff.toml` pins
 on the default branch of `origin`. riff fetches that branch first. The
-waves of the daemon, `riff join`, `riff run`, `riff lead start`
+waves of the daemon, `riff host join`, `riff run`, `riff lead start`
 and the update steps of the daemon use the merged pin. An edit of
 `riff.toml` that is not merged changes no session, also an edit in the
 main clone. When `riff.toml` of the main clone pins another image, riff
@@ -1962,7 +1962,7 @@ sequenceDiagram
 - `--image` works only on the host. The daemon takes the image that the
   repository pins.
 - The daemon must know the repository: run `riff lead start` once, or
-  `riff join` in the clone on the host.
+  `riff host join` in the clone on the host.
 - When the job does not start, for example when a hold keeps the item,
   the riff is paused, or a fact of the host fails, the lead gets a
   message with the reason. The item stays free.
@@ -2436,21 +2436,26 @@ Get ready as for `riff run` (see
 clone of the repository:
 
 ```sh
-riff join
+riff host join
 ```
 
-`riff join` gives this host the part workers in the repository: the
-daemon serves the repository and runs its wave. First the daemon must
-have the session image that the repository pins. It pulls the image
-when it is not on the machine. When podman does not run, or the pull
-fails, `riff join` says why, and the daemon runs no wave.
+`riff host join` gives this host the part workers in the repository:
+the daemon serves the repository and runs its wave. First riff asks
+riff-server whether the repository is a project that allows this host.
+When it is not, `riff host join` names the fix, and asks the daemon
+nothing (see
+[A wave and a lead only for a project](how-it-works.md#a-wave-and-a-lead-only-for-a-project)).
+Then the daemon must have the session image that the repository pins.
+It pulls the image when it is not on the machine. When podman does not
+run, or the pull fails, `riff host join` says why, and the daemon runs
+no wave.
 
 The wave reads the default branch of the repository from GitHub. Below,
 `main` is that branch, also when it has another name (see
 [Use any default branch](start-a-riff.md#use-any-default-branch)).
 
 The daemon keeps the wave, also over its own restart and over an
-update, until you run `riff leave` (see
+update, until you run `riff host leave` (see
 [Stop the wave](#stop-the-wave)). The rollout of your lead starts
 no wave for you on a host that never joined: see
 [Let the rollout of the lead run the wave](#let-the-rollout-of-the-lead-run-the-wave).
@@ -2461,7 +2466,7 @@ The wave starts no session while the repository has no live lead: see
 To run the wave on another host of yours too, with no login there:
 
 ```sh
-riff join --host thelio
+riff host join --host thelio
 ```
 
 See [Add a host to the wave](#add-a-host-to-the-wave).
@@ -2505,7 +2510,7 @@ The wave starts one session for each head commit with a conflict.
 When that session ends with no push, your lead gets a message:
 
 ```text
-issue-12: the rebase session of the wave ended with no push (session 9f8e7d6c). PR #40, branch worktree-issue-12, still has the head commit 1a2b3c4 with the conflict with main. The riff daemon sends no verify request, and the wave starts no second session for this commit. Give the item to a session to rebase, or run riff join to start the rebase again. The item is free.
+issue-12: the rebase session of the wave ended with no push (session 9f8e7d6c). PR #40, branch worktree-issue-12, still has the head commit 1a2b3c4 with the conflict with main. The riff daemon sends no verify request, and the wave starts no second session for this commit. Give the item to a session to rebase, or run riff host join to start the rebase again. The item is free.
 ```
 
 To start the rebase of the same commit again, see
@@ -2578,8 +2583,8 @@ one wave with 8 sessions uses at most 1,500.
   minute.
 - A wave with no work, no session and no change since its last look
   looks each 5 minutes, or each 30 minutes with the events of the GitHub
-  App. It looks each minute again when something changes. A session
-  that ends, a job that ends, a new `riff join` in your clone, a change
+  App. It looks each minute again when something changes. A session that
+  ends, a job that ends, a new `riff host join` in your clone, a change
   of the plan on riff-server and a wake of GitHub make it look at once
   (see
   [Which host takes a free item](how-it-works.md#which-host-takes-a-free-item)).
@@ -3026,7 +3031,7 @@ main clone itself, with the `gh` of your user on that host. Run this in
 your clone of the repository, or let your lead run it in its container:
 
 ```sh
-riff join --host thelio
+riff host join --host thelio
 ```
 
 ```mermaid
@@ -3034,7 +3039,7 @@ sequenceDiagram
     participant L as lead on pangolin
     participant S as riff-server
     participant D as riff daemon on thelio
-    L->>S: riff join --host thelio
+    L->>S: riff host join --host thelio
     S->>D: wake: the request
     D->>D: gh repo clone, once, into its folder clones
     D->>D: serve the repository, get the part workers, run its wave
@@ -3047,8 +3052,8 @@ The daemon of thelio does three steps:
 1. It clones the repository into `clones/OWNER/REPO` in its folder.
    It clones nothing when it serves the repository already.
 2. It serves the repository, so the other `--host` commands reach it.
-3. It gives the host the part workers, and runs the wave, as `riff join`
-   does there.
+3. It gives the host the part workers, and runs the wave, as `riff host
+   join` does there.
 
 A second call changes nothing: the daemon keeps its clone, its session
 and its wave. To take the workers from that host again, see
@@ -3061,13 +3066,13 @@ repository. Else do the steps of
 terminal and your lead in this repository can use `--host`. The daemon
 of HOST refuses each other session, for example a worker.
 
-In the container of your lead, `riff join` with no `--host` gives no
-workers: the container has no daemon of its own. It names the hosts of
-yours with a daemon that does not serve the repository, and exits with
-1:
+In the container of your lead, `riff host join` with no `--host` gives
+no workers: the container has no daemon of its own. It names the hosts
+of yours with a daemon that does not serve the repository, and exits
+with 1:
 
 ```text
-riff: a lead container gives no workers itself. Your hosts that give no workers to como-technologies/riff: thelio. To add one, run riff join --host thelio.
+riff: a lead container gives no workers itself. Your hosts that give no workers to como-technologies/riff: thelio. To add one, run riff host join --host thelio.
 ```
 
 #### Know which notices come from each host
@@ -3188,14 +3193,14 @@ checks of the pull request. It sends no verify request. Your lead gets
 a message when a check still fails:
 
 ```text
-issue-12: the session of the wave for the failed checks of PR #40 ended with no push (session 9f8e7d6c). PR #40, branch worktree-issue-12, still has the head commit 1a2b3c4, and the check Gate still fails. The riff daemon sends no verify request, and the wave starts no second session for this commit. Give the item to a session to fix, or run riff join to start the fix again. The item is free.
+issue-12: the session of the wave for the failed checks of PR #40 ended with no push (session 9f8e7d6c). PR #40, branch worktree-issue-12, still has the head commit 1a2b3c4, and the check Gate still fails. The riff daemon sends no verify request, and the wave starts no second session for this commit. Give the item to a session to fix, or run riff host join to start the fix again. The item is free.
 ```
 
 Your lead gets a note when no check fails because the session ran the
 job again:
 
 ```text
-issue-12: the session of the wave for the failed checks of PR #40 pushed nothing (session 9f8e7d6c). PR #40, branch worktree-issue-12, still has the head commit 1a2b3c4, and no check fails now: the job runs again. The riff daemon sends no verify request: the wave starts a verify of this commit when it has none. The pull request merges when its checks and its verify pass. When a check fails again, the wave starts no second session for this commit, and riff top shows stuck for the item. Run riff join to start the fix again.
+issue-12: the session of the wave for the failed checks of PR #40 pushed nothing (session 9f8e7d6c). PR #40, branch worktree-issue-12, still has the head commit 1a2b3c4, and no check fails now: the job runs again. The riff daemon sends no verify request: the wave starts a verify of this commit when it has none. The pull request merges when its checks and its verify pass. When a check fails again, the wave starts no second session for this commit, and riff top shows stuck for the item. Run riff host join to start the fix again.
 ```
 
 To see the stuck pull requests of the current wave, in your clone of
@@ -3523,7 +3528,7 @@ sign-in, run `claude` on that machine, and then end it:
 claude
 ```
 
-You do not have to run `riff join` again. At its next look, the
+You do not have to run `riff host join` again. At its next look, the
 wave starts the work. While it waits, `riff daemon status` shows the
 wave with the words `waits for this machine` and the reason.
 
@@ -3594,7 +3599,7 @@ session ended, and only for the head that the pull request has then, so
 your lead gets none for an old head:
 
 ```text
-The riff daemon started verify-issue-1597 3 times for the head 988cb7b of its pull request, and it is still free work. The last session ended: exit code 0, and no PASS or FAIL. It starts no more session for this head until riff join again. A new head starts a new count. Read why: riff session why verify-issue-1597
+The riff daemon started verify-issue-1597 3 times for the head 988cb7b of its pull request, and it is still free work. The last session ended: exit code 0, and no PASS or FAIL. It starts no more session for this head until riff host join again. A new head starts a new count. Read why: riff session why verify-issue-1597
 ```
 
 To read each of these sessions, run this on any machine:
@@ -3630,7 +3635,7 @@ request](#see-why-a-session-ended-with-no-pull-request). When you fixed
 it, run this in your clone of the repository:
 
 ```sh
-riff join
+riff host join
 ```
 
 The wave goes on, and the starts of each item go back to 0. The
@@ -3718,8 +3723,8 @@ cannot list the open issues, the note says so.
 You need no command for this on a host that joined. When the current
 wave has free work, the rollout of your lead asks the riff daemon of its
 machine to run the wave of the repository. It asks only when the host
-has the part workers (`riff join`) and no wave of the repository runs
-there. On a host that never joined, or that left, the rollout asks
+has the part workers (`riff host join`) and no wave of the repository
+runs there. On a host that never joined, or that left, the rollout asks
 nothing and says nothing: a lead on it only watches. `riff lead start`
 starts no wave.
 
@@ -3754,14 +3759,14 @@ there. Else get that machine ready as for `riff run` (see
 clone of the repository on that machine:
 
 ```sh
-riff join
+riff host join
 ```
 
 The claims on riff-server keep the two machines from one item: each
 item runs on one machine only. The limit of the containers of each
 machine is the limit of its daemon (see
 [Set the limit of the host](#set-the-limit-of-the-host)). To stop the
-wave of that machine, run `riff leave` there. Your lead can do
+wave of that machine, run `riff host leave` there. Your lead can do
 each of these steps from its own machine with `--host` (see
 [Manage the daemon of another host](#manage-the-daemon-of-another-host)).
 
@@ -3912,12 +3917,12 @@ with a lead on the host. So nothing stops.
 ```mermaid
 stateDiagram-v2
     [*] --> none
-    none --> workers: riff join
-    workers --> none: riff leave
+    none --> workers: riff host join
+    workers --> none: riff host leave
     none --> lead: a lead starts
     lead --> none: the lead ends
-    lead --> both: riff join
-    both --> lead: riff leave
+    lead --> both: riff host join
+    both --> lead: riff host leave
 ```
 
 ### Stop the wave
@@ -3925,14 +3930,14 @@ stateDiagram-v2
 In your clone of the repository:
 
 ```sh
-riff leave
+riff host leave
 ```
 
 The host loses the part workers. The daemon starts no new session for
 the repository, and the rollout of your lead asks for no wave there. The
 sessions that run go on to their end. The leave holds over a restart of
 the daemon and over an update. To give the workers again, run
-`riff join`.
+`riff host join`.
 
 When the host has no other part in the repository, for example a lead,
 its daemon also stops serving it. It removes the main clone that it made
@@ -3941,8 +3946,8 @@ of yours.
 
 #### See when the host is empty
 
-After `riff leave`, the sessions of the repository on the host go on to
-their end. To see how many are left:
+After `riff host leave`, the sessions of the repository on the host go
+on to their end. To see how many are left:
 
 ```sh
 riff who
@@ -3967,7 +3972,7 @@ under the row of the host: see
 To end the sessions that run, and free their items:
 
 ```sh
-riff leave --now
+riff host leave --now
 ```
 
 The daemon stops the container of each session of the repository but the
@@ -3976,7 +3981,7 @@ free work for another host.
 
 ```mermaid
 flowchart TD
-    L["riff leave"] --> W["the host loses the part workers"]
+    L["riff host leave"] --> W["the host loses the part workers"]
     W --> N{"--now?"}
     N -- no --> G["the sessions that run go on to their end"]
     N -- yes --> E["the daemon frees the item of each session<br/>and stops its container"]
@@ -4410,7 +4415,7 @@ joined, or a lead runs on it. Do this once on the other host, in the
 main clone of the repository:
 
 ```sh
-riff join
+riff host join
 ```
 
 The daemon keeps it over its restarts and over an update. With `--host`
@@ -4461,8 +4466,8 @@ daemon uses its own main clone there, and makes it when it has none (see
 [Add a host to the wave](#add-a-host-to-the-wave)):
 
 ```sh
-riff join --host thelio
-riff leave --host thelio
+riff host join --host thelio
+riff host leave --host thelio
 ```
 
 A leave and a new join clear the spent starts of each item. With
@@ -4495,7 +4500,7 @@ no other user reads it.
 Your lead, or you in a terminal, can see the sessions of the daemon of
 another host, with no SSH. Only you in a terminal and your lead in this
 repository can use `--host`. The daemon of HOST refuses each other
-session, for example a worker. Do the step `riff join` of
+session, for example a worker. Do the step `riff host join` of
 [Manage the daemon of another host](#manage-the-daemon-of-another-host)
 on that host first. Then run each command in the clone of the
 repository.
@@ -4660,6 +4665,9 @@ Then, in your clone of the repository:
 riff lead start
 ```
 
+The repository must be a project of the riff: else `riff lead start`
+names the fix, `riff project init`, and starts nothing (see
+[A wave and a lead only for a project](how-it-works.md#a-wave-and-a-lead-only-for-a-project)).
 The daemon starts the lead of the repository in the container
 `riff-lead-OWNER-REPO`, and riff attaches your terminal to it. A new
 lead is the lead of your user at once: `riff lead start` names it, and
@@ -4674,7 +4682,7 @@ To leave the terminal of the lead, press Ctrl-P, then Ctrl-Q. The lead
 runs on, and riff says that you left the terminal of the container.
 
 `riff lead start` starts no workers, and it does not join the host. A
-host that gave no workers gets one line that names `riff join`. The
+host that gave no workers gets one line that names `riff host join`. The
 daemon serves the repository while the lead runs, so `riff who` shows
 the host. To end the lead with its notes, run `riff lead stop` (see
 [Stop the lead](start-a-riff.md#stop-the-lead)). To end it at once, type
@@ -4751,8 +4759,8 @@ It does so on each host with the part lead, with or without the part
 workers. It needs no wave of the repository. So a host that must not
 run the wave of a repository updates its lead too, for example when the
 other person of the repository has a rule that its waves run on other
-hosts only. `riff leave` took the part workers from the host, or no
-person ran `riff join` there. A lead that `riff lead stop` ended is
+hosts only. `riff host leave` took the part workers from the host, or no
+person ran `riff host join` there. A lead that `riff lead stop` ended is
 gone: no update starts it again.
 
 ```mermaid
@@ -4784,11 +4792,11 @@ The clone of the lead links to its main clone: riff makes it with
 `git clone --reference`. Suppose a clone has no such link, and the
 daemon runs no wave of the repository. Then the line in riff chat says
 so, and the lead stays on the old riff. riff has no step that gives the
-main clone and starts no session. `riff join` in a clone of the
+main clone and starts no session. `riff host join` in a clone of the
 repository gives it, and starts a session for each free item:
 
 ```sh
-riff join
+riff host join
 ```
 
 #### Run a riff command in the terminal of the lead
@@ -7299,7 +7307,7 @@ sequenceDiagram
 | The real-session test | `riff release test --host HOST` | the test passed (next: `riff release cut`), or failed |
 | The CI run of the tag | `riff release cut` | the job `Deploy` waits for a person (the owner gets the line in `riff chat`), or a job failed |
 | The job `Deploy` | `riff release approve`, `retry`, `rollback` | the job failed (the failed jobs), or it passed, your container runs the release, and the job `Check the deploy` set its status or ended (see [Wait for the new riff before the check](#wait-for-the-new-riff-before-the-check) and [Check the release after the deploy](#check-the-release-after-the-deploy)) |
-| The wave | `riff join` | the last open item of the current wave closed (next: `riff release test`, then `riff release cut`); from the release issue to the check, it also gives the step of the release to `riff who` and the TUI |
+| The wave | `riff host join` | the last open item of the current wave closed (next: `riff release test`, then `riff release cut`); from the release issue to the check, it also gives the step of the release to `riff who` and the TUI |
 | The check of the lead | the watch of the job `Deploy`, at its end | never: it gives the step to `riff who` and the TUI (see [See who acts next on the release](#see-who-acts-next-on-the-release)) |
 
 The message ends with `next:` and the command of the next step. A
@@ -7323,7 +7331,7 @@ give one message, and it names each of them.
 A command prints the line `riff watches ...` after it starts the
 operation. When the daemon of the host does not serve the repository,
 the command still runs the operation. It says on stderr that the lead
-gets no message at the end. Run `riff join` in the main clone of
+gets no message at the end. Run `riff host join` in the main clone of
 the repository, and the daemon serves it.
 
 #### See the watches of the daemon
@@ -7943,12 +7951,13 @@ number, for example `The release issue: #7` (see
 `passed` or `failed`. The daemon of the host registers a watch of the
 test when the test starts, and wakes the lead at its end: the lead gets
 one message with `passed` or `failed`, and the next step. Name the host
-as `riff daemon status --host HOST` does. The host needs `riff join` in
-its main clone of the repository, or `riff join --host HOST` from here.
+as `riff daemon status --host HOST` does. The host needs `riff host
+join` in its main clone of the repository, or `riff host join --host
+HOST` from here.
 
 The lead runs this command, and each other `--host` command, in its
 container: `riff daemon status --host`, `riff daemon sweep --host`,
-`riff join --host` and `riff build --host`. In the container, the
+`riff host join --host` and `riff build --host`. In the container, the
 request goes through the riff daemon of the host to the daemon of
 `HOST`. A worker gets a refusal. In a container, `riff daemon status`
 with no `--host` shows the riff daemon of the session.
@@ -8445,14 +8454,14 @@ flowchart TD
 
    ```sh
    riff pause
-   riff leave
+   riff host leave
    ```
 
    `riff who` lists each other host with a daemon. Stop the wave of
    each one:
 
    ```sh
-   riff leave --host HOST
+   riff host leave --host HOST
    ```
 
 3. Make the release (see [Make a release](#make-a-release)). The tag

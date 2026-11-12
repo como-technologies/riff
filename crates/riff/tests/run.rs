@@ -426,11 +426,23 @@ pub(crate) fn git(dir: &Path, args: &[&str]) -> String {
     text(&out.stdout).trim().to_owned()
 }
 
+/// The repository of the tests, a project of the riff of [`server`].
+const REPO: &str = "como-technologies/riff";
+
+/// A riff-server of [`no_project`] where [`REPO`] is a project that
+/// allows each host: a wave and a lead run only for a project (#1863).
+async fn server() -> Arc<Served> {
+    let served = no_project().await;
+    crate::github_apps::enroll(&served.signed, &served.github, REPO, &[]).await;
+    served
+}
+
 /// A real riff-server of this build that needs a sign-in, with the two
 /// GitHub Apps of the riff on a fake GitHub that has them on
 /// `como-technologies/riff`. So each session gets a token of an App: no
-/// session gets the token of the person (01M6Z87A04EXTT1FFJSJ1EM6TB).
-async fn server() -> Arc<Served> {
+/// session gets the token of the person (01M6Z87A04EXTT1FFJSJ1EM6TB). It
+/// has no project.
+async fn no_project() -> Arc<Served> {
     let github = FakeGitHub::start().await;
     {
         let mut seen = github.seen();
@@ -753,6 +765,22 @@ impl Machine {
 
     fn read(&self, name: &str) -> String {
         std::fs::read_to_string(self.bin.path().join(name)).unwrap_or_default()
+    }
+
+    /// `riff daemon status`, again until it has `part`.
+    async fn status_until(&self, part: &str) -> String {
+        let started = Instant::now();
+        loop {
+            let status = self.ok(None, &["daemon", "status"]).await;
+            if status.contains(part) {
+                return status;
+            }
+            assert!(
+                started.elapsed() < isolated::HANG,
+                "no {part:?} in: {status}"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
     }
 }
 
@@ -1598,7 +1626,7 @@ async fn riff_run_goes_on_from_the_branch_of_an_earlier_session() {
 
 /// 01M51STPHXSSZMHF9T7Z85097R, 01M51STPMEM62Z8B26YM2CH6QH,
 /// 01M51SVXQK037E20R7WAY66532: the main clone pins another image in its
-/// working tree, and origin has the merged pin. `riff join`, the
+/// working tree, and origin has the merged pin. `riff host join`, the
 /// image step of `riff update --check`, `riff run` and `riff lead start`
 /// each use the merged pin, and say in one line that the local pin
 /// differs. Only the image of this folder in `riff update --check` reads
@@ -1618,8 +1646,8 @@ async fn only_the_merged_pin_counts_and_a_local_pin_gives_one_line() {
         assert_eq!(out.matches(line).count(), 1, "{out}");
     };
 
-    // riff join: the riff is paused, so the wave starts nothing.
-    let out = machine.ok(None, &["join"]).await;
+    // riff host join: the riff is paused, so the wave starts nothing.
+    let out = machine.ok(None, &["host", "join"]).await;
     says(&out, &differs);
 
     // The update step of the wave: the merged pin. Only the image of this
@@ -1649,7 +1677,7 @@ async fn only_the_merged_pin_counts_and_a_local_pin_gives_one_line() {
         &format!("como-technologies/riff: {differs}"),
     )
     .await;
-    machine.ok(None, &["leave"]).await;
+    machine.ok(None, &["host", "leave"]).await;
 
     // riff run pulls and runs the merged pin.
     machine.lead().await;
@@ -2578,15 +2606,15 @@ async fn riff_run_with_no_daemon_takes_no_claim_and_says_how_to_start_it() {
     machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
 }
 
-/// `riff join` asks the daemon to run the wave of the repository of
-/// the clone, and `riff leave` ends it (01M4ZV3B6J89KJQ0F14YWTZMJQ,
+/// `riff host join` asks the daemon to run the wave of the repository of
+/// the clone, and `riff host leave` ends it (01M4ZV3B6J89KJQ0F14YWTZMJQ,
 /// #1643). `riff daemon status` shows the limit, the wave and the parts
 /// of the host (01M4ZV3B6HAFTSC2K63FMC5FYA). The riff is paused, so the
 /// wave starts nothing.
 #[tokio::test]
-async fn riff_join_and_leave_ask_the_daemon() {
+async fn riff_host_join_and_leave_ask_the_daemon() {
     let machine = Machine::new().await;
-    let out = machine.ok(None, &["join"]).await;
+    let out = machine.ok(None, &["host", "join"]).await;
     assert!(
         out.contains("The riff daemon runs the wave of como-technologies/riff."),
         "{out}"
@@ -2610,7 +2638,7 @@ async fn riff_join_and_leave_ask_the_daemon() {
         status.contains("Parts of this host:\n  como-technologies/riff  workers\n"),
         "{status}"
     );
-    let out = machine.ok(None, &["leave"]).await;
+    let out = machine.ok(None, &["host", "leave"]).await;
     assert!(
         out.contains(&riff::text::leave_stops("como-technologies/riff")),
         "{out}"
@@ -2618,7 +2646,7 @@ async fn riff_join_and_leave_ask_the_daemon() {
     let status = machine.ok(None, &["daemon", "status"]).await;
     assert!(!status.contains("Waves:"), "{status}");
     assert!(!status.contains("Parts of this host:"), "{status}");
-    let out = machine.run(None, &["leave"]).await;
+    let out = machine.run(None, &["host", "leave"]).await;
     assert!(!out.status.success());
     let stderr = text(&out.stderr);
     assert!(
@@ -2627,12 +2655,93 @@ async fn riff_join_and_leave_ask_the_daemon() {
     );
 }
 
+/// 01M77FHMPV0NQ407TKC2F7J41Q, 01M77FHTXBCWA4FG793TEB5XCY: `riff host
+/// join` in a repository that is no project of the riff fails with the
+/// fix, and asks the daemon nothing: no wave and no part. A host that the
+/// project does not allow fails too, with a fix that names each host.
+/// When the project allows the host, the join runs the wave.
+#[tokio::test]
+async fn riff_host_join_refuses_a_repository_that_is_no_project_and_a_host_that_it_does_not_allow()
+{
+    let served = no_project().await;
+    let machine = Machine::with_server(None, served.clone()).await;
+    let no_wave = |status: &str| !status.contains("Waves:") && !status.contains("Parts of");
+
+    let out = machine.run(None, &["host", "join"]).await;
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let stderr = text(&out.stderr);
+    assert!(stderr.contains(&riff::text::no_project(REPO)), "{stderr}");
+    let status = machine.ok(None, &["daemon", "status"]).await;
+    assert!(no_wave(&status), "{status}");
+
+    let github = &served.github;
+    crate::github_apps::enroll(&served.signed, github, REPO, &["pangolin"]).await;
+    let out = machine.run(None, &["host", "join"]).await;
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let stderr = text(&out.stderr);
+    let fix = riff::text::host_not_allowed(REPO, "thelio", &["pangolin".into()]);
+    assert!(stderr.contains(&fix), "{stderr}");
+    assert!(
+        fix.contains("riff project init --host pangolin --host thelio"),
+        "{fix}"
+    );
+    let status = machine.ok(None, &["daemon", "status"]).await;
+    assert!(no_wave(&status), "{status}");
+
+    crate::github_apps::enroll(&served.signed, github, REPO, &["pangolin", "thelio"]).await;
+    let out = machine.ok(None, &["host", "join"]).await;
+    assert!(out.contains(&riff::text::wave_asked(REPO)), "{out}");
+}
+
+/// 01M77FHMTD5Y5FXRD903S2ZGCX: the loop of the wave reads the projects
+/// before each look. A host that the project no longer allows starts no
+/// new session, and `riff daemon status` says why. So does a repository
+/// that the riff forgot. The host keeps the part workers.
+#[tokio::test]
+async fn a_host_that_the_project_no_longer_allows_shows_why_in_the_daemon_status() {
+    let served = server().await;
+    let mut machine = Machine::with_server(None, served.clone()).await;
+    machine.ok(None, &["host", "join"]).await;
+    crate::github_apps::enroll(&served.signed, &served.github, REPO, &["pangolin"]).await;
+    // The new start of the daemon starts the loop, and it looks at once.
+    machine.stop_daemon().await;
+    machine.start_daemon().await;
+    let word = riff::text::wave_host_not_allowed("thelio");
+    let status = machine
+        .status_until(&format!("Waves:\n  {REPO}  {word}\n"))
+        .await;
+    assert!(
+        status.contains(&format!("Parts of this host:\n  {REPO}  workers\n")),
+        "{status}"
+    );
+    assert!(machine.read("run.args").is_empty());
+}
+
+/// 01M77FHTT8BZ2YN1SV7H1X3NG8: `riff lead start` in a repository that is
+/// no project of the riff fails with the fix, and starts no container.
+#[tokio::test]
+async fn riff_lead_start_refuses_a_repository_that_is_no_project() {
+    let machine = Machine::with_server(None, no_project().await).await;
+    machine.claude_token();
+    let out = machine.run(None, &["lead", "start"]).await;
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
+    assert!(stderr.contains(&riff::text::no_project(REPO)), "{stderr}");
+    assert!(!stdout.contains("The lead starts"), "{stdout}");
+    assert!(machine.read("run.args").is_empty());
+    let status = machine.ok(None, &["daemon", "status"]).await;
+    assert!(
+        !status.contains("riff-lead-como-technologies-riff"),
+        "{status}"
+    );
+}
+
 /// #1643, 01M6QRDB7KVR8954B00RTETEK4: the leave of a host holds over a
 /// restart of the daemon, which is also what an update does to it. The
 /// restarted daemon runs no wave, serves nothing, and the rollout of the
 /// lead asks for no wave: the host has no part workers.
 #[tokio::test]
-async fn riff_leave_holds_over_a_restart_of_the_daemon() {
+async fn riff_host_leave_holds_over_a_restart_of_the_daemon() {
     use riff::rollout::{WaveState, wave_state};
     let mut machine = Machine::new().await;
     machine.lead().await;
@@ -2641,9 +2750,9 @@ async fn riff_leave_holds_over_a_restart_of_the_daemon() {
     // A host that never joined: no ask of the rollout.
     assert_eq!(wave_state(&dir, repo, limit).await, WaveState::NoWorkers);
 
-    machine.ok(None, &["join"]).await;
+    machine.ok(None, &["host", "join"]).await;
     assert_eq!(wave_state(&dir, repo, limit).await, WaveState::Runs);
-    machine.ok(None, &["leave"]).await;
+    machine.ok(None, &["host", "leave"]).await;
     assert_eq!(wave_state(&dir, repo, limit).await, WaveState::NoWorkers);
 
     // A new start of the daemon, as an update makes it.
@@ -2673,7 +2782,7 @@ async fn riff_leave_holds_over_a_restart_of_the_daemon() {
     assert_eq!(wave_state(&dir, repo, limit).await, WaveState::NoWorkers);
 
     // A join gives the part again, and it holds over a restart too.
-    machine.ok(None, &["join"]).await;
+    machine.ok(None, &["host", "join"]).await;
     machine.stop_daemon().await;
     machine.start_daemon().await;
     assert_eq!(wave_state(&dir, repo, limit).await, WaveState::Runs);
@@ -2682,7 +2791,7 @@ async fn riff_leave_holds_over_a_restart_of_the_daemon() {
         status.contains("Parts of this host:\n  como-technologies/riff  workers\n"),
         "{status}"
     );
-    machine.ok(None, &["leave"]).await;
+    machine.ok(None, &["host", "leave"]).await;
 }
 
 /// #1643, 01M6QRCW89MXNTVKSCS2BCE0GX: a host that runs a wave gets the part
@@ -2728,24 +2837,24 @@ async fn a_host_that_runs_a_wave_gets_the_part_workers_at_the_first_start_of_the
             .contains("gave this host its parts: como-technologies/riff workers")
     );
     // The first start gives the parts one time: a leave holds after it.
-    machine.ok(None, &["leave"]).await;
+    machine.ok(None, &["host", "leave"]).await;
     machine.stop_daemon().await;
     machine.start_daemon().await;
     let status = machine.ok(None, &["daemon", "status"]).await;
     assert!(!status.contains("Waves:"), "{status}");
 }
 
-/// #1643, 01M6QRDB7KVR8954B00RTETEK4: `riff leave --now` ends the session
-/// that runs and frees its item on riff-server. `riff leave` alone lets
+/// #1643, 01M6QRDB7KVR8954B00RTETEK4: `riff host leave --now` ends the session
+/// that runs and frees its item on riff-server. `riff host leave` alone lets
 /// the session go on to its end.
 #[tokio::test]
-async fn riff_leave_now_ends_the_sessions_and_frees_their_items() {
+async fn riff_host_leave_now_ends_the_sessions_and_frees_their_items() {
     let machine = Machine::new().await;
     machine.lead().await;
     let bin = machine.bin.path();
     std::fs::write(bin.join("hold"), "").unwrap();
     std::fs::write(bin.join("wave-issue"), "").unwrap();
-    machine.ok(None, &["join"]).await;
+    machine.ok(None, &["host", "join"]).await;
 
     // The wave starts issue 12: a session claims it.
     let started = Instant::now();
@@ -2785,7 +2894,7 @@ async fn riff_leave_now_ends_the_sessions_and_frees_their_items() {
     );
 
     // A leave alone: the host loses the part, the session goes on.
-    let out = machine.ok(None, &["leave"]).await;
+    let out = machine.ok(None, &["host", "leave"]).await;
     assert!(
         out.contains(&riff::text::leave_stops("como-technologies/riff")),
         "{out}"
@@ -2799,7 +2908,7 @@ async fn riff_leave_now_ends_the_sessions_and_frees_their_items() {
     assert!(!status.contains("Waves:"), "{status}");
 
     // --now ends it and frees the item, with no part workers any more.
-    let out = machine.ok(None, &["leave", "--now"]).await;
+    let out = machine.ok(None, &["host", "leave", "--now"]).await;
     assert!(out.contains(&riff::text::daemon_freed("issue-12")), "{out}");
     let started = Instant::now();
     loop {
@@ -2815,7 +2924,7 @@ async fn riff_leave_now_ends_the_sessions_and_frees_their_items() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     // The host has nothing to leave now.
-    let out = machine.run(None, &["leave", "--now"]).await;
+    let out = machine.run(None, &["host", "leave", "--now"]).await;
     assert!(!out.status.success());
     std::fs::remove_file(bin.join("wave-issue")).unwrap();
     std::fs::remove_file(bin.join("hold")).unwrap();
@@ -3093,12 +3202,12 @@ async fn riff_lead_start_keeps_a_clone_that_git_cannot_fast_forward_and_starts_t
 /// #1644, 01M6QVSJC4V3Z3NB6MJW4XGJSR, 01M6QVSWQZE41BMQ6YN2963C4V: `riff
 /// lead start` on a host with no part workers starts the lead and no wave,
 /// and no session for an item, although issue 12 is free. It says that
-/// `riff join` gives workers. The daemon serves the repository while the
-/// lead runs. Then `riff join` gives the workers, and the wave starts
+/// `riff host join` gives workers. The daemon serves the repository while the
+/// lead runs. Then `riff host join` gives the workers, and the wave starts
 /// issue 12. The daemon is real, and the fake `podman` of this file is its
 /// runtime.
 #[tokio::test]
-async fn riff_lead_start_starts_no_worker_and_riff_join_gives_the_workers() {
+async fn riff_lead_start_starts_no_worker_and_riff_host_join_gives_the_workers() {
     let machine = Machine::new().await;
     machine.lead().await;
     machine.claude_token();
@@ -3142,8 +3251,8 @@ async fn riff_lead_start_starts_no_worker_and_riff_join_gives_the_workers() {
     );
     assert!(!again.contains(&riff::text::wave_asked(repo)), "{again}");
 
-    // `riff join` gives the workers, and the wave starts the item.
-    let joined = machine.ok(None, &["join"]).await;
+    // `riff host join` gives the workers, and the wave starts the item.
+    let joined = machine.ok(None, &["host", "join"]).await;
     assert!(joined.contains(&riff::text::wave_asked(repo)), "{joined}");
     wait_for(&bin.join("daemon.out"), "starts: issue-12").await;
     let status = machine.ok(None, &["daemon", "status"]).await;
@@ -3154,7 +3263,7 @@ async fn riff_lead_start_starts_no_worker_and_riff_join_gives_the_workers() {
         "{status}"
     );
 
-    machine.ok(None, &["leave"]).await;
+    machine.ok(None, &["host", "leave"]).await;
     std::fs::remove_file(bin.join("wave-issue")).unwrap();
     std::fs::remove_file(bin.join("hold")).unwrap();
     let started = Instant::now();
@@ -3345,7 +3454,10 @@ async fn two_waves_of_one_repository_on_two_machines_never_run_one_item_two_time
         std::fs::write(machine.bin.path().join("hold"), "").unwrap();
         std::fs::write(machine.bin.path().join("wave-issue"), "").unwrap();
     }
-    let (out_a, out_b) = tokio::join!(thelio.ok(None, &["join"]), pangolin.ok(None, &["join"]));
+    let (out_a, out_b) = tokio::join!(
+        thelio.ok(None, &["host", "join"]),
+        pangolin.ok(None, &["host", "join"])
+    );
     for out in [out_a, out_b] {
         assert!(
             out.contains(&riff::text::wave_asked("como-technologies/riff")),
@@ -3384,7 +3496,7 @@ async fn two_waves_of_one_repository_on_two_machines_never_run_one_item_two_time
     assert_eq!(who.matches("claim=issue-12").count(), 1, "{who}");
 
     for machine in [&thelio, &pangolin] {
-        machine.ok(None, &["leave"]).await;
+        machine.ok(None, &["host", "leave"]).await;
         std::fs::remove_file(machine.bin.path().join("wave-issue")).unwrap();
         std::fs::remove_file(machine.bin.path().join("hold")).unwrap();
     }
@@ -3415,7 +3527,7 @@ async fn a_claim_refused_for_a_pause_ends_the_session_of_the_job() {
     let bin = machine.bin.path();
     std::fs::write(bin.join("wave-issue"), "").unwrap();
     std::fs::write(bin.join("milestone-hold"), "").unwrap();
-    machine.ok(None, &["join"]).await;
+    machine.ok(None, &["host", "join"]).await;
 
     // The job looked, and waits for the milestone of the issue: its
     // step before the claim.
@@ -3444,7 +3556,7 @@ async fn a_claim_refused_for_a_pause_ends_the_session_of_the_job() {
         !thread.contains("could not start issue-12"),
         "the lead got a message: {thread}"
     );
-    machine.ok(None, &["leave"]).await;
+    machine.ok(None, &["host", "leave"]).await;
 }
 
 /// 01M5SNTPHHXP54YBTV09JNRY3F: before the first job of a wave, the daemon
@@ -3458,7 +3570,7 @@ async fn a_session_image_with_an_old_claude_tells_the_lead_once() {
     let bin = machine.bin.path();
     std::fs::write(bin.join("wave-issue"), "").unwrap();
     std::fs::write(bin.join("old-claude"), "").unwrap();
-    machine.ok(None, &["join"]).await;
+    machine.ok(None, &["host", "join"]).await;
     wait_for(&bin.join("daemon.out"), "starts: issue-12").await;
 
     let claude = riff::image_tools::Tool::Claude;
@@ -3489,7 +3601,7 @@ async fn a_session_image_with_an_old_claude_tells_the_lead_once() {
         thread.contains("FROM ghcr.io/como-technologies/riff-base@sha256:"),
         "{thread}"
     );
-    machine.ok(None, &["leave"]).await;
+    machine.ok(None, &["host", "leave"]).await;
 }
 
 /// 01M5QVH3MAEPPJN9PPVDX6N2EY, 01M51QEYKTD7ZEB0YA0C3MQTPN,
@@ -3513,7 +3625,7 @@ async fn the_daemon_tells_the_lead_that_main_is_broken_and_files_the_fix_item() 
         ),
     )
     .unwrap();
-    machine.ok(None, &["join"]).await;
+    machine.ok(None, &["host", "join"]).await;
 
     let started = Instant::now();
     let thread = loop {
@@ -3536,7 +3648,7 @@ async fn the_daemon_tells_the_lead_that_main_is_broken_and_files_the_fix_item() 
         log.contains("--label broken-main") && log.contains("--milestone Wave 27"),
         "{log}"
     );
-    machine.ok(None, &["leave"]).await;
+    machine.ok(None, &["host", "leave"]).await;
 }
 
 /// 01M5QYBWPAJ219BE8QKVKG1TWW (#1352), 01M5R56GN3DC09GAPAF69GENEZ (#1404):
@@ -3558,7 +3670,7 @@ async fn the_look_of_a_repository_with_the_default_branch_master_reads_master() 
         r#"{"check_runs":[{"status":"completed","conclusion":"failure","head_sha":"5103311abcdef"}]}"#,
     )
     .unwrap();
-    machine.ok(None, &["join"]).await;
+    machine.ok(None, &["host", "join"]).await;
 
     let waves = machine.env.riff_home().join("daemon/waves.json");
     let kept = std::fs::read_to_string(&waves).unwrap();
@@ -3583,13 +3695,13 @@ async fn the_look_of_a_repository_with_the_default_branch_master_reads_master() 
     );
     assert!(log.contains("/commits/master/check-runs"), "{log}");
     assert!(!log.contains("/commits/main/"), "{log}");
-    machine.ok(None, &["leave"]).await;
+    machine.ok(None, &["host", "leave"]).await;
 }
 
 /// 01M5R56GN3DC09GAPAF69GENEZ (#1404): `waves.json` of an older build has
 /// no default branch. The daemon of a later build starts with that file, runs
 /// the wave, and its look reads the full check of `commits/master`, the
-/// default branch that the forge gives. `riff join` reads the old file
+/// default branch that the forge gives. `riff host join` reads the old file
 /// too, and the file that it writes has no branch.
 #[tokio::test]
 async fn a_daemon_with_a_waves_file_of_an_older_build_runs_the_wave_and_the_look_reads_master() {
@@ -3644,12 +3756,12 @@ async fn a_daemon_with_a_waves_file_of_an_older_build_runs_the_wave_and_the_look
     let out = machine.read("daemon.out");
     assert!(!out.contains("cannot read the waves"), "{out}");
 
-    // `riff join` reads the old file, and writes none of the branch.
-    machine.ok(None, &["join"]).await;
+    // `riff host join` reads the old file, and writes none of the branch.
+    machine.ok(None, &["host", "join"]).await;
     let kept = std::fs::read_to_string(&waves).unwrap();
     assert!(kept.contains("como-technologies/riff"), "{kept}");
     assert!(!kept.contains("branch"), "{kept}");
-    machine.ok(None, &["leave"]).await;
+    machine.ok(None, &["host", "leave"]).await;
 }
 
 /// 01M5R56GN3DC09GAPAF69GENEZ (#1404): a default branch that does not read
@@ -3665,7 +3777,7 @@ async fn a_default_branch_that_does_not_read_starts_no_work_and_the_next_look_re
     std::fs::write(bin.join("branch-fails"), "").unwrap();
     std::fs::write(bin.join("hold"), "").unwrap();
     std::fs::write(bin.join("wave-issue"), "").unwrap();
-    machine.ok(None, &["join"]).await;
+    machine.ok(None, &["host", "join"]).await;
 
     // The wave looks, and the branch does not read: no start.
     wait_for(&bin.join("gh.log"), "--jq .default_branch").await;
@@ -3683,17 +3795,17 @@ async fn a_default_branch_that_does_not_read_starts_no_work_and_the_next_look_re
     assert!(machine.read("run.stdin").is_empty());
     assert!(!machine.read("gh.log").contains("issue view 12"));
 
-    // The forge answers again. `riff join` makes the wave look at once.
+    // The forge answers again. `riff host join` makes the wave look at once.
     let reads = machine
         .read("gh.log")
         .matches("--jq .default_branch")
         .count();
     std::fs::remove_file(bin.join("branch-fails")).unwrap();
-    machine.ok(None, &["join"]).await;
+    machine.ok(None, &["host", "join"]).await;
     wait_for(&bin.join("run.stdin"), "Never push to master.").await;
     let log = machine.read("gh.log");
     assert!(log.matches("--jq .default_branch").count() > reads, "{log}");
-    machine.ok(None, &["leave"]).await;
+    machine.ok(None, &["host", "leave"]).await;
     std::fs::remove_file(bin.join("wave-issue")).unwrap();
     std::fs::remove_file(bin.join("hold")).unwrap();
     let started = Instant::now();
@@ -3721,12 +3833,12 @@ async fn the_start_text_of_a_build_of_a_repository_with_the_default_branch_maste
     std::fs::write(bin.join("branch"), "master").unwrap();
     std::fs::write(bin.join("hold"), "").unwrap();
     std::fs::write(bin.join("wave-issue"), "").unwrap();
-    machine.ok(None, &["join"]).await;
+    machine.ok(None, &["host", "join"]).await;
 
     wait_for(&bin.join("run.stdin"), "Never push to master.").await;
     let start = machine.read("run.stdin");
     assert!(!start.contains("Never push to main"), "{start}");
-    machine.ok(None, &["leave"]).await;
+    machine.ok(None, &["host", "leave"]).await;
     std::fs::remove_file(bin.join("wave-issue")).unwrap();
     std::fs::remove_file(bin.join("hold")).unwrap();
     let started = Instant::now();
@@ -4026,7 +4138,7 @@ async fn riff_who_long_shows_the_pin_of_the_wave_and_the_image_of_each_session_c
     // podman says that the container runs the pinned digest.
     let digest = PINNED.split_once('@').unwrap().1;
     std::fs::write(bin.join("digest"), format!("{digest}\n")).unwrap();
-    machine.ok(None, &["join"]).await;
+    machine.ok(None, &["host", "join"]).await;
 
     let (wave, session) = (
         "wave como-technologies/riff: ",
@@ -4052,7 +4164,7 @@ async fn riff_who_long_shows_the_pin_of_the_wave_and_the_image_of_each_session_c
     assert!(short.contains("image here"), "{short}");
     assert!(!short.contains("0123456789ab"), "{short}");
 
-    machine.ok(None, &["leave"]).await;
+    machine.ok(None, &["host", "leave"]).await;
     std::fs::remove_file(bin.join("wave-issue")).unwrap();
     std::fs::remove_file(bin.join("hold")).unwrap();
     let started = Instant::now();

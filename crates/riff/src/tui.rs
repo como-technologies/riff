@@ -207,7 +207,7 @@
 //! | [`Action::StartLead`] | `riff lead start` from the main clone of the wave: [`crate::lead::start_of_wave`], then [`crate::lead::attach`] |
 //! | [`Action::Takeover`] | `riff takeover NAME`: [`crate::takeover::takeover`] |
 //! | [`Action::End`] | `riff daemon end NAME`: [`crate::daemon::ask_end`] |
-//! | [`Action::Host`] | `riff daemon end NAME --host HOST`, `riff leave --host HOST`: [`sessions::ask_host`] |
+//! | [`Action::Host`] | `riff daemon end NAME --host HOST`, `riff host leave --host HOST`: [`sessions::ask_host`] |
 //! | [`Action::Limit`] | `riff daemon limit --sessions N`: [`machines::set_limit`] |
 //! | [`Action::Do`] | `riff plan hold`, `riff plan free`, `riff pause`, `riff resume`, `riff questions --answered`: [`Effect::run`] |
 //! | [`Action::Post`] | `riff chat`: [`crate::chat::posts`], through [`chat::Link`] |

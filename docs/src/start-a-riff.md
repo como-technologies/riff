@@ -64,14 +64,14 @@ riff daemon of this machine runs each work item in a container. The
 second starts your lead, in a container too:
 
 ```sh
-riff join
+riff host join
 riff lead start
 ```
 
-`riff lead start` gives no workers, and `riff join` starts no lead. Ask
-the lead: *"Who else is in the riff?"* The sessions ask their questions
-there. See [The lead](how-it-works.md#the-lead). The lead starts at
-effort xhigh.
+`riff lead start` gives no workers, and `riff host join` starts no lead.
+Ask the lead: *"Who else is in the riff?"* The sessions ask their
+questions there. See [The lead](how-it-works.md#the-lead). The lead
+starts at effort xhigh.
 
 ## Detach from the lead
 
@@ -171,7 +171,7 @@ See [Pause the riff](how-it-works.md#pause-the-riff).
 ## Let riff work in auto mode
 
 In auto mode, Claude Code can block riff work: a riff tool,
-`riff join`, or a step of a pull request. A session cannot allow
+`riff host join`, or a step of a pull request. A session cannot allow
 this itself. Run this once in each project, then commit the file that
 it names:
 
@@ -310,7 +310,9 @@ and [The release cycle](development.md#the-release-cycle).
 ## Set up your project
 
 riff works on projects. A project is a repository on GitHub that a
-person enrolled in the riff. In your clone of the project, run:
+person enrolled in the riff. riff runs a wave and a lead only for a
+project. In a repository that is no project, a session has the chat
+and the messages only. In your clone of the project, run:
 
 ```sh
 riff project init
@@ -319,8 +321,10 @@ riff project init
 `riff project init` checks the repository on GitHub, and sets it up for
 riff after one question. When each check passes, it enrolls the
 repository as a project of the riff. You must be an admin of the
-repository on GitHub, and an admin of the riff. For each check and each
-step, see
+repository on GitHub, and an admin of the riff. With no `--host`, each
+host may run the wave of the project: see
+[Choose the hosts of a project](how-it-works.md#choose-the-hosts-of-a-project).
+For each check and each step, see
 [Add another repository to the riff](#add-another-repository-to-the-riff).
 For the projects, see
 [The projects of the riff](how-it-works.md#the-projects-of-the-riff).
@@ -371,7 +375,8 @@ see
 ### Let the lead start the work
 
 You start no worker by hand. A host gives workers to a repository after
-`riff join` (see [Give workers from a host](#give-workers-from-a-host)).
+`riff host join` (see
+[Give workers to a repository from a host](#give-workers-to-a-repository-from-a-host)).
 Then, when the current wave has free work, the riff daemon of the host
 runs each free item and each verify in a container, in the limit of the
 machine. The lead gets a note.
@@ -386,7 +391,8 @@ riff lead start
 
 `riff lead start` gives no workers, and it does not join the host. It
 says so when the host gave no workers. A host gives workers after
-`riff join`: see [Give workers from a host](#give-workers-from-a-host).
+`riff host join`: see
+[Give workers to a repository from a host](#give-workers-to-a-repository-from-a-host).
 
 `riff lead start` attaches your terminal to the lead. Select text with
 the mouse, then copy and paste, as in a plain terminal: the `claude` of
@@ -414,37 +420,44 @@ riff daemon status
 A second machine takes work when it joined too: see
 [Use a second machine](development.md#use-a-second-machine).
 
-### Give workers from a host
+### Give workers to a repository from a host
 
 A host has two parts in a repository. It gives workers: its riff daemon
 runs the wave, which is the work items and the verifies. It runs the
-lead of a person. `riff join` gives this host the part workers. Run it
-in your clone of the project:
+lead of a person. `riff host join` gives this host the part workers.
+Run it in your clone of the project:
 
 ```sh
-riff join
+riff host join
 ```
 
-The daemon serves the repository, gets the session image that
-`riff.toml` pins, and runs the wave. It needs the sign-in of riff, of
-`gh` and of `claude` on this machine. The host keeps the part until
-`riff leave`, also over a restart of the daemon and over an update.
+The repository must be a project of the riff, and the project must
+allow this host: see [Set up your project](#set-up-your-project). Else
+`riff host join` names the fix, and the daemon runs no wave. The
+daemon serves the repository, gets the session image that `riff.toml`
+pins, and runs the wave. It needs the sign-in of riff, of `gh` and of
+`claude` on this machine. The host keeps the part until
+`riff host leave`, also over a restart of the daemon and over an
+update.
 
 To give workers from another host of yours, with no login there:
 
 ```sh
-riff join --host thelio
+riff host join --host thelio
 ```
 
 ```mermaid
 flowchart LR
-    J["riff join"] --> W["this host has the part workers"]
+    J["riff host join"] --> P{"a project that<br/>allows this host?"}
+    P -- "no" --> F["the fix: riff project init"]
+    P -- "yes" --> W["this host has the part workers"]
     W --> D["the daemon runs the wave:<br/>an item or a verify, each in a container"]
-    L["riff leave"] --> N["this host loses the part workers"]
+    L["riff host leave"] --> N["this host loses the part workers"]
     N --> E["no new session starts there"]
 ```
 
-See [Add a host to the wave](development.md#add-a-host-to-the-wave).
+See [Add a host to the wave](development.md#add-a-host-to-the-wave) and
+[A wave and a lead only for a project](how-it-works.md#a-wave-and-a-lead-only-for-a-project).
 
 ### Take the workers from a host
 
@@ -452,7 +465,7 @@ A host that joined gives workers until you take them. Run this in your
 clone of the project:
 
 ```sh
-riff leave
+riff host leave
 ```
 
 The daemon starts no new session for the repository on this host. The
@@ -461,7 +474,7 @@ and the rollout of the lead asks for no wave there. To end the
 sessions that run, and free their items:
 
 ```sh
-riff leave --now
+riff host leave --now
 ```
 
 When the host has no other part in the repository, for example a lead,

@@ -65,7 +65,7 @@
 //!
 //! # A host that leaves a repository
 //!
-//! After `riff leave`, a host takes no new claim for the repository, and
+//! After `riff host leave`, a host takes no new claim for the repository, and
 //! its sessions there go on to their end. Its daemon names the
 //! repository and those sessions in its facts
 //! ([`riff_client::daemons::Leaving`], 01M6WJYQJ58MHQF1XPXXZW2ET6). The
@@ -77,7 +77,7 @@
 //! repository, and the sessions of each repository that it leaves. A
 //! mark is no fault: the order of the rows stays. When the hosts do not
 //! fit, the rows scroll by lines, so the selected row shows with its
-//! marks. The screen after `riff leave --host pangolin`, with pangolin
+//! marks. The screen after `riff host leave --host pangolin`, with pangolin
 //! selected:
 //!
 //! ```text
@@ -207,7 +207,7 @@ pub const NO_HOSTS: &str = "No riff daemon sent the facts of its host in the las
 
 /// The line under [`NO_HOSTS`].
 pub const ADD_HOST: &str =
-    "To add a host, run riff join in the main clone of the repository on that host.";
+    "To add a host, run riff host join in a clone of the repository on that host.";
 
 /// This host at a look (01M6VFD09QN71SWMPP8YXCRAEK): the user and the
 /// host of the TUI, and what its riff daemon tells on its socket.
@@ -2031,7 +2031,10 @@ mod tests {
         .unwrap();
         let block = |after: &str| text_block(&book, after, "");
         assert_eq!(block("#### See the hosts in the TUI"), screen[2..21]);
-        assert_eq!(block("After `riff leave --host pangolin`"), leaves[2..16]);
+        assert_eq!(
+            block("After `riff host leave --host pangolin`"),
+            leaves[2..16]
+        );
         assert_eq!(block("In a terminal of 120 columns or more"), wider[3..7]);
         assert_eq!(block("#### Filter the hosts in the TUI"), filter[2..5]);
     }
@@ -2386,7 +2389,7 @@ mod tests {
         );
     }
 
-    /// The state of [`mock_up`] after `riff leave --host pangolin` in
+    /// The state of [`mock_up`] after `riff host leave --host pangolin` in
     /// como-technologies/riff (01M6WJYQN2WY5NH3DVDBAAY8ST): pangolin gives
     /// workers to n8behavior/sens-o-matic only, and its 3 sessions of
     /// como-technologies/riff go on to their end. Pangolin is selected.
@@ -2943,7 +2946,7 @@ mod tests {
         assert_eq!(rows[2], format!(" {NO_HOSTS}"));
         assert_eq!(
             rows[3],
-            " To add a host, run riff join in the main clone of the repository on that host."
+            " To add a host, run riff host join in a clone of the repository on that host."
         );
         assert_eq!(rows[5], ruled("the link and the server", 80));
         assert_eq!(state.on_key(Key::Char('l')), None);
