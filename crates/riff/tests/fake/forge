@@ -1,6 +1,6 @@
 #!/bin/sh
-# A fake forge for the tests of riff init (01M5R1672NF56P15VD0JEX51K4): a
-# fake gh for the repository acme/app that keeps its state in the files of
+# A fake forge for the tests of riff project init (01M5R1672NF56P15VD0JEX51K4):
+# a fake gh for the repository acme/app that keeps its state in the files of
 # its own folder. It logs each call to the file calls.
 #
 # The state, one file each:
@@ -29,6 +29,8 @@
 #   config          the text of riff.toml on main; with no file, it is empty
 #   releases        the body of the ruleset releases on the tags, when it is
 #                   made; a person who is not an admin sees no bypass actors
+#   token           the token that gh auth token prints; with no file, gh
+#                   has no token
 dir=$(dirname "$0")
 echo "$*" >> "$dir/calls"
 flag() { [ -f "$dir/$1" ]; }
@@ -131,5 +133,8 @@ case "$*" in
   'issue list --state open --limit 1000 --json number,title,body,labels')
     if flag issues; then cat "$dir/issues"; else printf '[]'; fi ;;
   'label create '*) ;;
+  'auth token')
+    flag token || { echo 'no oauth token found for github.com' >&2; exit 1; }
+    cat "$dir/token" ;;
   *) echo "gh: no such call: $*" >&2; exit 1 ;;
 esac

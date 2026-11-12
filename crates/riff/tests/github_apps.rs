@@ -819,7 +819,7 @@ async fn install_with_no_apps_names_create() {
     );
 }
 
-/// 01M6WPV8473EBABR1ZMEPZMTQQ: `riff init` asks riff-server for the bot
+/// 01M6WPV8473EBABR1ZMEPZMTQQ: `riff project init` asks riff-server for the bot
 /// of the session App. Each person gets it: bob is no admin. A riff with
 /// no session App gives none, and a riff-server that does not answer
 /// gives why.
@@ -845,7 +845,7 @@ async fn each_person_gets_the_bot_of_the_session_app() {
     );
 }
 
-/// 01M6WZ40YED6THKVJ2JQRXFK4N: `riff init` asks riff-server for the lead
+/// 01M6WZ40YED6THKVJ2JQRXFK4N: `riff project init` asks riff-server for the lead
 /// App, its App ID and its slug. Each person gets it. A riff with no lead
 /// App gives none, and a riff-server that does not answer gives why.
 #[tokio::test]
@@ -874,14 +874,12 @@ async fn each_person_gets_the_lead_app() {
     );
 }
 
-/// 01M6WZ40YED6THKVJ2JQRXFK4N: `riff init --check` in a clone of a
+/// 01M6WZ40YED6THKVJ2JQRXFK4N: `riff project init --check` in a clone of a
 /// repository with the release cycle and no ruleset `releases` names the
 /// lead App of the riff in the fix, and changes nothing. With no
 /// `[release]` in `riff.toml`, it has no such check.
-/// `riff init` needs Linux.
-#[cfg(target_os = "linux")]
 #[tokio::test]
-async fn riff_init_check_names_the_ruleset_releases_with_the_lead_app() {
+async fn riff_project_init_check_names_the_ruleset_releases_with_the_lead_app() {
     let fake = FakeGitHub::start().await;
     let keys = keys_dir();
     let server = serve(&fake, At::Dir(keys.path().to_owned())).await;
@@ -900,7 +898,9 @@ async fn riff_init_check_names_the_ruleset_releases_with_the_lead_app() {
     );
     let check = || {
         env.tokio_riff()
-            .args(["init", "--check"])
+            .args(["project", "init", "--check"])
+            // A plain terminal: the test can run under Claude Code.
+            .env_remove("CLAUDECODE")
             .current_dir(repo.path())
             .env("RIFF_SERVER", &*server)
             .env("PATH", &path)
@@ -918,7 +918,7 @@ async fn riff_init_check_names_the_ruleset_releases_with_the_lead_app() {
             "\n  fail  the ruleset releases: acme/app has the release cycle of riff and no \
              ruleset releases, so each session can push a tag v*. Fix: make the ruleset releases \
              on the tags v*, with the admin role and riff-acme-lead as bypass actors. See \"Let \
-             the lead push the release tag\" in the book. Then run riff init again\n"
+             the lead push the release tag\" in the book. Then run riff project init again\n"
         ),
         "{stdout}"
     );
@@ -927,14 +927,12 @@ async fn riff_init_check_names_the_ruleset_releases_with_the_lead_app() {
     assert!(!calls.contains(" -X "), "{calls}");
 }
 
-/// 01M6WPV86SW4AAVA2NCBQNYXK3: `riff init --check` in a clone of a
+/// 01M6WPV86SW4AAVA2NCBQNYXK3: `riff project init --check` in a clone of a
 /// repository with no guard, in a riff with the session App, names the
 /// guard of its bot with the fix, and changes nothing. bob is no admin
 /// of the riff.
-/// `riff init` needs Linux.
-#[cfg(target_os = "linux")]
 #[tokio::test]
-async fn riff_init_check_names_a_repository_with_no_guard() {
+async fn riff_project_init_check_names_a_repository_with_no_guard() {
     let fake = FakeGitHub::start().await;
     let keys = keys_dir();
     let server = serve(&fake, At::Dir(keys.path().to_owned())).await;
@@ -953,7 +951,9 @@ async fn riff_init_check_names_a_repository_with_no_guard() {
     );
     let out = env
         .tokio_riff()
-        .args(["init", "--check"])
+        .args(["project", "init", "--check"])
+        // A plain terminal: the test can run under Claude Code.
+        .env_remove("CLAUDECODE")
         .current_dir(repo.path())
         .env("RIFF_SERVER", &*server)
         .env("PATH", path)
@@ -975,14 +975,12 @@ async fn riff_init_check_names_a_repository_with_no_guard() {
     assert!(!calls.contains(" -X "), "{calls}");
 }
 
-/// 01M6Z87JTXW0Y99X08VHA2SSSR: `riff init --check` in a clone of a
+/// 01M6Z87JTXW0Y99X08VHA2SSSR: `riff project init --check` in a clone of a
 /// repository with no installation of the Apps fails a check, and names
 /// `riff github install OWNER`. With the Apps on the repository, the
 /// check passes.
-/// `riff init` needs Linux.
-#[cfg(target_os = "linux")]
 #[tokio::test]
-async fn riff_init_check_names_the_install_of_the_apps() {
+async fn riff_project_init_check_names_the_install_of_the_apps() {
     let fake = FakeGitHub::start().await;
     let keys = keys_dir();
     let server = serve(&fake, At::Dir(keys.path().to_owned())).await;
@@ -991,7 +989,9 @@ async fn riff_init_check_names_the_install_of_the_apps() {
     let repo = clone();
     let init = || {
         env.tokio_riff()
-            .args(["init", "--check"])
+            .args(["project", "init", "--check"])
+            // A plain terminal: the test can run under Claude Code.
+            .env_remove("CLAUDECODE")
             .current_dir(repo.path())
             .env("RIFF_SERVER", &*server)
             .output()

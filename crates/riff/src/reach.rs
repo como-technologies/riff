@@ -54,7 +54,7 @@
 //! container (01M74A84SA5KCBVGVW7M9ETJ3A): also `riff top`, `riff read`,
 //! `riff post`, `riff status`, `riff blocked`, `riff step`, `riff tell`,
 //! `riff denials`, `riff pause`, `riff resume`, `riff pr open`, `riff pr
-//! wait`, `riff verify`, `riff init` and the TUI. Each such method of
+//! wait`, `riff verify`, `riff project list` and the TUI. Each such method of
 //! [`Reach`] takes the client and the URI of the session for the way
 //! straight, and gives the line for the person: [`Reach::post`],
 //! [`Reach::read`], [`Reach::look`] and the others. The table [`COMMANDS`]
@@ -66,7 +66,7 @@
 //! |---|---|
 //! | post, tell, read, status, blocked, step | each session, as with its riff tools |
 //! | pause and resume, the fact of a pull request, the thread denials | the lead (01M74A8D1GV6TCPXV2XEPVA53A) |
-//! | the GitHub Apps of the riff, for `riff init` | each session: no key and no secret (01M74A8DC74TT2YGZPBBAENMWH) |
+//! | the projects of the riff, for `riff project list` | each session (01M76SHB4SAWFW3S5Y7X9KC6E4) |
 //!
 //! ```mermaid
 //! flowchart LR
@@ -859,15 +859,17 @@ impl Reach {
         }
     }
 
-    /// The GitHub Apps of the riff, through the socket of the session, for
-    /// `riff init` in a container. `None` for a riff with no sign-in. On a
-    /// host, `riff init` reads them straight with the sign-in of the
-    /// person ([`crate::guard::session_bot`]).
-    pub async fn apps(&self) -> Result<Option<riff_core::wire::GitHubAppsReply>> {
-        let Reach::Daemon(socket) = self else {
-            anyhow::bail!("this riff has no socket of a session");
-        };
-        ask(socket, &ServerCall::Apps).await
+    /// Each project of the riff, for `riff project list`
+    /// (01M76SHB4SAWFW3S5Y7X9KC6E4). Each person and each session may
+    /// read them.
+    pub async fn projects(&self) -> Result<riff_core::wire::ProjectsReply> {
+        match self {
+            Reach::Direct(server) => {
+                let (api, me) = signed(server)?;
+                api.projects(&me).await
+            }
+            Reach::Daemon(socket) => ask(socket, &ServerCall::Projects).await,
+        }
     }
 
     /// The records of the thread `denials` at or after `from_ms`, oldest
@@ -983,7 +985,7 @@ pub const COMMANDS: &[InContainer] = &[
         "1a2b3c4d",
     ]),
     socket(&["ps"]),
-    socket(&["init", "--check"]),
+    socket(&["project", "list"]),
     // The commands of the lead.
     socket(&["pause"]),
     socket(&["resume"]),
@@ -1075,8 +1077,11 @@ pub const COMMANDS: &[InContainer] = &[
     host(&["device", "list"]),
     host(&["device", "remove", "yubikey"]),
     host(&["device", "test"]),
+    host(&["project", "init", "--host", "thelio"]),
+    host(&["project", "remove", "acme/app"]),
     // No riff-server.
     local(&["usage"]),
+    local(&["init", "--check"]),
     local(&["setup", "--check"]),
     local(&["image"]),
     local(&["build"]),

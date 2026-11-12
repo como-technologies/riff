@@ -3,22 +3,18 @@
 //!
 //! # Design
 //!
-//! `riff init` gets a machine ready for `riff run`. The checks of the
-//! machine need no riff-server and no sign-in. In a clone of a repository
-//! on GitHub, riff asks riff-server for the bot of the session App, for
-//! the check of the guard. It does these steps, in order:
+//! `riff init` gets a machine ready for `riff run`. It checks only the
+//! machine: it reads no repository on GitHub, and asks riff-server
+//! nothing (01M76SHAZK2PSMET0HRYM0J7VN). `riff project init` sets up a
+//! repository on GitHub: see [`crate::project`]. `riff init` does these
+//! steps, in order:
 //!
 //! ```mermaid
 //! flowchart LR
-//!     C["the checks<br/>podman, its init, subuid, subgid,<br/>cgroup v2, riff.toml,<br/>the riff binary,<br/>the repository on GitHub"] --> X{"wide<br/>rules?"}
+//!     C["the checks<br/>podman, its init, subuid, subgid,<br/>cgroup v2, riff.toml,<br/>the riff binary"] --> X{"wide<br/>rules?"}
 //!     X -- "one question:<br/>y in a terminal" --> V["remove them"]
-//!     X -- "no" --> G{"steps of the<br/>repository?"}
-//!     V --> G
-//!     G -- "one question:<br/>y in a terminal, or --yes" --> T["set up the<br/>repository on GitHub"]
-//!     G -- "none, or no" --> E{"each check<br/>passed?"}
-//!     T --> P["git pull --ff-only<br/>in the clone, when it is safe"]
-//!     P --> A["the checks again"]
-//!     A --> E
+//!     X -- "no" --> E{"each check<br/>passed?"}
+//!     V --> E
 //!     E -- "no" --> F["the name and the fix of<br/>each check that fails, exit 1"]
 //!     E -- "yes" --> D["the daemon<br/>riff.service"]
 //!     D --> I["the session image<br/>the daemon pulls it"]
@@ -27,10 +23,7 @@
 //!
 //! 1. The checks ([`checks`]). riff reads the [`Facts`] of the machine,
 //!    and prints one line for each check: `pass`, or `fail` with the
-//!    fix (01M4ZJN6TEWCYCB39XTH6BBD9H). When riff can do the step of a
-//!    failed check now (step 3), the line reads `step` with the step, in
-//!    place of `fail` with the fix ([`Check::planned_line`],
-//!    01M5RGG9KJXCKH8C94145WS8SM).
+//!    fix (01M4ZJN6TEWCYCB39XTH6BBD9H).
 //! 2. The wide rules ([`Wide`]). When the user settings, the project
 //!    settings or the local settings of Claude Code have an allow rule
 //!    that is wider than the steps of riff ([`crate::permissions::wide`]),
@@ -39,28 +32,14 @@
 //!    terminal removes them ([`crate::permissions::remove`],
 //!    01M51JCW2EKF8H8QFQYSVRSPET). `--yes` and `--check` ask nothing and
 //!    remove nothing. A wide rule fails no check.
-//! 3. The setup of the repository (01M5R1672NF56P15VD0JEX51K4).
-//!    When a check of the repository on GitHub failed and has a step
-//!    ([`crate::repo_setup::Step`]), and the person is an admin of the
-//!    repository, riff names the steps and asks one question
-//!    ([`Question::Setup`]). Only a `y` in a terminal does them. `--yes`
-//!    does them with no question. `--check` does none. A person who is
-//!    not an admin gets the fix of each check, and riff changes nothing
-//!    there. After the steps, when the step of `riff.toml` merged the
-//!    file and the clone has none, riff runs `git pull --ff-only` in the
-//!    clone if it is on the default branch and has no change ([`pull`],
-//!    01M5RGGD9AYNC12Z2CG5CDZWNA). Else it says why it did not, and the
-//!    image of the release is the session image of this run. Then riff
-//!    checks again and prints the list again: a step that worked passes
-//!    its check (01M5RGGD6YR36EXZEG61XCJVRY).
-//! 4. When a check still fails, riff installs nothing, pulls no image,
-//!    names the check and the fix of each failed check, and exits with 1.
+//! 3. When a check fails, riff installs nothing, pulls no image, names
+//!    the check and the fix of each failed check, and exits with 1.
 //!    `--check` stops here (01M4ZJN6WR0JJ891R9JMQNPKGD).
-//! 5. The daemon. When a riff daemon answers, riff keeps it: it does
+//! 4. The daemon. When a riff daemon answers, riff keeps it: it does
 //!    not start it again. When no daemon answers, riff installs it as
 //!    `riff daemon install` does ([`crate::daemon::install`],
 //!    01M4ZJN6Z1DGD43CKZ19QPN2NK).
-//! 6. The image. riff asks the daemon for the session image that
+//! 5. The image. riff asks the daemon for the session image that
 //!    `riff.toml` pins. The daemon pulls it when podman does not have
 //!    it (01M4ZJN718EF1PC9YY9GFD0EJ2).
 //!
@@ -73,47 +52,11 @@
 //! | `/etc/subuid` | the lines of the person, by name or by user ID | [`MIN_IDS`] IDs or more, added over the lines |
 //! | `/etc/subgid` | the same | the same |
 //! | cgroup v2 | `/sys/fs/cgroup/cgroup.controllers`, and `cgroup.controllers` of `user@UID.service` | the file is there, and the controllers of the user have `cpu` and `memory` |
-//! | the session image | `riff.toml` of the repository of the current folder ([`crate::session_image::of_folder`]) | it pins an image by its digest |
+//! | the session image | `riff.toml` of the repository of the current folder ([`crate::session_image::of_folder`]) | it pins an image by its digest. The fix names `riff project init` ([`text::INIT_FIX_IMAGE`]) |
 //! | the riff binary | the ELF of the riff of this process ([`crate::release::check_file`]) | it has no interpreter, so `riff relay` starts in each session image. The fix is `riff update` (01M510NW68CTZBHHW7ZYFV7Q3X) |
-//! | `riff.toml` on the default branch | the files at the root of the default branch ([`crate::repo_setup`], 01M5QVF5535YRN1EF3DZAB4W8G) | it is there |
-//! | auto-merge and squash merge | `allow_auto_merge` and `allow_squash_merge` of the repository on GitHub | both are on |
-//! | the ruleset of the default branch | the active rules of the default branch | one requires the check `riff/verify` |
-//! | the milestone `Backlog` | the open milestones | one has that title |
-//! | the first wave | the open milestones | one is a wave |
-//! | the checks of a pull request | the required checks and the check runs of the latest pull requests | the full check can end |
-//! | the guard | `.github/workflows/riff-guard.yml` on the default branch, and the bot of the session App from riff-server ([`crate::guard::session_bot`], 01M6WPV86SW4AAVA2NCBQNYXK3) | it is the guard of that bot, or the riff has no session App |
-//! | the ruleset `releases` | only with `[release]` in `riff.toml` of the default branch: the ruleset of the tags `v*`, and the lead App from riff-server ([`crate::repo_setup::lead_app`], 01M6WZ40YED6THKVJ2JQRXFK4N) | it has the lead App as a bypass actor, or the riff has no lead App |
-//!
-//! The first five checks of the repository have a step that `riff init`
-//! can do. So has the check of the guard when riff-server gives the bot:
-//! the pull request of `riff.toml` adds the guard. So has the check of
-//! the ruleset `releases` when riff-server gives the lead App.
-//! The check of the session image has the step of `riff.toml` when
-//! the default branch has none. The check of a pull request has the step of
-//! the ruleset when no pull request ran a check yet: else its fix is the
-//! work of the person. `riff init` reads no file of rules for agents, such
-//! as `CLAUDE.md` or `AGENTS.md` (01M5RN89Z749VYS1CRYJQTKAWY).
-//!
-//! After the first list, `riff init` prints one note when the repository
-//! on GitHub has open issues with no `Done when:` line and no
-//! `## Done when` heading: the wave starts no session for them
-//! ([`crate::repo_setup::no_done_when`], [`text::init_no_done_when`],
-//! 01M5SMMP7ZW2PZNGK63WWZAC8P). A tracker and a release issue are not in
-//! the note. It is no check: it changes no exit code, and `--check` prints
-//! it too. When `gh` cannot list the issues, the note says so
-//! ([`text::init_issues_unread`]).
 //!
 //! The fix of `/etc/subuid` or `/etc/subgid` adds a free range of
 //! [`MIN_IDS`] IDs from [`free_sub_id`].
-//!
-//! The checks of the repository run only in a folder whose remote `origin` is on
-//! GitHub, with the `gh` of the machine. They read the repository and
-//! change nothing, also without `--check`; only the steps of the setup
-//! change it. Only there `riff init` asks riff-server for the bot of the
-//! session App and for the lead App: a riff with no sign-in has neither.
-//! When `gh` cannot read the
-//! repository, one check fails and its fix is `gh auth login`
-//! ([`crate::repo_setup`]).
 //!
 //! riff reads the controllers of `user@UID.service`, not `podman info`:
 //! a process in a scope that gives no `cpu` to its children still gets
@@ -124,20 +67,16 @@
 //! A session container, for example a lead, runs no podman: the host
 //! runs the containers. When `RIFF_SOCKET` is set ([`Facts::container`]),
 //! `riff init` skips the first five checks, prints the line
-//! [`text::INIT_MACHINE_SKIPPED`] in their place, and runs the other
-//! checks. It only checks there, also with `--yes`: it prints the line
-//! [`text::INIT_STEPS_SKIPPED`], asks no question, does no step of the
-//! repository, and stops after the checks. A person does the steps in a
-//! terminal, and the host has the daemon and the session image
-//! (01M5SMJMR5KS1Z1Z7CEPH9JVBB, 01M6WZ410X4RPG1KMPEBVEP2DF).
+//! [`text::INIT_MACHINE_SKIPPED`] in their place, and checks only the
+//! session image and the riff binary. It only checks there, also with
+//! `--yes`, and stops after the checks: the host has the daemon and the
+//! session image (01M5SMJMR5KS1Z1Z7CEPH9JVBB).
 //!
 //! ```mermaid
 //! flowchart LR
 //!     I["riff init"] --> S{"RIFF_SOCKET<br/>set?"}
-//!     S -- "no: a host" --> M["the checks of the machine"]
-//!     S -- "yes: a session<br/>container" --> K["skip, and say so"]
-//!     M --> R["the checks of the repository"]
-//!     K --> C["the checks of the repository,<br/>no step: a person runs<br/>riff init in a terminal"]
+//!     S -- "no: a host" --> M["the checks of the machine,<br/>then the daemon and the image"]
+//!     S -- "yes: a session<br/>container" --> K["skip them, and say so:<br/>only the session image<br/>and the riff binary"]
 //! ```
 //!
 //! ```
@@ -155,11 +94,7 @@
 //!     image: Ok(format!("ghcr.io/o/i@sha256:{}", "0".repeat(64))),
 //!     wide: vec![],
 //!     riff: Ok("/home/mike/.cargo/bin/riff is static".into()),
-//!     github: None,
-//!     no_done_when: None,
-//!     folder: "/home/mike/riff".into(),
 //!     container: false,
-//!     apps: None,
 //! };
 //! assert!(checks(&facts).iter().all(|c| c.passed()));
 //!
@@ -185,8 +120,20 @@
 //! assert!(failed[0].starts_with("fail  the init of podman: "), "{}", failed[0]);
 //! assert!(failed[0].ends_with("Fix: install catatonit, the init of podman, for example: sudo apt install catatonit"), "{}", failed[0]);
 //!
+//! // No riff.toml: the fix names riff project init (01M76SHAZK2PSMET0HRYM0J7VN).
+//! facts.init = Some("/usr/libexec/podman/catatonit".into());
+//! facts.image = Err("no riff.toml".into());
+//! let failed: Vec<String> = checks(&facts)
+//!     .iter()
+//!     .filter(|c| !c.passed())
+//!     .map(|c| c.line())
+//!     .collect();
+//! assert_eq!(failed.len(), 1);
+//! assert!(failed[0].contains("riff project init"), "{}", failed[0]);
+//!
 //! // In a session container the host runs the checks of the machine
 //! // (01M5SMJMR5KS1Z1Z7CEPH9JVBB).
+//! facts.image = Ok(format!("ghcr.io/o/i@sha256:{}", "0".repeat(64)));
 //! facts.container = true;
 //! let lines: Vec<String> = checks(&facts).iter().map(|c| c.line()).collect();
 //! assert_eq!(lines.len(), 2);
@@ -207,9 +154,8 @@ use anyhow::Result;
 use riff_core::build::Build;
 
 use crate::permissions::{self, Rules};
-use crate::repo_setup::{self, Forge};
 use crate::service::{ServiceManager, Unit};
-use crate::{daemon, session_image, text};
+use crate::{daemon, text};
 
 /// The IDs that `/etc/subuid` and `/etc/subgid` must each give the
 /// person: the size of the range that `useradd` gives.
@@ -277,99 +223,10 @@ pub struct Facts {
     /// What riff found of its own binary: static, or why it is not
     /// ([`crate::release::check_file`]).
     pub riff: Result<String, String>,
-    /// The facts of the repository on GitHub that riff reads
-    /// ([`crate::repo_setup`]), or why it cannot. `None` when the folder
-    /// has no remote `origin` on GitHub: riff checks nothing there.
-    pub github: Option<Result<crate::repo_setup::Github, String>>,
-    /// The numbers of the open issues of the repository that have no
-    /// "Done when" line ([`crate::repo_setup::no_done_when`],
-    /// 01M5SMMP7ZW2PZNGK63WWZAC8P), or why riff cannot list the issues.
-    /// `None` when riff did not read the repository.
-    pub no_done_when: Option<Result<Vec<u64>, String>>,
-    /// The folder that riff checks: the clone, where `git pull` runs
-    /// after the step of `riff.toml` (01M5RGGD9AYNC12Z2CG5CDZWNA).
-    pub folder: PathBuf,
     /// True in a session container ([`crate::cycle::in_container`]): it
     /// runs no podman, and the host runs the checks of the machine
     /// (01M5SMJMR5KS1Z1Z7CEPH9JVBB).
     pub container: bool,
-    /// What riff-server says of the GitHub Apps of riff on the
-    /// repository ([`apps_of`], 01M6Z87JTXW0Y99X08VHA2SSSR). `None` when
-    /// riff did not ask: no repository on GitHub, no sign-in, or no
-    /// answer.
-    pub apps: Option<Apps>,
-}
-
-/// What riff-server says of the GitHub Apps of riff on one repository,
-/// from the check of the token of each role (01M6WG534PPE2JW8JQFRJDEK86).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Apps {
-    /// The repository, `OWNER/NAME`.
-    pub repo: String,
-    /// Each App that is not on the repository, as riff-server names it,
-    /// with its fix: `riff-acme is not installed on acme/app: riff github
-    /// install acme`.
-    pub missing: Vec<String>,
-}
-
-/// The check of the GitHub Apps of riff on a repository: no worker and
-/// no verify starts there while an App is not on it, and the check names
-/// the same fix (01M6Z87A04EXTT1FFJSJ1EM6TB, 01M6Z87JTXW0Y99X08VHA2SSSR).
-///
-/// ```
-/// use riff::first_run::{Apps, apps_check};
-///
-/// let on = Apps { repo: "acme/app".into(), missing: vec![] };
-/// assert_eq!(apps_check(&on).line(), "pass  the GitHub Apps of riff: on acme/app");
-/// let missing = Apps {
-///     repo: "acme/app".into(),
-///     missing: vec!["riff-acme is not installed on acme/app: riff github install acme".into()],
-/// };
-/// assert_eq!(
-///     apps_check(&missing).line(),
-///     "fail  the GitHub Apps of riff: riff-acme is not installed on acme/app. Fix: riff github install acme"
-/// );
-/// ```
-pub fn apps_check(apps: &Apps) -> Check {
-    match apps.missing.first() {
-        None => Check::pass(text::INIT_APPS, text::init_apps_on(&apps.repo)),
-        Some(missing) => {
-            let (found, fix) = missing
-                .rsplit_once(": ")
-                .unwrap_or((missing.as_str(), "riff github check"));
-            Check::fail(text::INIT_APPS, found.to_owned(), fix.to_owned())
-        }
-    }
-}
-
-/// How long `riff init` waits for riff-server to check the GitHub Apps.
-const APPS_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
-
-/// What riff-server says of the GitHub Apps of riff on `repo`
-/// ([`Apps`]): each role with an App that is not on the repository. A
-/// riff with no App gives no check: its sessions keep the token of the
-/// person by design. `None` when riff cannot ask.
-pub async fn apps_of(server: &str, repo: &str) -> Option<Apps> {
-    let api = riff_client::api::Api::new(server).signed_in(None).ok()?;
-    if !api.sends_token() {
-        return None;
-    }
-    let checked = tokio::time::timeout(APPS_WAIT, api.github_check(repo))
-        .await
-        .ok()?
-        .ok()?;
-    let missing = checked
-        .roles
-        .into_iter()
-        .filter_map(|role| role.problem)
-        .filter(|problem| problem.contains(": riff github install "))
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    Some(Apps {
-        repo: repo.to_owned(),
-        missing,
-    })
 }
 
 /// The home of the person who runs riff.
@@ -491,20 +348,9 @@ fn podman_version() -> Result<String, String> {
 }
 
 impl Facts {
-    /// The facts of this machine, with the repository of the folder
-    /// `dir`, the bot `bot` of the session App of the riff
-    /// ([`crate::guard::session_bot`]) and its lead App `lead`
-    /// ([`crate::repo_setup::lead_app`]).
-    pub fn here(
-        dir: &Path,
-        bot: Result<Option<String>, String>,
-        lead: Result<Option<crate::repo_setup::LeadApp>, String>,
-    ) -> Facts {
-        let github = crate::repo_setup::here(dir, bot, lead);
-        let no_done_when = match &github {
-            Some(Ok(_)) => crate::repo_setup::no_done_when_here(dir),
-            _ => None,
-        };
+    /// The facts of this machine, with the `riff.toml` and the settings
+    /// of Claude Code of the repository of the folder `dir`.
+    pub fn here(dir: &Path) -> Facts {
         let etc = dir_of(ETC_VAR, "/etc");
         let uid = nix::unistd::getuid();
         let user = nix::unistd::User::from_uid(uid)
@@ -534,11 +380,7 @@ impl Facts {
                 .map_err(|e| format!("{e:#}")),
             wide: Wide::here(dir),
             riff: riff_binary(),
-            github,
-            no_done_when,
-            folder: dir.to_owned(),
             container: crate::cycle::in_container(),
-            apps: None,
         }
     }
 }
@@ -696,7 +538,7 @@ impl Check {
     ///     lines,
     ///     [
     ///         "step  the first wave: acme/app has no open wave. Step: make the milestone Wave 1",
-    ///         "fail  the checks of a pull request: pull requests of acme/app ran lint, and no rule requires them, so a merge does not wait for them. Fix: add them to the ruleset of main. See \"Use the checks that you have\" in the book. Then run riff init again",
+    ///         "fail  the checks of a pull request: pull requests of acme/app ran lint, and no rule requires them, so a merge does not wait for them. Fix: add them to the ruleset of main. See \"Use the checks that you have\" in the book. Then run riff project init again",
     ///     ]
     /// );
     /// ```
@@ -764,26 +606,17 @@ fn cgroup_check(facts: &Facts) -> Check {
 }
 
 /// Each check of the first run on `facts`, in order
-/// (01M4ZJN6TEWCYCB39XTH6BBD9H).
+/// (01M4ZJN6TEWCYCB39XTH6BBD9H): the checks of the machine, then the
+/// session image and the riff binary. In a session container, only the
+/// session image and the riff binary.
 pub fn checks(facts: &Facts) -> Vec<Check> {
-    // The step that makes riff.toml fixes the session image of a clone that
-    // has none: the pull gives the clone the file (01M5RGG9KJXCKH8C94145WS8SM).
-    let makes_config =
-        matches!(&facts.github, Some(Ok(github)) if !github.has(session_image::FILE));
     let image = match &facts.image {
         Ok(image) => Check::pass("the session image", image.clone()),
-        Err(why) => {
-            let check = Check::fail(
-                "the session image",
-                why.clone(),
-                text::INIT_FIX_IMAGE.into(),
-            );
-            if makes_config {
-                check.with_step(repo_setup::Step::Config)
-            } else {
-                check
-            }
-        }
+        Err(why) => Check::fail(
+            "the session image",
+            why.clone(),
+            text::INIT_FIX_IMAGE.into(),
+        ),
     };
     let riff = match &facts.riff {
         Ok(found) => Check::pass(text::INIT_RIFF, found.clone()),
@@ -795,8 +628,6 @@ pub fn checks(facts: &Facts) -> Vec<Check> {
         machine_checks(facts)
     };
     checks.extend([image, riff]);
-    checks.extend(facts.github.iter().flat_map(crate::repo_setup::checks_of));
-    checks.extend(facts.apps.iter().map(apps_check));
     checks
 }
 
@@ -829,20 +660,21 @@ pub fn machine_checks(facts: &Facts) -> Vec<Check> {
     ]
 }
 
-/// What `riff init` may change.
+/// What `riff init` and `riff project init` may change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     /// `--check`: riff changes nothing and asks nothing.
     Check,
-    /// riff asks one question before it removes the wide rules, and one
-    /// before it sets up the repository on GitHub.
+    /// riff asks one question before it removes the wide rules, and
+    /// `riff project init` one before it sets up the repository on
+    /// GitHub.
     Ask,
-    /// `--yes`: riff sets up the repository on GitHub with no question.
-    /// It removes no wide rule.
+    /// `--yes`: riff asks no question. `riff init` removes no wide rule,
+    /// and `riff project init` sets up the repository on GitHub.
     Yes,
 }
 
-/// A question of `riff init`.
+/// A question of `riff init` or `riff project init`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Question {
     /// Remove the wide allow rules (01M51JCW2EKF8H8QFQYSVRSPET).
@@ -862,7 +694,7 @@ impl Question {
     }
 }
 
-/// Asks the question `question` of `riff init`, when `terminal` is true
+/// Asks the question `question`, when `terminal` is true
 /// (01M51JCW2EKF8H8QFQYSVRSPET). It writes
 /// the question to `out`, and reads one line of `input`: `y` or `yes` is
 /// a yes. Each other answer, the end of the input, and no terminal are a
@@ -904,20 +736,27 @@ pub fn ask(
     Ok(matches!(answer.trim().to_lowercase().as_str(), "y" | "yes"))
 }
 
+/// [`ask`] on the terminal of this process: no question when stdin or
+/// stdout is no terminal.
+pub fn ask_here(question: Question) -> Result<bool> {
+    use std::io::IsTerminal;
+    let terminal = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
+    ask(
+        question,
+        terminal,
+        &mut std::io::stdin().lock(),
+        &mut std::io::stdout(),
+    )
+}
+
 /// The first run on `facts`, with the daemon in the folder `dir`. It
 /// prints each step, and gives the exit code: 1 when a check failed.
 /// When settings have wide rules, it names them, and in [`Mode::Ask`]
-/// asks `ask` the question [`Question::Remove`]. When a check of the
-/// repository on GitHub failed and has a step, and the person is an admin,
-/// it names the steps and does them in the `forge`: after the question
-/// [`Question::Setup`] in [`Mode::Ask`], and with no question in
-/// [`Mode::Yes`] (01M5R1672NF56P15VD0JEX51K4). It prints the list of the
-/// checks again after the steps, and the end of a failed run names each
-/// failed check with its fix. With [`Mode::Check`], and in a session
-/// container with each mode, it stops after the checks
-/// (01M6WZ410X4RPG1KMPEBVEP2DF). When no daemon answers, it installs `unit` with
-/// `manager`, and waits up to `wait` for the daemon.
-#[allow(clippy::too_many_arguments)]
+/// asks `ask` the question [`Question::Remove`]. The end of a failed run
+/// names each failed check with its fix. With [`Mode::Check`], and in a
+/// session container with each mode, it stops after the checks
+/// (01M5SMJMR5KS1Z1Z7CEPH9JVBB). When no daemon answers, it installs
+/// `unit` with `manager`, and waits up to `wait` for the daemon.
 pub async fn run(
     facts: &Facts,
     mode: Mode,
@@ -926,41 +765,20 @@ pub async fn run(
     manager: &impl ServiceManager,
     unit: &Unit,
     wait: Duration,
-    forge: &Forge,
 ) -> Result<i32> {
     println!("{}", text::INIT_CHECKS);
-    // In a session container, riff init only checks, also with --yes: a
-    // person does the steps of the repository in a terminal
-    // (01M6WZ410X4RPG1KMPEBVEP2DF).
+    // In a session container, riff init only checks, also with --yes: the
+    // host has the daemon and the image (01M5SMJMR5KS1Z1Z7CEPH9JVBB).
     let mode = match facts.container {
         true => {
             println!("  {}", text::INIT_MACHINE_SKIPPED);
-            println!("  {}", text::INIT_STEPS_SKIPPED);
             Mode::Check
         }
         false => mode,
     };
-    let mut list = checks(facts);
-    // A step fixes a failed check only when riff can do the step now
-    // (01M5RGG9KJXCKH8C94145WS8SM).
-    let doable = match &facts.github {
-        Some(Ok(github)) if mode != Mode::Check && github.admin => Some(github),
-        _ => None,
-    };
+    let list = checks(facts);
     for check in &list {
-        println!(
-            "  {}",
-            doable.map_or_else(|| check.line(), |github| check.planned_line(github))
-        );
-    }
-    if let (Some(Ok(github)), Some(issues)) = (&facts.github, &facts.no_done_when) {
-        match issues {
-            Ok(numbers) if !numbers.is_empty() => {
-                println!("{}", text::init_no_done_when(&github.repo, numbers));
-            }
-            Ok(_) => {}
-            Err(why) => println!("{}", text::init_issues_unread(&github.repo, why)),
-        }
+        println!("  {}", check.line());
     }
     if !facts.wide.is_empty() {
         println!("{}", text::init_wide(&facts.wide));
@@ -971,21 +789,6 @@ pub async fn run(
             }
         } else {
             println!("{}", text::INIT_WIDE_KEPT);
-        }
-    }
-    let after = if mode == Mode::Check {
-        None
-    } else {
-        set_up(facts, &list, mode, &mut ask, forge)?
-    };
-    let facts = after.as_ref().unwrap_or(facts);
-    if after.is_some() {
-        // The second list: each step is done, so a check that fails has no
-        // step to wait for (01M5RGGD6YR36EXZEG61XCJVRY).
-        list = checks(facts);
-        println!("{}", text::INIT_CHECKS_AGAIN);
-        for check in &list {
-            println!("  {}", check.line());
         }
     }
     let failed: Vec<(&str, &str)> = list
@@ -1020,210 +823,25 @@ pub async fn run(
     Ok(0)
 }
 
-/// The steps of the failed checks `list` that set up the repository on
-/// GitHub (01M5R1672NF56P15VD0JEX51K4). It names them, and does them
-/// in `forge` when the person is an admin, and says yes: always in
-/// [`Mode::Yes`], else after the question [`Question::Setup`]. It
-/// returns the facts after the steps, or `None` when it did no step.
-/// The facts after the steps have the `riff.toml` of the clone as the
-/// session image, when the step made the file and `git pull` ([`pull`])
-/// gave it to the clone, else the image of this release.
-fn set_up(
-    facts: &Facts,
-    list: &[Check],
-    mode: Mode,
-    ask: &mut impl FnMut(Question) -> Result<bool>,
-    forge: &Forge,
-) -> Result<Option<Facts>> {
-    let Some(Ok(github)) = &facts.github else {
-        return Ok(None);
-    };
-    let steps = repo_setup::steps_of(list);
-    if steps.is_empty() {
-        return Ok(None);
-    }
-    if !github.admin {
-        println!("{}", text::init_not_admin(&github.repo));
-        return Ok(None);
-    }
-    let titles: Vec<String> = steps.iter().map(|s| s.title(github)).collect();
-    println!("{}", text::init_setup(&github.repo, &titles));
-    if mode != Mode::Yes && !ask(Question::Setup)? {
-        println!("{}", text::INIT_SETUP_KEPT);
-        return Ok(None);
-    }
-    let mut after = github.clone();
-    for (step, done) in repo_setup::setup(forge, &steps, &mut after) {
-        let title = step.title(github);
-        println!(
-            "  {}",
-            match &done {
-                Ok(what) => text::init_step_done(&title, what),
-                Err(why) => text::init_step_failed(&title, why),
-            }
-        );
-        // The base has no language: the project adds its toolchain.
-        if step == repo_setup::Step::Config && done.is_ok() && forge.image.is_none() {
-            println!("  {}", text::init_toolchain(&forge.pin()));
-        }
-    }
-    let mut facts = facts.clone();
-    if facts.image.is_err() && !github.has(session_image::FILE) && after.has(session_image::FILE) {
-        // The new riff.toml is on the default branch, not yet in this clone.
-        let branch = &github.default_branch;
-        let pulled = match pull(&facts.folder, branch) {
-            Ok(()) => {
-                println!("{}", text::init_pulled(branch));
-                true
-            }
-            Err(why) => {
-                println!("{}", text::init_not_pulled(branch, &why));
-                false
-            }
-        };
-        // The pulled file is the image of the clone. Else the image of this
-        // release stands in for it, as the file will pin it.
-        let image = pulled
-            .then(|| session_image::of_folder(&facts.folder).ok())
-            .flatten()
-            .unwrap_or_else(|| forge.pin());
-        facts.image = Ok(image.to_string());
-    }
-    facts.github = Some(Ok(after));
-    Ok(Some(facts))
-}
-
-/// Gives the clone in `clone` the commits of `origin` with `git pull
-/// --ff-only origin BRANCH` (01M5RGGD9AYNC12Z2CG5CDZWNA), when it is safe:
-/// the clone is on the branch `branch`, and has no change. A clone with
-/// commits that `origin` lacks does not fast-forward, so git stops and
-/// changes nothing. It gives why riff ran no pull, or why git failed, in
-/// one line.
-///
-/// ```
-/// use riff::first_run::pull;
-///
-/// let dir = tempfile::tempdir()?;
-/// let git = |dir: &std::path::Path, args: &[&str]| {
-///     let status = std::process::Command::new("git")
-///         .args(["-c", "user.name=a", "-c", "user.email=a@b.c", "-C"])
-///         .arg(dir)
-///         .args(args)
-///         .status()
-///         .unwrap();
-///     assert!(status.success(), "git {args:?}");
-/// };
-/// let (origin, clone) = (dir.path().join("origin"), dir.path().join("clone"));
-/// git(dir.path(), &["init", "-q", "-b", "main", "origin"]);
-/// git(&origin, &["commit", "-q", "--allow-empty", "-m", "first"]);
-/// git(dir.path(), &["clone", "-q", "origin", "clone"]);
-/// git(&origin, &["commit", "-q", "--allow-empty", "-m", "second"]);
-///
-/// assert_eq!(pull(&clone, "dev"), Err("the clone is on main, not on dev".to_owned()));
-/// std::fs::write(clone.join("note"), "")?;
-/// assert_eq!(pull(&clone, "main"), Err("the clone has a change".to_owned()));
-/// std::fs::remove_file(clone.join("note"))?;
-/// assert_eq!(pull(&clone, "main"), Ok(()));
-/// # Ok::<(), std::io::Error>(())
-/// ```
-pub fn pull(clone: &Path, branch: &str) -> Result<(), String> {
-    let git = |args: &[&str]| session_image::git(clone, args).map_err(|e| format!("{e:#}"));
-    let on = git(&["symbolic-ref", "--quiet", "--short", "HEAD"]).unwrap_or_default();
-    if on != branch {
-        return Err(text::init_clone_branch(&on, branch));
-    }
-    if !git(&["status", "--porcelain"])?.is_empty() {
-        return Err(text::INIT_CLONE_CHANGED.to_owned());
-    }
-    git(&["pull", "--ff-only", "origin", branch]).map(drop)
-}
-
 /// `riff init`: the first run on this machine, with the repository of
 /// the current folder and the daemon of this machine. It asks its
 /// question on the terminal. It gives the exit code. On a host that is
-/// not Linux, it changes nothing. `image` is the session image that the
-/// new `riff.toml` pins in place of the base of the release
-/// (`riff init --image`, 01M5SNTPEP41NMSP3SEKR7KVB0). In a folder of a
-/// repository on GitHub, it asks the riff-server `server` for the bot of
-/// the session App, for the check of the guard
-/// (01M6WPV86SW4AAVA2NCBQNYXK3), for the lead App, for the check of the
-/// ruleset `releases` (01M6WZ40YED6THKVJ2JQRXFK4N), and for the GitHub
-/// Apps of riff on the repository (01M6Z87JTXW0Y99X08VHA2SSSR).
-pub async fn init(
-    mode: Mode,
-    image: Option<session_image::Image>,
-    reach: &crate::reach::Reach,
-) -> Result<i32> {
+/// not Linux, it changes nothing. It reads no repository on GitHub and
+/// asks riff-server nothing (01M76SHAZK2PSMET0HRYM0J7VN).
+pub async fn init(mode: Mode) -> Result<i32> {
     #[cfg(target_os = "linux")]
     {
-        use crate::reach::Reach;
         use anyhow::Context;
-        use std::io::IsTerminal;
         let here = std::env::current_dir().context("cannot read the current folder")?;
-        let origin = crate::identity::github_origin(&here);
-        let (bot, lead) = match (&origin, reach) {
-            (Some(_), Reach::Direct(server)) => {
-                match riff_client::api::Api::new(server).signed_in(None) {
-                    Ok(api) => (
-                        crate::guard::session_bot(&api).await,
-                        crate::repo_setup::lead_app(&api).await,
-                    ),
-                    Err(e) => {
-                        let why = format!("{e:#}");
-                        (
-                            Err(text::guard_unasked(server, &why)),
-                            Err(text::lead_unasked(server, &why)),
-                        )
-                    }
-                }
-            }
-            // In a container, the riff daemon reads the Apps
-            // (01M74A8DC74TT2YGZPBBAENMWH).
-            (Some(_), Reach::Daemon(_)) => match reach.apps().await {
-                Ok(Some(apps)) => (
-                    crate::guard::session_bot_of(&apps),
-                    Ok(crate::repo_setup::lead_app_of(&apps)),
-                ),
-                Ok(None) => (Ok(None), Ok(None)),
-                Err(e) => {
-                    let (at, why) = (text::THE_SOCKET, format!("{e:#}"));
-                    (
-                        Err(text::guard_unasked(at, &why)),
-                        Err(text::lead_unasked(at, &why)),
-                    )
-                }
-            },
-            (None, _) => (Ok(None), Ok(None)),
-        };
-        let mut facts = Facts::here(&here, bot, lead);
-        // A container has no sign-in of a person for the check of the
-        // tokens of the Apps.
-        if let (Some(repo), Reach::Direct(server)) = (origin, reach) {
-            facts.apps = apps_of(server, &repo).await;
-        }
+        let facts = Facts::here(&here);
         let manager = crate::platform::service_manager()?;
         let unit = Unit::of_this()?;
-        let question = |question: Question| {
-            let terminal = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
-            ask(
-                question,
-                terminal,
-                &mut std::io::stdin().lock(),
-                &mut std::io::stdout(),
-            )
-        };
-        let forge = Forge {
-            image,
-            ..crate::identity::github_origin(&here)
-                .map(|repo| Forge::of(&repo))
-                .unwrap_or_default()
-        };
         let dir = daemon::dir()?;
-        run(&facts, mode, question, &dir, &manager, &unit, WAIT, &forge).await
+        run(&facts, mode, ask_here, &dir, &manager, &unit, WAIT).await
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (mode, image, reach);
+        let _ = mode;
         anyhow::bail!("{}", text::INIT_LINUX_ONLY)
     }
 }
@@ -1253,11 +871,7 @@ mod tests {
             image: Ok(IMAGE.into()),
             wide: vec![],
             riff: Ok("/home/mike/.cargo/bin/riff is static".into()),
-            github: None,
-            no_done_when: None,
-            folder: "/nonexistent/clone".into(),
             container: false,
-            apps: None,
         }
     }
 
@@ -1403,74 +1017,6 @@ mod tests {
         assert_eq!(unique.len(), fixes.len(), "{fixes:#?}");
     }
 
-    /// A repository on GitHub with each part.
-    fn github() -> crate::repo_setup::Github {
-        crate::repo_setup::Github {
-            repo: "acme/app".into(),
-            default_branch: "main".into(),
-            auto_merge: true,
-            squash_merge: true,
-            required: vec!["Gate".into(), "riff/verify".into()],
-            milestones: vec!["Backlog".into(), "Wave 1".into()],
-            admin: true,
-            files: vec!["riff.toml".into()],
-            ci: vec!["Gate".into()],
-            guard: None,
-            bot: Ok(None),
-            lead: Ok(None),
-            releases: None,
-            queue: None,
-        }
-    }
-
-    /// 01M5QVF5535YRN1EF3DZAB4W8G: the checks of the repository come after
-    /// the checks of the machine, and only for a folder with a remote on
-    /// GitHub.
-    #[test]
-    fn the_repository_on_github_has_seven_checks_after_the_machine() {
-        let names = |facts: &Facts| {
-            checks(facts)
-                .into_iter()
-                .map(|c| c.name)
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(names(&ready()).len(), 7, "no remote on GitHub: no check");
-        let with = Facts {
-            github: Some(Ok(github())),
-            ..ready()
-        };
-        assert!(checks(&with).iter().all(Check::passed));
-        assert_eq!(
-            names(&with)[7..],
-            [
-                "riff.toml on main",
-                "auto-merge and squash merge",
-                "the ruleset of main",
-                "the milestone Backlog",
-                "the first wave",
-                "the checks of a pull request",
-                "the guard"
-            ]
-        );
-        let none = Facts {
-            github: Some(Ok(crate::repo_setup::Github {
-                auto_merge: false,
-                required: vec![],
-                milestones: vec![],
-                ..github()
-            })),
-            ..ready()
-        };
-        assert_eq!(failed(&none).len(), 4);
-        let unread = Facts {
-            github: Some(Err("gh: not logged in".into())),
-            ..ready()
-        };
-        let failed = failed(&unread);
-        assert_eq!(failed.len(), 1, "{failed:?}");
-        assert_eq!(failed[0].name, "the repository on GitHub");
-    }
-
     #[test]
     fn a_range_that_is_too_small_fails_and_two_lines_add_up() {
         let small = Facts {
@@ -1583,7 +1129,6 @@ mod tests {
             &manager,
             &unit(),
             WAIT,
-            &Forge::default(),
         )
         .await
         .unwrap();
@@ -1641,49 +1186,12 @@ mod tests {
                 &manager,
                 &unit(),
                 WAIT,
-                &Forge::default(),
             )
             .await
             .unwrap();
             assert_eq!(code, 0, "{mode:?}");
             assert!(manager.0.lock().unwrap().is_empty(), "{mode:?}");
             assert!(!dir_in(root.path()).exists(), "{mode:?}");
-        }
-    }
-
-    /// 01M6WZ410X4RPG1KMPEBVEP2DF: in a session container, `riff init` and
-    /// `riff init --yes` only check: they ask nothing and change nothing on
-    /// GitHub, also for a bare repository and a person who is an admin. The
-    /// failed checks give their fix, and the run exits with 1.
-    #[tokio::test]
-    async fn a_run_in_a_session_container_only_checks_also_with_yes() {
-        for mode in [Mode::Ask, Mode::Yes] {
-            let forged = Forged::bare();
-            let root = tempfile::tempdir().unwrap();
-            let manager = Manager::default();
-            let facts = Facts {
-                container: true,
-                ..forged.facts(None)
-            };
-            let code = run(
-                &facts,
-                mode,
-                no_question,
-                &dir_in(root.path()),
-                &manager,
-                &unit(),
-                WAIT,
-                &forged.forge(),
-            )
-            .await
-            .unwrap();
-            assert_eq!(code, 1, "{mode:?}");
-            assert!(
-                forged.changes().is_empty(),
-                "{mode:?}: {:?}",
-                forged.changes()
-            );
-            assert!(manager.0.lock().unwrap().is_empty(), "{mode:?}");
         }
     }
 
@@ -1699,7 +1207,6 @@ mod tests {
             &manager,
             &unit(),
             WAIT,
-            &Forge::default(),
         )
         .await
         .unwrap();
@@ -1735,18 +1242,9 @@ mod tests {
         for mode in [Mode::Ask, Mode::Yes, Mode::Check] {
             let manager = Manager::default();
             let dir = dir_in(root.path());
-            let code = run(
-                &facts,
-                mode,
-                |_| Ok(true),
-                &dir,
-                &manager,
-                &unit(),
-                WAIT,
-                &Forge::default(),
-            )
-            .await
-            .unwrap();
+            let code = run(&facts, mode, |_| Ok(true), &dir, &manager, &unit(), WAIT)
+                .await
+                .unwrap();
             assert_eq!(code, 1);
             assert_eq!(std::fs::read_to_string(&there).unwrap(), text);
             assert!(!absent.exists());
@@ -1778,7 +1276,6 @@ mod tests {
             &manager,
             &unit(),
             WAIT,
-            &Forge::default(),
         )
         .await
         .unwrap();
@@ -1796,7 +1293,6 @@ mod tests {
             &manager,
             &unit(),
             WAIT,
-            &Forge::default(),
         )
         .await
         .unwrap();
@@ -1923,18 +1419,9 @@ mod tests {
         };
         let manager = Manager::default();
         let dir = dir_in(root.path());
-        let code = run(
-            &facts,
-            Mode::Ask,
-            question,
-            &dir,
-            &manager,
-            &unit(),
-            WAIT,
-            &Forge::default(),
-        )
-        .await
-        .unwrap();
+        let code = run(&facts, Mode::Ask, question, &dir, &manager, &unit(), WAIT)
+            .await
+            .unwrap();
         assert_eq!(code, 1);
         assert_eq!(asked, [text::INIT_ASK_WIDE]);
 
@@ -1984,7 +1471,6 @@ mod tests {
             &Manager::default(),
             &unit(),
             WAIT,
-            &Forge::default(),
         )
         .await
         .unwrap();
@@ -2014,7 +1500,6 @@ mod tests {
             &manager,
             &unit(),
             WAIT,
-            &Forge::default(),
         )
         .await
         .unwrap();
@@ -2031,7 +1516,6 @@ mod tests {
             &manager,
             &unit(),
             WAIT,
-            &Forge::default(),
         )
         .await
         .unwrap();
@@ -2061,7 +1545,6 @@ mod tests {
             &Manager::default(),
             &unit(),
             WAIT,
-            &Forge::default(),
         )
         .await
         .unwrap_err();
@@ -2069,410 +1552,6 @@ mod tests {
 
         let _ = stop.send(());
         served.await.unwrap().unwrap();
-    }
-
-    /// The fake forge of the tests of `riff init` (`tests/fake/forge`),
-    /// in a folder of its own.
-    struct Forged {
-        dir: tempfile::TempDir,
-        /// The bot of the session App that riff-server gives.
-        bot: Result<Option<String>, String>,
-    }
-
-    impl Forged {
-        /// A bare repository: no file, a pull request that ran two checks,
-        /// no auto-merge, no ruleset, no milestone.
-        fn bare() -> Forged {
-            let dir = tempfile::tempdir().unwrap();
-            let files = [
-                ("files", ""),
-                ("milestones", ""),
-                (
-                    "prior_pulls",
-                    r#"[{"number":3,"html_url":"https://github.com/acme/app/pull/3","head":{"ref":"feature","sha":"abc1234"},"base":{"ref":"main"}}]"#,
-                ),
-                (
-                    "checks_abc1234",
-                    r#"{"check_runs":[{"name":"checks / lint"},{"name":"checks / test"}]}"#,
-                ),
-            ];
-            for (name, text) in files {
-                std::fs::write(dir.path().join(name), text).unwrap();
-            }
-            isolated::write_program(dir.path().join("gh"), include_str!("../tests/fake/forge"));
-            Forged { dir, bot: Ok(None) }
-        }
-
-        /// The same forge, in a riff whose session App has the bot `bot`.
-        fn with_bot(self, bot: &str) -> Forged {
-            Forged {
-                bot: Ok(Some(bot.into())),
-                ..self
-            }
-        }
-
-        fn forge(&self) -> Forge {
-            Forge {
-                gh: crate::pr::Gh::at(self.dir.path().join("gh")),
-                waits: repo_setup::Waits::NONE,
-                image: None,
-            }
-        }
-
-        /// The facts of the machine, with the facts that riff reads from
-        /// the forge now. The clone has no `riff.toml` when `image` is
-        /// `None`.
-        fn facts(&self, image: Option<&str>) -> Facts {
-            Facts {
-                image: image
-                    .map(str::to_owned)
-                    .ok_or("no riff.toml in this clone".into()),
-                github: Some(repo_setup::read(
-                    &self.forge().gh,
-                    self.bot.clone(),
-                    Ok(None),
-                )),
-                ..ready()
-            }
-        }
-
-        /// The calls that change the forge.
-        fn changes(&self) -> Vec<String> {
-            std::fs::read_to_string(self.dir.path().join("calls"))
-                .unwrap_or_default()
-                .lines()
-                .filter(|c| c.contains(" -X ") || c.starts_with("label "))
-                .map(Into::into)
-                .collect()
-        }
-
-        fn has(&self, name: &str) -> bool {
-            self.dir.path().join(name).exists()
-        }
-    }
-
-    /// `run` with a podman that fails: it does the setup and the checks,
-    /// and stops before the daemon.
-    async fn run_stopped(forged: &Forged, facts: &Facts, mode: Mode, yes: bool) -> (i32, usize) {
-        let root = tempfile::tempdir().unwrap();
-        let facts = Facts {
-            podman: Err(text::INIT_NO_PODMAN.into()),
-            ..facts.clone()
-        };
-        let asked = std::cell::Cell::new(0);
-        let question = |q: Question| {
-            assert_eq!(q, Question::Setup, "riff asked: {}", q.text());
-            asked.set(asked.get() + 1);
-            Ok(yes)
-        };
-        let code = run(
-            &facts,
-            mode,
-            question,
-            &dir_in(root.path()),
-            &Manager::default(),
-            &unit(),
-            WAIT,
-            &forged.forge(),
-        )
-        .await
-        .unwrap();
-        (code, asked.get())
-    }
-
-    /// 01M5R1672NF56P15VD0JEX51K4: `riff init --yes` sets up a bare
-    /// repository with no question; the second run changes nothing and
-    /// asks nothing.
-    #[tokio::test]
-    async fn yes_sets_up_a_bare_repository_and_pulls_the_new_image_and_a_second_run_changes_nothing()
-     {
-        let forged = Forged::bare();
-        let root = tempfile::tempdir().unwrap();
-        let dir = dir_in(root.path());
-        let release = session_image::base().to_string();
-        let fake = Fake::default().with_registry(&release);
-        let listener = listen(&dir).await.unwrap();
-        riff_client::secrets::mock_store();
-        let daemon = Arc::new(Daemon::new(fake.clone(), dir.clone()).unwrap());
-        let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
-        let served = tokio::spawn(daemon.serve(listener, async {
-            let _ = stopped.await;
-        }));
-
-        // The clone has no riff.toml: the new file is the image of the run.
-        let manager = Manager::default();
-        let code = run(
-            &forged.facts(None),
-            Mode::Yes,
-            no_question,
-            &dir,
-            &manager,
-            &unit(),
-            WAIT,
-            &forged.forge(),
-        )
-        .await
-        .unwrap();
-        assert_eq!(code, 0);
-        assert_eq!(fake.calls(), [format!("pull {release}")]);
-        let changes = forged.changes().len();
-        assert!(changes >= 8, "{:?}", forged.changes());
-        for name in ["auto_merge", "ruleset", "config.json", "merge.json"] {
-            assert!(forged.has(name), "{name}");
-        }
-        let milestones = std::fs::read_to_string(forged.dir.path().join("milestones")).unwrap();
-        assert_eq!(milestones, "Backlog\nWave 1\n");
-
-        // The clone pulled the new file: a second run changes nothing.
-        let code = run(
-            &forged.facts(Some(&release)),
-            Mode::Yes,
-            no_question,
-            &dir,
-            &manager,
-            &unit(),
-            WAIT,
-            &forged.forge(),
-        )
-        .await
-        .unwrap();
-        assert_eq!(code, 0);
-        assert_eq!(
-            forged.changes().len(),
-            changes,
-            "a second run changes the forge"
-        );
-        assert_eq!(fake.calls(), [format!("pull {release}")]);
-
-        let _ = stop.send(());
-        served.await.unwrap().unwrap();
-    }
-
-    /// 01M5R1672NF56P15VD0JEX51K4: in `Mode::Ask`, the steps wait for one
-    /// question. A no does none, and a yes does each.
-    #[tokio::test]
-    async fn the_steps_wait_for_one_question_and_a_no_changes_nothing() {
-        let forged = Forged::bare();
-        let facts = forged.facts(Some(IMAGE));
-        let (code, asked) = run_stopped(&forged, &facts, Mode::Ask, false).await;
-        assert_eq!((code, asked), (1, 1));
-        assert!(forged.changes().is_empty(), "{:?}", forged.changes());
-
-        let (code, asked) = run_stopped(&forged, &facts, Mode::Ask, true).await;
-        // podman fails, so a check still fails; the steps are done.
-        assert_eq!((code, asked), (1, 1));
-        assert!(forged.has("ruleset") && forged.has("config.json"));
-
-        // Set up: no question at all.
-        let facts = forged.facts(Some(IMAGE));
-        assert!(
-            failed(&Facts {
-                podman: Ok("podman".into()),
-                ..facts.clone()
-            })
-            .is_empty()
-        );
-        let (_, asked) = run_stopped(&forged, &facts, Mode::Ask, true).await;
-        assert_eq!(asked, 0);
-    }
-
-    /// 01M5R1672NF56P15VD0JEX51K4: `--check` makes no call that changes the
-    /// forge, and asks nothing.
-    #[tokio::test]
-    async fn check_names_the_steps_and_changes_nothing() {
-        let forged = Forged::bare();
-        let facts = forged.facts(Some(IMAGE));
-        let (code, asked) = run_stopped(&forged, &facts, Mode::Check, true).await;
-        assert_eq!((code, asked), (1, 0));
-        assert!(forged.changes().is_empty(), "{:?}", forged.changes());
-        assert!(!forged.has("ruleset"));
-    }
-
-    /// 01M6WPV86SW4AAVA2NCBQNYXK3: in a riff with a session App, `riff init
-    /// --check` names the missing guard with its step and changes nothing.
-    /// `--yes` puts the guard of the bot in the pull request of
-    /// `riff.toml`, and the check of the guard passes after it.
-    #[tokio::test]
-    async fn the_check_names_a_missing_guard_and_yes_puts_it_with_riff_toml() {
-        let forged = Forged::bare().with_bot("riff-acme[bot]");
-        let facts = forged.facts(Some(IMAGE));
-        let guard = checks(&facts).pop().unwrap();
-        assert_eq!(guard.name, "the guard");
-        assert_eq!(guard.step, Some(repo_setup::Step::Config));
-        assert!(
-            guard
-                .line()
-                .contains("has no .github/workflows/riff-guard.yml"),
-            "{}",
-            guard.line()
-        );
-        let (code, asked) = run_stopped(&forged, &facts, Mode::Check, true).await;
-        assert_eq!((code, asked), (1, 0));
-        assert!(forged.changes().is_empty(), "{:?}", forged.changes());
-
-        let (code, _) = run_stopped(&forged, &facts, Mode::Yes, true).await;
-        assert_eq!(code, 1, "podman fails");
-        let written = std::fs::read_to_string(forged.dir.path().join("guard")).unwrap();
-        assert_eq!(written, crate::guard::workflow("riff-acme[bot]"));
-        let after = forged.facts(Some(IMAGE));
-        let guard = checks(&after).pop().unwrap();
-        assert!(guard.passed(), "{}", guard.line());
-    }
-
-    /// 01M5R1672NF56P15VD0JEX51K4: a person who is not an admin gets the
-    /// steps named. riff asks nothing and changes nothing.
-    #[tokio::test]
-    async fn a_person_who_is_not_an_admin_gets_no_question_and_no_change() {
-        let forged = Forged::bare();
-        std::fs::write(forged.dir.path().join("not_admin"), "").unwrap();
-        let facts = forged.facts(Some(IMAGE));
-        assert!(!facts.github.as_ref().unwrap().as_ref().unwrap().admin);
-        for mode in [Mode::Ask, Mode::Yes] {
-            let (code, asked) = run_stopped(&forged, &facts, mode, true).await;
-            assert_eq!((code, asked), (1, 0), "{mode:?}");
-        }
-        assert!(forged.changes().is_empty(), "{:?}", forged.changes());
-    }
-
-    /// A step that fails fails the run, and the next steps run.
-    #[tokio::test]
-    async fn a_step_that_fails_fails_the_run_and_the_next_steps_run() {
-        let forged = Forged::bare();
-        std::fs::write(forged.dir.path().join("fail"), "rulesets").unwrap();
-        let facts = forged.facts(Some(IMAGE));
-        let (code, _) = run_stopped(&forged, &facts, Mode::Yes, true).await;
-        assert_eq!(code, 1);
-        assert!(forged.has("auto_merge") && forged.has("config.json"));
-        assert!(!forged.has("ruleset"));
-        let milestones = std::fs::read_to_string(forged.dir.path().join("milestones")).unwrap();
-        assert_eq!(milestones, "Backlog\nWave 1\n");
-    }
-
-    /// Runs `git ARGS` in `dir`, and gives its stdout.
-    fn git(dir: &Path, args: &[&str]) -> String {
-        let out = std::process::Command::new("git")
-            .args([
-                "-c",
-                "user.name=riff",
-                "-c",
-                "user.email=riff@example.com",
-                "-C",
-            ])
-            .arg(dir)
-            .args(args)
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "git {args:?}: {out:?}");
-        String::from_utf8_lossy(&out.stdout).trim().to_owned()
-    }
-
-    /// A clone of a repository on the branch `main` that lacks the last
-    /// commit of its origin: the commit that adds `riff.toml` with the image
-    /// `IMAGE`, as the merge of the step does. It gives the folders of
-    /// the origin and of the clone.
-    fn clone_behind(root: &Path) -> (PathBuf, PathBuf) {
-        let (origin, clone) = (root.join("origin"), root.join("clone"));
-        git(root, &["init", "-q", "-b", "main", "origin"]);
-        std::fs::write(origin.join("CLAUDE.md"), "rules\n").unwrap();
-        git(&origin, &["add", "."]);
-        git(&origin, &["commit", "-q", "-m", "first"]);
-        git(root, &["clone", "-q", "origin", "clone"]);
-        let image = IMAGE.parse().unwrap();
-        std::fs::write(origin.join("riff.toml"), session_image::config_of(&image)).unwrap();
-        git(&origin, &["add", "."]);
-        git(&origin, &["commit", "-q", "-m", "Set up riff"]);
-        (origin, clone)
-    }
-
-    /// `set_up` in `Mode::Yes` for the clone `folder`, in the forge `forged`:
-    /// the facts after the steps.
-    fn set_up_in(forged: &Forged, folder: &Path) -> Facts {
-        let facts = Facts {
-            folder: folder.to_owned(),
-            ..forged.facts(None)
-        };
-        let list = checks(&facts);
-        set_up(&facts, &list, Mode::Yes, &mut no_question, &forged.forge())
-            .unwrap()
-            .expect("the steps ran")
-    }
-
-    /// 01M5RGGD9AYNC12Z2CG5CDZWNA: the clone is on the default branch, has
-    /// no change, and lacks only the commits of `origin`: after the step of
-    /// `riff.toml`, riff runs `git pull --ff-only`, and the clone has the
-    /// file. The session image is the one that the file pins.
-    #[test]
-    fn a_clone_that_lacks_only_commits_of_origin_gets_riff_toml_by_git_pull() {
-        let forged = Forged::bare();
-        let root = tempfile::tempdir().unwrap();
-        let (origin, clone) = clone_behind(root.path());
-        assert!(!clone.join("riff.toml").exists());
-
-        let after = set_up_in(&forged, &clone);
-        assert!(forged.has("config.json"), "the step ran");
-        assert!(clone.join("riff.toml").exists());
-        assert_eq!(
-            git(&clone, &["rev-parse", "HEAD"]),
-            git(&origin, &["rev-parse", "HEAD"])
-        );
-        assert_eq!(after.image, Ok(IMAGE.to_owned()));
-        assert_ne!(IMAGE, session_image::base().to_string());
-    }
-
-    /// 01M5RGGD9AYNC12Z2CG5CDZWNA: a clone on another branch, with a change,
-    /// or with a commit that `origin` lacks gets no `git pull`: riff changes
-    /// nothing in it, and the image of the release stands in for the file.
-    #[test]
-    fn a_clone_that_is_not_safe_to_pull_gets_no_git_pull() {
-        let release = session_image::base().to_string();
-        for case in ["another branch", "a change", "a local commit"] {
-            let forged = Forged::bare();
-            let root = tempfile::tempdir().unwrap();
-            let (_, clone) = clone_behind(root.path());
-            match case {
-                "another branch" => drop(git(&clone, &["checkout", "-q", "-b", "dev"])),
-                "a change" => std::fs::write(clone.join("CLAUDE.md"), "mine\n").unwrap(),
-                _ => drop(git(
-                    &clone,
-                    &["commit", "-q", "--allow-empty", "-m", "mine"],
-                )),
-            }
-            let head = git(&clone, &["rev-parse", "HEAD"]);
-            let after = set_up_in(&forged, &clone);
-            assert!(forged.has("config.json"), "{case}: the step ran");
-            assert!(!clone.join("riff.toml").exists(), "{case}");
-            assert_eq!(git(&clone, &["rev-parse", "HEAD"]), head, "{case}");
-            assert_eq!(after.image, Ok(release.clone()), "{case}");
-        }
-    }
-
-    #[test]
-    fn pull_says_why_it_ran_no_git_pull() {
-        let root = tempfile::tempdir().unwrap();
-        let (_, clone) = clone_behind(root.path());
-        assert_eq!(
-            pull(&clone, "trunk"),
-            Err("the clone is on main, not on trunk".to_owned())
-        );
-        git(&clone, &["checkout", "-q", "--detach"]);
-        assert_eq!(
-            pull(&clone, "main"),
-            Err("the clone is on no branch, not on main".to_owned())
-        );
-        git(&clone, &["checkout", "-q", "main"]);
-        std::fs::write(clone.join("new"), "").unwrap();
-        assert_eq!(
-            pull(&clone, "main"),
-            Err("the clone has a change".to_owned())
-        );
-        std::fs::remove_file(clone.join("new")).unwrap();
-        git(&clone, &["commit", "-q", "--allow-empty", "-m", "mine"]);
-        let why = pull(&clone, "main").unwrap_err();
-        assert!(why.starts_with("git pull --ff-only origin main: "), "{why}");
-        assert!(!why.contains('\n'), "{why}");
-        // Not a repository: git says so.
-        let none = tempfile::tempdir().unwrap();
-        assert!(pull(none.path(), "main").is_err());
     }
 
     #[test]

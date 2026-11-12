@@ -491,7 +491,7 @@ async fn sync_here(
     images: Vec<(String, Result<String, String>)>,
 ) -> Vec<Step> {
     let manager = manager_here();
-    let facts = first_run::Facts::here(&lifecycle::run_dir(), Ok(None), Ok(None));
+    let facts = first_run::Facts::here(&lifecycle::run_dir());
     let at = Machine {
         manager: manager.as_ref(),
         runtime,

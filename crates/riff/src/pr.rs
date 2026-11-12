@@ -460,8 +460,8 @@ impl Gh {
     /// folder: it sets `GH_REPO`.
     ///
     /// ```
-    /// let gh = riff::pr::Gh::here("init").with_repo("o/r");
-    /// assert_eq!(gh.caller(), "init");
+    /// let gh = riff::pr::Gh::here("project init").with_repo("o/r");
+    /// assert_eq!(gh.caller(), "project init");
     /// ```
     pub fn with_repo(self, repo: &str) -> Self {
         Self {

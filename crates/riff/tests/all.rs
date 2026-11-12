@@ -79,6 +79,7 @@ mod pause;
 mod pr;
 #[cfg(target_os = "linux")]
 mod priority;
+mod project;
 mod proof;
 #[cfg(target_os = "linux")]
 mod ps;
