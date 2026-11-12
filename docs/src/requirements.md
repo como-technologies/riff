@@ -5386,10 +5386,10 @@ of this part when they merge.
   there. Both come from the merged `riff.toml`, as the image does
   (01M51STPHXSSZMHF9T7Z85097R). A `riff.toml` with neither table gives a
   session neither.
-- **01M5SMW28KT5D5HPRH7KAZ8TVC** riff sets in a session only what riff
-  needs itself: the home, the user, the sign-ins, the git config, the
-  Claude folder, the clone, the folder of the socket, `--memory` and
-  `--cpus`. It sets no variable and no volume of a language or a tool:
+- **01M5SMW28KT5D5HPRH7KAZ8TVC** riff sets in a session what riff needs
+  itself: the home, the user, the sign-ins, the git config, the Claude
+  folder, the clone, the folder of the socket, `--memory` and `--cpus`.
+  It sets no variable and no volume of a language or a tool:
   no `RUSTC_WRAPPER`, no `CARGO_HOME`, no `CARGO_BUILD_JOBS`, no sccache
   and no cache volume. A repository sets them in `riff.toml`. This
   supersedes 01M4Z60B7RPSQ1ABGVMJSZWS5P and 01M57818168N3AQGE3G5GDYDDD
@@ -6169,6 +6169,15 @@ of this part when they merge.
   reader of riff. A wait does not stop riff daemon status, riff lead
   start, or the loop of the daemon that sets its status and sends its
   facts.
+- **01M7755V17SGY2NW231WJ12WXN** Each process of a session container
+  runs at nice 19, the lowest CPU priority. The daemon starts the
+  `podman run` of each worker, verify and lead with `nice -n 19`, so
+  each process of the container gets the value from podman. A takeover
+  starts its command in the container with `nice -n 19`. Each container
+  also gets `--cgroup-conf cpu.weight=1`: the lowest CPU weight of
+  cgroup v2, below the default weight 100 of the cgroups of the person.
+  riff writes neither of them in a file of the person. This supersedes
+  01M5SMW28KT5D5HPRH7KAZ8TVC in part.
 
 ### riff relay
 
