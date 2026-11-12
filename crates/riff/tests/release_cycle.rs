@@ -1209,11 +1209,28 @@ fn this_tag() -> String {
 }
 
 /// The cases of `gh` for the CI run 9 of `tag`, whose job `Deploy`
-/// ended with `conclusion`.
+/// ended with `conclusion`. The job `Check the deploy` ran after a pass.
 fn deployed(tag: &str, conclusion: &str) -> String {
+    let checked = if conclusion == "success" {
+        "success"
+    } else {
+        "skipped"
+    };
+    run_of(tag, conclusion, ("completed", checked))
+}
+
+/// The cases of `gh` for the CI run 9 of `tag`, whose job `Deploy`
+/// ended with `conclusion`, and whose job `Check the deploy` has the
+/// status `job` and the conclusion `checked`. The run ends with that job.
+fn run_of(tag: &str, conclusion: &str, (job, checked): (&str, &str)) -> String {
+    let (run, ended) = match job {
+        "completed" if checked == "failure" => ("completed", "failure"),
+        "completed" => ("completed", conclusion),
+        _ => ("in_progress", ""),
+    };
     format!(
-        "'run list --workflow CI --limit'*) printf '%s\n' '[{{\"databaseId\":9,\"headBranch\":\"{tag}\",\"headSha\":\"abc\",\"url\":\"https://github.com/como-technologies/riff/actions/runs/9\",\"displayTitle\":\"Release\",\"status\":\"completed\",\"conclusion\":\"{conclusion}\"}}]' ;;\n\
-         'run view 9 --json jobs') printf '%s\n' '{{\"jobs\":[{{\"name\":\"Release check\",\"status\":\"completed\",\"conclusion\":\"success\"}},{{\"name\":\"Deploy\",\"status\":\"completed\",\"conclusion\":\"{conclusion}\",\"startedAt\":\"2026-10-18T20:00:00Z\",\"completedAt\":\"2026-10-18T20:03:00Z\"}}]}}' ;;\n\
+        "'run list --workflow CI --limit'*) printf '%s\n' '[{{\"databaseId\":9,\"headBranch\":\"{tag}\",\"headSha\":\"abc\",\"url\":\"https://github.com/como-technologies/riff/actions/runs/9\",\"displayTitle\":\"Release\",\"status\":\"{run}\",\"conclusion\":\"{ended}\"}}]' ;;\n\
+         'run view 9 --json jobs') printf '%s\n' '{{\"jobs\":[{{\"name\":\"Release check\",\"status\":\"completed\",\"conclusion\":\"success\"}},{{\"name\":\"Deploy\",\"status\":\"completed\",\"conclusion\":\"{conclusion}\",\"startedAt\":\"2026-10-18T20:00:00Z\",\"completedAt\":\"2026-10-18T20:03:00Z\"}},{{\"name\":\"Check the deploy\",\"status\":\"{job}\",\"conclusion\":\"{checked}\"}}]}}' ;;\n\
          'run rerun 9 --failed') echo ;;\n\
          'workflow run'*) echo ;;\n\
          'issue comment'*) echo ;;\n\
@@ -1342,15 +1359,18 @@ async fn check_takes_the_four_checks_of_the_log_from_the_status_and_runs_no_gclo
     assert_eq!(machine.gcloud_log(), "", "riff release check ran gcloud");
 }
 
-/// 01M76SSFTGW41RHHV445ZM5RHY: before the job Check the deploy sets the
-/// status, riff names each check of the log that it could not do, and
-/// when the job ends. It keeps the riff and the issue as they are
-/// (01M58KMMP9FKRFYX58ESVRSZQX).
+/// 01M76SSFTGW41RHHV445ZM5RHY: after a job Check the deploy that ended
+/// with no status, riff names each check of the log that it could not
+/// do, and the check of a person on a host. It keeps the riff and the
+/// issue as they are (01M58KMMP9FKRFYX58ESVRSZQX).
 #[tokio::test]
 async fn check_names_the_checks_that_it_could_not_do() {
     let machine = Machine::new().await;
     let tag = this_tag();
-    machine.fake_gh(&deployed(&tag, "success"));
+    machine.fake_gh(&format!(
+        "'api repos/{{owner}}/{{repo}}/commits/{tag}/status') printf '%s\\n' '{{\"sha\":\"abc\",\"statuses\":[]}}' ;;\n{}",
+        run_of(&tag, "success", ("completed", "cancelled"))
+    ));
     let lead = [("RIFF_SESSION", "s1")];
     machine.name_lead(&lead).await;
     let out = machine.ok(&lead, &["release", "check", &tag]).await;
@@ -1361,13 +1381,54 @@ async fn check_names_the_checks_that_it_could_not_do() {
     assert!(
         out.contains(&format!(
             "- no 500 of riff-server: riff could not check it: the job Check the deploy of \
-             https://github.com/como-technologies/riff/actions/runs/9 did not set the status \
-             riff/deploy-check for this deploy yet. It ends at about 20:09 UTC. Then run: riff \
+             https://github.com/como-technologies/riff/actions/runs/9 ended with cancelled, and \
+             set no status riff/deploy-check for this deploy. A person on a host runs: riff \
+             cloud check shared --since 2026-10-18T20:00:00Z --commit abc. Then run: riff \
              release check {tag}\n"
         )),
         "{out}"
     );
     assert!(!machine.log().contains("issue close"), "{}", machine.log());
+}
+
+/// 01M77BT4XB4T8MQVCY7MK0B843: a check before the end of the job Check the
+/// deploy refuses, and names when the job ends. It makes no release issue
+/// and no comment, and the other lead hears no note "unknown". After the
+/// job sets the status, the check runs, and the other lead hears its
+/// result.
+#[tokio::test]
+async fn a_check_before_the_end_of_the_job_check_the_deploy_tells_the_other_lead_nothing() {
+    let machine = Machine::new().await;
+    let tag = this_tag();
+    machine.fake_gh(&run_of(&tag, "success", ("in_progress", "")));
+    machine.name_lead(&LEAD).await;
+    let other = machine.other_lead().await;
+    machine.ok(&LEAD, &["pause", "--riff"]).await;
+    let out = machine.run(&LEAD, &["release", "check", &tag], "").await;
+    assert!(!out.status.success(), "{out:?}");
+    assert!(
+        text(&out.stderr).contains(&riff::text::release_check_early(
+            &tag,
+            "https://github.com/como-technologies/riff/actions/runs/9",
+            "20:09 UTC"
+        )),
+        "{}",
+        text(&out.stderr)
+    );
+    let log = machine.log();
+    for write in ["issue create", "issue comment", "issue close"] {
+        assert!(!log.contains(write), "{write}: {log}");
+    }
+    assert!(machine.heard(&other).await.is_empty());
+
+    // The job sets the status before its end: the check runs.
+    machine.fake_gh(&format!(
+        "{}\n{}",
+        log_passed(&tag),
+        run_of(&tag, "success", ("in_progress", ""))
+    ));
+    machine.ok(&LEAD, &["release", "check", &tag]).await;
+    assert_eq!(machine.heard(&other).await, [note(Step::Checked, &tag)]);
 }
 
 /// 01M76SS6T89DPNV7S4SWY1R7F3: the job Check the deploy waits
@@ -2055,6 +2116,10 @@ fn the_book_shows_the_release_cycle_with_its_gates_and_a_how_to_for_each_command
         "participant C as the job Check the deploy (riff-check)",
         "`riff release\ncheck` runs no `gcloud`",
         "riff names the CI run and the time when the job ends",
+        // 01M77BT0489T9R084WEFHPMCR5, 01M77BT4XB4T8MQVCY7MK0B843: when the
+        // lead gets the step of the check, and a check that comes too early.
+        "waits until the job sets the status `riff/deploy-check` of the tag, or",
+        "A check before the job sets the status refuses, and changes nothing:",
         "`deploying`, `deployed`,\n`checked`, `failed` or `rolled back`",
         // 01M5RGCW5NCKQYA61RM63914TX: the diagram says what wakes the lead
         // at each step, and a how-to says how the watches work.

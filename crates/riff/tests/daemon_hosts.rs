@@ -1831,29 +1831,41 @@ async fn leave_with_host_stops_serving_and_removes_the_clone_that_the_daemon_mad
 
 /// A `gh` whose CI run of `TAG` has the state in the file `dir/state`:
 /// `waiting` (the job `Deploy` waits for a person), `running`, `success`
-/// or `failure`. The list of the release issues is the file `dir/issues`,
-/// or empty. Every other call answers with an empty list. Gives the
-/// variables for a host.
+/// or `failure`. The job `Check the deploy` has the state in the file
+/// `dir/check`, `running` or a conclusion; with no file, it ended as the
+/// job `Deploy`. The status `riff/deploy-check` of the tag is the file
+/// `dir/status` (see [`deploy_status`]), or none. The list of the release
+/// issues is the file `dir/issues`, or empty. Every other call answers
+/// with an empty list. Gives the variables for a host.
 fn fake_deploy(dir: &Path) -> Vec<(String, String)> {
     let bin = dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     let url = "https://github.com/o/r/actions/runs/9";
     let body = format!(
         "#!/bin/sh\nstate=$(cat {state} 2>/dev/null)\n\
+         check=$(cat {check} 2>/dev/null || echo \"$state\")\n\
          case \"$state\" in\n\
            waiting) status=waiting; job=waiting; conclusion= ;;\n\
            running) status=in_progress; job=in_progress; conclusion= ;;\n\
            *) status=completed; job=completed; conclusion=$state ;;\n\
          esac\n\
+         ended=$conclusion\n\
+         case \"$check\" in\n\
+           waiting|running) checking=in_progress; checked= ; [ \"$status\" = completed ] && status=in_progress && ended= ;;\n\
+           *) checking=completed; checked=$check ;;\n\
+         esac\n\
          case \"$*\" in\n\
          'run list'*)\n\
-           printf '[{{\"databaseId\":9,\"headBranch\":\"{TAG}\",\"headSha\":\"abc\",\"url\":\"{url}\",\"displayTitle\":\"Release\",\"status\":\"%s\",\"conclusion\":\"%s\"}}]\\n' \"$status\" \"$conclusion\" ;;\n\
+           printf '[{{\"databaseId\":9,\"headBranch\":\"{TAG}\",\"headSha\":\"abc\",\"url\":\"{url}\",\"displayTitle\":\"Release\",\"status\":\"%s\",\"conclusion\":\"%s\"}}]\\n' \"$status\" \"$ended\" ;;\n\
          'run view 9 --json jobs')\n\
-           printf '{{\"jobs\":[{{\"name\":\"Deploy\",\"status\":\"%s\",\"conclusion\":\"%s\",\"startedAt\":\"\"}}]}}\\n' \"$job\" \"$conclusion\" ;;\n\
+           printf '{{\"jobs\":[{{\"name\":\"Deploy\",\"status\":\"%s\",\"conclusion\":\"%s\",\"startedAt\":\"\"}},{{\"name\":\"Check the deploy\",\"status\":\"%s\",\"conclusion\":\"%s\"}}]}}\\n' \"$job\" \"$conclusion\" \"$checking\" \"$checked\" ;;\n\
+         'api repos/'*'/commits/{TAG}/status') cat {status} 2>/dev/null || echo '{{\"sha\":\"abc\",\"statuses\":[]}}' ;;\n\
          'issue list'*) cat {issues} 2>/dev/null || echo '[]' ;;\n\
          *) echo '[]' ;;\n\
          esac\n",
         state = dir.join("state").display(),
+        check = dir.join("check").display(),
+        status = dir.join("status").display(),
         issues = dir.join("issues").display(),
     );
     isolated::write_program(bin.join("gh"), body);
@@ -1939,6 +1951,11 @@ async fn the_watch_of_a_deploy_gives_the_other_lead_one_note_for_each_step() {
     .await;
 
     // The job passes: one more note, and the watch goes.
+    std::fs::write(
+        tmp.path().join("status"),
+        deploy_status("success", LOG_PASSED),
+    )
+    .unwrap();
     std::fs::write(&state, "success").unwrap();
     until("the note of the pass", || async {
         (heard().await.len() == 2).then_some(())
@@ -1975,6 +1992,131 @@ async fn the_watch_of_a_deploy_gives_the_other_lead_one_note_for_each_step() {
     );
     assert_eq!(r.messages(&lead("passed")).await.len(), 1);
     assert_eq!(r.messages(&lead("failed")).await.len(), 1);
+}
+
+/// The file `status` of [`fake_deploy`]: the status `riff/deploy-check` of
+/// the tag, `state` with `description`.
+fn deploy_status(state: &str, description: &str) -> String {
+    format!(
+        r#"{{"sha":"abc","statuses":[{{"context":"riff/deploy-check","state":"{state}","description":"{description}","updated_at":"2026-10-18T20:09:10Z"}}]}}"#
+    )
+}
+
+/// The description of the status `riff/deploy-check` when each check of
+/// the log passed.
+const LOG_PASSED: &str = "503 run: 0 s, 500: 0, token store: 0, old lease: no";
+
+/// 01M77BT0489T9R084WEFHPMCR5: with a real riff-server and a fake `gh`, the
+/// watch of a deploy that passed gives the lead the step of the check, and
+/// the other lead its note, only after the job Check the deploy set the
+/// status `riff/deploy-check`. A status `error`, and a job that failed with
+/// no status, wake the lead with the reason.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_watch_of_a_deploy_gives_the_step_of_the_check_only_after_the_job_check_the_deploy() {
+    let tmp = tempfile::tempdir().unwrap();
+    let extra = fake_deploy(tmp.path());
+    let r = riff_env(300, 300, &extra).await;
+    // The watch fetches the main clone: it needs an origin.
+    add_origin(&r.main, tmp.path());
+    let other: SessionUri = "riff://bob@b/n8behavior/sens-o-matic?session=b1"
+        .parse()
+        .unwrap();
+    r.api(&other).register(&other).await.unwrap();
+    crate::common::name_lead(&r.server.api("bob", None), &other).await;
+
+    let repo = r.lead.place().repo_text();
+    let dir = r.host("a").dir();
+    let set = |name: &str, text: &str| std::fs::write(tmp.path().join(name), text).unwrap();
+    let heard = || async {
+        let api = r.api(&other);
+        match api.read(&other, &riff::hold::thread(), true).await {
+            Ok(read) => read.into_iter().map(|m| m.message.body).collect(),
+            Err(_) => Vec::<String>::new(),
+        }
+    };
+    let passed = format!("The deploy of {TAG} passed: https://github.com/o/r/actions/runs/9.");
+    let watch = || {
+        let op = riff::watches::Op::Deploy {
+            tag: TAG.to_owned(),
+            stale: None,
+        };
+        riff::watches::Watches::new(&dir)
+            .register(&repo, op, riff::daemon::now_ms())
+            .unwrap();
+    };
+    // The messages of the pass, when the last one has `reason` and the
+    // step of the check.
+    let (riff, passed) = (&r, passed.as_str());
+    let told = |reason: String| async move {
+        let what = format!("the message of the pass: {reason}");
+        let step = format!("next: riff release check {TAG}");
+        until(&what, || async {
+            let found = riff.messages(passed).await;
+            found
+                .last()
+                .is_some_and(|m| m.contains(&reason) && m.ends_with(&step))
+                .then_some(found.len())
+        })
+        .await
+    };
+
+    // The job Deploy passed, and the job Check the deploy runs: no message.
+    // The riff is paused since the approval.
+    r.api(&r.lead)
+        .set_riff(&r.lead, RiffState::Paused)
+        .await
+        .unwrap();
+    set("state", "success");
+    set("check", "running");
+    watch();
+    until("the step of the release in who", || async {
+        let out = r.a.run(&r.main, &["who"], None).await;
+        text(&out.stdout)
+            .contains(&format!("{TAG}: the deploy passed"))
+            .then_some(())
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(LOOK_MS * 10)).await;
+    assert!(r.messages(passed).await.is_empty());
+    assert!(heard().await.is_empty(), "the other lead hears no note yet");
+
+    // The job sets the status: the lead gets the step, the other lead the
+    // note.
+    set("status", &deploy_status("success", LOG_PASSED));
+    assert_eq!(told(String::new()).await, 1);
+    let deployed =
+        riff::text::release_note(riff::hold::Step::Deployed, TAG, &riff::hold::by(&repo));
+    until("the note of the pass", || async {
+        (heard().await == [deployed.clone()]).then_some(())
+    })
+    .await;
+
+    // A status error: the reason of the job.
+    std::fs::remove_file(tmp.path().join("status")).unwrap();
+    watch();
+    tokio::time::sleep(Duration::from_millis(LOOK_MS * 10)).await;
+    assert_eq!(r.messages(passed).await.len(), 1);
+    let why = "The job Check the deploy failed before it read the log.";
+    set("status", &deploy_status("error", why));
+    set("check", "failure");
+    let error = format!(
+        "The check of the log has no result: {}",
+        riff::text::deploy_check_error(TAG, why)
+    );
+    assert_eq!(told(error).await, 2);
+
+    // A job that failed with no status: its end.
+    std::fs::remove_file(tmp.path().join("status")).unwrap();
+    set("check", "running");
+    watch();
+    tokio::time::sleep(Duration::from_millis(LOOK_MS * 10)).await;
+    assert_eq!(r.messages(passed).await.len(), 2);
+    set("check", "cancelled");
+    let none = format!(
+        "The check of the log has no result: {}.",
+        riff::text::deploy_check_none("https://github.com/o/r/actions/runs/9", Some("cancelled"))
+    );
+    assert_eq!(told(none).await, 3);
 }
 
 /// 01M6XTS7RGXB30MFM6DZ7PVZ75: `riff who` says the state of an open release
