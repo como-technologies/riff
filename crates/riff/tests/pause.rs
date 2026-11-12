@@ -12,7 +12,7 @@ use riff::text;
 use riff_client::api::PauseScope;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::record::By;
-use riff_core::wire::{Posted, RiffState};
+use riff_core::wire::{Posted, RiffReply, RiffState};
 
 use crate::common;
 
@@ -381,7 +381,7 @@ async fn a_resume_of_a_repository_in_a_paused_riff_wakes_nobody() {
     assert!(reply.riff.is_some() && reply.repositories.is_empty());
     assert!(posted.is_empty(), "nobody wakes: {posted:?}");
     assert_eq!(
-        text::riff_set(Some(&repo()), RiffState::Running, &reply, &posted),
+        text::riff_set(Some(&repo()), RiffState::Running, &reply, &posted, true),
         "The repository como-technologies/riff is running now. No other session woke. The \
          whole riff is still paused: an admin resumes it with `riff resume --riff`."
     );
@@ -439,7 +439,7 @@ async fn a_resume_of_the_riff_leaves_a_paused_repository_paused() {
         ["b1", "l1", "w1"],
         "strata stays paused: only its lead hears it"
     );
-    let answer = text::riff_set(None, RiffState::Running, &reply, &posted);
+    let answer = text::riff_set(None, RiffState::Running, &reply, &posted, true);
     assert!(
         answer.contains("Told the lead of como-technologies/strata: brett@kadomony:strata (b1)."),
         "{answer}"
@@ -526,7 +526,7 @@ async fn a_pause_and_a_resume_of_the_riff_tell_the_lead_of_a_paused_repository()
         assert_eq!(to.repo.as_deref(), Some("como-technologies/strata"));
         assert_eq!(to.lead, Some(true));
 
-        let answer = text::riff_set(None, state, &reply, &posted);
+        let answer = text::riff_set(None, state, &reply, &posted, true);
         assert!(
             answer
                 .contains("Told the lead of como-technologies/strata: brett@kadomony:strata (b1)."),
@@ -561,7 +561,7 @@ async fn a_pause_of_the_riff_tells_no_lead_when_no_repository_is_paused() {
     assert!(reply.repositories.is_empty());
     assert_eq!(posted.len(), 1, "one message to the repository");
     assert_eq!(woken(&posted), ["l1", "w1"]);
-    let answer = text::riff_set(None, RiffState::Running, &reply, &posted);
+    let answer = text::riff_set(None, RiffState::Running, &reply, &posted, true);
     assert!(!answer.contains("Told the lead"), "{answer}");
 }
 
@@ -596,4 +596,94 @@ async fn a_pause_names_the_host_where_it_ran() {
     let senders: Vec<String> = news.iter().map(|m| m.message.from.short()).collect();
     assert_eq!(senders, ["mike@b:riff", "mike@a:riff"], "{news:?}");
     assert!(news[1].message.body.contains("paused"), "{news:?}");
+}
+
+/// 01M78V5MB2RRR40B5QYHPC6ZC4: the answer to `riff resume` of a repository
+/// with no lead names the cause of the wait. With no host that runs the
+/// wave of the repository, it says that no host runs it. When the daemon
+/// of a host runs the wave, it says that no lead runs. A live lead ends
+/// the wait, and the answer names no cause.
+#[tokio::test]
+async fn a_resume_with_no_lead_names_the_cause_of_the_wait() {
+    use riff_client::daemons::{Facts, Wave};
+
+    let server = common::start_signed().await;
+    let (lead, worker, mike) = sessions();
+    common::api_of(&server, &worker)
+        .register(&worker)
+        .await
+        .unwrap();
+    let api = common::api_of(&server, &mike);
+    api.set_riff(&mike, RiffState::Running).await.unwrap();
+    let resume = || {
+        riff::reach::pause(
+            &api,
+            &mike,
+            mike.place(),
+            PauseScope::Here,
+            RiffState::Running,
+        )
+    };
+    let repo = repo().to_string();
+
+    let answer = resume().await.unwrap();
+    assert_eq!(
+        answer,
+        format!(
+            "The repository {repo} was running already. {}",
+            text::resume_waits(&repo, false)
+        )
+    );
+
+    // The riff daemon of thelio runs the wave of the repository. Its watch
+    // keeps its session live.
+    let daemon = uri("riff://mike@thelio/como-technologies/riff?session=d1");
+    let api_daemon = common::api_of(&server, &daemon);
+    api_daemon.register(&daemon).await.unwrap();
+    let _watch = api_daemon.watch(&daemon).await.unwrap();
+    let wave = Wave {
+        repo: repo.clone(),
+        word: String::new(),
+        image: None,
+        waits: Default::default(),
+    };
+    let facts = Facts {
+        waves: vec![wave],
+        ..Facts::default()
+    };
+    api_daemon.machine(&daemon, &facts.line()).await.unwrap();
+    let answer = resume().await.unwrap();
+    assert_eq!(
+        answer,
+        format!(
+            "The repository {repo} was running already. {}",
+            text::resume_waits(&repo, true)
+        )
+    );
+
+    common::api_of(&server, &lead)
+        .register(&lead)
+        .await
+        .unwrap();
+    common::name_lead(&common::api_of(&server, &common::person_of(&lead)), &lead).await;
+    let answer = resume().await.unwrap();
+    assert_eq!(
+        answer,
+        format!("The repository {repo} was running already.")
+    );
+
+    // The book shows the answer of each cause.
+    let book = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/src/how-it-works.md"),
+    )
+    .unwrap();
+    let reply = RiffReply {
+        changed: true,
+        no_lead: vec![self::repo()],
+        ..RiffState::Running.into()
+    };
+    for runs in [true, false] {
+        let shown = text::riff_set(Some(&self::repo()), RiffState::Running, &reply, &[], runs);
+        assert!(book.contains(&format!("\n{shown}\n")), "{shown}");
+    }
 }

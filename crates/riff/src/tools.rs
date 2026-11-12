@@ -795,7 +795,15 @@ impl Tools {
         self.lead_step(&me, text::riff_step(whole, state).into())
             .await;
         let repository = scope.repository(&me);
-        Ok(text::riff_set(repository.as_ref(), state, &reply, &posted))
+        let runs =
+            crate::reach::wave_runs(&self.api, &me, repository.as_ref(), state, &reply).await;
+        Ok(text::riff_set(
+            repository.as_ref(),
+            state,
+            &reply,
+            &posted,
+            runs,
+        ))
     }
 
     /// Sets the step of `me` to `step`, when `me` is the lead: the

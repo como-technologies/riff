@@ -3135,6 +3135,67 @@ async fn the_daemon_starts_the_lead_with_a_terminal_and_riff_lead_start_attaches
     }
 }
 
+/// 01M77PT9TNP97MA89SYZPBJ6QY, 01M51STPHXSSZMHF9T7Z85097R: the riff daemon
+/// starts the lead only from a wave of the repository that it runs
+/// ([`riff::lead::claim_start`]): from the main clone of the wave, with
+/// the image of the merged `riff.toml`. A host that runs no wave of the
+/// repository starts no lead, also with the riff running and the claude
+/// token there.
+#[tokio::test]
+async fn the_daemon_starts_the_lead_from_the_main_clone_of_its_wave_with_the_merged_image() {
+    let machine = Machine::new().await;
+    machine.claude_token();
+    let hold = machine.bin.path().join("hold");
+    std::fs::write(&hold, "").unwrap();
+    // The working tree pins another image: only the merged pin counts.
+    let local = format!(
+        "ghcr.io/como-technologies/riff-session@sha256:{}",
+        "f".repeat(64)
+    );
+    let config = format!("[session]\nimage = \"{local}\"\n");
+    std::fs::write(machine.main.join("riff.toml"), config).unwrap();
+
+    // No wave of the repository runs on the host: no lead starts.
+    machine.ok(None, &["resume", "--riff"]).await;
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert!(machine.read("run.args").is_empty());
+    let status = machine.ok(None, &["daemon", "status"]).await;
+    assert!(!status.contains(LEAD_NAME), "{status}");
+
+    // `riff host join` runs the wave, and its lead loop starts the lead.
+    machine.ok(None, &["host", "join"]).await;
+    machine.lead_starts().await;
+    machine.ok(None, &["host", "leave"]).await;
+    let args: Vec<String> = machine.read("run.args").lines().map(String::from).collect();
+    assert!(args.iter().any(|a| a == PINNED), "{args:?}");
+    assert!(!args.contains(&local), "{args:?}");
+    // The clone of the lead links to the main clone of the wave, and the
+    // container binds the objects of that main clone, with no write.
+    let clone = machine
+        .env
+        .riff_home()
+        .join("leads/como-technologies-riff/clone");
+    let linked = riff::lead::linked_main(&clone).unwrap();
+    assert_eq!(
+        std::fs::canonicalize(linked).unwrap(),
+        std::fs::canonicalize(&machine.main).unwrap()
+    );
+    let objects = PathBuf::from(git(
+        &machine.main,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    ))
+    .join("objects");
+    let o = objects.display().to_string();
+    let bind = format!("{o}:{o}:ro");
+    assert!(
+        args.windows(2).any(|w| w[0] == "-v" && w[1] == bind),
+        "{args:?}"
+    );
+
+    std::fs::remove_file(&hold).unwrap();
+    machine.lead_ends().await;
+}
+
 /// 01M77Y6ZQ76DTX470STN8ATTA9: with no claude token, the riff daemon of a
 /// host that joined starts no lead, and the line of its log names the
 /// step. `riff lead start` starts none either.

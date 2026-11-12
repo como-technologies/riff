@@ -7159,6 +7159,15 @@ of this part when they merge.
   Actions that the ruleset does not name. A look that cannot read the
   workflow fails, and says why. Supersedes 01M749P62T24VDPX20D40KRJEK in
   part.
+- **01M78V5MB2RRR40B5QYHPC6ZC4** The answer to `riff resume` of a
+  repository with no lead names the cause of the wait
+  (01M776RT1GW3N4MJDMPXZ8JAJE). When the riff daemon of a host in `riff
+  who` runs the wave of the repository, it says that no lead runs. Else
+  it says that no host runs the wave, so no lead and no session start.
+  Each names `riff host join`. riff asks riff-server for the sessions
+  only after such a resume, and when that ask fails, the answer says
+  that no lead runs. The tool `resume` of the lead gives the same
+  answer.
 
 ### The lead, the view and the takeover
 

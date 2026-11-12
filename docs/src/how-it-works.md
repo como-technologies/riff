@@ -6720,6 +6720,15 @@ pause: `riff resume` works, and its answer says that no lead runs:
 The repository como-technologies/riff is running now. No other session woke. No lead of como-technologies/riff runs, so its wave starts no session: a host that joined como-technologies/riff starts the lead (riff host join).
 ```
 
+When no host runs the wave of the repository, the answer names that
+cause. riff reads it in the facts of the riff daemons in `riff who`:
+
+```text
+The repository como-technologies/riff is running now. No other session woke. No host runs the wave of como-technologies/riff, so no lead and no session of it start: a host that joins como-technologies/riff runs its wave and starts its lead (riff host join).
+```
+
+The step is the same: `riff host join` in a clone of the repository.
+
 ### Ask the lead
 
 A session asks the lead with `tell` and the session `lead`. It does

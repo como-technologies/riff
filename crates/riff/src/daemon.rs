@@ -1462,7 +1462,7 @@ async fn server_call(record: &Record, call: &ServerCall) -> Result<Value> {
             let (reply, posted) = signed()?
                 .set_pause(&record.me, &PauseScope::Riff, state)
                 .await?;
-            Value::String(text::riff_set(None, state, &reply, &posted))
+            Value::String(text::riff_set(None, state, &reply, &posted, true))
         }
         ServerCall::Roster => {
             let reply = signed()?.roster(&record.me, false).await?;

@@ -597,7 +597,7 @@ impl Reach {
                 })
                 .await?;
                 let state = RiffState::Paused;
-                Ok(text::riff_set(None, state, &reply, &posted))
+                Ok(text::riff_set(None, state, &reply, &posted, true))
             }
             Reach::Daemon(_) => anyhow::bail!(text::release_refused(
                 "approve",
@@ -621,7 +621,7 @@ impl Reach {
                     async move { api.set_pause(&me, &PauseScope::Riff, state).await }
                 })
                 .await?;
-                Ok(text::riff_set(None, state, &reply, &posted))
+                Ok(text::riff_set(None, state, &reply, &posted, true))
             }
             Reach::Daemon(socket) => ask(socket, &ServerCall::ResumeRiff).await,
         }
@@ -1159,7 +1159,37 @@ pub async fn pause(
     };
     let (reply, posted) = api.set_pause(me, &scope, state).await?;
     let repository = scope.repository(me);
-    Ok(text::riff_set(repository.as_ref(), state, &reply, &posted))
+    let runs = wave_runs(api, me, repository.as_ref(), state, &reply).await;
+    Ok(text::riff_set(
+        repository.as_ref(),
+        state,
+        &reply,
+        &posted,
+        runs,
+    ))
+}
+
+/// Whether the daemon of a host runs the wave of `repository`, for the
+/// answer to a resume of `repository` with no lead ([`text::riff_set`],
+/// 01M78V5MB2RRR40B5QYHPC6ZC4): `me` asks `api` for the sessions of `riff
+/// who` ([`crate::view::wave_runs`]). It asks only after a resume of a
+/// repository that `reply` names with no lead. When the ask fails, the
+/// answer names no lead.
+pub async fn wave_runs(
+    api: &Api,
+    me: &SessionUri,
+    repository: Option<&ThreadName>,
+    state: RiffState,
+    reply: &RiffReply,
+) -> bool {
+    let Some(repo) = repository.filter(|r| state == RiffState::Running && reply.waits_for_lead(r))
+    else {
+        return true;
+    };
+    match api.roster(me, false).await {
+        Ok(who) => crate::view::wave_runs(&who.sessions, &repo.to_string()),
+        Err(_) => true,
+    }
 }
 
 /// The riff of `server` with the sign-in of this machine, and the sender

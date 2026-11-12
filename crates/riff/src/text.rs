@@ -766,8 +766,10 @@ pub fn build_line(server: Option<&Build>) -> String {
 /// repository `repository` or of the whole riff, the sessions that
 /// woke, the leads that it told (a lead of a repository with a pause of
 /// its own, 01M6FYGVTCBKC9C8AXMFD7WMW2), and each pause that still stops
-/// work (01M3XAHZSJ5914BRQBZ2G4ZBSA). A resume of a repository whose wave
-/// waits for a lead says so (01M776RT1GW3N4MJDMPXZ8JAJE).
+/// work (01M3XAHZSJ5914BRQBZ2G4ZBSA). A resume of a repository with no
+/// lead names the cause of the wait ([`resume_waits`],
+/// 01M78V5MB2RRR40B5QYHPC6ZC4): `wave_runs` is true when the daemon of a
+/// host runs the wave of the repository ([`crate::view::wave_runs`]).
 ///
 /// ```
 /// use riff_core::wire::{PauseInfo, Posted, RepositoryPause, RiffReply, RiffState};
@@ -780,28 +782,36 @@ pub fn build_line(server: Option<&Build>) -> String {
 ///     unmatched: vec![],
 /// };
 /// assert_eq!(
-///     riff::text::riff_set(None, RiffState::Paused, &reply, &[posted]),
+///     riff::text::riff_set(None, RiffState::Paused, &reply, &[posted], true),
 ///     "The riff is paused now. Woke brett@heron:riff#tests (77e0)."
 /// );
 /// let again = RiffReply::from(RiffState::Paused);
 /// assert_eq!(
-///     riff::text::riff_set(None, RiffState::Paused, &again, &[]),
+///     riff::text::riff_set(None, RiffState::Paused, &again, &[], true),
 ///     "The riff was paused already."
 /// );
 /// // A resume of a repository while the whole riff is paused.
 /// let riff = "como-technologies/riff".parse()?;
 /// assert_eq!(
-///     riff::text::riff_set(Some(&riff), RiffState::Running, &reply, &[]),
+///     riff::text::riff_set(Some(&riff), RiffState::Running, &reply, &[], true),
 ///     "The repository como-technologies/riff is running now. No other session woke. The \
 ///      whole riff is still paused: an admin resumes it with `riff resume --riff`."
 /// );
 /// // A resume of a repository with no live lead: its wave still waits.
 /// let no_lead = RiffReply { no_lead: vec![riff.clone()], ..RiffReply { changed: true, ..RiffState::Running.into() } };
 /// assert_eq!(
-///     riff::text::riff_set(Some(&riff), RiffState::Running, &no_lead, &[]),
+///     riff::text::riff_set(Some(&riff), RiffState::Running, &no_lead, &[], true),
 ///     "The repository como-technologies/riff is running now. No other session woke. No lead \
 ///      of como-technologies/riff runs, so its wave starts no session: a host that joined \
 ///      como-technologies/riff starts the lead (riff host join)."
+/// );
+/// // With no host that runs its wave, the answer names that cause.
+/// assert_eq!(
+///     riff::text::riff_set(Some(&riff), RiffState::Running, &no_lead, &[], false),
+///     "The repository como-technologies/riff is running now. No other session woke. No host \
+///      runs the wave of como-technologies/riff, so no lead and no session of it start: a \
+///      host that joins como-technologies/riff runs its wave and starts its lead (riff host \
+///      join)."
 /// );
 /// // A resume of the whole riff while a repository has a pause of its own:
 /// // its lead hears it, and no worker of it wakes.
@@ -815,7 +825,7 @@ pub fn build_line(server: Option<&Build>) -> String {
 ///     unmatched: vec![],
 /// };
 /// assert_eq!(
-///     riff::text::riff_set(None, RiffState::Running, &running, &[lead]),
+///     riff::text::riff_set(None, RiffState::Running, &running, &[lead], true),
 ///     "The riff is running now. Told the lead of como-technologies/strata: brett@heron:strata \
 ///      (62b2). Still paused: como-technologies/strata. Its user or its lead resumes it with \
 ///      `riff resume`."
@@ -827,6 +837,7 @@ pub fn riff_set(
     state: RiffState,
     reply: &RiffReply,
     posted: &[Posted],
+    wave_runs: bool,
 ) -> String {
     let subject = riff_client::text::pause_subject(repository);
     let mut out = if reply.changed {
@@ -860,12 +871,8 @@ pub fn riff_set(
         }
         // A resume does not end the wait for a lead (01M776RT1GW3N4MJDMPXZ8JAJE).
         if let Some(repository) = repository.filter(|r| reply.waits_for_lead(r)) {
-            let repo = safe(&repository.to_string());
-            let _ = write!(
-                out,
-                " No lead of {repo} runs, so its wave starts no session: a host that joined {repo} \
-                 starts the lead (riff host join)."
-            );
+            out.push(' ');
+            out.push_str(&resume_waits(&safe(&repository.to_string()), wave_runs));
         }
         if repository.is_none() && !reply.repositories.is_empty() {
             let names: Vec<String> = reply
@@ -881,6 +888,37 @@ pub fn riff_set(
         }
     }
     out
+}
+
+/// Why the wave of `repo` starts no session after a resume of `repo`, which
+/// has no lead (01M78V5MB2RRR40B5QYHPC6ZC4): no lead runs, while the daemon
+/// of a host runs the wave (`wave_runs`), or no host runs the wave. Each
+/// names the step `riff host join` (01M77Y6ZQ76DTX470STN8ATTA9).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::resume_waits("o/r", true),
+///     "No lead of o/r runs, so its wave starts no session: a host that joined o/r starts the \
+///      lead (riff host join)."
+/// );
+/// assert_eq!(
+///     riff::text::resume_waits("o/r", false),
+///     "No host runs the wave of o/r, so no lead and no session of it start: a host that joins \
+///      o/r runs its wave and starts its lead (riff host join)."
+/// );
+/// ```
+pub fn resume_waits(repo: &str, wave_runs: bool) -> String {
+    if wave_runs {
+        format!(
+            "No lead of {repo} runs, so its wave starts no session: a host that joined {repo} \
+             starts the lead (riff host join)."
+        )
+    } else {
+        format!(
+            "No host runs the wave of {repo}, so no lead and no session of it start: a host that \
+             joins {repo} runs its wave and starts its lead (riff host join)."
+        )
+    }
 }
 
 /// The note to the lead when the rollout asked the riff daemon of its
