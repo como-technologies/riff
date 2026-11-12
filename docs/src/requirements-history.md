@@ -3118,6 +3118,17 @@ Backlog (01M53NGWN190T2MYB1EZAD36VB).
   lag behind it. When that read shows the release before the merge, or
   no release, the next step is the one of a merged release that has no
   test.
+- **01M5GVPND32X3R9MYXYB5SV83W** When the container of the lead has no
+  `gcloud`, each check of `riff release check` that reads the Cloud Run
+  log names the step for a person on the host: `riff release check
+  vX.Y.Z` in a terminal. Superseded by 01M76SSFTGW41RHHV445ZM5RHY.
+- **01M5ND5B14MXGGK0RJ7R2BREW6** In the container of the lead, riff
+  release check reads the Cloud Run log through the riff daemon of the
+  host, with the gcloud and the sign-in of the person on the host. The
+  container gets no Google credential. The daemon refuses a worker. When
+  the sign-in of gcloud ended, each check of the log says that a person
+  on the host runs gcloud auth login, and the daemon tells the lead in
+  chat. Superseded by 01M76SSFTGW41RHHV445ZM5RHY.
 
 ## The UIs
 

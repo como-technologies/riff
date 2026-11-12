@@ -1213,11 +1213,29 @@ fn this_tag() -> String {
 fn deployed(tag: &str, conclusion: &str) -> String {
     format!(
         "'run list --workflow CI --limit'*) printf '%s\n' '[{{\"databaseId\":9,\"headBranch\":\"{tag}\",\"headSha\":\"abc\",\"url\":\"https://github.com/como-technologies/riff/actions/runs/9\",\"displayTitle\":\"Release\",\"status\":\"completed\",\"conclusion\":\"{conclusion}\"}}]' ;;\n\
-         'run view 9 --json jobs') printf '%s\n' '{{\"jobs\":[{{\"name\":\"Release check\",\"status\":\"completed\",\"conclusion\":\"success\"}},{{\"name\":\"Deploy\",\"status\":\"completed\",\"conclusion\":\"{conclusion}\",\"startedAt\":\"2026-10-18T20:00:00Z\"}}]}}' ;;\n\
+         'run view 9 --json jobs') printf '%s\n' '{{\"jobs\":[{{\"name\":\"Release check\",\"status\":\"completed\",\"conclusion\":\"success\"}},{{\"name\":\"Deploy\",\"status\":\"completed\",\"conclusion\":\"{conclusion}\",\"startedAt\":\"2026-10-18T20:00:00Z\",\"completedAt\":\"2026-10-18T20:03:00Z\"}}]}}' ;;\n\
          'run rerun 9 --failed') echo ;;\n\
          'workflow run'*) echo ;;\n\
          'issue comment'*) echo ;;\n\
          'issue close'*) echo ;;"
+    )
+}
+
+/// The case of `gh` for the status `riff/deploy-check` of the commit abc
+/// of `tag`, set after the deploy of [`deployed`]: `state` with
+/// `description` (01M76SS6T89DPNV7S4SWY1R7F3).
+fn checked(tag: &str, state: &str, description: &str) -> String {
+    format!(
+        "'api repos/{{owner}}/{{repo}}/commits/{tag}/status') printf '%s\n' '{{\"sha\":\"abc\",\"statuses\":[{{\"context\":\"riff/deploy-check\",\"state\":\"{state}\",\"description\":\"{description}\",\"updated_at\":\"2026-10-18T20:09:10Z\"}}]}}' ;;"
+    )
+}
+
+/// The status of a deploy whose four checks of the log passed.
+fn log_passed(tag: &str) -> String {
+    checked(
+        tag,
+        "success",
+        "503 run: 0 s, 500: 0, token store: 0, old lease: no",
     )
 }
 
@@ -1237,6 +1255,11 @@ impl Machine {
             "#!/bin/sh\necho \"gcloud $*\" >> \"$(dirname \"$0\")/gcloud.log\"\nexit 0\n",
         );
     }
+
+    /// Each call of the fake `gcloud`.
+    fn gcloud_log(&self) -> String {
+        std::fs::read_to_string(self.bin().join("gcloud.log")).unwrap_or_default()
+    }
 }
 
 /// The checks after the deploy pass: riff writes the result on the
@@ -1246,8 +1269,7 @@ impl Machine {
 async fn check_passes_closes_the_release_issue_and_resumes_the_riff() {
     let machine = Machine::new().await;
     let tag = this_tag();
-    machine.fake_gh(&deployed(&tag, "success"));
-    machine.shared_cloud();
+    machine.fake_gh(&format!("{}\n{}", log_passed(&tag), deployed(&tag, "success")));
     let lead = [("RIFF_SESSION", "s1")];
     machine.name_lead(&lead).await;
     machine.ok(&lead, &["pause", "--riff"]).await;
@@ -1272,52 +1294,53 @@ async fn check_passes_closes_the_release_issue_and_resumes_the_riff() {
         "{log}"
     );
     assert!(log.contains("gh issue close 7"), "{log}");
-    let gcloud = std::fs::read_to_string(machine.bin().join("gcloud.log")).unwrap();
-    assert_eq!(gcloud.lines().count(), 4, "{gcloud}");
-    assert!(
-        gcloud.contains("timestamp>=\"2026-10-18T20:00:00Z\" AND httpRequest.status=503"),
-        "{gcloud}"
-    );
 }
 
-/// 01M5MQHDMBYG187T0Q622XWBMN: a 500 of an instance of the old revision
-/// in the switch does not fail the check. A 500 of the new revision does.
+/// 01M76SSFTGW41RHHV445ZM5RHY: `riff release check` takes the four checks
+/// of the log from the status `riff/deploy-check` of the tag, and runs no
+/// `gcloud`, also with `gcloud` and the cloud settings on the machine.
 #[tokio::test]
-async fn check_counts_only_the_500s_of_the_new_revision() {
-    for (revision, passed) in [
-        ("riff-server-00001-old", true),
-        ("riff-server-00002-new", false),
+async fn check_takes_the_four_checks_of_the_log_from_the_status_and_runs_no_gcloud() {
+    let machine = Machine::new().await;
+    let tag = this_tag();
+    let status = checked(
+        &tag,
+        "failure",
+        "503 run: 25 s, 500: 2, token store: 0, old lease: no",
+    );
+    machine.fake_gh(&format!("{status}\n{}", deployed(&tag, "success")));
+    machine.shared_cloud();
+    let lead = [("RIFF_SESSION", "s1")];
+    machine.name_lead(&lead).await;
+    machine.ok(&lead, &["pause", "--riff"]).await;
+    let out = machine.ok(&lead, &["release", "check", &tag]).await;
+    assert!(
+        out.starts_with(&format!("riff release check {tag}: failed\n")),
+        "{out}"
+    );
+    for line in [
+        "- no run of 503 longer than 20 s: failed: a run of 503 took 25 s\n",
+        "- no 500 of riff-server: failed: 2 replies 500\n",
+        "- no 401 or 429 of the token store: passed\n",
+        "- no old instance takes the lease: passed\n",
     ] {
-        let machine = Machine::new().await;
-        let tag = this_tag();
-        machine.fake_gh(&deployed(&tag, "success"));
-        machine.shared_cloud();
-        let body = format!(
-            "#!/bin/sh\ncase \"$*\" in\n\
-             *'riff-server serves'*) printf '2026-10-18T20:00:05Z\\triff-server-00001-old\\n\
-             2026-10-18T20:00:09Z\\triff-server-00002-new\\n' ;;\n\
-             *'status=500'*) printf '2026-10-18T20:00:40Z\\t{revision}\\n' ;;\n\
-             esac\nexit 0\n"
-        );
-        isolated::write_program(machine.bin().join("gcloud"), &body);
-        let lead = [("RIFF_SESSION", "s1")];
-        machine.name_lead(&lead).await;
-        let out = machine.ok(&lead, &["release", "check", &tag]).await;
-        let want = if passed {
-            "- no 500 of riff-server: passed\n"
-        } else {
-            "- no 500 of riff-server: failed: 1 replies 500\n"
-        };
-        assert!(out.contains(want), "{revision}: {out}");
-        assert!(
-            out.contains("- no old instance takes the lease: passed\n"),
-            "{revision}: {out}"
-        );
+        assert!(out.contains(line), "{line}: {out}");
     }
+    assert!(!out.contains("The riff is running now."), "{out}");
+    let log = machine.log();
+    assert!(
+        log.contains(&format!(
+            "gh api repos/{{owner}}/{{repo}}/commits/{tag}/status\n"
+        )),
+        "{log}"
+    );
+    assert!(!log.contains("issue close"), "{log}");
+    assert_eq!(machine.gcloud_log(), "", "riff release check ran gcloud");
 }
 
-/// With no cloud settings, check names each check of the log that it
-/// could not do, and keeps the riff and the issue as they are
+/// 01M76SSFTGW41RHHV445ZM5RHY: before the job Check the deploy sets the
+/// status, riff names each check of the log that it could not do, and
+/// when the job ends. It keeps the riff and the issue as they are
 /// (01M58KMMP9FKRFYX58ESVRSZQX).
 #[tokio::test]
 async fn check_names_the_checks_that_it_could_not_do() {
@@ -1332,12 +1355,143 @@ async fn check_names_the_checks_that_it_could_not_do() {
         "{out}"
     );
     assert!(
-        out.contains(
-            "- no 500 of riff-server: riff could not check it: riff cannot read the Cloud Run log"
-        ),
+        out.contains(&format!(
+            "- no 500 of riff-server: riff could not check it: the job Check the deploy of \
+             https://github.com/como-technologies/riff/actions/runs/9 did not set the status \
+             riff/deploy-check for this deploy yet. It ends at about 20:09 UTC. Then run: riff \
+             release check {tag}\n"
+        )),
         "{out}"
     );
     assert!(!machine.log().contains("issue close"), "{}", machine.log());
+}
+
+/// 01M76SSFZG959CQ1JHQTVTZCRA: `riff cloud check` reads the four checks of
+/// the log from `--since`, prints them, and sets the status
+/// `riff/deploy-check` of the commit. A 500 of an instance of the old
+/// revision in the switch does not fail the check. A 500 of the new
+/// revision does, and the command exits with 1
+/// (01M5MQHDMBYG187T0Q622XWBMN).
+#[tokio::test]
+async fn cloud_check_reads_the_log_and_sets_the_status_of_the_commit() {
+    for (revision, passed) in [
+        ("riff-server-00001-old", true),
+        ("riff-server-00002-new", false),
+    ] {
+        let machine = Machine::new().await;
+        machine.fake_gh("");
+        machine.shared_cloud();
+        let body = format!(
+            "#!/bin/sh\necho \"gcloud $*\" >> \"$(dirname \"$0\")/gcloud.log\"\ncase \"$*\" in\n\
+             *'riff-server serves'*) printf '2026-10-18T20:00:05Z\\triff-server-00001-old\\n\
+             2026-10-18T20:00:09Z\\triff-server-00002-new\\n' ;;\n\
+             *'status=500'*) printf '2026-10-18T20:00:40Z\\t{revision}\\n' ;;\n\
+             esac\nexit 0\n"
+        );
+        isolated::write_program(machine.bin().join("gcloud"), &body);
+        let args = [
+            "cloud",
+            "check",
+            "shared",
+            "--since",
+            "2026-10-18T20:00:00Z",
+            "--commit",
+            "abc",
+        ];
+        let out = machine.run(&[], &args, "").await;
+        assert_eq!(out.status.success(), passed, "{revision}: {out:?}");
+        let shown = text(&out.stdout);
+        let (want, state, description) = if passed {
+            (
+                "- no 500 of riff-server: passed\n",
+                "success",
+                "503 run: 0 s, 500: 0, token store: 0, old lease: no",
+            )
+        } else {
+            (
+                "- no 500 of riff-server: failed: 1 replies 500\n",
+                "failure",
+                "503 run: 0 s, 500: 1, token store: 0, old lease: no",
+            )
+        };
+        assert!(shown.contains(want), "{revision}: {shown}");
+        assert!(
+            shown.contains("- no old instance takes the lease: passed\n"),
+            "{revision}: {shown}"
+        );
+        assert!(
+            shown.contains(&riff::text::deploy_check_set("abc", state, description)),
+            "{revision}: {shown}"
+        );
+        let log = machine.log();
+        assert!(
+            log.contains("gh api -X POST repos/{owner}/{repo}/statuses/abc --include --input "),
+            "{log}"
+        );
+        assert!(
+            log.contains(&format!(
+                "{{\"context\":\"riff/deploy-check\",\"description\":\"{description}\",\"state\":\"{state}\"}}"
+            )),
+            "{log}"
+        );
+        let calls = machine.gcloud_log();
+        assert_eq!(calls.lines().count(), 4, "{calls}");
+        assert!(
+            calls.lines().all(|l| l.starts_with("gcloud logging read ")
+                && l.contains("timestamp>=\"2026-10-18T20:00:00Z\" AND ")),
+            "{calls}"
+        );
+    }
+}
+
+/// 01M76SSFZG959CQ1JHQTVTZCRA: when `gcloud` cannot read the log, `riff
+/// cloud check` sets the status `error` with the reason, and exits with
+/// 1. `riff release check` then names that reason for each check of the
+/// log, and the other lead hears an unknown result.
+#[tokio::test]
+async fn a_log_that_cloud_check_cannot_read_gives_an_error_status() {
+    let machine = Machine::new().await;
+    machine.fake_gh("");
+    machine.shared_cloud();
+    isolated::write_program(
+        machine.bin().join("gcloud"),
+        "#!/bin/sh\necho 'ERROR: (gcloud.logging.read) PERMISSION_DENIED' >&2\nexit 1\n",
+    );
+    let args = [
+        "cloud",
+        "check",
+        "shared",
+        "--since",
+        "2026-10-18T20:00:00Z",
+        "--commit",
+        "abc",
+    ];
+    let out = machine.run(&[], &args, "").await;
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let shown = text(&out.stdout);
+    assert!(
+        shown.starts_with(
+            "- no run of 503 longer than 20 s: riff could not check it: riff could not read the \
+             Cloud Run log: "
+        ),
+        "{shown}"
+    );
+    assert!(shown.contains("PERMISSION_DENIED"), "{shown}");
+    let log = machine.log();
+    assert!(log.contains("\"state\":\"error\""), "{log}");
+    assert!(
+        log.contains("\"description\":\"riff could not read the Cloud Run log: "),
+        "{log}"
+    );
+
+    let refused = machine
+        .run(&[], &["cloud", "check", "shared", "--since", "now"], "")
+        .await;
+    assert!(!refused.status.success());
+    assert!(
+        text(&refused.stderr).contains(&riff::text::cloud_check_bad_since("now")),
+        "{refused:?}"
+    );
 }
 
 /// A call of `gh` that fails with the 504 of GitHub.

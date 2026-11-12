@@ -635,6 +635,10 @@ jobs:
     concurrency:
       group: deploy
       cancel-in-progress: false
+    # The job Check the deploy reads the log from the time before the
+    # step Deploy (01M76SS6T89DPNV7S4SWY1R7F3).
+    outputs:
+      at: ${{ steps.at.outputs.at }}
     env:
       TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
       GH_TOKEN: ${{ github.token }}
@@ -676,12 +680,81 @@ jobs:
       - name: Build and push the image of the release
         run: deploy/cloud/image.sh "$IMAGE" dist/riff-server-x86_64-unknown-linux-musl
 
+      - name: Keep the time of the deploy
+        id: at
+        run: echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       # The deploy is the riff cloud deploy of a person
       # (01M4262E0QJHCZXNH7EFG7FXN2), of the riff of the tag.
       - name: Deploy
         env:
           RIFF_OWNER: ${{ vars.RIFF_OWNER }}
         run: dist/riff-x86_64-unknown-linux-musl cloud deploy shared "$TAG" --confirm shared
+
+  deploy_check:
+    # After a pass of the job Deploy in the run of the push of a release
+    # tag, the four checks of the Cloud Run log (01M76SS6T89DPNV7S4SWY1R7F3).
+    # The job waits 5 minutes (riff::cycle::DEPLOY_CHECK_WAIT). Then the
+    # riff of the release reads the log from the time before the step
+    # Deploy, and sets the status riff/deploy-check of the tagged commit.
+    # riff release check reads that status, and runs no gcloud
+    # (01M76SSFTGW41RHHV445ZM5RHY). A run by hand has no such job. The job
+    # signs in to Google Cloud as the check account riff-check, with the
+    # OIDC token of GitHub and no key: only a job of a tag v* may, and the
+    # account only reads the log (01M76SSFX0QGPA4MTXV39JV5P3). It runs in
+    # no GitHub environment, so it waits for no approval. It compiles
+    # nothing.
+    name: Check the deploy
+    needs: [deploy]
+    if: >-
+      !cancelled() && github.event_name == 'push' &&
+      startsWith(github.ref, 'refs/tags/v') && needs.deploy.result == 'success'
+    runs-on: ${{ vars.RIFF_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+      statuses: write
+      id-token: write
+    env:
+      TAG: ${{ github.ref_name }}
+      AT: ${{ needs.deploy.outputs.at }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Read the cloud settings
+        run: grep -E '^[A-Z_]+=' deploy/cloud/shared.env >> "$GITHUB_ENV"
+
+      - name: Take the riff of the release
+        run: |
+          mkdir dist
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir dist \
+            --pattern riff-x86_64-unknown-linux-musl --pattern SHA256SUMS
+          (cd dist && sha256sum --check --ignore-missing SHA256SUMS)
+          chmod +x dist/riff-x86_64-unknown-linux-musl
+
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: projects/${{ env.CLOUD_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github/providers/github
+          service_account: ${{ env.CLOUD_CHECK_ACCOUNT }}@${{ env.CLOUD_PROJECT }}.iam.gserviceaccount.com
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      # Cloud Run moves the calls to the new revision in this time.
+      - name: Wait for the switch to the new revision
+        run: sleep 300
+
+      - name: Check the log
+        id: check
+        run: dist/riff-x86_64-unknown-linux-musl cloud check shared --since "$AT" --commit "$GITHUB_SHA"
+
+      # A step before the check failed: riff release check says so.
+      - name: Set the status after a failed step
+        if: failure() && steps.check.outcome == 'skipped'
+        run: |
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state=error -f context=riff/deploy-check \
+            -f description="The job Check the deploy failed before it read the log." \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > /dev/null
 
   stage:
     # Each push to main, after its gate, builds the image of the commit

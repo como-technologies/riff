@@ -1247,18 +1247,6 @@ pub enum ServerCall {
         /// The body of the request, as [`remote::Request`] writes it.
         request: String,
     },
-    /// The lines of the Cloud Run log that `filter` matches, read with the
-    /// `gcloud` and the sign-in of the person on the host
-    /// (`riff release check`, #1247). Only the lead may. The answer is
-    /// the output of `gcloud logging read` ([`crate::cycle::log_read_args`]).
-    CloudLog {
-        /// The Cloud Run service.
-        service: String,
-        /// The project of the service.
-        project: String,
-        /// The filter of the lines.
-        filter: String,
-    },
     /// What `riff whoami` reads: [`crate::reach::WhoamiFacts`] (#1338).
     Whoami,
     /// The person of the session on GitHub, as [`crate::pr::GitHubUser`],
@@ -1605,7 +1593,6 @@ async fn server_call(record: &Record, call: &ServerCall) -> Result<Value> {
                 Err(e) => return Err(e),
             }
         }
-        ServerCall::CloudLog { .. } => bail!("the daemon reads the log itself"),
         ServerCall::Person => bail!("the daemon reads the person itself"),
         ServerCall::Run { .. } => bail!("the daemon runs the item itself"),
         ServerCall::Watch { .. } => bail!("the daemon watches itself"),
@@ -2642,8 +2629,6 @@ pub struct Daemon<R> {
     /// The pull of the session image that failed for the wave of each
     /// repository, until a pull works (01M5SMSB3H1E9NXMBDN8ZDJ6CD).
     pulls: Mutex<BTreeMap<String, Pulled>>,
-    /// The `gcloud` of the host, for [`ServerCall::CloudLog`].
-    gcloud: Arc<crate::cloud::Gcloud>,
     /// The session of each lead whose stale sign-in the person heard of
     /// in riff chat ([`Daemon::stale_leads`]).
     stale: Mutex<std::collections::BTreeSet<String>>,
@@ -2806,7 +2791,6 @@ impl<R: Runtime + 'static> Daemon<R> {
             sends: facts::Sends::default(),
             ends: Mutex::new(BTreeMap::new()),
             pulls: Mutex::new(BTreeMap::new()),
-            gcloud: Arc::default(),
             stale: Mutex::default(),
             lead_idle: lead_idle(),
             again_told: Mutex::default(),
@@ -2882,13 +2866,6 @@ impl<R: Runtime + 'static> Daemon<R> {
     #[must_use]
     pub fn with_memory(mut self, memory: crate::room::Memory) -> Self {
         self.room = Room::new(self.dir.clone(), memory);
-        self
-    }
-
-    /// The daemon that runs `gcloud` at `gcloud`, for a test.
-    #[must_use]
-    pub fn with_gcloud(mut self, gcloud: crate::cloud::Gcloud) -> Self {
-        self.gcloud = Arc::new(gcloud);
         self
     }
 
@@ -5551,11 +5528,6 @@ impl<R: Runtime + 'static> Daemon<R> {
                     }
                     ServerCall::Ps if !record.terminal => Err(anyhow!(text::DAEMON_PS_ONLY_LEAD)),
                     ServerCall::Ps => serde_json::to_value(self.ps().await).map_err(Into::into),
-                    ServerCall::CloudLog {
-                        service,
-                        project,
-                        filter,
-                    } => self.cloud_log(&record, &service, &project, &filter).await,
                     ServerCall::Events { name, after, notes } => {
                         self.events_page(&record, &name, (after, notes)).await
                     }
@@ -5757,43 +5729,6 @@ impl<R: Runtime + 'static> Daemon<R> {
         let gh = self.world.gh(&repo).as_ref().clone().by("token");
         let person = tokio::task::spawn_blocking(move || crate::pr::read_user(&gh)).await??;
         Ok(serde_json::to_value(person)?)
-    }
-
-    /// `gcloud logging read` for the lead of `record`, with the `gcloud`
-    /// and the sign-in of the person on this host (#1247). A session that
-    /// is not the lead gets a refusal. When the sign-in of `gcloud`
-    /// ended, the daemon also tells the lead in chat.
-    async fn cloud_log(
-        &self,
-        record: &Record,
-        service: &str,
-        project: &str,
-        filter: &str,
-    ) -> Result<Value> {
-        if !record.terminal {
-            bail!(text::DAEMON_LOG_ONLY_LEAD);
-        }
-        let args = crate::cycle::log_read_args(service, project, filter);
-        let gcloud = self.gcloud.clone();
-        let done = tokio::task::spawn_blocking(move || gcloud.run(&args, None)).await?;
-        match done {
-            Ok(out) => Ok(Value::String(out)),
-            Err(e) if crate::cycle::gcloud_missing(&e) => bail!(text::DAEMON_NO_GCLOUD),
-            Err(e) => {
-                let ended = e
-                    .downcast_ref::<crate::cloud::Failed>()
-                    .is_some_and(crate::cloud::Failed::signin_ended);
-                if ended {
-                    let api = riff_client::api::Api::new(&record.server)
-                        .signed_in(Some(&record.live.session));
-                    if let Ok(api) = api {
-                        let lead = riff_client::api::LEAD;
-                        let _ = api.tell(&record.me, lead, text::DAEMON_GCLOUD_SIGNIN).await;
-                    }
-                }
-                Err(e)
-            }
-        }
     }
 
     /// The person of the session of `record` gave a prompt
@@ -6860,7 +6795,6 @@ mod tests {
             .with_quiet(quiet)
             .with_keep_end(keep_end)
             .with_relay(static_riff(dir))
-            .with_gcloud(crate::cloud::Gcloud::at(dir.with_file_name("gcloud")))
             // The free memory of the host that runs the test does not count:
             // a Mac of the CI has less than the floor.
             .with_memory(Arc::new(|| None))
@@ -9645,120 +9579,6 @@ mod tests {
                 other => panic!("{other:?}"),
             }
         })
-    }
-
-    /// A fake `gcloud` beside the folder `dir` of a daemon. It logs each
-    /// call in `gcloud.log` beside it, then prints one line of the log,
-    /// or fails as `gcloud` does when its sign-in ended with `ended`.
-    fn fake_gcloud(dir: &Path, ended: bool) {
-        let body = if ended {
-            "echo 'ERROR: (gcloud.logging.read) Reauthentication failed. Please run: gcloud auth login' >&2\nexit 1\n"
-        } else {
-            "echo '2026-10-22T10:00:00Z riff-00001'\n"
-        };
-        let script = format!("#!/bin/sh\necho \"$*\" >> \"$(dirname \"$0\")/gcloud.log\"\n{body}");
-        isolated::write_program(dir.with_file_name("gcloud"), script);
-    }
-
-    /// #1247: the lead in a container reads the Cloud Run log through
-    /// its socket, with the `gcloud` of the host: each of the 4 log checks
-    /// of `riff release check` goes to the fake `gcloud`. A worker on its
-    /// own socket gets a refusal, and `gcloud` does not run for it.
-    #[tokio::test(flavor = "multi_thread")]
-    async fn the_lead_reads_the_cloud_run_log_through_its_socket_and_a_worker_cannot() {
-        let here = Here::new(Fake::default().with_image(IMAGE)).await;
-        fake_gcloud(&here.dir, false);
-        let mut lead = here.start("riff-lead-o-r", "lead");
-        lead.terminal = true;
-        let (_lead, lead_name) = here.started(lead).await;
-        let (_worker, worker_name) = here
-            .started(here.start("riff-issue-1-aaaaaaaa", "issue-1"))
-            .await;
-
-        let settings = crate::cloud::Settings::new("shared", "como-riff", "123", "europe-west1");
-        let log = crate::reach::DaemonLog {
-            socket: session_dir(&here.dir, &lead_name).join(SOCKET),
-            settings: settings.clone(),
-        };
-        let served = crate::cycle::Served {
-            server: Ok("3.3.0".into()),
-            hosts: Ok(vec![]),
-            keys: Ok(None),
-        };
-        let version = crate::cycle::version("3.3.0").unwrap();
-        let lines = crate::cycle::checks(version, "2026-10-22T09:00:00Z", &served, &log);
-        let ran = std::fs::read_to_string(here.dir.with_file_name("gcloud.log")).unwrap();
-        assert_eq!(ran.lines().count(), 4, "{ran}");
-        assert!(
-            ran.lines()
-                .all(|l| l.starts_with("logging read") && l.contains("--project como-riff")),
-            "{ran}"
-        );
-        // The fake printed one line of one revision: no check is unknown.
-        for (name, verdict) in &lines {
-            assert!(
-                !matches!(verdict, crate::cycle::Verdict::Unknown(_)),
-                "{name}: {verdict:?}"
-            );
-        }
-
-        let worker = crate::reach::DaemonLog {
-            socket: session_dir(&here.dir, &worker_name).join(SOCKET),
-            settings,
-        };
-        let refused = crate::cycle::CloudLog::lines(&worker, "severity>=ERROR").unwrap_err();
-        assert_eq!(refused.to_string(), text::DAEMON_LOG_ONLY_LEAD);
-        let ran = std::fs::read_to_string(here.dir.with_file_name("gcloud.log")).unwrap();
-        assert_eq!(ran.lines().count(), 4, "{ran}");
-    }
-
-    /// #1247: when the sign-in of `gcloud` on the host ended, each check
-    /// of the log says that a person on the host runs `gcloud auth
-    /// login`. When the host has no `gcloud`, the check says to install
-    /// it.
-    #[tokio::test(flavor = "multi_thread")]
-    async fn a_host_with_no_sign_in_or_no_gcloud_names_the_step_for_a_person() {
-        let here = Here::new(Fake::default().with_image(IMAGE)).await;
-        let mut lead = here.start("riff-lead-o-r", "lead");
-        lead.terminal = true;
-        let (_lead, name) = here.started(lead).await;
-        let settings = crate::cloud::Settings::new("shared", "como-riff", "123", "europe-west1");
-        let log = crate::reach::DaemonLog {
-            socket: session_dir(&here.dir, &name).join(SOCKET),
-            settings,
-        };
-        let served = crate::cycle::Served {
-            server: Ok("3.3.0".into()),
-            hosts: Ok(vec![]),
-            keys: Ok(None),
-        };
-        let version = crate::cycle::version("3.3.0").unwrap();
-        let unknown = |lines: Vec<(&str, crate::cycle::Verdict)>| -> Vec<String> {
-            lines
-                .into_iter()
-                .filter_map(|(_, v)| match v {
-                    crate::cycle::Verdict::Unknown(why) => Some(why),
-                    _ => None,
-                })
-                .collect()
-        };
-
-        fake_gcloud(&here.dir, true);
-        let ended = unknown(crate::cycle::checks(version, "t", &served, &log));
-        assert_eq!(ended.len(), 4, "{ended:?}");
-        for why in &ended {
-            assert!(
-                why.contains("A person on the host runs: gcloud auth login"),
-                "{why}"
-            );
-        }
-
-        std::fs::remove_file(here.dir.with_file_name("gcloud")).unwrap();
-        let none = unknown(crate::cycle::checks(version, "t", &served, &log));
-        assert_eq!(none.len(), 4, "{none:?}");
-        for why in &none {
-            assert!(why.contains("gcloud is not on PATH"), "{why}");
-        }
     }
 
     /// 01M5NJ87YEHHGJBANM7CRYV56Z

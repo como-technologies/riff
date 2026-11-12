@@ -318,11 +318,12 @@ impl Cloud {
 
 /// Each resource that `riff cloud create shared` makes, as its describe
 /// call.
-const SETUP: [&str; 7] = [
+const SETUP: [&str; 8] = [
     "storage buckets describe gs://como-riff-state",
     "iam service-accounts describe riff-server@",
     "iam service-accounts describe riff-build@",
     "iam service-accounts describe riff-deploy@",
+    "iam service-accounts describe riff-check@",
     "artifacts repositories describe riff ",
     "iam workload-identity-pools describe github ",
     "iam workload-identity-pools providers describe github ",
@@ -588,7 +589,7 @@ const PRODUCTION: &str = "principalSet://iam.googleapis.com/projects/81691764197
 
 /// The attribute mapping of the provider: it maps the claim
 /// `environment` of a job.
-const MAPPING: &str = "google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref,attribute.environment=assertion.environment";
+const MAPPING: &str = "google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref,attribute.environment=assertion.environment,attribute.ref_type=assertion.ref_type";
 
 /// The member of the pool for each job of the repository.
 const REPOSITORY: &str = "principalSet://iam.googleapis.com/projects/816917641970/locations/global/workloadIdentityPools/github/attribute.repository/como-technologies/riff";
@@ -608,6 +609,7 @@ fn only_a_job_in_its_github_environment_signs_in_as_a_deploy_account() {
             .calls
             .lines()
             .filter(|l| l.contains("--role roles/iam.workloadIdentityUser"))
+            .filter(|l| !l.contains("riff-check@"))
             .collect();
         assert_eq!(users.len(), 1, "{users:#?}");
         let member = format!(
@@ -633,6 +635,62 @@ fn only_a_job_in_its_github_environment_signs_in_as_a_deploy_account() {
             ran.stdout()
         );
     }
+}
+
+/// The member of the pool for each job of a tag.
+const TAG_JOB: &str = "principalSet://iam.googleapis.com/projects/816917641970/locations/global/workloadIdentityPools/github/attribute.ref_type/tag";
+
+/// 01M76SSFX0QGPA4MTXV39JV5P3: `riff cloud create shared` makes the check
+/// account `riff-check`. Its only role is `roles/logging.viewer` on the
+/// project, and only a job of a tag signs in as it. The stage has no
+/// check account, so it makes none.
+#[test]
+fn create_makes_riff_check_with_only_the_role_that_reads_the_log() {
+    let ran = Cloud::new().run(&["create", "shared"]).ok();
+    ran.line("iam service-accounts create riff-check ");
+    let account = "riff-check@como-riff.iam.gserviceaccount.com";
+    let roles: Vec<&str> = ran
+        .calls
+        .lines()
+        .filter(|l| l.contains(&format!("--member serviceAccount:{account} ")))
+        .collect();
+    assert_eq!(
+        roles,
+        ["projects add-iam-policy-binding como-riff --member serviceAccount:riff-check@como-riff.iam.gserviceaccount.com --role roles/logging.viewer --condition None --project como-riff"],
+        "{}",
+        ran.calls
+    );
+    let users: Vec<&str> = ran
+        .calls
+        .lines()
+        .filter(|l| l.starts_with(&format!("iam service-accounts add-iam-policy-binding {account} ")))
+        .collect();
+    assert_eq!(users.len(), 1, "{users:#?}");
+    assert!(
+        users[0].contains(&format!(
+            "--member {TAG_JOB} --role roles/iam.workloadIdentityUser"
+        )),
+        "{}",
+        users[0]
+    );
+    // No other account takes a job of a tag.
+    assert_eq!(ran.calls.matches(TAG_JOB).count(), 1, "{}", ran.calls);
+    assert!(
+        ran.stdout()
+            .contains("CI check: set, for a job of a tag v*. riff-check only reads the log."),
+        "{}",
+        ran.stdout()
+    );
+
+    let ran = Cloud::new().run(&["create", "stage"]).ok();
+    assert!(!ran.calls.contains("riff-check"), "{}", ran.calls);
+    assert!(!ran.calls.contains("roles/logging.viewer"), "{}", ran.calls);
+    assert!(
+        ran.stdout()
+            .contains("CI check: none, because stage.env has no check account."),
+        "{}",
+        ran.stdout()
+    );
 }
 
 /// `create` removes the old binding that let each job of the
@@ -1068,7 +1126,7 @@ fn deploy_to_the_shared_riff_asks_for_the_name() {
 /// the stage cannot touch the data of the shared riff.
 #[test]
 fn no_settings_of_one_riff_name_a_resource_of_another() {
-    const RESOURCES: [&str; 11] = [
+    const RESOURCES: [&str; 12] = [
         "CLOUD_SECRET",
         "CLOUD_BUCKET",
         "CLOUD_SERVICE",
@@ -1078,6 +1136,7 @@ fn no_settings_of_one_riff_name_a_resource_of_another() {
         "CLOUD_RUN_ACCOUNT",
         "CLOUD_BUILD_ACCOUNT",
         "CLOUD_DEPLOY_ACCOUNT",
+        "CLOUD_CHECK_ACCOUNT",
         "CLOUD_ALERT_CHANNEL",
         "RIFF_OIDC_CLIENT_ID",
     ];

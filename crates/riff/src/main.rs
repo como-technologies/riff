@@ -942,6 +942,26 @@ enum CloudCommand {
         /// The name of the instance.
         name: String,
     },
+    /// Check the Cloud Run log of an instance after a deploy
+    ///
+    /// It reads the log with gcloud from the time --since, and prints
+    /// four checks: no run of 503 longer than 20 s, no 500 of
+    /// riff-server, no 401 or 429 of the token store, and no old instance
+    /// that takes the lease. With --commit, it sets the status
+    /// riff/deploy-check of that commit, which riff release check reads.
+    /// The CI job Check the deploy runs it. It exits with 1 when a check
+    /// failed or when it could not read the log.
+    Check {
+        /// The name of the instance.
+        name: String,
+        /// The start of the log to check, in RFC 3339, for example
+        /// 2026-10-18T20:00:00Z. The default is 1 hour ago.
+        #[arg(long, value_name = "TIME")]
+        since: Option<String>,
+        /// Set the status riff/deploy-check of this commit, with gh.
+        #[arg(long, value_name = "SHA")]
+        commit: Option<String>,
+    },
     /// Show the log of the service of an instance
     Log {
         /// The name of the instance.
@@ -1223,10 +1243,12 @@ enum ReleaseCommand {
     /// Do the checks after the deploy of a release
     ///
     /// The lead runs it after the job Deploy. It checks that riff server
-    /// shows the build, that the Cloud Run log has no run of 503 longer
-    /// than 20 s, no 500 of riff-server, no 401 or 429 of the token
-    /// store, and no old instance that takes the lease, and that each
-    /// host has the build. It writes the result on the release issue.
+    /// shows the build, and that each host has the build. It takes the
+    /// four checks of the Cloud Run log from the status riff/deploy-check
+    /// that the CI job Check the deploy sets: no run of 503 longer than
+    /// 20 s, no 500 of riff-server, no 401 or 429 of the token store, and
+    /// no old instance that takes the lease. It runs no gcloud. It writes
+    /// the result on the release issue.
     /// When each check passes, it closes the release issue and resumes
     /// the riff. After a failed deploy job, it files an issue with the
     /// log and resumes the riff: the old revision still serves.
@@ -3450,6 +3472,29 @@ async fn cloud(command: &CloudCommand, server: &str) -> Result<()> {
             print!("{}", text::cloud_status(&s, &facts, &secrets));
             Ok(())
         }
+        CloudCommand::Check {
+            name,
+            since,
+            commit,
+        } => {
+            let s = cloud::load(&dir, name)?;
+            let since = riff::cycle::since(since.as_deref(), chrono::Utc::now())?;
+            let log = riff::cycle::RunLog {
+                gcloud,
+                settings: s,
+            };
+            let found = riff::cycle::cloud_check(&log, &since);
+            print!("{}", riff::cycle::cloud_check_text(&found));
+            if let Some(commit) = commit {
+                let gh = pr::Gh::here("cloud check").retrying();
+                let (state, description) = riff::cycle::set_deploy_check(&gh, commit, &found)?;
+                println!("{}", text::deploy_check_set(commit, state, &description));
+            }
+            if !found.is_ok_and(|m| m.passed()) {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
         CloudCommand::Log {
             name,
             errors,
@@ -3587,35 +3632,6 @@ async fn release_owner(reach: &Reach) -> Result<String> {
         riff_core::wire::RiffOwner::Owner { user, .. } => user,
         _ => String::new(),
     })
-}
-
-/// The log of the Cloud Run service of the shared riff, from the cloud
-/// settings `shared` of this repository.
-struct NoLog(String);
-
-impl riff::cycle::CloudLog for NoLog {
-    fn lines(&self, _filter: &str) -> Result<Vec<riff::cycle::LogLine>> {
-        anyhow::bail!("{}", self.0)
-    }
-}
-
-/// The log of the shared riff, or a log that names why riff cannot read
-/// it.
-fn shared_log(here: &std::path::Path, reach: &Reach) -> Box<dyn riff::cycle::CloudLog> {
-    match cloud::dir(here).and_then(|dir| cloud::load(&dir, "shared")) {
-        // The container has no gcloud: the daemon of the host reads the log.
-        Ok(settings) => match reach {
-            Reach::Daemon(socket) => Box::new(riff::reach::DaemonLog {
-                socket: socket.clone(),
-                settings,
-            }),
-            Reach::Direct(_) => Box::new(riff::cycle::RunLog {
-                gcloud: cloud::Gcloud::default(),
-                settings,
-            }),
-        },
-        Err(e) => Box::new(NoLog(format!("{e:#}"))),
-    }
 }
 
 /// Resumes the whole riff after `riff release check`. A failure is a
@@ -3899,9 +3915,8 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
             }
             let forge = forge()?;
             let served = reach.served().await;
-            let log = shared_log(&here, reach);
             let show = &mut |result: &str| print!("{result}");
-            match cycle::check(&forge, tag, &served, log.as_ref(), show)? {
+            match cycle::check(&forge, tag, &served, show)? {
                 Checked::DeployFailed { deploy, issue } => {
                     println!(
                         "The deploy of {tag} failed: {}. The old revision still serves. The issue: #{issue}",
