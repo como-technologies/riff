@@ -10,9 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use riff_core::dpop::Key;
 use riff_core::name::{SessionUri, ThreadName};
-use riff_core::wire::{
-    BotFact, BotPost, Invite, Kind, PassOwner, Post, Posted, ReadReply, TokenReply,
-};
+use riff_core::wire::{BotFact, BotPost, Invite, Kind, Post, Posted, ReadReply, TokenReply};
 use riff_server::Service;
 use riff_server::auth::Config;
 use riff_state::state::threads::KIND_RIFF;
@@ -441,12 +439,12 @@ async fn a_tail_acts_only_as_the_caller_of_its_token() {
 /// Only riff-server posts the kind `riff` (01M6Y4ZCTSTVM971BDC1F7GJPK).
 /// A signed post with that kind is refused, of a member and of a session,
 /// also with the words of a line of riff, and it adds no line. The lines
-/// of riff-server itself in the chat, for an invite and a pass of the
-/// owner role, keep the kind (01M76S6128EZRZS2D5CE2QCC05).
+/// of riff-server itself in the chat, for an invite and for a release,
+/// keep the kind (01M76S6128EZRZS2D5CE2QCC05).
 #[tokio::test]
 async fn only_riff_server_itself_posts_the_kind_riff() {
     let (service, base) = common::start(true, &[]).await;
-    // mike signs in first, so mike is the owner.
+    // mike signs in first, so mike is an admin.
     let person = Caller::new(&service, &base, MIKE).await;
     let a = Caller::new(&service, &base, A).await;
     let brett = Caller::new(&service, &base, BRETT).await;
@@ -463,28 +461,29 @@ async fn only_riff_server_itself_posts_the_kind_riff() {
         assert!(text.contains(KIND_RIFF), "{text}");
     }
 
-    let email = "brett@comotechnologies.io";
     let invite = Invite {
-        email: email.into(),
+        email: "dan@comotechnologies.io".into(),
     };
     assert_eq!(person.call(&base, "invite", &invite).await.status(), 200);
-    let pass = PassOwner {
-        email: email.into(),
+    let here = Caller::new(&service, &base, MIKE_HERE).await;
+    let cut = BotFact::ReleasePublished {
+        tag: "v3.3.0".into(),
+        run: None,
     };
-    assert_eq!(person.call(&base, "owner", &pass).await.status(), 200);
+    assert_eq!(bot(&here, &base, cut).await, 200);
     let reply = brett.read(&base, CHAT).await;
-    let [invited, passed] = reply.messages.as_slice() else {
+    let [invited, published] = reply.messages.as_slice() else {
         panic!("only the lines of riff-server: {reply:?}");
     };
-    for line in [invited, passed] {
+    for line in [invited, published] {
         assert_eq!(line.from, SessionUri::server());
         assert_eq!(line.kind, Kind::Riff);
     }
     assert!(invited.body.contains("invited"), "{}", invited.body);
     assert!(
-        passed.body.contains("passed the owner role"),
+        published.body.contains("riff release v3.3.0 is published"),
         "{}",
-        passed.body
+        published.body
     );
 }
 
@@ -514,14 +513,14 @@ async fn bot(caller: &Caller, base: &str, fact: BotFact) -> u16 {
 
 /// 01M74BPHQZHXFYYNXAJ1WFASQQ: riff-server posts the line that riff writes
 /// for a person, as `<riff-bot>`: the ask of a release and the line "riff
-/// started the lead ...". It writes the text from the fact, the owner, the
-/// place of the caller and the holds of the version. The ask names the
-/// owner, and wakes the owner by the name; the line of the daemon names no
-/// one.
+/// started the lead ...". It writes the text from the fact, the admins,
+/// the place of the caller and the holds of the version. The ask names
+/// each admin, and wakes each admin by the name (01M7767T5VSWN9EYDVSTCEJ8AM);
+/// the line of the daemon names no one.
 #[tokio::test]
 async fn riff_server_posts_the_line_of_riff_bot_for_a_fact() {
     let (service, base) = common::start(true, &[]).await;
-    // mike signs in first, so mike is the owner.
+    // mike signs in first, so mike is the one admin.
     let (person, lead) = person_and_lead(&service, &base).await;
     let mut hold = lead.unsigned(
         "release",

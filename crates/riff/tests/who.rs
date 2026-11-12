@@ -266,11 +266,10 @@ async fn the_state_of_a_lead_comes_from_its_facts() {
     );
 
     // It waits for its person: waiting, with the person and the reason.
-    let wait = ["blocked", "run riff owner --take"];
+    let wait = ["blocked", "run riff admin add ada@gmail.com"];
     let said = output(riff(&server, dir, Some("a1"), &wait)).await;
     assert!(said.starts_with("You wait for your person"), "{said}");
-    let waiting =
-        "mike@pangolin:riff (a1) waiting lead waiting for mike: run riff owner --take (Ns ago)";
+    let waiting = "mike@pangolin:riff (a1) waiting lead waiting for mike: run riff admin add ada@gmail.com (Ns ago)";
     assert_eq!(row(&server, dir, "a1").await, waiting);
 
     // A message of a worker and more work do not end the wait.

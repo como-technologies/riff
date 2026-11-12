@@ -286,14 +286,17 @@ changes! {
     /// An email is no member of the riff. Each sign-in of its USER from
     /// before this record is ended.
     MemberRemoved(Email) = "member_removed",
-    /// An email is an admin that the owner made, or it is not.
+    /// An email is an admin, or it is not.
     AdminSet(AdminSet) = "admin_set",
-    /// An email is the owner. With no email, the owner is gone, and the
-    /// riff has no owner. The request for the owner role ends.
+    /// An old record of the owner role, which riff has no more. The
+    /// log reads it as an `admin_set` of its email. With no email, it
+    /// changes nothing. No command writes it.
     OwnerSet(OwnerSet) = "owner_set",
-    /// An admin asks for the owner role.
+    /// An old request for the owner role. It changes nothing. No
+    /// command writes it.
     OwnerAsked(OwnerAsked) = "owner_asked",
-    /// The owner keeps the owner role that an admin asked for.
+    /// An old answer to a request for the owner role. It changes
+    /// nothing. No command writes it.
     OwnerDenied(Email) = "owner_denied",
     /// Each sign-in of a USER from before this record is ended.
     SigninsEnded(SigninsEnded) = "signins_ended",
@@ -1176,7 +1179,8 @@ pub struct AdminSet {
     pub admin: bool,
 }
 
-/// The owner of the riff.
+/// The owner of the riff, in an old log. The log reads it as an
+/// `admin_set` of its email.
 ///
 /// ```
 /// use riff_core::record::OwnerSet;
@@ -1187,18 +1191,18 @@ pub struct AdminSet {
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct OwnerSet {
-    /// The email of the owner. `None`: the owner is gone.
+    /// The email of the owner. `None`: the owner was gone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
 }
 
-/// A request for the owner role.
+/// A request for the owner role, in an old log.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct OwnerAsked {
-    /// The email of the admin that asks.
+    /// The email of the admin that asked.
     pub email: String,
-    /// With no answer before this time, the admin is the owner. In
-    /// milliseconds since the Unix epoch.
+    /// The end of the time of the owner to answer, in milliseconds
+    /// since the Unix epoch.
     pub due_ms: u64,
 }
 

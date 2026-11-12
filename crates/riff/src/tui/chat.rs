@@ -5,13 +5,13 @@
 //!
 //! ```text
 //!  1 Sessions  [2 Chat]  3 Waves•  4 Machines  5 Devices  6 Reports
-//!  riff running · owner mike · build 10df8a4 · link ok 2s
+//!  riff running · build 10df8a4 · link ok 2s
 //!  chat · online: mike, brett · away: ann · @NAME wakes a person or a project
 //! ──── Friday 2026-11-06 ─────────────────────────────────────────────
 //!  09:14 <riff> good morning: 2 pull requests merged
 //!  09:15 <ann> morning
 //!  12:20 * mike goes for lunch
-//!  12:40 <riff-bot> members: ann passed the owner role to mike.
+//!  12:40 <riff-bot> members: ann made brett an admin.
 //!
 //! > @riff what is next?
 //!
@@ -41,7 +41,7 @@
 //!   end of the line. A click on the row and a send show it too.
 //!
 //!   ```text
-//!    12:40 <riff-bot> members: ann passed the owner role to mike.
+//!    12:40 <riff-bot> members: ann made brett an admin.
 //!    2 new lines below: End
 //!   > @riff what is next?
 //!   ```
@@ -1973,7 +1973,7 @@ mod tests {
     use ratatui::buffer::Buffer;
     use ratatui::crossterm::event::{KeyEvent, MouseButton, MouseEvent};
     use riff_core::build::Build;
-    use riff_core::wire::{Kind, NameKind, RiffOwner};
+    use riff_core::wire::{Kind, NameKind};
 
     /// The time of the screen tests: 13:20 UTC on 2026-11-06, the day of
     /// the mock-up.
@@ -2077,7 +2077,7 @@ mod tests {
                 "12:40",
                 "riff://riff@server",
                 Kind::Riff,
-                "members: ann passed the owner role to mike.",
+                "members: ann made brett an admin.",
             ),
             said(
                 "12:46",
@@ -2099,19 +2099,15 @@ mod tests {
         ]
     }
 
-    /// The state of the mock-up: a riff of the owner mike that runs,
+    /// The state of the mock-up: a riff of the admin mike that runs,
     /// with mike and brett online and ann away, the lead of mike in
     /// como-technologies/riff, the lines of the mock-up, and news in
     /// the waves.
     fn mock_up() -> State {
         let mut state = State::new(build("10df8a4c0ffe"), "riff://mike@thelio".parse().unwrap());
         let mut look = Look::default();
-        look.who.owner = RiffOwner::Owner {
-            user: "mike".into(),
-            email: "m@x.io".into(),
-        };
         look.who.people = serde_json::from_value(serde_json::json!([
-            {"user": "mike", "role": "owner", "live": true},
+            {"user": "mike", "role": "admin", "live": true},
             {"user": "brett", "role": "member", "live": true},
             {"user": "ann", "role": "admin", "live": false, "seen_secs": 3600},
         ]))
@@ -2172,7 +2168,7 @@ mod tests {
         let (rows, view) = drawn(&mut state, 80, 24);
         let mut want = vec![
             " 1 Sessions  [2 Chat]  3 Waves•  4 Machines  5 Devices  6 Reports".to_owned(),
-            " riff running · owner mike · build 10df8a4 · link ok 2s".to_owned(),
+            " riff running · build 10df8a4 · link ok 2s".to_owned(),
             " chat · online: mike, brett · away: ann · @NAME wakes a person or a project"
                 .to_owned(),
             format!("──── Friday 2026-11-06 {}", "─".repeat(57)),
@@ -2188,7 +2184,7 @@ mod tests {
                 " 12:02 <strata> noted: mike looks at #1608 after lunch",
                 " 12:20 * mike goes for lunch",
                 " 12:31 <riff> blocked: 3a3f8d5d (#994) asks: which of two designs?",
-                " 12:40 <riff-bot> members: ann passed the owner role to mike.",
+                " 12:40 <riff-bot> members: ann made brett an admin.",
                 " 12:46 <riff> #994 still has no answer; I wait for mike",
                 " 13:05 <mike> back. @lead:riff the first design, with the tab for waves",
                 " 13:05 <riff> ok: #994 goes on with the first design",
@@ -2232,8 +2228,8 @@ mod tests {
             "12:20 * mike goes for lunch",
             "12:31 <riff> blocked: 3a3f8d5d (#994)",
             "      asks: which of two designs?",
-            "12:40 <riff-bot> members: ann passed the",
-            "      owner role to mike.",
+            "12:40 <riff-bot> members: ann made brett",
+            "      an admin.",
             "12:46 <riff> #994 still has no answer; I",
             "      wait for mike",
             "13:05 <mike> back. @lead:riff the first",
@@ -2252,8 +2248,8 @@ mod tests {
 
     /// Only a line of riff-server itself shows as `<riff-bot>`
     /// (01M6Y4ZCTSTVM971BDC1F7GJPK): the ask of a release that it writes
-    /// for mike (01M74BPHQZHXFYYNXAJ1WFASQQ) and the line of a pass of the
-    /// owner role. A line of mike with the words of riff-bot shows as
+    /// for mike (01M74BPHQZHXFYYNXAJ1WFASQQ) and the line of a change of the
+    /// admins. A line of mike with the words of riff-bot shows as
     /// `<mike>`, and so does a line of mike with the kind `riff` in an old
     /// log.
     #[test]
@@ -2262,7 +2258,7 @@ mod tests {
         let mike = "riff://mike@thelio";
         let server = "riff://riff@server";
         let waits = "@mike riff release v3.3.0 waits for your approval";
-        let passed = "members: ann passed the owner role to brett.";
+        let passed = "members: ann made brett an admin.";
         for came in [
             said("13:15", mike, waits),
             said_as("13:16", mike, Kind::Riff, "a line of an old log"),

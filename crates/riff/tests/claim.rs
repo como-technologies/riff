@@ -118,7 +118,7 @@ async fn a_new_riff_is_paused_and_refuses_each_claim() {
     assert_eq!(
         out,
         "The repository como-technologies/riff was running already. The whole riff is still \
-         paused: the owner or an admin resumes it with `riff resume --riff`. No lead of \
+         paused: an admin resumes it with `riff resume --riff`. No lead of \
          como-technologies/riff runs, so its wave starts no session: run riff lead start in a \
          clone of como-technologies/riff.\n"
     );

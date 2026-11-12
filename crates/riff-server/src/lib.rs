@@ -26,8 +26,7 @@
 //! - [`state::State`] does not know about HTTP or clocks. The engine
 //!   passes the time in, so tests control it.
 //! - The state machine is the crate `riff-state`: the [`state`], the
-//!   [`log`] and its replay, the [`checkpoint`], the [`store`], and the
-//!   rules of the [`owner`] role. Only
+//!   [`log`] and its replay, the [`checkpoint`] and the [`store`]. Only
 //!   riff-server uses it (01M4ZHW1Y1X21ZPV053D0CXWMC). This crate adds
 //!   HTTP, the sign-in, the lease and the engine.
 //! - The writer sends the wakes and the `tail` event of a message to
@@ -61,17 +60,15 @@
 //! - `POST /v1/token` swaps a refresh token for a new pair. The token
 //!   store has its own lock, so a refresh never waits for the state.
 //! - The people are state of the log (01M3XA875QZ584JBGA37853PWX): who
-//!   may join the riff, the roles, and the request for the owner role.
-//!   Each change of them is a command, with the one handler: see
-//!   [`state::people`]. `POST /v1/revoke` ends each sign-in of a
-//!   person. The admins are the owner, the admins that the owner made,
-//!   and a setting ([`auth::Config::admins`]). Each admin is named by
-//!   verified email (R210). `POST /v1/invite` and `/v1/remove` change
-//!   who may join the riff, and `/v1/members` shows it. `POST
-//!   /v1/admin` lets the owner make a person an admin, or an admin a
-//!   member again. `POST /v1/owner` lets the owner pass the owner
-//!   role. `POST /v1/owner/take` lets an admin ask for it, and `POST
-//!   /v1/owner/deny` lets the owner keep it.
+//!   may join the riff, and the roles, member and admin
+//!   (01M77671TQ92487GSM24RJG82Z). Each change of them is a command, with the
+//!   one handler: see [`state::people`]. `POST /v1/revoke` ends each sign-in of
+//!   a person. The setting [`auth::Config::admins`] names an admin at
+//!   each start (01M7767SVH8AKK7144QTJGGGRY). Each admin is named by verified
+//!   email (R210). `POST /v1/invite` and `/v1/remove` change who may join the
+//!   riff, and `/v1/members` shows it. `POST /v1/admin` lets an admin
+//!   make a person an admin, or an admin a member again. The last admin
+//!   stays (01M7767SY5PW1AMB0PBMW2GXDX).
 //! - The devices of a person (01M75NGT9Z0NSZTG97TBAMP7RS) are state of
 //!   the log too: the keys, each a FIDO2 / WebAuthn authenticator.
 //!   `POST /v1/devices`, `/v1/device/remove`, `/v1/device/key` and
@@ -87,8 +84,8 @@
 //!   the command. `POST /v1/policy` sets the policy of the riff, and
 //!   `POST /v1/proof/use` checks a step that riff-server does not do
 //!   itself. See [`proofs`].
-//! - `POST /v1/log` gives the records of one repository to the owner
-//!   and the admins, for `riff audit` (01M3ZWRC11R5M9V1KTF05P240W). It
+//! - `POST /v1/log` gives the records of one repository to the
+//!   admins, for `riff audit` (01M3ZWRC11R5M9V1KTF05P240W). It
 //!   reads the log from the store, and a post has only its mark
 //!   (01M3ZWRC3XBFN8FJDGE8XWZ5EA).
 //! - A sign-in has two steps (01M3XA877YZQ649SWB5TN60V5P): the command
@@ -97,11 +94,6 @@
 //!   the sign-ins of a removed person is an effect of the writer, and
 //!   a load drops each sign-in from before the last removal of its
 //!   person (01M3XA87A9GGFA89RQXWSKY0V6).
-//! - A task looks at the owner role each [`owner::Timing::tick`]: it
-//!   sends the command `grant_owner` for a request whose time ended,
-//!   and checks the owner: the command `end_owner` ends the role of an
-//!   owner who is gone. The note of each change of the role is in the
-//!   chunk of its command. See [`owner`].
 //! - Each route with a `me` acts only as the [`auth::SignedIn`] caller
 //!   of its token: the same user and the same session ID, or 403
 //!   (R104). A person token acts only as the person. A session token
@@ -149,7 +141,7 @@
 //!   go-live (01M3Z8MRDZEKTXSKZTDTDSCZ3W): see [`import`].
 //! - A start with no record of a project in the log sends the command
 //!   `find_projects` after the load and before the first call, and tells
-//!   the owner in the chat (01M76SG8NCSAP69Y5AX455BJQM): see
+//!   each admin in the chat (01M76SG8NCSAP69Y5AX455BJQM): see
 //!   [`projects`].
 //! - [`Service::load`] loads the newest checkpoint of a [`store::Store`],
 //!   and replays the log after it (R30). A timer writes a checkpoint, and
@@ -296,14 +288,14 @@ use riff_core::record::Record;
 use riff_core::selector::Selector;
 use riff_core::wire::{
     ACCESS_TOKEN_TYPE, Alive, AliveReply, BlockedLook, BlockedLookReply, Call, CheckpointFacts,
-    Claim, DenyOwner, End, FactError, Free, GitHubApps, GitHubCheck, GitHubCreate,
-    GitHubDaemonToken, GitHubEvents, GitHubToken, Hold, ID_TOKEN_TYPE, Idle, IdleQuery, Invite,
-    ItemFacts, Join, Keys, Kind, Lead, Leave, LogQuery, LogReply, MeReply, Members, MembersReply,
-    NotesReply, NotesShow, PassOwner, Pause, Person, PlanOff, PlanReply, PlanSeen, PlanShow, Post,
-    Pruned, Read, ReadReply, Register, Release, ReleaseFor, Remove, ResourceMetadata, Resume,
-    Revoke, RiffOwner, RiffQuery, RiffReply, ServerFacts, ServerMetadata, SetAdmin, SetBlocked,
-    SetIdle, SetNotes, SetPlan, SetStatus, SetStep, SignInConfig, Start, TOKEN_EXCHANGE, TakeOwner,
-    Threads, ThreadsReply, TokenError, TokenReply, TokenRequest, Unanswered, WhoReply, WhoRequest,
+    Claim, End, FactError, Free, GitHubApps, GitHubCheck, GitHubCreate, GitHubDaemonToken,
+    GitHubEvents, GitHubToken, Hold, ID_TOKEN_TYPE, Idle, IdleQuery, Invite, ItemFacts, Join, Keys,
+    Kind, Lead, Leave, LogQuery, LogReply, MeReply, Members, MembersReply, NotesReply, NotesShow,
+    Pause, Person, PlanOff, PlanReply, PlanSeen, PlanShow, Post, Pruned, Read, ReadReply, Register,
+    Release, ReleaseFor, Remove, ResourceMetadata, Resume, Revoke, RiffQuery, RiffReply,
+    ServerFacts, ServerMetadata, SetAdmin, SetBlocked, SetIdle, SetNotes, SetPlan, SetStatus,
+    SetStep, SignInConfig, Start, TOKEN_EXCHANGE, Threads, ThreadsReply, TokenError, TokenReply,
+    TokenRequest, Unanswered, WhoReply, WhoRequest,
 };
 use riff_core::wire::{
     Approve, ProofReply, ProofStart, ProofTicket, ProofWait, ReadThreads, ReadThreadsReply,
@@ -312,12 +304,11 @@ use riff_core::wire::{
 use riff_core::wire::{BotPost, Names, NamesReply, SetMachine};
 use riff_core::wire::{Devices, KeyReply, KeyStart, KeyTicket, KeyWait, RemoveDevice};
 use riff_core::wire::{ProjectInit, ProjectRemove, ProjectsQuery};
-use riff_state::owner::{Check, Checks};
 use riff_state::state::{
-    Announce, Code, OwnerChange, Refused, Role, Settings, Signal, Snapshot, State, may_read,
+    Announce, Code, Refused, Role, Settings, Signal, Snapshot, State, may_read,
 };
 use riff_state::store::{Memory, SIGN_INS, Store, StoreError, Version};
-use riff_state::{checkpoint, log, owner, state, store};
+use riff_state::{checkpoint, log, state, store};
 use serde::Deserialize;
 use tokio::time::MissedTickBehavior;
 use tokio_stream::wrappers::BroadcastStream;
@@ -1200,57 +1191,6 @@ impl Server {
             .unwrap_or_else(|poison| poison.into_inner())
     }
 
-    /// One look at the owner role at `now` (see [`owner`]): it sends
-    /// the command `grant_owner` for a request whose time ended, then
-    /// checks the owner when a check is due. It warns the owner one
-    /// check before the owner is gone, and then sends the command
-    /// `end_owner`. Returns the change that it made. The note of a
-    /// change is in the chunk of its command.
-    async fn owner_tick(&self, checks: &mut Checks, now: Instant) -> Option<OwnerChange> {
-        let timing = &self.config.owner_role;
-        if self.engine.read(|state| state.owner_due(now)) {
-            return self.changed(self.engine.grant_owner().await);
-        }
-        if !checks.due(now) {
-            return None;
-        }
-        // Only a riff with an owner and another admin checks the owner.
-        let owner = self.engine.read(|state| {
-            let people = state.people();
-            people
-                .has_other_admin()
-                .then(|| people.owner_user().map(str::to_owned))
-        });
-        let Some(user) = owner else {
-            checks.reset(now, timing);
-            return None;
-        };
-        let since = checks.since(timing);
-        let seen = user
-            .as_deref()
-            .is_some_and(|user| self.engine.read(|state| state.present(user, since, now)));
-        match checks.record(now, seen, timing) {
-            Check::Seen | Check::Missed => None,
-            Check::Warn => {
-                self.warn_owner().await;
-                None
-            }
-            Check::Gone => self.changed(self.engine.end_owner().await),
-        }
-    }
-
-    /// The change of a command of the owner timer. A command that did
-    /// not go is only logged: the next look sends it again.
-    fn changed(&self, sent: Result<Option<OwnerChange>, Failed>) -> Option<OwnerChange> {
-        match sent {
-            Ok(change) => change,
-            Err(failed) => {
-                tracing::warn!("a change of the owner role did not go: {}", failed.text());
-                None
-            }
-        }
-    }
-
     /// A note or a message of the server, for [`Server::announce_each`].
     fn news(thread: Option<ThreadName>, to: Vec<Selector>, body: &str, kind: Kind) -> Announce {
         Announce {
@@ -1273,22 +1213,6 @@ impl Server {
                 tracing::warn!("a note of the server did not go: {}", failed.text());
             }
         }
-    }
-
-    /// Warns the owner that the next check can drop the owner
-    /// (01M3Q546335NBTKG5BHQ27QC93): one line in the chat, of the kind
-    /// `riff` (01M6Y4ZCTSTVM971BDC1F7GJPK), and no note to the thread of
-    /// a repository (01M76S6128EZRZS2D5CE2QCC05). The log line names no
-    /// email (01M3XA87CJHCGZX283ZQAFKARZ).
-    async fn warn_owner(&self) {
-        let Some(email) = self.engine.read(|state| state.people().members().owner) else {
-            return;
-        };
-        let news = owner::warn_news(&email, &self.config.owner_role);
-        tracing::info!("the server warns the owner: the next check can end the owner role");
-        let chat = ThreadName::chat();
-        let line = Server::news(Some(chat), Vec::new(), &news, Kind::Riff);
-        self.announce_each(vec![line]).await;
     }
 }
 
@@ -1438,7 +1362,7 @@ impl Service {
     /// let loaded = Service::prepare(config, Arc::new(store.clone())).await?;
     /// // The load takes no lease.
     /// assert!(store.load(LEASE).await?.is_none());
-    /// assert!(!loaded.owned());
+    /// assert!(!loaded.has_admin());
     /// let service = loaded.serve().await?;
     /// assert!(store.load(LEASE).await?.is_some());
     /// # drop(service);
@@ -1500,8 +1424,8 @@ impl Service {
     /// `log` is the store of the log. `until` is the end of the first
     /// serve time of a server with a lease. `start` is the second when it
     /// starts to serve. With `import`, the import of go-live follows: it
-    /// gives the riff its ID and its owner, so the build sends no
-    /// `make_riff` and no `name_owner`.
+    /// gives the riff its ID and its admins, so the build sends no
+    /// `make_riff` and no `name_admins`.
     #[allow(clippy::too_many_arguments)]
     fn build(
         config: Config,
@@ -1516,7 +1440,7 @@ impl Service {
         facts: Facts,
         import: bool,
     ) -> Self {
-        let settings = Settings::new(&config.admins, &config.public_url, config.owner_role);
+        let settings = Settings::new(&config.public_url);
         let state = state.with_settings(settings);
         // A sign-in from before the last removal or revoke of its person
         // is ended: the server stopped between the write of the record
@@ -1543,13 +1467,9 @@ impl Service {
         // A riff with no ID gets one: the first start of a riff
         // (01M3WRD99M99PNGP8ME50KC6WS), or a log from before the ID.
         let first = state.riff_id().is_none();
-        // The setting names the owner of a riff that has none and had
-        // none (01M3JN3ASSV9SA0QZKXXJ0RTEV). A riff with no sign-in has
-        // no people.
-        let named = config
-            .owner
-            .clone()
-            .filter(|_| !config.trusted() && !state.owned());
+        // The setting names its admins at each start
+        // (01M7767SVH8AKK7144QTJGGGRY). A riff with no sign-in has no people.
+        let named = (!config.trusted() && !config.admins.is_empty()).then(|| config.admins.clone());
         let tokens = Arc::new(Mutex::new(tokens));
         let tokens_changes = Arc::new(AtomicU64::new(u64::from(dropped > 0)));
         let sign_ins = SignInStore {
@@ -1563,8 +1483,8 @@ impl Service {
         if first && !import {
             engine.make_riff(token::random_token());
         }
-        if let Some(owner) = named.filter(|_| !import) {
-            engine.name_owner(&owner);
+        if let Some(admins) = named.filter(|_| !import) {
+            engine.name_admins(&admins);
         }
         let save_every = config.save_every;
         let github = github::GitHub::new(config.github.clone(), http.clone());
@@ -1597,7 +1517,6 @@ impl Service {
         service.keep_checkpoints();
         service.forget_sessions();
         service.watch_lead_claims();
-        service.watch_owner();
         service.read_keys();
         service
     }
@@ -1802,57 +1721,6 @@ impl Service {
                 if s.serving() {
                     for thread in s.engine.lead_claims_ended(&mut told, Instant::now()) {
                         tracing::info!(%thread, "the claim lead ended: the daemons look");
-                    }
-                }
-            }
-        });
-    }
-
-    /// Starts the task that looks at the owner role each
-    /// [`owner::Timing::tick`]: it grants a request whose time ended, and
-    /// checks the owner (see [`owner`]). A server with no async runtime,
-    /// for example in a doc test, starts no task. The task ends when the
-    /// service ends.
-    fn watch_owner(&self) {
-        // A riff with no sign-in has no people, so it has no owner.
-        if self.0.config.trusted() {
-            return;
-        }
-        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
-            return;
-        };
-        let server = Arc::downgrade(&self.0);
-        let timing = self.0.config.owner_role;
-        runtime.spawn(async move {
-            let mut tick = tokio::time::interval(timing.tick());
-            tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
-            let mut checks = Checks::new(Instant::now(), &timing);
-            loop {
-                tick.tick().await;
-                let Some(server) = server.upgrade() else {
-                    break;
-                };
-                if server.is_stopped() {
-                    break;
-                }
-                if !server.serving() {
-                    continue;
-                }
-                if let Some(change) = server.owner_tick(&mut checks, Instant::now()).await {
-                    // The words name no person: an email is in no log
-                    // line (01M3XA87CJHCGZX283ZQAFKARZ).
-                    match change {
-                        OwnerChange::Granted { .. } => {
-                            tracing::info!(
-                                "the owner did not answer: the admin that asked is the owner"
-                            );
-                        }
-                        OwnerChange::Gone { owner: Some(_), .. } => {
-                            tracing::info!("the owner is gone: the admin that asked is the owner");
-                        }
-                        OwnerChange::Gone { owner: None, .. } => {
-                            tracing::info!("the owner is gone: the riff has no owner");
-                        }
                     }
                 }
             }
@@ -2116,9 +1984,6 @@ impl Service {
             .route(Invite::PATH, post(command::<Invite>))
             .route(Remove::PATH, post(command::<Remove>))
             .route(SetAdmin::PATH, post(command::<SetAdmin>))
-            .route(PassOwner::PATH, post(command::<PassOwner>))
-            .route(TakeOwner::PATH, post(command::<TakeOwner>))
-            .route(DenyOwner::PATH, post(command::<DenyOwner>))
             .route(Members::PATH, post(members))
             .route(LogQuery::PATH, post(log_records))
             .route(GitHubCreate::PATH, post(github::create))
@@ -2204,12 +2069,12 @@ impl Service {
     ///     require_sign_in: true,
     ///     ..Config::default()
     /// });
-    /// assert!(!service.owned());
-    /// // The first person is the owner, from any domain.
+    /// assert!(!service.has_admin());
+    /// // The first person is an admin, from any domain.
     /// let ada = service.admit("Ada@gmail.com", false, "k1").await.unwrap();
     /// assert_eq!(ada.user, "ada");
-    /// assert_eq!(service.members().owner.as_deref(), Some("ada@gmail.com"));
-    /// assert!(service.owned());
+    /// assert_eq!(service.members().admins, ["ada@gmail.com"]);
+    /// assert!(service.has_admin());
     ///
     /// // A person with no invite and no allowed domain is refused.
     /// let refused = service.admit("bob@gmail.com", false, "k2").await.unwrap_err();
@@ -2243,31 +2108,27 @@ impl Service {
     }
 
     /// Who may join the riff: what `POST /v1/members` replies. Each
-    /// person shows once, with the highest role. The admins of the
-    /// settings are in it (R210).
+    /// person shows once, with the highest role. The start names the
+    /// admins of the settings in the log (01M7767SVH8AKK7144QTJGGGRY).
     ///
     /// ```
+    /// # #[tokio::main] async fn main() {
     /// use riff_server::Service;
     /// use riff_server::auth::Config;
     ///
     /// let service = Service::new(Config {
+    ///     require_sign_in: true,
     ///     admins: vec![" Dan@X.io".into()],
     ///     ..Config::default()
     /// });
+    /// service.save().await.unwrap();
     /// let list = service.members();
-    /// assert_eq!(list.owner, None);
     /// assert_eq!(list.admins, ["dan@x.io"]);
     /// assert!(list.members.is_empty());
-    /// assert_eq!(service.asks(), None);
+    /// # }
     /// ```
     pub fn members(&self) -> MembersReply {
         self.0.members()
-    }
-
-    /// The email of the admin whose request for the owner role waits
-    /// (01M3N7K3ZAZFGABN7032AYJWEM).
-    pub fn asks(&self) -> Option<String> {
-        self.0.engine.read(State::asks)
     }
 
     /// The ID of the riff, when it has one (01M3JNVBPMZ1K9WX7Q7DP6Y0DH).
@@ -2276,10 +2137,9 @@ impl Service {
         self.0.engine.read(State::riff_id)
     }
 
-    /// True when the riff has an owner, or had one: a riff whose owner
-    /// was gone counts (01M3JN3AQMHZHT6JP3P6GM9PWZ).
-    pub fn owned(&self) -> bool {
-        self.0.engine.read(State::owned)
+    /// True when the riff has an admin (01M7767T0PQBQZ0CGA6YJT3VV8).
+    pub fn has_admin(&self) -> bool {
+        self.0.engine.read(State::has_admin)
     }
 
     /// The number of proof IDs that this server keeps (R114).
@@ -2289,12 +2149,12 @@ impl Service {
 }
 
 impl Loaded {
-    /// True when the loaded state has an owner, or when the settings
-    /// name the owner of a riff that has none: the start names it. The
-    /// check of the listen address reads it before the port opens
-    /// ([`listen::check`]).
-    pub fn owned(&self) -> bool {
-        self.state.owned() || (self.config.owner.is_some() && !self.config.trusted())
+    /// True when the loaded state has an admin, or when the settings
+    /// name one: the start names it (01M7767SVH8AKK7144QTJGGGRY). The check of
+    /// the listen address reads it before the port opens ([`listen::check`]).
+    pub fn has_admin(&self) -> bool {
+        let named = self.config.admins.iter().any(|admin| admin.contains('@'));
+        self.state.has_admin() || (named && !self.config.trusted())
     }
 
     /// The settings of the server.
@@ -2741,9 +2601,9 @@ pub fn still_blocked(session: &SessionUri, reason: &str, after_secs: u64) -> Str
 
 /// Posts the line of riff-bot for the fact of the caller in the chat,
 /// with the kind `riff` ([`bot`], 01M74BPHQZHXFYYNXAJ1WFASQQ). riff-server
-/// writes the text from the fact and from what it holds: the owner, the
-/// place of the caller and the holds of the version. Only a person and
-/// the lead of the person may call it.
+/// writes the text from the fact and from what it holds: the admins
+/// (01M7767T5VSWN9EYDVSTCEJ8AM), the place of the caller and the holds of the
+/// version. Only a person and the lead of the person may call it.
 async fn bot_post(
     AxumState(s): AxumState<Shared>,
     proof: Proof,
@@ -2751,15 +2611,12 @@ async fn bot_post(
 ) -> Reply<()> {
     let caller = admit(&s, &proof, &r.me)?;
     let now = Instant::now();
-    let (lead, owner, messages) = s
+    let (lead, admins, messages) = s
         .engine
         .query(&caller, |state| {
-            let owner = match state.people().riff_owner() {
-                RiffOwner::Owner { user, .. } => Some(user),
-                RiffOwner::NoSignIn | RiffOwner::Nobody => None,
-            };
+            let admins = state.people().admin_users();
             let messages = state.messages(&riff_core::hold::thread());
-            (state.uri(caller.who(), now).lead(), owner, messages)
+            (state.uri(caller.who(), now).lead(), admins, messages)
         })
         .await?;
     if caller.who().session().is_some() && !lead {
@@ -2776,9 +2633,10 @@ async fn bot_post(
         }
         _ => Vec::new(),
     };
+    let admins: Vec<&str> = admins.iter().map(String::as_str).collect();
     let facts = bot::Facts {
         me: &r.me,
-        owner: owner.as_deref(),
+        admins: &admins,
         holds: &holds,
     };
     let line = bot::line(&r.fact, &facts).map_err(bad_request)?;
@@ -2829,11 +2687,10 @@ async fn who(
             let now_ms = now_ms();
             // The people of the written copy. A riff with no sign-in
             // shows none.
-            let (owner, members) = if trusted {
-                (RiffOwner::NoSignIn, Vec::new())
+            let members = if trusted {
+                Vec::new()
             } else {
-                let people = state.people();
-                (people.riff_owner(), people.persons())
+                state.people().persons()
             };
             let people = members
                 .into_iter()
@@ -2849,7 +2706,6 @@ async fn who(
                 .collect();
             WhoReply {
                 sessions: state.who(now, now_ms, r.all),
-                owner,
                 people,
                 repos: state.repos_of(&user),
             }
@@ -3083,18 +2939,17 @@ async fn plan_show(
 }
 
 /// Reads the notes of a lead: a query (01M59258NTXPMWV18TKRKWNTYN). Only
-/// the user of the lead and the owner can.
+/// the user of the lead and each admin can (01M77671TQ92487GSM24RJG82Z).
 async fn notes_show(
     AxumState(s): AxumState<Shared>,
     proof: Proof,
     Json(r): Json<NotesShow>,
 ) -> Reply<NotesReply> {
     let caller = admit(&s, &proof, &r.me)?;
-    let who = caller.caller().clone();
     let reply = s
         .engine
-        .query(&caller, |state| {
-            state.notes(&who, &r.thread, r.user.as_deref(), r.history)
+        .query_as(&caller, |state, who| {
+            state.notes(who, &r.thread, r.user.as_deref(), r.history)
         })
         .await?
         .map_err(Failed::Refused)?;
@@ -3177,7 +3032,7 @@ async fn members(
 }
 
 /// Gives the records of one repository for an audit
-/// (01M3ZWRC11R5M9V1KTF05P240W): only to the owner and the admins. It
+/// (01M3ZWRC11R5M9V1KTF05P240W): only to the admins. It
 /// reads the log from the store, so it has each record that the log
 /// keeps, also the records before the last checkpoint. After a prune,
 /// it reads from the oldest chunk, and the reply says so
@@ -3191,7 +3046,7 @@ async fn log_records(
 ) -> Reply<LogReply> {
     let user = signed_in.who.user();
     if s.engine.read(|state| state.role(user)) < Role::Admin {
-        let reason = "only the owner and the admins can read the log";
+        let reason = "only an admin can read the log";
         return Err(Failed::Refused(Refused::new(Code::NotAllowed, reason)).into());
     }
     let (first, replayed) = log::replay_kept(&*s.log).await.map_err(|error| {
@@ -5417,7 +5272,7 @@ mod tests {
             [
                 "riff_made",
                 "person_joined",
-                "owner_set",
+                "admin_set",
                 "pause_set",
                 "setting_changed"
             ]
@@ -6445,7 +6300,7 @@ mod tests {
         }
     }
 
-    /// A riff with sign-in on `store`. Ada is the owner.
+    /// A riff with sign-in on `store`. Ada is the first admin.
     async fn riff_of_ada(store: Arc<Gated>) -> Service {
         let service = Service::load(signed_config(), store).await.unwrap();
         service.admit(ADA, false, "key-of-ada").await.unwrap();
@@ -6483,31 +6338,19 @@ mod tests {
             admin: true,
         };
         assert_eq!(code(as_person(&service, "ada", set).await), no_sign_in);
-        let pass = PassOwner { email: BOB.into() };
-        assert_eq!(code(as_person(&service, "ada", pass).await), no_sign_in);
-        assert_eq!(
-            code(as_person(&service, "ada", TakeOwner {}).await),
-            no_sign_in
-        );
-        assert_eq!(
-            code(as_person(&service, "ada", DenyOwner {}).await),
-            no_sign_in
-        );
         let revoke = Revoke { user: None };
         assert_eq!(code(as_person(&service, "ada", revoke).await), no_sign_in);
-        // The sign-in, and the commands of the server.
+        // The sign-in.
         assert_eq!(
             code(service.0.engine.sign_in(&identity(ADA)).await),
             no_sign_in
         );
-        assert_eq!(code(service.0.engine.grant_owner().await), no_sign_in);
-        assert_eq!(code(service.0.engine.end_owner().await), no_sign_in);
         let refused = service.admit(ADA, false, "k").await.unwrap_err();
         assert!(refused.contains("this riff has no sign-in"), "{refused}");
-        assert_eq!(service.members().owner, None);
+        assert!(service.members().admins.is_empty());
 
         let lines = capture.results("refused");
-        assert_eq!(lines.len(), 11, "{lines:?}");
+        assert_eq!(lines.len(), 6, "{lines:?}");
         for line in &lines {
             let line = line.as_object().unwrap();
             assert_eq!(line["code"], "no_sign_in");
@@ -6516,8 +6359,8 @@ mod tests {
         assert_eq!(lines[0]["command"], "invite");
         assert_eq!(lines[0]["caller"], serde_json::json!({"person": "ada"}));
         // The line of a sign-in names its USER, not its email.
-        assert_eq!(lines[7]["command"], "admit");
-        assert_eq!(lines[7]["caller"], serde_json::json!({"sign_in": "ada"}));
+        assert_eq!(lines[4]["command"], "admit");
+        assert_eq!(lines[4]["caller"], serde_json::json!({"sign_in": "ada"}));
     }
 
     /// The first sign-in of a person runs `admit` through the dispatch,
@@ -6681,7 +6524,7 @@ mod tests {
             assert_eq!(refresh, Err(token::Refused::Unknown));
         }
         assert_eq!(next.tokens().chains(), 0);
-        // The removed person does not sign in. The owner signs in again.
+        // The removed person does not sign in. The admin signs in again.
         assert!(next.admit(BOB, false, "key-of-bob").await.is_err());
         assert!(next.admit(ADA, false, "key-of-ada").await.is_ok());
     }
@@ -6700,8 +6543,7 @@ mod tests {
         let capture = Capture::start();
         let store = Arc::new(Gated::default());
         let mut config = signed_config();
-        config.admins = vec![email("carol")];
-        config.owner = Some(email("ada"));
+        config.admins = vec![email("ada"), email("carol")];
         let service = Service::load(config, store.clone()).await.unwrap();
         // The sign-in: accepted, a second time, and refused.
         service.admit(&email("ada"), false, "k").await.unwrap();
@@ -6737,17 +6579,11 @@ mod tests {
         as_person(&service, "bob", set("dan", true))
             .await
             .unwrap_err();
-        as_person(&service, "ada", set("bob", true)).await.unwrap();
-        let pass = |user: &str| PassOwner { email: email(user) };
-        as_person(&service, "ada", pass("eve")).await.unwrap_err();
-        as_person(&service, "bob", pass("bob")).await.unwrap_err();
-        as_person(&service, "ada", DenyOwner {}).await.unwrap_err();
-        as_person(&service, "ada", TakeOwner {}).await.unwrap();
-        as_person(&service, "bob", TakeOwner {}).await.unwrap();
-        as_person(&service, "carol", TakeOwner {})
+        as_person(&service, "dan", set("dan", true))
             .await
             .unwrap_err();
-        as_person(&service, "ada", DenyOwner {}).await.unwrap();
+        as_person(&service, "ada", set("bob", true)).await.unwrap();
+        as_person(&service, "ada", set("ada", true)).await.unwrap();
         let revoke = |user: Option<&str>| Revoke {
             user: user.map(str::to_owned),
         };
@@ -6764,21 +6600,6 @@ mod tests {
         as_person(&service, "ada", remove(&email("bob")))
             .await
             .unwrap();
-        // The commands of the timer: a warning, a request whose time did
-        // not end, and an owner who is gone, with a request and with
-        // none.
-        as_person(&service, "carol", TakeOwner {}).await.unwrap();
-        service.0.warn_owner().await;
-        assert_eq!(service.0.engine.grant_owner().await.unwrap(), None);
-        let gone = service.0.engine.end_owner().await.unwrap();
-        assert!(matches!(
-            gone,
-            Some(OwnerChange::Gone { owner: Some(_), .. })
-        ));
-        assert_eq!(service.members().owner, Some(email("carol")));
-        let gone = service.0.engine.end_owner().await.unwrap();
-        assert!(matches!(gone, Some(OwnerChange::Gone { owner: None, .. })));
-        assert_eq!(service.0.engine.end_owner().await.unwrap(), None);
         service.save().await.unwrap();
         drop(service);
         // A new start drops the sign-ins of the removed person.

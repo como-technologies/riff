@@ -112,11 +112,11 @@ fn the_notes_need_a_repository_thread() {
     assert_eq!(refused.code, Code::BadRequest);
 }
 
-/// The user reads the notes, the owner reads the notes of each user,
+/// The user reads the notes, each admin reads the notes of each user,
 /// and another member reads no notes of another user. The history has
 /// each old text, the oldest first.
 #[test]
-fn the_user_and_the_owner_read_the_notes_and_the_history() {
+fn the_user_and_each_admin_read_the_notes_and_the_history() {
     let records = [
         team(),
         vec![
@@ -137,13 +137,11 @@ fn the_user_and_the_owner_read_the_notes_and_the_history() {
     // Another member.
     let refused = state.notes(&ann, &repo(), Some("bob"), false).unwrap_err();
     assert_eq!(refused.code, Code::NotAllowed);
-    // The owner.
-    let owner = Caller::of(&person()).with_role(Role::Owner);
-    let bobs = state.notes(&owner, &repo(), Some("bob"), false).unwrap();
-    assert_eq!(bobs.text, "bob's");
-    // An admin is no owner.
+    assert!(refused.reason.contains("an admin"), "{refused}");
+    // Each admin reads each note (01M77671TQ92487GSM24RJG82Z).
     let admin = Caller::of(&person()).with_role(Role::Admin);
-    assert!(state.notes(&admin, &repo(), Some("bob"), false).is_err());
+    let bobs = state.notes(&admin, &repo(), Some("bob"), false).unwrap();
+    assert_eq!(bobs.text, "bob's");
     // No notes: an empty text.
     let none = state.notes(&ann, &design(), None, true).unwrap();
     assert_eq!(none.text, "");

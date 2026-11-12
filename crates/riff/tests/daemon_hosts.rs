@@ -2225,10 +2225,10 @@ async fn riff_who_says_the_state_of_an_open_release_at_each_step() {
     })
     .await;
 
-    // A check fails: the owner resumes, or the lead rolls back.
+    // A check fails: an admin resumes, or the lead rolls back.
     set("issues", &issue(true, "failed"));
     shows(Some(format!(
-        "{TAG}: the check failed: the owner resumes or rolls back"
+        "{TAG}: the check failed: an admin resumes or rolls back"
     )))
     .await;
 

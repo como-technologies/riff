@@ -18,9 +18,8 @@ use riff_client::api::{Claimed, Inbox, Told};
 use riff_client::threads::{Line, Names, RIFF_BOT, Thread};
 use riff_core::wire::{
     AdminSet, DeviceInfo, DevicesReply, FreeReply, GitHubRole, HoldReply, Invited, Kind, LeadReply,
-    OwnerAsked, OwnerDenied, OwnerPassed, PauseInfo, Posted, ProjectInitReply, ProjectsReply,
-    ReleaseReply, Removed, Revoked, RiffOwner, RiffReply, RiffState, SessionInfo, StepChange,
-    ThreadInfo, Wake,
+    PauseInfo, Posted, ProjectInitReply, ProjectsReply, ReleaseReply, Removed, Revoked, RiffReply,
+    RiffState, SessionInfo, StepChange, ThreadInfo, Wake,
 };
 
 /// Tells the reader how to act on a message (R10). The start hook and
@@ -749,7 +748,7 @@ pub fn riff_state(pauses: &RiffReply, here: Option<&ThreadName>) -> String {
     let mut out = match paused(pauses, here) {
         None => "The riff is running.".to_owned(),
         Some(text) if pauses.riff.is_some() => format!(
-            "{text}. Nobody claims work. The owner or an admin resumes it with `riff resume \
+            "{text}. Nobody claims work. An admin resumes it with `riff resume \
              --riff`."
         ),
         Some(text) => format!(
@@ -829,7 +828,7 @@ pub fn build_line(server: Option<&Build>) -> String {
 /// assert_eq!(
 ///     riff::text::riff_set(Some(&riff), RiffState::Running, &reply, &[]),
 ///     "The repository como-technologies/riff is running now. No other session woke. The \
-///      whole riff is still paused: the owner or an admin resumes it with `riff resume --riff`."
+///      whole riff is still paused: an admin resumes it with `riff resume --riff`."
 /// );
 /// // A resume of a repository with no live lead: its wave still waits.
 /// let no_lead = RiffReply { no_lead: vec![riff.clone()], ..RiffReply { changed: true, ..RiffState::Running.into() } };
@@ -890,7 +889,7 @@ pub fn riff_set(
     if state == RiffState::Running {
         if repository.is_some() && reply.riff.is_some() {
             out.push_str(
-                " The whole riff is still paused: the owner or an admin resumes it with `riff \
+                " The whole riff is still paused: an admin resumes it with `riff \
                  resume --riff`.",
             );
         }
@@ -2485,93 +2484,6 @@ pub fn admin_set(done: &AdminSet) -> String {
     }
 }
 
-/// The answer to `riff owner`.
-///
-/// ```
-/// use riff_core::wire::OwnerPassed;
-///
-/// let done = OwnerPassed { owner: "bob@gmail.com".into(), admin: "ada@gmail.com".into() };
-/// assert_eq!(
-///     riff::text::owner_passed(&done),
-///     "bob@gmail.com is now the owner. ada@gmail.com stays an admin."
-/// );
-/// ```
-pub fn owner_passed(done: &OwnerPassed) -> String {
-    format!(
-        "{} is now the owner. {} stays an admin.",
-        done.owner, done.admin
-    )
-}
-
-/// The answer to `riff owner --take` (01M3N7K3ZAZFGABN7032AYJWEM).
-///
-/// ```
-/// use riff_core::wire::OwnerAsked;
-///
-/// let asked = OwnerAsked {
-///     admin: "bob@gmail.com".into(),
-///     owner: Some("ada@gmail.com".into()),
-///     answer_secs: 600,
-/// };
-/// assert_eq!(
-///     riff::text::owner_asked(&asked),
-///     "You asked ada@gmail.com for the owner role. The owner has 10 minutes to \
-///      answer. With no answer, you are the owner. The riff posts each step in the \
-///      chat."
-/// );
-/// let took = OwnerAsked { owner: None, answer_secs: 0, ..asked };
-/// assert_eq!(
-///     riff::text::owner_asked(&took),
-///     "The riff had no owner. bob@gmail.com is now the owner."
-/// );
-/// // The owner asked (01M3WRJAFS6W3J2ZRJ6XSW3SB5).
-/// let same = OwnerAsked { owner: Some("bob@gmail.com".into()), ..took };
-/// assert_eq!(
-///     riff::text::owner_asked(&same),
-///     "You are the owner already. Nothing changed."
-/// );
-/// ```
-pub fn owner_asked(asked: &OwnerAsked) -> String {
-    let Some(owner) = &asked.owner else {
-        return format!("The riff had no owner. {} is now the owner.", asked.admin);
-    };
-    if asked.already() {
-        return "You are the owner already. Nothing changed.".to_owned();
-    }
-    let minutes = match asked.answer_secs / 60 {
-        0 => "less than a minute".to_owned(),
-        1 => "1 minute".to_owned(),
-        n => format!("{n} minutes"),
-    };
-    format!(
-        "You asked {owner} for the owner role. The owner has {minutes} to answer. With no \
-         answer, you are the owner. The riff posts each step in the chat."
-    )
-}
-
-/// The answer to `riff owner --deny` (01M3N7K41N03P26BEFFNX5617K).
-///
-/// ```
-/// use riff_core::wire::OwnerDenied;
-///
-/// let denied = OwnerDenied { owner: "ada@gmail.com".into(), admin: "bob@gmail.com".into() };
-/// assert_eq!(
-///     riff::text::owner_denied(&denied),
-///     "ada@gmail.com stays the owner. The riff tells bob@gmail.com."
-/// );
-/// ```
-pub fn owner_denied(denied: &OwnerDenied) -> String {
-    format!(
-        "{} stays the owner. The riff tells {}.",
-        denied.owner, denied.admin
-    )
-}
-
-/// The line of `riff members` for a riff with no owner
-/// (01M3Q63NNC6SC03BFCG80M7B4D).
-pub const NO_OWNER: &str =
-    "The riff has no owner. An admin takes the owner role with: riff owner --take";
-
 fn workers_count(n: usize) -> String {
     if n == 1 {
         "1 worker".into()
@@ -2674,10 +2586,10 @@ pub fn release_refused(command: &str, refusal: crate::cycle::Refusal) -> String 
         ),
         Refusal::Member => (
             format!(
-                "riff: only the owner or an admin of the riff, or the lead of one, runs {step}. \
+                "riff: only an admin of the riff, or the lead of one, runs {step}. \
                  Your user is a member, so {step} changed nothing."
             ),
-            format!("the owner or an admin of the riff runs {step}"),
+            format!("an admin of the riff runs {step}"),
         ),
         Refusal::RoleUnknown => (
             format!("riff: cannot check your role in the riff, so {step} changed nothing."),
@@ -2741,7 +2653,7 @@ pub fn release_refused(command: &str, refusal: crate::cycle::Refusal) -> String 
 /// );
 /// assert_eq!(
 ///     line(ReleaseStep::CheckFailed, true).unwrap(),
-///     "v3.3.0: the check failed: the owner resumes or rolls back"
+///     "v3.3.0: the check failed: an admin resumes or rolls back"
 /// );
 /// assert_eq!(
 ///     line(ReleaseStep::CheckFailed, false).unwrap(),
@@ -2778,7 +2690,7 @@ pub fn release_line(release: &riff_client::daemons::Release, paused: bool) -> Op
             format!("the deploy failed; it waits for the check of the lead of {repo}")
         }
         (ReleaseStep::CheckFailed, true) => {
-            "the check failed: the owner resumes or rolls back".to_owned()
+            "the check failed: an admin resumes or rolls back".to_owned()
         }
         (ReleaseStep::CheckFailed, false) => {
             format!("the check failed: the lead of {repo} fixes forward or rolls back")
@@ -3549,28 +3461,6 @@ pub fn inbox(list: &[Inbox], me: &SessionUri) -> String {
     out
 }
 
-/// The owner line of `who` (01M3Q63NK0AHM25MB258B0K8XP), or `None` for
-/// a riff with no sign-in.
-///
-/// ```
-/// use riff::text::owner_line;
-/// use riff_core::wire::RiffOwner;
-///
-/// let ada = RiffOwner::Owner { user: "ada".into(), email: "ada@gmail.com".into() };
-/// assert_eq!(owner_line(&ada).unwrap(), "The owner is ada (ada@gmail.com).");
-/// assert_eq!(owner_line(&RiffOwner::Nobody).unwrap(), "The riff has no owner.");
-/// assert_eq!(owner_line(&RiffOwner::NoSignIn), None);
-/// ```
-pub fn owner_line(owner: &RiffOwner) -> Option<String> {
-    match owner {
-        RiffOwner::NoSignIn => None,
-        RiffOwner::Nobody => Some("The riff has no owner.".into()),
-        RiffOwner::Owner { user, email } => {
-            Some(format!("The owner is {} ({}).", safe(user), safe(email)))
-        }
-    }
-}
-
 /// The kind of a session in `riff who` and `riff top`
 /// (01M510MG2YSETB2CCAS8XDHPZ0): the first that matches of the lead, a
 /// session in a container, a worker, the session of
@@ -3687,13 +3577,11 @@ fn is_host(s: &SessionInfo) -> bool {
 /// session of `riff workers host` (01M510MG2YSETB2CCAS8XDHPZ0), and
 /// `daemon` for the session of the riff daemon
 /// (01M589HH6HCWYJP1ZC7MRAXZ6E). The lead in a container has
-/// `lead container`. The tag `owner` is on the
-/// row of the owner as a person, with no session
-/// (01M3Q63NK0AHM25MB258B0K8XP).
+/// `lead container`. No row gets the tag `owner` (01M7767T8EFVR79NSHKTK53G7B).
 ///
 /// ```
 /// use riff::text::tags;
-/// use riff_core::wire::{RiffOwner, SessionInfo, Status, StatusInfo};
+/// use riff_core::wire::{SessionInfo, Status, StatusInfo};
 ///
 /// let row = |uri: &str, worker: bool| SessionInfo {
 ///     uri: uri.parse().unwrap(),
@@ -3713,36 +3601,31 @@ fn is_host(s: &SessionInfo) -> bool {
 ///     step: None,
 ///     machine: None,
 /// };
-/// let owner = RiffOwner::Owner { user: "mike".into(), email: "m@x.io".into() };
-/// assert_eq!(tags(&row("riff://mike@thelio/o/r?session=a1&lead=true", false), &owner), ["lead"]);
-/// assert_eq!(tags(&row("riff://mike@thelio/o/r?session=w1", true), &owner), ["worker"]);
-/// assert!(tags(&row("riff://mike@thelio/o/r?session=b2", false), &owner).is_empty());
-/// assert_eq!(tags(&row("riff://mike@thelio", false), &owner), ["owner"]);
-/// assert!(tags(&row("riff://ann@heron", false), &owner).is_empty());
+/// assert_eq!(tags(&row("riff://mike@thelio/o/r?session=a1&lead=true", false)), ["lead"]);
+/// assert_eq!(tags(&row("riff://mike@thelio/o/r?session=w1", true)), ["worker"]);
+/// assert!(tags(&row("riff://mike@thelio/o/r?session=b2", false)).is_empty());
+/// assert!(tags(&row("riff://mike@thelio", false)).is_empty());
 ///
 /// // A session in a container, and the lead in a container.
 /// let boxed = SessionInfo { container: true, ..row("riff://mike@thelio/o/r?session=c1", true) };
-/// assert_eq!(tags(&boxed, &owner), ["container"]);
+/// assert_eq!(tags(&boxed), ["container"]);
 /// let lead = row("riff://mike@thelio/o/r?session=l1&lead=true", false);
-/// assert_eq!(tags(&SessionInfo { container: true, ..lead }, &owner), ["lead", "container"]);
+/// assert_eq!(tags(&SessionInfo { container: true, ..lead }), ["lead", "container"]);
 ///
 /// // The session of `riff workers host`.
 /// let mut host = row("riff://mike@thelio/o/r?session=h1", false);
 /// let step = "workers host: limit 10, floor 4GB, no workers".into();
 /// host.status = Some(StatusInfo { status: Status { step }, age_secs: 1, stale: false });
-/// assert_eq!(tags(&host, &owner), ["host"]);
+/// assert_eq!(tags(&host), ["host"]);
 ///
 /// // The session of the riff daemon.
 /// let mut daemon = row("riff://mike@thelio/o/r?session=d1", false);
 /// let step = riff::daemon::remote::status_line(812, "3.2.0", 0);
 /// daemon.status = Some(StatusInfo { status: Status { step }, age_secs: 1, stale: false });
-/// assert_eq!(tags(&daemon, &owner), ["daemon"]);
+/// assert_eq!(tags(&daemon), ["daemon"]);
 /// ```
-pub fn tags(s: &SessionInfo, owner: &RiffOwner) -> Vec<&'static str> {
+pub fn tags(s: &SessionInfo) -> Vec<&'static str> {
     let mut tags = Vec::new();
-    if s.uri.who().session().is_none() && owner.is(s.uri.who().user()) {
-        tags.push("owner");
-    }
     if s.uri.lead() {
         tags.push(SessionKind::Lead.word());
     }
@@ -3768,7 +3651,7 @@ pub fn tags(s: &SessionInfo, owner: &RiffOwner) -> Vec<&'static str> {
 ///
 /// ```
 /// use riff::text;
-/// use riff_core::wire::{RiffOwner, SessionInfo, SessionState, Status, StatusInfo};
+/// use riff_core::wire::{SessionInfo, SessionState, Status, StatusInfo};
 ///
 /// let me = "riff://mike@pangolin/como-technologies/riff?session=a6cf&claim=issue-6".parse()?;
 /// let brett = "riff://brett@heron/como-technologies/riff?session=77e0".parse()?;
@@ -3811,9 +3694,7 @@ pub fn tags(s: &SessionInfo, owner: &RiffOwner) -> Vec<&'static str> {
 ///         machine: None,
 ///     },
 /// ];
-/// // The owner is a person: the sessions of brett get no tag `owner`.
-/// let owner = RiffOwner::Owner { user: "brett".into(), email: "brett@x.io".into() };
-/// let out = text::who(&list, &owner, &list[0].uri);
+/// let out = text::who(&list, &list[0].uri);
 /// assert!(out.contains("(a6cf) busy (you)  riff://"), "{out}");
 /// assert!(out.contains("\n  working on #6\n"), "{out}");
 /// assert!(out.contains("(77e0) idle worker  riff://"), "{out}");
@@ -3823,7 +3704,7 @@ pub fn tags(s: &SessionInfo, owner: &RiffOwner) -> Vec<&'static str> {
 /// assert!(!out.contains("Hosts:"), "{out}");
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
-pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> String {
+pub fn who(sessions: &[SessionInfo], me: &SessionUri) -> String {
     if sessions.is_empty() {
         return "Nobody is in the riff.".into();
     }
@@ -3834,7 +3715,7 @@ pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> Stri
         } else {
             ""
         };
-        let tags: String = tags(s, owner).iter().map(|t| format!(" {t}")).collect();
+        let tags: String = tags(s).iter().map(|t| format!(" {t}")).collect();
         let state = crate::state::of(s).word();
         let _ = writeln!(out, "{} {state}{you}{tags}  {}", name(&s.uri), s.uri);
         for (line, _) in crate::state::detail(s, &|_| None) {
@@ -4094,10 +3975,10 @@ pub fn status_set(status: &riff_core::wire::Status) -> String {
 /// assert_eq!(told, "You are blocked: the build fails. The lead has the reason.");
 /// let alone = riff::text::blocked_set("which design?", Told::Nobody);
 /// assert!(alone.contains("No lead got the message: ask your own user."), "{alone}");
-/// let lead = riff::text::blocked_set("run riff owner --take", Told::You);
+/// let lead = riff::text::blocked_set("run riff admin add ada@gmail.com", Told::You);
 /// assert_eq!(
 ///     lead,
-///     "You wait for your person: run riff owner --take. Ask your user. The next prompt ends the wait."
+///     "You wait for your person: run riff admin add ada@gmail.com. Ask your user. The next prompt ends the wait."
 /// );
 /// ```
 pub fn blocked_set(reason: &str, told: Told) -> String {
@@ -6728,8 +6609,8 @@ pub fn daemon_github_events(shown: &crate::hooks::Shown, now_ms: i64) -> String 
 }
 
 /// The refusal of `riff cloud deploy` with no `RIFF_OWNER`.
-pub const CLOUD_NO_OWNER: &str = "RIFF_OWNER is not set: the cloud riff needs an owner. Run: \
-export RIFF_OWNER=YOUR_EMAIL";
+pub const CLOUD_NO_OWNER: &str = "RIFF_OWNER is not set: the cloud riff needs your email for \
+its first admin. Run: export RIFF_OWNER=YOUR_EMAIL";
 
 /// The refusal of `riff cloud deploy` with a tag that is not a release
 /// tag.
@@ -14859,7 +14740,7 @@ mod tests {
             row("riff://mike@thelio/o/r?session=d1", 12),
             row("riff://mike@framework/o/r?session=d2", 30),
         ];
-        let out = who(&list, &Default::default(), &list[0].uri);
+        let out = who(&list, &list[0].uri);
         assert!(out.contains("\nHosts:\n"), "{out}");
         assert!(
             out.contains("mike@thelio (12s ago)\n  daemon 3.1.0"),
@@ -15238,7 +15119,7 @@ mod tests {
             seq: 4,
             from: riff_core::name::SessionUri::server(),
             to: vec![],
-            body: "members: ann passed the owner role to mike.".into(),
+            body: "@mike riff release v3.3.0 is cut.".into(),
             at_ms: 0,
             kind: Kind::Riff,
             sig: None,
@@ -15263,7 +15144,7 @@ mod tests {
         let plain = anstream::adapter::strip_str(&text).to_string();
         assert_eq!(
             plain,
-            "00:00  <riff-bot>  riff@server  #4\n       members: ann passed the owner role to mike."
+            "00:00  <riff-bot>  riff@server  #4\n       @mike riff release v3.3.0 is cut."
         );
         // Another kind from the address of riff-server shows its mark.
         let said = Checked {
@@ -15411,7 +15292,7 @@ mod tests {
         assert_eq!(SessionKind::of(&lead), Some(SessionKind::Lead));
 
         let me = "riff://mike@pangolin/o/riff?session=a1".parse().unwrap();
-        let out = who(&[daemon, host, plain], &RiffOwner::NoSignIn, &me);
+        let out = who(&[daemon, host, plain], &me);
         let lines: Vec<&str> = out.lines().collect();
         assert!(
             lines[0].contains("(002d404c) idle daemon  riff://"),

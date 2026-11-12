@@ -139,10 +139,6 @@ pub enum Action {
     Remove { email: String },
     /// `admin` true makes `email` an admin, false a member again.
     Admin { email: String, admin: bool },
-    /// The owner passes the owner role to `email`.
-    PassOwner { email: String },
-    /// An admin asks for the owner role.
-    TakeOwner,
     /// The end of the session `name` on the host `host`.
     End { host: String, name: String },
     /// The end of each session of `repo` on `host` now: `riff host leave
@@ -184,13 +180,6 @@ impl Action {
         }
     }
 
-    /// The pass of the owner role to `email`, in lower case.
-    pub fn pass_owner(email: &str) -> Action {
-        Action::PassOwner {
-            email: email.trim().to_lowercase(),
-        }
-    }
-
     /// The action as a person reads it, on the page of the proof and in
     /// the log.
     ///
@@ -220,8 +209,6 @@ impl Action {
                 email,
                 admin: false,
             } => format!("make {email} a member again"),
-            Action::PassOwner { email } => format!("pass the owner role to {email}"),
-            Action::TakeOwner => "ask for the owner role".into(),
             Action::End { host, name } => format!("end the session {name} on the host {host}"),
             Action::Leave { host, repo } => {
                 format!("end the sessions of {repo} on the host {host} now")
@@ -325,8 +312,6 @@ mod tests {
             Action::remove("bob@acme.io"),
             Action::admin("bob@acme.io", true),
             Action::admin("bob@acme.io", false),
-            Action::pass_owner("bob@acme.io"),
-            Action::TakeOwner,
             Action::End {
                 host: host(),
                 name: name(),

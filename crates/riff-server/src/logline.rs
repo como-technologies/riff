@@ -7,7 +7,7 @@
 //! Logging. Cloud Logging reads a line of JSON as a structured entry,
 //! and takes its level from the field `severity`. So a filter
 //! `severity>=ERROR` finds each error, and an alert on that filter goes
-//! to the owner (01M3TJWJ6J3M6JRXJTAETZ5M6F).
+//! to the address of `RIFF_OWNER` (01M3TJWJ6J3M6JRXJTAETZ5M6F).
 //!
 //! ```text
 //! {"severity":"INFO","time":"2026-09-30T12:00:00.000Z","message":"riff-server listens on 127.0.0.1:7878","target":"riff_server"}

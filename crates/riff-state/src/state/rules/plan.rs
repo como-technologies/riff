@@ -118,8 +118,8 @@ fn a_hold_needs_a_reason_of_1_to_200_characters() {
 }
 
 /// A worker, and a session that is not a lead, get `not_allowed` for
-/// `hold` and `free` (01M43GSGGY0QMB5D5EH92M6ZFP). The owner and an
-/// admin can, also as a person.
+/// `hold` and `free` (01M43GSGGY0QMB5D5EH92M6ZFP). An admin can, also as
+/// a person.
 #[test]
 fn a_worker_and_a_session_that_is_not_a_lead_cannot_hold_or_free() {
     let held = [worker_records(), vec![item_held("issue-12", REASON)]].concat();
@@ -146,13 +146,13 @@ fn a_worker_and_a_session_that_is_not_a_lead_cannot_hold_or_free() {
     let person = Caller::of(&person());
     given(&held)
         .when_as(&person, Free("issue-12"))
-        .then_refused_as(Code::NotAllowed, "the owner or an admin");
+        .then_refused_as(Code::NotAllowed, "or an admin");
     // An admin can, as a session and as a person.
     given(&records)
         .when_as(&carol.with_role(Role::Admin), Free("issue-12"))
         .then(&[item_freed("issue-12")]);
     given(&held)
-        .when_as(&person.with_role(Role::Owner), Free("issue-12"))
+        .when_as(&person.with_role(Role::Admin), Free("issue-12"))
         .then(&[item_freed("issue-12")]);
 }
 
@@ -406,9 +406,9 @@ fn a_plan_needs_items_of_the_form_issue_n_once_each() {
 }
 
 /// The case of the issue (01M4A4YTWK68JDA0DKXX2HV4FA): a worker gets
-/// `not_allowed` for `plan` and `plan_off`, also with the role of the
-/// owner. A session out of the thread and a person who is a member
-/// get it too. The owner and an admin can.
+/// `not_allowed` for `plan` and `plan_off`, also with the role of an
+/// admin. A session out of the thread and a person who is a member get
+/// it too. An admin can.
 #[test]
 fn a_worker_cannot_send_a_plan() {
     let (records, _) = planned(&["issue-12"]);
@@ -431,10 +431,10 @@ fn a_worker_cannot_send_a_plan() {
         .then_refused_as(Code::NotAllowed, "only a session in acme/app");
     given(&records)
         .when_as(&Caller::of(&person()), Off)
-        .then_refused_as(Code::NotAllowed, "the owner or an admin");
+        .then_refused_as(Code::NotAllowed, "or an admin");
     let ended = Change::PlanEnded(PlanEnded { thread: repo() });
     given(&records)
-        .when_as(&Caller::of(&person()).with_role(Role::Owner), Off)
+        .when_as(&Caller::of(&person()).with_role(Role::Admin), Off)
         .then(std::slice::from_ref(&ended));
     given(&records)
         .when_as(&Caller::of(&cy()).with_role(Role::Admin), Off)

@@ -588,7 +588,7 @@ async fn only_the_owner_and_the_admins_read_the_log() {
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("only the owner and the admins can read the log"),
+        stderr.contains("only an admin can read the log"),
         "{stderr}"
     );
 }

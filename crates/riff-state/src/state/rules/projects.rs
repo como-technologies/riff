@@ -79,11 +79,6 @@ fn an_admin_of_the_riff_and_of_the_repository_enrolls_it_and_sets_its_hosts() {
     given(&written)
         .when_as(&admin(), enroll(&[]))
         .then(&[enrolled(&[])]);
-    // The owner is an admin too.
-    let owner = Caller::of(&person()).with_role(Role::Owner);
-    given(&team())
-        .when_as(&owner, enroll(&[]))
-        .then(&[enrolled(&[])]);
 }
 
 /// A member, and a session with each role, cannot enroll or remove a
@@ -252,7 +247,7 @@ fn a_log_with_a_record_of_a_project_gets_no_search() {
 /// Only the server looks for the projects.
 #[test]
 fn only_the_server_looks_for_the_projects() {
-    for caller in [admin(), Caller::of(&ann()).with_role(Role::Owner)] {
+    for caller in [admin(), Caller::of(&ann()).with_role(Role::Admin)] {
         given(&team())
             .when_as(&caller, FindProjects)
             .then_refused_as(Code::NotAllowed, "cannot send the command find_projects");

@@ -81,9 +81,9 @@
 //!   (01M5157V0P92EBHF4M7N9K0RGR). The step fails when `gh` cannot put
 //!   the label on.
 //! - Then the test holds `verify-issue-N`, so a claim of the verify by a
-//!   worker fails. Only a lead, the owner or an admin can hold an item,
-//!   not a worker. When the hold fails, the test goes on with a
-//!   warning: the label keeps the verify.
+//!   worker fails. Only a lead or an admin can hold an item, not a
+//!   worker. When the hold fails, the test goes on with a warning: the
+//!   label keeps the verify.
 //!
 //! ```mermaid
 //! flowchart LR

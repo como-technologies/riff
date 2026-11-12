@@ -420,15 +420,10 @@ whole!(
     MakeRiff,
     Import,
     Admit,
-    GrantOwner,
-    EndOwner,
-    NameOwner,
+    NameAdmins,
     wire::Invite,
     wire::Remove,
     wire::SetAdmin,
-    wire::PassOwner,
-    wire::TakeOwner,
-    wire::DenyOwner,
     wire::Revoke
 );
 

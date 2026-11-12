@@ -989,7 +989,7 @@ fn deploy_runs_one_instance_with_sign_in() {
         "RIFF_PUBLIC_URL=https://riff-server-816917641970.us-central1.run.app,",
         "RIFF_REQUIRE_SIGN_IN=true,",
         "RIFF_BUCKET=como-riff-state,",
-        "RIFF_OWNER=owner@example.com",
+        "RIFF_ADMINS=owner@example.com",
         "--set-secrets RIFF_OIDC_CLIENT_SECRET=riff-oidc-client-secret:latest",
     ] {
         assert!(deploy.contains(flag), "{flag} is not in: {deploy}");
@@ -1051,10 +1051,11 @@ fn the_build_id_of_the_deploy_is_the_output_of_the_script() {
     assert_eq!(lines.len(), 2, "{id}");
 }
 
-/// The cloud riff needs an owner (01M3JN3ASSV9SA0QZKXXJ0RTEV). With
-/// no `RIFF_OWNER`, the deploy stops before it calls gcloud.
+/// The cloud riff needs the email of its first admin in `RIFF_OWNER`
+/// (01M7767SVH8AKK7144QTJGGGRY). With no `RIFF_OWNER`, the deploy stops before
+/// it calls gcloud.
 #[test]
-fn deploy_stops_with_no_owner() {
+fn deploy_stops_with_no_riff_owner() {
     let ran = Cloud::new().run_with(&["deploy", "stage", "v1.0.0"], None, "");
     assert!(!ran.out.status.success());
     assert!(

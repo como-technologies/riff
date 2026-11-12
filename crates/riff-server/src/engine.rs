@@ -35,9 +35,8 @@
 //!   nothing.
 //! - The server is a caller too. The engine has one function for each
 //!   command of the server: [`Engine::make_riff`], [`Engine::announce`],
-//!   [`Engine::forget`], [`Engine::import`], [`Engine::name_owner`],
-//!   [`Engine::grant_owner`], [`Engine::end_owner`] and
-//!   [`Engine::find_projects`]. No HTTP call can send them.
+//!   [`Engine::forget`], [`Engine::import`], [`Engine::name_admins`]
+//!   and [`Engine::find_projects`]. No HTTP call can send them.
 //! - The calls of a project send the command `enroll_project` or
 //!   `remove_project` after a check on GitHub
 //!   ([`Engine::enroll_project`], [`Engine::remove_project`],
@@ -189,17 +188,16 @@ use riff_core::name::{SessionUri, ThreadName, Who};
 use riff_core::proof::Action;
 use riff_core::record::{Change, Record};
 use riff_core::wire::{
-    AliveReply, Approve, CALL_HEADER, Call, Claim, DenyOwner, End, Free, GitHubChange, Hold,
-    Invite, Join, Keys, Lead, Leave, PassOwner, Pause, PlanChanged, PlanOff, Post, REFUSED_HEADER,
-    REPEAT_HEADER, Register, Release, ReleaseFor, Remove, RemoveDevice, Resume, Revoke, SetAdmin,
-    SetIdle, SetNotes, SetPlan, SetPolicy, Start, Tailed, TakeOwner, Wake,
+    AliveReply, Approve, CALL_HEADER, Call, Claim, End, Free, GitHubChange, Hold, Invite, Join,
+    Keys, Lead, Leave, Pause, PlanChanged, PlanOff, Post, REFUSED_HEADER, REPEAT_HEADER, Register,
+    Release, ReleaseFor, Remove, RemoveDevice, Resume, Revoke, SetAdmin, SetIdle, SetNotes,
+    SetPlan, SetPolicy, Start, Tailed, Wake,
 };
 use riff_state::log::Written;
 use riff_state::state::{
     AddKey, Admit, Admitted as SignedInAs, Announce, Arrive, Caller, Cause, Check, Code, Command,
-    CommandKind, Delivery, Done, EndOwner, EnrollProject, FindProjects, Forget, GrantOwner, Import,
-    Imported, Key, MakeRiff, NameOwner, OwnerChange, Prove, Refused, RemoveProject, Role, Signal,
-    State,
+    CommandKind, Delivery, Done, EnrollProject, FindProjects, Forget, Import, Imported, Key,
+    MakeRiff, NameAdmins, Prove, Refused, RemoveProject, Role, Signal, State,
 };
 use tokio::sync::{Notify, broadcast, oneshot};
 
@@ -304,17 +302,7 @@ macro_rules! routed_by_token {
     };
 }
 
-routed_by_token!(
-    Invite,
-    Remove,
-    SetAdmin,
-    PassOwner,
-    TakeOwner,
-    DenyOwner,
-    Revoke,
-    RemoveDevice,
-    SetPolicy
-);
+routed_by_token!(Invite, Remove, SetAdmin, Revoke, RemoveDevice, SetPolicy);
 
 /// With sign-in, a post needs a valid signature from the key of its
 /// token over its payload (R197), and the message keeps the payload and
@@ -1018,15 +1006,20 @@ impl Engine {
     }
 
     /// The caller of `admitted` with its role. The role of a caller
-    /// with a token comes from the people of the pending copy, with the
-    /// admins of the settings ([`State::role`],
-    /// 01M3XA87F70CD3WH4STADSCW6S). The role of a caller with no token
-    /// comes from the trust of the riff (01M3X4Z6G0TG0B4FT2N1FSPDHS): an
-    /// admin in a riff with no sign-in ([`SignIns::trusted`]), else a
-    /// member.
+    /// with a token comes from the people of the pending copy
+    /// ([`State::role`], 01M3XA87F70CD3WH4STADSCW6S). The role of a
+    /// caller with no token comes from the trust of the riff
+    /// (01M3X4Z6G0TG0B4FT2N1FSPDHS): an admin in a riff with no sign-in
+    /// ([`SignIns::trusted`]), else a member.
     fn with_role(&self, admitted: &Admitted, state: &State) -> Caller {
+        self.role_from(admitted, |user| state.role(user))
+    }
+
+    /// The caller of `admitted` with the role that `role_of` gives its
+    /// user, for a caller with a token. See [`Engine::with_role`].
+    fn role_from(&self, admitted: &Admitted, role_of: impl FnOnce(&str) -> Role) -> Caller {
         let role = match &admitted.key {
-            Some(_) => state.role(admitted.who().user()),
+            Some(_) => role_of(admitted.who().user()),
             None if self.0.sign_ins.trusted() => Role::Admin,
             None => Role::Member,
         };
@@ -1054,12 +1047,12 @@ impl Engine {
         Ok(made)
     }
 
-    /// The setting `--owner`: sends the command `name_owner` of the
-    /// server, one time after the load (01M3JN3ASSV9SA0QZKXXJ0RTEV). As
+    /// The setting `--admin`: sends the command `name_admins` of the
+    /// server, one time after the load (01M7767SVH8AKK7144QTJGGGRY). As
     /// [`Engine::make_riff`], it does not wait for the write.
-    pub fn name_owner(&self, email: &str) {
-        let email = email.to_owned();
-        drop(self.send(Engine::as_server(NameOwner { email })));
+    pub fn name_admins(&self, emails: &[String]) {
+        let emails = emails.to_vec();
+        drop(self.send(Engine::as_server(NameAdmins { emails })));
     }
 
     /// The search of the projects at a start (01M76SG8NCSAP69Y5AX455BJQM):
@@ -1109,18 +1102,6 @@ impl Engine {
     pub fn role(&self, admitted: &Admitted) -> Role {
         let core = self.core();
         self.with_role(admitted, &core.state).role()
-    }
-
-    /// Grants a request for the owner role whose time ended: the command
-    /// `grant_owner` of the server. Gives the change that it made.
-    pub async fn grant_owner(&self) -> Result<Option<OwnerChange>, Failed> {
-        self.dispatch(Engine::as_server(GrantOwner)).await
-    }
-
-    /// Ends the role of an owner who is gone: the command `end_owner`
-    /// of the server. Gives the change that it made.
-    pub async fn end_owner(&self) -> Result<Option<OwnerChange>, Failed> {
-        self.dispatch(Engine::as_server(EndOwner)).await
     }
 
     /// The first step of a sign-in: sends the command `admit` for the
@@ -1367,6 +1348,25 @@ impl Engine {
         let place = caller.caller.me().place().clone();
         self.signal(caller, Signal::Called { place }).await?;
         Ok(read(&self.core().state))
+    }
+
+    /// A query that reads as the caller with its role: for a read that
+    /// only some roles may make, for example the notes of another user
+    /// (01M59258NTXPMWV18TKRKWNTYN, 01M77671TQ92487GSM24RJG82Z). The role of a
+    /// caller with a token comes from the people of the written copy, as each
+    /// query reads them (01M3XA87F70CD3WH4STADSCW6S). A caller with no token
+    /// is an admin in a riff with no sign-in, else a member.
+    pub async fn query_as<T>(
+        &self,
+        caller: &Admitted,
+        read: impl FnOnce(&State, &Caller) -> T,
+    ) -> Result<T, Failed> {
+        let place = caller.caller.me().place().clone();
+        self.signal(caller, Signal::Called { place }).await?;
+        let core = self.core();
+        let state = &core.state;
+        let role = |user: &str| state.people().role_of(user);
+        Ok(read(state, &self.role_from(caller, role)))
     }
 
     /// A read for a caller that is not a call of it: it sets no signal,

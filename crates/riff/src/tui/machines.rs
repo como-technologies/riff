@@ -6,7 +6,7 @@
 //!
 //! ```text
 //!  1 Sessions  2 Chat•2  3 Waves•  [4 Machines]  5 Devices  6 Reports
-//!  riff running · owner mike · build 10df8a4 · link ok 2s
+//!  riff running · build 10df8a4 · link ok 2s
 //!  3 hosts · 1 at its limit · 1 low on memory
 //!      HOST       WORK  LOAD     MEM FREE    DISK FREE   USED  WAITS SEEN
 //!  > ! thelio     3/3   19.0/32  2/124 GB !  95/455 GB   79%   1     0s
@@ -1739,7 +1739,7 @@ mod tests {
     use ratatui::buffer::Buffer;
     use riff_client::daemons::{Caps, Leaving, Parts, RepoParts, Session, Test, Wave};
     use riff_client::sessions::Phase;
-    use riff_core::wire::{MachineInfo, RiffOwner, SessionInfo};
+    use riff_core::wire::{MachineInfo, SessionInfo};
 
     /// The time of the screen tests.
     const NOW: i64 = 1_000_000_000;
@@ -1877,14 +1877,12 @@ mod tests {
     /// on memory. The link is good, and riff-server has the same build.
     fn mock_up() -> State {
         let mut state = State::new(build("10df8a4c0ffe"), "riff://mike@thelio".parse().unwrap());
-        let mut look = Look::default();
-        look.who.owner = RiffOwner::Owner {
-            user: "mike".into(),
-            email: "m@x.io".into(),
+        let mut look = Look {
+            server: Some(build("10df8a4c0ffe")),
+            call: Some(Duration::from_millis(118)),
+            reconnects: 1,
+            ..Look::default()
         };
-        look.server = Some(build("10df8a4c0ffe"));
-        look.call = Some(Duration::from_millis(118));
-        look.reconnects = 1;
         let pangolin = Facts {
             sessions: vec![
                 session("7a8b9c0d", "issue-1610", Phase::Works),
@@ -2047,7 +2045,7 @@ mod tests {
         let state = mock_up();
         let mut want: Vec<String> = [
             " 1 Sessions  2 Chat•2  3 Waves•  [4 Machines]  5 Devices  6 Reports",
-            " riff running · owner mike · build 10df8a4 · link ok 2s",
+            " riff running · build 10df8a4 · link ok 2s",
             " 3 hosts · 1 at its limit · 1 low on memory",
             "     HOST       WORK  LOAD     CLOCK          MEM FREE    DISK FREE   USED  POOL          WAITS SEEN",
             " > ! thelio     3/3   19.0/32  4100/5883 MHz  2/124 GB !  95/455 GB   79%   8 CPU 8 GB    1     0s",
@@ -2256,7 +2254,7 @@ mod tests {
         let state = mock_up();
         let mut want: Vec<String> = [
             " 1 Sessions  2 Chat•2  3 Waves•  [4 Machines]  5 Devices  6 Reports",
-            " riff running · owner mike · build 10df8a4 · link ok 2s",
+            " riff running · build 10df8a4 · link ok 2s",
             " 3 hosts · 1 at its limit · 1 low on memory",
             "     HOST       WORK  LOAD     MEM FREE    DISK FREE   USED  WAITS SEEN",
             " > ! thelio     3/3   19.0/32  2/124 GB !  95/455 GB   79%   1     0s",

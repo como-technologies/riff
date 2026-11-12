@@ -105,7 +105,7 @@ riff
 
 The first row has the six tabs: Sessions, Chat, Waves, Machines,
 Devices and Reports. The second row shows the state of the riff, the
-owner, the build of your riff and the link to riff-server. After an
+build of your riff and the link to riff-server. After an
 update, a row under it tells you to start the TUI again: see
 [Start the TUI again after an update](#start-the-tui-again-after-an-update).
 The row
@@ -296,7 +296,7 @@ echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.zprofile
 
 The lead cuts each release: in its container, it pushes the tag
 `vX.Y.Z` with the token of the lead App. Only a person approves the
-deploy: the owner or an admin of a riff that deploys its own server.
+deploy: an admin of a riff that deploys its own server.
 No session approves, also not the lead when you say approve in riff
 chat. The riff daemon tells you in `riff chat` when a deploy waits.
 Approve it in a plain terminal, outside Claude Code:
@@ -764,9 +764,8 @@ riff. See
 [Make the GitHub Apps of riff](start-a-team-riff.md#make-the-github-apps-of-riff).
 A repository of another account, for example `n8behavior`, needs both
 Apps on that account. Without them, no worker starts there: no session
-gets your token. The owner or an admin of the riff runs this in a
-plain terminal, in a clone of the repository. Put the account in place
-of `OWNER`:
+gets your token. An admin of the riff runs this in a plain terminal,
+in a clone of the repository. Put the account in place of `OWNER`:
 
 ```sh
 riff github install OWNER
@@ -785,9 +784,9 @@ App and each install the rights of riff: see
 The owner of an account can install the Apps with **Only select
 repositories**. Then each new repository of the riff on that account
 must be in both installs. `riff github check` in a clone of a
-repository that an install does not have fails, and names the fix. The
-owner or an admin of the riff runs the fix in a plain terminal, in a
-clone of the repository. Put the account in place of `OWNER`:
+repository that an install does not have fails, and names the fix. An
+admin of the riff runs the fix in a plain terminal, in a clone of the
+repository. Put the account in place of `OWNER`:
 
 ```sh
 riff github install OWNER

@@ -11,7 +11,7 @@
 //! | Claims | thread and item | [`Riff`] | The log. The session that holds the item. |
 //! | Leads | user and repository thread | [`Riff`] | The log. The lead session of the user. |
 //! | Riff state | none: one for the server | [`Riff`] | The log. The pause of the riff and of each repository, and the settings of idle workers. |
-//! | People | email, or USER | [`Riff`] | The log. The riff ID, the email of each USER, the members, the admins, the owner, and the request for the owner role (01M3XA875QZ584JBGA37853PWX). |
+//! | People | email, or USER | [`Riff`] | The log. The riff ID, the email of each USER, the members and the admins (01M3XA875QZ584JBGA37853PWX). |
 //! | Projects | repository thread | [`Riff`] | The log. Who enrolled each project and when, and the hosts that may run its wave (01M76SG2E9RPV4B7CYSZPGGZ3P). |
 //! | Known sessions | who | [`Riff`] | The log. The URI and the time of the last record that names the session, and its life cycle: the worker mark, the MustClear mark and the time of its last fresh start (see [`sessions`]). |
 //! | Sessions | who | [`Presence`] | Memory. The place, open watch streams, the last call, the last sign of life, whether it ended, and its last status. |
@@ -44,7 +44,7 @@
 //! | threads | [`threads`] | [`Threads`](threads::Threads) | [`Join`], [`Leave`], [`Post`], [`Announce`] |
 //! | work | [`work`] | [`Work`](work::Work) | [`Claim`], [`Release`], [`ReleaseFor`], [`Lead`] |
 //! | the riff | [`the_riff`] | [`TheRiff`](the_riff::TheRiff) | [`MakeRiff`], [`Pause`], [`Resume`], [`SetIdle`], [`Forget`], [`Import`] |
-//! | people | [`people`] | [`People`] | [`Admit`], `Invite`, `Remove`, `SetAdmin`, `PassOwner`, `TakeOwner`, `DenyOwner`, [`GrantOwner`], [`EndOwner`], [`NameOwner`], `Revoke` |
+//! | people | [`people`] | [`People`] | [`Admit`], `Invite`, `Remove`, `SetAdmin`, [`NameAdmins`], `Revoke` |
 //! | projects | [`projects`] | [`Projects`] | [`EnrollProject`], [`RemoveProject`], [`FindProjects`] |
 //!
 //! The wire type of a command that a client can send is its command
@@ -302,7 +302,7 @@ pub use command::{
     permits,
 };
 pub use devices::{AddKey, PersonKey, Prove};
-pub use people::{Admit, Admitted, EndOwner, GrantOwner, NameOwner, OwnerChange, People};
+pub use people::{Admit, Admitted, NameAdmins, People};
 pub use plan::Plans;
 pub use presence::{Imported, ImportedSession, Presence, Signal};
 pub use projects::{EnrollProject, Enrolled, FindProjects, OnGitHub, Projects, RemoveProject};
@@ -486,17 +486,14 @@ impl State {
     }
 
     /// The same state with these settings of the server
-    /// (01M3XA87F70CD3WH4STADSCW6S): the admins of the settings, the
-    /// public address, and the times of the owner role. Each view holds
+    /// (01M3XA87F70CD3WH4STADSCW6S): the public address. Each view holds
     /// them.
     ///
     /// ```
-    /// use riff_state::owner::Timing;
     /// use riff_state::state::{Role, Settings, State};
     ///
-    /// let settings = Settings::new(&["boss@x.io".into()], "https://riff.x.io", Timing::default());
-    /// let state = State::default().with_settings(settings);
-    /// // A USER with no email is a member, also with the name of an admin.
+    /// let state = State::default().with_settings(Settings::new("https://riff.x.io"));
+    /// // A USER with no email is a member.
     /// assert_eq!(state.role("boss"), Role::Member);
     /// ```
     pub fn with_settings(self, settings: Settings) -> State {
@@ -1015,7 +1012,6 @@ impl State {
         let needs = command.needs(&caller);
         let mut proved = false;
         let result = permits(C::KIND, &caller, needs)
-            .map_err(|refused| self.no_owner(needs, refused))
             .and_then(|()| {
                 proved = self.check_proof(&caller, command, now)?;
                 Ok(())
@@ -1083,29 +1079,16 @@ impl State {
         self.pending.people().keys_of(user).next().is_some()
     }
 
-    /// The refusal of `permits` for a command that needs the owner, in
-    /// a riff with no owner: its text names `riff owner --take`
-    /// (01M3Q63NNC6SC03BFCG80M7B4D). `permits` reads only the caller, so
-    /// it cannot know that the riff has no owner.
-    fn no_owner(&self, needs: Role, refused: Refused) -> Refused {
-        if needs == Role::Owner && self.pending.people().owner().is_none() {
-            Refused::new(refused.code, people::NO_OWNER)
-        } else {
-            refused
-        }
-    }
-
     /// The role of `user` for the check of a command: from the pending
-    /// copy, with the admins of the settings
-    /// (01M3XA87F70CD3WH4STADSCW6S). The queue is in order, so a command
-    /// that comes after a change of a role gets the new role.
+    /// copy (01M3XA87F70CD3WH4STADSCW6S). The queue is in order, so a
+    /// command that comes after a change of a role gets the new role.
     pub fn role(&self, user: &str) -> Role {
         self.pending_view().role_of(user)
     }
 
     /// The people of the written copy, with the settings: for each
     /// query. See [`View::roles`], [`View::persons`] and
-    /// [`View::riff_owner`].
+    /// [`View::admin_users`].
     pub fn people(&self) -> View<'_> {
         self.written_view()
     }
@@ -1116,23 +1099,10 @@ impl State {
         self.written.people().riff_id().map(str::to_owned)
     }
 
-    /// True when the riff has an owner, or had one, in the written
-    /// copy (01M3JN3AQMHZHT6JP3P6GM9PWZ).
-    pub fn owned(&self) -> bool {
-        self.written.people().owned()
-    }
-
-    /// The email of the admin whose request for the owner role waits,
-    /// in the written copy.
-    pub fn asks(&self) -> Option<String> {
-        self.written.people().asks().map(str::to_owned)
-    }
-
-    /// True when a request for the owner role waits, and its time ended
-    /// at `now`, on the clock of the state: the clock that gave the
-    /// request its time.
-    pub fn owner_due(&self, now: Instant) -> bool {
-        self.written.people().is_due(self.ms(now))
+    /// True when the riff has an admin in the written copy
+    /// (01M7767T0PQBQZ0CGA6YJT3VV8).
+    pub fn has_admin(&self) -> bool {
+        self.written.people().has_admin()
     }
 
     /// The position of the last end of the sign-ins of each USER, in
@@ -2343,8 +2313,8 @@ impl State {
 
     /// The notes of the lead of `user` in `thread`, as the query `notes`
     /// gives them (01M59258NTXPMWV18TKRKWNTYN). `user` is the user of
-    /// the caller when it is `None`. Only that user and the owner can
-    /// read them.
+    /// the caller when it is `None`. Only that user and each admin can
+    /// read them (01M77671TQ92487GSM24RJG82Z).
     pub fn notes(
         &self,
         caller: &Caller,
@@ -2769,47 +2739,6 @@ impl State {
     /// for the type-ahead of `@` ([`names`]).
     pub fn names(&self, me: &Who, now: Instant) -> Vec<ChatName> {
         self.written_view().names(me, now)
-    }
-
-    /// True when `user` shows a sign of life at `now`: a session of the
-    /// user that is not gone, or a call of the user at `since` or later,
-    /// also a call as a person (01M3Q546335NBTKG5BHQ27QC93). A person
-    /// entry is not a session, so only its calls count.
-    ///
-    /// ```
-    /// use std::time::{Duration, Instant};
-    /// use riff_core::name::SessionUri;
-    /// use riff_state::state::{GONE, State};
-    ///
-    /// let lead: SessionUri = "riff://ada@thelio/como-technologies/riff?session=a6cf".parse()?;
-    /// let other: SessionUri = "riff://ada@pangolin/como-technologies/riff?session=b7d0".parse()?;
-    /// let person: SessionUri = "riff://ada@pangolin".parse()?;
-    /// let start = Instant::now();
-    /// let mut state = State::default();
-    /// state.register(&lead, start);
-    /// state.register(&other, start);
-    /// state.end(&lead, start);
-    /// assert!(state.present("ada", start, start), "another live session");
-    /// assert!(!state.present("bob", start, start));
-    ///
-    /// let later = start + GONE;
-    /// assert!(!state.present("ada", later, later), "each session is gone");
-    /// state.register(&person, later);
-    /// assert!(state.present("ada", later, later), "a call as a person");
-    /// let after = later + Duration::from_secs(1);
-    /// assert!(!state.present("ada", after, after), "no call since the last check");
-    /// # Ok::<(), riff_core::name::NameError>(())
-    /// ```
-    pub fn present(&self, user: &str, since: Instant, now: Instant) -> bool {
-        self.presence
-            .sessions
-            .iter()
-            .filter(|(who, _)| who.user() == user)
-            .any(|(who, session)| {
-                (who.session().is_some() && !session.gone(now))
-                    || session.alive.is_some_and(|alive| alive >= since)
-                    || session.last_seen >= since
-            })
     }
 
     /// The thread of each repository of the riff, sorted: the repository
@@ -4525,7 +4454,7 @@ mod tests {
                 "users": {"mike": "mike@acme.io"},
                 "members": ["bob@acme.io"],
                 "admins": ["cy@acme.io"],
-                "owner": "mike@acme.io",
+                "owner": "dee@acme.io",
                 "no_owner": true,
                 "owner_asked": {"email": "cy@acme.io", "due_ms": T0},
                 "signins_ended": {"bob": 1},
@@ -4572,9 +4501,22 @@ mod tests {
             .collect();
         assert_eq!(gaps, Vec::<String>::new());
 
+        // The load makes the owner of a checkpoint from before one more
+        // admin, and drops the other fields of the owner role
+        // (01M7767T393P46VTNNE5SY203K).
         let now = Instant::now();
         let state = State::load(Some(full.state.clone()), [], now, T0);
-        assert_eq!(state.snapshot(now, T0), full.state);
+        let mut expected = full_checkpoint();
+        let fields = expected["state"].as_object_mut().unwrap();
+        for old in ["owner", "no_owner", "owner_asked"] {
+            fields.remove(old);
+        }
+        fields.insert(
+            "admins".into(),
+            serde_json::json!(["cy@acme.io", "dee@acme.io"]),
+        );
+        let expected: crate::checkpoint::Checkpoint = serde_json::from_value(expected).unwrap();
+        assert_eq!(state.snapshot(now, T0), expected.state);
     }
 
     /// A JSON round trip of the snapshot of `state`, as a checkpoint

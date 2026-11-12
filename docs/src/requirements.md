@@ -272,11 +272,11 @@
   claim: it does not end a claim, and only a free ends it. A held item
   is no free work. The lead holds an item with `hold`, not with a
   claim.
-- **01M43GSGGY0QMB5D5EH92M6ZFP** Only a lead of the repository thread,
-  the owner or an admin can hold and free an item. A worker gets
-  `not_allowed`, also a worker of the owner. A hold needs a reason of 1
-  to 200 characters. A free of an item with no hold makes no record:
-  the trace is a `no_change` line.
+- **01M43GSGGY0QMB5D5EH92M6ZFP** Only a lead of the repository thread or
+  an admin can hold and free an item. A worker gets `not_allowed`, also
+  a worker of an admin. A hold needs a reason of 1 to 200 characters. A
+  free of an item with no hold makes no record: the trace is a
+  `no_change` line.
 - **01M43GSGPJ69TPWPA4935WR8RW** A claim of a held item by a worker is
   refused with the code `on_hold` and the status 409. The reason names
   the lead, the time and the reason of the hold. Each other session
@@ -304,8 +304,8 @@
   items, and the thread is a repository thread. Else the server refuses
   it with `bad_request`.
 - **01M4A4YTWK68JDA0DKXX2HV4FA** Each session in the repository thread
-  that is not a worker, the owner and each admin can send `plan` and
-  `plan_off`. A worker gets `not_allowed`, also a worker of the owner.
+  that is not a worker, and each admin, can send `plan` and `plan_off`.
+  A worker gets `not_allowed`, also a worker of an admin.
 - **01M4A4YTYVHFGK0CJVACJQ8DQ3** The signal `plan_seen` names the
   position of the plan that a look saw. When it is the position of the
   plan of the server, and the caller is a session in the repository
@@ -1170,11 +1170,11 @@
   GitHub Apps refuses their read, riff-server pauses the whole riff as
   the server: Secret Manager answers 401 or 403, or the file of `--dir`
   has no read right. riff-server then posts one line of the kind `riff`
-  in the chat to the owner and each admin, wakes each repository as a
-  pause of a person does, and logs one error. riff-server reads the keys
-  at its start, at each call that needs them, and at each `riff resume
-  --riff`. The line names the cause, the fix, and a prompt to paste into
-  a `claude` session that an admin starts on the host, in the clone with
+  in the chat to each admin, wakes each repository as a pause of a
+  person does, and logs one error. riff-server reads the keys at its
+  start, at each call that needs them, and at each `riff resume --riff`.
+  The line names the cause, the fix, and a prompt to paste into a
+  `claude` session that an admin starts on the host, in the clone with
   the cloud settings of the riff. The fix is `git pull`, `riff cloud
   create NAME`, then `riff resume --riff`, in a terminal. `riff resume
   --riff` reads the keys first, and riff-server refuses it with the fix
@@ -1243,11 +1243,11 @@
   the pause of the repository.
 - **01M3XAHZDSQR263QZVB41CK0MX** A person (a call with no session ID,
   for example `riff pause` in a shell) or the lead of a repository can
-  pause and resume the repository of the call. Only the owner or an
-  admin can pause and resume the whole riff, or a repository that the
-  call names: as a person, or as a session that is a lead. The server
-  refuses each other caller with the code `not_allowed` and a reason.
-  In a riff with no sign-in, each caller has the role of an admin.
+  pause and resume the repository of the call. Only an admin can pause
+  and resume the whole riff, or a repository that the call names: as a
+  person, or as a session that is a lead. The server refuses each other
+  caller with the code `not_allowed` and a reason. In a riff with no
+  sign-in, each caller has the role of an admin.
 - **01M3JCG3WBHDF0ZWM06XV94ZDC** While a thread is paused, a claim in
   it fails. The refusal says which pause stops it (the riff or the
   repository), who set it, and who can end it. The sessions keep the
@@ -1520,10 +1520,10 @@
 - **01M76SG8NCSAP69Y5AX455BJQM** At a start with no record of a project
   in the log, riff-server enrolls each repository thread that has a lead
   or the notes of a lead, with the command `find_projects` of the
-  server. It then posts one line of the kind `riff` in the chat to the
-  owner: the projects, and to review them with `riff project list`. A
-  riff with no such repository gets no record and no line. A riff with a
-  record of a project runs no such search again.
+  server. It then posts one line of the kind `riff` in the chat: the
+  projects, and to review them with `riff project list`. A riff with no
+  such repository gets no record and no line. A riff with a record of a
+  project runs no such search again.
 - **01M779MKDQFY6982B7D533G8K2** A test changes a file that a fake
   program reads while riff runs, for example the state of a CI run that
   the fake `gh` of a watch of the daemon gives, with
@@ -1536,6 +1536,10 @@
   `Registered::New`. At the end of a watch, the daemon posts its
   messages first and removes the watch after, and a register in that
   time keeps the old watch and adds none.
+- **01M77FVW07HC05Q69HV6971F20** The line of riff-bot after the search
+  of the projects at a start goes in the chat to each admin: one
+  selector `user=USER` for each admin with a USER. With no such admin,
+  the line has no `to`. Supersedes 01M76SG8NCSAP69Y5AX455BJQM in part.
 
 ## Saved state
 
@@ -1926,31 +1930,24 @@
   writes a last checkpoint after it writes the log, also when no
   record came after the last checkpoint.
 - **01M3XA875QZ584JBGA37853PWX** The people are state of the log: the
-  riff ID, the email of each USER, the members, the admins that the
-  owner made, the owner, a riff whose owner is gone, and the request
-  for the owner role with its time. Only `apply` of the kinds
-  `riff_made`, `person_joined`, `member_invited`, `member_removed`,
-  `admin_set`, `owner_set`, `owner_asked`, `owner_denied` and
-  `signins_ended` changes them. The checkpoint holds each of them, so
-  they stay after a restart with a bucket. `who`, `members` and
-  `GET /v1/sign-in` read them from the written copy.
+  riff ID, the email of each USER, the members and the admins. Only
+  `apply` of the kinds `riff_made`, `person_joined`, `member_invited`,
+  `member_removed`, `admin_set`, `owner_set` and `signins_ended` changes
+  them. The checkpoint holds each of them, so they stay after a restart
+  with a bucket. `who`, `members` and `GET /v1/sign-in` read them from
+  the written copy.
 - **01M3XA87NXAP6TEMB34QJ28HVP** Each change of the people is a command
-  through `Engine::dispatch`: `admit`, `invite`, `remove`, `set_admin`,
-  `pass_owner`, `take_owner`, `deny_owner`, `grant_owner`, `end_owner`,
-  `name_owner` and `revoke`. Only a person sends `invite`, `remove`,
-  `set_admin`, `pass_owner`, `take_owner`, `deny_owner`, `revoke` and
-  `set_idle`. Only the sign-in sends `admit`. Only the server sends
-  `grant_owner`, `end_owner` and `name_owner`. A riff with no sign-in
-  refuses each command of the people with the code `no_sign_in`. A
-  command that names a person who is not a member is refused with the
-  code `not_member`.
-- **01M3XA87F70CD3WH4STADSCW6S** The role of a caller with a token
-  comes from the people of the pending copy, with the admins of the
-  settings (R210). So a command that comes after a change of a role in
-  the queue gets the new role. A query reads the people of the written
-  copy. The admins of the settings, the public address and the times of
-  the owner role are settings of the state: each view holds them, and
-  they are not in the log.
+  through `Engine::dispatch`: `admit`, `invite`, `remove`, `set_admin`
+  and `revoke`. Only a person sends `invite`, `remove`, `set_admin`,
+  `revoke` and `set_idle`. Only the sign-in sends `admit`. A riff with
+  no sign-in refuses each command of the people with the code
+  `no_sign_in`. A command that names a person who is not a member is
+  refused with the code `not_member`.
+- **01M3XA87F70CD3WH4STADSCW6S** The role of a caller with a token comes
+  from the people of the pending copy. So a command that comes after a
+  change of a role in the queue gets the new role. A query reads the
+  people of the written copy. The public address is a setting of the
+  state: each view holds it, and it is not in the log.
 - **01M3XA877YZQ649SWB5TN60V5P** The first step of a sign-in is the
   command `admit`. Its caller is the sign-in: the verified email of the
   provider. Then the token store starts the chain. `admit` makes no
@@ -1975,14 +1972,8 @@
   ID. `GET /v1/sign-in` gives the ID of the written copy. A restart on
   the same bucket keeps it. A server with no bucket gets a new riff ID
   at each start.
-- **01M3XA87KQ6ESMQ4W1W1PTW766** `apply` of `owner_set` stores only the
-  owner, and ends the request that waits. A record with no email says
-  that the owner is gone. `handle` keeps the old owner an admin and a
-  member: it gives `member_invited` and `admin_set` for the old owner
-  before `owner_set`, in the same chunk. `set_admin` for a person who
-  is not a member gives `member_invited`, then `admin_set`. The notes
-  of `take_owner`, `deny_owner`, `grant_owner` and `end_owner` are
-  `posted` records in the chunk of the command.
+- **01M3XA87KQ6ESMQ4W1W1PTW766** `set_admin` for a person who is not a
+  member gives `member_invited`, then `admin_set`.
 - **01M3XA87CJHCGZX283ZQAFKARZ** No log line holds an email. An email
   is in a record, and in a reply to a member. The line of a refused
   command of the people has its code and no reason. The line of a
@@ -2097,14 +2088,14 @@
   the log, and removes no record before the first problem. When the
   first problem is before the oldest kept checkpoint, `log verify`
   names no cut, and `log cut` refuses.
-- **01M3ZWRC11R5M9V1KTF05P240W** `POST /v1/log` gives the records of
-  one repository thread, for an audit. Only the owner and the admins
-  can read them; each other person gets 403. The server reads the log
-  from the store. A record of the repository is a post, a membership,
-  a lead, a claim or a release in its thread; a direct message from a
-  session in the repository; the start or the end of a session in the
-  repository; a pause of the riff or of the repository; and a hold or
-  a free of an item of the repository.
+- **01M3ZWRC11R5M9V1KTF05P240W** `POST /v1/log` gives the records of one
+  repository thread, for an audit. Only the admins can read them; each
+  other person gets 403. The server reads the log from the store. A
+  record of the repository is a post, a membership, a lead, a claim or a
+  release in its thread; a direct message from a session in the
+  repository; the start or the end of a session in the repository; a
+  pause of the riff or of the repository; and a hold or a free of an
+  item of the repository.
 - **01M3ZWRC3XBFN8FJDGE8XWZ5EA** A post in the reply of `POST /v1/log`
   has no text of its body, no signature and no payload. Its body is
   only its mark: `request`, `verify request` or `verify result` when
@@ -2146,6 +2137,16 @@
 - **01M48VFXMHBT491BA5XYSRB3BA** A rollback to a build with no call ID
   loses the kept calls. For `CALL_KEEP` after it, a repeated command
   can run two times. The steps of a rollback say so.
+- **01M7767T393P46VTNNE5SY203K** A log and a checkpoint from before keep
+  their records of the owner role, and load. `apply` of an `owner_set`
+  with an email makes that email an admin, as `admin_set` does. An
+  `owner_set` with no email, `owner_asked` and `owner_denied` change
+  nothing. The load of an old checkpoint makes its `owner` an admin, and
+  drops `no_owner` and `owner_asked`. No command writes these kinds. The
+  names of the old commands `pass_owner`, `take_owner`, `deny_owner`,
+  `grant_owner`, `end_owner` and `name_owner` stay in the list of the
+  kinds, and no new kind gets one. Supersedes 01M3XA87KQ6ESMQ4W1W1PTW766
+  and 01M3XA875QZ584JBGA37853PWX in part.
 
 ## Cloud
 
@@ -2321,10 +2322,10 @@
   create` sets each of them, and each deploy sets the memory.
 - **01M3TJWJ6J3M6JRXJTAETZ5M6F** `riff cloud create` makes an alert in
   the cloud project: a log line of the service with the severity `ERROR`
-  or more sends an email to the owner, at most one each 5 minutes. The
-  email comes from `RIFF_OWNER`. With no `RIFF_OWNER`, the setup makes
-  no alert, and says how to make it. `riff cloud log NAME --errors`
-  shows these log lines.
+  or more sends an email to the address of `RIFF_OWNER`, at most one
+  each 5 minutes. With no `RIFF_OWNER`, the setup makes no alert, and
+  says how to make it. `riff cloud log NAME --errors` shows these log
+  lines.
 - **R145** A person makes the OAuth client by hand in the console, with
   the how-to in the book. `riff cloud signin` puts the client secret in
   Secret Manager and the client ID in the settings file. The secret is
@@ -2378,7 +2379,7 @@
   cloud deploy shared TAG --confirm shared`, from the riff of the tag.
 - **01M496K1KN392S11YEH33JGK9N** The CI deploy job of a release runs in
   the GitHub environment `production`. It waits for the approval of the
-  reviewer of that environment, the owner, and deploys only after it.
+  reviewer of that environment, and deploys only after it.
 - **01M496JT94NQ686GVSY5CCGZK7** Each push to `main` deploys to the
   stage in CI, when the repository variable `STAGE_DEPLOY` is `true`,
   after the gate of the push passes. The job runs in the GitHub
@@ -2729,13 +2730,13 @@
   space, and keeps at most 256 characters. A body of the forge is only
   read for numbers and trailers, and is never printed. `riff pr open`
   refuses a wave name that the filter changes.
-- **01M3Q63MVZ74WPNBA3QJYQGHFG** `riff who` shows the facts of the
-  riff, then a table with a row for each session. The facts are
-  `riff` (`running` green, `paused` yellow, with who set the pause),
-  `paused` for each repository that is paused, `owner` and `build`. The
-  columns are SESSION, STATE, ROLE and DETAIL. SESSION is the name
-  with the short session ID, bold, in the same color as in `riff
-  tail`. STATE and DETAIL are the state of the session and its detail
+- **01M3Q63MVZ74WPNBA3QJYQGHFG** `riff who` shows the facts of the riff,
+  then a table with a row for each session. The facts are `riff`
+  (`running` green, `paused` yellow, with who set the pause), `paused`
+  for each repository that is paused, and `build`. The columns are
+  SESSION, STATE, ROLE and DETAIL. SESSION is the name with the short
+  session ID, bold, in the same color as in `riff tail`. STATE and
+  DETAIL are the state of the session and its detail
   (01M3QB6CJ1XCQG5B1BVR8AF3B4). ROLE has `you` in bold and the tags.
   With `--long`, the column URI takes the place of SESSION. The styles
   come from one shared module. The MCP `who` tool stays plain.
@@ -2743,19 +2744,12 @@
   option of each `riff` command. `auto` uses color only when stdout is
   a terminal, and obeys `NO_COLOR` and `CLICOLOR_FORCE`. A pipe gets
   plain text.
-- **01M3Q63NK0AHM25MB258B0K8XP** `riff who` names the owner of the
-  riff in the fact `owner`: `USER (EMAIL)`, or `none`. A riff with no
-  owner ends with the line that names `riff owner --take`, in yellow.
-  A riff with no sign-in shows no owner. The owner is a person: only a
-  row with no session of the owner gets the tag `owner`. The MCP `who`
-  tool shows the owner line `The owner is USER (EMAIL).` or
-  `The riff has no owner.`, plain.
 - **01M3NT4M159EHN5W8JRTQ417N4** A session has a role: `lead`, `worker`,
   or none. A worker (`RIFF_WORKER=1`) says so in each register call, and
   the server keeps it and gives it in `who`. `riff who`, the MCP `who`
   tool and `riff top` tag a session with its role, `lead` or `worker`,
   and with its kind (01M510MG2YSETB2CCAS8XDHPZ0), the same on each
-  machine. No session gets the tag `owner`.
+  machine.
 - **01M510MG2YSETB2CCAS8XDHPZ0** `riff who`, the MCP `who` tool and
   `riff top` tag a session in a container `container`, in place of
   `worker`. The lead in a container has `lead container`. The session
@@ -2772,33 +2766,31 @@
   shows `hosts workers for` and the time. The session of the riff
   daemon shows `hosts containers for` and the time.
 - **01M3NT4M3A4E3K5S2NM7MS6PQD** The reply to `who` lists each member of
-  the riff with a USER, also when away: the USER, the role (`owner`,
-  `admin` or `member`), whether a session of the person is live, and
-  the seconds since the last call of a session of the person. A riff
-  with no sign-in lists none.
-- **01M3NT4M5D36KTZ5XZMDP6QFQT** `riff top` shows a tree with `├─` and
-  `└─` (01M42KHN33M4K13GKTX2WM6CMM). The person line has the USER in a
-  bold color, the tag `owner` or `admin`, and the state of the person
+  the riff with a USER, also when away: the USER, the role (`admin` or
+  `member`), whether a session of the person is live, and the seconds
+  since the last call of a session of the person. A riff with no sign-in
+  lists none.
+- **01M3NT4M5D36KTZ5XZMDP6QFQT** `riff top` shows a tree with `├─`
+  and `└─` (01M42KHN33M4K13GKTX2WM6CMM). The person line has the
+  USER in a bold color, the tag `admin`, and the state of the person
   (01M3QB6CJ1XCQG5B1BVR8AF3B4). Each member of `who` gets a line, also
   when away; with no sign-in, each user of a session. People come by
   USER, hosts by name, and repositories by `OWNER/REPO`. In a
-  repository, blocked sessions come first, then by session ID. A
-  person on the command line gets no session line.
+  repository, blocked sessions come first, then by session ID. A person
+  on the command line gets no session line.
 - **01M3NB54P1RBHTA5TKXP8BMY3K** `riff top` shows a live table of the
   sessions of `riff who`, and draws it again in place every 3 seconds
-  and after each message of the repository thread, until Ctrl-C.
-  `riff top --once` prints one table and exits. The header has the
-  facts of `riff who`: the state, the owner and the build. A board of
-  the current wave of each repository follows
-  (01M42KHN80V49HDDZF953HXDT0): the wave, then one line for each group
-  of its open items, `free`, `held`, `claimed` and `verify`
-  (01M3Z9N6X92KT051P10CKKV7EK). The first line of a
-  session has the short session ID, the tag of its role, and its state.
-  Under it comes one line for each fact of the detail of the state
-  (01M3QB6CJ1XCQG5B1BVR8AF3B4). The titles and the wave come from
-  `gh issue list`, kept for one minute. With no `gh`, the rows still
-  print. `--color` works as in
-  `riff who`.
+  and after each message of the repository thread, until Ctrl-C. `riff
+  top --once` prints one table and exits. The header has the facts of
+  `riff who`: the state and the build. A board of the current wave of
+  each repository follows (01M42KHN80V49HDDZF953HXDT0): the wave, then
+  one line for each group of its open items, `free`, `held`, `claimed`
+  and `verify` (01M3Z9N6X92KT051P10CKKV7EK). The first line of a session
+  has the short session ID, the tag of its role, and its state. Under it
+  comes one line for each fact of the detail of the state
+  (01M3QB6CJ1XCQG5B1BVR8AF3B4). The titles and the wave come from `gh
+  issue list`, kept for one minute. With no `gh`, the rows still print.
+  `--color` works as in `riff who`.
 - **01M3Z9N6X92KT051P10CKKV7EK** On the board of `riff top`, an item
   with no claim whose pull request waits for a verify or for the merge
   is in `verify`, not in `free`. An item with a failed verify is in
@@ -3278,6 +3270,15 @@
   minutes (`GONE`): the host or its daemon is down. After a start of
   riff-server, a lead with no sign of life since that start counts until
   3 minutes after it.
+- **01M7767T8EFVR79NSHKTK53G7B** `riff who`, the MCP `who` tool, `riff
+  members`, `riff top` and the header of the TUI name no owner. No fact
+  is `owner`, and no row gets the tag `owner`. The person line of `riff
+  top` and of the Sessions tab has the tag `admin` for an admin. `riff
+  members` shows the admins, the members, the allowed domains and the
+  proof. Supersedes 01M3Q63NK0AHM25MB258B0K8XP in full, and
+  01M3Q63MVZ74WPNBA3QJYQGHFG, 01M3NT4M159EHN5W8JRTQ417N4,
+  01M3NT4M3A4E3K5S2NM7MS6PQD, 01M3NT4M5D36KTZ5XZMDP6QFQT,
+  01M3NB54P1RBHTA5TKXP8BMY3K and 01M6VAZK4RQSZ0MG2DHWQC598Q in part.
 
 ## Threads
 
@@ -3572,7 +3573,7 @@
   The riff of the person sends only the fact in the call `bot`: the
   version and the run of a release, or the step of the daemon.
   riff-server writes the text from the fact and from what it holds: the
-  owner, the place of the caller and the holds of the version. No text
+  admins, the place of the caller and the holds of the version. No text
   of a client goes into the line: a line of the daemon names the cause
   of a fault only for a clone with no main clone. Only a person and the
   lead of the person make the call. Supersedes
@@ -3625,6 +3626,15 @@
   repository, the chat, `release` and its direct threads, the lead
   reads each message. The unread counts of `threads` do the same. A
   read with `all` gives each kept message.
+- **01M7767T5VSWN9EYDVSTCEJ8AM** Each line of riff-bot of a release
+  names each admin with `@USER`, and wakes each admin by the name: the
+  line of `riff release cut`, the line "waits for your approval" and its
+  reminder. riff-server takes the admins from its people. With no admin
+  that has a USER, the line names no one. `riff release cut` prints the
+  USER of each admin that it told. Supersedes
+  01M74BPHQZHXFYYNXAJ1WFASQQ, 01M5TKDYAFA683KNAJTGYTQD5W,
+  01M7641BHHND5JJA8DGJPFNAN7, 01M5RGD0XTR4X1MEV726HMCEGQ and
+  01M5SNV7BC5J58WRZRJ5HS4NSJ in part.
 
 ## Security
 
@@ -3691,8 +3701,8 @@
   address, unless it gets `--insecure` (`RIFF_INSECURE`). With
   `--insecure` on such an address, it warns at start: each machine that
   can reach it can read, post and answer as any person. A riff with
-  sign-in listens on any address once it has an owner
-  (01M3JN3AQMHZHT6JP3P6GM9PWZ).
+  sign-in listens on any address once it has an admin
+  (01M7767T0PQBQZ0CGA6YJT3VV8).
 - **01M3JZN1VEF73EPFE2FJY36EY4** When `riff-server` refuses an address
   that is not loopback because it has no sign-in, its error names
   `RIFF_OIDC_CLIENT_ID`, `RIFF_OIDC_CLIENT_SECRET` and `--insecure`.
@@ -3716,10 +3726,10 @@
   `merge_group`.
 - **01M6WG52T5PAD9NGQ597CP56K7** `riff github create --owner OWNER`
   makes the two Apps on OWNER, an organization or a personal account,
-  with the manifest flow of GitHub. Only the owner or an admin of the
-  riff runs it. riff-server gives the start page with a new state. A
-  state is good for 10 minutes and for one use. riff-server refuses a
-  state that it did not make, an old one and a used one.
+  with the manifest flow of GitHub. Only an admin of the riff runs it.
+  riff-server gives the start page with a new state. A state is good for
+  10 minutes and for one use. riff-server refuses a state that it did
+  not make, an old one and a used one.
 - **01M6WG52WSWM8A9CN6X448AGAJ** riff-server swaps the code of GitHub
   for the ID, the slug, the private key and the webhook secret of the
   App, and reads the user ID of its bot. On Cloud Run, it keeps them in
@@ -3770,8 +3780,7 @@
   its step.
 - **01M6WPV8473EBABR1ZMEPZMTQQ** Each person of the riff can ask
   riff-server for the Apps of the riff with no account: the ID, the slug
-  and the bot of each App. Only the owner or an admin asks with an
-  account.
+  and the bot of each App. Only an admin asks with an account.
 - **01M6WPMEEWX09DHJZF18BKBPYW** The daemon asks riff-server for the
   token of a session on GitHub with `POST /v1/github/token` and the
   session ID, signed in as the person. riff-server refuses a session
@@ -3798,15 +3807,15 @@
 - **01M6Z7DMYAW52X62TN1DEX9NCG** `riff github install OWNER`, in a clone
   of a repository of OWNER or with `--repo OWNER/NAME`, asks riff-server
   whether the install of each App on OWNER has the repository. It
-  refuses a `--repo` of another account. Only the owner or an admin of
-  the riff asks riff-server with a repository. For each App that is
-  installed without it, riff opens the page Configure of the install,
-  and says to add the repository under "Repository access". riff waits
-  at most 10 minutes until both installs have the repository. Then it
-  runs `riff github check` for the repository. `riff github create` ends
-  with the same steps in a clone. `riff github check` names each App
-  whose install does not have the repository, with the fix `riff github
-  install OWNER`.
+  refuses a `--repo` of another account. Only an admin of the riff asks
+  riff-server with a repository. For each App that is installed without
+  it, riff opens the page Configure of the install, and says to add the
+  repository under "Repository access". riff waits at most 10 minutes
+  until both installs have the repository. Then it runs `riff github
+  check` for the repository. `riff github create` ends with the same
+  steps in a clone. `riff github check` names each App whose install
+  does not have the repository, with the fix `riff github install
+  OWNER`.
 - **01M6Z7R4R56ANXBQN0XJZXNFXW** The how-to "Add another repository to
   the riff" of "Start a Riff" has the step "Add the repository to the
   installs of the Apps", with a copyable `sh` block for `riff github
@@ -3980,14 +3989,13 @@
   of the admin, also to off. A session never sets it.
 - **01M75WKSD5A66RHQMMM5CMKWJB** The actions of the list: the approval
   of the deploy of a release, the answer to a decision that waits for
-  the person (riff questions --answered N), the pass and the take of the
-  owner role, an invite, a removal, a change of an admin, the pause and
-  the resume of the whole riff, the end of a session, riff host leave
-  --now, riff lead stop, riff daemon sweep --remove NAME --force, a
-  take-over, the add of a second key, the removal of a device, and the
-  change of the policy. Each runs on this host or on another one with
-  --host. The accept of an outside pull request joins the list when riff
-  has it.
+  the person (riff questions --answered N), an invite, a removal, a
+  change of an admin, the pause and the resume of the whole riff, the
+  end of a session, riff host leave --now, riff lead stop, riff daemon
+  sweep --remove NAME --force, a take-over, the add of a second key,
+  the removal of a device, and the change of the policy. Each runs on
+  this host or on another one with --host. The accept of an outside
+  pull request joins the list when riff has it.
 - **01M75WKSFX84BHHGFX8VJ37DC6** With required, riff-server refuses each
   action of the list with no proof, with the code needs_proof and the
   status 403. The text names the action and says how to add an
@@ -4046,16 +4054,12 @@
   setting. The default is `comotechnologies.io`.
 - **R94** The domain of an account is the `hd` claim of its ID token. An
   account without `hd` is in no allowed domain.
-- **01M3JN3AD44CC98AGMVP43F56G** The first person who signs in to a riff
-  with sign-in is its owner. On a riff with admins (R210), only an admin
-  becomes the owner. The owner is an admin. A riff that has an owner
-  keeps it.
 - **01M3JN3AFA2SAX0CEC1Y6E4NM5** These people can sign in to a riff with
-  sign-in: the owner, the admins, the members, and the accounts of the
-  allowed domains (R15). A member is named by verified email. A member
-  needs no allowed domain and no `hd`. On a riff with no owner and no
-  admin, the first person signs in. The refusal of a person tells them
-  to ask the owner for `riff invite EMAIL`.
+  sign-in: the admins, the members, and the accounts of the allowed
+  domains (R15). A member is named by verified email. A member needs no
+  allowed domain and no `hd`. On a riff with no admin, the first person
+  signs in. The refusal of a person tells them to ask an admin for `riff
+  invite EMAIL`.
 - **01M3MEF4B33Z6WVJMDP29C7SS2** `riff invite EMAIL` prints the public
   address of the riff (the `--public-url` of `riff-server`) and the
   lines that the person runs to join: install `riff`, set `RIFF_SERVER`
@@ -4063,77 +4067,18 @@
 - **01M3MEFG6F102T1H8DFJ38EJ4A** The book page "Start a Team Riff"
   starts a riff with sign-in for a team, on a Linux host that the team
   reaches, behind a TLS proxy: the OIDC app of the team in the
-  environment of `riff-server`, `--public-url`, `--owner`, a sign-in of
-  the owner, and `riff invite EMAIL` for each person. No secret is on
+  environment of `riff-server`, `--public-url`, `--admin`, a sign-in of
+  the admin, and `riff invite EMAIL` for each person. No secret is on
   the page.
 - **01M3JY7T109BR860EQBSKEFDHY** `riff admin add EMAIL` makes a person
   an admin and a member. `riff admin remove EMAIL` makes an admin a
-  member again. Only the owner can do either. The owner stays an admin.
-  `riff remove` refuses an admin that the owner made.
-- **01M3JY7T3645CMQ8CS4T4ABZTP** `riff-server` keeps the admins that the
-  owner made with the owner and the members. They stay after a restart
-  with a bucket. The admins of R210 add to them. `riff members` shows
-  both.
-- **01M3JYX8NPZASQY6031R35H39P** `riff owner EMAIL` passes the owner
-  role to a member or an admin. Only the owner can. A riff has one owner
-  at a time. The old owner stays an admin.
-- **01M3JYX8QSEZDB5RZJ3Y57DR4Y** `riff-server` keeps a passed owner role
-  in its state. It stays after a restart with a bucket, also when
-  `--owner` names the old owner.
-- **01M3N7K3ZAZFGABN7032AYJWEM** `riff owner --take`: an admin asks for
-  the owner role. Only an admin can. `riff-server` tells the owner at
-  once: a direct message to each live lead of the owner. One request
-  waits at a time. A second request is refused, and the refusal names
-  the admin that asked first.
-- **01M3WRJAFS6W3J2ZRJ6XSW3SB5** `riff owner --take` by the owner is not
-  an error. It says that the user is the owner already, and exits with
-  0. It changes nothing: no request, no note and no message.
-- **01M3N7K41N03P26BEFFNX5617K** The owner answers a request in N
-  minutes. `riff owner EMAIL` passes the role and ends the request.
-  `riff owner --deny` keeps the role: the riff tells the admin with a
-  direct message to each live lead of the admin. With no answer in N
-  minutes, the admin that asked is the owner. The old owner stays an
-  admin.
-- **01M3Q5460YESBSQHTV3M15PE53** `riff-server` has three settings of the
-  owner role, each 1 or more: N is `--owner-take-minutes`
-  (`RIFF_OWNER_TAKE_MINUTES`, default 10). M is `--owner-ping-minutes`
-  (`RIFF_OWNER_PING_MINUTES`, default 10). P is `--owner-pings`
-  (`RIFF_OWNER_PINGS`, default 3).
-- **01M3Q546335NBTKG5BHQ27QC93** `riff-server` checks the owner each M
-  minutes, while the riff has an owner and an admin who is not the
-  owner. A check misses when no session of the owner is live, and the
-  owner made no call since the last check, also as a person. A check
-  wakes no session. After P misses in a row, the server warns the owner:
-  one line in the chat. When the next check misses too, the owner is
-  gone, and stays an admin. The admin of a request that waits is the
-  owner at once. With no request, the riff has no owner, and asks for a
-  volunteer: a direct message to each live lead of each admin.
-- **01M3Q63NNC6SC03BFCG80M7B4D** On a riff with no owner, `riff owner
-  --take` of an admin makes that admin the owner at once. `riff members`
-  shows the owner `none` and ends with the line that says that the riff
-  has no owner, in yellow. `riff admin`, `riff owner EMAIL` and `riff
-  owner --deny` are refused, with a text that names `riff owner --take`.
-  A sign-in makes no owner.
+  member again. `riff remove` refuses an admin.
+- **01M3JY7T3645CMQ8CS4T4ABZTP** `riff-server` keeps the admins with the
+  members. They stay after a restart with a bucket.
 - **01M3N7K4BC1RPZKQ1XNDTBRPGF** `riff-server` posts its own notes and
   messages as `riff://riff@server`. The USER `riff` belongs to the
   server: no person signs in with it. A post of the server has no
   signature. The server is not a session: `who` does not show it.
-- **01M3N7K4GAKJ621V5AWJRQVF3M** `riff-server` keeps a request that
-  waits, and a riff with no owner, with the tokens in its state. They
-  stay after a restart with a bucket. A request whose time ended while
-  the server was down is granted at the first look after the load.
-  `--owner` names no owner on a riff with no owner. A riff with no owner
-  counts as a riff with an owner for the listen address
-  (01M3JN3AQMHZHT6JP3P6GM9PWZ).
-- **01M3JN3AQMHZHT6JP3P6GM9PWZ** A riff with sign-in listens only on a
-  loopback address until it has an owner, so the owner signs in from the
-  machine of the server. `riff-server` refuses another address at start,
-  also with `--insecure`. It checks again after it loads its bucket.
-  Before the load, it counts `RIFF_OWNER` or a bucket as an owner.
-- **01M3JN3ASSV9SA0QZKXXJ0RTEV** `--owner EMAIL` (`RIFF_OWNER`) names
-  the owner of a riff that has none. The cloud deploy passes it from the
-  GitHub Actions variable `RIFF_OWNER`. The deploy stops with an error
-  when the variable is missing.
 - **R16** `riff-server` issues its own tokens. It accepts sign-in from
   each OpenID Connect provider in its settings.
 - **R17** An access token expires in 10 minutes or less. A refresh token
@@ -4313,22 +4258,13 @@
   token in the `Authorization` header.
 - **R47** Each session connects through `riff`. Direct connections from
   an agent tool are not supported for now.
-- **01M6FYH5XZAZYJFPFQVAFQSSVT** Each change of the owner role posts
-  one line in the chat, as `riff://riff@server`. The line has no `to`:
-  it wakes no session. A person sees it in `riff chat`. The server posts
-  the line in the chunk of the command that makes the change, so a
-  replay of the log has it.
 - **01M76S6128EZRZS2D5CE2QCC05** riff-server posts a change of the
-  members in the chat too, as 01M6FYH5XZAZYJFPFQVAFQSSVT says for the
-  owner role: `riff invite`, `riff remove`, `riff admin add` and `riff
-  admin remove` each post one line. The steps of the owner role that
-  post a line are a request, a pass, a deny, a grant after N minutes,
-  the warning to the owner, a gone owner, and a take on a riff with no
-  owner. The line of a command of a person names its user, the email and
-  the change. A line holds no secret and no token. No change of the
-  people posts a note to the thread of a repository: neither riff-server
-  nor `riff` posts one. The direct message to each live lead stays
-  (#313). Supersedes 01M3N7K4DVHSF7AQ402F14J26Z,
+  members in the chat: `riff invite`, `riff remove`, `riff admin add`
+  and `riff admin remove` each post one line. The line of a command of
+  a person names its user, the email and the change. A line holds no
+  secret and no token. No change of the people posts a note to the
+  thread of a repository: neither riff-server nor `riff` posts one.
+  Supersedes 01M3N7K4DVHSF7AQ402F14J26Z,
   01M3MN14ZCTRVD3T455P6TFK1B and 01M3MN1537Z0K3BRK6H2BZKZT0 in full, and
   01M6FYH5XZAZYJFPFQVAFQSSVT, 01M3N7K3ZAZFGABN7032AYJWEM,
   01M3N7K41N03P26BEFFNX5617K and 01M3Q546335NBTKG5BHQ27QC93 in part.
@@ -4340,6 +4276,64 @@
   opens a new connection with a new plain session. So a riff daemon
   reads its secrets again after a restart of the keyring, with no
   restart of `riff.service`. Supersedes 01M54510PS9FDKQKJB0RAH3XG3 in
+  part.
+- **01M77671TQ92487GSM24RJG82Z** A riff with sign-in has two roles of a
+  person: member and admin. An admin is a member too. Each admin does
+  what the owner did: an admin invites and removes a member, makes a
+  person an admin, makes an admin a member again, and reads the notes of
+  each lead and the log. riff has no owner: `riff owner EMAIL`, `riff
+  owner --take`, `riff owner --deny`, the check of a gone owner, and the
+  settings `--owner`, `--owner-take-minutes`, `--owner-ping-minutes` and
+  `--owner-pings` are gone. Supersedes 01M3JYX8NPZASQY6031R35H39P,
+  01M3JYX8QSEZDB5RZJ3Y57DR4Y, 01M3N7K3ZAZFGABN7032AYJWEM,
+  01M3WRJAFS6W3J2ZRJ6XSW3SB5, 01M3N7K41N03P26BEFFNX5617K,
+  01M3Q5460YESBSQHTV3M15PE53, 01M3Q546335NBTKG5BHQ27QC93,
+  01M3Q63NNC6SC03BFCG80M7B4D,
+  01M3N7K4GAKJ621V5AWJRQVF3M and 01M6FYH5XZAZYJFPFQVAFQSSVT in full, and
+  01M3JY7T109BR860EQBSKEFDHY, 01M3MEFG6F102T1H8DFJ38EJ4A,
+  01M76S6128EZRZS2D5CE2QCC05, 01M43GSGGY0QMB5D5EH92M6ZFP,
+  01M4A4YTWK68JDA0DKXX2HV4FA, 01M6YC3SYATQW7GZZV3APFG85B,
+  01M3XAHZDSQR263QZVB41CK0MX, 01M3ZWRC11R5M9V1KTF05P240W,
+  01M3TJWJ6J3M6JRXJTAETZ5M6F, 01M496K1KN392S11YEH33JGK9N,
+  01M6WG52T5PAD9NGQ597CP56K7, 01M6WPV8473EBABR1ZMEPZMTQQ,
+  01M6Z7DMYAW52X62TN1DEX9NCG, 01M75WKSD5A66RHQMMM5CMKWJB,
+  01M5QVX8D3JE51FAYRWXMAYFAY, 01M6QPQZ0FNEZFQ1F4Q9C7FEEQ,
+  01M74A8CXVRD352VRJ9FH54HJ1, 01M4Z60B8JEX15M1Q2435FZSDM,
+  01M59269HHZ5C82DR3RG3QHAM3, 01M6WZ40SFVZ6CRQ1H4Z27CWP4,
+  01M5SNV7E775DRY9QY60E8JPJR, 01M6XTS1GCW7PTWSMM1HKQTHSN,
+  01M59258NTXPMWV18TKRKWNTYN and 01M59258VCNV9AMGMQTDH936SK in part.
+- **01M7767SRX4K1N1BCDHT7M85DN** The first person who signs in to a riff
+  with sign-in and no admin is an admin and a member. A sign-in to a
+  riff with an admin makes no admin. Supersedes
+  01M3JN3AD44CC98AGMVP43F56G in full, and 01M3JN3AFA2SAX0CEC1Y6E4NM5 in
+  part.
+- **01M7767SVH8AKK7144QTJGGGRY** At each start, `riff-server` makes each
+  email of `--admin EMAIL` (`RIFF_ADMINS`, R210) an admin and a member:
+  the command `name_admins`, one time after the load. Only the server
+  sends it. An admin that `riff admin remove` made a member is an admin
+  again at the next start with that setting. The cloud deploy passes the
+  email of the GitHub Actions variable `RIFF_OWNER` to `riff-server` as
+  `RIFF_ADMINS`, and stops with an error when the variable is missing.
+  Supersedes 01M3JN3ASSV9SA0QZKXXJ0RTEV in full, and
+  01M3JY7T3645CMQ8CS4T4ABZTP, 01M3XA87NXAP6TEMB34QJ28HVP and
+  01M3XA87F70CD3WH4STADSCW6S in part.
+- **01M7767SY5PW1AMB0PBMW2GXDX** The riff keeps its last admin. `riff
+  admin remove EMAIL` of the last admin is refused and changes nothing.
+  The refusal says to make another person an admin first with `riff
+  admin add EMAIL`.
+- **01M7767T0PQBQZ0CGA6YJT3VV8** A riff with sign-in listens only on a
+  loopback address until it has an admin, so the first admin signs in
+  from the machine of the server. `riff-server` refuses another address
+  at start, also with `--insecure`, and the refusal names `riff login`
+  and `--admin EMAIL`. It checks again after it loads its bucket. Before
+  the load, it counts an email of `--admin`, or a bucket, as an admin.
+  Supersedes 01M3JN3AQMHZHT6JP3P6GM9PWZ in full, and
+  01M3JCE4ZD4DZCQ21FA69RT52D in part.
+- **01M77BSQQGGNE83ECS27YGVEP1** Each line of a change of the members in
+  the chat comes from `riff://riff@server`. The line has no `to`: it
+  wakes no session. A person sees it in `riff chat`. riff-server posts
+  the line in the chunk of the command that makes the change, so a
+  replay of the log has it. Supersedes 01M76S6128EZRZS2D5CE2QCC05 in
   part.
 
 ## Terminal
@@ -7143,8 +7137,8 @@ of this part when they merge.
   the socket of the session (RIFF_SOCKET), as riff wave list does. They
   need no RIFF_SERVER and no sign-in in the container. Only the lead can
   read the log for riff audit, and riff-server still gives it only to
-  the owner and the admins. riff invite, riff remove, riff admin and
-  riff owner stay for a person in a terminal on the host (#1338).
+  the admins. riff invite, riff remove and riff admin stay for a person
+  in a terminal on the host (#1338).
 - **01M5QVX8FFG2FPWZEW61A985CF** In the container of the lead, riff run
   ITEM asks the riff daemon on the socket of the session to run the item
   as a job of the wave of the repository: the claim, the clone, the
@@ -7207,9 +7201,9 @@ of this part when they merge.
   plan free reach riff-server through the riff daemon on the socket of
   the session (RIFF_SOCKET), as riff who does. They need no RIFF_SERVER
   and no sign-in in the container. The daemon makes the call as the
-  session. riff-server still lets only a lead of the repository thread,
-  the owner and an admin hold and free, and gives a work session
-  `not_allowed` (#1619).
+  session. riff-server still lets only a lead of the repository thread
+  and an admin hold and free, and gives a work session `not_allowed`
+  (#1619).
 - **01M6QVSJC4V3Z3NB6MJW4XGJSR** `riff lead start` starts the lead of
   the repository on the host and attaches, and the host gets the part
   `lead`. It starts no wave, no worker and no session of an item, and it
@@ -7313,12 +7307,12 @@ of this part when they merge.
   with no row, and for a row whose command asks the riff-server of
   the machine (#1733).
 - **01M74A8CXVRD352VRJ9FH54HJ1** In a container, riff login, riff
-  logout, riff invite, riff remove, riff admin, riff owner, riff chat,
-  riff tail, riff claim, riff release ITEM, riff lead --session, riff
-  lead start, riff lead move, riff lead notes, riff questions
-  --answered, riff server, riff update and riff cloud refuse before each
-  call. The refusal says that the command needs the host, and that the
-  commands of a session work in the container (#1733).
+  logout, riff invite, riff remove, riff admin, riff chat, riff tail,
+  riff claim, riff release ITEM, riff lead --session, riff lead start,
+  riff lead move, riff lead notes, riff questions --answered, riff
+  server, riff update and riff cloud refuse before each call. The
+  refusal says that the command needs the host, and that the commands of
+  a session work in the container (#1733).
 - **01M74A8D1GV6TCPXV2XEPVA53A** Through the socket of a session, each
   session can post, tell, read, set its status, say that it is blocked,
   and start, end or fail a long step, as with its riff tools. Only the
@@ -8136,9 +8130,9 @@ of this part when they merge.
 ### The security of riff's own code
 
 - **01M4Z60B8JEX15M1Q2435FZSDM** A session gets no power that a plain
-  `claude` lacks, other than the riff tools. An owner or admin step, for
-  example to admit a member or to change a role, needs a person at the
-  CLI. No MCP tool does it.
+  `claude` lacks, other than the riff tools. An admin step, for example
+  to admit a member or to change a role, needs a person at the CLI. No
+  MCP tool does it.
 - **01M4Z60B8KDXD190RWC7D184Q3** No secret goes into a log line, a
   message or a file of a clone. riff builds no shell string from input.
   CI keeps `clippy -D warnings` and `cargo audit`.
@@ -8182,13 +8176,13 @@ of this part when they merge.
   command. The instructions of the lead have no tag line and no `gh
   release` line.
 - **01M59269HHZ5C82DR3RG3QHAM3** `riff release check`, `retry` and
-  `rollback` allow the lead of the owner or of an admin in a container
-  (`riff lead start`). The daemon tells the lead from a work session by
-  the socket of the session: only the session with a terminal is the
-  lead, and a work session cannot forge that. A work session in a
-  container is still refused. The container of the lead has `RIFF_USER`,
-  so the riff commands find their user without a keyring, and
-  `RIFF_CHECK` names a folder that it can write for `riff build`.
+  `rollback` allow the lead of an admin in a container (`riff lead
+  start`). The daemon tells the lead from a work session by the socket
+  of the session: only the session with a terminal is the lead, and a
+  work session cannot forge that. A work session in a container is still
+  refused. The container of the lead has `RIFF_USER`, so the riff
+  commands find their user without a keyring, and `RIFF_CHECK` names a
+  folder that it can write for `riff build`.
 - **01M5SMPX8NM75P8E38DGQ17W7B** Only a repository whose `riff.toml` has
   the table `[release]` has the release cycle of riff. Without it, each
   `riff release` subcommand but `hold`, `riff build` and the
@@ -8208,7 +8202,7 @@ of this part when they merge.
   is not TOML are errors that name their cause. `riff release` and `riff
   build` in the clone of a person still read the working tree.
 - **01M5TKDYAFA683KNAJTGYTQD5W** The line that `riff release cut` writes
-  in riff chat asks the owner for nothing. The only ask is the line of
+  in riff chat asks the admins for nothing. The only ask is the line of
   riff while the job `Deploy` waits ("riff release vX.Y.Z waits for your
   approval", also "still waits" in a reminder).
 - **01M5TKMVB7CF0QNAWXEVGEQETJ** A reader shows a line of the kind
@@ -8216,11 +8210,11 @@ of this part when they merge.
   name in `riff post`.
 - **01M6WZ40SFVZ6CRQ1H4Z27CWP4** Only a person approves a deploy. `riff
   release approve` refuses the lead of each user, in a container and in
-  a terminal, also when the owner or an admin said approve in riff chat.
-  riff reads no approval from riff chat. Supersedes
-  01M5NCYW06FJ8P5X629VFK1BNR in full, and 01M594XQJMXAXY3JXP66Y8EVQ7,
-  01M58B0JSQMWNCMSNX19536XT8, 01M5TKDYAFA683KNAJTGYTQD5W,
-  01M5TKMVB7CF0QNAWXEVGEQETJ and 01M5TQ0DX4M2EJJGE7QA8DZVYS in part.
+  a terminal, also when an admin said approve in riff chat. riff reads
+  no approval from riff chat. Supersedes 01M5NCYW06FJ8P5X629VFK1BNR in
+  full, and 01M594XQJMXAXY3JXP66Y8EVQ7, 01M58B0JSQMWNCMSNX19536XT8,
+  01M5TKDYAFA683KNAJTGYTQD5W, 01M5TKMVB7CF0QNAWXEVGEQETJ and
+  01M5TQ0DX4M2EJJGE7QA8DZVYS in part.
 - **01M6ZM68Y1QCTA2M8DHYRMKBPN** `riff release cut` refuses, before it
   makes the release issue, while an alert of the repository has no
   review. It reads the code scanning alerts, of security and of quality,
@@ -8252,8 +8246,8 @@ of this part when they merge.
   of the account of `gh`: the ruleset `releases` decides the push of the
   tag. When GitHub refuses the push, the refusal names the ruleset
   `releases`, the admin role and the lead App, and riff deletes the
-  local tag. After the release, it posts a chat line to the owner in
-  `riff chat`: the version, the CI run, and that riff tells the owner
+  local tag. After the release, it posts a chat line to each admin in
+  `riff chat`: the version, the CI run, and that riff tells each admin
   when the deploy waits. It needs no paused riff. Supersedes
   01M58B0JABCET719T3HFB19NDW, 01M58KMM1BHX3YY81BPZG04JSX and
   01M6WZ40VYDBBTJBTQEBY2984P in full, and 01M58B0HZYMAK1B2AJMWKHCXG0 in
@@ -8410,9 +8404,9 @@ of this part when they merge.
   watch goes, and no second message comes for the same end. A watch
   whose state riff cannot read goes on.
 - **01M5RGD0XTR4X1MEV726HMCEGQ** The watch of the tag posts the line
-  "waits for your approval" to the owner in `riff chat`, and a message
+  "waits for your approval" to each admin in `riff chat`, and a message
   to the lead, only when the job `Deploy` waits for `production`. While
-  it waits, the watch reminds the owner in `riff chat` each 4 hours.
+  it waits, the watch reminds each admin in `riff chat` each 4 hours.
 - **01M5RGD12P0GZDDR9HWHP4N0KP** When the last open item of the current
   wave closes, the daemon posts one message to the lead: "Wave N is
   complete", with the next steps of the release, or `riff wave end N
@@ -8438,14 +8432,14 @@ of this part when they merge.
   reason.
 - **01M5SNV7BC5J58WRZRJ5HS4NSJ** `riff release status` shows each hold
   of the current release and of each deploy that waits, as "the lead of
-  OWNER/REPO asks to wait: REASON". The chat line to the owner while the
-  job `Deploy` waits for the approval, and each reminder, shows each
+  OWNER/REPO asks to wait: REASON". The chat line to the admins while
+  the job `Deploy` waits for the approval, and each reminder, shows each
   hold of the version in the same words.
 - **01M5SNV7E775DRY9QY60E8JPJR** `riff release approve vX.Y.Z` refuses
   while a hold of that version stands. It names each hold with its
   reason, and says `next:` the end of the hold or `--over-holds`. A
   person in a plain terminal passes `--over-holds` to approve all the
-  same. The lead of the owner never passes it: `--over-holds` refuses in
+  same. The lead of an admin never passes it: `--over-holds` refuses in
   each agent session.
 - **01M5SSXJNW7CR0E1EE6G4KNFJ4** The command `riff release hold` works
   in a repository with no `[release]` in `riff.toml`: the lead of
@@ -8932,10 +8926,10 @@ that builds it merges.
   you looked at it gets `•` after its name, or `•N` for N new lines.
   The news of a tab goes when you open it.
 - **01M6VAZK4RQSZ0MG2DHWQC598Q** The header of the TUI shows the state
-  of the whole riff (`running` or `paused`), the owner, the build ID of
-  this riff, and the link: `link ok` with the age of the last good look,
-  or `link down`. When riff-server has another build, the header names
-  its ID too.
+  of the whole riff (`running` or `paused`), the build ID of this riff,
+  and the link: `link ok` with the age of the last good look, or `link
+  down`. When riff-server has another build, the header names its ID
+  too.
 - **01M6VAZK7N636Q0JFSV553A9ES** The TUI looks at riff-server with the
   calls `riff` and `who` each 3 seconds, and each 15 seconds after 2
   minutes with no key and no click. The key `r` looks again at once. A
@@ -9355,7 +9349,7 @@ that builds it merges.
   vX.Y.Z)`, `vX.Y.Z: the deploy runs; the riff is paused`, `vX.Y.Z: the
   deploy passed; it waits for the check of the lead of OWNER/REPO`,
   `vX.Y.Z: the deploy failed; it waits for the check of the lead of
-  OWNER/REPO`, or `vX.Y.Z: the check failed: the owner resumes or rolls
+  OWNER/REPO`, or `vX.Y.Z: the check failed: an admin resumes or rolls
   back`. After a resume, a failed check gives `vX.Y.Z: the check failed:
   the lead of OWNER/REPO fixes forward or rolls back`, and a passed
   deploy or a failed deploy gives no line. The line comes from the facts
@@ -9501,8 +9495,8 @@ that builds it merges.
   history, also in the checkpoint. The same text makes no record. The
   text has 64 KiB at most. A longer text gets `bad_request` that says
   the limit.
-- **01M59258NTXPMWV18TKRKWNTYN** The user of the lead and the owner
-  of the riff read the notes (`POST /v1/notes`, with the history when
+- **01M59258NTXPMWV18TKRKWNTYN** The user of the lead and each admin of
+  the riff read the notes (`POST /v1/notes`, with the history when
   asked). Another member gets `not_allowed`. The person of the user and
   a session of the user that is not a worker write the notes of the
   user. A worker gets `not_allowed`.
@@ -9512,7 +9506,7 @@ that builds it merges.
   not repeat the text.
 - **01M59258VCNV9AMGMQTDH936SK** `riff lead notes` shows the notes of
   the person in the repository thread, with `--history` the old texts,
-  with `--user` the notes of another user (owner only), and with
+  with `--user` the notes of another user (admin only), and with
   `--thread` another repository thread. `riff lead notes edit` opens
   `$VISUAL`, `$EDITOR` or `vi` on the notes, and `riff lead notes edit
   --file FILE` takes the new text from a file (`-` is the standard

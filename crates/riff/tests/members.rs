@@ -1,7 +1,7 @@
-//! `riff invite`, `riff remove`, `riff members`, `riff admin` and `riff owner` against a real
-//! server (01M3JN3AHMK532XMRDASD4XD5D), and the owner in `riff who`
-//! (01M3Q63NK0AHM25MB258B0K8XP). The sign-in is in the mock store of
-//! `keyring-core`, so the tests run in process.
+//! `riff invite`, `riff remove`, `riff members` and `riff admin` against a
+//! real server (01M3JN3AHMK532XMRDASD4XD5D, 01M77671TQ92487GSM24RJG82Z), and
+//! the people in `riff who`, with no owner (01M7767T8EFVR79NSHKTK53G7B). The
+//! sign-in is in the mock store of `keyring-core`, so the tests run in process.
 //!
 //! A riff here has sign-in, unless the test is about a riff with no
 //! sign-in: such a riff has no people. The tests read the people
@@ -23,6 +23,7 @@ use riff_core::wire::{Kind, PersonRole, RiffState, TokenReply};
 use riff_server::Service;
 use riff_server::auth::Config;
 use riff_server::oidc::Provider;
+use riff_state::state::people::last_admin;
 
 /// A riff with sign-in. A call with no token is not refused.
 async fn start() -> (Service, Api) {
@@ -100,7 +101,7 @@ fn session(user: &str, id: &str) -> SessionUri {
 async fn who(api: &Api, me: &SessionUri) -> String {
     let pauses = api.pauses(me).await.unwrap();
     let who = api.roster(me, false).await.unwrap();
-    let text = riff::view::who(&pauses, &who.owner, &who.sessions, me, false);
+    let text = riff::view::who(&pauses, &who.sessions, me, false);
     anstream::adapter::strip_str(&text).to_string()
 }
 
@@ -115,7 +116,7 @@ fn repo() -> ThreadName {
 }
 
 #[tokio::test]
-async fn the_owner_invites_lists_and_removes() {
+async fn the_first_admin_invites_lists_and_removes() {
     let (service, api) = start().await;
     let signed_in = as_person(&service, &api, "ada@gmail.com").await;
 
@@ -144,7 +145,7 @@ async fn the_owner_invites_lists_and_removes() {
     let list = signed_in.members().await.unwrap();
     assert_eq!(
         members(&list),
-        "owner            ada@gmail.com\nadmins           none\nmembers          bob@gmail.com\n\
+        "admins           ada@gmail.com\nmembers          bob@gmail.com\n\
          allowed domains  none\nproof            off\n"
     );
 
@@ -167,7 +168,7 @@ async fn the_owner_invites_lists_and_removes() {
 
 #[tokio::test]
 async fn a_member_cannot_invite() {
-    // Given the owner ada, who invites bob.
+    // Given the admin ada, who invites bob.
     let (service, api) = start().await;
     let ada = as_person(&service, &api, "ada@gmail.com").await;
     ada.invite("bob@gmail.com").await.unwrap();
@@ -196,7 +197,7 @@ async fn members_needs_a_sign_in() {
 }
 
 #[tokio::test]
-async fn the_owner_makes_an_admin_who_invites_and_removes() {
+async fn an_admin_makes_an_admin_who_invites_and_removes() {
     let (service, api) = start().await;
     let added = as_person(&service, &api, "ada@gmail.com")
         .await
@@ -215,36 +216,75 @@ async fn the_owner_makes_an_admin_who_invites_and_removes() {
     let list = bob.members().await.unwrap();
     assert_eq!(
         members(&list),
-        "owner            ada@gmail.com\nadmins           bob@gmail.com\nmembers          carol@gmail.com\n\
+        "admins           ada@gmail.com, bob@gmail.com\nmembers          carol@gmail.com\n\
          allowed domains  none\nproof            off\n"
     );
 }
 
+/// A member cannot add or remove an admin (01M77671TQ92487GSM24RJG82Z). The
+/// words of the refusal count, not the number of the status.
 #[tokio::test]
-async fn only_the_owner_adds_an_admin() {
-    // Given the owner ada, the member bob and the admin carol.
+async fn only_an_admin_adds_an_admin() {
+    // Given the first admin ada, and the member bob.
     let (service, api) = start().await;
     let ada = as_person(&service, &api, "ada@gmail.com").await;
     ada.invite("bob@gmail.com").await.unwrap();
-    ada.set_admin("carol@gmail.com", true).await.unwrap();
 
-    // When the member or the admin adds or removes an admin, the riff
-    // refuses.
-    for email in ["bob@gmail.com", "carol@gmail.com"] {
-        let signed_in = as_person(&service, &api, email).await;
-        for admin in [true, false] {
-            let error = signed_in
-                .set_admin("carol@gmail.com", admin)
-                .await
-                .unwrap_err();
-            assert!(error.to_string().contains("not the owner"), "{error}");
-        }
+    // When the member bob adds or removes an admin, the riff refuses.
+    let bob = as_person(&service, &api, "bob@gmail.com").await;
+    for (email, admin) in [("bob@gmail.com", true), ("ada@gmail.com", false)] {
+        let error = bob.set_admin(email, admin).await.unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("bob is not an admin; only an admin adds or removes an admin"),
+            "{error}"
+        );
     }
     // Then the roles are as before.
     let list = service.members();
-    assert_eq!(list.owner.as_deref(), Some("ada@gmail.com"));
-    assert_eq!(list.admins, ["carol@gmail.com"]);
+    assert_eq!(list.admins, ["ada@gmail.com"]);
     assert_eq!(list.members, ["bob@gmail.com"]);
+}
+
+/// Each admin adds and removes an admin, also the first admin, and the
+/// riff keeps its last admin (01M77671TQ92487GSM24RJG82Z,
+/// 01M7767SY5PW1AMB0PBMW2GXDX).
+#[tokio::test]
+async fn each_admin_adds_and_removes_an_admin_and_the_last_admin_stays() {
+    // Given the first admin ada.
+    let (service, api) = start().await;
+    let ada = as_person(&service, &api, "ada@gmail.com").await;
+
+    // The last admin stays, and nothing changes.
+    let error = ada.set_admin("ada@gmail.com", false).await.unwrap_err();
+    assert!(
+        error.to_string().contains(&last_admin("ada@gmail.com")),
+        "{error}"
+    );
+    assert_eq!(service.members().admins, ["ada@gmail.com"]);
+
+    // ada makes bob an admin, and the admin bob removes ada.
+    ada.set_admin("bob@gmail.com", true).await.unwrap();
+    let bob = as_person(&service, &api, "bob@gmail.com").await;
+    let removed = bob.set_admin("ada@gmail.com", false).await.unwrap();
+    assert_eq!(
+        text::admin_set(&removed),
+        "ada@gmail.com is now a member, not an admin."
+    );
+    // Each person shows once, with the highest role
+    // (01M3MN157X8N9QKER1AJEPEJVX).
+    assert_eq!(
+        members(&bob.members().await.unwrap()),
+        "admins           bob@gmail.com\nmembers          ada@gmail.com\n\
+         allowed domains  none\nproof            off\n"
+    );
+    // Now bob is the last admin.
+    let error = bob.set_admin("bob@gmail.com", false).await.unwrap_err();
+    assert!(
+        error.to_string().contains(&last_admin("bob@gmail.com")),
+        "{error}"
+    );
 }
 
 #[tokio::test]
@@ -268,63 +308,11 @@ async fn a_removed_admin_cannot_invite() {
     assert_eq!(service.members().members, ["bob@gmail.com"]);
 }
 
-#[tokio::test]
-async fn the_owner_passes_the_role_to_a_member() {
-    let (service, api) = start().await;
-    let ada = as_person(&service, &api, "ada@gmail.com").await;
-    ada.invite("bob@gmail.com").await.unwrap();
-    // Only to a member or an admin. The words of the refusal count,
-    // not the number of the status.
-    let error = ada.pass_owner("carol@gmail.com").await.unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("carol@gmail.com is not a member of this riff; run riff invite"),
-        "{error}"
-    );
-    assert_eq!(service.members().owner.as_deref(), Some("ada@gmail.com"));
-    let passed = ada.pass_owner("Bob@gmail.com").await.unwrap();
-    assert_eq!(
-        text::owner_passed(&passed),
-        "bob@gmail.com is now the owner. ada@gmail.com stays an admin."
-    );
-
-    let list = as_person(&service, &api, "bob@gmail.com")
-        .await
-        .members()
-        .await
-        .unwrap();
-    // The old owner shows once, as an admin (01M3MN157X8N9QKER1AJEPEJVX).
-    assert_eq!(
-        members(&list),
-        "owner            bob@gmail.com\nadmins           ada@gmail.com\nmembers          none\n\
-         allowed domains  none\nproof            off\n"
-    );
-}
-
-#[tokio::test]
-async fn only_the_owner_passes_the_role() {
-    // Given the owner ada, who invites bob.
-    let (service, api) = start().await;
-    let ada = as_person(&service, &api, "ada@gmail.com").await;
-    ada.invite("bob@gmail.com").await.unwrap();
-
-    // When the member bob passes the owner role.
-    let error = as_person(&service, &api, "bob@gmail.com")
-        .await
-        .pass_owner("bob@gmail.com")
-        .await
-        .unwrap_err();
-
-    // Then the riff refuses, and ada stays the owner.
-    assert!(error.to_string().contains("not the owner"), "{error}");
-    assert_eq!(service.members().owner.as_deref(), Some("ada@gmail.com"));
-}
-
 /// Each change of the members posts one line of riff-server in the chat,
 /// and no note to the thread of a repository. The line names the user,
 /// the email and the change, holds no token, and has no `to`, so it
-/// wakes no session (01M76S6128EZRZS2D5CE2QCC05).
+/// wakes no session (01M76S6128EZRZS2D5CE2QCC05,
+/// 01M77BSQQGGNE83ECS27YGVEP1).
 #[tokio::test]
 async fn each_change_of_the_members_posts_one_line_in_the_chat() {
     let (service, api) = start_with(true).await;
@@ -341,7 +329,6 @@ async fn each_change_of_the_members_posts_one_line_in_the_chat() {
     ada.set_admin("carol@gmail.com", true).await.unwrap();
     ada.set_admin("carol@gmail.com", false).await.unwrap();
     ada.remove("carol@gmail.com").await.unwrap();
-    ada.pass_owner("bob@gmail.com").await.unwrap();
 
     let notes = session.read(&s1, &repo(), true).await.unwrap();
     assert!(notes.is_empty(), "no note in the repository: {notes:#?}");
@@ -354,7 +341,6 @@ async fn each_change_of_the_members_posts_one_line_in_the_chat() {
             "members: ada made carol@gmail.com an admin.",
             "members: ada made carol@gmail.com a member again, not an admin.",
             "members: ada removed carol@gmail.com. carol@gmail.com is not a member now.",
-            "members: ada passed the owner role to bob@gmail.com. ada@gmail.com stays an admin.",
         ]
     );
     for line in &lines {
@@ -372,13 +358,13 @@ async fn people(api: &Api, me: &SessionUri) -> Vec<(String, PersonRole)> {
     who.people.into_iter().map(|p| (p.user, p.role)).collect()
 }
 
-/// `riff who` names the owner after the state line. The owner is a
-/// person: no session gets the tag `owner`, and `who` gives each member
-/// with a role. After `riff owner`, it shows the new owner
-/// (01M3Q63NK0AHM25MB258B0K8XP, 01M3NT4M159EHN5W8JRTQ417N4,
-/// 01M3NT4M3A4E3K5S2NM7MS6PQD).
+/// `riff who` names no owner (01M7767T8EFVR79NSHKTK53G7B): the line after the
+/// state is the build. An admin is a person: no session gets the tag `admin`,
+/// and `who` gives each member with a role (01M3NT4M159EHN5W8JRTQ417N4,
+/// 01M3NT4M3A4E3K5S2NM7MS6PQD). The first person who signs in is an
+/// admin (01M7767SRX4K1N1BCDHT7M85DN).
 #[tokio::test]
-async fn who_shows_the_owner() {
+async fn who_shows_each_admin_as_a_person() {
     let (service, api) = start_with(true).await;
     sign_in(&service, &api, "ada@gmail.com").await;
     let a1 = session("ada", "a1");
@@ -388,28 +374,17 @@ async fn who_shows_the_owner() {
     crate::common::name_lead(&namer, &a1).await;
 
     let shown = who(&ada, &a1).await;
-    assert_eq!(
-        shown.lines().nth(1),
-        Some("owner  ada (ada@gmail.com)"),
-        "{shown}"
-    );
+    let second = shown.lines().nth(1).unwrap();
+    assert!(second.starts_with("build  v"), "{shown}");
+    assert!(!shown.contains("owner"), "{shown}");
     let line = line_of(&shown, "a1");
     assert!(line.contains("  you lead"), "{shown}");
-    assert_eq!(people(&ada, &a1).await, [("ada".into(), PersonRole::Owner)]);
+    assert_eq!(people(&ada, &a1).await, [("ada".into(), PersonRole::Admin)]);
 
     // Only a person changes the people: the token of the person, not
     // of the session.
     let as_person = api.clone().signed_in(None).unwrap();
-    as_person.invite("bob@gmail.com").await.unwrap();
-    as_person.pass_owner("bob@gmail.com").await.unwrap();
-    let shown = who(&ada, &a1).await;
-    assert_eq!(
-        shown.lines().nth(1),
-        Some("owner  bob (bob@gmail.com)"),
-        "{shown}"
-    );
-    let line = line_of(&shown, "a1");
-    assert!(line.contains("  you lead"), "{shown}");
+    as_person.set_admin("bob@gmail.com", true).await.unwrap();
 
     sign_in(&service, &api, "bob@gmail.com").await;
     let b1 = session("bob", "b1");
@@ -420,26 +395,27 @@ async fn who_shows_the_owner() {
     let shown = who(&bob, &b1).await;
     let line = line_of(&shown, "b1");
     assert!(line.contains("  you lead"), "{shown}");
-    assert!(!line_of(&shown, "a1").contains("owner"), "{shown}");
+    assert!(!line_of(&shown, "a1").contains("admin"), "{shown}");
+    assert!(!shown.contains("owner"), "{shown}");
     let who = bob.roster(&b1, false).await.unwrap();
     let bob_row = who.people.iter().find(|p| p.user == "bob").unwrap();
-    assert_eq!(bob_row.role, PersonRole::Owner);
+    assert_eq!(bob_row.role, PersonRole::Admin);
     assert_eq!(bob_row.seen_secs, Some(0));
     assert_eq!(
         people(&bob, &b1).await,
         [
             ("ada".into(), PersonRole::Admin),
-            ("bob".into(), PersonRole::Owner)
+            ("bob".into(), PersonRole::Admin)
         ]
     );
 }
 
-/// A riff with no sign-in shows no owner line, also when its settings
-/// name an owner (01M3Q63NK0AHM25MB258B0K8XP).
+/// A riff with no sign-in names no owner in `riff who`, also when its
+/// settings name an admin (01M7767T8EFVR79NSHKTK53G7B).
 #[tokio::test]
-async fn who_on_a_riff_with_no_sign_in_shows_no_owner() {
+async fn who_on_a_riff_with_no_sign_in_names_no_owner() {
     let (_, api) = serve(|url| Config {
-        owner: Some("ada@gmail.com".into()),
+        admins: vec!["ada@gmail.com".into()],
         ..Config::new(url)
     })
     .await;
@@ -448,35 +424,13 @@ async fn who_on_a_riff_with_no_sign_in_shows_no_owner() {
     let shown = who(&api, &a1).await;
     let second = shown.lines().nth(1).unwrap();
     assert!(second.starts_with("build  v"), "{shown}");
-    // The action of the pause names the role, not a person.
-    assert!(!shown.lines().any(|l| l.starts_with("owner")), "{shown}");
+    assert!(!shown.contains("owner"), "{shown}");
 }
 
-/// A riff with sign-in and no owner says so (01M3Q63NK0AHM25MB258B0K8XP).
+/// The `who` tool of `riff mcp` names no owner, and has no escape codes
+/// (01M7767T8EFVR79NSHKTK53G7B).
 #[tokio::test]
-async fn who_on_a_riff_with_no_owner_says_so() {
-    let (_, api) = serve(|url| Config {
-        provider: Some(Provider {
-            allowed_domains: vec!["gmail.com".into()],
-            ..provider()
-        }),
-        ..Config::new(url)
-    })
-    .await;
-    let a1 = session("ada", "a1");
-    api.register(&a1).await.unwrap();
-    let shown = who(&api, &a1).await;
-    assert_eq!(shown.lines().nth(1), Some("owner  none"), "{shown}");
-    assert!(
-        shown.ends_with(&format!("{}\n", riff::text::NO_OWNER)),
-        "{shown}"
-    );
-}
-
-/// The `who` tool of `riff mcp` names the owner and tags each session
-/// of the owner, with no escape codes (01M3Q63NK0AHM25MB258B0K8XP).
-#[tokio::test]
-async fn the_who_tool_shows_the_owner() {
+async fn the_who_tool_names_no_owner() {
     use riff::tools::Tools;
     use rmcp::ServiceExt;
     use rmcp::model::CallToolRequestParams;
@@ -509,40 +463,34 @@ async fn the_who_tool_shows_the_owner() {
         .iter()
         .filter_map(|c| c.as_text().map(|t| t.text.clone()))
         .collect();
-    assert_eq!(
-        shown.lines().nth(1),
-        Some("The owner is ada (ada@gmail.com)."),
-        "{shown}"
-    );
+    assert!(!shown.contains("owner"), "{shown}");
     let line = line_of(&shown, "a1");
     assert!(line.contains(" (you) lead  riff://"), "{shown}");
     assert!(!shown.contains('\x1b'), "{shown:?}");
 }
 
-/// The `riff who` how-to of the book shows the owner line and the tag
-/// (01M3Q63NK0AHM25MB258B0K8XP).
+/// The `riff who` how-to of the book shows the facts with no owner, and
+/// the tags of the sessions (01M7767T8EFVR79NSHKTK53G7B).
 #[test]
-fn the_book_shows_the_owner_in_who() {
+fn the_book_shows_who_with_no_owner() {
     let page = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/src/how-it-works.md"),
     )
     .unwrap();
     let (_, section) = page.split_once("## See who is in the riff").unwrap();
-    assert!(
-        section.contains("\nowner  mike (mike@comotechnologies.io)\n"),
-        "{section}"
-    );
-    assert!(section.contains("The owner is `none`"), "{section}");
+    let (section, _) = section.split_once("\n## ").unwrap();
+    assert!(section.contains("\nriff   running\nbuild  v"), "{section}");
+    assert!(!section.contains("owner"), "{section}");
     assert!(section.contains("  you lead  working on #6\n"), "{section}");
     assert!(section.contains("  worker    working on #7  "), "{section}");
 }
 
-/// Only the owner and the admins pause and resume the whole riff, or a
+/// Only the admins pause and resume the whole riff, or a
 /// repository by its name (01M3XAHZDSQR263QZVB41CK0MX). A lead that is
 /// not an admin gets a refusal with the reason, and still pauses its
 /// own repository. The other repository goes on.
 #[tokio::test]
-async fn only_the_owner_and_the_admins_pause_the_whole_riff() {
+async fn only_the_admins_pause_the_whole_riff() {
     let (service, api) = start_with(true).await;
     sign_in(&service, &api, "ada@gmail.com").await;
     let a1 = session("ada", "a1");
@@ -550,7 +498,7 @@ async fn only_the_owner_and_the_admins_pause_the_whole_riff() {
     ada.register(&a1).await.unwrap();
     let namer = api.clone().signed_in(None).unwrap();
     crate::common::name_lead(&namer, &a1).await;
-    // The owner resumes the new riff, as its lead.
+    // The first admin resumes the new riff, as its lead.
     let (reply, _) = ada.set_riff(&a1, RiffState::Running).await.unwrap();
     assert!(reply.changed);
     // Only a person changes the people: the token of the person.
@@ -574,8 +522,8 @@ async fn only_the_owner_and_the_admins_pause_the_whole_riff() {
                 RiffState::Running => "resume",
             };
             let reason = format!(
-                "bob is not an admin; only the owner or an admin can {verb} the whole riff or a \
-                 repository by its name"
+                "bob is not an admin; only an admin can {verb} the whole riff or a repository \
+                 by its name"
             );
             assert!(error.contains("403"), "{error}");
             assert!(error.contains(&reason), "{error}");
@@ -592,7 +540,7 @@ async fn only_the_owner_and_the_admins_pause_the_whole_riff() {
     assert!(reply.changed && reply.riff.is_none());
     assert_eq!(reply.state, RiffState::Paused);
 
-    // The owner goes on in its repository. It pauses the whole riff,
+    // The admin ada goes on in its repository. It pauses the whole riff,
     // and it resumes the repository of bob by its name.
     sign_in(&service, &api, "ada@gmail.com").await;
     let ada = api.clone().signed_in(Some("a1")).unwrap();
@@ -609,7 +557,7 @@ async fn only_the_owner_and_the_admins_pause_the_whole_riff() {
     let as_person = api.clone().signed_in(None).unwrap();
     as_person.set_admin("bob@gmail.com", true).await.unwrap();
 
-    // An admin resumes the whole riff.
+    // The new admin bob resumes the whole riff.
     sign_in(&service, &api, "bob@gmail.com").await;
     let bob = api.clone().signed_in(Some("b1")).unwrap();
     let (reply, _) = bob.set_riff(&b1, RiffState::Running).await.unwrap();
@@ -645,14 +593,13 @@ fn the_book_has_one_how_to_for_riff_members() {
     assert_eq!(shown, ["riff members"]);
     book::each_is_real(&shown);
     let list = riff_core::wire::MembersReply {
-        owner: Some("mike@example.com".into()),
-        admins: vec!["ada@example.com".into()],
+        admins: vec!["ada@example.com".into(), "mike@example.com".into()],
         members: vec!["bob@gmail.com".into()],
         allowed_domains: vec!["example.com".into()],
         proof: riff_core::proof::Policy::Off,
     };
     assert!(part.contains(&members(&list)), "{part}");
-    assert!(part.contains("shows the owner `none`"), "{part}");
+    assert!(!part.contains("owner"), "{part}");
 }
 
 /// `riff members` with no color.

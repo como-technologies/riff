@@ -75,7 +75,7 @@
 //! its reply is [`Revoked`]. A missing or bad token gets status 401. A
 //! person who is not an admin and names another user gets status 403.
 //!
-//! Five calls change or show who may join the riff
+//! Four calls change or show who may join the riff
 //! (01M3JN3AHMK532XMRDASD4XD5D). Each needs an access token and a DPoP
 //! proof, like `revoke`:
 //!
@@ -85,13 +85,11 @@
 //! | `POST /v1/remove` | [`Remove`] | [`Removed`] | an admin |
 //! | `POST /v1/members` | [`Members`] | [`MembersReply`] | each person |
 //! | `POST /v1/log` | [`LogQuery`] | [`LogReply`] | an admin |
-//! | `POST /v1/admin` | [`SetAdmin`] | [`AdminSet`] | the owner |
-//! | `POST /v1/owner` | [`PassOwner`] | [`OwnerPassed`] | the owner |
+//! | `POST /v1/admin` | [`SetAdmin`] | [`AdminSet`] | an admin |
 //!
 //! A person who is not an admin gets status 403 from `invite`,
-//! `remove` and `log`. A person who is not the owner gets status 403 from
-//! `admin` and `owner`. `owner` to a person who is not a member or an
-//! admin gets status 400. `remove` of the owner or of an admin gets status 400.
+//! `remove`, `log` and `admin`. `remove` of an admin gets status 400,
+//! and so does `admin` for the removal of the last admin.
 //!
 //! Four calls add, list and remove the devices of a person
 //! (01M75NGT9Z0NSZTG97TBAMP7RS). Each needs a person token and a DPoP
@@ -311,9 +309,6 @@ calls! {
     Members => "/v1/members", MembersReply;
     LogQuery => "/v1/log", LogReply;
     SetAdmin => "/v1/admin", AdminSet;
-    PassOwner => "/v1/owner", OwnerPassed;
-    TakeOwner => "/v1/owner/take", OwnerAsked;
-    DenyOwner => "/v1/owner/deny", OwnerDenied;
     Devices => "/v1/devices", DevicesReply;
     RemoveDevice => "/v1/device/remove", DeviceInfo;
     KeyStart => "/v1/device/key", KeyStarted;
@@ -508,9 +503,6 @@ pub struct WhoRequest {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct WhoReply {
     pub sessions: Vec<SessionInfo>,
-    /// The owner of the riff (01M3Q63NK0AHM25MB258B0K8XP).
-    #[serde(default)]
-    pub owner: RiffOwner,
     /// Each member of the riff with a USER, also when away
     /// (01M3NT4M3A4E3K5S2NM7MS6PQD). A riff with no sign-in has none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -627,9 +619,9 @@ pub struct CheckpointFacts {
 /// use riff_core::wire::{Person, PersonRole};
 ///
 /// let ada: Person =
-///     serde_json::from_str(r#"{"user":"ada","role":"owner","live":false,"seen_secs":3600}"#).unwrap();
-/// assert_eq!(ada.role, PersonRole::Owner);
-/// assert_eq!(ada.role.tag(), Some("owner"));
+///     serde_json::from_str(r#"{"user":"ada","role":"admin","live":false,"seen_secs":3600}"#).unwrap();
+/// assert_eq!(ada.role, PersonRole::Admin);
+/// assert_eq!(ada.role.tag(), Some("admin"));
 /// assert_eq!(PersonRole::Member.tag(), None);
 /// assert_eq!(ada.seen_secs, Some(3600));
 /// ```
@@ -652,56 +644,17 @@ pub struct Person {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum PersonRole {
-    Owner,
     Admin,
     Member,
 }
 
 impl PersonRole {
-    /// The tag on the row of the person: `owner`, `admin`, or none for
-    /// a member.
+    /// The tag on the row of the person: `admin`, or none for a member.
     pub fn tag(self) -> Option<&'static str> {
         match self {
-            PersonRole::Owner => Some("owner"),
             PersonRole::Admin => Some("admin"),
             PersonRole::Member => None,
         }
-    }
-}
-
-/// The owner of the riff, in the reply to `who`
-/// (01M3Q63NK0AHM25MB258B0K8XP). A reply with no owner field reads as
-/// [`RiffOwner::NoSignIn`].
-///
-/// ```
-/// use riff_core::wire::{RiffOwner, WhoReply};
-///
-/// let reply: WhoReply = serde_json::from_str(
-///     r#"{"sessions":[],"owner":{"kind":"owner","user":"ada","email":"ada@gmail.com"}}"#,
-/// ).unwrap();
-/// assert_eq!(reply.owner, RiffOwner::Owner { user: "ada".into(), email: "ada@gmail.com".into() });
-/// assert!(reply.owner.is("ada") && !reply.owner.is("bob"));
-///
-/// let old: WhoReply = serde_json::from_str(r#"{"sessions":[]}"#).unwrap();
-/// assert_eq!(old.owner, RiffOwner::NoSignIn);
-/// assert!(!RiffOwner::Nobody.is("ada"));
-/// ```
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum RiffOwner {
-    /// A riff with no sign-in: it shows no owner.
-    #[default]
-    NoSignIn,
-    /// A riff with sign-in and no owner yet.
-    Nobody,
-    /// The owner: the USER and the email, in lower case.
-    Owner { user: String, email: String },
-}
-
-impl RiffOwner {
-    /// True when `user` is the owner.
-    pub fn is(&self, user: &str) -> bool {
-        matches!(self, RiffOwner::Owner { user: owner, .. } if owner == user)
     }
 }
 
@@ -1629,7 +1582,7 @@ pub enum Kind {
     /// next `read` (01M3JPMQE6S7YM4HPEVGXWK7ET).
     Note,
     /// A line of riff-server itself, for example the line in the chat
-    /// for a change of the owner role. riff-server refuses it in a post of
+    /// of a release. riff-server refuses it in a post of
     /// a client (01M6Y4ZCTSTVM971BDC1F7GJPK). It reads and wakes as a
     /// message. It never counts as the word of a person
     /// ([`Kind::by_riff`]). A session has no use for it, so a schema of a
@@ -1977,7 +1930,7 @@ pub struct ClaimReply {
 /// `POST /v1/plan/hold`: a lead holds an item of its repository thread
 /// with a reason, so that no worker can claim it
 /// (01M43GSGB9ZFHSG0Q83Y50FEGW). A hold of a held item replaces its
-/// reason. Only a lead of the thread, the owner or an admin can
+/// reason. Only a lead of the thread or an admin can
 /// (01M43GSGGY0QMB5D5EH92M6ZFP).
 ///
 /// ```
@@ -2164,7 +2117,7 @@ pub struct SetNotesReply {
 
 /// `POST /v1/notes`: the query for the notes of a lead
 /// (01M59258NTXPMWV18TKRKWNTYN). The user of the lead can read them,
-/// and the owner of the riff. Another member cannot.
+/// and each admin of the riff. Another member cannot.
 ///
 /// ```
 /// use riff_core::wire::{Call, NotesShow};
@@ -2181,7 +2134,7 @@ pub struct NotesShow {
     pub me: SessionUri,
     pub thread: ThreadName,
     /// The user of the lead. Leave it out to read the notes of the
-    /// caller. Only the owner can name another user.
+    /// caller. Only an admin can name another user.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user: Option<String>,
     /// True asks also for the old texts.
@@ -2834,7 +2787,7 @@ pub struct IdleQuery {
 }
 
 /// `POST /v1/idle/set`: sets each given setting of idle workers, and
-/// gives the settings. Only the owner or an admin can; in a riff with
+/// gives the settings. Only an admin can; in a riff with
 /// no sign-in, each caller can (01M3Q5A0TF9K49V8Z1ZY9NDF74).
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct SetIdle {
@@ -3292,8 +3245,8 @@ pub struct Removed {
     pub sign_ins: usize,
 }
 
-/// `POST /v1/admin`: the owner makes a person an admin, or an admin a
-/// member again.
+/// `POST /v1/admin`: an admin makes a person an admin, or an admin a
+/// member again. The last admin stays an admin.
 ///
 /// ```
 /// use riff_core::wire::SetAdmin;
@@ -3315,86 +3268,6 @@ pub struct SetAdmin {
 /// The reply to [`SetAdmin`]: the change of its record, with the email
 /// in lower case.
 pub use crate::record::AdminSet;
-
-/// `POST /v1/owner`: the owner passes the owner role to a member or an
-/// admin. The old owner stays an admin.
-///
-/// ```
-/// use riff_core::wire::PassOwner;
-///
-/// let pass = PassOwner { email: "bob@gmail.com".into() };
-/// assert_eq!(serde_json::to_string(&pass).unwrap(), r#"{"email":"bob@gmail.com"}"#);
-/// ```
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct PassOwner {
-    pub email: String,
-}
-
-/// The reply to [`PassOwner`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct OwnerPassed {
-    /// The email of the new owner, in lower case.
-    pub owner: String,
-    /// The email of the old owner, now an admin.
-    pub admin: String,
-}
-
-/// `POST /v1/owner/take`: an admin asks for the owner role
-/// (01M3N7K3ZAZFGABN7032AYJWEM).
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct TakeOwner {}
-
-/// The reply to [`TakeOwner`].
-///
-/// ```
-/// use riff_core::wire::OwnerAsked;
-///
-/// let asked: OwnerAsked = serde_json::from_str(
-///     r#"{"admin":"bob@gmail.com","owner":"ada@gmail.com","answer_secs":600}"#,
-/// ).unwrap();
-/// assert_eq!(asked.owner.as_deref(), Some("ada@gmail.com"));
-/// assert!(!asked.already());
-///
-/// // The owner asked: nothing changed (01M3WRJAFS6W3J2ZRJ6XSW3SB5).
-/// let same: OwnerAsked = serde_json::from_str(
-///     r#"{"admin":"ada@gmail.com","owner":"ada@gmail.com","answer_secs":0}"#,
-/// ).unwrap();
-/// assert!(same.already());
-/// ```
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct OwnerAsked {
-    /// The email of the admin that asked, in lower case.
-    pub admin: String,
-    /// The email of the owner that answers. `None` when the riff had no
-    /// owner: the admin is the owner now. The email of `admin` when the
-    /// admin that asked is the owner already: nothing changed.
-    pub owner: Option<String>,
-    /// The time that the owner has to answer, in seconds. With no
-    /// answer, the admin is the owner.
-    pub answer_secs: u64,
-}
-
-impl OwnerAsked {
-    /// True when the admin that asked is the owner already
-    /// (01M3WRJAFS6W3J2ZRJ6XSW3SB5).
-    pub fn already(&self) -> bool {
-        self.owner.as_deref() == Some(self.admin.as_str())
-    }
-}
-
-/// `POST /v1/owner/deny`: the owner keeps the owner role that an admin
-/// asks for (01M3N7K41N03P26BEFFNX5617K).
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct DenyOwner {}
-
-/// The reply to [`DenyOwner`].
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct OwnerDenied {
-    /// The email of the owner, who stays the owner.
-    pub owner: String,
-    /// The email of the admin that asked.
-    pub admin: String,
-}
 
 /// The kind of a device of a person (01M75NGT9Z0NSZTG97TBAMP7RS). See
 /// [`crate::device`].
@@ -3801,8 +3674,7 @@ pub struct Approve {
 }
 
 /// `POST /v1/log`: the records of the log of one repository, for an
-/// audit (01M3ZWRC11R5M9V1KTF05P240W). Only the owner and the admins
-/// can read them.
+/// audit (01M3ZWRC11R5M9V1KTF05P240W). Only the admins can read them.
 ///
 /// ```
 /// use riff_core::wire::{Call, LogQuery};
@@ -3950,7 +3822,7 @@ impl std::fmt::Display for GitHubRole {
 }
 
 /// `POST /v1/github/create`: the start of `riff github create`
-/// (01M6WG52T5PAD9NGQ597CP56K7). Only the owner and the admins can.
+/// (01M6WG52T5PAD9NGQ597CP56K7). Only the admins can.
 ///
 /// ```
 /// use riff_core::wire::{Call, GitHubCreate};
@@ -3992,7 +3864,7 @@ pub struct GitHubStarted {
 
 /// `POST /v1/github/apps`: the Apps of the riff, whether each is
 /// installed on `owner`, and whether its install has `repo`. Each person
-/// can ask with neither. Only the owner and the admins can ask with one
+/// can ask with neither. Only the admins can ask with one
 /// (01M6WPV8473EBABR1ZMEPZMTQQ, 01M6Z7DMYAW52X62TN1DEX9NCG).
 ///
 /// ```
@@ -4297,20 +4169,16 @@ pub struct Members {}
 /// use riff_core::wire::MembersReply;
 ///
 /// let reply: MembersReply = serde_json::from_str(
-///     r#"{"owner":"ada@gmail.com","admins":[],"members":["bob@gmail.com"],"allowed_domains":["x.io"]}"#,
+///     r#"{"admins":["ada@gmail.com"],"members":["bob@gmail.com"],"allowed_domains":["x.io"]}"#,
 /// ).unwrap();
-/// assert_eq!(reply.owner.as_deref(), Some("ada@gmail.com"));
+/// assert_eq!(reply.admins, ["ada@gmail.com"]);
 /// ```
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct MembersReply {
-    /// The email of the owner. `None` when the riff has no owner: before
-    /// the first sign-in, or after the owner was gone
-    /// (01M3Q63NNC6SC03BFCG80M7B4D).
-    pub owner: Option<String>,
-    /// The email of each admin, sorted: the admins that the owner made
-    /// and the admins of the settings (R210). The owner is not in it.
+    /// The email of each admin, sorted. It is empty only before the
+    /// first sign-in of a riff that no `--admin` names.
     pub admins: Vec<String>,
-    /// The email of each member that is not the owner and not an admin,
+    /// The email of each member that is not an admin,
     /// sorted (01M3MN157X8N9QKER1AJEPEJVX).
     pub members: Vec<String>,
     /// The allowed domains (R15).

@@ -45,8 +45,8 @@
 //!   ([`riff_state::state::Import`]), in this order:
 //!   1. `riff_made`, with the riff ID of today.
 //!   2. `person_joined` for each USER, with its email.
-//!   3. `member_invited`, `admin_set` and `owner_set`; `owner_asked`
-//!      when a request for the owner role waits.
+//!   3. `member_invited` and `admin_set`. The owner of v0.8.0 is an
+//!      admin of today (01M7767T393P46VTNNE5SY203K): one more `admin_set`.
 //!   4. `pause_set` for the riff, paused, and `setting_changed`.
 //!   5. The `posted` records: the last [`KEEP_MESSAGES`] messages of
 //!      each thread, with their old seq. A direct thread with no session
@@ -98,8 +98,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use riff_core::name::{SessionUri, ThreadName, Who};
 use riff_core::record::{
-    AdminSet, Change, Claimed, Email, Forgotten, Member, OwnerAsked, OwnerSet, PauseSet,
-    PersonJoined, Posted, RiffMade, Scope, SessionStarted, SettingChanged,
+    AdminSet, Change, Claimed, Email, Forgotten, Member, PauseSet, PersonJoined, Posted, RiffMade,
+    Scope, SessionStarted, SettingChanged,
 };
 use riff_core::signed::Content;
 use riff_core::wire::{Idle, Message, RiffState, StartReason, Status};
@@ -231,17 +231,6 @@ struct People {
     admins: BTreeSet<String>,
     #[serde(default)]
     riff_id: Option<String>,
-    #[serde(default)]
-    no_owner: bool,
-    #[serde(default)]
-    take: Option<Take>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-struct Take {
-    admin: String,
-    /// In milliseconds since the Unix epoch.
-    until: u64,
 }
 
 fn millis(time: std::time::Duration) -> u64 {
@@ -395,21 +384,14 @@ impl Old {
                 email: email.clone(),
             }));
         }
-        for email in &people.admins {
+        let owner = people
+            .owner
+            .iter()
+            .filter(|owner| !people.admins.contains(*owner));
+        for email in people.admins.iter().chain(owner) {
             changes.push(Change::AdminSet(AdminSet {
                 email: email.clone(),
                 admin: true,
-            }));
-        }
-        if people.owner.is_some() || people.no_owner {
-            changes.push(Change::OwnerSet(OwnerSet {
-                email: people.owner.clone(),
-            }));
-        }
-        if let Some(take) = &people.take {
-            changes.push(Change::OwnerAsked(OwnerAsked {
-                email: take.admin.clone(),
-                due_ms: take.until,
             }));
         }
         changes.push(Change::PauseSet(PauseSet {
@@ -552,14 +534,12 @@ mod tests {
     fn the_changes_come_in_the_order_of_the_design() {
         let changes = old().changes(SAVED_MS);
         assert_eq!(
-            kinds(&changes)[..9],
+            kinds(&changes)[..7],
             [
                 "riff_made",
                 "person_joined",
                 "member_invited",
                 "admin_set",
-                "owner_set",
-                "owner_asked",
                 "pause_set",
                 "setting_changed",
                 "posted",
@@ -589,8 +569,10 @@ mod tests {
             state: RiffState::Paused,
         });
         assert!(changes.contains(&paused));
-        let owner = Change::OwnerSet(OwnerSet {
-            email: Some("mike@comotechnologies.io".into()),
+        // The owner of v0.8.0 is an admin of today.
+        let owner = Change::AdminSet(AdminSet {
+            email: "mike@comotechnologies.io".into(),
+            admin: true,
         });
         assert!(changes.contains(&owner));
         // A removed person keeps its USER, and is no member.

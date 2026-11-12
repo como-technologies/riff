@@ -453,7 +453,7 @@ fn release_approve_help_says_who_may_approve() {
     for words in [
         "Only a person in a plain terminal approves",
         "It refuses each agent session: a worker, a container session, and the lead, also \
-         when the owner said approve in riff chat",
+         when an admin said approve in riff chat",
     ] {
         assert!(flat.contains(words), "{words:?} missing in {help}");
     }

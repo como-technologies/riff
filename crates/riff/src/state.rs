@@ -249,7 +249,7 @@ pub fn work(activity: &Activity) -> String {
 /// s.uri = "riff://mike@thelio/o/r?session=l1&lead=true".parse()?;
 /// (s.status, s.must_clear, s.fresh_secs) = (None, false, None);
 /// s.blocked = Some(BlockedInfo {
-///     reason: "run riff owner --take".into(),
+///     reason: "run riff admin add ada@gmail.com".into(),
 ///     secs: 60,
 ///     answered: false,
 ///     woken_again: false,
@@ -259,7 +259,7 @@ pub fn work(activity: &Activity) -> String {
 /// s.state = Some(SessionState::Waiting);
 /// assert_eq!(
 ///     plain(&s),
-///     ["waiting for mike: run riff owner --take (1m ago)", "live window for 12m"]
+///     ["waiting for mike: run riff admin add ada@gmail.com (1m ago)", "live window for 12m"]
 /// );
 /// s.state = Some(SessionState::Offline);
 /// assert_eq!(plain(&s), ["seen 2h ago"]);

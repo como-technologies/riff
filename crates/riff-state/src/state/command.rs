@@ -15,7 +15,7 @@
 //! | notes | [`super::notes`] | [`SetNotes`](riff_core::wire::SetNotes) |
 //! | projects | [`super::projects`] | [`EnrollProject`](super::EnrollProject), [`RemoveProject`](super::RemoveProject), [`FindProjects`](super::FindProjects) |
 //! | devices | [`super::devices`] | [`AddKey`](super::AddKey), [`RemoveDevice`](riff_core::wire::RemoveDevice), [`Prove`](super::Prove) |
-//! | people | [`super::people`] | [`Admit`](super::Admit), [`Invite`](riff_core::wire::Invite), [`Remove`](riff_core::wire::Remove), [`SetAdmin`](riff_core::wire::SetAdmin), [`PassOwner`](riff_core::wire::PassOwner), [`TakeOwner`](riff_core::wire::TakeOwner), [`DenyOwner`](riff_core::wire::DenyOwner), [`GrantOwner`](super::GrantOwner), [`EndOwner`](super::EndOwner), [`NameOwner`](super::NameOwner), [`Revoke`](riff_core::wire::Revoke) |
+//! | people | [`super::people`] | [`Admit`](super::Admit), [`Invite`](riff_core::wire::Invite), [`Remove`](riff_core::wire::Remove), [`SetAdmin`](riff_core::wire::SetAdmin), [`NameAdmins`](super::NameAdmins), [`Revoke`](riff_core::wire::Revoke) |
 //!
 //! # Who can send a command
 //!
@@ -86,18 +86,16 @@ impl Class {
     }
 }
 
-/// The role of a caller. The owner has the role of an admin too, and an
-/// admin the role of a member.
+/// The role of a caller. An admin has the role of a member too.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Role {
     Member,
     Admin,
-    Owner,
 }
 
 impl Role {
     /// Each role.
-    pub const ALL: [Role; 3] = [Role::Member, Role::Admin, Role::Owner];
+    pub const ALL: [Role; 2] = [Role::Member, Role::Admin];
 }
 
 /// Who sends a call (01M3WRD959DYNZHDKP5ZT9Q1C7). The token layer gives
@@ -385,12 +383,7 @@ command_kinds! {
     Invite = "invite",
     Remove = "remove",
     SetAdmin = "set_admin",
-    PassOwner = "pass_owner",
-    TakeOwner = "take_owner",
-    DenyOwner = "deny_owner",
-    GrantOwner = "grant_owner",
-    EndOwner = "end_owner",
-    NameOwner = "name_owner",
+    NameAdmins = "name_admins",
     Revoke = "revoke",
     Hold = "hold",
     Free = "free",
@@ -408,6 +401,26 @@ command_kinds! {
 }
 
 impl CommandKind {
+    /// The name of each removed kind: no command of this build has it,
+    /// an old record still has it, and no new kind gets it
+    /// (01M3XM2C3MND6YB24SGZ565353). The kinds of the owner role went
+    /// with the role: an admin does what the owner did.
+    ///
+    /// ```
+    /// use riff_state::state::CommandKind;
+    ///
+    /// assert!(CommandKind::RETIRED.contains(&"take_owner"));
+    /// assert!(CommandKind::ALL.iter().all(|kind| !CommandKind::RETIRED.contains(&kind.as_str())));
+    /// ```
+    pub const RETIRED: &[&str] = &[
+        "pass_owner",
+        "take_owner",
+        "deny_owner",
+        "grant_owner",
+        "end_owner",
+        "name_owner",
+    ];
+
     /// True for a command of the group "people". A riff with no sign-in
     /// refuses each of them (01M3WRD9G5GAF65EX8P6D5DMQM), and the log
     /// line of each has no reason: the reason can name an email
@@ -418,7 +431,7 @@ impl CommandKind {
     ///
     /// assert!(CommandKind::Invite.of_people() && CommandKind::Admit.of_people());
     /// assert!(!CommandKind::Claim.of_people() && !CommandKind::MakeRiff.of_people());
-    /// assert_eq!(CommandKind::ALL.iter().filter(|kind| kind.of_people()).count(), 15);
+    /// assert_eq!(CommandKind::ALL.iter().filter(|kind| kind.of_people()).count(), 10);
     /// ```
     pub fn of_people(self) -> bool {
         // Each kind has an arm: a new kind does not compile until a
@@ -438,12 +451,7 @@ impl CommandKind {
             | CommandKind::Invite
             | CommandKind::Remove
             | CommandKind::SetAdmin
-            | CommandKind::PassOwner
-            | CommandKind::TakeOwner
-            | CommandKind::DenyOwner
-            | CommandKind::GrantOwner
-            | CommandKind::EndOwner
-            | CommandKind::NameOwner
+            | CommandKind::NameAdmins
             | CommandKind::Revoke
             | CommandKind::AddKey
             | CommandKind::RemoveDevice => true,
@@ -515,9 +523,6 @@ impl CommandKind {
             | CommandKind::Invite
             | CommandKind::Remove
             | CommandKind::SetAdmin
-            | CommandKind::PassOwner
-            | CommandKind::TakeOwner
-            | CommandKind::DenyOwner
             | CommandKind::Revoke
             | CommandKind::AddKey
             | CommandKind::RemoveDevice => false,
@@ -525,9 +530,7 @@ impl CommandKind {
             | CommandKind::Announce
             | CommandKind::Forget
             | CommandKind::Import
-            | CommandKind::GrantOwner
-            | CommandKind::EndOwner
-            | CommandKind::NameOwner
+            | CommandKind::NameAdmins
             | CommandKind::EnrollProject
             | CommandKind::RemoveProject
             | CommandKind::FindProjects => false,
@@ -747,12 +750,12 @@ pub fn permits(kind: CommandKind, caller: &Caller, needs: Role) -> Result<(), Re
         // (01M6YC3SYATQW7GZZV3APFG85B). Only a person and a lead resume it.
         CommandKind::Pause => (&[Person, Session, Server], Can),
         CommandKind::Resume => (&[Person, Session], Can),
-        // `handle` checks that the caller is a lead of the thread, the
-        // owner or an admin (01M43GSGGY0QMB5D5EH92M6ZFP).
+        // `handle` checks that the caller is a lead of the thread or an
+        // admin (01M43GSGGY0QMB5D5EH92M6ZFP).
         CommandKind::Hold => (&[Person, Session], Cannot("hold an item. Tell the lead.")),
         CommandKind::Free => (&[Person, Session], Cannot("free an item. Tell the lead.")),
-        // `handle` checks that the caller is a session in the thread, the
-        // owner or an admin (01M4A4YTWK68JDA0DKXX2HV4FA).
+        // `handle` checks that the caller is a session in the thread or
+        // an admin (01M4A4YTWK68JDA0DKXX2HV4FA).
         CommandKind::Plan => (&[Person, Session], Cannot("send plan. Tell the lead.")),
         CommandKind::PlanOff => (&[Person, Session], Cannot("send plan_off. Tell the lead.")),
         // The notes of the user of the caller (01M59258NTXPMWV18TKRKWNTYN).
@@ -765,9 +768,6 @@ pub fn permits(kind: CommandKind, caller: &Caller, needs: Role) -> Result<(), Re
         | CommandKind::Invite
         | CommandKind::Remove
         | CommandKind::SetAdmin
-        | CommandKind::PassOwner
-        | CommandKind::TakeOwner
-        | CommandKind::DenyOwner
         | CommandKind::Revoke => (&[Person], Can),
         // An authenticator is a device of the person, never of a
         // session (01M75NH30PNATYN33MXZQMVBW8).
@@ -785,9 +785,7 @@ pub fn permits(kind: CommandKind, caller: &Caller, needs: Role) -> Result<(), Re
         | CommandKind::Announce
         | CommandKind::Forget
         | CommandKind::Import
-        | CommandKind::GrantOwner
-        | CommandKind::EndOwner
-        | CommandKind::NameOwner => (&[Server], Can),
+        | CommandKind::NameAdmins => (&[Server], Can),
     };
     if !classes.contains(&class) {
         let reason = match (kind, class) {
@@ -807,25 +805,20 @@ pub fn permits(kind: CommandKind, caller: &Caller, needs: Role) -> Result<(), Re
     if class.has_role() && caller.role() < needs {
         let user = caller.who().user();
         let admin = |what: &str| format!("{user} is not an admin; only an admin {what}");
-        let owner = |what: &str| format!("{user} is not the owner; only the owner {what}");
-        let reason = match (kind, needs) {
-            (CommandKind::SetIdle, _) => admin("can change the settings of idle workers"),
-            (CommandKind::SetPolicy, _) => admin("sets the policy of the proof of presence"),
-            (CommandKind::Approve, _) => admin("approves the deploy of a release"),
-            (CommandKind::Pause | CommandKind::Resume, _) => format!(
-                "{user} is not an admin; only the owner or an admin can {kind} the whole riff \
-                 or a repository by its name"
+        let reason = match kind {
+            CommandKind::SetIdle => admin("can change the settings of idle workers"),
+            CommandKind::SetPolicy => admin("sets the policy of the proof of presence"),
+            CommandKind::Approve => admin("approves the deploy of a release"),
+            CommandKind::Pause | CommandKind::Resume => format!(
+                "{user} is not an admin; only an admin can {kind} the whole riff or a repository \
+                 by its name"
             ),
-            (CommandKind::Invite, _) => admin("can invite a person"),
-            (CommandKind::Remove, _) => admin("can remove a person"),
-            (CommandKind::TakeOwner, _) => admin("can take the owner role"),
-            (CommandKind::Revoke, _) => admin("revokes another person"),
-            (CommandKind::SetAdmin, _) => owner("adds or removes an admin"),
-            (CommandKind::PassOwner, _) => owner("passes the owner role"),
-            (CommandKind::DenyOwner, _) => owner("denies the owner role"),
-            (CommandKind::EnrollProject, _) => admin("enrolls a project"),
-            (CommandKind::RemoveProject, _) => admin("removes a project"),
-            (_, Role::Owner) => format!("{user} is not the owner; the command {kind} needs it"),
+            CommandKind::Invite => admin("can invite a person"),
+            CommandKind::Remove => admin("can remove a person"),
+            CommandKind::Revoke => admin("revokes another person"),
+            CommandKind::SetAdmin => admin("adds or removes an admin"),
+            CommandKind::EnrollProject => admin("enrolls a project"),
+            CommandKind::RemoveProject => admin("removes a project"),
             _ => format!("{user} is not an admin; the command {kind} needs an admin"),
         };
         return Err(Refused::new(Code::NotAllowed, reason));
@@ -1000,12 +993,7 @@ mod tests {
         row(CommandKind::Invite,     P,  true,  true,  false),
         row(CommandKind::Remove,     P,  true,  true,  false),
         row(CommandKind::SetAdmin,   P,  true,  true,  false),
-        row(CommandKind::PassOwner,  P,  true,  true,  false),
-        row(CommandKind::TakeOwner,  P,  true,  true,  false),
-        row(CommandKind::DenyOwner,  P,  true,  true,  false),
-        row(CommandKind::GrantOwner, &[Class::Server], true, true, false),
-        row(CommandKind::EndOwner,   &[Class::Server], true, true, false),
-        row(CommandKind::NameOwner,  &[Class::Server], true, true, false),
+        row(CommandKind::NameAdmins, &[Class::Server], true, true, false),
         row(CommandKind::Revoke,     P,  true,  true,  false),
         row(CommandKind::Hold,       PS, false, false, true),
         row(CommandKind::Free,       PS, false, false, true),
@@ -1045,7 +1033,7 @@ mod tests {
                 "{kind}: registers first"
             );
             for &class in row.classes {
-                let worker = caller(class).with_worker(true).with_role(Role::Owner);
+                let worker = caller(class).with_worker(true).with_role(Role::Admin);
                 let result = permits(kind, &worker, Role::Member);
                 assert_eq!(
                     result.is_ok(),
@@ -1056,7 +1044,7 @@ mod tests {
                     assert_eq!(refused.code, Code::NotAllowed);
                     assert!(refused.reason.starts_with("a worker cannot "), "{refused}");
                 }
-                let not_worker = caller(class).with_role(Role::Owner);
+                let not_worker = caller(class).with_role(Role::Admin);
                 assert!(
                     permits(kind, &not_worker, Role::Member).is_ok(),
                     "{kind} by {class:?}"
@@ -1102,9 +1090,8 @@ mod tests {
         let expected = |kind| match kind {
             CommandKind::Invite
             | CommandKind::Remove
-            | CommandKind::TakeOwner
+            | CommandKind::SetAdmin
             | CommandKind::SetPolicy => Role::Admin,
-            CommandKind::SetAdmin | CommandKind::PassOwner | CommandKind::DenyOwner => Role::Owner,
             _ => Role::Member,
         };
         for kind in CommandKind::ALL.into_iter().filter(|kind| kind.of_people()) {
@@ -1125,14 +1112,12 @@ mod tests {
     fn needs(kind: CommandKind, caller: &Caller) -> Vec<Role> {
         use riff_core::record::{Plan, PlanSet};
         use riff_core::wire::{
-            Claim, DenyOwner, End, Free, Hold, Invite, Join, Kind, Lead, Leave, PassOwner, Pause,
-            PlanOff, Post, Register, Release, ReleaseFor, Remove, RemoveDevice, Resume, Revoke,
-            SetAdmin, SetIdle, SetNotes, SetPlan, Start, StartReason, TakeOwner,
+            Claim, End, Free, Hold, Invite, Join, Kind, Lead, Leave, Pause, PlanOff, Post,
+            Register, Release, ReleaseFor, Remove, RemoveDevice, Resume, Revoke, SetAdmin, SetIdle,
+            SetNotes, SetPlan, Start, StartReason,
         };
 
-        use crate::state::{
-            AddKey, Admit, Announce, EndOwner, Forget, GrantOwner, Import, MakeRiff, NameOwner,
-        };
+        use crate::state::{AddKey, Admit, Announce, Forget, Import, MakeRiff, NameAdmins};
 
         let of = Needs(caller);
         let email = "bob@acme.io".to_owned();
@@ -1242,12 +1227,12 @@ mod tests {
             CommandKind::Invite => of.of(Invite { email }, kind),
             CommandKind::Remove => of.of(Remove { email }, kind),
             CommandKind::SetAdmin => of.of(SetAdmin { email, admin: true }, kind),
-            CommandKind::PassOwner => of.of(PassOwner { email }, kind),
-            CommandKind::TakeOwner => of.of(TakeOwner {}, kind),
-            CommandKind::DenyOwner => of.of(DenyOwner {}, kind),
-            CommandKind::GrantOwner => of.of(GrantOwner, kind),
-            CommandKind::EndOwner => of.of(EndOwner, kind),
-            CommandKind::NameOwner => of.of(NameOwner { email }, kind),
+            CommandKind::NameAdmins => of.of(
+                NameAdmins {
+                    emails: vec![email],
+                },
+                kind,
+            ),
             CommandKind::AddKey => {
                 let add = AddKey {
                     name: "yubikey".into(),
@@ -1350,14 +1335,15 @@ mod tests {
             }
         }
         // Each kind has one case, and `revoke` has 3.
-        assert_eq!(tried, (41 + 2) * 4 * 2 * 3);
+        assert_eq!(tried, (36 + 2) * 4 * 2 * 2);
     }
 
     #[test]
-    fn the_owner_has_the_role_of_an_admin_and_an_admin_the_role_of_a_member() {
-        assert!(Role::Owner > Role::Admin && Role::Admin > Role::Member);
-        let owner = caller(Class::Person).with_role(Role::Owner);
-        assert!(permits(CommandKind::SetIdle, &owner, Role::Admin).is_ok());
+    fn an_admin_has_the_role_of_a_member() {
+        assert!(Role::Admin > Role::Member);
+        let admin = caller(Class::Person).with_role(Role::Admin);
+        assert!(permits(CommandKind::SetIdle, &admin, Role::Admin).is_ok());
+        assert!(permits(CommandKind::SetAdmin, &admin, Role::Admin).is_ok());
         let member = caller(Class::Person);
         let refused = permits(CommandKind::SetIdle, &member, Role::Admin).unwrap_err();
         assert!(refused.reason.contains("ann is not an admin"), "{refused}");

@@ -63,8 +63,8 @@
 //! `container`, `host` or `daemon` (01M3NT4M159EHN5W8JRTQ417N4,
 //! 01M510MG2YSETB2CCAS8XDHPZ0, 01M589HH6HCWYJP1ZC7MRAXZ6E). The role and the container mark come
 //! from the server, so each machine shows the same. The line of a host
-//! counts each kind (01M510MG5J92PYDWZSDQS8HMWK). The owner is a person:
-//! the tag `owner` is on the row of the person.
+//! counts each kind (01M510MG5J92PYDWZSDQS8HMWK). An admin is a person:
+//! the tag `admin` is on the row of the person.
 //!
 //! A session that runs an old riff gets the mark [`OUT_OF_DATE`] after
 //! its short ID, and the line of its host counts it
@@ -163,9 +163,7 @@ use riff_client::sessions::{Group, Level, PersonRow, Sessions, Show, blocked, ou
 use riff_client::waves::{Board, Issue, Issues, board_repos};
 use riff_core::build::Build;
 use riff_core::name::Repo;
-use riff_core::wire::{
-    HoldInfo, Person, PersonRole, RiffOwner, RiffReply, SessionInfo, SessionState,
-};
+use riff_core::wire::{HoldInfo, Person, PersonRole, RiffReply, SessionInfo, SessionState};
 use serde::Deserialize;
 
 use crate::state;
@@ -359,7 +357,6 @@ pub fn issues_and_pulls(gh: &crate::pr::Gh, repo: &str) -> anyhow::Result<(Issue
 pub struct Top<'a> {
     /// The pauses of the riff, as the caller sees them.
     pub pauses: &'a RiffReply,
-    pub owner: &'a RiffOwner,
     pub server: Option<&'a Build>,
     /// The sessions model ([`Sessions`]): `riff top` draws its sessions
     /// on riff-server.
@@ -717,8 +714,7 @@ impl Top<'_> {
     /// line is wider than [`Top::width`]. riff cuts a wider line with `…`
     /// (01M3QA8EZHX5B8C9CKF8Q3154X). No line has a column heading.
     ///
-    /// - The header: the facts `riff`, `owner` and `build`, as in
-    ///   `riff who`.
+    /// - The header: the facts `riff` and `build`, as in `riff who`.
     /// - A board for each repository of a live session, and of
     ///   [`Top::repo`], that has issues ([`board_repos`],
     ///   01M42KHN80V49HDDZF953HXDT0): the current wave
@@ -744,8 +740,8 @@ impl Top<'_> {
     ///   kinds. A row with one row
     ///   under it stays on one line with it, after a `›`: so a small
     ///   riff stays short.
-    /// - A person line: the USER in bold color, the role tag `owner` or
-    ///   `admin`, and [`state::person`]. Each member of `who` gets a
+    /// - A person line: the USER in bold color, the role tag `admin`,
+    ///   and [`state::person`]. Each member of `who` gets a
     ///   line, also when away, when [`Top::show`] has no filter of a
     ///   host or a repository.
     /// - A repository line: its short name when the repositories of the
@@ -773,7 +769,7 @@ impl Top<'_> {
     /// use riff::top::{Top, parse_issues, with_pulls};
     /// use riff_client::sessions::{By, Sessions, Show};
     /// use riff_core::wire::{
-    ///     BlockedInfo, HoldInfo, Person, PersonRole, RiffOwner, RiffState, SessionInfo, SessionState, Status,
+    ///     BlockedInfo, HoldInfo, Person, PersonRole, RiffState, SessionInfo, SessionState, Status,
     ///     StatusInfo,
     /// };
     ///
@@ -828,7 +824,7 @@ impl Top<'_> {
     /// ];
     /// let people = [
     ///     Person { user: "ann".into(), role: PersonRole::Admin, live: false, seen_secs: Some(3600) },
-    ///     Person { user: "mike".into(), role: PersonRole::Owner, live: true, seen_secs: Some(0) },
+    ///     Person { user: "mike".into(), role: PersonRole::Admin, live: true, seen_secs: Some(0) },
     /// ];
     /// let issues = parse_issues(
     ///     r#"[{"number": 12, "title": "Show the wave in the board of riff top", "milestone": {"title": "Wave 3"}},
@@ -848,13 +844,11 @@ impl Top<'_> {
     /// // The lead holds #16.
     /// let hold = HoldInfo { reason: "a reading at 19:40 UTC".into(), by: None, at_ms: 0 };
     /// let holds = BTreeMap::from([("o/r".to_owned(), BTreeMap::from([("issue-16".to_owned(), hold)]))]);
-    /// let owner = RiffOwner::Owner { user: "mike".into(), email: "m@x.io".into() };
     /// let running = RiffState::Running.into();
     /// let all = Show::default();
     /// let sessions = Sessions::new(sessions.to_vec(), vec![]);
     /// let mut top = Top {
     ///     pauses: &running,
-    ///     owner: &owner,
     ///     server: None,
     ///     sessions: &sessions,
     ///     people: &people,
@@ -867,7 +861,7 @@ impl Top<'_> {
     ///     machines: &[],
     /// };
     /// let text = anstream::adapter::strip_str(&top.view()).to_string();
-    /// assert!(text.starts_with("riff   running\nowner  mike (m@x.io)\nbuild  "), "{text}");
+    /// assert!(text.starts_with("riff   running\nbuild  "), "{text}");
     /// assert!(
     ///     text.contains("\n\nblocked  dddd4444 verify-issue-13, 25m, the lead gave no answer: waits for the…\n"),
     ///     "{text}"
@@ -878,7 +872,7 @@ impl Top<'_> {
     /// let tree: Vec<&str> = text.rsplit("\n\n").next().unwrap().lines().collect();
     /// assert_eq!(tree, [
     ///     "ann  admin  offline  seen 1h ago",
-    ///     "mike  owner  online  5 sessions: 2 busy, 1 idle, 1 blocked, 3 claims",
+    ///     "mike  admin  online  5 sessions: 2 busy, 1 idle, 1 blocked, 3 claims",
     ///     "├─ pangolin  2 sessions: 1 lead, 1 worker; 1 busy, 1 blocked, 2 claims",
     ///     // A host with a live worker and no numbers of its machine.
     ///     "│  │  no numbers",
@@ -916,10 +910,10 @@ impl Top<'_> {
     ///     .filter(|l| l.contains(" session"))
     ///     .collect();
     /// assert_eq!(rows, [
-    ///     "r  › mike  owner  online  4 sessions: 1 busy, 1 idle, 1 blocked, 2 claims",
+    ///     "r  › mike  admin  online  4 sessions: 1 busy, 1 idle, 1 blocked, 2 claims",
     ///     "├─ pangolin  1 session: 1 worker; 1 blocked, 1 claim",
     ///     "└─ thelio  3 sessions: 1 lead, 1 worker; 1 busy, 1 idle, 1 claim",
-    ///     "s  › mike  owner  online  › pangolin  1 session: 1 lead; 1 busy, 1 claim",
+    ///     "s  › mike  admin  online  › pangolin  1 session: 1 lead; 1 busy, 1 claim",
     /// ], "{text}");
     /// top.show = &all;
     ///
@@ -940,13 +934,6 @@ impl Top<'_> {
     pub fn view(&self) -> String {
         let here = self.repo.and_then(|repo| repo.parse().ok());
         let (mut facts, paused) = view::state_facts(self.pauses, here.as_ref());
-        match self.owner {
-            RiffOwner::NoSignIn => {}
-            RiffOwner::Nobody => facts.push(("owner", "none".into())),
-            RiffOwner::Owner { user, email } => {
-                facts.push(("owner", format!("{} ({})", safe(user), safe(email))));
-            }
-        }
         facts.extend(view::build_facts(self.server));
         let mut out = String::new();
         if let Some(fault) = self.fault {
@@ -995,7 +982,7 @@ impl Top<'_> {
             lines.extend(board_lines(&board, paused));
         }
         lines.push(Line::new("", vec![]));
-        let people = self.sessions.people(self.people, self.owner);
+        let people = self.sessions.people(self.people);
         let tops = self.sessions.tree(self.show, &people);
         for group in &tops {
             self.draw(group, "", "", &people, &mut lines);
@@ -1123,7 +1110,7 @@ impl Top<'_> {
     /// The lines of the session `s`: the first line after `pre`, each
     /// line of its detail after `more`.
     fn session(&self, pre: String, more: &str, s: &SessionInfo) -> Vec<Line> {
-        let tags = crate::text::tags(s, self.owner);
+        let tags = crate::text::tags(s);
         let worktree = s
             .uri
             .place()
@@ -1305,10 +1292,8 @@ mod tests {
         holds: &BTreeMap<String, BTreeMap<String, HoldInfo>>,
     ) -> String {
         let sessions = &Sessions::new(sessions.to_vec(), Vec::new());
-        let owner = RiffOwner::NoSignIn;
         let top = Top {
             pauses,
-            owner: &owner,
             server: None,
             sessions,
             people: &[],

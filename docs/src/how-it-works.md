@@ -327,7 +327,7 @@ hold each decision of the design.
 | The network | Each session reaches the internet, as a plain `claude` does. No proxy and no filter. | It uses the same connection and reaches each service that your machine reaches. |
 | The sign-in of `gh` | The session acts on GitHub as a bot of a GitHub App of the riff, with a token for its one repository and the rights of its role: see [Who acts on GitHub for each role](#who-acts-on-github-for-each-role). The container never gets your token. Where the Apps are not on the repository, no worker and no verify starts, and the lead starts with no token on GitHub: see [Repair riff with claude on the host](#repair-riff-with-claude-on-the-host). The image has `gh` at `/usr/bin/gh`. The daemon binds the binary of riff at `/usr/local/bin/gh`: it counts each call for `riff daemon status` (see [See how the daemon uses the GitHub limit](development.md#see-how-the-daemon-uses-the-github-limit)), and runs the real `gh`. An image with its own `gh` at `/usr/local/bin/gh` gets no bind: its `gh` runs as it is, with no count. No secret goes into a log line, a message or a file of a clone. | A worker can change an issue or a comment of another session: the right `issues: write` has no smaller part. The guard puts the change back: see [Add to an issue](#add-to-an-issue). |
 | The sign-in of `claude` | Each session has its own Claude folder in a folder of riff. riff trusts the clone of the session there, as you trust the main clone. The daemon gives the session the long-lived token of `riff claude-token`, kept in the OS keyring, in `CLAUDE_CODE_OAUTH_TOKEN`. With no token, riff binds your `~/.claude/.credentials.json` with no write, and starts no session while its access token has less than 60 minutes left. riff never changes your own Claude config. | It uses the limits of your plan that another session needs. |
-| The daemon and the riff tools | Each relay talks to the daemon through its own Unix socket, in a folder that only that session sees. The socket tells the daemon which session asks. The daemon serves the riff tools of the session on riff-server, as its worker session. A session gets only the riff tools that talk: `whoami`, `who`, `threads`, `read`, `post`, `tell`, `status` and `blocked`. No riff tool of a session acts on a folder of your machine or on a claim. The owner and admin steps need a person at the CLI. No riff tool does them. | It can send messages to other sessions through the riff tools. |
+| The daemon and the riff tools | Each relay talks to the daemon through its own Unix socket, in a folder that only that session sees. The socket tells the daemon which session asks. The daemon serves the riff tools of the session on riff-server, as its worker session. A session gets only the riff tools that talk: `whoami`, `who`, `threads`, `read`, `post`, `tell`, `status` and `blocked`. No riff tool of a session acts on a folder of your machine or on a claim. The admin steps need a person at the CLI. No riff tool does them. | It can send messages to other sessions through the riff tools. |
 
 ## Where the env of a session comes from
 
@@ -755,7 +755,7 @@ flowchart LR
 | Step | Who | What decides |
 |---|---|---|
 | Push the tag `vX.Y.Z` | the lead in its container, with the token of the lead App, or an admin of the repository in a terminal | The ruleset `releases` lets only the admin role of the repository and the lead App push a tag `v*`. `riff release cut` checks no role: when GitHub refuses the push, riff names the ruleset and deletes the tag on its machine. |
-| Approve the deploy | you, the owner or an admin of the riff, in a plain terminal | `riff release approve` refuses each session, also the lead, also when you say approve in riff chat. Only a person is a reviewer of the environment `production`. |
+| Approve the deploy | you, an admin of the riff, in a plain terminal | `riff release approve` refuses each session, also the lead, also when you say approve in riff chat. Only a person is a reviewer of the environment `production`. |
 
 `just github` and `riff project init` make the ruleset `releases`: see
 [Let the lead push the release tag](start-a-riff.md#let-the-lead-push-the-release-tag).
@@ -1202,7 +1202,7 @@ sequenceDiagram
     C->>G: open browser, sign in
     G-->>C: Google ID token
     C->>E: Google ID token + device public key
-    E->>E: check signature; owner, admin, member or allowed domain
+    E->>E: check signature; admin, member or allowed domain
     E-->>C: riff tokens, bound to the device key
     Note over C: tokens and key go to the OS keyring
 ```
@@ -1362,10 +1362,10 @@ each policy, an action that comes with a proof is marked in the log.
   answer to a decision that waits for you (`riff questions --answered
   N`, and `a` in the Waves tab). The accept of an outside pull request
   joins the list when riff has it.
-- The commands that only a person does: take or pass the owner role
-  (`riff owner`), invite (`riff invite`), remove (`riff remove`), make
-  an admin or a member again (`riff admin`), and pause or resume the
-  whole riff (`riff pause --riff`, `riff resume --riff`).
+- The commands that only a person does: invite (`riff invite`), remove
+  (`riff remove`), make an admin or a member again (`riff admin`), and
+  pause or resume the whole riff (`riff pause --riff`,
+  `riff resume --riff`).
 - The steps that can lose work, on this host or on another one with
   `--host`: end a session (`riff daemon end NAME`, and `x` in the
   Sessions tab), `riff host leave --now`, `riff lead stop`, the removal
@@ -1488,9 +1488,9 @@ on the proof of presence.
 riff admin proof required
 ```
 
-Only the owner or an admin can. The change needs a proof of your key,
-so add one first. Before you turn it on, each person of the riff adds
-an authenticator and tests a proof: with `required`, a person with no
+Only an admin can. The change needs a proof of your key, so add one
+first. Before you turn it on, each person of the riff adds an
+authenticator and tests a proof: with `required`, a person with no
 authenticator cannot do an action of the list. `riff` prints:
 
 ```text
@@ -1560,15 +1560,12 @@ riff-server holds.
 riff who
 ```
 
-The first lines are facts: the state of the riff, the owner, and the
-build. The owner is `none` when the riff has no owner. A riff with no
-sign-in shows no owner. Then a table shows a row for each session: its
-name with the short session ID, its state, its role, and the detail of
-its state:
+The first lines are facts: the state of the riff and the build. Then a
+table shows a row for each session: its name with the short session ID,
+its state, its role, and the detail of its state:
 
 ```text
 riff   running
-owner  mike (mike@comotechnologies.io)
 build  v0.7.0  (f45be4d, 2026-09-29)
 
 SESSION                            STATE    ROLE      DETAIL
@@ -1606,16 +1603,12 @@ SESSION                      STATE  ROLE    DETAIL
 mike@thelio:riff (002d404c)  idle   daemon  hosts containers for 2h  25s ago: daemon host: pid 249637, build 3.2.0, 0 sessions
 ```
 
-The owner is a person, not a session. So no session has the tag
-`owner`. Only a line with no session, a person on the command line of
-the owner, has it.
-
 STATE is the state of the session, and DETAIL tells more about it. See
 [The state of a session](#the-state-of-a-session). `riff top`
 and the `who` tool use the same words.
 
 When you must act, the last line says so, in yellow: for example when
-the riff or your repository is paused, or when the riff has no owner.
+the riff or your repository is paused.
 
 In a terminal, `riff who` has the colors of `riff tail`: each session
 has the same color in both. `running` is green and `paused` is yellow.
@@ -1980,9 +1973,9 @@ riff
 
 ```text
 [1 Sessions]  2 Chat•2  3 Waves•  4 Machines  5 Devices  6 Reports
- riff running · owner mike · build 10df8a4 · link ok 2s
+ riff running · build 10df8a4 · link ok 2s
  6 sessions: 1 blocked · 1 done · 3 busy · 1 idle · 1 to update         by repo
- ▼ riff › mike  owner  online                                        4 sessions
+ ▼ riff › mike  admin  online                                        4 sessions
  > ! 3a3f8d5d  #994   worker     thelio   blocked 32m  which of two designs?
    ✓ 8f1c2d3e  #1599  container  thelio   done         waits for a verify of PR
    ● 5b1e2a90  #1590  container  thelio   busy 12m     Bash: just check
@@ -2088,7 +2081,7 @@ riff
 
 ```text
  6 sessions: 1 blocked · 1 done · 3 busy · 1 idle · 1 to update       by person
- ▼ mike  owner  online        5 sessions · 1 blocked · 1 done · 2 busy · 1 idle
+ ▼ mike  admin  online        5 sessions · 1 blocked · 1 done · 2 busy · 1 idle
    ▼ riff                     4 sessions · 1 blocked · 1 done · 1 busy · 1 idle
  >   ! 3a3f8d5d  #994   worker     thelio   blocked 32m  which of two designs?
      ✓ 8f1c2d3e  #1599  container  thelio   done         waits for a verify of P
@@ -2165,7 +2158,7 @@ match, of all the sessions:
 
 ```text
  filter host:pangolin · 1 of 6 sessions: 1 busy · Esc clears            by repo
- ▼ strata › mike  owner  online                              1 session · 1 busy
+ ▼ strata › mike  admin  online                              1 session · 1 busy
  > ● 9c0d1e2f  #88    worker     pangolin busy 10m
  ↑↓ select  Enter open  l lead  t take over  Esc clear the filter  ? help
 ```
@@ -2189,7 +2182,7 @@ thread. Ctrl-C stops it:
 riff top
 ```
 
-The header shows the state of the riff, the owner and the build, as in
+The header shows the state of the riff and the build, as in
 `riff who`. A board comes next for each repository with a live
 session, and for the repository where you run `riff top`: the current
 wave with its repository, one line for the `free` items, one for the
@@ -2212,7 +2205,6 @@ the repositories on each host, and the sessions in each repository:
 
 ```text
 riff   running
-owner  mike (mike@example.com)
 build  v1.0.0  (10df8a4, 2026-10-04)
 
 blocked  3a3f8d5d issue-8, 32m, the lead gave no answer: which of two designs?
@@ -2229,7 +2221,7 @@ ann  admin  offline  seen 1h ago
 brett  online  › kadomony  › strata  1 session: 1 worker; 1 busy, 1 claim
 └─ 7a8b9c0d  #issue-88  worker  busy
      working on #88 Split the store
-mike  owner  online  7 sessions: 2 busy, 3 idle, 1 blocked, 3 claims
+mike  admin  online  7 sessions: 2 busy, 3 idle, 1 blocked, 3 claims
 ├─ pangolin  › riff  2 sessions: 1 container, 1 worker; 2 busy, 2 claims
 │  ├─ 5b1e2a90  #issue-7  worker  busy
 │  │    working on #7 Fix the help
@@ -2260,7 +2252,7 @@ mike  owner  online  7 sessions: 2 busy, 3 idle, 1 blocked, 3 claims
 - A blocked session has a red line before the boards: the session, its
   claims, the reason and the time that it waits. When the lead gave no
   answer, the line says so. See [A blocked session](#a-blocked-session).
-- A person line: the user in a bold color, the tag `owner` or `admin`,
+- A person line: the user in a bold color, the tag `admin` for an admin,
   and `online` when a session of the person is online. Else `offline`,
   with the time since the last call. Each member of the riff has a
   line, also when away.
@@ -4065,8 +4057,7 @@ from a person and from a session. Each line that riff writes for you is
 a line of `riff-bot` too. These are the lines of `riff-bot`:
 
 - the line of each change of the people: `riff invite`, `riff remove`,
-  `riff admin add`, `riff admin remove`, and each step of the owner
-  role (see
+  `riff admin add` and `riff admin remove` (see
   [See each change of the members](start-a-team-riff.md#see-each-change-of-the-members)),
 - the line of `riff release cut`,
 - the ask while a deploy waits for your approval, and its reminder,
@@ -4107,7 +4098,6 @@ riff chat
 14:05 <riff-bot> @mike riff release v3.3.0 waits for your approval: https://github.com/como-technologies/riff/actions/runs/9. In a terminal, run: riff release approve v3.3.0
 14:05 <riff-bot> riff started the lead of brett in como-technologies/riff on heron again on the new riff.
 14:06 [mike a6cf2205] the checks of #207 passed
-14:07 <riff-bot> members: mike passed the owner role to brett@acme.io.
 ```
 
 To see the host and the session of each sender, follow the chat with
@@ -4584,7 +4574,7 @@ riff
 
 ```text
  1 Sessions  [2 Chat]  3 Waves  4 Machines  5 Devices  6 Reports
- riff running · owner mike · build 10df8a4 · link ok 2s
+ riff running · build 10df8a4 · link ok 2s
  chat · online: mike, brett · away: ann · @NAME wakes a person or a project
 ──── Friday 2026-11-06 ──────────────────────────────────────────────
  12:01 <brett> mike, can you look at #1608?
@@ -4689,7 +4679,7 @@ riff
 ```
 
 ```text
- 12:40 <riff-bot> members: ann passed the owner role to mike.
+ 12:40 <brett> mike, #1608 looks good
  12:46 <riff> #994 still has no answer; I wait for mike
  2 new lines below: End
 >
@@ -5171,8 +5161,8 @@ sequenceDiagram
     L->>E: free issue-12
 ```
 
-- Only a lead of the repository, the owner or an admin can hold and
-  free an item. A worker cannot.
+- Only a lead of the repository or an admin can hold and free an
+  item. A worker cannot.
 - A hold names one item by its exact name. A hold of `issue-12` does
   not stop `verify-issue-12`.
 - A hold does not end a claim. It stops only the next claim of a
@@ -5234,7 +5224,7 @@ issue-12 in como-technologies/riff is free of its hold: a worker can claim it.
 
 A hold of `verify-issue-12` stops the claim of the verify by a worker.
 `riff run` and the wave of the daemon send no verify request for the
-item. Only a lead, the owner or an admin can hold it:
+item. Only a lead or an admin can hold it:
 
 ```sh
 riff plan hold verify-issue-12 a scratch item
@@ -5370,10 +5360,10 @@ sequenceDiagram
 | Pause | Who can set and end it |
 |---|---|
 | your repository | you, in a shell in that repository, or your lead there |
-| a repository that you name | the owner or an admin |
-| the whole riff | the owner or an admin |
+| a repository that you name | an admin |
+| the whole riff | an admin |
 
-A riff with no sign-in has no owner: each person there can set each
+A riff with no sign-in has no admin: each person there can set each
 pause. A pause and a resume wake each session that they stop or start.
 The lead of a repository with a pause of its own hears the pause and
 the resume of the whole riff too (see
@@ -5417,7 +5407,7 @@ resume of the riff.
 
 ### Pause the whole riff
 
-Only the owner or an admin can. Use it for example for a release:
+Only an admin can. Use it for example for a release:
 
 ```sh
 riff pause --riff
@@ -5475,7 +5465,7 @@ The lead resumes its repository with `riff resume`, or you do.
 
 ### Pause a repository of another person
 
-Only the owner or an admin can. Name the repository:
+Only an admin can. Name the repository:
 
 ```sh
 riff pause --repo acme/app
@@ -5506,10 +5496,10 @@ When Secret Manager refuses the read, with 401 or 403, riff-server
 pauses the whole riff. For example, the secret is not there, or the
 account of riff-server has no role on it. Then:
 
-- riff-server posts one line as `<riff-bot>` in the chat to the owner
-  and each admin. The line has the cause, the fix, and a prompt for
-  `claude` on the host. It also logs one error: the alert of the riff,
-  when it has one, sends an email to the owner.
+- riff-server posts one line as `<riff-bot>` in the chat to each admin.
+  The line has the cause, the fix, and a prompt for `claude` on the
+  host. It also logs one error: the alert of the riff, when it has one,
+  sends an email to the address of `RIFF_OWNER`.
 - No worker and no verify starts.
 - A lead still starts, with no token on GitHub: no `GH_TOKEN`, and
   never your token. A lead that runs loses its token at its next
@@ -5533,9 +5523,8 @@ sequenceDiagram
     Note over D: no worker and no verify starts
 ```
 
-The fix is for the owner or an admin, in a terminal, in the clone with
-the cloud settings of the riff. Put the name of your riff in place of
-`shared`:
+The fix is for an admin, in a terminal, in the clone with the cloud
+settings of the riff. Put the name of your riff in place of `shared`:
 
 ```sh
 git pull
@@ -5712,7 +5701,7 @@ The lead has no claims. riff makes its state from what it does:
 | State | When | Detail |
 |---|---|---|
 | `busy` | a turn runs | the work, for example `runs Bash: deploy the stage for 2m` |
-| `waiting` | the lead said `blocked` and waits for its person | `waiting for mike: run riff owner --take (3m ago)` |
+| `waiting` | the lead said `blocked` and waits for its person | `waiting for mike: run riff release approve v3.3.0 (3m ago)` |
 | `idle` | the turn ended, and nothing waits | `monitoring work for 6m` |
 
 ```mermaid
@@ -5731,15 +5720,15 @@ call, the lead is gone.
 
 ### Say that the lead waits for you
 
-When the lead needs you, for example to run a command as the owner, it
+When the lead needs you, for example to approve a release, it
 says so. riff shows it as `waiting`, with your name and the reason:
 
 ```sh
-riff blocked run riff owner --take
+riff blocked run riff release approve v3.3.0
 ```
 
 ```text
-You wait for your person: run riff owner --take. Ask your user. The next prompt ends the wait.
+You wait for your person: run riff release approve v3.3.0. Ask your user. The next prompt ends the wait.
 ```
 
 The lead sends no message: you read its terminal. A message of
@@ -5915,7 +5904,7 @@ flowchart LR
     S -->|the notes tool, at each start| L2[the lead on a new host]
 ```
 
-Only you and the owner of the riff can read your notes. A secret never
+Only you and the admins of the riff can read your notes. A secret never
 goes in them: riff refuses a text that looks like a token. The limit is
 64 KiB.
 
@@ -5948,7 +5937,13 @@ riff keeps each old text.
 riff lead notes --history
 ```
 
-The owner can show the notes of another user with `--user NAME`.
+### Show the notes of another user
+
+Only an admin can. Put the user in place of `NAME`:
+
+```sh
+riff lead notes --user NAME
+```
 
 ## Move the lead to another host
 
@@ -6145,7 +6140,7 @@ The riff forgets the project. GitHub keeps the repository as it is:
 
 A riff-server whose log has no record of a project enrolls, at its
 start, each repository that has a lead or the notes of a lead. Then
-riff-bot tells the owner in one line of the chat. Review the list with
+riff-bot tells each admin in one line of the chat. Review the list with
 `riff project list`, and remove each project that the riff does not
 work on.
 
@@ -6670,7 +6665,7 @@ The server writes the object when it changed:
 Only a token from the last second before a crash is lost: then `riff`
 refreshes one time by itself.
 
-The people are not in that object. Who may join, the owner, the
+The people are not in that object. Who may join, the
 admins, the members and the riff ID are records of the log. So they
 stay after a restart, and the log shows who changed them. See
 [Find who changed the
@@ -6837,13 +6832,14 @@ flowchart LR
     O -.->|they stay for a rollback| O
 ```
 
-- The riff keeps its ID, its owner, its admins and its members.
+- The riff keeps its ID, its admins and its members. The old owner is
+  an admin.
 - Your sign-in stays. Do not run `riff login`.
 - Each session keeps its threads, its claims, its lead and its read
   cursors. A thread keeps its last 200 messages.
 - `riff` on your machine updates itself, or tells you to run
   `riff update`.
-- The whole riff is paused after the move. The owner or an admin
+- The whole riff is paused after the move. An admin
   resumes it (see [Resume the whole riff](#resume-the-whole-riff)).
 
 Check that your machine and the server run the new release, and that
@@ -7035,7 +7031,7 @@ for a person: run `riff chat` on the host.
 
 A step of a person, a claim, and a command that needs a program of the
 host refuse in the container before each call: `riff login`, `riff
-logout`, `riff invite`, `riff remove`, `riff admin`, `riff owner`,
+logout`, `riff invite`, `riff remove`, `riff admin`,
 `riff chat`, `riff tail`, `riff claim`, `riff release ITEM`, `riff
 lead --session`, `riff lead start`, `riff lead move`, `riff lead
 notes`, `riff questions --answered`, `riff server`, `riff update` and
@@ -7534,7 +7530,7 @@ fix:
 | Reason | The fix |
 |---|---|
 | `riff-OWNER is not installed on OWNER/REPO` | `riff github install OWNER` |
-| `the riff has no session App`, or no lead App | `riff github create --owner OWNER`, by the owner or an admin |
+| `the riff has no session App`, or no lead App | `riff github create --owner OWNER`, by an admin |
 | `the gh of the person cannot push to OWNER/REPO` | `gh auth login`, with an account that can push there |
 | `riff-server is older` | an admin runs `riff cloud deploy NAME` |
 | `this riff has no sign-in` | a riff with sign-in and the Apps (see [Start a Team Riff](start-a-team-riff.md)), or `riff run ITEM --no-github` |

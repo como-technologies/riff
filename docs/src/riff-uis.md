@@ -182,7 +182,7 @@ Each tab has the same five parts:
 
 ```text
 [1 Sessions]  2 Chat•2  3 Waves•  4 Machines  5 Devices  6 Reports
- riff running · owner mike · build 10df8a4 · link ok 2s
+ riff running · build 10df8a4 · link ok 2s
  the body of the tab
 
  the note: the result of the last action, or the fault of the link
@@ -191,8 +191,8 @@ Each tab has the same five parts:
 
 - The tab strip shows the active tab in `[ ]`. A dot after a tab says
   that it has news since you looked at it: `Chat•2` is two new lines.
-- The header shows the state of the whole riff, the owner, the build
-  of your riff, and the link: `link ok` with the age of the last look,
+- The header shows the state of the whole riff, the build of your
+  riff, and the link: `link ok` with the age of the last look,
   or `link down`. When riff-server runs another build, the header
   names it.
 - While a release is open, the line of its state comes under the

@@ -234,7 +234,7 @@ impl Line {
     ///     Line::of(&Checked { message, verified: false }, &"chat".parse().unwrap())
     /// };
     /// let mike: SessionUri = "riff://mike@thelio".parse()?;
-    /// assert!(line(SessionUri::server(), Kind::Riff, "members: ann passed the owner role").by_server());
+    /// assert!(line(SessionUri::server(), Kind::Riff, "riff release v3.3.0 is cut.").by_server());
     /// assert!(!line(SessionUri::server(), Kind::Message, "hi").by_server());
     /// assert!(!line(mike.clone(), Kind::Riff, "hi").by_server());
     /// assert!(!line(mike, Kind::Message, "riff release v3.3.0 waits for your approval").by_server());
@@ -578,7 +578,7 @@ mod tests {
             assert_eq!(typed.sender(&names).name, "mike 0271342b", "{kind:?}");
         }
         let server = SessionUri::server().to_string();
-        let passed = "members: ann passed the owner role to mike.";
+        let passed = "@mike riff release v3.3.0 is cut.";
         let bot = line(&server, Kind::Riff, passed).sender(&names);
         assert_eq!((bot.name.as_str(), bot.named), (RIFF_BOT, true));
     }

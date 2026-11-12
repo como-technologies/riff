@@ -31,8 +31,8 @@
 //! - At a start with no record of a project in the log, and with a
 //!   repository thread that has a lead or the notes of a lead, the
 //!   server sends the command `find_projects`, and posts one line of the
-//!   kind `riff` in the chat to the owner (`find`,
-//!   01M76SG8NCSAP69Y5AX455BJQM).
+//!   kind `riff` in the chat to each admin (`find`,
+//!   01M76SG8NCSAP69Y5AX455BJQM, 01M77FVW07HC05Q69HV6971F20).
 
 use std::time::Instant;
 
@@ -133,8 +133,8 @@ async fn on_github(s: &Server, admitted: &Admitted, repo: &ThreadName, token: &s
 
 /// The search of the projects at a start (01M76SG8NCSAP69Y5AX455BJQM):
 /// the command `find_projects`, then one line of the kind `riff` in the
-/// chat to the owner, with each repository that it enrolled. A riff with
-/// no owner gets the line with no selector.
+/// chat to each admin, with each repository that it enrolled. A riff with
+/// no admin that has a USER gets the line with no selector.
 pub(crate) async fn find(s: &Server) {
     let found = match s.engine.find_projects().await {
         Ok(found) => found,
@@ -150,15 +150,13 @@ pub(crate) async fn find(s: &Server) {
         projects = found.len(),
         "enrolled each repository with a lead or the notes of a lead as a project"
     );
-    let owner = s
-        .engine
-        .read(|state| state.people().owner_user().map(str::to_owned));
-    let to = owner
+    let admins = s.engine.read(|state| state.people().admin_users());
+    let to = admins
+        .into_iter()
         .map(|user| Selector {
             user: Some(user),
             ..Selector::default()
         })
-        .into_iter()
         .collect();
     let body = found_line(&found);
     let post = Server::news(Some(ThreadName::chat()), to, &body, Kind::Riff);
@@ -167,7 +165,7 @@ pub(crate) async fn find(s: &Server) {
     }
 }
 
-/// The line to the owner after the search of the projects
+/// The line to each admin after the search of the projects
 /// (01M76SG8NCSAP69Y5AX455BJQM).
 ///
 /// ```

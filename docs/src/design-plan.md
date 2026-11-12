@@ -247,13 +247,13 @@ and its replay. The test of the kinds takes the union of the lists.
 
 `permits` gives each command to a person or a session with the role
 member and no worker mark. A worker gets
-`not_allowed`, also a worker of the owner. `handle` then checks the
+`not_allowed`, also a worker of an admin. `handle` then checks the
 rest, because "the lead of this thread" needs the state:
 
 | Command | `handle` lets it through for | Else |
 |---|---|---|
-| `plan`, `plan_off` | each session in the repository thread; the owner and each admin | `not_allowed` |
-| `hold`, `free` | a lead of the repository thread; the owner and each admin | `not_allowed` |
+| `plan`, `plan_off` | each session in the repository thread; each admin | `not_allowed` |
+| `hold`, `free` | a lead of the repository thread; each admin | `not_allowed` |
 | `plan_seen` | each session in the repository thread that is not a worker | ignored |
 | query `plan` | each member | — |
 
@@ -442,7 +442,7 @@ no forge.
    another name get only the hold and the checks of today.
 9. The checks of the plan and the hold refuse only a worker. Each
    other session is granted, with a warning in the reply.
-10. Each session that is not a worker can send the plan. Only a lead,
-    the owner or an admin can hold and free an item.
+10. Each session that is not a worker can send the plan. Only a lead
+    or an admin can hold and free an item.
 11. A change of the plan never ends a claim.
 12. The holds are the first build item.

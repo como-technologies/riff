@@ -14,7 +14,7 @@ use riff::top::Top;
 use riff_client::api::Api;
 use riff_client::sessions::Sessions;
 use riff_core::name::{SessionUri, ThreadName};
-use riff_core::wire::{RiffOwner, RiffState, SessionInfo, SessionState, Waits};
+use riff_core::wire::{RiffState, SessionInfo, SessionState, Waits};
 
 async fn start_server() -> crate::common::Signed {
     crate::common::start_signed().await
@@ -99,7 +99,6 @@ fn top(sessions: &[SessionInfo]) -> String {
     let running = RiffState::Running.into();
     let top = Top {
         pauses: &running,
-        owner: &RiffOwner::NoSignIn,
         server: None,
         sessions,
         people: &[],

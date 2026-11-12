@@ -573,7 +573,7 @@ async fn install_opens_the_install_page_of_each_app() {
     .await
     .unwrap_err();
     assert!(
-        format!("{error:#}").contains("only the owner or an admin"),
+        format!("{error:#}").contains("only an admin of the riff"),
         "{error:#}"
     );
 }

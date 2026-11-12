@@ -5,7 +5,7 @@
 //!
 //! ```text
 //!  1 Sessions  2 Chat•2  3 Waves•  4 Machines  5 Devices  [6 Reports]
-//!  riff running · owner mike · build 10df8a4 · link ok 2s
+//!  riff running · build 10df8a4 · link ok 2s
 //!  [Usage]  Audit  Session log
 //!  USAGE OF WAVE 48 · como-technologies/riff · 14.3M tokens in 6 issues
 //!    ISSUE  TITLE                            TOKENS  MODELS

@@ -1,9 +1,9 @@
 //! The projects of the riff over HTTP, with a fake GitHub
 //! (01M76SG2E9RPV4B7CYSZPGGZ3P, 01M76SG8GBXFYXKWMQHPCNEXBN,
-//! 01M76SG8JVHTKY6N62FQG7XAE6, 01M76SG8NCSAP69Y5AX455BJQM): the
-//! enrollment and the removal by an admin who is an admin of the
-//! repository, the refusals, the hosts over a restart, and the search
-//! of the projects at a start.
+//! 01M76SG8JVHTKY6N62FQG7XAE6, 01M76SG8NCSAP69Y5AX455BJQM,
+//! 01M77FVW07HC05Q69HV6971F20): the enrollment and the removal by an
+//! admin who is an admin of the repository, the refusals, the hosts
+//! over a restart, and the search of the projects at a start.
 
 use crate::common;
 use crate::fake_github::{FakeGitHub, REPO};
@@ -14,7 +14,7 @@ use std::time::Duration;
 use riff_core::dpop::Key;
 use riff_core::name::SessionUri;
 use riff_core::record::{
-    By, Change, Envelope, Member, NotesSet, OwnerSet, PersonJoined, Record, RiffMade,
+    AdminSet, By, Change, Envelope, Member, NotesSet, PersonJoined, Record, RiffMade,
 };
 use riff_core::wire::{
     Kind, ProjectFacts, ProjectInitReply, ProjectsReply, REFUSED_HEADER, ReadReply, TokenReply,
@@ -175,7 +175,6 @@ async fn projects_of(url: &str, person: &Person) -> Vec<ProjectFacts> {
 async fn an_admin_who_is_an_admin_of_the_repository_enrolls_and_removes_a_project() {
     let fake = github().await;
     let (service, url) = signed(&fake).await;
-    let _owner = person(&service, "ann@acme.io").await;
     let cy = person(&service, "cy@acme.io").await;
     let bob = person(&service, "bob@acme.io").await;
 
@@ -235,7 +234,6 @@ async fn an_admin_who_is_an_admin_of_the_repository_enrolls_and_removes_a_projec
 async fn a_member_or_an_admin_who_is_not_an_admin_of_the_repository_is_refused() {
     let fake = github().await;
     let (service, url) = signed(&fake).await;
-    let _owner = person(&service, "ann@acme.io").await;
     let cy = person(&service, "cy@acme.io").await;
     let bob = person(&service, "bob@acme.io").await;
 
@@ -380,10 +378,10 @@ fn record(position: u64, change: Change) -> Record {
 
 /// At a start with no record of a project, riff-server enrolls each
 /// repository with a lead or the notes of a lead, and posts one line to
-/// the owner in the chat. A second start finds the records, and does it
+/// each admin in the chat. A second start finds the records, and does it
 /// no more.
 #[tokio::test]
-async fn the_first_start_enrolls_each_repository_with_a_lead_or_notes_and_tells_the_owner() {
+async fn the_first_start_enrolls_each_repository_with_a_lead_or_notes_and_tells_each_admin() {
     let fake = github().await;
     let store: Arc<dyn Store> = Arc::new(Memory::default());
     let lead: SessionUri = "riff://mike@pangolin/acme/app?session=a1".parse().unwrap();
@@ -406,8 +404,17 @@ async fn the_first_start_enrolls_each_repository_with_a_lead_or_notes_and_tells_
             user: "mike".into(),
             email: "mike@acme.io".into(),
         }),
-        Change::OwnerSet(OwnerSet {
-            email: Some("mike@acme.io".into()),
+        Change::PersonJoined(PersonJoined {
+            user: "ann".into(),
+            email: "ann@acme.io".into(),
+        }),
+        Change::AdminSet(AdminSet {
+            email: "mike@acme.io".into(),
+            admin: true,
+        }),
+        Change::AdminSet(AdminSet {
+            email: "ann@acme.io".into(),
+            admin: true,
         }),
         Change::JoinedThread(member.clone()),
         Change::LeadSet(member),
@@ -448,8 +455,8 @@ async fn the_first_start_enrolls_each_repository_with_a_lead_or_notes_and_tells_
     assert_eq!(chat.len(), 1, "one line");
     let line = &chat[0];
     assert_eq!(line.kind, Kind::Riff);
-    assert_eq!(line.to.len(), 1);
-    assert_eq!(line.to[0].user.as_deref(), Some("mike"));
+    let to: Vec<Option<&str>> = line.to.iter().map(|s| s.user.as_deref()).collect();
+    assert_eq!(to, [Some("ann"), Some("mike")]);
     assert!(line.body.contains("acme/app, acme/web"), "{}", line.body);
     assert!(line.body.contains("riff project list"), "{}", line.body);
     let found = log::replay(&*store).await.unwrap().records;

@@ -26,14 +26,14 @@
 //!
 //! | Command | Who (01M43GSGGY0QMB5D5EH92M6ZFP) | Else |
 //! |---|---|---|
-//! | `hold`, `free` | a lead of the repository thread; the owner and each admin | `not_allowed` |
+//! | `hold`, `free` | a lead of the repository thread; each admin | `not_allowed` |
 //!
 //! [`permits`](super::permits) refuses a worker. `handle` checks the
 //! lead and the role, because "the lead of this thread" needs the state.
 //!
 //! ```mermaid
 //! flowchart LR
-//!     H[hold ITEM REASON] -->|a lead, the owner, an admin| R[(item_held)]
+//!     H[hold ITEM REASON] -->|a lead, an admin| R[(item_held)]
 //!     F[free ITEM] -->|held| E[(item_freed)]
 //!     F -->|not held| N[no record: a no_change line]
 //!     R --> C{claim ITEM}
@@ -51,7 +51,7 @@
 //!
 //! | Command | Who (01M4A4YTWK68JDA0DKXX2HV4FA) | Else |
 //! |---|---|---|
-//! | `plan`, `plan_off` | a session in the repository thread; the owner and each admin | `not_allowed` |
+//! | `plan`, `plan_off` | a session in the repository thread; each admin | `not_allowed` |
 //!
 //! ```mermaid
 //! flowchart LR
@@ -481,9 +481,7 @@ fn may_change(
     } else {
         Err(Refused::new(
             Code::NotAllowed,
-            format!(
-                "only a lead of {thread}, the owner or an admin can {kind} an item. Tell the lead."
-            ),
+            format!("only a lead of {thread} or an admin can {kind} an item. Tell the lead."),
         ))
     }
 }
@@ -595,7 +593,7 @@ fn may_plan(
     } else {
         Err(Refused::new(
             Code::NotAllowed,
-            format!("only a session in {thread}, the owner or an admin can send {kind}"),
+            format!("only a session in {thread} or an admin can send {kind}"),
         ))
     }
 }

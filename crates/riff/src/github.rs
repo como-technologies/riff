@@ -62,8 +62,8 @@
 //!
 //! Each command refuses in an agent session and in a container, before
 //! each call ([`refusal`], 01M6WG537B67VWVENY3821RV33). riff-server
-//! refuses `create` and `install` to a member who is not the owner or an
-//! admin of the riff.
+//! refuses `create` and `install` to a member who is not an admin of the
+//! riff.
 
 use std::io::Write;
 use std::time::{Duration, Instant};

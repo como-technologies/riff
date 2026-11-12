@@ -17,8 +17,6 @@ use std::time::Instant;
 
 use riff_core::name::{Place, SessionUri, Who};
 
-use crate::owner::Timing;
-
 use super::presence::Presence;
 use super::riff::Riff;
 
@@ -34,57 +32,33 @@ pub struct View<'a> {
 /// (01M3XA87F70CD3WH4STADSCW6S). They are not in the log: the state gets them at its
 /// start, and each view holds them.
 ///
+/// The admins of the settings (R210) are not here: the server names
+/// them in the log at each start ([`NameAdmins`](super::NameAdmins)).
+///
 /// ```
-/// use riff_state::owner::Timing;
 /// use riff_state::state::Settings;
 ///
-/// let settings = Settings::new(&[" Boss@X.io".into()], "https://riff.x.io", Timing::default());
-/// assert!(settings.is_admin("boss@x.io"));
-/// assert!(!Settings::default().is_admin("boss@x.io"));
+/// let settings = Settings::new("https://riff.x.io");
 /// assert_eq!(settings.address(), "https://riff.x.io");
+/// assert_eq!(Settings::default().address(), "");
 /// ```
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Settings {
-    /// The email of each admin of the settings, in lower case (R210).
-    admins: Vec<String>,
     /// The public address of the riff: the reply to an invite names it.
     address: String,
-    /// The times of the owner role.
-    owner_role: Timing,
 }
 
 impl Settings {
-    /// The settings with the admin emails `admins` (R210), the public
-    /// address `address`, and the times of the owner role.
-    pub fn new(admins: &[String], address: &str, owner_role: Timing) -> Settings {
-        let mut admins: Vec<String> = admins.iter().map(|a| super::people::email(a)).collect();
-        admins.sort();
-        admins.dedup();
+    /// The settings with the public address `address`.
+    pub fn new(address: &str) -> Settings {
         Settings {
-            admins,
             address: address.to_owned(),
-            owner_role,
         }
-    }
-
-    /// The email of each admin of the settings, sorted.
-    pub fn admins(&self) -> &[String] {
-        &self.admins
-    }
-
-    /// True when `email`, in lower case, is an admin of the settings.
-    pub fn is_admin(&self, email: &str) -> bool {
-        self.admins.iter().any(|admin| admin == email)
     }
 
     /// The public address of the riff.
     pub fn address(&self) -> &str {
         &self.address
-    }
-
-    /// The times of the owner role.
-    pub fn owner_role(&self) -> &Timing {
-        &self.owner_role
     }
 }
 

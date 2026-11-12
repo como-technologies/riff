@@ -61,6 +61,9 @@
 //!   hosts of one, another person enrolls a third, the first removes
 //!   one, and the last record, with no caller, enrolls a fourth. So
 //!   `replayed.json` has three projects and the mark `projects_known`.
+//!   `kinds.json` also has the command `name_admins`. The commands of
+//!   the owner role went: their names stay in the lists of 1.0.0, and in
+//!   [`CommandKind::RETIRED`].
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -85,7 +88,8 @@ const NOTES: &str = "3.4.0";
 /// The release of the fixtures of the keys of a person.
 const KEYS: &str = "4.17.0";
 
-/// The release of the fixtures of the projects of the riff.
+/// The release of the fixtures of the projects of the riff, and of the
+/// command that names the admins at each start.
 const PROJECTS: &str = "4.18.0";
 
 /// Each release with a directory of its own and a `kinds.json`.
@@ -157,9 +161,9 @@ fn written(state: &State, like: &Checkpoint) -> Vec<u8> {
 }
 
 /// A name of the list that is gone from the code fails the first
-/// check: a kind is never renamed and never removed. A new kind of the
-/// code that is not in the list fails the second one: add it to the
-/// list of its release.
+/// check: a kind is never renamed, and a kind that went is in
+/// [`CommandKind::RETIRED`]. A new kind of the code that is not in the
+/// list fails the second one: add it to the list of its release.
 #[test]
 fn the_code_has_each_kind_of_the_list_and_the_list_has_each_kind_of_the_code() {
     let kinds = kinds();
@@ -181,9 +185,10 @@ fn the_code_has_each_kind_of_the_list_and_the_list_has_each_kind_of_the_code() {
 
     let listed = set(kinds.commands.iter().map(String::as_str));
     let code = set(CommandKind::ALL.iter().map(|kind| kind.as_str()));
+    let retired = set(CommandKind::RETIRED.iter().copied());
     assert_eq!(
-        listed.difference(&code).collect::<Vec<_>>(),
-        [] as [&&str; 0]
+        listed.difference(&code).copied().collect::<BTreeSet<_>>(),
+        retired
     );
     assert_eq!(
         code.difference(&listed).collect::<Vec<_>>(),
@@ -263,6 +268,24 @@ fn json_with_cursors(
     json
 }
 
+/// `json`, a checkpoint of the release, as this build reads it
+/// (01M7767T393P46VTNNE5SY203K): the owner is one more admin, and the other
+/// fields of the owner role go.
+fn as_today(mut json: serde_json::Value) -> serde_json::Value {
+    let state = json["state"].as_object_mut().unwrap();
+    state.remove("no_owner");
+    state.remove("owner_asked");
+    if let Some(owner) = state.remove("owner") {
+        let admins = state.entry("admins").or_insert(serde_json::json!([]));
+        let admins = admins.as_array_mut().unwrap();
+        if !admins.contains(&owner) {
+            admins.push(owner);
+            admins.sort_by_key(|admin| admin.as_str().unwrap().to_owned());
+        }
+    }
+    json
+}
+
 #[test]
 fn this_build_writes_the_bytes_of_the_log_and_the_checkpoint_of_the_release() {
     assert_eq!(log::encode(&records("log.jsonl")), bytes("log.jsonl"));
@@ -279,7 +302,7 @@ fn a_replay_of_the_fixture_log_gives_the_state_of_the_release() {
     let replayed = json_with_cursors(&written(&state, &expected), |_| false);
     assert_eq!(
         replayed,
-        json_with_cursors(&bytes("replayed.json"), |_| true)
+        as_today(json_with_cursors(&bytes("replayed.json"), |_| true))
     );
 }
 
@@ -318,14 +341,16 @@ fn a_checkpoint_of_a_live_state_keeps_the_read_cursors() {
     // The replay gives the cursors of the joins. The two reads are the
     // cursors of the release.
     let read = |cursor: &serde_json::Value| cursor["session"]["session"] == "a1";
+    let today = as_today(serde_json::from_slice(&bytes("checkpoint.json")).unwrap());
     assert_eq!(
         json_with_cursors(&encode(&state, now), read),
-        json_with_cursors(&bytes("checkpoint.json"), read)
+        json_with_cursors(&serde_json::to_vec(&today).unwrap(), read)
     );
 
     let loaded = State::load(Some(expected.state.clone()), [], now, LIVE_MS);
     assert!(loaded.same_log_state(&state));
-    assert_eq!(encode(&loaded, now), bytes("checkpoint.json"));
+    let encoded: serde_json::Value = serde_json::from_slice(&encode(&loaded, now)).unwrap();
+    assert_eq!(encoded, today);
 }
 
 /// Each part of the state that the log gives is in the checkpoint. At

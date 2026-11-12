@@ -25,7 +25,7 @@
 //! | Command | Who | What |
 //! |---|---|---|
 //! | `riff release test vX.Y.Z --host HOST` | the lead or a person; not a worker | the real-session test of the last commit of `origin/main` on the daemon of a host, and the release issue ([`test_target`], [`crate::daemon::release_test`], 01M76428TRD7KWC4C8V5NNPNC7) |
-//! | `riff release cut X.Y.Z` | the owner or an admin of the riff, or its lead; the ruleset `releases` lets the admin role and the lead App push the tag | the tag on the last commit of `origin/main`, the GitHub release, the pull request of the next version, the chat line to the owner, when each alert has a review ([`cut`], [`crate::alerts`], 01M7641BHHND5JJA8DGJPFNAN7, 01M7641T7FX9416CYY1XKHTJE6) |
+//! | `riff release cut X.Y.Z` | an admin of the riff, or its lead; the ruleset `releases` lets the admin role and the lead App push the tag | the tag on the last commit of `origin/main`, the GitHub release, the pull request of the next version, the chat line to each admin, when each alert has a review ([`cut`], [`crate::alerts`], 01M7641BHHND5JJA8DGJPFNAN7, 01M7641T7FX9416CYY1XKHTJE6) |
 //! | `riff release status` | each session | the versions, what waits, the state and the next step ([`status`], 01M76428NPN7HZCNFCJW8H67RS) |
 //! | `riff release approve vX.Y.Z` | only a person in a terminal: never a session, also not the lead (01M6WZ40SFVZ6CRQ1H4Z27CWP4) | the pause of the riff, then the approval of `production`; it refuses while a lead holds the version, unless a person passes `--over-holds` ([`approve`], 01M58KMM3NFGJRW4CCV50KJQB2, 01M5SNV7E775DRY9QY60E8JPJR) |
 //! | `riff release hold vX.Y.Z REASON` | the lead of any user, also of a member | the hold of the version: each other lead hears it, `riff release status` shows it ([`crate::hold`], 01M5SNV78EBAYY4SZ891DM2MQG) |
@@ -112,7 +112,7 @@
 //!     R --> T["the tag and the CI run"]
 //!     T --> D["the job Deploy waits<br/>for production"]
 //!     P["a person in a terminal"] -- "riff release approve" --> D
-//!     L -. "refused, also with the word<br/>of the owner in riff chat" .-> D
+//!     L -. "refused, also with the word<br/>of an admin in riff chat" .-> D
 //! ```
 //!
 //! Each step goes through [`Forge`]. [`GitHub`] runs `gh` and `git`; a
@@ -2848,7 +2848,7 @@ pub enum Refusal {
     NotTheLead,
     /// An agent session, and riff cannot ask riff-server for the lead.
     LeadUnknown,
-    /// The user is a member: not the owner, not an admin.
+    /// The user is a member, not an admin.
     Member,
     /// riff cannot ask riff-server for the role of the person.
     RoleUnknown,
@@ -2859,9 +2859,9 @@ pub enum Refusal {
 impl Caller {
     /// Why this caller may not run a step of the lead: `riff release
     /// cut`, `check`, `retry` and `rollback`, or `None`
-    /// (01M58KMMF9WMH39ZMD0MKGRVZB, 01M7641T7FX9416CYY1XKHTJE6). A person in a plain terminal, or the
-    /// lead of its user, may when the user is the owner or an admin of
-    /// the riff, or when the riff has no sign-in.
+    /// (01M58KMMF9WMH39ZMD0MKGRVZB, 01M7641T7FX9416CYY1XKHTJE6). A person in
+    /// a plain terminal, or the lead of its user, may when the user is an
+    /// admin of the riff, or when the riff has no sign-in.
     ///
     /// ```
     /// use riff::cycle::{Caller, Refusal};
@@ -2966,7 +2966,7 @@ impl Caller {
     /// Why this caller may not run a step of a person: `riff release
     /// approve`, or `None` (01M58B0JSQMWNCMSNX19536XT8). Only a
     /// person in a plain terminal may: never an agent session, also not
-    /// the lead of the owner, in a container or in a terminal
+    /// the lead of an admin, in a container or in a terminal
     /// (01M6WZ40SFVZ6CRQ1H4Z27CWP4). A member may not, when riff knows the
     /// role.
     ///
@@ -2977,8 +2977,8 @@ impl Caller {
     /// assert!(Caller::default().person_step().is_none());
     /// let lead = Caller { agent: true, lead: Some(true), ..Caller::default() };
     /// assert_eq!(lead.person_step(), Some(Refusal::Agent));
-    /// let owner = Caller { role: Some(PersonRole::Owner), container: true, lead_container: true, ..lead };
-    /// assert_eq!(owner.person_step(), Some(Refusal::Agent));
+    /// let admin = Caller { role: Some(PersonRole::Admin), container: true, lead_container: true, ..lead };
+    /// assert_eq!(admin.person_step(), Some(Refusal::Agent));
     /// let member = Caller { role: Some(PersonRole::Member), ..Caller::default() };
     /// assert_eq!(member.person_step(), Some(Refusal::Member));
     /// ```
@@ -4991,7 +4991,7 @@ pub(crate) mod tests {
             (Refusal::LeadUnknown, "next: riff whoami"),
             (
                 Refusal::Member,
-                "next: the owner or an admin of the riff runs riff release cut",
+                "next: an admin of the riff runs riff release cut",
             ),
             (Refusal::RoleUnknown, "next: riff whoami"),
             (
@@ -5798,7 +5798,7 @@ pub(crate) mod tests {
             lead(Some(PersonRole::Member)).lead_step(),
             Some(Refusal::Member)
         );
-        for role in [None, Some(PersonRole::Owner), Some(PersonRole::Admin)] {
+        for role in [None, Some(PersonRole::Admin)] {
             assert_eq!(lead(role).lead_step(), None, "{role:?}");
         }
         // A person in a terminal: the role decides.
@@ -5810,7 +5810,7 @@ pub(crate) mod tests {
             person(Some(PersonRole::Member)).lead_step(),
             Some(Refusal::Member)
         );
-        for role in [None, Some(PersonRole::Owner), Some(PersonRole::Admin)] {
+        for role in [None, Some(PersonRole::Admin)] {
             assert_eq!(person(role).lead_step(), None, "{role:?}");
             assert_eq!(person(role).person_step(), None, "{role:?}");
         }
@@ -5842,7 +5842,7 @@ pub(crate) mod tests {
             role_unknown,
             ..Caller::default()
         };
-        for role in [None, Some(PersonRole::Owner), Some(PersonRole::Admin)] {
+        for role in [None, Some(PersonRole::Admin)] {
             assert_eq!(lead(role, false).lead_step(), None, "{role:?}");
         }
         assert_eq!(
@@ -5880,11 +5880,11 @@ pub(crate) mod tests {
     }
 
     /// 01M6WZ40SFVZ6CRQ1H4Z27CWP4: `riff release approve` refuses each
-    /// agent session, also the lead of the owner or of an admin, in a
-    /// container and in a terminal. The guard reads no word of the owner in
-    /// riff chat: only a person in a terminal gets past it.
+    /// agent session, also the lead of an admin, in a container and in a
+    /// terminal. The guard reads no word of an admin in riff chat: only a
+    /// person in a terminal gets past it.
     #[test]
-    fn approve_refuses_each_agent_session_also_the_lead_of_the_owner() {
+    fn approve_refuses_each_agent_session_also_the_lead_of_an_admin() {
         let lead = Caller {
             agent: true,
             lead: Some(true),
@@ -5919,28 +5919,23 @@ pub(crate) mod tests {
             lead,
             lead_container,
         ];
-        let roles = [
-            None,
-            Some(PersonRole::Owner),
-            Some(PersonRole::Admin),
-            Some(PersonRole::Member),
-        ];
+        let roles = [None, Some(PersonRole::Admin), Some(PersonRole::Member)];
         for session in sessions {
             for role in roles {
                 let caller = Caller { role, ..session };
                 assert_eq!(caller.person_step(), Some(Refusal::Agent), "{caller:?}");
             }
         }
-        // The lead of the owner still runs the steps of the lead.
+        // The lead of an admin still runs the steps of the lead.
         for lead in [lead, lead_container] {
-            let owner = Caller {
-                role: Some(PersonRole::Owner),
+            let admin = Caller {
+                role: Some(PersonRole::Admin),
                 ..lead
             };
-            assert_eq!(owner.lead_step(), None, "{owner:?}");
+            assert_eq!(admin.lead_step(), None, "{admin:?}");
         }
         // Only a person in a terminal approves.
-        for role in &roles[..3] {
+        for role in &roles[..2] {
             let person = Caller {
                 role: *role,
                 ..Caller::default()

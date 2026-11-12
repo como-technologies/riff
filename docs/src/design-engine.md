@@ -81,14 +81,12 @@ flowchart TD
   sets it in the presence at the check, under the same lock, also when
   the command makes no record. A refused command sets no signal.
 - The server is a caller too. Each timer sends a command as the caller
-  `server`: forget the old sessions, grant a request for the owner
-  role, end the role of an owner who is gone, post a note of the
-  server, name the owner of the settings. The engine has one function
-  for each command of the server: `Engine::make_riff`,
-  `Engine::announce`, `Engine::forget`, `Engine::import`,
-  `Engine::name_owner`, `Engine::grant_owner` and
-  `Engine::end_owner`. The function makes
-  the `Authenticated` value inside the engine module.
+  `server`: forget the old sessions, and post a note of the server. At
+  each start, it names the admins of the settings. The engine has one
+  function for each command of the server: `Engine::make_riff`,
+  `Engine::announce`, `Engine::forget`, `Engine::import` and
+  `Engine::name_admins`. The function makes the `Authenticated` value
+  inside the engine module.
   `Engine::sign_in` sends the command `admit` of the token path, with
   the proof of the sign-in (01M3XA877YZQ649SWB5TN60V5P).
 - `Engine::make_riff` goes through the same stages as
@@ -134,7 +132,7 @@ flowchart TD
 | the server | a timer of riff-server | `"server"` |
 
 - The token layer makes the caller, with its class. `Engine::check`
-  adds the worker mark and the role (member, admin or owner) under the
+  adds the worker mark and the role (member or admin) under the
   lock, before `permits`. A session that the state does not know is
   not a worker.
 - The role of a command comes from the people of the pending copy,
@@ -163,11 +161,10 @@ flowchart TD
 | threads | `join`, `leave`, `post`, `announce` |
 | work | `claim`, `release`, `release_for`, `lead` |
 | the riff | `make_riff`, `pause`, `resume`, `set_idle`, `forget`, `import` |
-| people | `admit`, `invite`, `remove`, `set_admin`, `pass_owner`, `take_owner`, `deny_owner`, `grant_owner`, `end_owner`, `name_owner`, `revoke` |
+| people | `admit`, `invite`, `remove`, `set_admin`, `name_admins`, `revoke` |
 
-- `make_riff`, `announce`, `forget`, `import`, `grant_owner`,
-  `end_owner`, `name_owner` and `admit` are not `Routed`. No HTTP call
-  can send them.
+- `make_riff`, `announce`, `forget`, `import`, `name_admins` and `admit`
+  are not `Routed`. No HTTP call can send them.
 - `pause`, `resume` and `set_idle` each have a path of their own:
   `/v1/pause`, `/v1/resume` and `/v1/idle/set`. A read of the pause
   (`/v1/riff`) or of the idle setting (`/v1/idle`) is a query.
@@ -181,6 +178,8 @@ flowchart TD
   claim has no `granted`. The client and the server are one release.
 - A kind is never renamed, and the name of a removed command is never
   used again. A file in the fixtures lists each kind of each release.
+  The commands of the owner role went: their names stay in the list
+  (01M7767T393P46VTNNE5SY203K).
 - Each group has one file in `crates/riff-state/src/state/`, with its
   part of the riff, its `apply` arms, its part of the checkpoint and
   its commands. The record `session_forgotten` of `forget` changes
@@ -196,7 +195,7 @@ flowchart TD
 
 One function, `permits`, holds this table. It reads only the caller:
 its class (person, session, sign-in, server), its worker mark, and its
-role (member, admin, owner; the owner has the role of an admin too).
+role (member or admin).
 It does not read the state. The engine calls it before `handle`, and
 its refusal has the code `not_allowed`. A kind with no row does not
 compile. One test runs each command as each class, mark and role, and
@@ -216,9 +215,8 @@ of the caller.
 | `pause`, `resume` of the riff | a person, a session | admin |
 | `pause` of the riff, when the server cannot read the keys of the GitHub Apps | the server | |
 | `revoke` of the own sign-ins | a person | member |
-| `set_idle`, `invite`, `remove`, `revoke` of another person, `take_owner` | a person | admin |
-| `set_admin`, `pass_owner`, `deny_owner` | a person | owner |
-| `make_riff`, `announce`, `forget`, `import`, `grant_owner`, `end_owner`, `name_owner` | the server | |
+| `set_idle`, `invite`, `remove`, `revoke` of another person, `set_admin` | a person | admin |
+| `make_riff`, `announce`, `forget`, `import`, `name_admins` | the server | |
 | `admit` | a sign-in | |
 
 The engine registers the first call of a person too, so `register`
@@ -226,10 +224,7 @@ has the class of a person.
 
 `Command::needs` gets the caller, only to know if the command names
 the caller: a `revoke` with no name, or with the name of the caller,
-ends the own sign-ins. A command that needs the owner in a riff with
-no owner gets the text "the riff has no owner; an admin takes the
-owner role with: riff owner --take". `permits` reads only the caller,
-so `State::check` puts that text in its refusal.
+ends the own sign-ins. `permits` reads only the caller.
 
 ```rust,ignore
 {{#include ../../crates/riff-state/src/state/command.rs:permits}}
@@ -279,7 +274,7 @@ there: `tell lead` fails, and each session asks in its own terminal.
   thread). An `end` is a command (it frees the claims) and a signal
   (the session ended).
 - The first sign-in of a person changes the people: it gives the user
-  its email, and it can make the first owner. The token path sends the
+  its email, and it can make the first admin. The token path sends the
   command `admit` for it, with the sign-in as the caller. Then it makes
   the chain. `admit` makes no record for a person that the state
   knows.
@@ -328,29 +323,21 @@ sequenceDiagram
     T-->>P: refused: 7 is before 8
 ```
 
-- The setting `--owner` is the command `name_owner` of the server. It
-  runs one time after the load, and makes an `owner_set` record when
-  the riff has no owner and had none. The server sends it only in a
-  riff with sign-in.
-- The settings that `handle` and `reply` read are not in the log: the
-  admins of the settings, the public address (the reply to an invite
-  names it) and the times of the owner role. `View` holds them. The
-  admins of the settings add to the role of the caller.
-- "The old owner stays an admin" is a decision, so `handle` makes it
-  (01M3XA87KQ6ESMQ4W1W1PTW766): `member_invited` and `admin_set` for
-  the old owner come before `owner_set`, in the same chunk. `apply` of
-  `owner_set` stores only the owner. `set_admin` for a person who is
-  not a member gives `member_invited`, then `admin_set`.
+- The setting `--admin` is the command `name_admins` of the server
+  (01M7767SVH8AKK7144QTJGGGRY). It runs one time after each load, and
+  makes each email of the setting that is no admin an admin and a
+  member. The server sends it only in a riff with sign-in.
+- The setting that `handle` and `reply` read is not in the log: the
+  public address (the reply to an invite names it). `View` holds it.
+- `set_admin` for a person who is not a member gives `member_invited`,
+  then `admin_set` (01M3XA87KQ6ESMQ4W1W1PTW766). The removal of the
+  last admin is refused (01M7767SY5PW1AMB0PBMW2GXDX).
 - Each change of the people puts one line of the server in the chat,
   as a `posted` record in the chunk of its command
-  (01M76S6128EZRZS2D5CE2QCC05): `invite`, `remove`, `set_admin`,
-  `pass_owner`, `take_owner`, `deny_owner`, `grant_owner` and
-  `end_owner`. A command that changes nothing puts no line. A request,
-  a deny and a gone owner also put a direct message to each live lead
-  of the person that must act. No record goes to the thread of a
-  repository, and `riff` posts no line and no note. The warning to the
-  owner is an `announce`: it is no change of the people, and its line
-  goes to the chat too.
+  (01M76S6128EZRZS2D5CE2QCC05, 01M77BSQQGGNE83ECS27YGVEP1): `invite`,
+  `remove` and `set_admin`. A command that changes nothing puts no
+  line. No record goes to the thread of a repository, and `riff` posts
+  no line and no note.
 
 ## The trace of a command
 
@@ -833,9 +820,9 @@ log line share it, so a new field gets to each path.
 | `member_invited` | `email` | `invite` |
 | `member_removed` | `email` | `remove` |
 | `admin_set` | `email`, `admin` | `set_admin` |
-| `owner_set` | `email`, or none | `admit`, `name_owner`, `pass_owner`, `take_owner`, `grant_owner`, `end_owner` |
-| `owner_asked` | `email`, `due_ms` | `take_owner` |
-| `owner_denied` | `email` | `deny_owner` |
+| `owner_set` | `email`, or none | none: a record of an old log (01M7767T393P46VTNNE5SY203K) |
+| `owner_asked` | `email`, `due_ms` | none: a record of an old log |
+| `owner_denied` | `email` | none: a record of an old log |
 | `signins_ended` | `user` | `revoke` |
 
 - `pause_set` holds the pause of the riff too.
@@ -921,7 +908,7 @@ The three rules of the store design stay. These rules come with them:
 | `riff_made` | A riff keeps its first ID: a second record changes nothing. | Yes. |
 | `person_joined` | The first email keeps a USER: a record for a USER that another email holds changes nothing. | Yes. |
 | `member_removed` | It finds each USER of the email, and keeps the position of the record for each: the end of their sign-ins. | Yes. |
-| `owner_set` | It ends the request for the owner role that waits. | Yes. |
+| `owner_set` | An email makes that email an admin, as `admin_set` does. With no email, it changes nothing (01M7767T393P46VTNNE5SY203K). | Yes. |
 
 ### The checkpoint
 
@@ -931,9 +918,9 @@ and the build item that adds a part to the state adds it to the
 checkpoint:
 
 - the riff ID;
-- the people: the email of each user, the members, the admins, the
-  owner, a riff whose owner is gone, and the request for the owner
-  role with its time;
+- the people: the email of each user, the members and the admins. An
+  old checkpoint can have the owner too: the load makes it an admin
+  (01M7767T393P46VTNNE5SY203K);
 - the position of the last `member_removed` and `signins_ended` record
   of each user;
 - the worker mark, the MustClear mark and the time of the last fresh
@@ -986,8 +973,8 @@ pub struct PauseInfo { by: Option<By>, at_ms: u64 }
 | Pause | Who can set and end it |
 |---|---|
 | the repository of the call | a person; the lead of that repository |
-| a repository that the call names | the owner and each admin: as a person, or as a lead |
-| the whole riff | the owner and each admin: as a person, or as a lead |
+| a repository that the call names | each admin: as a person, or as a lead |
+| the whole riff | each admin: as a person, or as a lead |
 
 - A resume of a repository while the riff is paused changes only the
   pause of the repository. The reply says that the riff is still
@@ -1014,8 +1001,8 @@ records as one chunk, with `by` `server` and `command` `import`:
 
 1. `riff_made`, with the riff ID of today.
 2. `person_joined` for each user, with its email.
-3. `member_invited`, `admin_set` and `owner_set`; `owner_asked` when a
-   request for the owner role waits.
+3. `member_invited` and `admin_set`. The owner of the old objects is
+   one more admin (01M7767T393P46VTNNE5SY203K).
 4. `pause_set` for the riff, paused; `setting_changed`.
 5. The `posted` records: the last 200 messages of each thread, as the
    checkpoint keeps them. A direct thread with no session that did not
@@ -1088,7 +1075,7 @@ sequenceDiagram
   that stops between the two steps finds no log at its next start, and
   imports again. So no stop loses the sign-ins.
 - The import changes no old object. They stay for a rollback.
-- After go-live, only the owner and the admins resume the whole riff.
+- After go-live, only the admins resume the whole riff.
 
 ## Build items
 

@@ -1215,7 +1215,7 @@ pub enum ServerCall {
     /// Resume the whole riff. Only the lead may. The answer is the line
     /// for the person.
     ResumeRiff,
-    /// The user of the session, the owner and the people of the riff, as
+    /// The user of the session and the people of the riff, as
     /// [`crate::reach::Roster`], for `riff release cut`.
     Roster,
     /// Tell riff-server the fact `fact` as the session, for `riff release
@@ -1273,7 +1273,7 @@ pub enum ServerCall {
     Members,
     /// The records of the repository thread `repo` for `riff audit`
     /// ([`riff_core::wire::LogReply`], #1338). Only the lead may, and
-    /// riff-server answers only for the owner and the admins.
+    /// riff-server answers only for the admins.
     Log {
         /// The repository thread.
         repo: riff_core::name::ThreadName,
@@ -1312,8 +1312,8 @@ pub enum ServerCall {
     /// Hold the item `item` of the repository thread `thread` with
     /// `reason`, as `riff plan hold` does on a host (#1619,
     /// 01M6QPQZ0FNEZFQ1F4Q9C7FEEQ). The daemon does not check the
-    /// session: riff-server lets only a lead of the thread, the owner and
-    /// an admin hold, and refuses each other session. The answer is the
+    /// session: riff-server lets only a lead of the thread and an admin
+    /// hold, and refuses each other session. The answer is the
     /// line for the person.
     PlanHold {
         /// The repository thread.
@@ -1460,7 +1460,6 @@ async fn server_call(record: &Record, call: &ServerCall) -> Result<Value> {
             let reply = signed()?.roster(&record.me, false).await?;
             serde_json::to_value(crate::reach::Roster {
                 user: record.me.who().user().to_owned(),
-                owner: reply.owner,
                 people: reply.people,
             })?
         }
@@ -12842,7 +12841,7 @@ mod tests {
         });
         let router = service.router();
         tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-        // The first person to sign in is the owner.
+        // The first person to sign in is an admin.
         let jkt = riff_client::device::key(&server).unwrap().thumbprint();
         let pair = service.admit("ada@gmail.com", false, &jkt).await.unwrap();
         riff_client::login::store(
@@ -12894,7 +12893,7 @@ mod tests {
 
         for reach in [&lead, &worker] {
             let members = reach.members().await.unwrap();
-            assert_eq!(members.owner.as_deref(), Some("ada@gmail.com"));
+            assert_eq!(members.admins, ["ada@gmail.com"]);
         }
         let repo: riff_core::name::ThreadName = REPO.parse().unwrap();
         let log = lead.log(&repo).await.unwrap();
@@ -13486,7 +13485,9 @@ mod tests {
         let me = start.me.clone();
         let (client, name) = here.started(start).await;
         drop(client);
-        api.blocked(&me, "run riff owner --take").await.unwrap();
+        api.blocked(&me, "run riff admin add ada@gmail.com")
+            .await
+            .unwrap();
         assert!(block_of(&api, &reader, &me).await, "the block holds");
 
         let socket = session_dir(&here.dir, &name).join(SOCKET);

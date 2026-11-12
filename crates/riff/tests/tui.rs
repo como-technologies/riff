@@ -232,9 +232,7 @@ async fn riff_with_no_command_in_a_terminal_shows_the_six_tabs_and_the_frame() {
     );
     let build: String = riff_core::build::Build::this().id.chars().take(7).collect();
     assert!(
-        rows[1].starts_with(&format!(
-            " riff paused · owner brett · build {build} · link ok "
-        )),
+        rows[1].starts_with(&format!(" riff paused · build {build} · link ok ")),
         "{rows:#?}"
     );
     // The Sessions tab: no session yet, and no riff daemon here.
@@ -522,7 +520,7 @@ async fn the_header_says_the_state_of_an_open_release_at_each_step() {
         (
             Some(ReleaseStep::CheckFailed),
             RiffState::Paused,
-            &[" v3.3.0: the check failed: the owner resumes or rolls back"],
+            &[" v3.3.0: the check failed: an admin resumes or rolls back"],
         ),
         (None, RiffState::Running, &[]),
     ];
@@ -550,7 +548,7 @@ async fn the_header_says_the_state_of_an_open_release_at_each_step() {
             RiffState::Paused => "paused",
             RiffState::Running => "running",
         };
-        let header = format!(" riff {word} · owner brett · build {build} · link ok ");
+        let header = format!(" riff {word} · build {build} · link ok ");
         let rows = tty
             .shows(|rows| {
                 rows[1].starts_with(&header)
@@ -595,7 +593,7 @@ async fn the_header_says_the_step_of_a_release_from_the_test_to_the_approve() {
     let mut tty = Tty::start(&server, "brett", "thelio", true);
     tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
     let build: String = riff_core::build::Build::this().id.chars().take(7).collect();
-    let header = format!(" riff running · owner brett · build {build} · link ok ");
+    let header = format!(" riff running · build {build} · link ok ");
     let release = |step| Release {
         repo: "como-technologies/riff".into(),
         tag: "v3.3.0".into(),
@@ -679,7 +677,7 @@ async fn the_header_says_that_a_complete_wave_waits_for_its_cut() {
     let mut tty = Tty::start(&server, "brett", "thelio", true);
     tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
     let build: String = riff_core::build::Build::this().id.chars().take(7).collect();
-    let header = format!(" riff running · owner brett · build {build} · link ok ");
+    let header = format!(" riff running · build {build} · link ok ");
     let steps: [(Option<CutWaits>, &[&str]); 3] = [
         (
             Some(CutWaits::MainFailed),
@@ -751,7 +749,7 @@ async fn session(server: &str, uri: &str, item: &str) {
 #[tokio::test]
 async fn the_sessions_tab_shows_the_tree_filters_it_and_pauses_a_repository() {
     let server = crate::common::start_signed().await;
-    // A new riff starts paused: the owner brett resumes it, as `riff
+    // A new riff starts paused: the admin brett resumes it, as `riff
     // resume --riff` does.
     let brett: riff_core::name::SessionUri = "riff://brett@thelio".parse().unwrap();
     crate::common::api_of(&server, &brett)
@@ -925,7 +923,7 @@ async fn fake_daemon(server: &str) -> Arc<Mutex<Vec<String>>> {
 #[tokio::test(flavor = "multi_thread")]
 async fn x_on_a_session_of_another_host_asks_the_daemon_of_that_host() {
     let server = crate::common::start_signed().await;
-    // A new riff starts paused: the owner brett resumes it. The clients
+    // A new riff starts paused: the admin brett resumes it. The clients
     // of mike come after this one.
     let brett: riff_core::name::SessionUri = "riff://brett@thelio".parse().unwrap();
     crate::common::api_of(&server, &brett)

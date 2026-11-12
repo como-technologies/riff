@@ -9,7 +9,7 @@
 //!
 //! ```text
 //! [1 Sessions]  2 Chat•2  3 Waves•  4 Machines  5 Devices  6 Reports
-//!  riff running · owner mike · build 10df8a4 · link ok 2s
+//!  riff running · build 10df8a4 · link ok 2s
 //!  the body of the tab
 //!
 //!  the note: the fault of the link, or the result of the last action
@@ -19,11 +19,11 @@
 //! - The strip shows the active tab in `[ ]`, and the news of a tab
 //!   ([`News`]) after its name. The news of a tab goes when you open it.
 //! - The header ([`view::compute_view`], 01M6VAZK4RQSZ0MG2DHWQC598Q)
-//!   shows the state of the whole riff, the owner, the build of this
-//!   riff, and the link with the age of the last good look. A TUI keeps
-//!   its build until it starts again. When an update put another build
-//!   in the riff file of this process, a row under the header names it,
-//!   and the step: `press q, then start riff again`
+//!   shows the state of the whole riff, the build of this riff, and the
+//!   link with the age of the last good look. A TUI keeps its build
+//!   until it starts again. When an update put another build in the
+//!   riff file of this process, a row under the header names it, and
+//!   the step: `press q, then start riff again`
 //!   ([`State::installed`], 01M748V7Y8DQPCQJ9D2Q7HKB76).
 //! - The note line shows the first note that it has: a question or the
 //!   filter that the person types in the Sessions tab, the fault of the
@@ -238,7 +238,7 @@ use riff_client::sessions::{Phase, Sessions};
 use riff_client::waves::Issues;
 use riff_core::build::Build;
 use riff_core::name::{SessionUri, ThreadName};
-use riff_core::wire::{HoldInfo, RiffOwner, RiffReply, RiffState, SessionState, WhoReply};
+use riff_core::wire::{HoldInfo, RiffReply, RiffState, SessionState, WhoReply};
 
 use crate::daemon::Status;
 use crate::reach::Reach;
@@ -802,7 +802,7 @@ impl Question {
 pub struct Look {
     /// The reply of the call `riff`: the pauses.
     pub pauses: RiffReply,
-    /// The reply of the call `who`: the sessions, the owner, the people.
+    /// The reply of the call `who`: the sessions and the people.
     pub who: WhoReply,
     /// The build of riff-server, from the header of its last reply.
     pub server: Option<Build>,
@@ -831,7 +831,6 @@ impl Default for Look {
             pauses: RiffState::Running.into(),
             who: WhoReply {
                 sessions: Vec::new(),
-                owner: RiffOwner::default(),
                 people: Vec::new(),
                 repos: Vec::new(),
             },

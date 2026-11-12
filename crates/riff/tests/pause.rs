@@ -383,7 +383,7 @@ async fn a_resume_of_a_repository_in_a_paused_riff_wakes_nobody() {
     assert_eq!(
         text::riff_set(Some(&repo()), RiffState::Running, &reply, &posted),
         "The repository como-technologies/riff is running now. No other session woke. The \
-         whole riff is still paused: the owner or an admin resumes it with `riff resume --riff`."
+         whole riff is still paused: an admin resumes it with `riff resume --riff`."
     );
     let error = common::api_of(&server, &worker)
         .claim(&worker, &repo(), "issue-12")

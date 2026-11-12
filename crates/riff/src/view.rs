@@ -18,8 +18,8 @@
 //! ```
 //! use riff::view::{facts, table};
 //!
-//! assert_eq!(facts(&[("riff", "running".into()), ("owner", "ada".into())]),
-//!            "riff   running\nowner  ada\n");
+//! assert_eq!(facts(&[("riff", "running".into()), ("admins", "ada".into())]),
+//!            "riff    running\nadmins  ada\n");
 //! let rows = [vec!["%3".into(), "live".into()], vec!["%10".into(), "idle 2m".into()]];
 //! let plain = anstream::adapter::strip_str(&table(&["PANE", "STATE"], &rows)).to_string();
 //! assert_eq!(plain, "PANE  STATE\n%3    live\n%10   idle 2m\n");
@@ -30,7 +30,7 @@ use std::path::Path;
 
 use riff_core::build::{Build, Mismatch};
 use riff_core::name::{SessionUri, ThreadName};
-use riff_core::wire::{MembersReply, PauseInfo, RiffOwner, RiffReply, SessionInfo};
+use riff_core::wire::{MembersReply, PauseInfo, RiffReply, SessionInfo};
 
 use crate::style::{BOLD, DIM, ERROR, GOOD, WARNING, styled};
 use crate::text::{self, safe};
@@ -265,8 +265,8 @@ pub(crate) fn state_facts(
             let fact = format!("paused{}", pause_by(pause));
             rows.push(("riff", styled(WARNING, &fact)));
             action = Some(
-                "The riff is paused. Nobody claims work. The owner or an admin resumes it \
-                 with: riff resume --riff"
+                "The riff is paused. Nobody claims work. An admin resumes it with: riff \
+                 resume --riff"
                     .to_owned(),
             );
         }
@@ -424,21 +424,20 @@ pub fn whoami(
 /// riff, then a table with a row for each session.
 ///
 /// - The facts: the state of the riff (`running` in green, `paused` in
-///   yellow), the owner ([`text::owner_line`]; none with no sign-in),
-///   and the build.
+///   yellow), and the build. No fact names an owner
+///   (01M7767T8EFVR79NSHKTK53G7B).
 /// - The columns: SESSION (the [`text::name`] in the color of the
 ///   session, as in `riff tail`), STATE (the word of the state that the
 ///   server derives, in its color: see [`crate::state`]), ROLE (`you`
 ///   in bold and the [`text::tags`]) and DETAIL (the
 ///   [`crate::state::detail`]). With `long`, the column URI takes the
 ///   place of SESSION.
-/// - The actions come last: resume a paused riff, and take the owner
-///   role of a riff with no owner.
+/// - The actions come last: resume a paused riff.
 ///
 /// Each text from the server is [`safe`].
 ///
 /// ```
-/// use riff_core::wire::{BlockedInfo, RiffOwner, RiffState, SessionInfo, SessionState};
+/// use riff_core::wire::{BlockedInfo, RiffState, SessionInfo, SessionState};
 ///
 /// let me = "riff://mike@pangolin/como-technologies/riff?session=a6cf&lead=true&claim=issue-6#issue-6"
 ///     .parse()?;
@@ -488,64 +487,38 @@ pub fn whoami(
 ///         machine: None,
 ///     },
 /// ];
-/// let owner = RiffOwner::Owner { user: "mike".into(), email: "mike@x.io".into() };
 /// let running = RiffState::Running.into();
-/// let text = riff::view::who(&running, &owner, &list, &list[0].uri, false);
+/// let text = riff::view::who(&running, &list, &list[0].uri, false);
 /// let plain = anstream::adapter::strip_str(&text).to_string();
 /// let lines: Vec<&str> = plain.lines().collect();
 /// assert_eq!(lines[0], "riff   running");
-/// assert_eq!(lines[1], "owner  mike (mike@x.io)");
-/// assert!(lines[2].starts_with("build  v"));
-/// assert_eq!(lines[3], "");
-/// assert_eq!(lines[4], "SESSION                            STATE    ROLE      DETAIL");
-/// assert_eq!(lines[5], "mike@pangolin:riff#issue-6 (a6cf)  busy     you lead  working on #6");
+/// assert!(lines[1].starts_with("build  v"));
+/// assert_eq!(lines[2], "");
+/// assert_eq!(lines[3], "SESSION                            STATE    ROLE      DETAIL");
+/// assert_eq!(lines[4], "mike@pangolin:riff#issue-6 (a6cf)  busy     you lead  working on #6");
 /// assert_eq!(
-///     lines[6],
+///     lines[5],
 ///     "brett@heron:riff (77e0)            blocked            which design? (1m ago)"
 /// );
+/// assert!(!plain.contains("owner"), "{plain}");
 /// let red = riff::style::ERROR;
 /// assert!(text.contains(&format!("{red}blocked{red:#}")));
 /// assert!(text.contains(&format!("{red}which design? (1m ago){red:#}")));
 ///
 /// // --long shows the URI in place of the name.
-/// let long = riff::view::who(&running, &owner, &list, &list[0].uri, true);
+/// let long = riff::view::who(&running, &list, &list[0].uri, true);
 /// let plain = anstream::adapter::strip_str(&long).to_string();
 /// assert!(plain.contains("\nURI "), "{plain}");
 /// assert!(plain.contains("\nriff://brett@heron/como-technologies/riff?session=77e0 "), "{plain}");
 ///
-/// // A riff with no sign-in shows no owner.
-/// let text = riff::view::who(&running, &RiffOwner::NoSignIn, &list, &list[0].uri, false);
-/// assert!(!anstream::adapter::strip_str(&text).to_string().contains("owner"));
-///
-/// // A riff with no owner ends with the action.
-/// let text = riff::view::who(&running, &RiffOwner::Nobody, &list, &list[0].uri, false);
-/// let plain = anstream::adapter::strip_str(&text).to_string();
-/// assert!(plain.contains("\nowner  none\n"), "{plain}");
-/// assert!(plain.ends_with("riff owner --take\n"), "{plain}");
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
-pub fn who(
-    pauses: &RiffReply,
-    owner: &RiffOwner,
-    sessions: &[SessionInfo],
-    me: &SessionUri,
-    long: bool,
-) -> String {
+pub fn who(pauses: &RiffReply, sessions: &[SessionInfo], me: &SessionUri, long: bool) -> String {
     let (mut rows, paused) = state_facts(pauses, me.default_thread().as_ref());
     if let Some(line) = release(pauses, sessions) {
         rows.insert(1, ("release", styled(WARNING, &line)));
     }
-    let mut actions: Vec<String> = paused.into_iter().collect();
-    match owner {
-        RiffOwner::NoSignIn => {}
-        RiffOwner::Nobody => {
-            rows.push(("owner", "none".into()));
-            actions.push(styled(WARNING, text::NO_OWNER));
-        }
-        RiffOwner::Owner { user, email } => {
-            rows.push(("owner", format!("{} ({})", safe(user), safe(email))));
-        }
-    }
+    let actions: Vec<String> = paused.into_iter().collect();
     rows.extend(build_facts(riff_client::link::server_build().as_ref()));
     let mut out = facts(&rows);
     out.push('\n');
@@ -565,7 +538,7 @@ pub fn who(
                 if s.uri.who() == me.who() {
                     role.push(styled(BOLD, "you"));
                 }
-                role.extend(text::tags(s, owner).into_iter().map(String::from));
+                role.extend(text::tags(s).into_iter().map(String::from));
                 let name = if long {
                     styled(DIM, &safe(&s.uri.to_string()))
                 } else {
@@ -644,9 +617,8 @@ pub fn who(
 /// );
 ///
 /// // `riff who` shows the line in the row `release`, under the state of the riff.
-/// let owner = riff_core::wire::RiffOwner::NoSignIn;
 /// let me = "riff://mike@thelio/o/r".parse()?;
-/// let text = riff::view::who(&paused, &owner, &[daemon(ReleaseStep::Passed)], &me, false);
+/// let text = riff::view::who(&paused, &[daemon(ReleaseStep::Passed)], &me, false);
 /// let plain = anstream::adapter::strip_str(&text).to_string();
 /// assert!(
 ///     plain.starts_with(
@@ -783,30 +755,28 @@ pub fn detail_cell(s: &SessionInfo) -> String {
         .join("  ")
 }
 
-/// `riff members`: the owner, the admins, the members, the allowed
-/// domains and the policy of the proof of presence (01M75WKSYCMMJFGAM3W4ASGN85). A riff
-/// with no owner ends with the action (01M3Q63NNC6SC03BFCG80M7B4D).
+/// `riff members`: the admins, the members, the allowed domains and the
+/// policy of the proof of presence (01M75WKSYCMMJFGAM3W4ASGN85). It
+/// names no owner (01M7767T8EFVR79NSHKTK53G7B).
 ///
 /// ```
 /// use riff_core::proof::Policy;
 /// use riff_core::wire::MembersReply;
 ///
 /// let reply = MembersReply {
-///     owner: Some("ada@gmail.com".into()),
-///     admins: vec![],
+///     admins: vec!["ada@gmail.com".into()],
 ///     members: vec!["bob@gmail.com".into()],
 ///     allowed_domains: vec!["x.io".into()],
 ///     proof: Policy::Required,
 /// };
 /// assert_eq!(
 ///     anstream::adapter::strip_str(&riff::view::members(&reply)).to_string(),
-///     "owner            ada@gmail.com\nadmins           none\nmembers          bob@gmail.com\n\
+///     "admins           ada@gmail.com\nmembers          bob@gmail.com\n\
 ///      allowed domains  x.io\nproof            required\n"
 /// );
-/// let none = MembersReply { owner: None, ..reply };
+/// let none = MembersReply { admins: vec![], ..reply };
 /// let plain = anstream::adapter::strip_str(&riff::view::members(&none)).to_string();
-/// assert!(plain.starts_with("owner            none\n"), "{plain}");
-/// assert!(plain.ends_with("\nThe riff has no owner. An admin takes the owner role with: riff owner --take\n"));
+/// assert!(plain.starts_with("admins           none\n"), "{plain}");
 /// ```
 pub fn members(reply: &MembersReply) -> String {
     let list = |items: &[String]| {
@@ -816,15 +786,10 @@ pub fn members(reply: &MembersReply) -> String {
             items.iter().map(|i| safe(i)).collect::<Vec<_>>().join(", ")
         }
     };
-    let mut out = facts(&[
-        ("owner", safe(reply.owner.as_deref().unwrap_or("none"))),
+    facts(&[
         ("admins", list(&reply.admins)),
         ("members", list(&reply.members)),
         ("allowed domains", list(&reply.allowed_domains)),
         ("proof", reply.proof.word().to_owned()),
-    ]);
-    if reply.owner.is_none() {
-        let _ = writeln!(out, "{}", styled(WARNING, text::NO_OWNER));
-    }
-    out
+    ])
 }

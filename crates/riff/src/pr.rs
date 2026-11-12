@@ -1570,7 +1570,7 @@ impl Link {
     /// ```
     /// use riff::pr::Link;
     ///
-    /// let live = "## Done when:\n\n- A test.\n- Live: the owner runs it.\n";
+    /// let live = "## Done when:\n\n- A test.\n- Live: an admin runs it.\n";
     /// assert_eq!(Link::of(12, live, false), Link::Live(12));
     /// assert_eq!(Link::of(12, live, true), Link::Live(12));
     /// assert_eq!(Link::of(12, "## Done when:\n\n- A test.\n", true), Link::Refs(12));
@@ -1645,7 +1645,7 @@ impl Link {
 ///
 /// // An issue with a check after the release: `Refs #12`, also with no
 /// // `--refs`, and a summary with `Closes #12` is refused.
-/// let issue = "Text.\n\n## Done when:\n\n- A test.\n- Live: the owner runs it.\n";
+/// let issue = "Text.\n\n## Done when:\n\n- A test.\n- Live: an admin runs it.\n";
 /// let body = riff::pr::body(Link::of(12, issue, false), "Show the wave.\n", "Wave 3").unwrap();
 /// assert_eq!(body, "Refs #12\n\nShow the wave.\n\nIssue: #12\nMilestone: Wave 3\n");
 /// let closes = riff::pr::body(Link::of(12, issue, false), "Closes #12\n\nShow it.\n", "Wave 3");
@@ -3602,7 +3602,7 @@ mod tests {
     #[test]
     fn an_issue_with_a_live_line_in_done_when_gets_refs() {
         let live = "Make the Apps.\n\n## Done when:\n\n- A test with a fake GitHub.\n\
-                    - Live: the owner runs `riff github check`, and it passes.\n\
+                    - Live: an admin runs `riff github check`, and it passes.\n\
                     - Docs: a how-to.\n";
         let plain = "Make the Apps.\n\n## Done when:\n\n- A test with a fake GitHub.\n";
         let refs = "Refs #12\n\nShow the wave.\n\nIssue: #12\nMilestone: Wave 3\n";

@@ -376,7 +376,7 @@ pub const LIVE: &str = "Live:";
 /// ```
 /// use riff::rollout::has_live_check;
 ///
-/// assert!(has_live_check("## Done when:\n\n- A test.\n- Live: the owner runs it.\n"));
+/// assert!(has_live_check("## Done when:\n\n- A test.\n- Live: an admin runs it.\n"));
 /// assert!(has_live_check("Done when:\n* Live: it runs on pangolin.\n2. Docs."));
 /// assert!(has_live_check("Done when: Live: it runs on pangolin."));
 /// assert!(has_live_check("### Done when\n- [ ] Live: it runs on pangolin."));

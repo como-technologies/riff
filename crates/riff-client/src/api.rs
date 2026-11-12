@@ -115,17 +115,16 @@ use riff_core::proof::{Action, Policy};
 use riff_core::selector::Selector;
 use riff_core::wire::{
     Activity, AdminSet, Alive, AliveReply, BlockedLook, CALL_HEADER, Call, ChatName, Claim,
-    ClaimReply, DenyOwner, End, Free, FreeReply, Freed, GitHubApps, GitHubAppsReply, GitHubCheck,
+    ClaimReply, End, Free, FreeReply, Freed, GitHubApps, GitHubAppsReply, GitHubCheck,
     GitHubChecked, GitHubCreate, GitHubDaemonToken, GitHubEvents, GitHubEventsReply, GitHubRenew,
     GitHubStarted, GitHubToken, GitHubWake, Hold, HoldReply, Invite, Invited, ItemFact, ItemFacts,
     Join, Keys, Kind, Lead, LeadReply, Leave, LogQuery, LogReply, MeReply, Members, MembersReply,
-    Message, Names, NotesReply, NotesShow, OwnerAsked, OwnerDenied, OwnerPassed, PassOwner, Pause,
-    PlanChanged, PlanReply, PlanShow, Post, Posted, REFUSED_HEADER, Read, Register, Release,
-    ReleaseFor, ReleaseReply, Remove, Removed, Resume, Revoke, Revoked, RiffBinary, RiffQuery,
-    RiffReply, RiffState, ServerFacts, SessionInfo, SessionToken, SetAdmin, SetBlocked, SetNotes,
-    SetNotesReply, SetStatus, SetStep, SignInConfig, Start, StartReason, Status, StepChange,
-    Tailed, TakeOwner, ThreadInfo, Threads, TokenError, TokenReply, TokenRequest, Unanswered, Wake,
-    WhoReply, WhoRequest,
+    Message, Names, NotesReply, NotesShow, Pause, PlanChanged, PlanReply, PlanShow, Post, Posted,
+    REFUSED_HEADER, Read, Register, Release, ReleaseFor, ReleaseReply, Remove, Removed, Resume,
+    Revoke, Revoked, RiffBinary, RiffQuery, RiffReply, RiffState, ServerFacts, SessionInfo,
+    SessionToken, SetAdmin, SetBlocked, SetNotes, SetNotesReply, SetStatus, SetStep, SignInConfig,
+    Start, StartReason, Status, StepChange, Tailed, ThreadInfo, Threads, TokenError, TokenReply,
+    TokenRequest, Unanswered, Wake, WhoReply, WhoRequest,
 };
 use riff_core::wire::{
     Approve, PolicyReply, ProofStart, ProofStarted, ProofState, ProofWait, SetPolicy, UseProof,
@@ -321,9 +320,9 @@ pub struct Probe {
 pub enum PauseScope {
     /// The repository of the caller.
     Here,
-    /// A repository by its name. Only the owner or an admin can.
+    /// A repository by its name. Only an admin can.
     Repository(ThreadName),
-    /// The whole riff. Only the owner or an admin can.
+    /// The whole riff. Only an admin can.
     Riff,
 }
 
@@ -1312,8 +1311,8 @@ impl Api {
         Ok(self.roster(me, all).await?.sessions)
     }
 
-    /// Lists the sessions and names the owner of the riff
-    /// (01M3Q63NK0AHM25MB258B0K8XP). `all` lists gone sessions too.
+    /// Lists the sessions and the people of the riff
+    /// (01M3NT4M3A4E3K5S2NM7MS6PQD). `all` lists gone sessions too.
     pub async fn roster(&self, me: &SessionUri, all: bool) -> Result<WhoReply> {
         let request = WhoRequest {
             me: me.clone(),
@@ -1754,7 +1753,7 @@ impl Api {
 
     /// The notes of the lead of `user` in `thread`, or of the user of
     /// `me` when `user` is `None`; with `history`, also the old texts
-    /// (01M59258NTXPMWV18TKRKWNTYN). Only that user and the owner can.
+    /// (01M59258NTXPMWV18TKRKWNTYN). Only that user and an admin can.
     pub async fn notes_show(
         &self,
         me: &SessionUri,
@@ -1814,7 +1813,7 @@ impl Api {
 
     /// Holds `item` of the repository thread `thread` with `reason`, so
     /// that no worker can claim it (01M43GSGB9ZFHSG0Q83Y50FEGW). Only a
-    /// lead of the thread, the owner or an admin can
+    /// lead of the thread or an admin can
     /// (01M43GSGGY0QMB5D5EH92M6ZFP).
     pub async fn hold(
         &self,
@@ -1948,7 +1947,7 @@ impl Api {
     }
 
     /// Pauses or resumes the whole riff: [`Api::set_pause`] with
-    /// [`PauseScope::Riff`]. Only the owner or an admin can
+    /// [`PauseScope::Riff`]. Only an admin can
     /// (01M3XAHZDSQR263QZVB41CK0MX).
     pub async fn set_riff(
         &self,
@@ -2179,8 +2178,9 @@ impl Api {
         self.call(&request).await
     }
 
-    /// Makes a person an admin, or an admin a member again. Only the
-    /// owner can. riff-server posts the line of the change in the chat.
+    /// Makes a person an admin, or an admin a member again. Only an
+    /// admin can. The last admin stays. riff-server posts the line of the
+    /// change in the chat.
     pub async fn set_admin(&self, email: &str, admin: bool) -> Result<AdminSet> {
         self.need_sign_in().await?;
         let request = SetAdmin {
@@ -2190,32 +2190,6 @@ impl Api {
         self.call(&request).await
     }
 
-    /// Passes the owner role to a member or an admin. Only the owner
-    /// can. riff-server posts the line of the change in the chat
-    /// (01M6FYH5XZAZYJFPFQVAFQSSVT).
-    pub async fn pass_owner(&self, email: &str) -> Result<OwnerPassed> {
-        self.need_sign_in().await?;
-        let request = PassOwner {
-            email: email.to_owned(),
-        };
-        self.call(&request).await
-    }
-
-    /// Asks for the owner role (01M3N7K3ZAZFGABN7032AYJWEM). Only an
-    /// admin can. The server posts the line of the change in the chat.
-    pub async fn take_owner(&self) -> Result<OwnerAsked> {
-        self.need_sign_in().await?;
-        self.call(&TakeOwner {}).await
-    }
-
-    /// Keeps the owner role that an admin asks for
-    /// (01M3N7K41N03P26BEFFNX5617K). Only the owner can. The server posts
-    /// the line of the change in the chat.
-    pub async fn deny_owner(&self) -> Result<OwnerDenied> {
-        self.need_sign_in().await?;
-        self.call(&DenyOwner {}).await
-    }
-
     /// Who may join the riff.
     pub async fn members(&self) -> Result<MembersReply> {
         self.need_sign_in().await?;
@@ -2223,24 +2197,23 @@ impl Api {
     }
 
     /// The records of the repository thread `repo`, for an audit
-    /// (01M3ZWRC11R5M9V1KTF05P240W). Only the owner and the admins can
-    /// read them.
+    /// (01M3ZWRC11R5M9V1KTF05P240W). Only the admins can read them.
     pub async fn log(&self, repo: &ThreadName) -> Result<LogReply> {
         self.need_sign_in().await?;
         self.call(&LogQuery { repo: repo.clone() }).await
     }
 
     /// The start of `riff github create` for the account `owner`: the URL
-    /// of the start page (01M6WG52T5PAD9NGQ597CP56K7). Only the owner and
-    /// the admins can.
+    /// of the start page (01M6WG52T5PAD9NGQ597CP56K7). Only the admins
+    /// can.
     pub async fn github_create(&self, create: &GitHubCreate) -> Result<GitHubStarted> {
         self.need_sign_in().await?;
         self.call(create).await
     }
 
     /// The GitHub Apps of the riff, whether each is installed on `owner`,
-    /// and whether its install has `repo`. Only the owner and the admins
-    /// can ask with either.
+    /// and whether its install has `repo`. Only the admins can ask with
+    /// either.
     pub async fn github_apps(
         &self,
         owner: Option<&str>,

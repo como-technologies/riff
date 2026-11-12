@@ -179,8 +179,8 @@ async fn the_tools_carry_a_conversation() {
     let (me, _) = call(&mike, "whoami", serde_json::json!({})).await;
     assert!(
         me.contains(
-            "The riff is paused by the server. Nobody claims work. The owner or an admin \
-             resumes it with `riff resume --riff`.\n"
+            "The riff is paused by the server. Nobody claims work. An admin resumes it with \
+             `riff resume --riff`.\n"
         ),
         "{me}"
     );
@@ -190,7 +190,7 @@ async fn the_tools_carry_a_conversation() {
     assert_eq!(
         resumed,
         "The repository como-technologies/riff was running already. The whole riff is still \
-         paused: the owner or an admin resumes it with `riff resume --riff`."
+         paused: an admin resumes it with `riff resume --riff`."
     );
     let (resumed, _) = call(&brett, "resume", serde_json::json!({ "riff": true })).await;
     assert_eq!(
@@ -875,16 +875,26 @@ async fn a_lead_with_no_memory_gets_its_state_from_the_notes() {
     let (still, _) = call(&lead, "notes", serde_json::json!({})).await;
     assert!(still.contains("Wave 37 runs."), "{still}");
 
-    // Another user does not read the notes of mike. A worker cannot
-    // write them.
-    let brett: SessionUri = BRETT.parse().unwrap();
-    of(&api, &brett).register(&brett).await.unwrap();
-    let thread = brett.default_thread().unwrap();
-    let error = of(&api, &brett)
-        .notes_show(&brett, &thread, Some("mike"), false)
+    // A member that is not an admin does not read the notes of mike;
+    // the admin brett does (01M77671TQ92487GSM24RJG82Z). A worker cannot write
+    // them.
+    let bob: SessionUri = "riff://bob@kite/como-technologies/riff?session=c3"
+        .parse()
+        .unwrap();
+    of(&api, &bob).register(&bob).await.unwrap();
+    let thread = bob.default_thread().unwrap();
+    let error = of(&api, &bob)
+        .notes_show(&bob, &thread, Some("mike"), false)
         .await;
     let error = format!("{:#}", error.unwrap_err());
-    assert!(error.contains("only mike and the owner"), "{error}");
+    assert!(error.contains("only mike and an admin"), "{error}");
+    let brett: SessionUri = BRETT.parse().unwrap();
+    of(&api, &brett).register(&brett).await.unwrap();
+    let read = of(&api, &brett)
+        .notes_show(&brett, &thread, Some("mike"), false)
+        .await
+        .unwrap();
+    assert!(format!("{read:?}").contains("Wave 37 runs."), "{read:?}");
     let worker: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=w1#w1"
         .parse()
         .unwrap();

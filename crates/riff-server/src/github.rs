@@ -18,7 +18,7 @@
 //!     participant B as browser
 //!     participant S as riff-server
 //!     participant G as GitHub
-//!     R->>S: POST /v1/github/create (the owner or an admin)
+//!     R->>S: POST /v1/github/create (an admin)
 //!     S-->>R: the start page, with a new state (10 minutes, one use)
 //!     R->>B: open the start page
 //!     B->>G: POST the manifest of riff-OWNER
@@ -1364,7 +1364,7 @@ fn refused_page(status: StatusCode, why: &str) -> Response {
     )
 }
 
-/// Refuses a caller who is not the owner or an admin of the riff.
+/// Refuses a caller who is not an admin of the riff.
 fn need_admin(
     s: &crate::Server,
     signed_in: &SignedIn,
@@ -1372,7 +1372,7 @@ fn need_admin(
 ) -> Result<(), (StatusCode, String)> {
     let user = signed_in.who.user();
     if s.engine.read(|state| state.role(user)) < Role::Admin {
-        let reason = format!("only the owner or an admin of the riff runs {what}");
+        let reason = format!("only an admin of the riff runs {what}");
         return Err(Failed::Refused(Refused::new(Code::NotAllowed, &reason)).into());
     }
     Ok(())
@@ -1450,9 +1450,9 @@ pub fn keys_wake(fault: &str) -> String {
 
 /// The Apps of the riff, from [`Keys::load`] (01M6YC3SYATQW7GZZV3APFG85B). The first
 /// read that the place refuses pauses the whole riff, posts one line as
-/// riff-bot in the chat to the owner and each admin, wakes each
-/// repository, and logs one error: the alert sends it to the owner. A
-/// later refused read only keeps the fault. A read that works ends the
+/// riff-bot in the chat to each admin, wakes each repository, and logs
+/// one error: the alert of a cloud riff sends it by email. A later
+/// refused read only keeps the fault. A read that works ends the
 /// fault; the riff stays paused until an admin resumes it.
 pub(crate) async fn apps_of(s: &crate::Server) -> Result<Apps, KeysError> {
     let read = s.github.keys.load().await;
@@ -1679,9 +1679,8 @@ pub(crate) async fn created(
 /// `POST /v1/github/apps`: each App of the riff, whether it is installed
 /// on the account of the query, with the ID of the install, and whether
 /// it is installed on the repository of the query. Each person asks with
-/// neither, for example `riff project init` for the bot of the
-/// guard. Only the
-/// owner or an admin asks with an account or a repository
+/// neither, for example `riff project init` for the bot of the guard.
+/// Only an admin asks with an account or a repository
 /// (01M6WPV8473EBABR1ZMEPZMTQQ, 01M6Z7DMYAW52X62TN1DEX9NCG). With an
 /// account, riff-server also reads the rights of each App and of its
 /// install there, and gives what differs from [`app_rights`]

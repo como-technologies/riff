@@ -6,7 +6,7 @@
 //! The command reads two sources, and changes nothing:
 //!
 //! - The records of the repository, from `riff-server` (`POST /v1/log`).
-//!   Only the owner and the admins can read them
+//!   Only the admins can read them
 //!   (01M3ZWRC11R5M9V1KTF05P240W). A post has only its mark: `request`,
 //!   `verify request`, `verify result` or none
 //!   (01M3ZWRC3XBFN8FJDGE8XWZ5EA).

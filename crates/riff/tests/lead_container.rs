@@ -72,8 +72,7 @@ fn text(bytes: &[u8]) -> String {
 async fn members_reads_the_members_through_the_socket() {
     let container = Container::new();
     let reply = json!({
-        "owner": "ada@example.com",
-        "admins": ["grace@example.com"],
+        "admins": ["ada@example.com", "grace@example.com"],
         "members": ["alan@example.com"],
         "allowed_domains": ["example.com"],
     });
@@ -212,14 +211,13 @@ async fn whoami_names_the_fault_of_a_read_and_keeps_the_uri_of_the_session() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn who_reads_the_sessions_and_the_owner_through_the_socket() {
+async fn who_reads_the_sessions_through_the_socket() {
     let container = Container::new();
     let (_dir, socket, asked) = common::session_socket(|call| {
         assert_eq!(call["all"], true, "{call}");
         Ok(json!({
             "pauses": {"state": "paused", "riff": {"by": null, "at_ms": 0}},
             "who": {
-                "owner": {"kind": "owner", "user": "ada", "email": "ada@example.com"},
                 "sessions": [
                     {"uri": LEAD, "live": true, "container": true},
                     {
@@ -234,7 +232,7 @@ async fn who_reads_the_sessions_and_the_owner_through_the_socket() {
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(text(&out.stderr), "");
     let shown = text(&out.stdout);
-    assert!(shown.contains("ada (ada@example.com)"), "{shown}");
+    assert!(!shown.contains("owner"), "{shown}");
     assert!(shown.contains("paused"), "{shown}");
     assert!(shown.contains("(c1)") && shown.contains("(w1)"), "{shown}");
     assert_eq!(common::call_names(&asked), ["who_facts"]);
@@ -359,9 +357,7 @@ async fn join_names_the_hosts_that_give_no_workers() {
         {"uri": LEAD, "live": true, "container": true},
     ]);
     let (_dir, socket, asked) = common::session_socket(move |call| match call["call"].as_str() {
-        Some("roster") => {
-            Ok(json!({"user": "mike", "owner": {"kind": "no_sign_in"}, "people": []}))
-        }
+        Some("roster") => Ok(json!({"user": "mike", "people": []})),
         Some("who") => Ok(json!({"sessions": sessions})),
         _ => Err(format!("unexpected call {call}")),
     });

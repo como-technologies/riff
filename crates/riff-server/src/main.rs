@@ -31,8 +31,10 @@ struct Cli {
     )]
     listen: SocketAddr,
 
-    /// The verified email of a person who may revoke the tokens of any
-    /// person. Repeat it for more admins.
+    /// The verified email of an admin. The server makes the person an
+    /// admin at each start. Repeat it for more admins. Without it, the
+    /// first person who signs in is an admin, and the server listens
+    /// only on a loopback address until then.
     #[arg(
         long = "admin",
         env = "RIFF_ADMINS",
@@ -40,13 +42,6 @@ struct Cli {
         value_delimiter = ','
     )]
     admins: Vec<String>,
-
-    /// The verified email of the owner of a new riff. Without it, the
-    /// first person who signs in is the owner, and the server listens
-    /// only on a loopback address until then. A riff that has an owner
-    /// keeps it.
-    #[arg(long, env = "RIFF_OWNER", hide_env_values = true)]
-    owner: Option<String>,
 
     /// The URL where people reach the server. It is the OAuth resource
     /// and issuer. The default is http://<listen>.
@@ -125,26 +120,6 @@ struct Cli {
     /// create refuses.
     #[arg(long, env = "RIFF_GITHUB_SECRET", hide_env_values = true)]
     github_secret: Option<String>,
-
-    /// The minutes that the owner has to answer `riff owner --take` of an
-    /// admin. With no answer, the admin is the owner.
-    #[arg(long, env = "RIFF_OWNER_TAKE_MINUTES", hide_env_values = true, default_value_t = 10,
-          value_parser = clap::value_parser!(u64).range(1..))]
-    owner_take_minutes: u64,
-
-    /// The minutes between two checks of the owner. A check misses when
-    /// no session of the owner is live, and the owner made no call since
-    /// the last check.
-    #[arg(long, env = "RIFF_OWNER_PING_MINUTES", hide_env_values = true, default_value_t = 10,
-          value_parser = clap::value_parser!(u64).range(1..))]
-    owner_ping_minutes: u64,
-
-    /// The misses in a row after which the server warns the owner. One
-    /// more miss, and the owner is gone: the riff then has no owner, and
-    /// asks each admin for a volunteer.
-    #[arg(long, env = "RIFF_OWNER_PINGS", hide_env_values = true, default_value_t = 3,
-          value_parser = clap::value_parser!(u32).range(1..))]
-    owner_pings: u32,
 }
 
 /// The commands of `riff-server`. It runs no server for them.
@@ -305,13 +280,10 @@ async fn log_tool(cli: &Cli, args: &LogArgs) -> Result<(), Stop> {
 
 /// Runs the server until it stops.
 async fn run(cli: Cli) -> Result<(), Stop> {
-    if let Some(owner) = cli.owner.as_deref().filter(|o| !o.contains('@')) {
-        return Err(Stop::Told(format!("the owner {owner} is not an email")));
-    }
-    // The bucket can hold an owner: check again after the load.
+    // The bucket can hold an admin: check again after the load.
     let trusted = cli.trusted();
-    let owned = cli.owner.is_some() || cli.bucket.is_some();
-    let warning = listen::check(cli.listen, trusted, cli.insecure, owned).map_err(Stop::Told)?;
+    let admin = cli.admins.iter().any(|a| a.contains('@')) || cli.bucket.is_some();
+    let warning = listen::check(cli.listen, trusted, cli.insecure, admin).map_err(Stop::Told)?;
     // Each line of the log is JSON with a severity
     // (01M3TJWJ3VK671T9NM95F3ES82).
     logline::init();
@@ -343,7 +315,6 @@ async fn serve(cli: Cli, trusted: bool) -> std::io::Result<()> {
         config.github.keys.describe()
     );
     config.admins = cli.admins;
-    config.owner = cli.owner;
     // Cloud Run names the revision of the instance: the order of the
     // deploys (01M53NHJXGK1PN2A9F7NSX0B4G).
     if let Ok(name) = std::env::var("K_REVISION") {
@@ -353,11 +324,6 @@ async fn serve(cli: Cli, trusted: bool) -> std::io::Result<()> {
             None => tracing::warn!("the revision {name} has no number: the lease holds none"),
         }
     }
-    config.owner_role = riff_state::owner::Timing::from_minutes(
-        cli.owner_take_minutes,
-        cli.owner_ping_minutes,
-        cli.owner_pings,
-    );
     for admin in &config.admins {
         if !admin.contains('@') {
             tracing::warn!("the admin {admin} is not an email: it names nobody (R210)");
@@ -402,10 +368,10 @@ async fn serve(cli: Cli, trusted: bool) -> std::io::Result<()> {
             Start::Now(Service::new(config))
         }
     };
-    // The owner is in the state: check the address again before the
+    // The admins are in the state: check the address again before the
     // port opens, and after the first save.
     if let Start::AfterLease(loaded) = &start {
-        listen::check(cli.listen, trusted, cli.insecure, loaded.owned())
+        listen::check(cli.listen, trusted, cli.insecure, loaded.has_admin())
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
     }
     let stop = async move {
@@ -416,7 +382,7 @@ async fn serve(cli: Cli, trusted: bool) -> std::io::Result<()> {
     };
     let (listen, insecure) = (cli.listen, cli.insecure);
     listen::serve(port, start, stop, |service| {
-        listen::check(listen, trusted, insecure, service.owned()).map(|_| ())
+        listen::check(listen, trusted, insecure, service.has_admin()).map(|_| ())
     })
     .await
 }
@@ -449,26 +415,24 @@ mod tests {
         Cli::command().debug_assert();
     }
 
+    /// 01M77671TQ92487GSM24RJG82Z: riff-server has no setting of the owner
+    /// role. `--admin` names each admin, also from `RIFF_ADMINS` with commas.
     #[test]
-    fn the_owner_settings_set_the_window_of_the_owner_check() {
+    fn the_admins_are_the_only_setting_of_the_roles() {
         use clap::Parser;
-        let cli = Cli::try_parse_from(["riff-server"]).unwrap();
-        let timing = riff_state::owner::Timing::from_minutes(
-            cli.owner_take_minutes,
-            cli.owner_ping_minutes,
-            cli.owner_pings,
-        );
-        assert_eq!(timing, riff_state::owner::Timing::default());
-        let cli = Cli::try_parse_from([
-            "riff-server",
+        for old in [
+            "--owner",
+            "--owner-take-minutes",
             "--owner-ping-minutes",
-            "20",
             "--owner-pings",
-            "4",
-        ])
-        .unwrap();
-        assert_eq!((cli.owner_ping_minutes, cli.owner_pings), (20, 4));
-        assert!(Cli::try_parse_from(["riff-server", "--owner-pings", "0"]).is_err());
+        ] {
+            assert!(
+                Cli::try_parse_from(["riff-server", old, "1"]).is_err(),
+                "{old}"
+            );
+        }
+        let cli = Cli::try_parse_from(["riff-server", "--admin", "a@x.io,b@x.io"]).unwrap();
+        assert_eq!(cli.admins, ["a@x.io", "b@x.io"]);
     }
 
     /// 01M6WG52WSWM8A9CN6X448AGAJ: the keys of the GitHub Apps go to the
