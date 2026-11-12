@@ -199,12 +199,10 @@ async fn a_session_of_each_machine_sees_the_others_in_riff_who() {
     let invited = Api::new(&server)
         .signed_in(None)
         .unwrap()
-        .invite(&uri("riff://ada@pangolin"), "bob@example.org")
+        .invite("bob@example.org")
         .await
         .unwrap();
-    // The invite posts a note to the thread of the repository of ada.
-    let posted = invited.news.unwrap();
-    assert_eq!(posted[0].thread.to_string(), "como-technologies/riff");
+    assert_eq!(invited.email, "bob@example.org");
     second.join(&server).await.unwrap();
     let bob = uri("riff://bob@thelio/como-technologies/riff?session=b2");
     let bob_session = second.start(&server, &bob).await;

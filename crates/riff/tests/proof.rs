@@ -226,13 +226,12 @@ async fn riff_asks_for_a_proof_and_sends_the_action_again_with_it() {
     // An invite with a proof.
     let me: SessionUri = "riff://brett@thelio".parse().unwrap();
     let invite = Action::invite("cy@comotechnologies.io");
-    let changed = proof::act(&api, &invite, &good.asker, |api| {
-        let me = me.clone();
-        async move { api.invite(&me, "cy@comotechnologies.io").await }
+    let invited = proof::act(&api, &invite, &good.asker, |api| async move {
+        api.invite("cy@comotechnologies.io").await
     })
     .await
     .unwrap();
-    assert_eq!(changed.done.email, "cy@comotechnologies.io");
+    assert_eq!(invited.email, "cy@comotechnologies.io");
     assert_eq!(good.opened.lock().unwrap().len(), 2);
 
     // A session gets the refusal, and opens no page.

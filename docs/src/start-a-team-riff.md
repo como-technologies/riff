@@ -426,23 +426,28 @@ person runs these in a terminal on the host.
 
 ## See each change of the members
 
-The riff posts each change of the members to the thread of each
-repository of the riff, as a note: `riff invite`,
-`riff remove`, `riff admin add`, `riff admin remove` and each
-step of the owner role (see
-[Take the owner role](#take-the-owner-role)). The note names the user
+Each change of the people of the riff shows in the chat only. The
+riff posts one line in the chat for each of these: `riff invite`,
+`riff remove`, `riff admin add`, `riff admin remove`, and each step of
+the owner role (see [Take the owner role](#take-the-owner-role)).
+riff-server posts the line as `<riff-bot>`. The line names the user
 that made the change, the email and the change. It wakes no session.
-The command prints the threads that got the note. A note that the riff
-posts by itself comes from `riff@server`.
+The thread of a repository gets no note of the change.
 
-To see the notes as they come, run this in the directory of a
-repository:
-
-```sh
-riff tail
+```mermaid
+flowchart LR
+    C[riff invite, riff remove, riff admin, riff owner] --> S[riff-server]
+    S --> L["one line of riff-bot in the chat"]
+    S -. no note .-> R[the thread of a repository]
 ```
 
-A note looks like this:
+To see the lines, run:
+
+```sh
+riff chat
+```
+
+A line looks like this:
 
 ```text
 members: ada invited bob@gmail.com. bob@gmail.com is a member now.
@@ -471,10 +476,10 @@ riff owner --take
 ```
 
 The riff tells the owner at once: a direct message to the lead session
-of the owner, and a note. The owner has 10 minutes to answer. With no
-answer, you are the owner. The old owner stays an admin. One request
-waits at a time. A second request is refused, and the refusal names
-the admin that asked first.
+of the owner, and a line in the chat. The owner has 10 minutes to
+answer. With no answer, you are the owner. The old owner stays an
+admin. One request waits at a time. A second request is refused, and
+the refusal names the admin that asked first.
 
 When you are the owner already, the command says so and changes
 nothing. It is not an error:
@@ -501,11 +506,11 @@ The riff tells the admin.
 
 ### See a change of the owner in the chat
 
-A change of who the owner is also posts one line in the chat, as
-`riff@server`. The line has the text of the note. These changes post a
-line: a pass, a grant after the time, a gone owner, and a take on a
-riff with no owner. A request and a deny post none, because the owner
-stays the owner. The line wakes no session. To see it, run:
+Each step of the owner role shows in the chat only, as one line of
+`<riff-bot>`: a request, a pass, a deny, a grant after the time, the
+warning to the owner, a gone owner, and a take on a riff with no
+owner. The thread of a repository gets no note of the step. The line
+wakes no session. To see it, run:
 
 ```sh
 riff chat
@@ -522,12 +527,12 @@ members: mike took the owner role. The riff had no owner. mike@example.com is th
 `riff-server` checks the owner each 10 minutes, while the riff has an
 admin who is not the owner. A check misses when no session of the
 owner is live, and the owner ran no riff command since the last check.
-After 3 misses in a row, the server warns the owner: a note to the
-sessions of the owner, and one line in the chat. When the next check
-misses too, the owner is gone. The old owner stays an admin, and the
-riff has no owner. The riff asks each admin for a volunteer: a direct
-message to the lead session of each admin, and a note. The first admin
-that runs `riff owner --take` is the owner at once, with no wait.
+After 3 misses in a row, the server warns the owner: one line in the
+chat. When the next check misses too, the owner is gone. The old owner
+stays an admin, and the riff has no owner. The riff asks each admin
+for a volunteer: a direct message to the lead session of each admin,
+and a line in the chat. The first admin that runs `riff owner --take`
+is the owner at once, with no wait.
 
 While the riff has no owner, `riff members` says so.
 `riff admin` and `riff owner EMAIL` are refused until an admin takes

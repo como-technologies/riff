@@ -1221,7 +1221,7 @@ impl Server {
         match checks.record(now, seen, timing) {
             Check::Seen | Check::Missed => None,
             Check::Warn => {
-                self.warn_owner(user.as_deref()).await;
+                self.warn_owner().await;
                 None
             }
             Check::Gone => self.changed(self.engine.end_owner().await),
@@ -1265,29 +1265,19 @@ impl Server {
     }
 
     /// Warns the owner that the next check can drop the owner
-    /// (01M3Q546335NBTKG5BHQ27QC93): a note to each session of `user` in
-    /// the thread of each repository, and one line in the chat, of the
-    /// kind `riff` (01M6Y4ZCTSTVM971BDC1F7GJPK). The log line names no
+    /// (01M3Q546335NBTKG5BHQ27QC93): one line in the chat, of the kind
+    /// `riff` (01M6Y4ZCTSTVM971BDC1F7GJPK), and no note to the thread of
+    /// a repository (01M76S6128EZRZS2D5CE2QCC05). The log line names no
     /// email (01M3XA87CJHCGZX283ZQAFKARZ).
-    async fn warn_owner(&self, user: Option<&str>) {
+    async fn warn_owner(&self) {
         let Some(email) = self.engine.read(|state| state.people().members().owner) else {
             return;
         };
         let news = owner::warn_news(&email, &self.config.owner_role);
         tracing::info!("the server warns the owner: the next check can end the owner role");
-        let mut posts = Vec::new();
-        if let Some(user) = user {
-            for thread in self.engine.read(State::repositories) {
-                let to = vec![Selector {
-                    user: Some(user.to_owned()),
-                    ..Selector::default()
-                }];
-                posts.push(Server::news(Some(thread), to, &news, Kind::Note));
-            }
-        }
         let chat = ThreadName::chat();
-        posts.push(Server::news(Some(chat), Vec::new(), &news, Kind::Riff));
-        self.announce_each(posts).await;
+        let line = Server::news(Some(chat), Vec::new(), &news, Kind::Riff);
+        self.announce_each(vec![line]).await;
     }
 }
 
@@ -6162,10 +6152,19 @@ mod tests {
         assert_eq!(code(by_session.await.unwrap()), state::Code::NotMember);
         assert_eq!(code(by_person.await.unwrap()), state::Code::NotMember);
         service.save().await.unwrap();
-        // The removal is the last record: bob changed nothing after it.
+        // The removal and its line in the chat are the last records: bob
+        // changed nothing after them (01M76S6128EZRZS2D5CE2QCC05).
+        let records: Vec<Change> = store.chunks().await.into_iter().flatten().collect();
+        let [.., removed, line] = &records[..] else {
+            panic!("{records:?}");
+        };
         assert!(matches!(
-            last(store.chunks().await),
+            removed,
             Change::MemberRemoved(removed) if removed.email == BOB
+        ));
+        assert!(matches!(
+            line,
+            Change::Posted(posted) if posted.thread == ThreadName::chat()
         ));
 
         // A revoke: bob is a member, and a sign-in from before the
@@ -6546,7 +6545,7 @@ mod tests {
         // not end, and an owner who is gone, with a request and with
         // none.
         as_person(&service, "carol", TakeOwner {}).await.unwrap();
-        service.0.warn_owner(Some("ada")).await;
+        service.0.warn_owner().await;
         assert_eq!(service.0.engine.grant_owner().await.unwrap(), None);
         let gone = service.0.engine.end_owner().await.unwrap();
         assert!(matches!(

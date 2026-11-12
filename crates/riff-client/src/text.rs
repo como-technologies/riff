@@ -2,7 +2,7 @@
 //! the notes that its calls post.
 
 use riff_core::name::ThreadName;
-use riff_core::wire::{AdminSet, Invited, OwnerPassed, PauseInfo, Removed, RiffState};
+use riff_core::wire::{PauseInfo, RiffState};
 
 /// The end of the refusal of the `leave` tool when riff has no
 /// directory for the mark of the leave (01M3XQVK05FAT3PR43W8RNEYHY).
@@ -105,85 +105,6 @@ pub fn new_riff(server: &str) -> String {
     format!(
         "This riff is new. Run riff login. \
          (riff removed the old sign-in of this machine for {server}.)"
-    )
-}
-
-/// The note of `riff invite` in each repository thread
-/// (01M3MN14ZCTRVD3T455P6TFK1B). `user` made the change.
-///
-/// ```
-/// use riff_core::wire::Invited;
-///
-/// let done = Invited { email: "bob@gmail.com".into(), address: "https://r.io".into() };
-/// assert_eq!(
-///     riff_client::text::invited_news("ada", &done),
-///     "members: ada invited bob@gmail.com. bob@gmail.com is a member now."
-/// );
-/// ```
-pub fn invited_news(user: &str, done: &Invited) -> String {
-    let email = &done.email;
-    format!("members: {user} invited {email}. {email} is a member now.")
-}
-
-/// The note of `riff remove` in each repository thread
-/// (01M3MN14ZCTRVD3T455P6TFK1B).
-///
-/// ```
-/// use riff_core::wire::Removed;
-///
-/// let done = Removed { email: "bob@gmail.com".into(), sign_ins: 2 };
-/// assert_eq!(
-///     riff_client::text::removed_news("ada", &done),
-///     "members: ada removed bob@gmail.com. bob@gmail.com is not a member now."
-/// );
-/// ```
-pub fn removed_news(user: &str, done: &Removed) -> String {
-    let email = &done.email;
-    format!("members: {user} removed {email}. {email} is not a member now.")
-}
-
-/// The note of `riff admin add` and `riff admin remove` in each
-/// repository thread (01M3MN14ZCTRVD3T455P6TFK1B).
-///
-/// ```
-/// use riff_core::wire::AdminSet;
-///
-/// let added = AdminSet { email: "bob@gmail.com".into(), admin: true };
-/// assert_eq!(
-///     riff_client::text::admin_news("ada", &added),
-///     "members: ada made bob@gmail.com an admin."
-/// );
-/// let removed = AdminSet { email: "bob@gmail.com".into(), admin: false };
-/// assert_eq!(
-///     riff_client::text::admin_news("ada", &removed),
-///     "members: ada made bob@gmail.com a member again, not an admin."
-/// );
-/// ```
-pub fn admin_news(user: &str, done: &AdminSet) -> String {
-    let email = &done.email;
-    if done.admin {
-        format!("members: {user} made {email} an admin.")
-    } else {
-        format!("members: {user} made {email} a member again, not an admin.")
-    }
-}
-
-/// The note of `riff owner` in each repository thread
-/// (01M3MN14ZCTRVD3T455P6TFK1B).
-///
-/// ```
-/// use riff_core::wire::OwnerPassed;
-///
-/// let done = OwnerPassed { owner: "bob@gmail.com".into(), admin: "ada@gmail.com".into() };
-/// assert_eq!(
-///     riff_client::text::owner_news("ada", &done),
-///     "members: ada passed the owner role to bob@gmail.com. ada@gmail.com stays an admin."
-/// );
-/// ```
-pub fn owner_news(user: &str, done: &OwnerPassed) -> String {
-    format!(
-        "members: {user} passed the owner role to {}. {} stays an admin.",
-        done.owner, done.admin
     )
 }
 

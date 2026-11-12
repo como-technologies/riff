@@ -440,9 +440,9 @@ async fn a_tail_acts_only_as_the_caller_of_its_token() {
 
 /// Only riff-server posts the kind `riff` (01M6Y4ZCTSTVM971BDC1F7GJPK).
 /// A signed post with that kind is refused, of a member and of a session,
-/// also with the words of a line of riff, and it adds no line. The line of
-/// riff-server itself in the chat, for a pass of the owner role, keeps
-/// the kind.
+/// also with the words of a line of riff, and it adds no line. The lines
+/// of riff-server itself in the chat, for an invite and a pass of the
+/// owner role, keep the kind (01M76S6128EZRZS2D5CE2QCC05).
 #[tokio::test]
 async fn only_riff_server_itself_posts_the_kind_riff() {
     let (service, base) = common::start(true, &[]).await;
@@ -473,12 +473,19 @@ async fn only_riff_server_itself_posts_the_kind_riff() {
     };
     assert_eq!(person.call(&base, "owner", &pass).await.status(), 200);
     let reply = brett.read(&base, CHAT).await;
-    let [line] = reply.messages.as_slice() else {
-        panic!("only the line of riff-server: {reply:?}");
+    let [invited, passed] = reply.messages.as_slice() else {
+        panic!("only the lines of riff-server: {reply:?}");
     };
-    assert_eq!(line.from, SessionUri::server());
-    assert_eq!(line.kind, Kind::Riff);
-    assert!(line.body.contains("passed the owner role"), "{}", line.body);
+    for line in [invited, passed] {
+        assert_eq!(line.from, SessionUri::server());
+        assert_eq!(line.kind, Kind::Riff);
+    }
+    assert!(invited.body.contains("invited"), "{}", invited.body);
+    assert!(
+        passed.body.contains("passed the owner role"),
+        "{}",
+        passed.body
+    );
 }
 
 /// The person of the riff and its lead in `REPO`: the person names the

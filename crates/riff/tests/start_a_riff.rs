@@ -141,7 +141,7 @@ fn update_riff_says_that_it_installs_the_release_of_the_riff() {
 
 /// "Start a Team Riff" (01M3MEFG6F102T1H8DFJ38EJ4A): the owner uses the
 /// riff, signs in first, then invites each person, and sees each change
-/// of the members with `riff tail` (01M3MN14ZCTRVD3T455P6TFK1B). Each
+/// of the members with `riff chat` (01M76S6128EZRZS2D5CE2QCC05). Each
 /// `riff` command is real. The server part of the page runs in
 /// `crates/riff-server/tests/start_a_team_riff.rs`.
 #[test]
@@ -174,7 +174,7 @@ fn the_owner_of_a_team_riff_signs_in_then_invites() {
             "riff github install OWNER",
             "riff invite EMAIL",
             "riff members",
-            "riff tail",
+            "riff chat",
             "riff owner --take",
             "riff owner EMAIL",
             "riff owner --deny",
@@ -183,13 +183,9 @@ fn the_owner_of_a_team_riff_signs_in_then_invites() {
         ]
     );
     each_is_real(&riff);
-    // The example note of the page is the note that riff posts.
-    let invited = riff_core::wire::Invited {
-        email: "bob@gmail.com".into(),
-        address: "URL".into(),
-    };
-    let note = riff_client::text::invited_news("ada", &invited);
-    assert!(page("start-a-team-riff.md").contains(&note), "{note}");
+    // The example line of the page is the line that riff-server posts.
+    let line = riff_state::state::people::invited_news("ada", "bob@gmail.com");
+    assert!(page("start-a-team-riff.md").contains(&line), "{line}");
 }
 
 #[test]

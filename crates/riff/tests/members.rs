@@ -89,11 +89,6 @@ async fn as_person(service: &Service, api: &Api, email: &str) -> Api {
     api.clone().signed_in(None).unwrap()
 }
 
-/// The person `user` on this host: it posts the note of each change.
-fn person(user: &str) -> SessionUri {
-    format!("riff://{user}@pangolin").parse().unwrap()
-}
-
 /// The agent session `id` of `user`.
 fn session(user: &str, id: &str) -> SessionUri {
     format!("riff://{user}@pangolin/como-technologies/riff?session={id}")
@@ -124,11 +119,7 @@ async fn the_owner_invites_lists_and_removes() {
     let (service, api) = start().await;
     let signed_in = as_person(&service, &api, "ada@gmail.com").await;
 
-    let invited = signed_in
-        .invite(&person("ada"), "bob@gmail.com")
-        .await
-        .unwrap()
-        .done;
+    let invited = signed_in.invite("bob@gmail.com").await.unwrap();
     // The answer names the address of the riff, and the lines to join
     // it (01M3MEF4B33Z6WVJMDP29C7SS2).
     let answer = text::invited(&invited);
@@ -157,11 +148,7 @@ async fn the_owner_invites_lists_and_removes() {
          allowed domains  none\nproof            off\n"
     );
 
-    let removed = signed_in
-        .remove(&person("ada"), "bob@gmail.com")
-        .await
-        .unwrap()
-        .done;
+    let removed = signed_in.remove("bob@gmail.com").await.unwrap();
     assert_eq!(
         text::removed(&removed),
         "Removed bob@gmail.com and ended 1 sign-in."
@@ -183,12 +170,12 @@ async fn a_member_cannot_invite() {
     // Given the owner ada, who invites bob.
     let (service, api) = start().await;
     let ada = as_person(&service, &api, "ada@gmail.com").await;
-    ada.invite(&person("ada"), "bob@gmail.com").await.unwrap();
+    ada.invite("bob@gmail.com").await.unwrap();
 
     // When the member bob invites a person.
     let error = as_person(&service, &api, "bob@gmail.com")
         .await
-        .invite(&person("bob"), "carol@gmail.com")
+        .invite("carol@gmail.com")
         .await
         .unwrap_err();
 
@@ -213,19 +200,18 @@ async fn the_owner_makes_an_admin_who_invites_and_removes() {
     let (service, api) = start().await;
     let added = as_person(&service, &api, "ada@gmail.com")
         .await
-        .set_admin(&person("ada"), "Bob@gmail.com", true)
+        .set_admin("Bob@gmail.com", true)
         .await
-        .unwrap()
-        .done;
+        .unwrap();
     assert_eq!(
         text::admin_set(&added),
         "bob@gmail.com is now an admin. They can invite and remove members."
     );
 
     let bob = as_person(&service, &api, "bob@gmail.com").await;
-    bob.invite(&person("bob"), "carol@gmail.com").await.unwrap();
-    bob.invite(&person("bob"), "dan@gmail.com").await.unwrap();
-    bob.remove(&person("bob"), "dan@gmail.com").await.unwrap();
+    bob.invite("carol@gmail.com").await.unwrap();
+    bob.invite("dan@gmail.com").await.unwrap();
+    bob.remove("dan@gmail.com").await.unwrap();
     let list = bob.members().await.unwrap();
     assert_eq!(
         members(&list),
@@ -239,10 +225,8 @@ async fn only_the_owner_adds_an_admin() {
     // Given the owner ada, the member bob and the admin carol.
     let (service, api) = start().await;
     let ada = as_person(&service, &api, "ada@gmail.com").await;
-    ada.invite(&person("ada"), "bob@gmail.com").await.unwrap();
-    ada.set_admin(&person("ada"), "carol@gmail.com", true)
-        .await
-        .unwrap();
+    ada.invite("bob@gmail.com").await.unwrap();
+    ada.set_admin("carol@gmail.com", true).await.unwrap();
 
     // When the member or the admin adds or removes an admin, the riff
     // refuses.
@@ -250,7 +234,7 @@ async fn only_the_owner_adds_an_admin() {
         let signed_in = as_person(&service, &api, email).await;
         for admin in [true, false] {
             let error = signed_in
-                .set_admin(&person("ada"), "carol@gmail.com", admin)
+                .set_admin("carol@gmail.com", admin)
                 .await
                 .unwrap_err();
             assert!(error.to_string().contains("not the owner"), "{error}");
@@ -267,14 +251,8 @@ async fn only_the_owner_adds_an_admin() {
 async fn a_removed_admin_cannot_invite() {
     let (service, api) = start().await;
     let ada = as_person(&service, &api, "ada@gmail.com").await;
-    ada.set_admin(&person("ada"), "bob@gmail.com", true)
-        .await
-        .unwrap();
-    let removed = ada
-        .set_admin(&person("ada"), "bob@gmail.com", false)
-        .await
-        .unwrap()
-        .done;
+    ada.set_admin("bob@gmail.com", true).await.unwrap();
+    let removed = ada.set_admin("bob@gmail.com", false).await.unwrap();
     assert_eq!(
         text::admin_set(&removed),
         "bob@gmail.com is now a member, not an admin."
@@ -283,7 +261,7 @@ async fn a_removed_admin_cannot_invite() {
     // The person stays a member, and signs in with no invite.
     let error = as_person(&service, &api, "bob@gmail.com")
         .await
-        .invite(&person("bob"), "carol@gmail.com")
+        .invite("carol@gmail.com")
         .await
         .unwrap_err();
     assert!(error.to_string().contains("not an admin"), "{error}");
@@ -294,13 +272,10 @@ async fn a_removed_admin_cannot_invite() {
 async fn the_owner_passes_the_role_to_a_member() {
     let (service, api) = start().await;
     let ada = as_person(&service, &api, "ada@gmail.com").await;
-    ada.invite(&person("ada"), "bob@gmail.com").await.unwrap();
+    ada.invite("bob@gmail.com").await.unwrap();
     // Only to a member or an admin. The words of the refusal count,
     // not the number of the status.
-    let error = ada
-        .pass_owner(&person("ada"), "carol@gmail.com")
-        .await
-        .unwrap_err();
+    let error = ada.pass_owner("carol@gmail.com").await.unwrap_err();
     assert!(
         error
             .to_string()
@@ -308,11 +283,7 @@ async fn the_owner_passes_the_role_to_a_member() {
         "{error}"
     );
     assert_eq!(service.members().owner.as_deref(), Some("ada@gmail.com"));
-    let passed = ada
-        .pass_owner(&person("ada"), "Bob@gmail.com")
-        .await
-        .unwrap()
-        .done;
+    let passed = ada.pass_owner("Bob@gmail.com").await.unwrap();
     assert_eq!(
         text::owner_passed(&passed),
         "bob@gmail.com is now the owner. ada@gmail.com stays an admin."
@@ -336,12 +307,12 @@ async fn only_the_owner_passes_the_role() {
     // Given the owner ada, who invites bob.
     let (service, api) = start().await;
     let ada = as_person(&service, &api, "ada@gmail.com").await;
-    ada.invite(&person("ada"), "bob@gmail.com").await.unwrap();
+    ada.invite("bob@gmail.com").await.unwrap();
 
     // When the member bob passes the owner role.
     let error = as_person(&service, &api, "bob@gmail.com")
         .await
-        .pass_owner(&person("bob"), "bob@gmail.com")
+        .pass_owner("bob@gmail.com")
         .await
         .unwrap_err();
 
@@ -350,12 +321,12 @@ async fn only_the_owner_passes_the_role() {
     assert_eq!(service.members().owner.as_deref(), Some("ada@gmail.com"));
 }
 
-/// Each change of the members posts one note to the thread of each
-/// repository of the riff. The note names the user, the email and the
-/// change, and wakes no session (01M3MN14ZCTRVD3T455P6TFK1B,
-/// 01M3MN1537Z0K3BRK6H2BZKZT0).
+/// Each change of the members posts one line of riff-server in the chat,
+/// and no note to the thread of a repository. The line names the user,
+/// the email and the change, holds no token, and has no `to`, so it
+/// wakes no session (01M76S6128EZRZS2D5CE2QCC05).
 #[tokio::test]
-async fn each_change_of_the_members_posts_a_note() {
+async fn each_change_of_the_members_posts_one_line_in_the_chat() {
     let (service, api) = start_with(true).await;
     let pair = sign_in(&service, &api, "ada@gmail.com").await;
     // A live session of ada works in the repository.
@@ -365,30 +336,17 @@ async fn each_change_of_the_members_posts_a_note() {
     let session = api.clone().signed_in(Some("s1")).unwrap();
     session.register(&s1).await.unwrap();
     let ada = api.clone().signed_in(None).unwrap();
-    let me = person("ada");
 
-    let mut posted = vec![
-        ada.invite(&me, "bob@gmail.com").await.unwrap().news,
-        ada.set_admin(&me, "carol@gmail.com", true)
-            .await
-            .unwrap()
-            .news,
-        ada.set_admin(&me, "carol@gmail.com", false)
-            .await
-            .unwrap()
-            .news,
-        ada.remove(&me, "carol@gmail.com").await.unwrap().news,
-        ada.pass_owner(&me, "bob@gmail.com").await.unwrap().news,
-    ];
-    for news in posted.drain(..) {
-        let news = news.unwrap();
-        assert_eq!(news.len(), 1, "{news:?}");
-        assert_eq!(news[0].thread, repo());
-        assert!(news[0].woken.is_empty(), "a note wakes no session");
-    }
+    ada.invite("bob@gmail.com").await.unwrap();
+    ada.set_admin("carol@gmail.com", true).await.unwrap();
+    ada.set_admin("carol@gmail.com", false).await.unwrap();
+    ada.remove("carol@gmail.com").await.unwrap();
+    ada.pass_owner("bob@gmail.com").await.unwrap();
 
-    let notes = session.read(&s1, &repo(), false).await.unwrap();
-    let bodies: Vec<&str> = notes.iter().map(|n| n.message.body.as_str()).collect();
+    let notes = session.read(&s1, &repo(), true).await.unwrap();
+    assert!(notes.is_empty(), "no note in the repository: {notes:#?}");
+    let lines = session.read(&s1, &ThreadName::chat(), true).await.unwrap();
+    let bodies: Vec<&str> = lines.iter().map(|l| l.message.body.as_str()).collect();
     assert_eq!(
         bodies,
         [
@@ -399,33 +357,13 @@ async fn each_change_of_the_members_posts_a_note() {
             "members: ada passed the owner role to bob@gmail.com. ada@gmail.com stays an admin.",
         ]
     );
-    for note in &notes {
-        assert_eq!(note.message.kind, Kind::Note);
-        assert_eq!(note.message.from.who(), me.who());
-        assert!(note.verified, "the client signs the note");
-        assert!(!note.message.body.contains(&pair.access_token));
-        assert!(!note.message.body.contains(&pair.refresh_token));
+    for line in &lines {
+        assert_eq!(line.message.from, SessionUri::server());
+        assert_eq!(line.message.kind, Kind::Riff);
+        assert!(line.message.to.is_empty(), "{line:?}");
+        assert!(!line.message.body.contains(&pair.access_token));
+        assert!(!line.message.body.contains(&pair.refresh_token));
     }
-}
-
-/// The change stands when the post of its note fails
-/// (01M3MN1537Z0K3BRK6H2BZKZT0).
-#[tokio::test]
-async fn a_failed_note_leaves_the_change() {
-    let (service, api) = start_with(true).await;
-    let ada = as_person(&service, &api, "ada@gmail.com").await;
-    // The token of ada does not act as mallory, so the post fails.
-    let changed = ada
-        .invite(&person("mallory"), "bob@gmail.com")
-        .await
-        .unwrap();
-    assert_eq!(changed.done.email, "bob@gmail.com");
-    let line = text::members_news(&changed.news);
-    assert!(
-        line.starts_with("riff: the change is done, but riff cannot post a note of it:"),
-        "{line}"
-    );
-    assert_eq!(service.members().members, ["bob@gmail.com"]);
 }
 
 /// The USER and the role of each person in the reply to `who`.
@@ -462,14 +400,8 @@ async fn who_shows_the_owner() {
     // Only a person changes the people: the token of the person, not
     // of the session.
     let as_person = api.clone().signed_in(None).unwrap();
-    as_person
-        .invite(&person("ada"), "bob@gmail.com")
-        .await
-        .unwrap();
-    as_person
-        .pass_owner(&person("ada"), "bob@gmail.com")
-        .await
-        .unwrap();
+    as_person.invite("bob@gmail.com").await.unwrap();
+    as_person.pass_owner("bob@gmail.com").await.unwrap();
     let shown = who(&ada, &a1).await;
     assert_eq!(
         shown.lines().nth(1),
@@ -623,10 +555,7 @@ async fn only_the_owner_and_the_admins_pause_the_whole_riff() {
     assert!(reply.changed);
     // Only a person changes the people: the token of the person.
     let as_person = api.clone().signed_in(None).unwrap();
-    as_person
-        .invite(&person("ada"), "bob@gmail.com")
-        .await
-        .unwrap();
+    as_person.invite("bob@gmail.com").await.unwrap();
 
     sign_in(&service, &api, "bob@gmail.com").await;
     let b1: SessionUri = "riff://bob@kadomony/como-technologies/strata?session=b1"
@@ -678,10 +607,7 @@ async fn only_the_owner_and_the_admins_pause_the_whole_riff() {
     let (reply, _) = ada.set_riff(&a1, RiffState::Paused).await.unwrap();
     assert!(reply.changed && reply.riff.is_some());
     let as_person = api.clone().signed_in(None).unwrap();
-    as_person
-        .set_admin(&person("ada"), "bob@gmail.com", true)
-        .await
-        .unwrap();
+    as_person.set_admin("bob@gmail.com", true).await.unwrap();
 
     // An admin resumes the whole riff.
     sign_in(&service, &api, "bob@gmail.com").await;
