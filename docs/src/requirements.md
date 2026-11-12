@@ -3575,11 +3575,11 @@
   The riff of the person sends only the fact in the call `bot`: the
   version and the run of a release, or the step of the daemon.
   riff-server writes the text from the fact and from what it holds: the
-  admins, the place of the caller and the holds of the version. No text
-  of a client goes into the line: a line of the daemon names the cause
-  of a fault only for a clone with no main clone. Only a person and the
-  lead of the person make the call. Supersedes
-  01M6Y4ZCTSTVM971BDC1F7GJPK, 01M5TKMVB7CF0QNAWXEVGEQETJ and
+  admins, the holds of the version, and for a line of the daemon the
+  place of the caller. No text of a client goes into the line: a line of
+  the daemon names the cause of a fault only for a clone with no main
+  clone. Only a person and the lead of the person make the call.
+  Supersedes 01M6Y4ZCTSTVM971BDC1F7GJPK, 01M5TKMVB7CF0QNAWXEVGEQETJ and
   01M6XSHMGM82QSABRWCYH595VH in part.
 - **01M74VFTFRSSWA6VPQS8SB0TBZ** riff-server writes a line of riff-bot
   about a release only for a tag `vX.Y.Z` with nothing after its
@@ -3637,6 +3637,13 @@
   01M74BPHQZHXFYYNXAJ1WFASQQ, 01M5TKDYAFA683KNAJTGYTQD5W,
   01M7641BHHND5JJA8DGJPFNAN7, 01M5RGD0XTR4X1MEV726HMCEGQ and
   01M5SNV7BC5J58WRZRJ5HS4NSJ in part.
+- **01M77F60MR8WZTMFJ5CF2295Q6** riff-server takes the fact of a release
+  in the call `bot` only when the repository of the caller is a project
+  of the riff. For another repository it refuses the call with an error
+  that names the repository and `riff project list`, and posts no line.
+  Each line of a release names who gave the fact, the person or the lead
+  of the person: "mike gave this fact." or "The lead of mike gave this
+  fact." Supersedes 01M74BPHQZHXFYYNXAJ1WFASQQ in part.
 
 ## Security
 

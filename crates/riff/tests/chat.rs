@@ -290,7 +290,7 @@ async fn named_leads(
 /// from the names of riff-server, which the chat reads at its start.
 #[tokio::test]
 async fn each_line_shows_its_sender_by_the_name_to_type() {
-    let server = crate::common::start_signed().await;
+    let server = crate::common::start_signed_project().await;
     let repos = ["como-technologies/riff", "como-technologies/strata"];
     let leads = named_leads(&server, "mike", &repos).await;
     // A session of brett in acme/strata: two projects have the name
@@ -321,8 +321,9 @@ async fn each_line_shows_its_sender_by_the_name_to_type() {
     // Only a line of riff-server itself shows as <riff-bot>
     // (01M6Y4ZCTSTVM971BDC1F7GJPK). riff-server writes the line that riff
     // writes for mike from its fact: the ask of a release names each
-    // admin, brett and mike, and the note of the daemon names no one. A
-    // line that mike types with the words of riff-bot shows as mike.
+    // admin, brett and mike, and its giver mike (01M77F60MR8WZTMFJ5CF2295Q6),
+    // and the note of the daemon names no one. A line that mike types with
+    // the words of riff-bot shows as mike.
     let person: SessionUri = "riff://mike@thelio/como-technologies/riff".parse().unwrap();
     let api = server.api("mike", None);
     let waits = BotFact::ReleaseWaits {
@@ -333,8 +334,8 @@ async fn each_line_shows_its_sender_by_the_name_to_type() {
     api.bot(&person, waits).await.unwrap();
     api.bot(&person, BotFact::LeadStarted).await.unwrap();
     let asked = "@brett @mike riff release v3.3.0 waits for your approval: \
-                 https://github.com/como-technologies/riff/actions/runs/9. In a terminal, run: \
-                 riff release approve v3.3.0";
+                 https://github.com/como-technologies/riff/actions/runs/9. mike gave this fact. \
+                 In a terminal, run: riff release approve v3.3.0";
     let started = "riff started the lead of mike in como-technologies/riff on thelio again on \
                    the new riff, and its conversation goes on. Attach with: riff lead start, or \
                    l in the Sessions tab of riff.";
@@ -1193,7 +1194,7 @@ async fn in_a_terminal_never_and_no_color_turn_off_the_bold_of_a_highlight() {
 /// "riff started the lead ..." names no one, and is plain.
 #[tokio::test]
 async fn in_a_terminal_the_ask_of_riff_bot_is_a_highlight_for_its_person() {
-    let server = crate::common::start_signed().await;
+    let server = crate::common::start_signed_project().await;
     let brett = Tty::start(&server, "brett", "heron").await;
     let person: SessionUri = "riff://mike@thelio/como-technologies/riff".parse().unwrap();
     let api = server.api("mike", None);

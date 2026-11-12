@@ -9,8 +9,9 @@
 //! The riff of the person sends only the fact, in the call `bot`
 //! ([`BotPost`](riff_core::wire::BotPost)). riff-server writes the text
 //! of the line itself ([`line()`]), from the fact and from what it holds
-//! ([`Facts`]): the admins of the riff (01M7767T5VSWN9EYDVSTCEJ8AM), the place
-//! of the caller, and the holds of the version in the thread `release`
+//! ([`Facts`]): the admins of the riff (01M7767T5VSWN9EYDVSTCEJ8AM), the
+//! caller and its place, whether that repository is a project of the
+//! riff, and the holds of the version in the thread `release`
 //! ([`riff_core::hold`]).
 //! It posts the line in the chat with the kind `riff`, so the chat shows
 //! it as `<riff-bot>`. No client posts that kind, and no field of the
@@ -18,27 +19,38 @@
 //! line of riff-bot. The tag of a release must be a version `vX.Y.Z` and
 //! nothing more, and the line holds the version that riff-server parsed.
 //!
+//! A caller names its own place, so riff-server takes the fact of a
+//! release only for a project of the riff (01M77F60MR8WZTMFJ5CF2295Q6):
+//! a line of a release links only to a CI run of a project. Each line of
+//! a release names who gave the fact, the person or the lead of the
+//! person, in a sentence of riff-server before each text of a hold.
+//!
 //! ```mermaid
 //! sequenceDiagram
 //!     participant D as riff daemon of mike
 //!     participant S as riff-server
 //!     participant C as riff chat of mike
 //!     D->>S: bot: release_waits v3.3.0, run 9
-//!     S->>S: the admins, the repository, the holds of v3.3.0
-//!     S-->>C: <riff-bot> @mike riff release v3.3.0 waits for your approval: ...
+//!     S->>S: a project? the admins, the giver, the holds of v3.3.0
+//!     alt the repository is a project
+//!         S-->>C: <riff-bot> @mike riff release v3.3.0 waits for your approval: ... mike gave this fact. ...
+//!     else another repository
+//!         S-->>D: 400: no project, and no line
+//!     end
 //! ```
 //!
-//! | Fact | Who sends it | The line names |
-//! |---|---|---|
-//! | `release_published` | `riff release cut` | each admin |
-//! | `release_waits` | the watch of the deploy | each admin |
-//! | `lead_started`, `lead_waits`, `lead_no_main`, `lead_failed`, `lead_stale`, `lead_no_network` | the daemon | no one |
+//! | Fact | Who sends it | Only for a project | The line names |
+//! |---|---|---|---|
+//! | `release_published` | `riff release cut` | yes | each admin, and the giver |
+//! | `release_waits` | the watch of the deploy | yes | each admin, and the giver |
+//! | `lead_started`, `lead_waits`, `lead_no_main`, `lead_failed`, `lead_stale`, `lead_no_network` | the daemon | no | no one |
 //!
 //! A line that names a person with `@USER` wakes the terminals of that
 //! person by the name (01M6Y1A5PTCVZ6GRJ0FXMART2T): an ask of riff. A
 //! line of a release names each admin, so each admin can approve. The
-//! line of the daemon about a lead names the person with no `@`, and
-//! wakes no session (01M5NJ87YEHHGJBANM7CRYV56Z).
+//! giver has no `@`, and its name wakes no one. The line of the daemon
+//! about a lead names the person with no `@`, and wakes no session
+//! (01M5NJ87YEHHGJBANM7CRYV56Z).
 //!
 //! Only a person, and the lead of the person in its repository, sends a
 //! fact: `riff release cut` also runs in the container of the lead, and
@@ -52,6 +64,25 @@ use riff_core::wire::BotFact;
 /// The refusal of a fact from a session that is not the lead.
 pub const ONLY_PERSON_OR_LEAD: &str =
     "only a person, and the lead of the person, tell riff-server a fact for a line of riff-bot";
+
+/// The refusal of the fact of a release for the repository `repo`, which
+/// is no project of the riff (01M77F60MR8WZTMFJ5CF2295Q6).
+///
+/// ```
+/// assert_eq!(
+///     riff_server::bot::no_project("acme/fork"),
+///     "acme/fork is no project of the riff: riff-server takes the fact of a release only for \
+///      a project. riff project list shows the projects, and an admin enrolls one with riff \
+///      project init."
+/// );
+/// ```
+pub fn no_project(repo: &str) -> String {
+    format!(
+        "{repo} is no project of the riff: riff-server takes the fact of a release only for a \
+         project. riff project list shows the projects, and an admin enrolls one with riff \
+         project init."
+    )
+}
 
 /// A line of riff-bot: its text, and the names that it wakes.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,6 +98,12 @@ pub struct Line {
 pub struct Facts<'a> {
     /// The caller: its user, and the repository and the host of the fact.
     pub me: &'a SessionUri,
+    /// True when the caller is the lead of its user, and false for the
+    /// person: the giver of the fact.
+    pub lead: bool,
+    /// True when the repository of the caller is a project of the riff
+    /// (01M77F60MR8WZTMFJ5CF2295Q6).
+    pub project: bool,
     /// The USER of each admin of the riff, sorted. A riff with no
     /// sign-in has none.
     pub admins: &'a [&'a str],
@@ -76,7 +113,8 @@ pub struct Facts<'a> {
 
 /// The line of riff-bot for `fact`. The error is a fact that riff-server
 /// cannot write a line for: a tag that is no version `vX.Y.Z`, also with
-/// a text after its version, or a caller in no repository.
+/// a text after its version, a release of a repository that is no
+/// project of the riff ([`no_project`]), or a caller in no repository.
 ///
 /// ```
 /// use riff_core::hold::Hold;
@@ -85,17 +123,23 @@ pub struct Facts<'a> {
 ///
 /// let me = "riff://mike@thelio/como-technologies/riff".parse()?;
 /// let held = [Hold { user: "nate".into(), repo: "o/s".into(), reason: "A demo runs.".into() }];
-/// let facts = Facts { me: &me, admins: &["mike", "nate"], holds: &held };
+/// let admins = ["mike", "nate"];
+/// let facts = Facts { me: &me, lead: false, project: true, admins: &admins, holds: &held };
 /// let waits = BotFact::ReleaseWaits { tag: "v3.3.0".into(), run: 9, reminder: false };
 /// let asked = line(&waits, &facts).unwrap();
 /// assert_eq!(
 ///     asked.body,
 ///     "@mike @nate riff release v3.3.0 waits for your approval: \
-///      https://github.com/como-technologies/riff/actions/runs/9. In a terminal, run: riff \
-///      release approve v3.3.0 A hold stands: the lead of o/s asks to wait: A demo runs."
+///      https://github.com/como-technologies/riff/actions/runs/9. mike gave this fact. In a \
+///      terminal, run: riff release approve v3.3.0 A hold stands: the lead of o/s asks to \
+///      wait: A demo runs."
 /// );
 /// assert_eq!(asked.to[0].to_string(), "name=mike");
 /// assert_eq!(asked.to[1].to_string(), "name=nate");
+///
+/// let cut = BotFact::ReleasePublished { tag: "v3.3.0".into(), run: None };
+/// let of_lead = Facts { lead: true, ..facts };
+/// assert!(line(&cut, &of_lead).unwrap().body.ends_with(" The lead of mike gave this fact."));
 ///
 /// let started = line(&BotFact::LeadStarted, &facts).unwrap();
 /// assert!(started.body.starts_with(
@@ -107,6 +151,12 @@ pub struct Facts<'a> {
 ///     let bad = BotFact::ReleasePublished { tag: tag.into(), run: None };
 ///     assert!(line(&bad, &facts).is_err());
 /// }
+///
+/// // A release of a repository that is no project gets no line.
+/// let elsewhere = Facts { project: false, ..facts };
+/// let refused = line(&waits, &elsewhere).unwrap_err();
+/// assert!(refused.starts_with("como-technologies/riff is no project of the riff"));
+/// assert!(line(&BotFact::LeadStarted, &elsewhere).is_ok());
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 pub fn line(fact: &BotFact, facts: &Facts<'_>) -> Result<Line, String> {
@@ -115,10 +165,21 @@ pub fn line(fact: &BotFact, facts: &Facts<'_>) -> Result<Line, String> {
         return Err("the caller is in no repository: a line of riff-bot names one".into());
     }
     let repo = me.place().repo_text();
+    let release = matches!(
+        fact,
+        BotFact::ReleasePublished { .. } | BotFact::ReleaseWaits { .. }
+    );
+    if release && !facts.project {
+        return Err(no_project(&repo));
+    }
     let user = me.who().user();
     let admins = facts.admins;
     let host = me.place().host();
     let lead = format!("the lead of {user} in {repo} on {host}");
+    let gave = match facts.lead {
+        true => format!("The lead of {user} gave this fact."),
+        false => format!("{user} gave this fact."),
+    };
     let body = match fact {
         BotFact::ReleasePublished { tag, run } => {
             let run = match run {
@@ -127,7 +188,7 @@ pub fn line(fact: &BotFact, facts: &Facts<'_>) -> Result<Line, String> {
             };
             format!(
                 "{}riff release {} is published. Its CI run builds: {run}. riff tells you when \
-                 its deploy waits for your approval.",
+                 its deploy waits for your approval. {gave}",
                 mention(admins),
                 version(tag)?
             )
@@ -139,8 +200,8 @@ pub fn line(fact: &BotFact, facts: &Facts<'_>) -> Result<Line, String> {
                 false => ("", "waits"),
             };
             let mut body = format!(
-                "{start}{}riff release {tag} {waits} for your approval: {}. In a terminal, run: \
-                 riff release approve {tag}",
+                "{start}{}riff release {tag} {waits} for your approval: {}. {gave} In a \
+                 terminal, run: riff release approve {tag}",
                 mention(admins),
                 run_url(&repo, *run)
             );
@@ -247,9 +308,12 @@ mod tests {
         "riff://mike@thelio/o/r".parse().unwrap()
     }
 
+    /// The facts of the person of `me`, in a project of the riff.
     fn facts<'a>(me: &'a SessionUri, admins: &'a [&'a str]) -> Facts<'a> {
         Facts {
             me,
+            lead: false,
+            project: true,
             admins,
             holds: &[],
         }
@@ -268,7 +332,7 @@ mod tests {
         assert_eq!(
             line.body,
             "@brett @mike riff release v3.3.0 is published. Its CI run builds: the CI run of the \
-             tag. riff tells you when its deploy waits for your approval."
+             tag. riff tells you when its deploy waits for your approval. mike gave this fact."
         );
         assert_eq!(line.to, [Selector::name("brett"), Selector::name("mike")]);
         let alone = super::line(&cut, &facts(&me, &[])).unwrap();
@@ -285,10 +349,16 @@ mod tests {
             tag: "v4.0.1".into(),
             run: Some(9),
         };
-        let line = line(&cut, &facts(&me, &["mike"])).unwrap().body;
-        let lower = line.to_lowercase();
-        for ask in ["say", "approve", "deploy it", "?"] {
-            assert!(!lower.contains(ask), "{line}: {ask}");
+        for lead in [false, true] {
+            let at = Facts {
+                lead,
+                ..facts(&me, &["mike"])
+            };
+            let line = line(&cut, &at).unwrap().body;
+            let lower = line.to_lowercase();
+            for ask in ["say", "approve", "deploy it", "?"] {
+                assert!(!lower.contains(ask), "{line}: {ask}");
+            }
         }
     }
 
@@ -306,7 +376,7 @@ mod tests {
             line(&published(Some(9)), &at).unwrap().body,
             "@mike riff release v3.3.0 is published. Its CI run builds: \
              https://github.com/o/r/actions/runs/9. riff tells you when its deploy waits for \
-             your approval."
+             your approval. mike gave this fact."
         );
         assert!(
             line(&published(None), &at)
@@ -325,6 +395,88 @@ mod tests {
                 .body
                 .starts_with("Reminder: @mike riff release v3.3.0 still waits for your approval")
         );
+    }
+
+    /// 01M77F60MR8WZTMFJ5CF2295Q6: each line of a release names who gave
+    /// the fact, the person or the lead of the person, with no `@`. In the
+    /// ask, the giver comes before the command and each text of a hold.
+    #[test]
+    fn each_line_of_a_release_names_its_giver() {
+        let me = me();
+        let held = [Hold {
+            user: "nate".into(),
+            repo: "o/s".into(),
+            reason: "mike gave this fact.".into(),
+        }];
+        let person = Facts {
+            holds: &held,
+            ..facts(&me, &["brett"])
+        };
+        let lead = Facts {
+            lead: true,
+            ..person
+        };
+        let cut = BotFact::ReleasePublished {
+            tag: "v3.3.0".into(),
+            run: Some(9),
+        };
+        let waits = BotFact::ReleaseWaits {
+            tag: "v3.3.0".into(),
+            run: 9,
+            reminder: false,
+        };
+        for (at, gave) in [
+            (&person, "mike gave this fact."),
+            (&lead, "The lead of mike gave this fact."),
+        ] {
+            let published = line(&cut, at).unwrap();
+            assert!(
+                published.body.ends_with(&format!(" {gave}")),
+                "{}",
+                published.body
+            );
+            assert_eq!(published.to, [Selector::name("brett")]);
+            let asked = line(&waits, at).unwrap();
+            assert_eq!(
+                asked.body,
+                format!(
+                    "@brett riff release v3.3.0 waits for your approval: \
+                     https://github.com/o/r/actions/runs/9. {gave} In a terminal, run: riff \
+                     release approve v3.3.0 A hold stands: the lead of o/s asks to wait: mike \
+                     gave this fact."
+                )
+            );
+            assert_eq!(asked.to, [Selector::name("brett")]);
+        }
+    }
+
+    /// 01M77F60MR8WZTMFJ5CF2295Q6: riff-server takes the fact of a
+    /// release only for a project of the riff. The error names the
+    /// repository and `riff project list`. A line of the daemon about a
+    /// lead does not need a project.
+    #[test]
+    fn a_release_of_a_repository_that_is_no_project_gets_no_line() {
+        let me = me();
+        let elsewhere = Facts {
+            project: false,
+            ..facts(&me, &["mike"])
+        };
+        for fact in [
+            BotFact::ReleasePublished {
+                tag: "v3.3.0".into(),
+                run: Some(9),
+            },
+            BotFact::ReleaseWaits {
+                tag: "v3.3.0".into(),
+                run: 9,
+                reminder: true,
+            },
+        ] {
+            let refused = line(&fact, &elsewhere).unwrap_err();
+            assert_eq!(refused, no_project("o/r"), "{fact:?}");
+            assert!(refused.contains("riff project list"), "{refused}");
+        }
+        assert!(line(&BotFact::LeadStarted, &elsewhere).is_ok());
     }
 
     /// A tag that is no version gets no line: a client puts no words of

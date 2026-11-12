@@ -15,7 +15,7 @@ use std::process::Output;
 use isolated::Isolated;
 
 use crate::book::{commands_of, each_is_real};
-use crate::github_apps::fake_github::FakeGitHub;
+use crate::common::fake_github::FakeGitHub;
 
 /// The image that `riff.toml` of the clone pins.
 const IMAGE: &str = "ghcr.io/como-technologies/riff-session@sha256:\

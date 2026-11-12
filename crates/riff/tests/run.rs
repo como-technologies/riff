@@ -24,7 +24,7 @@ use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
-use crate::github_apps::fake_github::FakeGitHub;
+use crate::common::fake_github::FakeGitHub;
 
 const GH_TOKEN: &str = "gho_FAKEtoken0123456789";
 const ACCESS: &str = "sk-ant-oat01-FAKEaccess";

@@ -168,12 +168,17 @@ fn an_admin_removes_a_project_and_a_repository_that_is_no_project_is_refused() {
 /// A project keeps who enrolled it and when. A later enrollment sets its
 /// hosts only. The query gives each project with the user of each lead
 /// that holds, and the reply of a removal is the project that went.
+/// `is_project` follows the enrollment and the removal
+/// (01M77F60MR8WZTMFJ5CF2295Q6).
 #[test]
 fn a_project_keeps_who_enrolled_it_and_when_and_the_query_names_its_leads() {
     let Given { mut state, now } = given(&team()).live(&[ann(), bob()]);
+    assert!(!state.is_project(&repo()));
     let mike = Caller::of(&"riff://mike@pangolin".parse().unwrap()).with_role(Role::Admin);
     let (made, note) = written(&mut state, &mike, &enroll(&["thelio"]), now);
     assert_eq!(note, Enrolled::New);
+    assert!(state.is_project(&repo()));
+    assert!(!state.is_project(&"acme/web".parse().unwrap()));
     let at_ms = made[0].envelope.written_at_ms;
     let (_, note) = written(&mut state, &admin(), &enroll(&["heron"]), now);
     assert_eq!(note, Enrolled::Hosts);
@@ -196,6 +201,7 @@ fn a_project_keeps_who_enrolled_it_and_when_and_the_query_names_its_leads() {
         Some(vec!["heron".into()])
     );
     assert!(state.projects(now).projects.is_empty());
+    assert!(!state.is_project(&repo()));
     // The mark stays after the last project went.
     assert!(state.projects_known());
 }

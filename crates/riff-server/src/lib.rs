@@ -211,8 +211,9 @@
 //!   (R142).
 //! - `POST /v1/bot` takes a fact of the riff of a person, and riff-server
 //!   posts the line of riff-bot for it in riff chat, with the kind `riff`
-//!   (01M74BPHQZHXFYYNXAJ1WFASQQ). riff-server writes the text itself:
-//!   see [`bot`].
+//!   (01M74BPHQZHXFYYNXAJ1WFASQQ). riff-server writes the text itself,
+//!   and takes the fact of a release only for a project of the riff
+//!   (01M77F60MR8WZTMFJ5CF2295Q6): see [`bot`].
 //! - `GET /v1/server` gives the facts of the instance, for `riff server`
 //!   (01M3TJWJ12WEDCXW3W0529KRP2): if it serves, its last error, the
 //!   log, the checkpoint, its sizes and its start. The route is outside
@@ -2602,8 +2603,10 @@ pub fn still_blocked(session: &SessionUri, reason: &str, after_secs: u64) -> Str
 /// Posts the line of riff-bot for the fact of the caller in the chat,
 /// with the kind `riff` ([`bot`], 01M74BPHQZHXFYYNXAJ1WFASQQ). riff-server
 /// writes the text from the fact and from what it holds: the admins
-/// (01M7767T5VSWN9EYDVSTCEJ8AM), the place of the caller and the holds of the
-/// version. Only a person and the lead of the person may call it.
+/// (01M7767T5VSWN9EYDVSTCEJ8AM), the caller and its place, and the holds
+/// of the version. Only a person and the lead of the person may call it.
+/// The fact of a release needs a repository that is a project of the riff
+/// (01M77F60MR8WZTMFJ5CF2295Q6).
 async fn bot_post(
     AxumState(s): AxumState<Shared>,
     proof: Proof,
@@ -2611,12 +2614,15 @@ async fn bot_post(
 ) -> Reply<()> {
     let caller = admit(&s, &proof, &r.me)?;
     let now = Instant::now();
-    let (lead, admins, messages) = s
+    let thread = r.me.default_thread();
+    let (lead, project, admins, messages) = s
         .engine
         .query(&caller, |state| {
             let admins = state.people().admin_users();
             let messages = state.messages(&riff_core::hold::thread());
-            (state.uri(caller.who(), now).lead(), admins, messages)
+            let project = thread.as_ref().is_some_and(|repo| state.is_project(repo));
+            let lead = state.uri(caller.who(), now).lead();
+            (lead, project, admins, messages)
         })
         .await?;
     if caller.who().session().is_some() && !lead {
@@ -2636,6 +2642,8 @@ async fn bot_post(
     let admins: Vec<&str> = admins.iter().map(String::as_str).collect();
     let facts = bot::Facts {
         me: &r.me,
+        lead,
+        project,
         admins: &admins,
         holds: &holds,
     };

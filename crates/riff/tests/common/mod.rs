@@ -18,6 +18,11 @@ use riff::login;
 use riff_core::wire::Discovery;
 use serde_json::{Value, json};
 
+/// The fake GitHub of the tests of riff-server: the tests of riff use it
+/// too.
+#[path = "../../../riff-server/tests/fake_github.rs"]
+pub mod fake_github;
+
 const KEY: &str = include_str!("../../../riff-server/testdata/test-only-rsa-key.pem");
 const JWKS: &str = include_str!("../../../riff-server/testdata/test-only-jwks.json");
 
@@ -359,6 +364,47 @@ pub async fn start_signed() -> Signed {
 pub async fn start_signed_with(wrap: impl FnOnce(axum::Router) -> axum::Router) -> Signed {
     let (listener, url) = listen().await;
     start_signed_at(listener, &url, None, wrap).await
+}
+
+/// The repository that [`start_signed_project`] enrolls.
+pub const PROJECT: &str = "como-technologies/riff";
+
+/// The token of `gh` of brett: on the fake GitHub of
+/// [`start_signed_project`], brett is an admin of [`PROJECT`].
+const BRETT_GH: &str = "gho_brett_admin_of_riff";
+
+/// As [`start_signed`], with [`PROJECT`] a project of the riff, as in a
+/// riff of this build: riff-server takes the fact of a release only for a
+/// project (01M77F60MR8WZTMFJ5CF2295Q6). Its GitHub is a fake where
+/// brett, an admin of the riff, is an admin of the repository, and brett
+/// enrolls it. The [`Signed::calls`] start after the enrollment.
+pub async fn start_signed_project() -> Signed {
+    let github = fake_github::FakeGitHub::start().await;
+    github.seen().person(BRETT_GH, PROJECT, true);
+    let settings = riff_server::github::Settings {
+        api: github.url.clone(),
+        web: github.url.clone(),
+        ..riff_server::github::Settings::default()
+    };
+    let (listener, url) = listen().await;
+    let server = start_signed_config(
+        listener,
+        &url,
+        None,
+        |router| router,
+        |config| {
+            config.github = settings;
+        },
+    )
+    .await;
+    let brett: riff_core::name::SessionUri = "riff://brett@thelio".parse().unwrap();
+    let repo = PROJECT.parse().unwrap();
+    let api = server.api("brett", None);
+    api.project_init(&brett, &repo, &[], BRETT_GH)
+        .await
+        .unwrap();
+    server.calls.lock().unwrap().clear();
+    server
 }
 
 /// The store that a server loads, and the timing of its lease.

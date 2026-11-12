@@ -4109,11 +4109,10 @@ the CI run of a deploy that waits. riff-server writes the text of the
 line itself: no client puts its own words in a line of `riff-bot`. The
 line of a release holds the version that riff-server parsed, and
 nothing more: a tag with a text after its version, for example
-`v3.3.0-rc1` or `v3.3.0+build9`, gets no line. An ask names you with
-`@USER`, so it is a highlight on your terminal (see
-"Get a highlight in the chat"). A line of the daemon names no one. The
-log of the riff daemon on the host has the cause of a fault. A line
-that a person types with the words of `riff-bot` shows as that person.
+`v3.3.0-rc1` or `v3.3.0+build9`, gets no line. For who a line names,
+see "Who a line of riff-bot names". The log of the riff daemon on the
+host has the cause of a fault. A line that a person types with the
+words of `riff-bot` shows as that person.
 
 The lead of each person in a project shows with the same name, and the
 name wakes your own lead there (see "Wake a person or a project by
@@ -4131,7 +4130,7 @@ riff chat
 ```text
 14:02 <brett> @riff is the release out?
 14:03 <riff> @brett not yet: #207 waits for CI.
-14:05 <riff-bot> @mike riff release v3.3.0 waits for your approval: https://github.com/como-technologies/riff/actions/runs/9. In a terminal, run: riff release approve v3.3.0
+14:05 <riff-bot> @mike riff release v3.3.0 waits for your approval: https://github.com/como-technologies/riff/actions/runs/9. brett gave this fact. In a terminal, run: riff release approve v3.3.0
 14:05 <riff-bot> riff started the lead of brett in como-technologies/riff on heron again on the new riff.
 14:06 [mike a6cf2205] the checks of #207 passed
 ```
@@ -4170,6 +4169,38 @@ riff read --thread chat
 chat
 [44] brett@heron:riff (25456ff6) lead=true to name=brett (verified): @brett not yet: #207 waits for CI.
 [45] riff-bot (riff-server) to name=mike: @mike riff release v3.3.0 waits for your approval: ...
+```
+
+#### Who a line of riff-bot names
+
+A name with `@USER` is a highlight on the terminal of that person (see
+"Get a highlight in the chat"). A name with no `@` wakes no one:
+
+| The line | Names with `@USER` | Names with no `@` |
+|---|---|---|
+| a change of the people | no one | the people of the change |
+| `riff release cut`, the ask while a deploy waits, and its reminder | each admin of the riff | who gave the fact: the person, or the lead of the person |
+| the riff daemon about your lead | no one | you, the project and the host of the lead |
+
+riff-server writes who gave the fact of a release in a sentence of its
+own: "brett gave this fact." for the person brett, or "The lead of
+brett gave this fact." for the lead of brett. In the ask, that sentence
+comes before the command and before each hold.
+
+Your riff names the repository of your clone. riff-server takes the
+fact of a release only for a project of the riff (see
+[The projects of the riff](#the-projects-of-the-riff)). For another
+repository it posts no line. `riff release cut` goes on, and shows the
+error:
+
+```text
+riff: cannot post the chat line to the admins: bot failed (400 Bad Request): acme/fork is no project of the riff: riff-server takes the fact of a release only for a project. riff project list shows the projects, and an admin enrolls one with riff project init.
+```
+
+See which repositories are projects:
+
+```sh
+riff project list
 ```
 
 ### Type while lines come in
@@ -6042,7 +6073,8 @@ riff lead start
 A project is a repository `OWNER/REPO` on GitHub that a person enrolled
 in the riff. riff-server keeps each project in its log: the repository,
 who enrolled it and when, and the hosts that may run its wave. A project
-with no host names each host.
+with no host names each host. riff-bot writes the lines of a release
+only for a project (see "Who a line of riff-bot names").
 
 ```mermaid
 flowchart LR
