@@ -10619,10 +10619,10 @@ pub fn init_issues_unread(repo: &str, why: &str) -> String {
 /// (01M5RGGD6YR36EXZEG61XCJVRY).
 ///
 /// ```
-/// let one = riff::text::init_failed(&[("the ruleset of main", "make it")]);
+/// let one = riff::text::init_failed(&[("the init of podman", "install catatonit")]);
 /// assert_eq!(
 ///     one,
-///     "1 check failed. riff installed no daemon and pulled no image. Do each fix, then run riff init again:\n  the ruleset of main: make it"
+///     "1 check failed. riff installed no daemon and pulled no image. Do each fix, then run riff init again:\n  the init of podman: install catatonit"
 /// );
 /// let two = riff::text::init_failed(&[("podman", "install it"), ("cgroup v2", "enable\nit")]);
 /// assert!(two.starts_with("2 checks failed."), "{two}");
