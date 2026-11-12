@@ -3222,6 +3222,12 @@ again. Your lead gets one message for each head commit:
 PR #41, branch worktree-issue-13, passed its verify at commit 1a2b3c4, but auto-merge is off, so it never merges. Turn it on: gh pr merge --auto --squash 41
 ```
 
+In the merge queue, GitHub shows no auto-merge for a pull request. So
+before this message, the wave asks GitHub again for the pull request.
+A pull request that merged, that is in the queue, that has auto-merge
+on, or that has a new head commit gets no message. When the ask fails,
+the wave sends no message, and asks again at the next look.
+
 Turn it on with the command of the message:
 
 ```sh
