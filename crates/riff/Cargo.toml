@@ -59,6 +59,7 @@ vt100.workspace = true
 # the store of riff with the store of the keyring crate on Linux.
 [target.'cfg(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android"))))'.dependencies]
 secret-service.workspace = true
+zbus.workspace = true
 
 [target.'cfg(not(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android")))))'.dependencies]
 keyring.workspace = true

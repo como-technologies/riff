@@ -1876,6 +1876,8 @@ riff daemon status
 ```
 
 It shows `claude token: keyring locked.` until the keyring answers.
+When the keyring does not answer at all, see
+[When the keyring does not answer](#when-the-keyring-does-not-answer).
 
 ### Run an item
 
@@ -6030,6 +6032,27 @@ the OS keyring of pangolin is locked or does not answer: unlock it at the deskto
    ```
 
 Then the next command works.
+
+#### When the keyring does not answer
+
+When the keyring shows no unlock prompt, or `gh` hangs, start the
+keyring again. Then unlock it at the desktop:
+
+```sh
+systemctl --user restart gnome-keyring-daemon
+```
+
+riff connects again by itself after a restart of the keyring. Each
+riff process, also the riff daemon, opens a new session of the new
+keyring at its next call. A restart of `riff.service` is not
+necessary. The daemon reads the claude token and the user of each
+wave at its next look. Check it:
+
+```sh
+riff daemon status
+```
+
+It shows `claude token: set.` when the daemon reads the keyring again.
 
 ### Count the calls to the keyring
 

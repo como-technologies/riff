@@ -25,7 +25,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use keyring_core::api::CredentialStoreApi;
-use riff::keyring_store;
+use riff::claude_token;
+use riff::keyring_store::{self, SECRETS};
+use riff_client::daemons::Token;
 use riff_client::device;
 use riff_client::login::{self, SignIn};
 use riff_client::secrets::{self, SERVICE};
@@ -33,9 +35,6 @@ use riff_core::dpop::Key;
 
 /// The variable that names the check of the child.
 const CHILD: &str = "RIFF_TEST_KEYRING_CHILD";
-
-/// The name of the Secret Service on the bus.
-const SECRETS: &str = "org.freedesktop.secrets";
 
 /// The algorithm of a DH session: the store of the `keyring` crate.
 const DH: &str = "dh-ietf1024-sha256-aes128-cbc-pkcs7";
@@ -73,6 +72,24 @@ fn three_hundred_sessions_of_the_store_of_riff_add_no_locked_memory() {
 #[test]
 fn riff_reads_and_writes_the_secrets_of_the_old_store() {
     on_a_private_keyring("old");
+}
+
+/// The criterion 1 of #1522: one store reads a secret, the keyring
+/// starts again, and the same store reads the secret again. It opens a
+/// new plain session for the new keyring, and no session for a read on
+/// the same keyring.
+#[test]
+fn one_store_reads_a_secret_again_after_a_restart_of_the_keyring() {
+    on_a_private_keyring("restart");
+}
+
+/// The criterion 2 of #1522: the reads of the riff daemon. The keyring
+/// starts again locked, and an unlock prompt of riff gets no answer.
+/// Then the keyring starts again unlocked, and the same process reads
+/// the claude token and the user of the wave.
+#[test]
+fn the_reads_of_the_daemon_work_again_after_a_restart_of_a_locked_keyring() {
+    on_a_private_keyring("daemon");
 }
 
 /// Runs the check `check` of [`child`] in a child on a private keyring,
@@ -149,11 +166,13 @@ fn child() {
     };
     // The OS store is a part of the platform of riff, as in `riff` itself.
     riff::platform::install();
-    let keyring = Keyring::start();
+    let mut keyring = Keyring::start();
     match check.as_str() {
         "plain" => plain(),
         "memory" => memory(&keyring),
         "old" => old(),
+        "restart" => restart(&mut keyring),
+        "daemon" => daemon(&mut keyring),
         other => panic!("no check {other}"),
     }
 }
@@ -292,6 +311,107 @@ fn old() {
     assert!(items(&sign_in_name).is_empty());
 }
 
+/// One store reads a secret before and after a restart of the keyring,
+/// with one plain session for each keyring.
+fn restart(keyring: &mut Keyring) {
+    let monitor = Monitor::start();
+    let name = login::secret_name("https://riff.example");
+    let store = keyring_store::Store::new().unwrap();
+    let entry = store.build(SERVICE, &name, None).unwrap();
+    entry.set_password("not a real secret").unwrap();
+    assert_eq!(entry.get_password().unwrap(), "not a real secret");
+    assert_eq!(entry.get_password().unwrap(), "not a real secret");
+    assert_eq!(monitor.wait_for(1), ["plain"]);
+
+    keyring.restart(true);
+    assert_eq!(entry.get_password().unwrap(), "not a real secret");
+    let again = store.build(SERVICE, &name, None).unwrap();
+    assert_eq!(again.get_password().unwrap(), "not a real secret");
+    assert_eq!(monitor.wait_for(2), ["plain", "plain"]);
+}
+
+/// The reads of a riff daemon, through the store of the process: a
+/// locked keyring, then a restart of the keyring.
+fn daemon(keyring: &mut Keyring) {
+    let server = "https://riff.example";
+    let dir = tempfile::tempdir().unwrap();
+    let sign_in = SignIn {
+        user: "mike".into(),
+        access_token: "a-1".into(),
+        refresh_token: "r-1".into(),
+        expires_at: 1,
+        riff_id: Some("riff-1".into()),
+    };
+    // Another riff process keeps the claude token and the sign-in, so
+    // this process keeps no value.
+    let other = keyring_store::Store::new().unwrap();
+    let write = |name: &str, value: &str| {
+        let entry = other.build(SERVICE, name, None).unwrap();
+        entry.set_password(value).unwrap();
+    };
+    write(claude_token::NAME, "sk-ant-oat01-not-real");
+    write(
+        &login::secret_name(server),
+        &serde_json::to_string(&sign_in).unwrap(),
+    );
+    assert_eq!(claude_token::state(dir.path()), Token::Set);
+
+    // The keyring starts again locked. Its unlock prompt gets no answer:
+    // riff waits for the prompt, and the keyring is locked to riff.
+    let prompter = silent_prompter();
+    keyring.restart(false);
+    assert_eq!(claude_token::state(dir.path()), Token::Locked);
+    let user = login::user(server).unwrap_err();
+    assert!(secrets::is_locked(&user), "{user:#}");
+    assert!(
+        format!("{user:#}").contains("does not answer"),
+        "riff does not wait for the prompt: {user:#}"
+    );
+    drop(prompter);
+
+    // The keyring starts again unlocked. The same process reads it, with
+    // no wait for the call that waits for the prompt.
+    keyring.restart(true);
+    let start = Instant::now();
+    assert_eq!(claude_token::state(dir.path()), Token::Set);
+    assert_eq!(login::user(server).unwrap().as_deref(), Some("mike"));
+    assert!(start.elapsed() < secrets::KEYRING_WAIT);
+}
+
+/// A system prompter of GNOME on the private bus that takes each prompt
+/// and never shows it, as a desktop where nobody answers. It holds the
+/// name up to its drop.
+fn silent_prompter() -> zbus::blocking::Connection {
+    zbus::blocking::connection::Builder::session()
+        .unwrap()
+        .name("org.gnome.keyring.SystemPrompter")
+        .unwrap()
+        .serve_at("/org/gnome/keyring/Prompter", SilentPrompter)
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
+/// The prompter of [`silent_prompter`].
+struct SilentPrompter;
+
+#[zbus::interface(name = "org.gnome.keyring.internal.Prompter")]
+impl SilentPrompter {
+    /// Takes the prompt, and never says that it is ready.
+    fn begin_prompting(&self, _callback: zbus::zvariant::ObjectPath<'_>) {}
+
+    fn perform_prompt(
+        &self,
+        _callback: zbus::zvariant::ObjectPath<'_>,
+        _kind: &str,
+        _properties: HashMap<String, zbus::zvariant::OwnedValue>,
+        _exchange: &str,
+    ) {
+    }
+
+    fn stop_prompting(&self, _callback: zbus::zvariant::ObjectPath<'_>) {}
+}
+
 /// A `gnome-keyring-daemon` of the test on the private bus of the
 /// child, unlocked with a test password.
 struct Keyring {
@@ -309,38 +429,76 @@ impl Keyring {
             !has_owner(),
             "the bus {bus} already has a Secret Service: it is not a private bus. Stop."
         );
-        let log = Path::new(&std::env::var_os("HOME").unwrap()).join("gnome-keyring.log");
+        let keyring = Keyring {
+            daemon: Keyring::spawn(true),
+        };
+        keyring.wait_for_owner();
+        keyring
+    }
+
+    /// Stops the daemon, and starts a new one on the same keyring files:
+    /// unlocked with the test password when `unlock`, else locked.
+    fn restart(&mut self, unlock: bool) {
+        let _ = self.daemon.kill();
+        let _ = self.daemon.wait();
+        let start = Instant::now();
+        while has_owner() {
+            assert!(
+                start.elapsed() < Duration::from_secs(10),
+                "the test keyring did not stop"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        self.daemon = Keyring::spawn(unlock);
+        self.wait_for_owner();
+    }
+
+    /// Starts a daemon: unlocked with the test password when `unlock`.
+    fn spawn(unlock: bool) -> Child {
+        let log = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(Keyring::log())
+            .unwrap();
         let mut daemon = Command::new("gnome-keyring-daemon")
-            .args(["--foreground", "--unlock", "--components=secrets"])
+            .args(["--foreground", "--components=secrets"])
+            .args(unlock.then_some("--unlock"))
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
-            .stderr(std::fs::File::create(&log).unwrap())
+            .stderr(log)
             .spawn()
             .unwrap();
         // The daemon reads the password up to the end of its input.
+        let mut input = daemon.stdin.take().unwrap();
+        if unlock {
+            input.write_all(b"test-password").unwrap();
+        }
         daemon
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(b"test-password")
-            .unwrap();
-        let keyring = Keyring { daemon };
+    }
+
+    /// Waits until the daemon owns the Secret Service. Stops the test
+    /// when another process owns it.
+    fn wait_for_owner(&self) {
         let start = Instant::now();
         while !has_owner() {
             assert!(
                 start.elapsed() < Duration::from_secs(10),
                 "the test keyring did not start. The bus: {}. The keyring: {}",
                 bus_call("NameHasOwner"),
-                std::fs::read_to_string(&log).unwrap_or_default()
+                std::fs::read_to_string(Keyring::log()).unwrap_or_default()
             );
             std::thread::sleep(Duration::from_millis(50));
         }
         let owner = bus_call("GetConnectionUnixProcessID");
         assert!(
-            owner.contains(&format!("uint32 {}", keyring.daemon.id())),
+            owner.contains(&format!("uint32 {}", self.daemon.id())),
             "the owner of {SECRETS} is not the test keyring: {owner}. Stop."
         );
-        keyring
+    }
+
+    /// The log of each daemon of the test.
+    fn log() -> std::path::PathBuf {
+        Path::new(&std::env::var_os("HOME").unwrap()).join("gnome-keyring.log")
     }
 
     /// The locked memory of the daemon, in kB, after it handled each
