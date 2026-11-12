@@ -21,13 +21,37 @@
 //! can use that bus. Those processes can also ask the Secret Service for
 //! the secret itself.
 //!
+//! # A new Secret Service
+//!
+//! A session belongs to one process of the Secret Service. After a
+//! restart of `gnome-keyring-daemon`, the new process does not know the
+//! session of the old one, and a prompt of the old one never completes.
+//! A riff daemon runs for days, so the store sees each new process
+//! (01M775GYAC3TYEJ2B504F8REE2). Before each call, it asks the bus, not
+//! the keyring, for the owner of [`SECRETS`]. When the owner is another
+//! process, or none, the store closes the old D-Bus connection and opens
+//! a new connection with a new plain session. The close ends each call
+//! that still waits on the old connection, for example a prompt: it
+//! fails, and it frees the old session. The store makes one call at a
+//! time on a session, so a call that waits for a prompt holds back the
+//! later calls of its session. They fail after
+//! [`KEYRING_WAIT`](riff_client::secrets::KEYRING_WAIT) as a keyring
+//! that does not answer, up to the new process.
+//!
 //! ```mermaid
 //! sequenceDiagram
 //!     participant R as a riff process
+//!     participant B as the bus
 //!     participant S as the Secret Service
-//!     R->>S: OpenSession("plain"), one time for the process
+//!     R->>S: OpenSession("plain"), at the first call
+//!     R->>B: GetNameOwner(org.freedesktop.secrets), at each call
 //!     R->>S: SearchItems(service, username)
 //!     R->>S: GetSecret, CreateItem, SetSecret or Delete
+//!     Note over S: gnome-keyring-daemon starts again
+//!     R->>B: GetNameOwner: another process
+//!     R->>R: closes the old connection
+//!     R->>S: OpenSession("plain") on a new connection
+//!     R->>S: SearchItems, then GetSecret
 //! ```
 //!
 //! The store keeps a secret as the store of the `keyring` crate did: one
@@ -37,7 +61,8 @@
 //! and an older riff reads each secret that this store writes.
 //!
 //! The test binary `keyring_store` checks the store on a private
-//! keyring: a private D-Bus session bus with its own GNOME Keyring.
+//! keyring: a private D-Bus session bus with its own GNOME Keyring. It
+//! also starts that keyring again under one store.
 //!
 //! # Example
 //!
@@ -48,6 +73,8 @@
 //! let store = riff::keyring_store::Store::new()?;
 //! let entry = store.build("riff", "sign-in https://riff.example", None)?;
 //! entry.set_password("a-1")?;
+//! assert_eq!(entry.get_password()?, "a-1");
+//! // After a restart of the keyring, the same entry opens a new session.
 //! assert_eq!(entry.get_password()?, "a-1");
 //! # Ok::<(), keyring_core::Error>(())
 //! ```
@@ -60,24 +87,32 @@ use keyring_core::api::{Credential, CredentialApi, CredentialStoreApi};
 use keyring_core::{Entry, Error, Result};
 use secret_service::EncryptionType;
 use secret_service::blocking::{Item, SecretService};
+use zbus::blocking::Connection;
+use zbus::blocking::fdo::DBusProxy;
 
 /// The content type of each secret that the store writes.
 pub const CONTENT_TYPE: &str = "application/octet-stream";
 
+/// The name of the Secret Service on the session bus.
+pub const SECRETS: &str = "org.freedesktop.secrets";
+
 /// A store of the Secret Service on the session bus of the process. It
 /// holds one D-Bus connection with one plain session, for each entry
-/// that it builds.
+/// that it builds, and opens a new one for a new process of the Secret
+/// Service.
 pub struct Store {
-    ss: Arc<Mutex<SecretService<'static>>>,
+    secrets: Arc<Secrets>,
 }
 
 impl Store {
     /// Connects to the Secret Service on the session bus, and opens one
     /// plain session.
     pub fn new() -> Result<Arc<Store>> {
-        let ss = SecretService::connect(EncryptionType::Plain).map_err(failure)?;
+        let link = Link::open()?;
         Ok(Arc::new(Store {
-            ss: Arc::new(Mutex::new(ss)),
+            secrets: Arc::new(Secrets {
+                link: Mutex::new(Some(Arc::new(link))),
+            }),
         }))
     }
 }
@@ -88,7 +123,7 @@ impl CredentialStoreApi for Store {
     }
 
     fn id(&self) -> String {
-        format!("{:p}", Arc::as_ptr(&self.ss))
+        format!("{:p}", Arc::as_ptr(&self.secrets))
     }
 
     /// The entry of the secret `user` of `service`. The store takes no
@@ -105,7 +140,7 @@ impl CredentialStoreApi for Store {
             ));
         }
         Ok(Entry::new_with_credential(Arc::new(Cred {
-            ss: self.ss.clone(),
+            secrets: self.secrets.clone(),
             service: service.to_owned(),
             user: user.to_owned(),
         })))
@@ -116,16 +151,115 @@ impl CredentialStoreApi for Store {
     }
 }
 
+/// The Secret Service of the session bus, as one store sees it.
+struct Secrets {
+    /// The link of the last open, or `None` after an open that failed.
+    link: Mutex<Option<Arc<Link>>>,
+}
+
+impl Secrets {
+    /// The link to the process that owns [`SECRETS`] now. When another
+    /// process owns it, or none, it closes the old link and opens a new
+    /// one.
+    fn link(&self) -> Result<Arc<Link>> {
+        let mut slot = lock(&self.link);
+        if let Some(link) = slot.as_ref().filter(|link| link.current()) {
+            return Ok(link.clone());
+        }
+        if let Some(old) = slot.take() {
+            old.close();
+        }
+        let link = Arc::new(Link::open()?);
+        *slot = Some(link.clone());
+        Ok(link)
+    }
+}
+
+/// One D-Bus connection with one plain session of one process of the
+/// Secret Service.
+struct Link {
+    conn: Connection,
+    bus: DBusProxy<'static>,
+    /// The unique name of the process that owned [`SECRETS`] after the
+    /// open of the session.
+    owner: Option<String>,
+    /// The session. It takes one call at a time.
+    ss: Mutex<SecretService<'static>>,
+}
+
+impl Link {
+    /// Connects to the session bus, and opens one plain session.
+    fn open() -> Result<Link> {
+        let conn = Connection::session().map_err(|e| failure(e.into()))?;
+        let ss = SecretService::connect_with_existing(EncryptionType::Plain, conn.clone())
+            .map_err(failure)?;
+        let bus = DBusProxy::builder(&conn)
+            .cache_properties(zbus::proxy::CacheProperties::No)
+            .build()
+            .map_err(|e| failure(e.into()))?;
+        let owner = owner(&bus);
+        Ok(Link {
+            conn,
+            bus,
+            owner,
+            ss: Mutex::new(ss),
+        })
+    }
+
+    /// True when the process of the session still owns [`SECRETS`].
+    fn current(&self) -> bool {
+        same_process(self.owner.as_deref(), owner(&self.bus).as_deref())
+    }
+
+    /// Closes the connection. Each call that waits on it fails.
+    fn close(&self) {
+        let _ = self.conn.clone().close();
+    }
+}
+
+/// The unique name of the owner of [`SECRETS`] on the bus, or `None`
+/// when it has no owner or the bus does not answer.
+fn owner(bus: &DBusProxy<'_>) -> Option<String> {
+    let name = zbus::names::BusName::try_from(SECRETS).ok()?;
+    bus.get_name_owner(name).ok().map(|owner| owner.to_string())
+}
+
+/// True when a session still belongs to the Secret Service: `opened` is
+/// the owner of [`SECRETS`] at the open of the session, and `now` its
+/// owner now. Only the same process knows the session.
+///
+/// ```
+/// use riff::keyring_store::same_process;
+///
+/// assert!(same_process(Some(":1.7"), Some(":1.7")));
+/// // gnome-keyring-daemon started again.
+/// assert!(!same_process(Some(":1.7"), Some(":1.9")));
+/// // No Secret Service now, or the bus does not answer.
+/// assert!(!same_process(Some(":1.7"), None));
+/// assert!(!same_process(None, None));
+/// ```
+pub fn same_process(opened: Option<&str>, now: Option<&str>) -> bool {
+    opened.is_some() && opened == now
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 /// The secret `user` of `service`.
 struct Cred {
-    ss: Arc<Mutex<SecretService<'static>>>,
+    secrets: Arc<Secrets>,
     service: String,
     user: String,
 }
 
 impl Cred {
-    fn lock(&self) -> MutexGuard<'_, SecretService<'static>> {
-        self.ss.lock().unwrap_or_else(PoisonError::into_inner)
+    /// Runs `call` on the session of the process that owns [`SECRETS`]
+    /// now, after the calls before it on that session.
+    fn on_session<T>(&self, call: impl FnOnce(&SecretService<'_>) -> Result<T>) -> Result<T> {
+        let link = self.secrets.link()?;
+        let ss = lock(&link.ss);
+        call(&ss)
     }
 
     /// Runs `call` on the one item of this secret, after an unlock when
@@ -161,43 +295,45 @@ impl Cred {
 
 impl CredentialApi for Cred {
     fn set_secret(&self, secret: &[u8]) -> Result<()> {
-        let ss = self.lock();
-        let set = |item: &Item| item.set_secret(secret, CONTENT_TYPE).map_err(decode);
-        if self.with_item(&ss, set)?.is_some() {
-            return Ok(());
-        }
-        let collection = ss.get_default_collection().map_err(decode)?;
-        if collection.is_locked().map_err(decode)? {
-            collection.unlock().map_err(decode)?;
-        }
-        collection
-            .create_item(
-                &label(&self.service, &self.user),
-                attributes(&self.service, &self.user),
-                secret,
-                true,
-                CONTENT_TYPE,
-            )
-            .map_err(failure)?;
-        Ok(())
+        self.on_session(|ss| {
+            let set = |item: &Item| item.set_secret(secret, CONTENT_TYPE).map_err(decode);
+            if self.with_item(ss, set)?.is_some() {
+                return Ok(());
+            }
+            let collection = ss.get_default_collection().map_err(decode)?;
+            if collection.is_locked().map_err(decode)? {
+                collection.unlock().map_err(decode)?;
+            }
+            collection
+                .create_item(
+                    &label(&self.service, &self.user),
+                    attributes(&self.service, &self.user),
+                    secret,
+                    true,
+                    CONTENT_TYPE,
+                )
+                .map_err(failure)?;
+            Ok(())
+        })
     }
 
     fn get_secret(&self) -> Result<Vec<u8>> {
-        let ss = self.lock();
-        self.with_item(&ss, |item| item.get_secret().map_err(decode))?
-            .ok_or(Error::NoEntry)
+        self.on_session(|ss| {
+            self.with_item(ss, |item| item.get_secret().map_err(decode))?
+                .ok_or(Error::NoEntry)
+        })
     }
 
     fn delete_credential(&self) -> Result<()> {
-        let ss = self.lock();
-        self.with_item(&ss, |item| item.delete().map_err(decode))?
-            .ok_or(Error::NoEntry)
+        self.on_session(|ss| {
+            self.with_item(ss, |item| item.delete().map_err(decode))?
+                .ok_or(Error::NoEntry)
+        })
     }
 
     /// `None`: this entry is the credential.
     fn get_credential(&self) -> Result<Option<Arc<Credential>>> {
-        let ss = self.lock();
-        self.with_item(&ss, |_| Ok(()))?.ok_or(Error::NoEntry)?;
+        self.on_session(|ss| self.with_item(ss, |_| Ok(()))?.ok_or(Error::NoEntry))?;
         Ok(None)
     }
 
@@ -279,6 +415,21 @@ mod tests {
             "keyring:sign-in https://riff.example@riff"
         );
         assert_eq!(CONTENT_TYPE, "application/octet-stream");
+    }
+
+    /// A session of an old process of the Secret Service gets a new
+    /// session: after a restart of the keyring, or when it has no owner.
+    #[test]
+    fn only_the_process_that_opened_a_session_keeps_it() {
+        assert!(same_process(Some(":1.42"), Some(":1.42")));
+        for (opened, now) in [
+            (Some(":1.42"), Some(":1.43")),
+            (Some(":1.42"), None),
+            (None, Some(":1.42")),
+            (None, None),
+        ] {
+            assert!(!same_process(opened, now), "{opened:?} {now:?}");
+        }
     }
 
     /// A locked keyring is a locked keyring to riff, and each other

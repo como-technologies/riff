@@ -80,6 +80,9 @@
 //!   needs no secret makes no call, so it opens nothing: for example
 //!   `riff statusline` with a kept answer, and each `riff hook` event
 //!   that does not talk to riff-server (01M54510M36SZ1C3AE2C8DS585).
+//!   On Linux and BSD, the store of riff opens a new session only for
+//!   a new process of the Secret Service, for example after a restart
+//!   of the keyring (01M775GYAC3TYEJ2B504F8REE2).
 //! - [`kept`] reads a secret from the store one time for each process,
 //!   and gives the same value at each later call. The sign-in and the
 //!   device key use it. [`set`] and [`delete`] keep the value that the

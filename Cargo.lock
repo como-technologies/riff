@@ -3217,6 +3217,7 @@ dependencies = [
  "toml_edit",
  "tower",
  "vt100",
+ "zbus",
  "zbus-secret-service-keyring-store",
  "zeroize",
 ]

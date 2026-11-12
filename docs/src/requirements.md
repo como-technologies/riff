@@ -4212,11 +4212,11 @@
 - **01M4385CCATXC0B8HV1XD6EFWG** When the OS keyring is locked or does
   not answer, the error of `riff` names the host, says to unlock the
   keyring at the desktop, and says that `gh` stops too.
-- **01M54510PS9FDKQKJB0RAH3XG3** A `riff` process opens the OS keyring
-  at most one time, and reads each secret at most one time. It keeps
-  the value for its later calls, and a write or a delete of the process
-  changes the kept value. Only the refresh of the sign-in reads it
-  again, under the refresh lock (R107).
+- **01M54510PS9FDKQKJB0RAH3XG3** A `riff` process reads each secret at
+  most one time. It keeps the value for its later calls, and a write or
+  a delete of the process changes the kept value. Only the refresh of
+  the sign-in reads it again, under the refresh lock (R107). Superseded
+  in part by 01M775GYAC3TYEJ2B504F8REE2.
 - **01M556QPPRSQ91HDED128G2X7G** On Linux and BSD, `riff` opens each
   session of the Secret Service as a plain session, as `gh` does, not
   as a DH session. It keeps each secret as the store of the `keyring`
@@ -4266,6 +4266,15 @@
   01M3MN14ZCTRVD3T455P6TFK1B and 01M3MN1537Z0K3BRK6H2BZKZT0 in full, and
   01M6FYH5XZAZYJFPFQVAFQSSVT, 01M3N7K3ZAZFGABN7032AYJWEM,
   01M3N7K41N03P26BEFFNX5617K and 01M3Q546335NBTKG5BHQ27QC93 in part.
+- **01M775GYAC3TYEJ2B504F8REE2** A `riff` process opens the OS keyring
+  one time. On Linux and BSD, it asks the bus for the owner of
+  `org.freedesktop.secrets` before each call to the keyring. When
+  another process owns that name, or none, for example after a restart
+  of `gnome-keyring-daemon`, riff closes its old D-Bus connection and
+  opens a new connection with a new plain session. So a riff daemon
+  reads its secrets again after a restart of the keyring, with no
+  restart of `riff.service`. Supersedes 01M54510PS9FDKQKJB0RAH3XG3 in
+  part.
 
 ## Terminal
 
