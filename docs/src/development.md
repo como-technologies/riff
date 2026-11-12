@@ -8226,10 +8226,12 @@ next: a person runs riff release approve v3.3.0 in a terminal when the deploy wa
 ```
 
 riff-bot writes one line in riff chat to each admin. It asks for
-nothing:
+nothing, and names who gave the fact, here the lead of mike. riff-bot
+writes it only for a project of the riff (see
+[Who a line of riff-bot names](how-it-works.md#who-a-line-of-riff-bot-names)):
 
 ```text
-@mike riff release v3.3.0 is published. Its CI run builds: https://github.com/como-technologies/riff/actions/runs/9. riff tells you when its deploy waits for your approval.
+@mike riff release v3.3.0 is published. Its CI run builds: https://github.com/como-technologies/riff/actions/runs/9. riff tells you when its deploy waits for your approval. The lead of mike gave this fact.
 ```
 
 riff posts one note to each other lead (see

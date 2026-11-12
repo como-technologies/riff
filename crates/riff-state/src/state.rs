@@ -2334,6 +2334,12 @@ impl State {
         self.written_view().projects(now)
     }
 
+    /// True when `repo` is a project of the riff: riff-server takes the
+    /// fact of a release only for a project (01M77F60MR8WZTMFJ5CF2295Q6).
+    pub fn is_project(&self, repo: &ThreadName) -> bool {
+        self.written.projects().has(repo)
+    }
+
     /// True when the log has a record of a project: then riff-server
     /// looks for no project at its start (01M76SG8NCSAP69Y5AX455BJQM).
     pub fn projects_known(&self) -> bool {

@@ -4,8 +4,7 @@
 //! 01M6WG537B67VWVENY3821RV33).
 
 use crate::common;
-#[path = "../../riff-server/tests/fake_github.rs"]
-pub(crate) mod fake_github;
+use crate::common::fake_github;
 
 use fake_github::{FakeGitHub, LEAD_CODE, OWNER, REPO, SESSION_CODE, both_apps, webhook_secret};
 

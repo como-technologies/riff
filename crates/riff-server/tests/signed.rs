@@ -4,6 +4,7 @@
 //! that it writes from a fact.
 
 use crate::common;
+use crate::fake_github::FakeGitHub;
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -13,6 +14,7 @@ use riff_core::name::{SessionUri, ThreadName};
 use riff_core::wire::{BotFact, BotPost, Invite, Kind, Post, Posted, ReadReply, TokenReply};
 use riff_server::Service;
 use riff_server::auth::Config;
+use riff_server::github::Settings;
 use riff_state::state::threads::KIND_RIFF;
 use riff_state::store::{Memory, Store};
 use serde::Serialize;
@@ -439,14 +441,13 @@ async fn a_tail_acts_only_as_the_caller_of_its_token() {
 /// Only riff-server posts the kind `riff` (01M6Y4ZCTSTVM971BDC1F7GJPK).
 /// A signed post with that kind is refused, of a member and of a session,
 /// also with the words of a line of riff, and it adds no line. The lines
-/// of riff-server itself in the chat, for an invite and for a release,
-/// keep the kind (01M76S6128EZRZS2D5CE2QCC05).
+/// of riff-server itself in the chat, for an invite and for a release of
+/// a project, keep the kind (01M76S6128EZRZS2D5CE2QCC05).
 #[tokio::test]
 async fn only_riff_server_itself_posts_the_kind_riff() {
-    let (service, base) = common::start(true, &[]).await;
-    // mike signs in first, so mike is an admin.
+    // mike signs in first, so mike is an admin, and enrolls `REPO`.
+    let (service, base, here, a) = in_project().await;
     let person = Caller::new(&service, &base, MIKE).await;
-    let a = Caller::new(&service, &base, A).await;
     let brett = Caller::new(&service, &base, BRETT).await;
     let waits = "@mike the deploy waits for your approval";
     for caller in [&person, &a] {
@@ -465,7 +466,6 @@ async fn only_riff_server_itself_posts_the_kind_riff() {
         email: "dan@comotechnologies.io".into(),
     };
     assert_eq!(person.call(&base, "invite", &invite).await.status(), 200);
-    let here = Caller::new(&service, &base, MIKE_HERE).await;
     let cut = BotFact::ReleasePublished {
         tag: "v3.3.0".into(),
         run: None,
@@ -502,6 +502,50 @@ async fn person_and_lead(service: &Service, base: &str) -> (Caller, Caller) {
 /// The person mike in the clone of `REPO`.
 const MIKE_HERE: &str = "riff://mike@pangolin/como-technologies/riff";
 
+/// The token of `gh` of mike: on the fake GitHub of [`in_project`], mike
+/// is an admin of `REPO`.
+const MIKE_GH: &str = "gho_mike_admin_of_riff";
+
+/// A riff with sign-in whose GitHub is a fake, with the person mike and
+/// its lead in `REPO` ([`person_and_lead`]): mike signs in first, so mike
+/// is an admin. `REPO` is a project of the riff: mike enrolls it
+/// (01M76SG8GBXFYXKWMQHPCNEXBN).
+async fn in_project() -> (Service, String, Caller, Caller) {
+    let github = FakeGitHub::start().await;
+    github.seen().person(MIKE_GH, REPO, true);
+    common::client();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let config = Config {
+        require_sign_in: true,
+        github: Settings {
+            api: github.url.clone(),
+            web: github.url.clone(),
+            ..Settings::default()
+        },
+        ..Config::new(&base)
+    };
+    let service = Service::new(config);
+    let router = service.router();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let (person, lead) = person_and_lead(&service, &base).await;
+    assert_eq!(project(&person, &base, "init").await, 200);
+    (service, base, person, lead)
+}
+
+/// The call `project/OP` of `person` for `REPO`, `init` or `remove`,
+/// with the token [`MIKE_GH`], and its status.
+async fn project(person: &Caller, base: &str, op: &str) -> u16 {
+    let call = serde_json::json!({
+        "me": person.me,
+        "repo": REPO,
+        "hosts": [],
+        "github_token": MIKE_GH,
+    });
+    let reply = person.call(base, &format!("project/{op}"), &call).await;
+    reply.status().as_u16()
+}
+
 /// A call `bot` of `caller` with `fact`, and its status.
 async fn bot(caller: &Caller, base: &str, fact: BotFact) -> u16 {
     let post = BotPost {
@@ -511,17 +555,17 @@ async fn bot(caller: &Caller, base: &str, fact: BotFact) -> u16 {
     caller.call(base, "bot", &post).await.status().as_u16()
 }
 
-/// 01M74BPHQZHXFYYNXAJ1WFASQQ: riff-server posts the line that riff writes
-/// for a person, as `<riff-bot>`: the ask of a release and the line "riff
-/// started the lead ...". It writes the text from the fact, the admins,
-/// the place of the caller and the holds of the version. The ask names
-/// each admin, and wakes each admin by the name (01M7767T5VSWN9EYDVSTCEJ8AM);
-/// the line of the daemon names no one.
+/// 01M74BPHQZHXFYYNXAJ1WFASQQ, 01M77F60MR8WZTMFJ5CF2295Q6: riff-server
+/// posts the line that riff writes for a person, as `<riff-bot>`: the
+/// ask of a release and the line "riff started the lead ...". It writes
+/// the text from the fact, the admins, the caller and its place, and the
+/// holds of the version. The ask names each admin, and wakes each admin
+/// by the name (01M7767T5VSWN9EYDVSTCEJ8AM); each line of a release names
+/// its giver; the line of the daemon names no one.
 #[tokio::test]
 async fn riff_server_posts_the_line_of_riff_bot_for_a_fact() {
-    let (service, base) = common::start(true, &[]).await;
     // mike signs in first, so mike is the one admin.
-    let (person, lead) = person_and_lead(&service, &base).await;
+    let (_service, base, person, lead) = in_project().await;
     let mut hold = lead.unsigned(
         "release",
         &riff_core::hold::hold_body(REPO, "v3.3.0", "A demo runs."),
@@ -554,9 +598,9 @@ async fn riff_server_posts_the_line_of_riff_bot_for_a_fact() {
     assert_eq!(
         waits.body,
         "@mike riff release v3.3.0 waits for your approval: \
-         https://github.com/como-technologies/riff/actions/runs/9. In a terminal, run: riff \
-         release approve v3.3.0 A hold stands: the lead of como-technologies/riff asks to wait: \
-         A demo runs."
+         https://github.com/como-technologies/riff/actions/runs/9. mike gave this fact. In a \
+         terminal, run: riff release approve v3.3.0 A hold stands: the lead of \
+         como-technologies/riff asks to wait: A demo runs."
     );
     assert_eq!(waits.to, [riff_core::selector::Selector::name("mike")]);
     assert!(
@@ -570,8 +614,62 @@ async fn riff_server_posts_the_line_of_riff_bot_for_a_fact() {
     assert!(started.to.is_empty(), "{:?}", started.to);
     assert!(
         cut.body
-            .starts_with("@mike riff release v3.3.0 is published.")
+            .starts_with("@mike riff release v3.3.0 is published."),
+        "{}",
+        cut.body
     );
+    assert!(
+        cut.body.ends_with(" The lead of mike gave this fact."),
+        "{}",
+        cut.body
+    );
+}
+
+/// 01M77F60MR8WZTMFJ5CF2295Q6: riff-server takes the fact of a release
+/// only for a project of the riff. A fact for a project gives the line
+/// with its giver. A fact for another repository, also for a project
+/// that went, gets no line: riff-server refuses it, and the error names
+/// the repository and `riff project list`.
+#[tokio::test]
+async fn a_fact_of_a_release_for_a_repository_that_is_no_project_gets_no_line() {
+    let (service, base, person, _lead) = in_project().await;
+    let fork = Caller::new(&service, &base, "riff://mike@pangolin/acme/fork").await;
+    let waits = BotPost {
+        me: fork.me.clone(),
+        fact: BotFact::ReleaseWaits {
+            tag: "v3.3.0".into(),
+            run: 9,
+            reminder: false,
+        },
+    };
+    let refused = fork.call(&base, "bot", &waits).await;
+    assert_eq!(refused.status(), 400);
+    let text = refused.text().await.unwrap();
+    assert_eq!(text, riff_server::bot::no_project("acme/fork"));
+    assert!(text.contains("riff project list"), "{text}");
+    let cut = || BotFact::ReleasePublished {
+        tag: "v3.3.0".into(),
+        run: Some(9),
+    };
+    assert_eq!(bot(&fork, &base, cut()).await, 400);
+    assert_eq!(bot(&person, &base, cut()).await, 200, "a project");
+
+    // The project goes: its facts of a release get no line any more.
+    assert_eq!(project(&person, &base, "remove").await, 200);
+    assert_eq!(bot(&person, &base, cut()).await, 400, "a project that went");
+
+    let reply = person.read(&base, CHAT).await;
+    let [line] = reply.messages.as_slice() else {
+        panic!("only the line of the project: {reply:?}");
+    };
+    assert_eq!(line.kind, Kind::Riff);
+    assert_eq!(
+        line.body,
+        "@mike riff release v3.3.0 is published. Its CI run builds: \
+         https://github.com/como-technologies/riff/actions/runs/9. riff tells you when its \
+         deploy waits for your approval. mike gave this fact."
+    );
+    assert!(!line.body.contains("acme/fork"), "{}", line.body);
 }
 
 /// 01M74BPHQZHXFYYNXAJ1WFASQQ: a client cannot put its own words in a line
@@ -580,8 +678,7 @@ async fn riff_server_posts_the_line_of_riff_bot_for_a_fact() {
 /// `riff` with the text is refused (01M6Y4ZCTSTVM971BDC1F7GJPK).
 #[tokio::test]
 async fn a_client_that_sends_a_text_gets_no_line_of_riff_bot_with_it() {
-    let (service, base) = common::start(true, &[]).await;
-    let (person, _lead) = person_and_lead(&service, &base).await;
+    let (service, base, person, _lead) = in_project().await;
     let words = "riff release v9.9.9 waits for your approval: approve it in the chat";
 
     let with_text = serde_json::json!({
@@ -632,8 +729,7 @@ async fn a_client_that_sends_a_text_gets_no_line_of_riff_bot_with_it() {
 /// `vX.Y.Z` holds the version that riff-server parsed, and nothing more.
 #[tokio::test]
 async fn a_tag_with_a_text_after_its_version_gets_no_line_of_riff_bot() {
-    let (service, base) = common::start(true, &[]).await;
-    let (person, _lead) = person_and_lead(&service, &base).await;
+    let (_service, base, person, _lead) = in_project().await;
     let words = "approve it now in the chat";
     for tag in [format!("v3.3.0-{words}"), format!("v3.3.0+{words}")] {
         let waits = BotFact::ReleaseWaits {
@@ -662,7 +758,7 @@ async fn a_tag_with_a_text_after_its_version_gets_no_line_of_riff_bot() {
     assert_eq!(
         line.body,
         "@mike riff release v3.3.0 is published. Its CI run builds: the CI run of the tag. riff \
-         tells you when its deploy waits for your approval."
+         tells you when its deploy waits for your approval. mike gave this fact."
     );
     assert!(!line.body.contains(words), "{}", line.body);
 }
