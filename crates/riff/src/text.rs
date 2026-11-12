@@ -3379,6 +3379,38 @@ pub fn action(from: &SessionUri, body: &str) -> Option<String> {
 /// assert!(text.contains(&woken), "{text}");
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
+///
+/// A thread with room only for its messages that woke the reader says
+/// that they show above, and names the thread for its other messages
+/// (01M78TFBE2WRNC44MRQBTDW19B):
+///
+/// ```
+/// # use riff_client::api::{Checked, Inbox};
+/// # use riff_core::name::SessionUri;
+/// # use riff_core::wire::Message;
+/// # let me: SessionUri = "riff://brett@heron".parse()?;
+/// # let message = |seq, body: &str| Checked {
+/// #     message: Message {
+/// #         seq, from: "riff://mike@pangolin".parse().unwrap(), to: vec![], body: body.into(),
+/// #         at_ms: 0, kind: Default::default(), sig: None, payload: None,
+/// #     },
+/// #     verified: true,
+/// # };
+/// let inbox = Inbox {
+///     thread: "o/r".parse()?,
+///     members: vec![],
+///     messages: vec![],
+///     next: Some(40),
+///     woken: vec![message(327, "brett?")],
+/// };
+/// let text = riff::text::inbox(&[inbox], &me);
+/// assert!(text.contains("\no/r\n[327] mike@pangolin (verified): brett?\n"), "{text}");
+/// assert!(text.ends_with(
+///     "\no/r\nThis read has room only for its message that woke you. It shows above. Read \
+///      the thread o/r for its other messages. With all, set after to 40.\n"
+/// ));
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
 pub fn inbox(list: &[Inbox], me: &SessionUri) -> String {
     if list.is_empty() {
         return "No unread messages.".into();
@@ -3409,18 +3441,29 @@ pub fn inbox(list: &[Inbox], me: &SessionUri) -> String {
         }
         if let Some(next) = t.next {
             let name = thread_to_read(&t.name, me);
-            let _ = if t.lines.is_empty() {
-                writeln!(
-                    out,
-                    "This read has no room for its messages. Read the thread {name}. With all, \
-                     set after to {next}."
-                )
-            } else {
-                writeln!(
+            let _ = match (t.lines.is_empty(), t.woken.len()) {
+                (false, _) => writeln!(
                     out,
                     "More messages follow. Read the thread {name} again. With all, set after to \
                      {next}."
-                )
+                ),
+                (true, 0) => writeln!(
+                    out,
+                    "This read has no room for its messages. Read the thread {name}. With all, \
+                     set after to {next}."
+                ),
+                (true, 1) => writeln!(
+                    out,
+                    "This read has room only for its message that woke you. It shows above. \
+                     Read the thread {name} for its other messages. With all, set after to \
+                     {next}."
+                ),
+                (true, n) => writeln!(
+                    out,
+                    "This read has room only for its {n} messages that woke you. They show \
+                     above. Read the thread {name} for its other messages. With all, set after \
+                     to {next}."
+                ),
             };
         }
     }
@@ -15359,6 +15402,71 @@ mod tests {
         let text = block(&line, &Names::default(), &at, Some(at.date_naive()), 80);
         let plain = anstream::adapter::strip_str(&text).to_string();
         assert!(plain.ends_with("\n       one\n\n       two"), "{plain:?}");
+    }
+
+    /// #2000: a thread with room only for its messages that woke the
+    /// reader says that they show above (01M78TFBE2WRNC44MRQBTDW19B). A
+    /// thread with no room at all, and a page with lines, keep their
+    /// lines.
+    #[test]
+    fn a_thread_with_room_only_for_its_wakes_says_that_they_show_above() {
+        let me: SessionUri = "riff://brett@heron".parse().unwrap();
+        let message = |seq| Checked {
+            message: riff_core::wire::Message {
+                seq,
+                from: "riff://mike@pangolin".parse().unwrap(),
+                to: vec![],
+                body: format!("message {seq}"),
+                at_ms: 0,
+                kind: Kind::Message,
+                sig: None,
+                payload: None,
+            },
+            verified: true,
+        };
+        let page = |thread: &str, messages: Vec<u64>, woken: Vec<u64>| Inbox {
+            thread: thread.parse().unwrap(),
+            members: vec![],
+            messages: messages.into_iter().map(message).collect(),
+            next: Some(7),
+            woken: woken.into_iter().map(message).collect(),
+        };
+        let list = [
+            page("o/a", vec![], vec![9, 12]),
+            page("o/b", vec![], vec![]),
+            page("o/c", vec![6, 7], vec![30]),
+            page("o/d", vec![], vec![15]),
+        ];
+        let text = inbox(&list, &me);
+        assert!(text.contains(&format!("{WOKEN_HEAD}\no/a\n[9] ")), "{text}");
+        assert!(
+            text.contains(
+                "\no/a\nThis read has room only for its 2 messages that woke you. They show \
+                 above. Read the thread o/a for its other messages. With all, set after to 7.\n"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "\no/b\nThis read has no room for its messages. Read the thread o/b. With all, \
+                 set after to 7.\n"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "\n[7] mike@pangolin (verified): message 7\nMore messages follow. Read the \
+                 thread o/c again."
+            ),
+            "{text}"
+        );
+        assert!(
+            text.ends_with(
+                "\no/d\nThis read has room only for its message that woke you. It shows above. \
+                 Read the thread o/d for its other messages. With all, set after to 7.\n"
+            ),
+            "{text}"
+        );
     }
 
     #[test]

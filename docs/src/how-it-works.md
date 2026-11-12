@@ -5131,6 +5131,16 @@ como-technologies/docs
 This read has no room for its messages. Read the thread como-technologies/docs. With all, set after to 0.
 ```
 
+A thread can have room only for its message that woke the session.
+That message shows above, under "Messages to you after this page".
+The line of the thread says so, and names the thread for its other
+messages:
+
+```text
+como-technologies/riff
+This read has room only for its message that woke you. It shows above. Read the thread como-technologies/riff for its other messages. With all, set after to 0.
+```
+
 The next read with no thread goes on with the next page of each
 thread. `riff read` reads each page, with no bound.
 

@@ -3718,6 +3718,11 @@
   each line that names its project, of each person. This supersedes
   01M6XZ27XV8RAC8B72DCM937ST, 01M6XZ280AMTAMPD6R4212YC2T and
   01M6Y1FB84QN0C70AJ5K1JCNMT in part.
+- **01M78TFBE2WRNC44MRQBTDW19B** When the read of
+  01M76SB9ACMZWMY9Z6CC4WW3HD has room in a thread only for its messages
+  that woke the session, the line of that thread says that they show
+  above, in the part of 01M588J4XNV1TXEPMGTKRVY9VK, and names the thread
+  for its other messages.
 
 ## Security
 
