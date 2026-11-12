@@ -6,7 +6,7 @@
 //! # Design
 //!
 //! The daemon of each host that joined a project runs a lead loop
-//! ([`run`]) next to the loop of its wave ([`crate::wave`]). Each look
+//! ([`run`], 01M77PT9TNP97MA89SYZPBJ6QY) next to the loop of its wave ([`crate::wave`]). Each look
 //! ([`look`]) reads the plan of the repository thread on riff-server
 //! ([`riff_core::wire::PlanReply`]): the session that holds the claim
 //! lead, and the host of the last lead.
@@ -61,7 +61,7 @@
 //!
 //! When no host can run a lead, no lead starts: the wave of the project
 //! waits for a lead ([`crate::wave::stopped`]), and so the project is
-//! paused until a host claims the lead.
+//! paused until a host claims the lead (01M77PTJW94PSRCHFC999MK990).
 //!
 //! The end of the container of a lead, and a lead with no container at
 //! the start of the daemon, are the business of the daemon
@@ -113,7 +113,7 @@ pub trait Ground: Send + Sync {
     fn start<'a>(&'a self, wave: &'a Wave) -> BoxFuture<'a, Result<bool>>;
 
     /// Stops the lead `session` of this host: another session holds the
-    /// claim lead. Its session ends.
+    /// claim lead. Its session ends (01M77PTJRNASXZ2SWD8HMSV681).
     fn stop<'a>(&'a self, wave: &'a Wave, session: &'a str) -> BoxFuture<'a, Result<()>>;
 }
 

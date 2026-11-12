@@ -742,9 +742,7 @@ pub async fn start_with(
         return attach_here(runtime, &name, &folder).await;
     };
     let start = text::lead_start(&repo);
-    launch(dir, api, here, server, (&main, &common), &start, true)
-        .await
-        .map_err(|e| held_elsewhere(e, here.host()))?;
+    launch(dir, api, here, server, (&main, &common), &start, false).await?;
     if !gives_workers(&status, &repo) {
         println!("{}", text::lead_gives_no_workers(&repo));
     }
@@ -780,10 +778,9 @@ pub async fn start_of_wave(dir: &Path, repo: &str) -> Result<String> {
         &wave.server,
         (&main, &common),
         &start,
-        true,
+        false,
     )
-    .await
-    .map_err(|e| held_elsewhere(e, here.host()))?;
+    .await?;
     Ok(name)
 }
 
@@ -839,16 +836,6 @@ impl std::fmt::Display for Held {
 }
 
 impl std::error::Error for Held {}
-
-/// The error of a start of the lead on the host `here` for a person:
-/// [`Held`] says where the lead runs and how to reach it
-/// ([`text::lead_held_elsewhere`]). Each other error stays.
-fn held_elsewhere(error: anyhow::Error, here: &str) -> anyhow::Error {
-    match error.downcast_ref::<Held>() {
-        Some(Held(held)) => anyhow::anyhow!("{}", text::lead_held_elsewhere(held, here)),
-        None => error,
-    }
-}
 
 /// Starts the lead of the repository of `here` on the daemon in the
 /// folder `dir`, from the main clone `main` with the git dir `common`,

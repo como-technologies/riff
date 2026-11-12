@@ -6269,12 +6269,6 @@ of this part when they merge.
   takeover, and the checks `stty`, `getent` and `stat` of the daemon.
   `podman exec` itself keeps the nice value of its caller. This
   supersedes 01M7755V17SGY2NW231WJ12WXN in part.
-- **01M776RT4CM1BVP3NNC7GVQ557** The daemon of a lead ends the session
-  of the lead on riff-server at once when the lead ends: when its
-  container ends (`/exit`, a crash, `riff lead stop`), and when the
-  daemon finds at its start a record of the lead with no container (a
-  reboot). A start again of the lead for an update keeps its session,
-  and is no end. The daemon starts no lead by itself.
 
 ### riff relay
 
@@ -6996,7 +6990,7 @@ of this part when they merge.
   `leads/OWNER-REPO` in the data folder of riff. At the first start,
   riff makes `clone/` with `git clone --reference MAIN`, on the default
   branch of `origin`, and the Claude folder `claude/`. Both stay
-  between the starts of the lead. Each start is a new session of
+  between the starts of the lead. Each new lead is a new session of
   riff-server and of `claude`.
 - **01M50RRQ9DT0JPSB358EAZRP8Z** Each later start of the lead fetches
   `origin` into the clone of the lead, and fast-forwards its branch to
@@ -7026,10 +7020,9 @@ of this part when they merge.
 - **01M501P9XWXWDBSXP4QRTHTZ4P** The host starts a session of
   riff-server for the lead, not a worker. While the container of the
   lead runs, the daemon keeps that session alive, also after its own
-  restart. At the end of the lead, the daemon ends that session. The
-  lead gets the riff tools that talk, and `lead`, `hold`, `free`,
-  `pause` and `resume`. The daemon refuses each other tool with a text
-  that says why.
+  restart. The lead gets the riff tools that talk, and `lead`, `hold`,
+  `free`, `pause` and `resume`. The daemon refuses each other tool with
+  a text that says why.
 - **01M501PA04NP79RJQEDP4D7YTM** `riff relay watch` in a session asks
   the daemon, on the socket of the session, to wait for the next wake of
   the session on riff-server. It prints the line of the wake, as `riff
@@ -7340,6 +7333,52 @@ of this part when they merge.
   project of the riff works for the chat and the messages only: the
   daemon runs no wave of the repository (01M77FHMTD5Y5FXRD903S2ZGCX),
   and no lead starts there (01M77FHTT8BZ2YN1SV7H1X3NG8).
+- **01M77PT9QAECENTY1WS616P5E2** riff-server keeps one lead for each
+  project: the session that holds the claim `lead` of the repository
+  thread of the project. Only the call `lead` of a person gives the
+  claim, with the lead, in one chunk. A `claim` of the item `lead` is
+  refused. A call with `if_free`, as the riff daemon of a host makes it,
+  gets the refusal `held` while a live session holds the claim, and the
+  refusal names the holder and its host. A call with no `if_free`, as
+  `riff lead start`, `riff lead move` and `riff lead --session` make it,
+  takes the claim from its holder. A new start of a session keeps its
+  claim `lead`, as it keeps its lead. The URI of the lead shows
+  `lead=true`, and no `claim=lead`. The plan of the thread names the
+  holder, and the host of the last lead while the claim is free.
+- **01M77PT9TNP97MA89SYZPBJ6QY** The riff daemon of each host that runs
+  the wave of a project looks at the claim `lead` of the project at each
+  change of the plan of its thread, and each minute. When the claim is
+  free, the daemon claims it and starts the lead in
+  `riff-lead-OWNER-REPO`, as `riff lead start` does, from the main clone
+  of the wave. Before the start, it waits 10 s × its live sessions /
+  its limit, and 1 s more when it is not the host of the last lead. Then
+  it claims only when the claim is still free. A lead of the host that
+  runs with no claim takes the claim at once.
+- **01M77PT9XXCBBP1Z73F30RYCNH** When the claim `lead` of a project
+  ends, riff-server wakes the riff daemon of each host of the project
+  with a change of the plan of its thread: at the end of the session of
+  the lead, and when the holder had no sign of life for 5 minutes (R9).
+  riff-server looks for such an end each 10 s, and wakes the daemons one
+  time for each end.
+- **01M77PTJN73R68Z2SRQP0F6V9T** A lead whose container ends by itself
+  (`/exit`, a crash), or that a reboot ended, starts again with `claude
+  --resume`, as the same session, while its session holds the claim
+  `lead` or nobody holds it. Its session ends at once instead, and a
+  host of the project starts a new lead, when another session holds the
+  claim, when the lead ended less than a minute after its start, or when
+  3 starts fail. A stop of the lead by the daemon, for example `riff
+  lead stop`, ends its session at once. A start again for an update
+  keeps the session, and is no end. This supersedes
+  01M501P9XWXWDBSXP4QRTHTZ4P and 01M501P9Q51AYN9GBPWKVHA229 in part.
+- **01M77PTJRNASXZ2SWD8HMSV681** The riff daemon stops each lead of its
+  host while another session holds the claim `lead` of its project: at a
+  change of the plan of the project, and at its look at its leads each
+  minute. The session of the old lead ends. So a host that comes back
+  stops its old lead, and `riff lead move` and `riff lead --session`
+  move the lead.
+- **01M77PTJW94PSRCHFC999MK990** When no host can run the lead of a
+  project, no lead starts, and the project stays paused: its wave waits
+  for a lead (01M776RSYKJK9NETFAD8G0CCVQ) until a host claims `lead`.
 
 ### The first run
 

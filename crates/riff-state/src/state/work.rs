@@ -591,7 +591,7 @@ impl Command for ReleaseFor {
 /// refuses a session, and `handle` refuses a worker.
 ///
 /// The new lead gets the claim [`LEAD_CLAIM`] of the project, in the same
-/// chunk: the one lead of the project. With `if_free`, a live holder of
+/// chunk: the one lead of the project (01M77PT9QAECENTY1WS616P5E2). With `if_free`, a live holder of
 /// the claim gets the refusal `held`, which names it. Else the new lead
 /// takes the claim: a `released` record for the old holder, then the
 /// `claimed` record.

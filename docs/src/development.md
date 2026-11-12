@@ -4720,13 +4720,18 @@ runs on, and riff says that you left the terminal of the container.
 host that gave no workers gets one line that names `riff host join`. The
 daemon serves the repository while the lead runs, so `riff who` shows
 the host. To end the lead with its notes, run `riff lead stop` (see
-[Stop the lead](start-a-riff.md#stop-the-lead)). To end it at once, type
-`/exit` in it. The container of the lead ends, and riff prints:
+[Stop the lead](start-a-riff.md#stop-the-lead)). When you type `/exit`
+in it, its container ends, and the riff daemon starts the lead again
+with `claude --resume`, as the same session (see
+[Where the lead runs](how-it-works.md#where-the-lead-runs)). Your
+terminal leaves the lead, and riff prints:
 
 ```text
 The lead in the container riff-lead-OWNER-REPO ended. Start it again in a clone: riff lead start
 The command claude --resume that claude shows works only in the container of the lead. In a new lead, /resume shows the old conversations.
 ```
+
+`riff lead start` attaches to the lead that started again.
 
 #### Fix a stale sign-in of the lead
 

@@ -313,7 +313,9 @@ enum Command {
     /// of this directory. It replaces the old lead, and riff tells the old
     /// lead. Run it in a terminal with no session, not in an agent
     /// session: a session cannot name the lead, also not itself. `riff
-    /// lead start` names its new lead too.
+    /// lead start` names its new lead too. A project has one lead: the new
+    /// lead takes the claim lead, and the riff daemon of the old lead
+    /// stops it.
     #[command(args_conflicts_with_subcommands = true)]
     Lead {
         /// The session ID of the new lead, or its start: at least 4
@@ -1788,10 +1790,12 @@ enum HostCommand {
     /// the clone of each item after its merge. It needs the sign-in of
     /// riff, of gh and of claude on this machine. The host keeps the part
     /// workers until riff host leave, also over a restart of the daemon
-    /// and over an update. With --host, the daemon of HOST does it in its
-    /// own main clone of the repository. When HOST does not serve the
-    /// repository yet, its daemon clones it first, with the gh of your
-    /// user there.
+    /// and over an update. The host can also run the lead of the project:
+    /// when no lead runs, the daemon of a host that joined claims the lead
+    /// and starts it, the host with the most free room first. With --host,
+    /// the daemon of HOST does it in its own main clone of the repository.
+    /// When HOST does not serve the repository yet, its daemon clones it
+    /// first, with the gh of your user there.
     ///
     /// The repository must be a project of the riff, and the project must
     /// allow the host. Else riff host join names the fix, riff project
@@ -1841,16 +1845,20 @@ enum LeadCommand {
     ///
     /// This command starts no workers and does not join the host: the
     /// host gives workers after riff host join. It starts a lead only for
-    /// a project of the riff: see riff project list.
+    /// a project of the riff: see riff project list. A project has one
+    /// lead: the new lead takes the claim lead, and the riff daemon of the
+    /// old lead stops it. The daemon of a host that joined starts the lead
+    /// by itself when no lead runs.
     Start,
     /// Stop the lead of this repository, and end its container
     ///
     /// riff asks the lead to write its notes, and waits for them for 5
     /// minutes. Then the riff daemon ends the container of the lead, and
     /// the host loses the part lead. An update starts the lead no more.
-    /// To start it again, run riff lead start. The lead can run this
-    /// command on your word, with --host. Only the lead and you can run
-    /// it.
+    /// The claim lead of the project is free then: the riff daemon of a
+    /// host that joined the project starts a new lead. To start it again
+    /// here, run riff lead start. The lead can run this command on your
+    /// word, with --host. Only the lead and you can run it.
     Stop {
         /// Ask the riff daemon of HOST, through riff-server. riff waits
         /// for its reply. Only you in a terminal and your lead in this
@@ -1865,9 +1873,10 @@ enum LeadCommand {
     /// lead, and waits for it for 5 minutes. Then riff asks the riff
     /// daemon of HOST to start the lead there, in a container, with the
     /// handover in its first prompt. The new lead becomes the lead, and
-    /// riff tells the old lead that it is not the lead any more. The old
-    /// session stays as a plain session: you end it. The lead can run
-    /// this command on your word. Only the lead and you can run it.
+    /// riff tells the old lead that it is not the lead any more. The new
+    /// lead takes the claim lead of the project, and the riff daemon of
+    /// the old lead stops it. The lead can run this command on your word.
+    /// Only the lead and you can run it.
     ///
     /// On HOST, the daemon must serve this repository. It does when HOST
     /// has a part in it: workers (riff host join --host HOST) or a lead.

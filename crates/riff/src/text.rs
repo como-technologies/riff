@@ -14331,26 +14331,6 @@ pub fn lead_host_did(repo: &str, did: &crate::lead_host::Did) -> Option<String> 
     Some(format!("{repo}: {what}."))
 }
 
-/// `riff lead start` and `l` in the TUI: another session holds the claim
-/// lead of the project (`held`, the text of riff-server), so this host
-/// starts no lead (#1791).
-///
-/// ```
-/// let text = riff::text::lead_held_elsewhere("the lead of o/r runs on thelio: mike@thelio:r (b2c3d4e5) holds the claim lead.", "pangolin");
-/// assert!(text.starts_with("The lead of o/r runs on thelio"));
-/// assert!(text.ends_with("To move it here, run riff lead move pangolin on its host."));
-/// ```
-pub fn lead_held_elsewhere(held: &str, here: &str) -> String {
-    let mut held = held.to_owned();
-    if let Some(first) = held.get(..1) {
-        held.replace_range(..1, &first.to_uppercase());
-    }
-    format!(
-        "{held} The project has one lead: riff starts no second lead. Attach on that host with \
-         riff lead start. To move it here, run riff lead move {here} on its host."
-    )
-}
-
 /// The daemon took up the session in the container `name`, and the
 /// container has no network (01M5SMQBTA3HQXPKKK01ZGFB4H). It frees the
 /// item and stops the container: the wave starts the item again.

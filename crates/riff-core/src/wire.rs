@@ -2458,7 +2458,8 @@ pub struct ReleaseFor {
 }
 
 /// The claim of the one lead of a project: an item of the repository
-/// thread. riff-server gives it only with [`Lead`], to one session.
+/// thread. riff-server gives it only with [`Lead`], to one session
+/// (01M77PT9QAECENTY1WS616P5E2).
 pub const LEAD_CLAIM: &str = "lead";
 
 /// `POST /v1/lead`: the person `me` makes the session `session` the

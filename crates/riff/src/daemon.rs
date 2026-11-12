@@ -411,10 +411,10 @@
 //! It takes up each session whose container runs, or when podman cannot
 //! say: it binds the socket of the session again in the same folder, and
 //! the relay connects again. It removes the record of each other one
-//! (01M4ZHT01HH88KPA8628M7VBEY). For a lead with no container, for example
-//! after a reboot, it also ends the session of the lead on riff-server, as
-//! at the end of the container of a lead: the wave of the repository waits
-//! for a lead (01M776RT4CM1BVP3NNC7GVQ557, [`crate::wave`]).
+//! (01M4ZHT01HH88KPA8628M7VBEY). A lead with no container, for example
+//! after a reboot, starts again as the same session while it holds the
+//! claim lead of its project, or nobody holds it (`Daemon::lead_back`,
+//! 01M77PTJN73R68Z2SRQP0F6V9T, [`crate::lead_host`]).
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -3280,7 +3280,8 @@ impl<R: Runtime + 'static> Daemon<R> {
         lines
     }
 
-    /// The claim lead of the project of the lead of `record` (#1791): when
+    /// The claim lead of the project of the lead of `record` (#1791,
+    /// 01M77PTJRNASXZ2SWD8HMSV681): when
     /// another session holds it, the daemon stops this lead, and it is
     /// true. When nobody holds it, the lead takes it again, as the person
     /// ([`World::lead_claim`]): a lead from before the claim, or a lead of
@@ -3470,7 +3471,8 @@ impl<R: Runtime + 'static> Daemon<R> {
         }
     }
 
-    /// The lead of `record` has no container (#1791): it ended by itself,
+    /// The lead of `record` has no container (#1791,
+    /// 01M77PTJN73R68Z2SRQP0F6V9T): it ended by itself,
     /// for example with `/exit` or a crash, or a reboot ended it. A lead
     /// starts again with `claude --resume`, as the same session, so it
     /// stays the lead of its project, while its session holds the claim
@@ -10516,7 +10518,7 @@ mod tests {
         assert_eq!(holder.who(), record.me.who());
     }
 
-    /// 01M776RT4CM1BVP3NNC7GVQ557: the daemon starts the lead again on a new
+    /// 01M77PTJN73R68Z2SRQP0F6V9T: the daemon starts the lead again on a new
     /// riff with the same session on riff-server. That is no end: the wave
     /// does not wait for a lead.
     #[tokio::test]

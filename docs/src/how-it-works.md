@@ -5967,8 +5967,9 @@ sequenceDiagram
     O->>O: handover in the notes
     P->>D: start the lead
     D->>N: claude, first prompt: read the notes
-    N->>N: is the lead now
+    N->>N: is the lead now, with the claim lead
     P->>O: you are not the lead any more
+    Note over O: the riff daemon of pangolin stops the old lead
 ```
 
 On thelio, the riff daemon must serve the repository. If it does not,
@@ -5995,13 +5996,9 @@ they are. If thelio has no daemon, nothing moves, and the old lead
 stays the lead. Only the lead and you can run this command. The lead
 runs it on your word, and writes its handover to the notes first.
 
-The old session stays as a plain session. It is not the lead any
-more, so riff asks it for no notes. End it when you are ready, with
-this command on pangolin:
-
-```sh
-riff lead stop
-```
+The new lead takes the claim `lead` of the project. The riff daemon of
+pangolin then stops the old lead, and its session ends (see
+[Where the lead runs](#where-the-lead-runs)).
 
 To attach to the new lead, run this on thelio:
 
@@ -6187,10 +6184,12 @@ flowchart TB
 ```
 
 - Each person has at most one lead in each repository, on all
-  machines together.
-- No session becomes the lead by itself, also the first. You name the
-  lead: see [Name the lead](#name-the-lead). A session cannot make
-  itself the lead. A worker is never the lead: see [When you have no
+  machines together. A project has one lead: see
+  [Where the lead runs](#where-the-lead-runs).
+- No session becomes the lead by itself, also the first. The riff
+  daemon of a host of the project starts the lead, or you name it: see
+  [Name the lead](#name-the-lead). A session cannot make itself the
+  lead. A worker is never the lead: see [When you have no
   lead](#when-you-have-no-lead).
 - The URI of the lead has `lead=true`. `riff who` shows it.
 - A lead that ends, stops for more than 5 minutes, or works in another
@@ -6229,11 +6228,76 @@ sequenceDiagram
     Note over S: continues, with no input at its own terminal
 ```
 
+### Where the lead runs
+
+A project has one lead. riff-server keeps it as the claim `lead` of
+the repository thread of the project, and gives the claim to one
+session only. The riff daemon of each host that joined the project with
+`riff host join` looks at the claim at each change of the plan of the
+project, and each minute:
+
+- When no session holds the claim, the daemon of a host claims it and
+  starts the lead in the container `riff-lead-OWNER-REPO`. riff-server
+  makes that session the lead.
+- The host with the most free room claims first. Before the claim, a
+  daemon waits 10 s × its live sessions / its limit, and 1 s more when
+  its host did not run the last lead. So on a tie, the host of the last
+  lead claims first. After the wait, the daemon claims only when the
+  claim is still free.
+- A lead that ends by itself, for example with `/exit`, a crash or a
+  reboot, starts again with `claude --resume`: the same session and the
+  same conversation. A lead that ends less than a minute after its start
+  does not start again: its session ends, and a host claims the lead
+  again.
+- When the host of the lead goes, the claim ends 5 minutes after the
+  last sign of life of the lead. riff-server then wakes the riff daemon
+  of each host of the project, and the next host starts a new lead. The
+  new lead reads the notes of the lead, and the messages that the old
+  lead did not read (see
+  [What a new lead reads](#what-a-new-lead-reads)).
+- A host that comes back stops its old lead: another session holds the
+  claim now.
+- When no host can run a lead, no lead starts, and the project is
+  paused: its wave waits for a lead. See
+  [The wave waits for its lead](#the-wave-waits-for-its-lead).
+
+```mermaid
+sequenceDiagram
+    participant A as riff daemon of pangolin: 0 of 4 sessions
+    participant S as riff-server
+    participant B as riff daemon of thelio: 2 of 4 sessions
+    A->>S: the claim lead is free
+    B->>S: the claim lead is free
+    A->>A: wait 0 s + 1 s
+    B->>B: wait 5 s + 1 s
+    A->>S: claim lead: granted
+    A->>A: start the lead in riff-lead-OWNER-REPO
+    B->>S: pangolin holds the claim lead
+    Note over A: pangolin goes
+    S->>B: 5 minutes later: a change of the plan
+    B->>S: claim lead: granted
+    B->>B: start a new lead
+    Note over A: pangolin comes back
+    A->>S: thelio holds the claim lead
+    A->>A: stop the old lead
+```
+
+To see the host of the lead, find the session with the tag `lead`:
+
+```sh
+riff who
+```
+
+`riff lead start`, `riff lead move` and `riff lead --session` name a
+lead by hand. The new lead takes the claim, and the riff daemon of the
+old lead stops the old lead.
+
 ### Name the lead
 
-Only you name your lead. `riff lead start` starts a lead in a
-container and names it the lead: see
-[Start the lead](development.md#start-the-lead). To name another
+Only you, or the riff daemon of a host of the project (see
+[Where the lead runs](#where-the-lead-runs)), name your lead.
+`riff lead start` starts a lead in a container and names it the lead:
+see [Start the lead](development.md#start-the-lead). To name another
 session the lead, for example a session on the host when the lead
 container ended, find its session ID:
 
@@ -6248,10 +6312,12 @@ session. Use the session ID, or its first 4 characters or more:
 riff lead --session 77e0a1b2
 ```
 
-The new lead replaces the old lead. riff sends the old lead a message:
-it is not the lead now. In an agent session, `riff lead` fails: `a
-session cannot name the lead, also not itself.` A worker cannot be the
-lead: `a worker cannot be the lead. Make another session the lead.`
+The new lead replaces the old lead, and takes the claim `lead`. riff
+sends the old lead a message: it is not the lead now. When the riff
+daemon of a host runs the old lead, it stops it. In an agent session,
+`riff lead` fails: `a session cannot name the lead, also not itself.` A
+worker cannot be the lead: `a worker cannot be the lead. Make another
+session the lead.`
 
 ```mermaid
 flowchart TD
@@ -6322,17 +6388,20 @@ item.
 
 A lead ends in these cases:
 
-- Its container ends: `/exit`, a crash, or `riff lead stop`. Its riff
-  daemon tells riff-server at once.
-- A reboot ends its container. At its start, the riff daemon finds the
-  lead with no container, and tells riff-server.
+- `riff lead stop` ends its container. Its riff daemon tells riff-server
+  at once.
+- It ends less than a minute after its start, or it cannot start again.
+  Its riff daemon tells riff-server at once.
 - riff-server gets no sign of life of the lead for 3 minutes: its host
   or its riff daemon is down.
 
-A start again of the lead on a new riff keeps its session, so the wave
-does not wait (see
+A lead that ends by itself later, with `/exit` or a crash, or that a
+reboot ends, starts again as the same session, so the wave does not
+wait. Nor does it wait for a start again of the lead on a new riff (see
 [The lead starts again on the new riff](#the-lead-starts-again-on-the-new-riff)).
-The riff daemon starts no lead by itself.
+When the claim `lead` is free, the riff daemon of a host of the project
+starts a new lead (see [Where the lead runs](#where-the-lead-runs)).
+With no such host, the wave waits until you start a lead.
 
 ```mermaid
 sequenceDiagram
@@ -6340,13 +6409,13 @@ sequenceDiagram
     participant D as riff daemon
     participant S as riff-server
     participant W as the wave
-    L->>D: the container ends
+    L->>D: riff lead stop ends the container
     D->>S: end the session of the lead
     W->>S: a look: the pauses
     S-->>W: no lead in OWNER/REPO
     W->>W: start no session
     Note over W: the sessions that run go on
-    D->>S: riff lead start: a new lead
+    D->>S: a host claims lead: a new lead
     S-->>W: a change of the plan
     W->>W: look now, start the free work
 ```

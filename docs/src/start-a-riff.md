@@ -68,10 +68,12 @@ riff host join
 riff lead start
 ```
 
-`riff lead start` gives no workers, and `riff host join` starts no lead.
-Ask the lead: *"Who else is in the riff?"* The sessions ask their
-questions there. See [The lead](how-it-works.md#the-lead). The lead
-starts at effort xhigh.
+`riff lead start` gives no workers. When the project has no lead, the
+riff daemon of a host that joined starts it: see
+[Where the lead runs](how-it-works.md#where-the-lead-runs). Then
+`riff lead start` attaches to it. Ask the lead: *"Who else is in the
+riff?"* The sessions ask their questions there. See
+[The lead](how-it-works.md#the-lead). The lead starts at effort xhigh.
 
 ## Detach from the lead
 
@@ -403,9 +405,10 @@ in the container can leave on in your terminal, for example the mouse
 reports. So your terminal is whole again.
 
 When another session of you is the lead, `riff lead start` makes the
-new session the lead. It prints which session was the lead before. In
-the lead container, `whoami` says in its first line when the session is
-not the lead. To see which session is the lead:
+new session the lead, and the riff daemon of the old lead stops it. It
+prints which session was the lead before. In the lead container,
+`whoami` says in its first line when the session is not the lead. To
+see which session is the lead:
 
 ```sh
 riff who
@@ -493,8 +496,10 @@ riff lead stop
 riff asks the lead to write its notes, and waits up to 5 minutes for
 them. Then the riff daemon ends the container of the lead, and the host
 loses the part lead. An update starts the lead no more. The workers of
-the host go on: `riff lead stop` does not take the part workers. To
-start the lead again:
+the host go on: `riff lead stop` does not take the part workers. The
+claim `lead` of the project is free then, so the riff daemon of a host
+that joined the project starts a new lead. To start the lead again on
+this host:
 
 ```sh
 riff lead start

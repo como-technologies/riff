@@ -1420,7 +1420,8 @@ impl Engine {
     /// holder had no sign of life for 5 minutes. So the riff daemon of
     /// each host of the project looks at once, and the next host claims
     /// the lead. `told` keeps each ended claim that it told, so each goes
-    /// out one time. It gives the threads of the events of this call.
+    /// out one time (01M77PT9XXCBBP1Z73F30RYCNH). It gives the threads of
+    /// the events of this call.
     pub fn lead_claims_ended(
         &self,
         told: &mut BTreeSet<(ThreadName, Who)>,
