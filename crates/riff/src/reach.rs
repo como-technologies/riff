@@ -1064,6 +1064,7 @@ pub const COMMANDS: &[InContainer] = &[
     host(&["cloud", "smoke", "riff"]),
     host(&["cloud", "list"]),
     host(&["cloud", "status", "riff"]),
+    host(&["cloud", "check", "riff"]),
     host(&["cloud", "log", "riff"]),
     host(&["cloud", "delete", "riff"]),
     host(&["github", "create", "--owner", "acme"]),

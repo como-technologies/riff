@@ -3486,7 +3486,8 @@ async fn cloud(command: &CloudCommand, server: &str) -> Result<()> {
             let found = riff::cycle::cloud_check(&log, &since);
             print!("{}", riff::cycle::cloud_check_text(&found));
             if let Some(commit) = commit {
-                let gh = pr::Gh::here("cloud check").retrying();
+                // The status is a step of the release: its calls count as `release`.
+                let gh = pr::Gh::here("release").retrying();
                 let (state, description) = riff::cycle::set_deploy_check(&gh, commit, &found)?;
                 println!("{}", text::deploy_check_set(commit, state, &description));
             }
