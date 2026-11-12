@@ -269,9 +269,7 @@ use riff_core::wire::{
     SetStep, Start, StartReason, Status, StatusInfo, StepChange, StepInfo, Tailed, ThreadInfo,
     Waits, Wake,
 };
-use riff_core::wire::{
-    ChatName, MachineInfo, NotesReply, ProjectsReply, SetMachine, ThreadPage,
-};
+use riff_core::wire::{ChatName, MachineInfo, NotesReply, ProjectsReply, SetMachine, ThreadPage};
 
 /// A blocked session that the look of the lead found, with its reason
 /// ([`State::look_blocks`]).
