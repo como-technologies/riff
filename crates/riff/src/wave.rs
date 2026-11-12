@@ -271,6 +271,11 @@
 //!   the claim ([`World::passed`]): a success starts no session, and the
 //!   start does not count. The loop takes each head that passed out of
 //!   its looks until a look sees the status ([`drop_passed`]);
+//! - a build or a verify of a head whose verify passed after a fail
+//!   (01M77JWXEGDDMB7TW97APGKW9W, #2014). riff posts the PASS in the
+//!   thread after it sets the status, so the look can still read the old
+//!   failure. The PASS in the thread counts over it ([`said`],
+//!   [`rollout::Pull::verify`]);
 //! - a verify or a rebase of a pull request whose head conflicts with the
 //!   head of a pull request before it: one whose verify runs or passed, or
 //!   whose item had its verify request first ([`order()`],
@@ -392,7 +397,7 @@
 //! verify of a head with a conflict: a pass counts only for its commit,
 //! and the rebase makes a new one. A pull request whose verify failed is
 //! free work as a build already, with the failed result, until a new
-//! verify request for the same head comes ([`reasked`], #1157): then it
+//! verify request for the same head comes ([`said`], #1157): then it
 //! waits for a verify again.
 //!
 //! A pull request whose `mergeable` is `UNKNOWN` has no verify in the
@@ -3711,40 +3716,54 @@ pub fn fixes(open: &rollout::Open, free: Vec<String>) -> (Vec<String>, Fixes) {
     (free, found)
 }
 
-/// The verify requests that answer a failed verify: the pairs of an
-/// issue and a commit (7 characters) whose last verify request in
-/// `bodies`, the bodies of the messages of the thread, oldest first,
-/// came after the last verify result for them (#1157). A fix of the
-/// body of a pull request makes no new commit, so the failed status
-/// of the head stays. The new request is the sign that the fail is
-/// answered.
+/// What the thread says of the verify of each head: for each pair of an
+/// issue and a commit (7 characters), its last verify request
+/// ([`rollout::Verify::Asked`]) or verify result (`PASS` or `FAIL`) in
+/// `bodies`, the bodies of the messages of the thread, oldest first.
+/// [`rollout::Pull::verify`] takes it with the status of the head.
+///
+/// - A request after a FAIL answers the fail (#1157). A fix of the body
+///   of a pull request makes no new commit, so the failed status of the
+///   head stays.
+/// - A PASS after a FAIL of the same head counts over the failed status
+///   (01M77JWXEGDDMB7TW97APGKW9W, #2014). riff sets the status before it
+///   posts the result, so the look can still read the old failure.
 ///
 /// ```
-/// use riff::wave::reasked;
+/// use riff::rollout::Verify;
+/// use riff::wave::said;
 ///
 /// let request = "verify request: issue-12, PR #40, branch worktree-issue-12, commit 1a2b3c4, from the riff daemon (session 65f510d7).";
-/// let result = "verify result: FAIL for issue-12, PR #40, commit 1a2b3c4. PR comment https://c, riff/verify failure set.";
-/// assert!(reasked(&[request, result]).is_empty());
-/// assert!(reasked(&[request, result, request]).contains(&(12, "1a2b3c4".into())));
-/// assert!(reasked(&[request, result, request, result]).is_empty());
+/// let result = |word| format!("verify result: {word} for issue-12, PR #40, commit 1a2b3c4. PR comment https://c.");
+/// let (fail, pass) = (result("FAIL"), result("PASS"));
+/// let of = |bodies: &[&str]| said(bodies).get(&(12, "1a2b3c4".into())).copied();
+/// assert_eq!(of(&[]), None);
+/// assert_eq!(of(&[request]), Some(Verify::Asked));
+/// assert_eq!(of(&[request, &fail]), Some(Verify::Failed));
+/// assert_eq!(of(&[request, &fail, request]), Some(Verify::Asked));
+/// assert_eq!(of(&[request, &fail, request, &pass]), Some(Verify::Passed));
 /// // A result names the full commit.
 /// let full = "verify result: FAIL for issue-12, PR #40, commit 1a2b3c4d5e6f7a8b9c0d. PR comment https://c.";
-/// assert!(reasked(&[request, full]).is_empty());
+/// assert_eq!(of(&[request, full]), Some(Verify::Failed));
 /// ```
-pub fn reasked(bodies: &[&str]) -> HashSet<(u64, String)> {
-    let mut asked = HashSet::new();
+pub fn said(bodies: &[&str]) -> HashMap<(u64, String), rollout::Verify> {
+    let mut said = HashMap::new();
     for body in bodies {
         if let Some(rest) = body.strip_prefix(VERIFY_REQUEST) {
-            asked.extend(item_commit(rest));
-        } else if let Some(found) = body
+            said.extend(item_commit(rest).map(|head| (head, rollout::Verify::Asked)));
+        } else if let Some((word, rest)) = body
             .strip_prefix("verify result: ")
             .and_then(|r| r.split_once(" for "))
-            .and_then(|(_, rest)| item_commit(rest))
         {
-            asked.remove(&found);
+            let verify = match word {
+                "PASS" => rollout::Verify::Passed,
+                "FAIL" => rollout::Verify::Failed,
+                _ => continue,
+            };
+            said.extend(item_commit(rest).map(|head| (head, verify)));
         }
     }
-    asked
+    said
 }
 
 /// The start of a verify request in the thread.
@@ -3811,10 +3830,12 @@ pub fn look_on(
 }
 
 /// [`look_on`] with `bodies`, the bodies of the messages of the thread of
-/// the repository, oldest first. A pull request with a failed verify whose
-/// head has a new verify request ([`reasked`]) waits for a verify again.
-/// The places of the verify requests ([`requests`]) give the order of the
-/// verifies ([`order()`]).
+/// the repository, oldest first. What the thread says of the verify of a
+/// head ([`said`]) counts with its status: a pull request with a failed
+/// verify whose head has a new verify request waits for a verify again,
+/// and one whose head has a PASS after the fail passed. The places of the
+/// verify requests ([`requests`]) give the order of the verifies
+/// ([`order()`]).
 pub fn look_with(
     gh: &pr::Gh,
     repo: &str,
@@ -3850,7 +3871,7 @@ fn look_from(
     bodies: &[&str],
     told: Option<&hooks::Told>,
 ) -> Result<Look> {
-    let asked = reasked(bodies);
+    let said = said(bodies);
     // The wakes of GitHub name what changed (#1656). Else GitHub is asked
     // first whether anything changed (#1566). A branch that does not read
     // is the error of the look: the wave starts no work, and reads it
@@ -3874,7 +3895,7 @@ fn look_from(
     let held: HashSet<String> = holds.iter().cloned().collect();
     for pull in &mut open.pulls {
         let commit: String = pull.head.chars().take(7).collect();
-        pull.reasked = pull.issue().is_some_and(|n| asked.contains(&(n, commit)));
+        pull.said = pull.issue().and_then(|n| said.get(&(n, commit)).copied());
     }
     let (free, fixes) = fixes(&open, open.free_work(&claimed, &held));
     let no_done_when = open.no_done_when(&claimed, &held).into_iter().collect();
@@ -4726,6 +4747,9 @@ mod tests {
         Failed,
         /// The verify failed, and a new verify request for the head came.
         Reasked,
+        /// The status of the verify is the old failure, and the thread has
+        /// a PASS of the head after it (#2014).
+        Repassed,
     }
 
     /// The forge and the riff of a test.
@@ -4943,7 +4967,9 @@ mod tests {
                 checks: match pr {
                     Pr::Asked => Vec::new(),
                     Pr::Passed => vec![rollout::Check::verify("SUCCESS")],
-                    Pr::Failed | Pr::Reasked => vec![rollout::Check::verify("FAILURE")],
+                    Pr::Failed | Pr::Reasked | Pr::Repassed => {
+                        vec![rollout::Check::verify("FAILURE")]
+                    }
                 }
                 .into_iter()
                 .chain(
@@ -4984,7 +5010,11 @@ mod tests {
                 merge_state: self.approvals.contains_key(n).then(|| "BLOCKED".into()),
                 waiting: self.approvals.get(n).cloned().unwrap_or_default(),
                 queue: self.queue.get(n).cloned().unwrap_or_default(),
-                reasked: pr == Pr::Reasked,
+                said: match pr {
+                    Pr::Reasked => Some(rollout::Verify::Asked),
+                    Pr::Repassed => Some(rollout::Verify::Passed),
+                    _ => None,
+                },
                 required: Some(REQUIRED.map(String::from).to_vec()),
                 ..rollout::Pull::default()
             });
@@ -7835,6 +7865,30 @@ esac
         here.run();
         here.until(3, |h| h.running("issue-1").is_some()).await;
         assert_eq!(here.forge().works, [Work::Build { issue: 1 }]);
+    }
+
+    /// 01M77JWXEGDDMB7TW97APGKW9W (#2014): the second verify of a head
+    /// whose first verify failed passes. The look still reads the old
+    /// failure of the head, and the thread has the PASS. The wave starts
+    /// no build and no second verify of that head, and the lead hears
+    /// nothing.
+    #[tokio::test]
+    async fn a_pass_after_a_failed_verify_of_the_head_starts_no_session() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 3, free).await;
+        here.forge().pulls.insert(1, Pr::Reasked);
+        here.run();
+        here.until(3, |h| h.running("verify-issue-1").is_some())
+            .await;
+        // The status of the PASS does not reach the look yet.
+        here.forge().shown.insert(1, Pr::Repassed);
+        here.end("verify-issue-1").await;
+        here.until(3, |h| h.forge().finished.len() == 1).await;
+        here.idle(3).await;
+        let forge = here.forge();
+        assert_eq!(forge.works, [verify("c1")]);
+        assert!(forge.told.is_empty(), "{:?}", forge.told);
+        assert!(here.running("issue-1").is_none());
     }
 
     /// The message to the lead about the pull request #41 of the item 1

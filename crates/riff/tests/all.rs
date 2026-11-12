@@ -121,6 +121,7 @@ mod wave_order;
 mod wave_question;
 mod wave_queue;
 mod wave_stuck;
+mod wave_verify;
 mod waves;
 mod who;
 mod wip;

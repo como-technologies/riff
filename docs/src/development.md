@@ -3537,6 +3537,10 @@ and Hygiene of the head pass. With no new request, a failed verify is
 free work as a build. A push makes a new head, and a new verify
 follows as always.
 
+When the new verify passes, the wave starts no build and no verify of
+that commit. GitHub can show the old failure for a short time after
+the pass: the PASS in the thread counts over it.
+
 ```sh
 riff post --to lead=true "verify request: issue-12, PR #40, branch worktree-issue-12, commit 1a2b3c4"
 ```

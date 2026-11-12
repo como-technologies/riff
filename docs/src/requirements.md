@@ -6985,6 +6985,14 @@ of this part when they merge.
   is no project of the riff`, or `starts nothing: the project does not
   allow the host HOST`. The sessions that run go on to their end. When
   the project allows the host again, the wave goes on at its next look.
+- **01M77JWXEGDDMB7TW97APGKW9W** The look of the wave takes the state of
+  the verify of a head commit from its status `riff/verify` and from the
+  last verify request or verify result for that head in the thread of
+  the repository. A PASS in the thread after a FAIL of the same head
+  makes the head passed, also while the look still reads the old
+  failure: the wave starts no build and no verify of that head. With no
+  status, a PASS or a FAIL in the thread gives the state. A status
+  `success` makes the head passed.
 
 ### The lead, the view and the takeover
 
