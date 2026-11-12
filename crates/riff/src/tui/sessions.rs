@@ -48,7 +48,10 @@
 //!   tree of `riff top` keeps the host as a level. A row with one row
 //!   under it takes that row after `›`, as in `riff top`. A group row
 //!   ends with the counts of its sessions, or the count of its sessions
-//!   with no room for each.
+//!   with no room for each. The group of a repository whose wave waits
+//!   for a lead says [`text::GROUP_NO_LEAD`] after its name, and its
+//!   detail says why ([`text::group_no_lead`],
+//!   01M776RTACYY4JTVQ4FNT81Q0T).
 //! - **The order** (01M6VAZKRTVZTY73PQV5GE2WY6,
 //!   01M6VGGWAAKQ3HPXZ7JX5FE7B0): in a group, the worst mark first, then
 //!   the session ID. The groups by their worst row: `!`, a session that
@@ -94,7 +97,7 @@
 //! | `↑` `↓` `j` `k`, `PgUp` `PgDn`, `g` `G`, `Home` `End` | Select a row. |
 //! | `←` `→`, `Space` | Fold or open a group. `←` on a session selects its group. |
 //! | `Enter` | A group: fold or open. A lead of this machine: attach. A worker in a container of a daemon of yours: its Session log in the Reports tab, and with no detail pane, its detail on the whole screen first. Each other session: its detail on the whole screen. |
-//! | `l` | Attach to the lead of the repository of the row, else to the first lead of this machine. On the lead of another host: a note with the step there. |
+//! | `l` | Attach to the lead of the repository of the row, else to the first lead of this machine. On the lead of another host: a note with the step there. On a repository whose wave waits for a lead: on a host that runs that wave, `Start the lead of OWNER/REPO on HOST? y/N`, and `y` starts the lead as `riff lead start` does, then attaches; on another host, a note with the step (01M776RTACYY4JTVQ4FNT81Q0T). |
 //! | `t` | Take over the selected session, after `y` (`riff takeover NAME`). On another host: a note with the step there. |
 //! | `x` | End the selected session of the daemon, after `y` (`riff daemon end NAME`, on another host with `--host HOST`). On the row of a daemon: the host stops taking work for the repository, after `y` (`riff leave --host HOST`). |
 //! | `p`, `P` | Pause or resume the repository of the row, or the whole riff, after `y`. |
@@ -1084,10 +1087,27 @@ impl State {
         None
     }
 
+    /// True when the wave of the repository `repo` waits for a lead at the
+    /// last look ([`crate::view::waits_for_lead`],
+    /// 01M776RTACYY4JTVQ4FNT81Q0T).
+    fn waits_for_lead(&self, repo: &str) -> bool {
+        self.last_look().is_some_and(|(look, _)| {
+            crate::view::waits_for_lead(&look.pauses, &look.who.sessions, repo)
+        })
+    }
+
+    /// True when the riff daemon of this machine runs the wave of `repo`.
+    fn runs_wave_here(&self, repo: &str) -> bool {
+        matches!(&self.daemon, Some(Ok(status)) if status.waves.iter().any(|w| w.repo == repo))
+    }
+
     /// `l`: the attach to the lead of the repository of the row, else to
     /// the first lead of this machine (01M51PD7M04HZR2PVVJA4WCBK5). On
     /// the lead of another host, the note names the step there
-    /// (01M6WMAXEVZB2XJN4XPR879J6W).
+    /// (01M6WMAXEVZB2XJN4XPR879J6W). On a repository whose wave waits for
+    /// a lead, it asks, then starts the lead here when this machine runs
+    /// that wave; else the note says to start it in a clone
+    /// (01M776RTACYY4JTVQ4FNT81Q0T).
     fn lead(&mut self) -> Option<Action> {
         let picked = self.picked();
         if let Some(Picked {
@@ -1127,7 +1147,20 @@ impl State {
                 .find(|(of, name)| of.as_ref() == Some(repo) || *name == crate::lead::name_of(repo))
                 .map(|(_, name)| name.clone())
         });
-        match of_repo.or_else(|| leads.first().map(|(_, name)| name.clone())) {
+        if let Some(name) = of_repo {
+            return Some(Action::Attach(name));
+        }
+        if let Some(repo) = repo.filter(|repo| self.waits_for_lead(repo)) {
+            let host = self.me.place().host().to_owned();
+            if self.runs_wave_here(&repo) {
+                let ask = text::ask_start_lead(&repo, &host);
+                self.ask(Question::new(ask, Action::StartLead(repo)));
+            } else {
+                self.note(text::lead_start_in_clone(&repo, &host));
+            }
+            return None;
+        }
+        match leads.first().map(|(_, name)| name.clone()) {
             Some(name) => Some(Action::Attach(name)),
             None => {
                 self.note(text::NO_LEAD_HERE);
@@ -1675,6 +1708,18 @@ fn label(state: &State, group: &Group, layout: Layout) -> Vec<Span<'static>> {
             );
             parts
         }
+        // A repository whose wave waits for a lead says so, and names the
+        // key that starts it (01M776RTACYY4JTVQ4FNT81Q0T).
+        Level::Repo if state.waits_for_lead(&group.key) => {
+            let word = match layout {
+                Layout::Wide => text::GROUP_NO_LEAD,
+                _ => text::WAITS_FOR_LEAD,
+            };
+            vec![
+                Span::raw(name(state, group)),
+                Span::styled(word, style_of(crate::style::WARNING)),
+            ]
+        }
         Level::Host | Level::Repo => vec![Span::raw(name(state, group))],
     }
 }
@@ -2042,6 +2087,11 @@ fn group_detail(state: &State, chain: &[&Group]) -> (String, Vec<Line<'static>>)
                 format!("{} is paused", safe(&group.key)),
                 style_of(crate::style::WARNING),
             ));
+        } else if group.level == Level::Repo && state.waits_for_lead(&group.key) {
+            lines.push(Line::styled(
+                text::group_no_lead(&group.key),
+                style_of(crate::style::WARNING),
+            ));
         }
     }
     (title.join(" › "), lines)
@@ -2114,7 +2164,7 @@ pub fn help_keys() -> Vec<(&'static str, &'static str)> {
             "Enter",
             "fold, attach to a lead, or open a session or its log",
         ),
-        ("l", "attach to the lead"),
+        ("l", "attach to the lead, or start it after y"),
         ("t", "take over the session, after y"),
         ("x", "end the session, or riff leave on a daemon, after y"),
         (

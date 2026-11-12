@@ -251,6 +251,10 @@ pub struct RepoRow {
     pub counts: Vec<(usize, ItemState)>,
     /// True when the repository or the whole riff is paused.
     pub paused: bool,
+    /// True when the wave of the repository waits for a lead, and no
+    /// pause stops it ([`crate::view::waits_for_lead`],
+    /// 01M776RSYKJK9NETFAD8G0CCVQ).
+    pub no_lead: bool,
 }
 
 /// A row of the body of the Waves tab, before the draw.
@@ -930,12 +934,15 @@ pub fn rows(waves: &Waves, look: &Look, look_ms: i64) -> Vec<Row> {
     let mut boards: Vec<(u8, RepoRow, Vec<Row>)> = Vec::new();
     for repo in repos {
         let paused = paused(look, &repo);
+        let no_lead =
+            !paused && crate::view::waits_for_lead(&look.pauses, &look.who.sessions, &repo);
         let folded = |wave| RepoRow {
             repo: repo.clone(),
             open: false,
             wave,
             counts: Vec::new(),
             paused,
+            no_lead,
         };
         let Some(forge) = waves.forge.get(&repo) else {
             boards.push((2, folded(Wave::Unread), Vec::new()));
@@ -969,6 +976,7 @@ pub fn rows(waves: &Waves, look: &Look, look_ms: i64) -> Vec<Row> {
             wave: Wave::Named(wave_name(&board.wave)),
             counts: counted,
             paused,
+            no_lead,
         };
         let mut under = Vec::new();
         if open {
@@ -1278,6 +1286,11 @@ fn repo_line(repo: &RepoRow, wide: bool, columns: usize) -> Line<'static> {
     let mut left = vec![Span::raw(format!("{fold} {} · {wave}", text::safe(name)))];
     if repo.paused {
         left.extend([Span::raw(" · "), Span::styled("paused", WARNING)]);
+    } else if repo.no_lead {
+        left.extend([
+            Span::raw(" · "),
+            Span::styled(text::WAITS_FOR_LEAD, WARNING),
+        ]);
     }
     let counts: Vec<String> = repo
         .counts
@@ -1973,6 +1986,55 @@ mod tests {
             state.shown_note(),
             Some("Select an item with the label question to mark it as answered.")
         );
+    }
+
+    /// The session of the riff daemon of thelio, whose facts say that it
+    /// runs the wave of `repo`.
+    fn daemon_of(repo: &str) -> SessionInfo {
+        let facts = riff_client::daemons::Facts {
+            waves: vec![riff_client::daemons::Wave {
+                repo: repo.into(),
+                word: text::wave_no_lead(repo),
+                image: None,
+                waits: BTreeMap::new(),
+            }],
+            ..riff_client::daemons::Facts::default()
+        };
+        let uri = format!("riff://mike@thelio/{repo}?session=d1");
+        let mut daemon: SessionInfo =
+            serde_json::from_value(serde_json::json!({"uri": uri, "live": true})).unwrap();
+        daemon.machine = Some(riff_core::wire::MachineInfo {
+            numbers: facts.line(),
+            age_secs: 5,
+        });
+        daemon
+    }
+
+    /// 01M776RSYKJK9NETFAD8G0CCVQ: the line of a repository that riff-server
+    /// names with no live lead says `waits for a lead` when a host runs its
+    /// wave. A pause comes first.
+    #[test]
+    fn the_line_of_a_wave_with_no_lead_says_that_it_waits_for_a_lead() {
+        let mut state = mock_up();
+        let (look, at) = state.last_look().unwrap();
+        let mut look = look.clone();
+        look.pauses.no_lead = vec![RIFF.parse().unwrap()];
+        state.looked(look.clone(), at);
+        assert!(!drawn(&state, 80, 24)[2].contains("waits for a lead"));
+        look.who.sessions.push(daemon_of(RIFF));
+        state.looked(look.clone(), at);
+        let rows = drawn(&state, 80, 24);
+        assert!(
+            rows[2].starts_with(" ▼ como-technologies/riff · Wave 48 · waits for a lead"),
+            "{}",
+            rows[2]
+        );
+        look.pauses.state = RiffState::Paused;
+        look.pauses.riff = Some(riff_core::wire::PauseInfo::default());
+        state.looked(look, at);
+        let rows = drawn(&state, 80, 24);
+        assert!(rows[2].contains(" · paused"), "{}", rows[2]);
+        assert!(!rows[2].contains("waits for a lead"), "{}", rows[2]);
     }
 
     /// 01M6VFGK9XXWCA8X7CE8EZNSJV: `p` pauses the repository of the row, or

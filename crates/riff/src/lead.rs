@@ -747,6 +747,32 @@ pub async fn start_with(
     attach_here(runtime, &name, &folder).await
 }
 
+/// The start of the lead of the repository `repo` (`OWNER/REPO`) with `l`
+/// in the Sessions tab of the TUI (01M776RTACYY4JTVQ4FNT81Q0T): as
+/// [`start`] does, from the main clone of the wave of `repo` that the
+/// daemon in the folder `dir` runs, when no lead of `repo` runs there. It
+/// gives the name of the container of the lead, for the attach. A daemon
+/// that runs no wave of `repo` starts nothing: the error is
+/// [`text::lead_no_wave_here`]. It starts no wave and no worker.
+pub async fn start_of_wave(dir: &Path, repo: &str) -> Result<String> {
+    let name = name_of(repo);
+    let status = daemon::status(dir).await?;
+    if runs(&status, &name) {
+        println!("{}", text::lead_runs(repo, &name));
+        return Ok(name);
+    }
+    let wave = crate::wave::read_waves(dir)?
+        .remove(repo)
+        .ok_or_else(|| anyhow::anyhow!("{}", text::lead_no_wave_here(repo)))?;
+    let here = wave.place(None)?;
+    let (main, common) = run::main_clone(&wave.main)?;
+    session_image::merged(&main, |_| {})?;
+    let api = Api::new(&wave.server);
+    let start = text::lead_start(repo);
+    launch(dir, api, &here, &wave.server, (&main, &common), &start).await?;
+    Ok(name)
+}
+
 /// Starts the lead of the repository of `here` on the daemon in the
 /// folder `dir`, from the main clone `main` with the git dir `common`,
 /// with the first prompt `start`. It waits until the container runs,

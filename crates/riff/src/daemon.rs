@@ -411,7 +411,10 @@
 //! It takes up each session whose container runs, or when podman cannot
 //! say: it binds the socket of the session again in the same folder, and
 //! the relay connects again. It removes the record of each other one
-//! (01M4ZHT01HH88KPA8628M7VBEY).
+//! (01M4ZHT01HH88KPA8628M7VBEY). For a lead with no container, for example
+//! after a reboot, it also ends the session of the lead on riff-server, as
+//! at the end of the container of a lead: the wave of the repository waits
+//! for a lead (01M776RT4CM1BVP3NNC7GVQ557, [`crate::wave`]).
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -5289,8 +5292,10 @@ impl<R: Runtime + 'static> Daemon<R> {
             failed: failed || stopped || !exited,
         };
         println!("{}", text::daemon_session_ends(&owned.name, code));
-        // A lead that the daemon starts again on a new riff keeps its
-        // session on riff-server: the next container is the same lead.
+        // The end of the lead ends its session on riff-server at once, so
+        // its wave waits for a lead (01M776RT4CM1BVP3NNC7GVQ557). A lead that
+        // the daemon starts again on a new riff keeps its session on
+        // riff-server: the next container is the same lead.
         let lead_ends =
             record.terminal && !owned.renewing.load(std::sync::atomic::Ordering::SeqCst);
         if lead_ends {
@@ -5977,6 +5982,9 @@ impl<R: Runtime + 'static> Daemon<R> {
                     self.revoke_github(&name, &record, token);
                 }
                 gh_token::remove(&record.folder);
+                // A lead with no container, for example after a reboot:
+                // its session on riff-server ends, so its wave waits for a
+                // lead (01M776RT4CM1BVP3NNC7GVQ557).
                 if record.terminal {
                     self.lead_part(&record, false);
                     let (world, record) = (self.world.clone(), record.clone());

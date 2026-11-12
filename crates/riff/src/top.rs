@@ -730,7 +730,9 @@ impl Top<'_> {
     ///   repository counts. A repository with no issues has no board,
     ///   and no error line. When the whole riff or the repository is
     ///   paused, the wave line ends with `paused` and the board has no
-    ///   group `free` (01M588G5K0B58QXD35AA5MTZ6E).
+    ///   group `free` (01M588G5K0B58QXD35AA5MTZ6E). Else, when the wave
+    ///   waits for a lead ([`view::waits_for_lead`]), the wave line ends
+    ///   with [`text::wave_no_lead`] (01M776RSYKJK9NETFAD8G0CCVQ).
     /// - The tree has four levels: person, host, repository, session.
     ///   With [`By::Repo`](riff_client::sessions::By::Repo) the
     ///   repository comes first: repository, person, host, session.
@@ -986,6 +988,8 @@ impl Top<'_> {
                     .is_ok_and(|thread| self.pauses.repository(&thread).is_some());
             if paused {
                 head.push(("paused".to_owned(), WARNING));
+            } else if view::waits_for_lead(self.pauses, self.sessions.on_server(), &repo) {
+                head.push((text::wave_no_lead(&repo), WARNING));
             }
             lines.push(Line::new("", head));
             lines.extend(board_lines(&board, paused));
@@ -1633,6 +1637,44 @@ mod tests {
             "{text}"
         );
         assert!(!text.contains("#355"), "{text}");
+    }
+
+    /// 01M776RSYKJK9NETFAD8G0CCVQ: the board of a repository whose wave
+    /// runs on a host and that riff-server names with no live lead says why
+    /// its wave waits on its wave line, and keeps its group `free`. A
+    /// repository whose wave runs on no host says nothing.
+    #[test]
+    fn the_board_of_a_wave_with_no_lead_says_that_it_waits_for_a_lead() {
+        let facts = riff_client::daemons::Facts {
+            waves: vec![riff_client::daemons::Wave {
+                repo: "o/strata".into(),
+                word: text::wave_no_lead("o/strata"),
+                image: None,
+                waits: BTreeMap::new(),
+            }],
+            ..riff_client::daemons::Facts::default()
+        };
+        let mut daemon = info("riff://mike@thelio/o/strata?session=d1", SessionState::Idle);
+        daemon.machine = Some(riff_core::wire::MachineInfo {
+            numbers: facts.line(),
+            age_secs: 5,
+        });
+        let mut sessions = riff_of_two();
+        sessions.push(daemon);
+        let pauses = RiffReply {
+            no_lead: vec!["o/riff".parse().unwrap(), "o/strata".parse().unwrap()],
+            ..riff_core::wire::RiffState::Running.into()
+        };
+        let issues = boards_with_free_items();
+        let text = shown_paused(&sessions, &issues, &Show::default(), &[], &pauses);
+        assert!(
+            text.contains(
+                "\nWave 9 (o/strata)  waits for a lead: run riff lead start in a clone of o/strata\n  \
+                 free: #355 #356\n"
+            ),
+            "{text}"
+        );
+        assert!(text.contains("\nWave 9 (o/riff)\n"), "{text}");
     }
 
     /// The holds of strata: #355 and #356 with one reason, #88 with a

@@ -606,6 +606,108 @@ fn l_and_enter_attach_to_the_lead() {
     );
 }
 
+/// [`mock_up`] after the end of the lead of riff: riff-server names riff
+/// with no live lead, and the riff daemon of thelio runs its wave. With
+/// `here`, the status of the daemon of this machine names the wave too.
+fn with_no_lead(here: bool) -> State {
+    let mut state = mock_up();
+    let (look, at) = state.last_look().unwrap();
+    let mut look = look.clone();
+    look.pauses.no_lead = vec!["como-technologies/riff".parse().unwrap()];
+    look.who.sessions.retain(|s| !s.uri.lead());
+    let facts = riff_client::daemons::Facts {
+        waves: vec![riff_client::daemons::Wave {
+            repo: "como-technologies/riff".into(),
+            word: text::wave_no_lead("como-technologies/riff"),
+            image: None,
+            waits: Default::default(),
+        }],
+        ..riff_client::daemons::Facts::default()
+    };
+    let mut daemon = info(&format!("{RIFF}?session=d1"), SessionState::Idle);
+    daemon.machine = Some(riff_core::wire::MachineInfo {
+        numbers: facts.line(),
+        age_secs: 5,
+    });
+    look.who.sessions.push(daemon);
+    state.looked(look, at);
+    let mut daemon = match &state.daemon {
+        Some(Ok(status)) => status.clone(),
+        _ => status(Vec::new()),
+    };
+    daemon.waves = if here {
+        vec![crate::daemon::WaveShown {
+            repo: "como-technologies/riff".into(),
+            word: text::wave_no_lead("como-technologies/riff"),
+            waits: Default::default(),
+        }]
+    } else {
+        Vec::new()
+    };
+    state.daemon_looked(Ok(daemon));
+    state
+}
+
+/// 01M776RTACYY4JTVQ4FNT81Q0T: the group of a repository whose wave waits
+/// for a lead says why and names `l`, and its detail says how to start the
+/// lead. On this machine, which runs the wave, `l` asks, and `y` starts the
+/// lead and attaches. On a machine that runs no wave of the repository,
+/// the note says to start the lead in a clone. The narrow layout says the
+/// wait in a few words.
+#[test]
+fn the_group_with_no_lead_says_why_and_l_starts_the_lead() {
+    let mut state = with_no_lead(true);
+    let rows = drawn(&state, 80, 24);
+    assert!(
+        rows[3].starts_with(" ▼ riff  waits for a lead · l starts it  › mike  owner  online"),
+        "{rows:#?}"
+    );
+    // The detail of the group.
+    state.on_key(Key::Char('g'));
+    let rows = drawn(&state, 80, 24);
+    assert!(
+        rows[12].starts_with("──riff · waits for a lead · l starts it › mike"),
+        "{rows:#?}"
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.starts_with(" The wave of como-technologies/riff waits for a lead.")),
+        "{rows:#?}"
+    );
+    // `l` asks first, and `y` starts the lead.
+    assert_eq!(state.on_key(Key::Char('l')), None);
+    assert_eq!(
+        drawn(&state, 80, 24)[22],
+        " Start the lead of como-technologies/riff on thelio? y/N"
+    );
+    assert_eq!(
+        state.on_key(Key::Char('y')),
+        Some(Action::StartLead("como-technologies/riff".into()))
+    );
+    // `n` starts nothing.
+    state.on_key(Key::Char('l'));
+    assert_eq!(state.on_key(Key::Char('n')), None);
+    assert_eq!(state.shown_note(), Some(crate::tui::NOTHING_CHANGED));
+    // A session row of the repository asks too.
+    state.on_key(Key::Down);
+    assert_eq!(state.on_key(Key::Char('l')), None);
+    assert!(state.asked().is_some());
+    state.on_key(Key::Esc);
+    // The narrow layout.
+    assert!(
+        drawn(&state, 40, 24)[3].starts_with("▼ riff  waits for a lead"),
+        "{:#?}",
+        drawn(&state, 40, 24)
+    );
+
+    // This machine runs no wave of riff: a note with the step.
+    let mut state = with_no_lead(false);
+    assert_eq!(state.on_key(Key::Char('l')), None);
+    assert_eq!(state.asked(), None);
+    let note = text::lead_start_in_clone("como-technologies/riff", "thelio");
+    assert_eq!(state.shown_note(), Some(note.as_str()));
+}
+
 /// `t` and `x` ask `y` or `n` first, then take over or end the selected
 /// container session of this machine.
 #[test]
