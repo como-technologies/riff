@@ -742,7 +742,9 @@ pub async fn start_with(
         return attach_here(runtime, &name, &folder).await;
     };
     let start = text::lead_start(&repo);
-    launch(dir, api, here, server, (&main, &common), &start).await?;
+    launch(dir, api, here, server, (&main, &common), &start, true)
+        .await
+        .map_err(|e| held_elsewhere(e, here.host()))?;
     if !gives_workers(&status, &repo) {
         println!("{}", text::lead_gives_no_workers(&repo));
     }
@@ -771,16 +773,92 @@ pub async fn start_of_wave(dir: &Path, repo: &str) -> Result<String> {
     session_image::merged(&main, |_| {})?;
     let api = Api::new(&wave.server);
     let start = text::lead_start(repo);
-    launch(dir, api, &here, &wave.server, (&main, &common), &start).await?;
+    launch(
+        dir,
+        api,
+        &here,
+        &wave.server,
+        (&main, &common),
+        &start,
+        true,
+    )
+    .await
+    .map_err(|e| held_elsewhere(e, here.host()))?;
     Ok(name)
+}
+
+/// The start of a new lead by the daemon in the folder `dir` for the
+/// project of `wave` (#1791): the claim lead was free. It starts the lead
+/// as [`start_of_wave`] does, from the main clone of the wave, and asks
+/// for the claim lead only when it is free. False when another session
+/// got the claim first: the new session ends, and no container starts.
+pub async fn claim_start(dir: &Path, wave: &crate::wave::Wave) -> Result<bool> {
+    let here = wave.place(None)?;
+    let main = wave.main.clone();
+    let (main, common) = tokio::task::spawn_blocking(move || {
+        let (main, common) = run::main_clone(&main)?;
+        session_image::merged(&main, |_| {})?;
+        anyhow::Ok((main, common))
+    })
+    .await??;
+    let api = Api::new(&wave.server);
+    let start = text::lead_start(&wave.repo);
+    match launch(
+        dir,
+        api,
+        &here,
+        &wave.server,
+        (&main, &common),
+        &start,
+        true,
+    )
+    .await
+    {
+        Ok(_) => Ok(true),
+        Err(e) if e.downcast_ref::<Held>().is_some() => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
+/// Another live session holds the claim lead of the project: the start of
+/// a lead with `if_free` starts no second lead (#1791). The text is the
+/// refusal of riff-server, which names the holder and its host.
+///
+/// ```
+/// let error = anyhow::Error::new(riff::lead::Held("the lead of o/r runs on thelio".into()));
+/// assert!(error.downcast_ref::<riff::lead::Held>().is_some());
+/// assert_eq!(error.to_string(), "the lead of o/r runs on thelio");
+/// ```
+#[derive(Debug)]
+pub struct Held(pub String);
+
+impl std::fmt::Display for Held {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Held {}
+
+/// The error of a start of the lead on the host `here` for a person:
+/// [`Held`] says where the lead runs and how to reach it
+/// ([`text::lead_held_elsewhere`]). Each other error stays.
+fn held_elsewhere(error: anyhow::Error, here: &str) -> anyhow::Error {
+    match error.downcast_ref::<Held>() {
+        Some(Held(held)) => anyhow::anyhow!("{}", text::lead_held_elsewhere(held, here)),
+        None => error,
+    }
 }
 
 /// Starts the lead of the repository of `here` on the daemon in the
 /// folder `dir`, from the main clone `main` with the git dir `common`,
 /// with the first prompt `start`. It waits until the container runs,
 /// and makes the new session the lead as the person, with no session
-/// ID (01M5NJAYC7MXS13TA3VJB4N6RP). It gives the session ID of the
-/// lead. A failed start ends the new session.
+/// ID (01M5NJAYC7MXS13TA3VJB4N6RP). The new lead gets the claim lead of
+/// the project (#1791): with `if_free`, only when no live session holds
+/// it, else the error is [`Held`]; with no `if_free`, it takes the claim
+/// from its holder. It gives the session ID of the lead. A failed start
+/// ends the new session.
 async fn launch(
     dir: &Path,
     api: Api,
@@ -788,6 +866,7 @@ async fn launch(
     server: &str,
     (main, common): (&Path, &Path),
     start: &str,
+    if_free: bool,
 ) -> Result<String> {
     let repo = here.repo_text();
     // A lead only for a project (#1863).
@@ -826,7 +905,14 @@ async fn launch(
     let api = api.signed_in(Some(&session))?;
     api.start(&me, StartReason::Process, false).await?;
     let named = identity::person(&place, server)?;
-    let led = match person.lead(&named, &session).await {
+    let led = match if_free {
+        true => person
+            .claim_lead(&named, &session)
+            .await
+            .and_then(|led| led.map_err(|held| Held(held).into())),
+        false => person.lead(&named, &session).await,
+    };
+    let led = match led {
         Ok(reply) => reply,
         Err(e) => {
             let _ = api.end(&me).await;
@@ -1039,7 +1125,16 @@ pub async fn take(dir: &Path, wave: &crate::wave::Wave) -> Result<String> {
             let (main, common) = run::main_clone(&wave.main)?;
             let api = Api::new(&wave.server);
             let start = text::lead_moved(&repo);
-            launch(dir, api, &here, &wave.server, (&main, &common), &start).await?
+            launch(
+                dir,
+                api,
+                &here,
+                &wave.server,
+                (&main, &common),
+                &start,
+                false,
+            )
+            .await?
         }
     };
     let place = Place::new(here.host(), here.repo().clone(), None)?;

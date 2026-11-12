@@ -14243,6 +14243,114 @@ pub fn lead_again_failed(name: &str, why: &str) -> String {
     )
 }
 
+/// The log line of the daemon: the lead `name` ended by itself, or a
+/// reboot ended it, and the daemon starts it again with `claude
+/// --resume`: the same session, so it stays the lead of its project
+/// (#1791).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::lead_back("riff-lead-o-r"),
+///     "The lead riff-lead-o-r ended. riff starts it again with claude --resume, as the same session."
+/// );
+/// ```
+pub fn lead_back(name: &str) -> String {
+    format!(
+        "The lead {name} ended. riff starts it again with claude --resume, as the same session."
+    )
+}
+
+/// The log line of the daemon: the start again of the lead `name` failed
+/// (`why`), so its session ends, and the next host claims the lead of the
+/// project (#1791).
+///
+/// ```
+/// let text = riff::text::lead_back_failed("riff-lead-o-r", "no image");
+/// assert!(text.starts_with("riff cannot start the lead riff-lead-o-r again: no image."));
+/// ```
+pub fn lead_back_failed(name: &str, why: &str) -> String {
+    format!(
+        "riff cannot start the lead {name} again: {why}. Its session ends, so a host of the \
+         project starts a new lead."
+    )
+}
+
+/// The log line of the daemon: the lead `name` ended less than a minute
+/// after its start, so the daemon does not start it again: its session
+/// ends, and the next host claims the lead of the project (#1791).
+///
+/// ```
+/// let text = riff::text::lead_ended_soon("riff-lead-o-r");
+/// assert!(text.starts_with("The lead riff-lead-o-r ended less than a minute after its start."));
+/// ```
+pub fn lead_ended_soon(name: &str) -> String {
+    format!(
+        "The lead {name} ended less than a minute after its start. Its session ends, so a host \
+         of the project starts a new lead."
+    )
+}
+
+/// The log line of the daemon: another session holds the claim lead of
+/// the project of the lead `name` now, for example after a reboot that
+/// took more than 5 minutes. The daemon stops the old lead (#1791).
+///
+/// ```
+/// let lead: riff_core::name::SessionUri = "riff://mike@thelio/o/r?session=b2c3d4e5-ffff".parse()?;
+/// assert_eq!(
+///     riff::text::lead_lost("riff-lead-o-r", &lead),
+///     "The lead of the project runs on thelio now (mike@thelio:r). riff stops the old lead riff-lead-o-r."
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn lead_lost(name: &str, lead: &SessionUri) -> String {
+    format!(
+        "The lead of the project runs on {} now ({}). riff stops the old lead {name}.",
+        lead.place().host(),
+        lead.short()
+    )
+}
+
+/// The log line of the lead loop of a daemon (#1791): what one look did
+/// for the lead of the project `repo`. `None` when it did nothing.
+///
+/// ```
+/// use riff::lead_host::Did;
+/// use riff::text::lead_host_did;
+///
+/// assert_eq!(lead_host_did("o/r", &Did::Started), Some("o/r: no host holds the claim lead: this host starts the lead.".into()));
+/// assert_eq!(lead_host_did("o/r", &Did::Nothing), None);
+/// ```
+pub fn lead_host_did(repo: &str, did: &crate::lead_host::Did) -> Option<String> {
+    use crate::lead_host::Did;
+    let what = match did {
+        Did::Nothing | Did::Taken => return None,
+        Did::Claimed => "this host claims the lead again for the lead that runs here",
+        Did::Started => "no host holds the claim lead: this host starts the lead",
+        Did::Stopped => "another host holds the claim lead: this host stops its old lead",
+    };
+    Some(format!("{repo}: {what}."))
+}
+
+/// `riff lead start` and `l` in the TUI: another session holds the claim
+/// lead of the project (`held`, the text of riff-server), so this host
+/// starts no lead (#1791).
+///
+/// ```
+/// let text = riff::text::lead_held_elsewhere("the lead of o/r runs on thelio: mike@thelio:r (b2c3d4e5) holds the claim lead.", "pangolin");
+/// assert!(text.starts_with("The lead of o/r runs on thelio"));
+/// assert!(text.ends_with("To move it here, run riff lead move pangolin on its host."));
+/// ```
+pub fn lead_held_elsewhere(held: &str, here: &str) -> String {
+    let mut held = held.to_owned();
+    if let Some(first) = held.get(..1) {
+        held.replace_range(..1, &first.to_uppercase());
+    }
+    format!(
+        "{held} The project has one lead: riff starts no second lead. Attach on that host with \
+         riff lead start. To move it here, run riff lead move {here} on its host."
+    )
+}
+
 /// The daemon took up the session in the container `name`, and the
 /// container has no network (01M5SMQBTA3HQXPKKK01ZGFB4H). It frees the
 /// item and stops the container: the wave starts the item again.
