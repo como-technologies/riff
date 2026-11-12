@@ -13,7 +13,7 @@
 //! ```mermaid
 //! flowchart LR
 //!     C["riff release test, cut,<br/>approve, retry, rollback"] -- "register" --> F["watches.json<br/>in the folder of the daemon"]
-//!     W["riff join"] -- "one watch for the wave" --> F
+//!     W["riff host join"] -- "one watch for the wave" --> F
 //!     D["riff daemon:<br/>a look each minute"] -- "read" --> F
 //!     D -- "gh, git" --> G["the forge"]
 //!     D -- "one message at the end" --> L["the lead"]
@@ -25,7 +25,7 @@
 //! | `riff release cut` | [`Op::Pull`] | the pull request of the next version merges or closes; a failed Gate gets a message, and the watch stays (01M76SBPGH2218K3ED569T051D) |
 //! | `riff release test --host HOST` | [`Op::Test`] | the real-session test passes or fails |
 //! | `riff release cut`, `approve`, `retry`, `rollback` | [`Op::Deploy`] | the job `Deploy` of the tag fails, or it passes and the job `Check the deploy` sets its status or ends (see "A deploy" below) |
-//! | `riff join` | [`Op::Wave`] | never: it posts each time the last open item of the current wave closes |
+//! | `riff host join` | [`Op::Wave`] | never: it posts each time the last open item of the current wave closes |
 //! | the end of the watch of a deploy | [`Op::Check`] | the check of the lead ends the release, or another deploy follows (see "The check" below) |
 //!
 //! The same watch is one watch: a second command that registers the watch

@@ -5,14 +5,14 @@
 //!
 //! The riff daemon runs the look of the repository of each wave that it
 //! runs, once each [`LOOK_EVERY`] (each 5 minutes while the wave has no
-//! session and the look told nothing, #1549), until `riff leave`
+//! session and the look told nothing, #1549), until `riff host leave`
 //! (`crate::wave::watch`, 01M5QVH3MAEPPJN9PPVDX6N2EY). It reads the
 //! forge with the `gh` of the person, and posts as the person: to the
 //! lead, or to the session that holds an item.
 //!
 //! ```mermaid
 //! flowchart LR
-//!     W["riff join"] --> D["riff daemon"]
+//!     W["riff host join"] --> D["riff daemon"]
 //!     D --> A["the loop of the wave:<br/>the work"]
 //!     D --> B["the look, each minute"]
 //!     B --> G["gh: the pull requests,<br/>the full check of main"]

@@ -158,7 +158,7 @@ pub fn line(fact: &BotFact, facts: &Facts<'_>) -> Result<Line, String> {
         BotFact::LeadNoMain => format!(
             "riff cannot start {lead} again on the new riff: the daemon runs no wave of {repo}, \
              and the clone of the lead links to no main clone. riff has no step that gives the \
-             main clone and starts no session. Run riff join in a clone of {repo}. The lead \
+             main clone and starts no session. Run riff host join in a clone of {repo}. The lead \
              still runs the old riff. riff tries again every minute."
         ),
         BotFact::LeadFailed => format!(
@@ -400,7 +400,11 @@ mod tests {
                 .body
                 .contains("riff has no step that gives the main clone")
         );
-        assert!(no_main.body.contains("Run riff join in a clone of o/r"));
+        assert!(
+            no_main
+                .body
+                .contains("Run riff host join in a clone of o/r")
+        );
         let lost = line(&BotFact::LeadNoNetwork, &facts(&me, None)).unwrap();
         assert!(
             lost.body

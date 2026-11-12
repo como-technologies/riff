@@ -37,6 +37,28 @@ pub(crate) async fn serve(fake: &FakeGitHub, keys: At) -> common::Signed {
     .await
 }
 
+/// The token of `gh` of `mike` in [`enroll`]: on the fake GitHub, an
+/// admin of each repository that it enrolls.
+#[cfg(target_os = "linux")]
+const PROJECT_ADMIN: &str = "gho_admin_of_the_projects";
+
+/// Enrolls `repo` (`OWNER/REPO`) as a project of the riff `server`, whose
+/// GitHub is `fake`, with the hosts `hosts`: none allows each host. The
+/// person is `mike`, an admin of the riff and of `repo` on the fake
+/// (01M76SG8GBXFYXKWMQHPCNEXBN). A wave and a lead run only for a project
+/// (#1863). Only the tests for Linux use it.
+#[cfg(target_os = "linux")]
+pub(crate) async fn enroll(server: &common::Signed, fake: &FakeGitHub, repo: &str, hosts: &[&str]) {
+    fake.seen().person(PROJECT_ADMIN, repo, true);
+    let me = "riff://mike@thelio".parse().unwrap();
+    let hosts: Vec<String> = hosts.iter().map(|h| (*h).to_owned()).collect();
+    server
+        .api("mike", None)
+        .project_init(&me, &repo.parse().unwrap(), &hosts, PROJECT_ADMIN)
+        .await
+        .unwrap();
+}
+
 /// A folder with both Apps in the file of the keys.
 pub(crate) fn keys_dir() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();

@@ -14,20 +14,20 @@
 //! ```mermaid
 //! stateDiagram-v2
 //!     [*] --> none
-//!     none --> workers: riff join
-//!     workers --> none: riff leave
+//!     none --> workers: riff host join
+//!     workers --> none: riff host leave
 //!     none --> lead: a lead starts
 //!     lead --> none: the lead ends
-//!     lead --> both: riff join
-//!     both --> lead: riff leave
+//!     lead --> both: riff host join
+//!     both --> lead: riff host leave
 //!     workers --> both: a lead starts
 //!     both --> workers: the lead ends
 //! ```
 //!
 //! | Step | Parts |
 //! |---|---|
-//! | `riff join` | the host gets `workers`, and the daemon serves the repository |
-//! | `riff leave` | the host loses `workers`: the daemon starts no new session there |
+//! | `riff host join` | the host gets `workers`, and the daemon serves the repository |
+//! | `riff host leave` | the host loses `workers`: the daemon starts no new session there |
 //! | A lead starts on the host | the host gets `lead` |
 //! | The lead ends | the host loses `lead` |
 //! | The first start of the daemon on this riff | a repository with a wave in [`crate::wave::WAVES_FILE`] gets `workers`, and a repository with a lead gets `lead` ([`first_start`]) |
@@ -36,7 +36,7 @@
 //! serving it, and removes the main clone that it made for it
 //! ([`crate::daemon::Daemon::retire`]).
 //!
-//! After `riff leave`, the sessions that run go on to their end. The
+//! After `riff host leave`, the sessions that run go on to their end. The
 //! daemon adds each repository where the host gives no workers and still
 //! runs sessions to its status and its facts, with those sessions
 //! ([`leaving`], 01M6WJYQJ58MHQF1XPXXZW2ET6). At the look after its last
@@ -46,7 +46,7 @@
 //!
 //! ```mermaid
 //! stateDiagram-v2
-//!     workers --> leaving: riff leave, 3 sessions run
+//!     workers --> leaving: riff host leave, 3 sessions run
 //!     leaving --> leaving: a session ends, 2 run
 //!     leaving --> left: the last session ends
 //!     left --> [*]: the next look
@@ -177,7 +177,7 @@ pub fn shown(dir: &Path) -> Vec<RepoParts> {
 /// sessions (01M6WJYQJ58MHQF1XPXXZW2ET6): each repository of `sessions`
 /// where `parts` gives the host no part workers, in order, with the
 /// sessions that still run there. `sessions` holds the repository and the
-/// name of the container of each live session but the lead. A `riff
+/// name of the container of each live session but the lead. A `riff host
 /// leave` makes them: the sessions go on to their end.
 ///
 /// ```

@@ -5,7 +5,7 @@
 //!
 //! The daemon of a host has a session of its own on riff-server for each
 //! repository that it serves, as `riff workers host` has
-//! (01M579Z9JE6HY9HG3PWR1RR0RQ). It serves a repository after `riff join`
+//! (01M579Z9JE6HY9HG3PWR1RR0RQ). It serves a repository after `riff host join`
 //! on that host, and while the host has a part in it
 //! ([`super::parts`], #1643). It keeps
 //! each one in [`SERVED_FILE`] in its folder, with its session ID, so a
@@ -14,7 +14,7 @@
 //!
 //! `riff daemon status`, `riff daemon limit`, `riff daemon cache`, `riff
 //! daemon events`, `riff daemon sweep`, `riff daemon end`, `riff daemon
-//! restart`, `riff join` and `riff leave` take `--host HOST`
+//! restart`, `riff host join` and `riff host leave` take `--host HOST`
 //! (01M579Z9MPS86MX7890T6HV18S). With it, riff posts the [`Request`] as
 //! a direct message to the session of the daemon of HOST ([`ask`]).
 //! The daemon judges it ([`judge`]), does it through its own control
@@ -79,7 +79,7 @@
 //! message of a session that is not the lead, for example a worker.
 //!
 //! A host that does not serve a repository has no session of its own for
-//! it. `riff join --host HOST` for such a repository goes to the session
+//! it. `riff host join --host HOST` for such a repository goes to the session
 //! of another daemon of the same user on HOST ([`route`]), as
 //! [`Request::Join`]. That daemon clones the repository with the `gh` of
 //! the user, into [`CLONES`] in its folder, serves it, and runs its wave
@@ -87,23 +87,27 @@
 //! when it serves the repository already, so a second request changes
 //! nothing. The lead of the repository of the request acts on it, also
 //! when the daemon serves another repository ([`judge`],
-//! 01M5SN5644YVEPF3D452ZA2JVD).
+//! 01M5SN5644YVEPF3D452ZA2JVD). First the daemon asks riff-server whether
+//! the repository is a project that allows its host, and clones nothing
+//! when it is not ([`crate::project::wave_allowed`],
+//! 01M77FHMPV0NQ407TKC2F7J41Q).
 //!
 //! ```mermaid
 //! sequenceDiagram
 //!     participant L as lead of o/r on pangolin
 //!     participant S as riff-server
 //!     participant D as riff daemon on thelio (serves o/other)
-//!     L->>S: riff join --host thelio
+//!     L->>S: riff host join --host thelio
 //!     Note over L: no daemon of o/r on thelio: route to the daemon of o/other
 //!     S->>D: wake: "join o/r"
+//!     D->>S: the projects: o/r allows thelio
 //!     D->>D: gh repo clone o/r into clones/o/r
 //!     D->>D: serve o/r, get the part workers, run its wave
 //!     D->>S: a direct note to the lead: "done"
 //!     S-->>L: riff prints the reply
 //! ```
 //!
-//! `riff leave --host HOST` goes to the daemon that serves the repository.
+//! `riff host leave --host HOST` goes to the daemon that serves the repository.
 //! It takes the part workers from the host. When the host has no other
 //! part there, the daemon stops serving the repository, and removes the
 //! main clone that it made ([`remove_clone`], [`super::Daemon::retire`]).
@@ -479,14 +483,14 @@ pub enum Request {
     End(String),
     /// `riff daemon restart`.
     Restart,
-    /// `riff join`: the host gives workers to `repo`. The daemon serves
+    /// `riff host join`: the host gives workers to `repo`. The daemon serves
     /// it, and clones it first when it has no main clone of it (#1430,
     /// #1643), then runs its wave.
     Join {
         /// The repository, as `OWNER/REPO`.
         repo: String,
     },
-    /// `riff leave`: the host gives no more workers to `repo`, and with
+    /// `riff host leave`: the host gives no more workers to `repo`, and with
     /// `now` ends its sessions (#1643).
     Leave {
         /// The repository, as `OWNER/REPO`.
@@ -944,7 +948,7 @@ pub fn leave_request(repo: &str, now: bool) -> Result<Request> {
 
 /// The session that gets `request` on `host`, and the request to send
 /// (#1430). The daemon of `user` on `host` that serves `repo` gets
-/// `request` as it is. For `riff join`, when no daemon there serves
+/// `request` as it is. For `riff host join`, when no daemon there serves
 /// `repo`, another daemon of `user` on `host` gets the same
 /// [`Request::Join`]: it serves `repo` and clones it first. Else none.
 ///
@@ -1206,13 +1210,16 @@ async fn wave_run(dir: &Path, wave: &Wave) -> Result<String> {
     Ok(lines.join("\n"))
 }
 
-/// `riff join --host` for `repo` (#1430, #1643): the daemon in the folder
+/// `riff host join --host` for `repo` (#1430, #1643): the daemon in the folder
 /// `dir` serves `repo` and runs its wave. A repository that it serves
 /// keeps its main clone. Else the daemon makes a main clone with
 /// [`clone_main`] and serves that one, with the riff-server and the host
 /// name of `served`: the request came through that riff-server.
 async fn join(dir: &Path, served: &Served, repo: &str) -> Result<String> {
     let mut lines = Vec::new();
+    // No clone for a repository that may run no wave here (#1863).
+    let place = crate::identity::place_from_text(&format!("{}/{repo}", served.wave.host))?;
+    crate::project::wave_allowed(&place, &served.wave.server).await?;
     let known = read_served(dir)?.remove(repo);
     let wave = match known {
         Some(known) => known.wave,

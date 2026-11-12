@@ -5376,13 +5376,13 @@ pub fn auto_update_failed(host: &str, old: &str, new: &str, error: &str, tried: 
 /// assert_eq!(
 ///     riff::text::no_lead_place("http://riff"),
 ///     "the update has no repository, and the daemon of this machine serves \
-///      no repository on http://riff: run riff join in a main clone"
+///      no repository on http://riff: run riff host join in a main clone"
 /// );
 /// ```
 pub fn no_lead_place(server: &str) -> String {
     format!(
         "the update has no repository, and the daemon of this machine serves \
-         no repository on {server}: run riff join in a main clone"
+         no repository on {server}: run riff host join in a main clone"
     )
 }
 
@@ -6974,7 +6974,7 @@ pub const RUN_IMAGE_ON_HOST: &str = "riff run --image works only on the host. In
 pub fn run_no_wave(repo: &str) -> String {
     format!(
         "The riff daemon does not serve {repo} yet, so it has no clone to run an item in. Run \
-         riff join in the clone of {repo} on the host."
+         riff host join in the clone of {repo} on the host."
     )
 }
 
@@ -11306,8 +11306,8 @@ pub fn daemon_refused(
     }
 }
 
-/// Who can use `--host` on the daemon commands, `riff join` and `riff
-/// leave`: the same words in the help of each flag and
+/// Who can use `--host` on the daemon commands, `riff host join` and `riff
+/// host leave`: the same words in the help of each flag and
 /// in the book (01M588QXAGD3B8BTK7N17M29WM).
 pub const DAEMON_HOST_WHO: &str = "Only you in a terminal and your lead in this repository can \
 use --host. The daemon of HOST refuses each other session, for example a worker.";
@@ -11319,20 +11319,20 @@ use --host. The daemon of HOST refuses each other session, for example a worker.
 /// ```
 /// assert_eq!(
 ///     riff::text::no_daemon_host("thelio", "o/r"),
-///     "riff: no daemon of your user on thelio serves o/r. To make it serve o/r, run riff join \
-///      --host thelio. When no daemon of yours runs on thelio, run riff join in a clone of o/r \
+///     "riff: no daemon of your user on thelio serves o/r. To make it serve o/r, run riff host join \
+///      --host thelio. When no daemon of yours runs on thelio, run riff host join in a clone of o/r \
 ///      on thelio."
 /// );
 /// ```
 pub fn no_daemon_host(host: &str, repo: &str) -> String {
     format!(
-        "riff: no daemon of your user on {host} serves {repo}. To make it serve {repo}, run riff \
-         join --host {host}. When no daemon of yours runs on {host}, run riff join in a clone of \
+        "riff: no daemon of your user on {host} serves {repo}. To make it serve {repo}, run riff host \
+         join --host {host}. When no daemon of yours runs on {host}, run riff host join in a clone of \
          {repo} on {host}."
     )
 }
 
-/// The error of `riff leave --host` when no daemon of the user serves the
+/// The error of `riff host leave --host` when no daemon of the user serves the
 /// repository `repo` on `host`: the host gives it no workers (#1643).
 ///
 /// ```
@@ -11379,7 +11379,7 @@ pub fn daemon_cloned(repo: &str, host: &str, main: &std::path::Path) -> String {
     )
 }
 
-/// What `riff join` in a lead container says: the container has no
+/// What `riff host join` in a lead container says: the container has no
 /// daemon of its own, and the daemon of another host runs the wave
 /// (#1430, 01M5SN566ZH5ZQ52NYT24WYA4P). `hosts` are the hosts of the
 /// user with a daemon that does not serve `repo`.
@@ -11389,42 +11389,42 @@ pub fn daemon_cloned(repo: &str, host: &str, main: &std::path::Path) -> String {
 /// assert_eq!(
 ///     riff::text::join_in_container("o/r", &hosts),
 ///     "riff: a lead container gives no workers itself. Your hosts that give no workers to \
-///      o/r: pangolin, thelio. To add one, run riff join --host pangolin."
+///      o/r: pangolin, thelio. To add one, run riff host join --host pangolin."
 /// );
 /// assert_eq!(
 ///     riff::text::join_in_container("o/r", &[]),
 ///     "riff: a lead container gives no workers itself. Each host of yours with a daemon serves \
-///      o/r. To give workers on one, run riff join --host HOST."
+///      o/r. To give workers on one, run riff host join --host HOST."
 /// );
 /// ```
 pub fn join_in_container(repo: &str, hosts: &[String]) -> String {
     match hosts.first() {
         Some(first) => format!(
             "riff: a lead container gives no workers itself. Your hosts that give no workers to \
-             {repo}: {}. To add one, run riff join --host {first}.",
+             {repo}: {}. To add one, run riff host join --host {first}.",
             hosts.join(", ")
         ),
         None => format!(
             "riff: a lead container gives no workers itself. Each host of yours with a daemon \
-             serves {repo}. To give workers on one, run riff join --host HOST."
+             serves {repo}. To give workers on one, run riff host join --host HOST."
         ),
     }
 }
 
-/// What `riff leave` in a lead container says: the container has no
+/// What `riff host leave` in a lead container says: the container has no
 /// daemon of its own (#1643).
 ///
 /// ```
 /// assert_eq!(
 ///     riff::text::leave_in_container("o/r"),
 ///     "riff: a lead container gives no workers itself, so it cannot leave o/r. To stop the \
-///      workers of a host, run riff leave --host HOST."
+///      workers of a host, run riff host leave --host HOST."
 /// );
 /// ```
 pub fn leave_in_container(repo: &str) -> String {
     format!(
         "riff: a lead container gives no workers itself, so it cannot leave {repo}. To stop the \
-         workers of a host, run riff leave --host HOST."
+         workers of a host, run riff host leave --host HOST."
     )
 }
 
@@ -11637,7 +11637,7 @@ pub fn wave_runs(repo: &str) -> String {
     format!("The riff daemon runs the wave of {repo}.")
 }
 
-/// `riff leave`: the host gives no more workers to `repo` (#1643).
+/// `riff host leave`: the host gives no more workers to `repo` (#1643).
 ///
 /// ```
 /// assert_eq!(
@@ -11651,28 +11651,28 @@ pub fn leave_stops(repo: &str) -> String {
     )
 }
 
-/// `riff leave` for a host that gives no workers to `repo`, and has no
+/// `riff host leave` for a host that gives no workers to `repo`, and has no
 /// session to end (#1643).
 ///
 /// ```
 /// assert_eq!(
 ///     riff::text::leave_not_joined("o/r"),
-///     "This host gives no workers to o/r. To give them, run riff join in a clone of o/r."
+///     "This host gives no workers to o/r. To give them, run riff host join in a clone of o/r."
 /// );
 /// ```
 pub fn leave_not_joined(repo: &str) -> String {
     format!(
-        "This host gives no workers to {repo}. To give them, run riff join in a clone of {repo}."
+        "This host gives no workers to {repo}. To give them, run riff host join in a clone of {repo}."
     )
 }
 
-/// `riff leave` with `runs` sessions of `repo` that go on to their end
+/// `riff host leave` with `runs` sessions of `repo` that go on to their end
 /// (#1643).
 ///
 /// ```
 /// assert_eq!(
 ///     riff::text::leave_goes_on("o/r", 2),
-///     "2 sessions of o/r go on to their end. To end them now, run riff leave --now."
+///     "2 sessions of o/r go on to their end. To end them now, run riff host leave --now."
 /// );
 /// assert!(riff::text::leave_goes_on("o/r", 1).starts_with("1 session of o/r goes on"));
 /// ```
@@ -11683,7 +11683,7 @@ pub fn leave_goes_on(repo: &str, runs: usize) -> String {
         ("sessions", "go")
     };
     format!(
-        "{runs} {noun} of {repo} {verb} on to their end. To end them now, run riff leave --now."
+        "{runs} {noun} of {repo} {verb} on to their end. To end them now, run riff host leave --now."
     )
 }
 
@@ -11822,6 +11822,70 @@ pub fn wave_no_lead(repo: &str) -> String {
 /// The word of a wave with no free work.
 pub const WAVE_NO_WORK: &str = "no free work now";
 
+/// The word of a wave of a repository that is no project of the riff
+/// (#1863).
+pub const WAVE_NO_PROJECT: &str =
+    "starts nothing: the repository is no project of the riff. See riff project list";
+
+/// The word of a wave on the host `host`, which the project does not
+/// allow (#1863).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::wave_host_not_allowed("thelio"),
+///     "starts nothing: the project does not allow the host thelio. See riff project list"
+/// );
+/// ```
+pub fn wave_host_not_allowed(host: &str) -> String {
+    format!("starts nothing: the project does not allow the host {host}. See riff project list")
+}
+
+/// Why `repo` gets no wave and no lead: it is no project of the riff
+/// (#1863).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::no_project("o/r"),
+///     "o/r is no project of the riff, so it gets no wave and no lead. A session there has \
+///      the chat and the messages only. To make it a project, an admin of the riff who is an \
+///      admin of o/r on GitHub runs riff project init in a clone of o/r."
+/// );
+/// ```
+pub fn no_project(repo: &str) -> String {
+    format!(
+        "{repo} is no project of the riff, so it gets no wave and no lead. A session there has \
+         the chat and the messages only. To make it a project, an admin of the riff who is an \
+         admin of {repo} on GitHub runs riff project init in a clone of {repo}."
+    )
+}
+
+/// Why the host `host` runs no wave of the project `repo`, which allows
+/// only `hosts` (#1863). The fix names each host of the project and
+/// `host`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::host_not_allowed("o/r", "thelio", &["a".into(), "b".into()]),
+///     "The project o/r does not allow the host thelio: its hosts are a, b. To allow it, an \
+///      admin of the riff who is an admin of o/r on GitHub runs riff project init --host a \
+///      --host b --host thelio in a clone of o/r."
+/// );
+/// ```
+pub fn host_not_allowed(repo: &str, host: &str, hosts: &[String]) -> String {
+    let flags: String = hosts
+        .iter()
+        .map(String::as_str)
+        .chain([host])
+        .map(|h| format!(" --host {h}"))
+        .collect();
+    format!(
+        "The project {repo} does not allow the host {host}: its hosts are {}. To allow it, an \
+         admin of the riff who is an admin of {repo} on GitHub runs riff project init{flags} in \
+         a clone of {repo}.",
+        hosts.join(", ")
+    )
+}
+
 /// The reason of the last end of an item whose start failed with `error`.
 pub fn wave_no_start(error: &str) -> String {
     format!("the session did not start: {error}")
@@ -11845,7 +11909,7 @@ pub fn wave_no_look(error: &str) -> String {
 /// does not know ([`crate::watches::wave_of`]).
 pub fn watch_no_wave(repo: &str) -> String {
     format!(
-        "The riff daemon does not serve {repo} yet, so it cannot watch there. Run riff join in \
+        "The riff daemon does not serve {repo} yet, so it cannot watch there. Run riff host join in \
          the clone of {repo} on the host."
     )
 }
@@ -12157,7 +12221,7 @@ pub fn wave_host_fault(repo: &str, item: &str, why: &str) -> String {
 ///
 /// let text = riff::text::wave_spent("verify-issue-1", Some("988cb7b1a2"), 3, "exit code 0, and no PASS or FAIL");
 /// assert!(text.starts_with("The riff daemon started verify-issue-1 3 times for the head 988cb7b of its pull request"));
-/// assert!(text.contains("It starts no more session for this head until riff join again."));
+/// assert!(text.contains("It starts no more session for this head until riff host join again."));
 /// assert!(text.contains("A new head starts a new count."));
 /// assert!(text.ends_with("Read why: riff session why verify-issue-1"));
 /// ```
@@ -12165,13 +12229,13 @@ pub fn wave_spent(item: &str, head: Option<&str>, starts: u32, reason: &str) -> 
     match head {
         None => format!(
             "The riff daemon started {item} {starts} times for the wave, and it is still free \
-             work. The last session ended: {reason}. It starts no more session for it until riff \
+             work. The last session ended: {reason}. It starts no more session for it until riff host \
              join again. Read why: riff session why {item}"
         ),
         Some(head) => format!(
             "The riff daemon started {item} {starts} times for the head {} of its pull request, \
              and it is still free work. The last session ended: {reason}. It starts no more \
-             session for this head until riff join again. A new head starts a new count. \
+             session for this head until riff host join again. A new head starts a new count. \
              Read why: riff session why {item}",
             head.get(..7).unwrap_or(head)
         ),
@@ -12629,7 +12693,7 @@ pub const WAVE_BASE_UNREAD: &str = "the default branch";
 ///     "issue-12: the rebase session of the wave ended with no push (session 9f8e7d6c). PR #40, \
 ///      branch worktree-issue-12, still has the head commit 1a2b3c4 with the conflict with \
 ///      main. The riff daemon sends no verify request, and the wave starts no second session \
-///      for this commit. Give the item to a session to rebase, or run riff join to start \
+///      for this commit. Give the item to a session to rebase, or run riff host join to start \
 ///      the rebase again. The item is free."
 /// );
 /// // The default branch did not read.
@@ -12651,7 +12715,7 @@ pub fn wave_not_rebased(
         "{item}: the rebase session of the wave ended with no push (session {session}). PR \
          #{number}, branch {branch}, still has the head commit {commit} with the conflict with \
          {base}. The riff daemon sends no verify request, and the wave starts no second session \
-         for this commit. Give the item to a session to rebase, or run riff join to start \
+         for this commit. Give the item to a session to rebase, or run riff host join to start \
          the rebase again. The item is free."
     )
 }
@@ -12963,7 +13027,7 @@ pub fn wave_stuck(
 ///     "issue-12: the session of the wave for the failed checks of PR #40 ended with no push \
 ///      (session 9f8e7d6c). PR #40, branch worktree-issue-12, still has the head commit 1a2b3c4, \
 ///      and the check Gate still fails. The riff daemon sends no verify request, and the wave \
-///      starts no second session for this commit. Give the item to a session to fix, or run riff \
+///      starts no second session for this commit. Give the item to a session to fix, or run riff host \
 ///      join to start the fix again. The item is free."
 /// );
 /// ```
@@ -12983,7 +13047,7 @@ pub fn wave_checks_not_fixed(
          push (session {session}). PR #{number}, branch {branch}, still has the head commit \
          {commit}, and {names} still {fail}. The riff daemon sends no verify request, and the \
          wave starts no second session for this commit. Give the item to a session to fix, or \
-         run riff join to start the fix again. The item is free."
+         run riff host join to start the fix again. The item is free."
     )
 }
 
@@ -13014,7 +13078,7 @@ pub fn wave_checks_rerun(
          check fails now: the job runs again. The riff daemon sends \
          no verify request: the wave starts a verify of this commit when it has none. The pull \
          request merges when its checks and its verify pass. When a check fails again, the wave starts no second session for this \
-         commit, and riff top shows stuck for the item. Run riff join to start the fix again."
+         commit, and riff top shows stuck for the item. Run riff host join to start the fix again."
     )
 }
 
@@ -13362,7 +13426,7 @@ pub fn swept_forge_failed(folder: &Path, error: &str) -> String {
 pub const SWEPT_NONE: &str = "riff removed no folder: the session of each folder runs, or its \
                               work is not over.";
 
-/// `riff join`: the daemon runs the wave.
+/// `riff host join`: the daemon runs the wave.
 pub fn wave_asked(repo: &str) -> String {
     format!(
         "The riff daemon runs the wave of {repo}. It starts a session for each free item and \
@@ -13919,11 +13983,11 @@ pub fn takeover_session_ended(name: &str) -> String {
 /// ```
 /// assert_eq!(
 ///     riff::text::lead_gives_no_workers("o/r"),
-///     "This host gives no workers to o/r. To give workers, run riff join."
+///     "This host gives no workers to o/r. To give workers, run riff host join."
 /// );
 /// ```
 pub fn lead_gives_no_workers(repo: &str) -> String {
-    format!("This host gives no workers to {repo}. To give workers, run riff join.")
+    format!("This host gives no workers to {repo}. To give workers, run riff host join.")
 }
 
 /// `riff lead start`: the lead of the repository runs already.
@@ -14135,12 +14199,12 @@ pub fn daemon_stops_lead(name: &str) -> String {
 /// let text = riff::text::lead_again_no_main("o/r", std::path::Path::new("/d/leads/o-r/clone"));
 /// assert!(text.starts_with("the daemon runs no wave of o/r"));
 /// assert!(text.contains("the clone of the lead at /d/leads/o-r/clone links to no main clone"));
-/// assert!(text.ends_with("Run riff join in a clone of o/r"));
+/// assert!(text.ends_with("Run riff host join in a clone of o/r"));
 /// ```
 pub fn lead_again_no_main(repo: &str, clone: &std::path::Path) -> String {
     format!(
         "the daemon runs no wave of {repo}, and the clone of the lead at {} links to no main \
-         clone. riff has no step that gives the main clone and starts no session. Run riff \
+         clone. riff has no step that gives the main clone and starts no session. Run riff host \
          join in a clone of {repo}",
         clone.display()
     )
@@ -14448,12 +14512,12 @@ pub fn ask_end_there(name: &str, host: &str) -> String {
 /// ```
 /// assert_eq!(
 ///     riff::text::ask_leave_there("pangolin", "o/r"),
-///     "pangolin stops taking work for o/r (riff leave):"
+///     "pangolin stops taking work for o/r (riff host leave):"
 /// );
 /// ```
 pub fn ask_leave_there(host: &str, repo: &str) -> String {
     format!(
-        "{} stops taking work for {} (riff leave):",
+        "{} stops taking work for {} (riff host leave):",
         safe(host),
         safe(repo)
     )

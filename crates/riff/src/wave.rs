@@ -7,15 +7,23 @@
 //!
 //! # Design
 //!
-//! `riff join` in a clone asks the daemon to run the wave of that
+//! `riff host join` in a clone asks the daemon to run the wave of that
 //! repository ([`Wave`]): the host gets the part workers
 //! ([`crate::daemon::parts`], #1643). The daemon keeps each wave in
 //! [`WAVES_FILE`] in its folder, and starts its loop again after its own
 //! restart and after an update, while the host has the part workers.
-//! `riff leave` takes the part workers and ends the loop: the daemon
+//! `riff host leave` takes the part workers and ends the loop: the daemon
 //! starts no new session there, and the sessions that run go on, or with
 //! `--now` it ends them. The rollout of a lead starts no wave on a host
 //! with no part workers ([`crate::rollout::WaveState::NoWorkers`]).
+//!
+//! A wave runs only for a project of the riff that allows the host
+//! ([`crate::project::wave_refused`], 01M77FHMPV0NQ407TKC2F7J41Q,
+//! 01M77FHMTD5Y5FXRD903S2ZGCX). `riff host join` refuses first, before the
+//! image ([`ask`]). The loop reads the projects before each look
+//! ([`World::projects`]): when they refuse the host, the look reads
+//! nothing, the wave starts no new session, and its word says why
+//! ([`crate::project::Refused::word`]). The sessions that run go on.
 //!
 //! Each item has one session: it starts, does the item and ends
 //! (01M4Z60B7NW4GHKGCYZZDG26R6). A verify is an item too: a new session
@@ -278,7 +286,7 @@
 //! - an item that started [`STARTS`] times in this run of the wave. The
 //!   lead gets one message for it. A start whose claim riff-server
 //!   refused for a pause does not count (01M558EYCXPFW8CJV3XJ7HK3NR).
-//!   `riff join` on the wave clears the starts
+//!   `riff host join` on the wave clears the starts
 //!   (01M57A7A48A70Y7PTD95A3MBYC). The starts of a verify are for its head
 //!   commit ([`Work::key`], 01M6QQ7H2B88AT3KS8NGM3DKCZ): a new head starts
 //!   a new count, and a verify whose PASS or FAIL riff put on the pull
@@ -409,7 +417,7 @@
 //! Each head commit with a conflict starts one session in a run of the
 //! wave: [`Work::key`] names the rebase by the item and the head. A pause
 //! or a fault of the host takes the start back, as for each item.
-//! `riff join` clears the starts, so a person can start the rebase
+//! `riff host join` clears the starts, so a person can start the rebase
 //! of the same head again. When the session ends with the head that had
 //! the conflict, the lead gets a message in place of the verify request
 //! (01M57FJ3Z8AFDY9G0KTAYZJESY).
@@ -424,11 +432,11 @@
 //!
 //! ```mermaid
 //! flowchart LR
-//!     S["riff join"] --> L["the loop: the work"]
+//!     S["riff host join"] --> L["the loop: the work"]
 //!     S --> W["the look, each minute"]
 //!     W --> P["a pull request that stops:<br/>a message to its holder or the lead"]
 //!     W --> M["the full check of main:<br/>a message, the fix item, a note"]
-//!     X["riff leave"] --> E["the loop and the look end"]
+//!     X["riff host leave"] --> E["the loop and the look end"]
 //! ```
 //!
 //! # A pull request that cannot merge
@@ -544,7 +552,7 @@
 //! by the item and the head ([`Work::key`]). So a new head is a new
 //! state. A message is not repeated while the wave runs. A build of a
 //! failed check runs one time for a head in a run of the wave
-//! ([`CHECKS`]), and `riff join` clears the starts. When a pull
+//! ([`CHECKS`]), and `riff host join` clears the starts. When a pull
 //! request has a conflict and a failed check, the rebase comes first:
 //! the new head has new checks.
 //!
@@ -658,8 +666,8 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 use riff_core::name::{Place, SessionUri, ThreadName};
 use riff_core::wire::{
-    BotFact, GitHubRenew, HoldInfo, Kind, PullState, RiffReply, RiffState, StartReason,
-    WORKER_ALIVE_EVERY, Wake,
+    BotFact, GitHubRenew, HoldInfo, Kind, ProjectFacts, PullState, RiffReply, RiffState,
+    StartReason, WORKER_ALIVE_EVERY, Wake,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Notify, mpsc};
@@ -675,8 +683,8 @@ use crate::run::{self, Facts};
 use crate::runtime::Runtime;
 use crate::session_setup::Setup;
 use crate::{
-    changes, ghcalls, hooks, identity, kept, look, order, pr, repo_setup, rollout, session_image,
-    text, usage,
+    changes, ghcalls, hooks, identity, kept, look, order, pr, project, repo_setup, rollout,
+    session_image, text, usage,
 };
 use riff_client::api::{self, Api};
 use riff_client::link::STREAM_RETRY;
@@ -799,7 +807,7 @@ pub fn write_waves(dir: &Path, waves: &BTreeMap<String, Wave>) -> Result<()> {
     std::fs::rename(&tmp, &path).with_context(|| format!("cannot write {}", path.display()))
 }
 
-/// `riff join`: asks the daemon in the folder `dir` to serve the
+/// `riff host join`: asks the daemon in the folder `dir` to serve the
 /// repository of the place `here`, to give the host the part workers, and
 /// to run the current wave, on the riff-server `server`
 /// (01M4ZV3B6J89KJQ0F14YWTZMJQ, #1643).
@@ -812,6 +820,10 @@ pub async fn ask_join(dir: &Path, here: &Place, server: &str) -> Result<()> {
 /// [`ask_join`] with each line of the steps to `show`, for a caller with
 /// no stdout of its own, as `riff mcp` (01M53NGVE839TRH7XB7CDPQNZE). It
 /// gives the repository, as `OWNER/REPO`.
+///
+/// First the repository must be a project of the riff that allows the
+/// host ([`crate::project::wave_allowed`], #1863). Else riff asks the
+/// daemon nothing, and fails with the fix.
 ///
 /// Before the ask of the wave, the daemon must have the session image
 /// that the repository pins: podman runs, and the image is on the
@@ -837,6 +849,8 @@ pub async fn ask_with(
     if here.default_thread().is_none() {
         bail!("{}", text::RUN_NO_REPO);
     }
+    // A wave only for a project that allows the host (#1863).
+    project::wave_allowed(here, server).await?;
     let (main, image, lines) = blocking(move || {
         let (main, _) = run::main_clone(&work)?;
         let mut lines = Vec::new();
@@ -900,7 +914,7 @@ pub fn gives_workers(status: &crate::daemon::Status, repo: &str) -> bool {
         .any(|p| p.repo == repo && p.parts.workers)
 }
 
-/// `riff leave`: asks the daemon in the folder `dir` to start no new
+/// `riff host leave`: asks the daemon in the folder `dir` to start no new
 /// session for the repository of the place `here`. With `now`, it ends the
 /// sessions that run, and frees their items (#1643).
 pub async fn ask_leave(dir: &Path, here: &Place, now: bool) -> Result<()> {
@@ -1652,6 +1666,12 @@ pub trait World: Send + Sync {
     /// come, the look reads only that.
     fn look<'a>(&'a self, wave: &'a Wave, told: Arc<hooks::Told>) -> BoxFuture<'a, Result<Look>>;
 
+    /// Each project of the riff of the wave now
+    /// (01M76SG8JVHTKY6N62FQG7XAE6). The loop reads them before each look:
+    /// a wave runs only for a project that allows its host
+    /// ([`crate::project::wave_refused`], #1863).
+    fn projects<'a>(&'a self, wave: &'a Wave) -> BoxFuture<'a, Result<Vec<ProjectFacts>>>;
+
     /// The session image of the repository of the wave, with its env and
     /// volumes: the merged pin of its main clone
     /// ([`session_image::merged_config`]).
@@ -2157,13 +2177,27 @@ pub(crate) async fn run<R: Runtime + 'static>(
         hooks::log_dropped(&events);
         let looked = tokio::time::Instant::now();
         let mut wait = LOOK_EVERY;
-        let next = match world.look(&wave, events.clone()).await {
-            Ok(mut look) => {
+        // A wave only for a project that allows the host: else the look
+        // reads nothing, and the word says why (#1863).
+        let seen = match world.projects(&wave).await {
+            Ok(projects) => match project::wave_refused(&projects, &wave.repo, &wave.host) {
+                Some(refused) => Ok(Err(refused)),
+                None => world.look(&wave, events.clone()).await.map(Ok),
+            },
+            Err(e) => Err(e),
+        };
+        let next = match seen {
+            Ok(Err(refused)) => {
+                say(refused.word());
+                last = None;
+                None
+            }
+            Ok(Ok(mut look)) => {
                 // A head whose verify passed gets no new verify (#1960).
                 daemon.drop_passed(&wave.repo, &mut look);
                 say_merged(&*world, &wave, &look, &mut said).await;
                 let spent = spent(&look, &running(&daemon, &wave, &taken), &lock(&starts));
-                // `riff join` cleared the starts of these items.
+                // `riff host join` cleared the starts of these items.
                 told.retain(|key| lock(&starts).get(key).is_some_and(|n| *n >= STARTS));
                 for Spent { item, key, head } in spent {
                     if told.insert(key) {
@@ -2352,7 +2386,7 @@ fn has_session<R: Runtime + 'static>(daemon: &Daemon<R>, wave: &Wave) -> bool {
 }
 
 /// The starts of each item in one run of a wave, shared by its loop and
-/// its jobs. `riff join` on a wave that runs clears them
+/// its jobs. `riff host join` on a wave that runs clears them
 /// (01M57A7A48A70Y7PTD95A3MBYC).
 pub(crate) type Starts = Arc<Mutex<BTreeMap<String, u32>>>;
 
@@ -4063,6 +4097,10 @@ impl World for Live {
         })
     }
 
+    fn projects<'a>(&'a self, wave: &'a Wave) -> BoxFuture<'a, Result<Vec<ProjectFacts>>> {
+        Box::pin(async move { project::projects_of(&wave.place(None)?, &wave.server).await })
+    }
+
     fn pinned<'a>(&'a self, wave: &'a Wave) -> BoxFuture<'a, Result<Pinned>> {
         let (main, repo) = (wave.main.clone(), wave.repo.clone());
         Box::pin(blocking(move || {
@@ -4825,6 +4863,20 @@ mod tests {
         merged_ins: Vec<(u64, u64, String)>,
         /// The number of the next comments `Merged in` that fail.
         merged_in_fails: usize,
+        /// The projects of the riff (#1863). `None`: `o/r` is a project
+        /// that allows each host.
+        projects: Option<Vec<ProjectFacts>>,
+    }
+
+    /// The project `o/r` with the hosts `hosts`: none allows each host.
+    fn project_of(hosts: &[&str]) -> ProjectFacts {
+        ProjectFacts {
+            repo: "o/r".parse().unwrap(),
+            by: None,
+            at_ms: 0,
+            hosts: hosts.iter().map(|h| (*h).to_owned()).collect(),
+            leads: Vec::new(),
+        }
     }
 
     impl Forge {
@@ -5028,6 +5080,11 @@ mod tests {
                     branch: "main".into(),
                 })
             })
+        }
+
+        fn projects<'a>(&'a self, _: &'a Wave) -> BoxFuture<'a, Result<Vec<ProjectFacts>>> {
+            let projects = lock(&self.forge).projects.clone();
+            Box::pin(async move { Ok(projects.unwrap_or_else(|| vec![project_of(&[])])) })
         }
 
         fn pinned<'a>(&'a self, _: &'a Wave) -> BoxFuture<'a, Result<Pinned>> {
@@ -6417,6 +6474,60 @@ esac
         assert_eq!(here.forge().starts.len(), 1);
     }
 
+    /// #1863: the daemon runs a wave only for a project, and only on a
+    /// host that the project allows. A repository that is no project, and
+    /// a project that allows only another host, start no session: the look
+    /// reads nothing, and `riff daemon status` says why. A project that
+    /// allows the host runs the wave.
+    #[tokio::test]
+    async fn a_wave_runs_only_for_a_project_that_allows_the_host() {
+        let refused = [
+            (vec![], text::WAVE_NO_PROJECT.to_owned()),
+            (
+                vec![project_of(&["pangolin"])],
+                text::wave_host_not_allowed("thelio"),
+            ),
+        ];
+        for (projects, word) in refused {
+            let here = Here::new(&[1], 2, Arc::new(AtomicU64::new(64))).await;
+            here.forge().projects = Some(projects);
+            here.run();
+            here.until(0, |h| h.daemon.waves_shown()[0].word == word)
+                .await;
+            here.idle(0).await;
+            assert!(here.forge().starts.is_empty(), "{word}");
+            assert_eq!(here.forge().branch_reads, 0, "{word}");
+        }
+        let here = Here::new(&[1], 2, Arc::new(AtomicU64::new(64))).await;
+        here.forge().projects = Some(vec![project_of(&["pangolin", "thelio"])]);
+        here.run();
+        here.until(1, |h| h.forge().starts.len() == 1).await;
+        assert_eq!(here.forge().starts[0].0, "issue-1");
+    }
+
+    /// #1863: a host that the project no longer allows starts no new
+    /// session there. The session that runs goes on to its end and its
+    /// steps after the end. When the project allows the host again, the
+    /// wave goes on.
+    #[tokio::test]
+    async fn a_host_that_the_project_no_longer_allows_starts_no_new_session() {
+        let here = Here::new(&[1, 2], 1, Arc::new(AtomicU64::new(64))).await;
+        here.run();
+        here.until(1, |h| h.forge().starts.len() == 1).await;
+        here.forge().projects = Some(vec![project_of(&["pangolin"])]);
+        let item = here.forge().starts[0].0.clone();
+        here.end(&item).await;
+        here.until(1, |h| h.forge().finished == [item.clone()])
+            .await;
+        let word = text::wave_host_not_allowed("thelio");
+        here.until(1, |h| h.daemon.waves_shown()[0].word == word)
+            .await;
+        here.idle(1).await;
+        assert_eq!(here.forge().starts.len(), 1, "no new session");
+        here.forge().projects = None;
+        here.until(1, |h| h.forge().starts.len() == 2).await;
+    }
+
     #[tokio::test]
     async fn a_held_item_never_starts() {
         let free = Arc::new(AtomicU64::new(64));
@@ -7627,7 +7738,7 @@ esac
     }
 
     /// 01M57A7A48A70Y7PTD95A3MBYC: a spent item starts again after a
-    /// second `riff join`, and the lead hears of it again when it is
+    /// second `riff host join`, and the lead hears of it again when it is
     /// spent again.
     #[tokio::test]
     async fn a_second_wave_run_clears_the_spent_starts() {
@@ -8874,7 +8985,7 @@ esac
         );
     }
 
-    /// `riff leave` ends the look with the loop of the wave.
+    /// `riff host leave` ends the look with the loop of the wave.
     #[tokio::test]
     async fn a_stop_of_the_wave_ends_its_look() {
         let here = Here::looking().await;

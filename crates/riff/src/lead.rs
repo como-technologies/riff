@@ -41,7 +41,8 @@
 //! | After the attach | [`Left`]: a detach, or the end of the lead when its container does not run; the line says which. First riff writes the reset of the modes of the terminal ([`crate::runtime::reset_terminal`]) | 01M51PD7Q24N252V66NFEHY49N, 01M6XVBRQMBMK68K8GCDRZ5GJ5 |
 //! | The sign-in of `claude` | the token of `riff claude-token` only ([`needs_token`]); a lead from an older riff with the sign-in file of the host gets a word when the host replaced that file ([`stale`], [`crate::daemon::Daemon::stale_leads`]) | 01M5NJ87NXF6077Y9W32840BR8, 01M5NJ87YEHHGJBANM7CRYV56Z |
 //! | A new riff | after `riff update`, the daemon stops an old lead (the bind of its riff has no link: [`old`]) when it is idle ([`idle`]: the `Stop` hook ended its turn, and its transcript got no write after the tail of the turn, [`between_turns`]; or its transcript got no write for 5 minutes, [`quiet`]) and the daemon itself runs the riff on disk, and starts it again with `claude --resume ID` ([`spec_again`], [`again`]): the same session, clone and Claude folder, no new session on riff-server; the main clone is that of the wave, and with no wave the one that the clone of the lead links to ([`linked_main`]); the person gets one line in riff chat ([`crate::daemon::Daemon::leads_again`]), and an attached terminal one line, then the attach to the new container ([`attach`], [`Again`]) | 01M5TC24PB3YC2CC8BA275WSEN, 01M6XTS7V47RFX1G37FRGRBWCY, 01M6WBX2FQEHW92Y1A5HM4H8BM, 01M6WBX2FT7Y9FV9VGGPDBKAHM, 01M5TC2919TB9XPF42YFNJBP79, 01M5TC29A4Q94NJP7HFC75XCF3, 01M6QB89JJEM9Z1V3RVZYHKYT0 |
-//! | The workers | none: `riff lead start` does not join the host, so it starts no wave. A host gives workers after `riff join`, and `riff lead start` says so when it starts a lead on a host with no part workers ([`gives_workers`]) | 01M6QVSJC4V3Z3NB6MJW4XGJSR |
+//! | The project | `riff lead start` and `riff lead move` start a lead only for a project of the riff ([`crate::project::lead_refused`], #1863): else riff names the fix, `riff project init`, and starts no session and no container | 01M77FHTT8BZ2YN1SV7H1X3NG8, 01M77FHTXBCWA4FG793TEB5XCY |
+//! | The workers | none: `riff lead start` does not join the host, so it starts no wave. A host gives workers after `riff host join`, and `riff lead start` says so when it starts a lead on a host with no part workers ([`gives_workers`]) | 01M6QVSJC4V3Z3NB6MJW4XGJSR |
 //! | The repository | the daemon serves it while the lead runs, so `riff who` and the commands with `--host` reach the host (`Daemon::serve_lead`) | 01M6QVSWQZE41BMQ6YN2963C4V |
 //! | The stop | `riff lead stop`: the lead writes its notes ([`stop_notes`]), then the daemon ends its container ([`crate::daemon::Daemon::stop_lead`]); the host loses the part lead, and an update starts the lead no more | 01M6QVSWTARPKP59X8AJBBK69X, 01M6QVSWWM3EA4ZS47XCKV38D0 |
 //!
@@ -267,7 +268,7 @@ pub fn runs(status: &Status, name: &str) -> bool {
 }
 
 /// True when the host of the daemon of `status` has the part workers in
-/// `repo` (#1644): `riff join` gave it. `riff lead start` gives none.
+/// `repo` (#1644): `riff host join` gave it. `riff lead start` gives none.
 ///
 /// ```
 /// use riff::daemon::Status;
@@ -700,8 +701,9 @@ async fn attach_here(runtime: &impl Runtime, name: &str, folder: &Path) -> Resul
 /// with the daemon of this machine when it does not run, and attaches to
 /// it. `api` is the sign-in of riff for the riff-server `server`. It starts
 /// no wave and no worker, and does not join the host: when the host has
-/// no part workers, it says that `riff join` gives them (#1644). On a host
-/// that is not Linux, it starts nothing.
+/// no part workers, it says that `riff host join` gives them (#1644). It
+/// starts a lead only for a project of the riff (#1863). On a host that is
+/// not Linux, it starts nothing.
 pub async fn start(api: Api, here: &Place, server: &str) -> Result<()> {
     #[cfg(target_os = "linux")]
     {
@@ -788,6 +790,11 @@ async fn launch(
     start: &str,
 ) -> Result<String> {
     let repo = here.repo_text();
+    // A lead only for a project (#1863).
+    let projects = crate::project::projects_of(here, server).await?;
+    if let Some(refused) = crate::project::lead_refused(&projects, &repo) {
+        return Err(refused.into());
+    }
     // With no token, a sign-in file that ends soon is no token either.
     let host = run::host_facts(main).map_err(|fault| match fault {
         run::HostFault::SignInEnds(_) => anyhow::anyhow!("{}", text::LEAD_NEEDS_TOKEN),

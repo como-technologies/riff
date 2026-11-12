@@ -118,17 +118,33 @@ fn the_help_lists_none_of_the_removed_commands() {
     }
 }
 
-/// #1643: `riff --help` lists `join` and `leave`. `riff wave run`, `riff
-/// wave stop` and `riff daemon host` are gone, with no shim: the help of
-/// `riff wave` and of `riff daemon` lists none of them, and each one fails.
+/// #1643, #1863: `riff --help` lists `host`, and `riff host --help` lists
+/// `join` and `leave`. `riff join`, `riff leave`, `riff wave run`, `riff
+/// wave stop` and `riff daemon host` are gone, with no shim: no help lists
+/// them, and each one fails.
 #[test]
-fn the_help_lists_join_and_leave_and_not_wave_run_wave_stop_or_daemon_host() {
+fn the_help_lists_host_join_and_leave_and_not_join_leave_wave_run_wave_stop_or_daemon_host() {
     let help = riff(&["--help"]);
+    assert!(
+        help.contains("  host          Give or take the workers of a host in this repository\n"),
+        "{help}"
+    );
+    for gone in ["join", "leave"] {
+        assert!(
+            !help
+                .lines()
+                .any(|l| l.trim_start().starts_with(&format!("{gone} "))),
+            "riff {gone}: {help}"
+        );
+        let out = Isolated::shared().riff().arg(gone).output().unwrap();
+        assert_eq!(out.status.code(), Some(2), "riff {gone} exists: {out:?}");
+    }
+    let host = riff(&["host", "--help"]);
     for line in [
-        "  join          Give workers to this repository from this host\n",
-        "  leave         Stop the workers of this host in this repository\n",
+        "  join   Give workers to this repository from this host\n",
+        "  leave  Stop the workers of this host in this repository\n",
     ] {
-        assert!(help.contains(line), "{line}: {help}");
+        assert!(host.contains(line), "{line}: {host}");
     }
     let wave = riff(&["wave", "--help"]);
     let daemon = riff(&["daemon", "--help"]);
@@ -152,12 +168,12 @@ fn the_help_lists_join_and_leave_and_not_wave_run_wave_stop_or_daemon_host() {
         }
     }
     // The help of the two commands says what they do.
-    let join = words(&riff(&["join", "--help"]));
-    for word in ["--host <HOST>", "part workers", "riff leave"] {
+    let join = words(&riff(&["host", "join", "--help"]));
+    for word in ["--host <HOST>", "part workers", "riff host leave"] {
         assert!(join.contains(word), "{word}: {join}");
     }
-    let leave = words(&riff(&["leave", "--help"]));
-    for word in ["--host <HOST>", "--now", "riff join"] {
+    let leave = words(&riff(&["host", "leave", "--help"]));
+    for word in ["--host <HOST>", "--now", "riff host join"] {
         assert!(leave.contains(word), "{word}: {leave}");
     }
 }
@@ -185,7 +201,7 @@ fn the_help_of_lead_lists_stop() {
         assert!(stop.contains(word), "{word}: {stop}");
     }
     let start = words(&riff(&["lead", "start", "--help"]));
-    for word in ["starts no workers", "riff join"] {
+    for word in ["starts no workers", "riff host join"] {
         assert!(start.contains(word), "{word}: {start}");
     }
     let end = words(&riff(&["daemon", "end", "--help"]));
@@ -229,7 +245,7 @@ fn the_help_has_no_command_and_no_flag_of_the_riff_of_peers() {
             assert!(!help.contains(word), "riff {name} --help: {word}: {help}");
         }
     }
-    for args in [&["run", "--help"][..], &["join", "--help"]] {
+    for args in [&["run", "--help"][..], &["host", "join", "--help"]] {
         let help = riff(args);
         assert!(!help.contains("--peers"), "riff {args:?}: {help}");
     }
@@ -377,8 +393,8 @@ fn the_help_and_the_book_say_who_can_use_each_host_flag() {
         (&["daemon", "sweep"], daemon),
         (&["daemon", "end"], daemon),
         (&["daemon", "restart"], daemon),
-        (&["join"], daemon),
-        (&["leave"], daemon),
+        (&["host", "join"], daemon),
+        (&["host", "leave"], daemon),
         (&["lead", "stop"], daemon),
     ] {
         for flag in ["--help", "-h"] {

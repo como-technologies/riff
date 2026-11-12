@@ -1004,7 +1004,7 @@ async fn x_on_a_session_of_another_host_asks_the_daemon_of_that_host() {
     })
     .await;
     tty.press("x").await;
-    tty.shows(|rows| rows[22] == " pangolin stops taking work for o/r (riff leave): y/N")
+    tty.shows(|rows| rows[22] == " pangolin stops taking work for o/r (riff host leave): y/N")
         .await;
     tty.press("y").await;
     let left: String = format!(" {}", riff::text::host_left("pangolin", "o/r"))

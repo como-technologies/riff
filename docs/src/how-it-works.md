@@ -123,7 +123,7 @@ sequenceDiagram
 ```
 
 A second machine takes work when it gives workers to the repository
-too. `riff join --host HOST` adds it: see
+too. `riff host join --host HOST` adds it: see
 [Add a host to the wave](development.md#add-a-host-to-the-wave). The
 claims on riff-server keep two machines from one item.
 
@@ -947,7 +947,7 @@ your lead once in each repository of the message:
 | The process that starts the update | The repository of the message |
 |---|---|
 | A session, or a `riff` command in a clone | The repository of the session or the clone |
-| The riff daemon | Each repository where the host has a part on the same riff (`riff join` in its main clone, or with `--host` from another host; a daemon start serves the repositories where the host has a part) |
+| The riff daemon | Each repository where the host has a part on the same riff (`riff host join` in its main clone, or with `--host` from another host; a daemon start serves the repositories where the host has a part) |
 
 The riff daemon has no repository of its own. Its working folder can
 be in the work tree of another repository, for example a home folder
@@ -1368,9 +1368,9 @@ each policy, an action that comes with a proof is marked in the log.
   whole riff (`riff pause --riff`, `riff resume --riff`).
 - The steps that can lose work, on this host or on another one with
   `--host`: end a session (`riff daemon end NAME`, and `x` in the
-  Sessions tab), `riff leave --now`, `riff lead stop`, the removal of a
-  folder with its work (`riff daemon sweep --remove NAME --force`), and
-  a take-over (`riff takeover`, and `t` in the Sessions tab).
+  Sessions tab), `riff host leave --now`, `riff lead stop`, the removal
+  of a folder with its work (`riff daemon sweep --remove NAME --force`),
+  and a take-over (`riff takeover`, and `t` in the Sessions tab).
 - Your keys: the add of a second key, and the removal of a device. Your
   first key needs no proof: it rests on your sign-in.
 - The change of the policy, with each policy.
@@ -1594,7 +1594,7 @@ session.
   so it takes no request from the lead. The lead in a container has
   `lead container`.
 - `daemon`: the session of the riff daemon on a machine, after
-  `riff join`, or while a lead runs there. It runs the sessions in
+  `riff host join`, or while a lead runs there. It runs the sessions in
   containers. Its status starts with `daemon host:`. It takes no
   claims, so when it is idle it shows `hosts containers`, not
   `ready for work`.
@@ -1622,14 +1622,14 @@ has the same color in both. `running` is green and `paused` is yellow.
 A blocked status is red. The `who` tool of a session stays plain.
 
 ### See the facts of each host
-
-The riff daemon of each host sends the facts of its host to the riff
+ The riff daemon of each host sends the facts of its host to the riff
 server each 30 seconds. It does so for each repository where the host
-has a part: after `riff join` in the main clone on that host, or while a
-lead runs there. `riff who` shows them in its last part, `Hosts`. The
-line `parts` of a host names the parts of the host in each repository:
-`workers`, `lead`, or `workers and lead`. `riff top` shows the facts
-under the row of the host. The `who` tool of a session shows the same
+has a part: after `riff host join` in the main clone on that host, or
+while a lead runs there. `riff who` shows them in its last part,
+`Hosts`. The line `parts` of a host names the parts of the host in each
+repository: `workers`, `lead`, or `workers and lead`. `riff top` shows
+the facts under the row of the host. The `who` tool of a session shows
+the same
 part, so the lead sees the facts in its session:
 
 ```sh
@@ -1788,15 +1788,15 @@ riff
   and the other callers used in the last hour. The daemon of your host
   counts them.
 
-A host that takes no new claim for a repository, and still runs
-sessions of it, gets a line under its row: the short name of the
-repository and the count of the sessions that go on to their end, for
-example `leaving riff: 3 to end`. You see it after `riff leave`. When
-the last session ends, the line says `left riff` until the next look of
-the daemon. A host that gives workers to no repository gets `takes no
-work`. These lines are no fault: the host keeps its place in the rows.
+A host that takes no new claim for a repository, and still runs sessions
+of it, gets a line under its row: the short name of the repository and
+the count of the sessions that go on to their end, for example `leaving
+riff: 3 to end`. You see it after `riff host leave`. When the last
+session ends, the line says `left riff` until the next look of the
+daemon. A host that gives workers to no repository gets `takes no work`.
+These lines are no fault: the host keeps its place in the rows.
 The detail lists the parts of the host by repository, and the sessions
-that go on to their end. After `riff leave --host pangolin`, with
+that go on to their end. After `riff host leave --host pangolin`, with
 pangolin selected:
 
 ```text
@@ -2049,7 +2049,7 @@ riff
 | `Enter` | A group: fold or open it. A lead: attach to it. A worker in a container of a daemon of yours: its events in the Reports tab, see [See the events in the TUI](development.md#see-the-events-in-the-tui). In a smaller terminal, the detail on the whole screen first. Another session: its detail on the whole screen. |
 | `l` | Attach to the lead of the repository of the row, else to the first lead of this machine. On the lead of another host: a note with the step there. On a repository whose wave waits for a lead: start the lead on this machine, after `y`, and attach. See [The wave waits for its lead](#the-wave-waits-for-its-lead). |
 | `t` | Take over the selected session, as `riff takeover` does. On another host: a note with the step there. |
-| `x` | End the selected session of the daemon, and free its item, as `riff daemon end` does, also on another host. On the row of a daemon: the host stops taking work for the repository, as `riff leave --host HOST` does. |
+| `x` | End the selected session of the daemon, and free its item, as `riff daemon end` does, also on another host. On the row of a daemon: the host stops taking work for the repository, as `riff host leave --host HOST` does. |
 | `p`, `P` | Pause or resume the repository of the row, or the whole riff. |
 | `e` | Open each group, or fold the groups that need no look. |
 | `b` | Put the person at the top of the tree, or the repository again. See [Put the people at the top of the tab](#put-the-people-at-the-top-of-the-tab). |
@@ -2116,7 +2116,7 @@ Select the row, and press the key:
 | Row | Key | Does |
 |---|---|---|
 | A session of another host | `x`, then `y` | Ends the session and frees its item, as `riff daemon end NAME --host HOST` does. The row before the last shows the reply of the daemon there. `n` sends nothing. |
-| The row of a daemon, with the tag `daemon` | `x`, then `y` | The host stops taking work for the repository of the row, as `riff leave --host HOST` does. Its sessions go on to their end. Press `x` on each one to end it now. |
+| The row of a daemon, with the tag `daemon` | `x`, then `y` | The host stops taking work for the repository of the row, as `riff host leave --host HOST` does. Its sessions go on to their end. Press `x` on each one to end it now. |
 | A session of another host | `t` | A note with the step there: `ssh HOST`, then `riff takeover NAME`. |
 | The lead of another host | `l` or `t` | A note with the step there: `ssh HOST`, then `riff lead start`. |
 
@@ -2124,7 +2124,7 @@ Select the row, and press the key:
 of `x` on the row of a daemon is, for example:
 
 ```text
-pangolin stops taking work for como-technologies/strata (riff leave): y/N
+pangolin stops taking work for como-technologies/strata (riff host leave): y/N
 ```
 
 NAME is the container that the daemon of the host names in its facts.
@@ -5257,7 +5257,7 @@ gh issue edit 12 --add-label no-verify
 riff run sends no verify request for issue-12: issue #12 has the label no-verify.
 ```
 
-The wave of the daemon (`riff join`) posts a note to the lead in
+The wave of the daemon (`riff host join`) posts a note to the lead in
 place of the verify request, with the reason:
 
 ```text
@@ -5976,11 +5976,11 @@ run this once in your clone of the repository. The daemon of thelio
 makes its own main clone (see
 [Add a host to the wave](development.md#add-a-host-to-the-wave)). This
 gives thelio the part workers too. When thelio must give no workers,
-run `riff leave --host thelio` after the move: the lead keeps the
+run `riff host leave --host thelio` after the move: the lead keeps the
 daemon serving the repository.
 
 ```sh
-riff join --host thelio
+riff host join --host thelio
 ```
 
 Then run this on pangolin, in the repository:
@@ -6060,6 +6060,59 @@ riff project init --host thelio --host heron
 ```
 
 With no `--host`, the project names each host.
+
+### A wave and a lead only for a project
+
+The riff daemon of a host runs the wave of a repository only when the
+repository is a project, and the project allows the host. A lead
+starts only for a project. In a repository that is no project, a
+session has the chat and the messages only.
+
+```mermaid
+flowchart LR
+    J["riff host join,<br/>or a look of the wave"] --> P{"a project?"}
+    P -- "no" --> N["no wave and no lead"]
+    P -- "yes" --> H{"no hosts,<br/>or this host?"}
+    H -- "no" --> M["no new session<br/>on this host"]
+    H -- "yes" --> W["the wave runs"]
+```
+
+`riff host join` and `riff lead start` ask riff-server first. In a
+repository that is no project, both name the fix and start nothing:
+
+```text
+Error: acme/app is no project of the riff, so it gets no wave and no lead. A session there has the chat and the messages only. To make it a project, an admin of the riff who is an admin of acme/app on GitHub runs riff project init in a clone of acme/app.
+```
+
+On a host that the project does not allow, `riff host join` names each
+host of the project and this host:
+
+```text
+Error: The project acme/app does not allow the host thelio: its hosts are heron. To allow it, an admin of the riff who is an admin of acme/app on GitHub runs riff project init --host heron --host thelio in a clone of acme/app.
+```
+
+The admin runs the fix in a clone of the project:
+
+```sh
+riff project init --host heron --host thelio
+```
+
+The loop of the wave reads the projects before each look. When the
+project no longer allows the host, or the riff forgot the project, the
+host starts no new session for it. The sessions that run go on to
+their end. To see why:
+
+```sh
+riff daemon status
+```
+
+```text
+Waves:
+  acme/app  starts nothing: the project does not allow the host thelio. See riff project list
+```
+
+When the project allows the host again, the wave goes on at its next
+look.
 
 ### List the projects
 
@@ -6889,7 +6942,7 @@ These commands work in the container:
 | `riff status`, `riff blocked`, `riff step` | Set the state of the session. |
 | `riff pr open`, `riff pr wait`, `riff verify` | The steps of a pull request. The steps on GitHub use the token of the session. |
 | `riff pause`, `riff resume`, `riff plan hold`, `riff plan free` | Only the lead: pause, resume, hold and free. |
-| `riff run`, `riff wave list`, `riff wave move`, `riff wave end --move-open-to-backlog`, `riff join` | Only the lead: the waves and their items. |
+| `riff run`, `riff wave list`, `riff wave move`, `riff wave end --move-open-to-backlog`, `riff host join` | Only the lead: the waves and their items. |
 | `riff audit`, `riff questions`, `riff session why`, `riff denials` | Only the lead: find out about a wave. |
 | `riff release test`, `cut`, `verify`, `status`, `hold`, `check`, `retry` and `rollback` | Only the lead: the release cycle. |
 | `riff daemon status`, `riff daemon events`, `riff ps`, and each command with `--host`, for example `riff build --host` | Only the lead: the daemons of your hosts. |
@@ -6928,8 +6981,9 @@ riff: riff claim does not run in a container session. It needs the host: the sig
 ```
 
 `riff github`, `riff device`, `riff project init`, `riff project
-remove`, `riff leave` and `riff lead stop` with no `--host` refuse in
-the container with words of their own: each names the step on the host.
+remove`, `riff host leave` and `riff lead stop` with no `--host` refuse
+in the container with words of their own: each names the step on the
+host.
 
 ### Watch the riff on another machine
 
@@ -6996,10 +7050,10 @@ flowchart TD
   first, also when it is not in the current wave (see
   [When main breaks](#when-main-breaks)).
 - **The wave.** riff asks only the daemon of the machine of the lead,
-  and only when the host has the part workers (`riff join`) and no wave
-  of the repository runs there. A host that left (`riff leave`), or that
-  never joined, gets no ask: its lead only watches. The daemon runs
-  each item in a container, in its own limit (see
+  and only when the host has the part workers (`riff host join`) and no
+  wave of the repository runs there. A host that left (`riff host
+  leave`), or that never joined, gets no ask: its lead only watches. The
+  daemon runs each item in a container, in its own limit (see
   [Let the rollout of the lead run the
   wave](development.md#let-the-rollout-of-the-lead-run-the-wave)). While
   the wave runs, the rollout asks nothing. The claims on riff-server

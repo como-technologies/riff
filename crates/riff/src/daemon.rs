@@ -533,7 +533,7 @@ pub const PROTOCOL: u32 = 4;
 /// reply to the lead of another host goes first.
 pub const RESTART_DELAY: Duration = Duration::from_secs(5);
 
-/// How long `riff leave --now` waits for a job of the wave that has no
+/// How long `riff host leave --now` waits for a job of the wave that has no
 /// container yet: it starts one, and the daemon ends it (#1643).
 pub const LEAVE_WAIT: Duration = Duration::from_secs(20);
 
@@ -950,14 +950,14 @@ pub enum Ask {
         /// The sequence number of the last event that `riff` has.
         after: u64,
     },
-    /// `riff join`: the host gives workers to a repository. The daemon
+    /// `riff host join`: the host gives workers to a repository. The daemon
     /// serves it, gets the part workers, and runs its current wave
     /// ([`crate::wave`], [`Daemon::join_repo`]).
     Join {
         /// The repository, its main clone, its riff-server and this host.
         wave: Wave,
     },
-    /// `riff leave`: the host gives no more workers to the repository
+    /// `riff host leave`: the host gives no more workers to the repository
     /// `repo`. The daemon starts no new session for it. The sessions that
     /// run go on to their end, or with `now` it ends them and frees their
     /// items ([`Daemon::leave_repo`]).
@@ -4345,7 +4345,7 @@ impl<R: Runtime + 'static> Daemon<R> {
         }
     }
 
-    /// `riff join` for `wave` (#1643): the host gets the part workers,
+    /// `riff host join` for `wave` (#1643): the host gets the part workers,
     /// the daemon runs the wave, and serves the repository
     /// ([`Daemon::serve_repo`]).
     pub fn join_repo(self: &Arc<Self>, wave: Wave) -> Result<()> {
@@ -4354,7 +4354,7 @@ impl<R: Runtime + 'static> Daemon<R> {
         self.serve_repo(&wave)
     }
 
-    /// `riff leave` for `repo` (#1643): the host loses the part workers,
+    /// `riff host leave` for `repo` (#1643): the host loses the part workers,
     /// and the daemon starts no new session for the repository. The
     /// sessions that run go on to their end. With `now`, the daemon ends
     /// them, and frees their items ([`Daemon::end_session`]); a job of the
@@ -9220,6 +9220,13 @@ mod tests {
             Box::pin(async { bail!("no wave in this test") })
         }
 
+        fn projects<'a>(
+            &'a self,
+            _: &'a Wave,
+        ) -> crate::wave::BoxFuture<'a, Result<Vec<riff_core::wire::ProjectFacts>>> {
+            Box::pin(async { bail!("no wave in this test") })
+        }
+
         fn pinned<'a>(
             &'a self,
             _: &'a Wave,
@@ -9947,7 +9954,7 @@ mod tests {
     }
 
     /// 01M6QB89JJEM9Z1V3RVZYHKYT0, 01M6QVSWWM3EA4ZS47XCKV38D0: the wave of
-    /// the repository is stopped (`riff leave`), or it never ran. The host
+    /// the repository is stopped (`riff host leave`), or it never ran. The host
     /// has the part lead and no part workers. The lead starts again all the
     /// same, and the daemon starts no session for any item and runs no wave.
     #[tokio::test]
@@ -9961,7 +9968,7 @@ mod tests {
         update_riff(&here);
         let terminal = format!("terminal {LEAD}");
 
-        // `riff leave`: the daemon keeps no wave of the repository.
+        // `riff host leave`: the daemon keeps no wave of the repository.
         assert!(here.daemon.stop_wave("como-technologies/riff").unwrap());
         assert!(crate::wave::read_waves(&here.dir).unwrap().is_empty());
         let repo = "como-technologies/riff";
@@ -10550,7 +10557,7 @@ mod tests {
         assert!(mine.exists());
     }
 
-    /// #1643, 01M6QRDB7KVR8954B00RTETEK4: `riff leave --now` ends the
+    /// #1643, 01M6QRDB7KVR8954B00RTETEK4: `riff host leave --now` ends the
     /// sessions of the repository but the lead, frees their items on
     /// riff-server, and ends a leave of a host that gave no workers.
     #[tokio::test]

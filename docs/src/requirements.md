@@ -3982,11 +3982,12 @@
   of the deploy of a release, the answer to a decision that waits for
   the person (riff questions --answered N), the pass and the take of the
   owner role, an invite, a removal, a change of an admin, the pause and
-  the resume of the whole riff, the end of a session, riff leave --now,
-  riff lead stop, riff daemon sweep --remove NAME --force, a take-over,
-  the add of a second key, the removal of a device, and the change of
-  the policy. Each runs on this host or on another one with --host. The
-  accept of an outside pull request joins the list when riff has it.
+  the resume of the whole riff, the end of a session, riff host leave
+  --now, riff lead stop, riff daemon sweep --remove NAME --force, a
+  take-over, the add of a second key, the removal of a device, and the
+  change of the policy. Each runs on this host or on another one with
+  --host. The accept of an outside pull request joins the list when riff
+  has it.
 - **01M75WKSFX84BHHGFX8VJ37DC6** With required, riff-server refuses each
   action of the list with no proof, with the code needs_proof and the
   status 403. The text names the action and says how to add an
@@ -5121,7 +5122,7 @@ of this part when they merge.
   goes on: the idle workers in tmux still get their requests, and the
   lead gets the note with the reason (01M5515CA4CZ6KV4ZD6Y0744Z7).
 - **01M558EYAJFZK7Y822NVWGBS9H** Before the ask of the wave, the
-  rollout and `riff join` ask the daemon to have the session image
+  rollout and `riff host join` ask the daemon to have the session image
   that the repository pins: podman runs, and the image is on the
   machine, or the daemon pulls it. When the daemon cannot, it gets no
   ask of the wave, and the lead gets the note with the reason. So a
@@ -5141,7 +5142,7 @@ of this part when they merge.
   room, and looks again. The lead gets one message when the wave starts
   to wait, with the step for the person. `riff daemon status` shows
   the wave as waiting, with the reason.
-- **01M57A7A48A70Y7PTD95A3MBYC** `riff join` on a wave that the
+- **01M57A7A48A70Y7PTD95A3MBYC** `riff host join` on a wave that the
   daemon runs clears the starts of each item of the wave
   (01M4ZV3B6PSRH40EYQEVYH2MBA). A spent item then starts again.
 - **01M57FJ3WWMQSDBFRRHXN3SMFQ** The wave of the daemon starts a build
@@ -5156,7 +5157,7 @@ of this part when they merge.
   starts no verify of a head commit with a conflict. Each head commit
   with a conflict starts one session in a run of the wave. A start that
   riff-server refused for a pause, or a fault of the host, does not
-  count. `riff join` clears the starts of the rebases too
+  count. `riff host join` clears the starts of the rebases too
   (01M57A7A48A70Y7PTD95A3MBYC).
 - **01M57FJ3Z8AFDY9G0KTAYZJESY** When the rebase session of a wave ends
   and its pull request still has the head commit with the conflict,
@@ -5164,7 +5165,7 @@ of this part when they merge.
   pull request, the commit and the steps for the person.
 - **01M53NGVH8A19QS3CQ79ENVVXT** A second machine of a person takes work
   in containers when its daemon runs the wave of the repository:
-  `riff join` in a clone on that machine. The claims on riff-server
+  `riff host join` in a clone on that machine. The claims on riff-server
   keep two machines from one item (01M4ZV3B6M7PZRJ39XTXBZP3ZH). The
   limit of the containers of each machine is the limit of its daemon
   (01M4ZV3B6HAFTSC2K63FMC5FYA). `riff workers host` stays, for the
@@ -5195,12 +5196,12 @@ of this part when they merge.
   peers uses, and `Cargo.lock` has no `iroh`.
 - **01M53NGW6F5HP1DZ9QRGP50MGT** riff has none of these, also not in
   `--help`: the flag `--peers` of `riff run`, and the flag `--forge` of
-  `riff release`. `riff join` and `riff leave` are no commands of the
-  riff of peers: they give and take the workers of a host
-  (01M6QRDB4WQ1WD3NTZ50XXXJPC). The
-  member commands act on riff-server (01M588J2QAF288ZB3M9PBN71ZS). `riff
-  daemon status` and `riff top` show no key, no riff of peers and no
-  peer link. With no `--host`, they show no session of another daemon.
+  `riff release`. `riff host join` and `riff host leave` are no commands
+  of the riff of peers: they give and take the workers of a host
+  (01M6QRDB4WQ1WD3NTZ50XXXJPC). The member commands act on riff-server
+  (01M588J2QAF288ZB3M9PBN71ZS). `riff daemon status` and `riff top` show
+  no key, no riff of peers and no peer link. With no `--host`, they show
+  no session of another daemon.
 - **01M53NGW9FH02EM74GKY829808** The re-cut supersedes each requirement
   of Wave B (#803), and each requirement of the riff of peers in "Data
   and peers": the log of peers, the keys of the members, the claims on
@@ -5414,7 +5415,7 @@ of this part when they merge.
 - **01M51STPHXSSZMHF9T7Z85097R** The merged pin of a main clone is the
   session image that `riff.toml` pins on the default branch of
   `origin`, the branch of `origin/HEAD`. riff fetches that branch
-  first. The wave of the daemon, `riff join`, `riff run`,
+  first. The wave of the daemon, `riff host join`, `riff run`,
   `riff lead start` and the image step of an update use only the
   merged pin. So an edit of `riff.toml` that is not merged never
   chooses the image that riff pulls and runs.
@@ -5874,16 +5875,16 @@ of this part when they merge.
   `riff run` shows them, and each new event until the end. Ctrl-C ends
   the view. The session goes on.
 - **01M579Z9JE6HY9HG3PWR1RR0RQ** The daemon of a host has a session of
-  its own on riff-server for each repository that it serves. It serves
-  a repository after `riff join` in its main clone, and while the host
-  has a part in it (01M6QRCW5WYMGNPC4WFPKBW08F). It keeps each one in
-  `served.json` in its folder, with its session ID, and serves with the
-  same session after its own restart. Its status is `daemon host: pid
-  P, build B, N sessions`.
+  its own on riff-server for each repository that it serves. It serves a
+  repository after `riff host join` in its main clone, and while the
+  host has a part in it (01M6QRCW5WYMGNPC4WFPKBW08F). It keeps each one
+  in `served.json` in its folder, with its session ID, and serves with
+  the same session after its own restart. Its status is `daemon host:
+  pid P, build B, N sessions`.
 - **01M579Z9MPS86MX7890T6HV18S** `riff daemon status`, `riff daemon
   limit`, `riff daemon cache`, `riff daemon events`, `riff daemon
-  sweep`, `riff daemon end`, `riff daemon restart`, `riff join` and
-  `riff leave` take `--host HOST`. With it, riff posts the request
+  sweep`, `riff daemon end`, `riff daemon restart`, `riff host join` and
+  `riff host leave` take `--host HOST`. With it, riff posts the request
   as a direct message to the session of the daemon of HOST. The daemon
   does it as the command does on HOST, and posts the reply as a direct
   note to the sender. riff prints the reply, and exits with 1 when the
@@ -6042,7 +6043,7 @@ of this part when they merge.
   runs in a scope of its own, not in the cgroup of the unit, and a stop
   of the unit does not end it.
   With no `INVOCATION_ID`, the daemon starts `podman run` itself.
-- **01M5SN561BM9SK24SS0AVJ3P5J** `riff join --host HOST` for a
+- **01M5SN561BM9SK24SS0AVJ3P5J** `riff host join --host HOST` for a
   repository that no daemon of the user on HOST serves goes to the
   session of another daemon of the user on HOST. That daemon makes a
   main clone of the repository with `gh repo clone`, with the `gh` of
@@ -6055,10 +6056,11 @@ of this part when they merge.
   repository, also when the daemon serves another repository. The daemon
   takes a repository only as `OWNER/REPO`, with no part that starts with
   `-` and no part `.` or `..`.
-- **01M5SN566ZH5ZQ52NYT24WYA4P** `riff join` with no `--host` in a
+- **01M5SN566ZH5ZQ52NYT24WYA4P** `riff host join` with no `--host` in a
   lead container gives no workers. It names the hosts of the user with a
   daemon that does not serve the repository, and exits with 1. So does
-  `riff leave` with no `--host`, and it names `riff leave --host`.
+  `riff host leave` with no `--host`, and it names `riff host leave
+  --host`.
 - **01M5SMQBTA3HQXPKKK01ZGFB4H** When the daemon takes up a session
   whose container runs (01M4ZHT01HH88KPA8628M7VBEY), it looks if the
   container reaches the network: `podman exec NAME getent hosts
@@ -6124,9 +6126,9 @@ of this part when they merge.
   the host in each repository in `parts.json` in its folder: `workers`
   (the daemon runs the wave of the repository), `lead` (a lead of the
   user runs on the host), both, or none. A repository with no part has
-  no entry. `riff join`, `riff leave`, the start of a lead and the end
-  of a lead change the parts. The parts hold over a restart of the
-  daemon and over an update. `riff who`, `riff top` and `riff daemon
+  no entry. `riff host join`, `riff host leave`, the start of a lead and
+  the end of a lead change the parts. The parts hold over a restart of
+  the daemon and over an update. `riff who`, `riff top` and `riff daemon
   status` show the parts of the host in each repository: the daemon
   sends them in its facts. `riff daemon host`, `riff wave run` and `riff
   wave stop` are gone, with no shim.
@@ -6151,12 +6153,12 @@ of this part when they merge.
   clone, and it keeps the clone while the clone of a session folder or
   of a lead links to it. The end of a session and the end of a lead make
   the daemon look again, and so does its start.
-- **01M6WJYQJ58MHQF1XPXXZW2ET6** After `riff leave`, the facts of a host
-  name each repository where the host gives no workers and still runs
-  sessions, with the names of the containers of those sessions: they go
-  on to their end. At the look after the last of them, when the daemon
-  serves the repository no more, the facts name the repository with no
-  session. `riff who` and `riff top` show a line for each such
+- **01M6WJYQJ58MHQF1XPXXZW2ET6** After `riff host leave`, the facts of a
+  host name each repository where the host gives no workers and still
+  runs sessions, with the names of the containers of those sessions:
+  they go on to their end. At the look after the last of them, when the
+  daemon serves the repository no more, the facts name the repository
+  with no session. `riff who` and `riff top` show a line for each such
   repository in the block of the host, for example `leaving
   como-technologies/riff: 3 sessions go on to their end`, and then `left
   como-technologies/riff`.
@@ -6398,11 +6400,11 @@ of this part when they merge.
   `claude`, beside `riff`, and gives `claude` no such variable. Each
   value of the `env` and the `headers` of a server is a secret that no
   event shows.
-- **01M4ZV3B6J89KJQ0F14YWTZMJQ** `riff join` in a clone asks the
+- **01M4ZV3B6J89KJQ0F14YWTZMJQ** `riff host join` in a clone asks the
   daemon to run the current wave of the repository of the clone. The
   daemon keeps each wave in `waves.json` in its folder, with the main
-  clone, the riff-server and the host, and starts it again after its
-  own restart, while the host has the part `workers`. `riff leave` ends
+  clone, the riff-server and the host, and starts it again after its own
+  restart, while the host has the part `workers`. `riff host leave` ends
   the wave: the daemon starts no new session for it, and the sessions
   that run go on (01M6QRDB7KVR8954B00RTETEK4).
 - **01M4ZV3B6KP33YV750DJ89SMFF** The loop of a wave first waits for
@@ -6486,10 +6488,10 @@ of this part when they merge.
   the commit, not the ref, so a push to the pull request after the look
   does not change what the verify reads.
 - **01M5QVH3MAEPPJN9PPVDX6N2EY** The riff daemon runs the look of the
-  repository of each wave that it runs until `riff leave`: it reads the
-  open pull requests and `main` with "gh", and posts as the person. The
-  messages of 01M49Q30XMVRFX42YTM1PHX0RZ, 01M49Q316RXNATJP587DWGDNCD and
-  01M51QEYKTD7ZEB0YA0C3MQTPN come from this look, and the steps of
+  repository of each wave that it runs until `riff host leave`: it reads
+  the open pull requests and `main` with "gh", and posts as the person.
+  The messages of 01M49Q30XMVRFX42YTM1PHX0RZ, 01M49Q316RXNATJP587DWGDNCD
+  and 01M51QEYKTD7ZEB0YA0C3MQTPN come from this look, and the steps of
   01M51QEYPGD6W345MZ4F85C38F and 01M51QEYVQN74Q1VDTVHB0445Q too. A
   message goes to the lead of the person, or to the session that holds
   the item of a pull request with a conflict. The daemon keeps what it
@@ -6563,7 +6565,7 @@ of this part when they merge.
   files of an older build stay valid after an update: a machine takes
   each release with no step of a person. A branch that does not read
   gives the error of the look: the wave starts no work at that look, and
-  reads again at the next one. `riff join` reads no branch.
+  reads again at the next one. `riff host join` reads no branch.
   Supersedes 01M5QYBWPAJ219BE8QKVKG1TWW in part.
 - **01M5SN0PY23JDWND8DGGAF9XMB** A failed check of a pull request starts
   a build session only when the check is a run of GitHub Actions: a
@@ -6813,28 +6815,29 @@ of this part when they merge.
   count. The wave sends it after the last session of the item ended, and
   only for the head that the pull request has at that look, so it sends
   none for an old head. Supersedes 01M4ZV3B6PSRH40EYQEVYH2MBA in part.
-- **01M6QRDB4WQ1WD3NTZ50XXXJPC** `riff join` gives the host the part
-  `workers` in the repository of the clone: the daemon serves the
+- **01M6QRDB4WQ1WD3NTZ50XXXJPC** `riff host join` gives the host the
+  part `workers` in the repository of the clone: the daemon serves the
   repository, gets the session image that `riff.toml` pins, and runs its
   current wave. It keeps the wave over its restarts and over an update,
-  until `riff leave`. `riff join --host HOST` asks the daemon of HOST.
-  When no daemon of the user on HOST serves the repository, another
-  daemon of the user on HOST makes a main clone with `gh repo clone`,
-  with the `gh` of the user on HOST, in `clones/OWNER/REPO` in its
-  folder, and serves it. A daemon that serves the repository keeps its
-  main clone and clones nothing, so a second request changes nothing. A
-  second `riff join` for a wave that runs clears the starts of each item
-  of the wave. This supersedes 01M4ZV3B6J89KJQ0F14YWTZMJQ in part.
-- **01M6QRDB7KVR8954B00RTETEK4** `riff leave` takes the part `workers`
-  from the host in the repository of the clone: the daemon starts no new
-  session for the repository, and the rollout of a lead asks for no wave
-  there. The sessions that run go on to their end. `riff leave --now`
-  ends them too: the daemon frees the item of each session on
-  riff-server, then stops its container. The lead is not one of them.
-  `riff leave --host HOST` asks the daemon of HOST. A host with no part
-  `workers` and no session to end fails with a line that names `riff
-  join`. The leave holds over a restart of the daemon and over an
-  update.
+  until `riff host leave`. `riff host join --host HOST` asks the daemon
+  of HOST. When no daemon of the user on HOST serves the repository,
+  another daemon of the user on HOST makes a main clone with `gh repo
+  clone`, with the `gh` of the user on HOST, in `clones/OWNER/REPO` in
+  its folder, and serves it. A daemon that serves the repository keeps
+  its main clone and clones nothing, so a second request changes
+  nothing. A second `riff host join` for a wave that runs clears the
+  starts of each item of the wave. This supersedes
+  01M4ZV3B6J89KJQ0F14YWTZMJQ in part.
+- **01M6QRDB7KVR8954B00RTETEK4** `riff host leave` takes the part
+  `workers` from the host in the repository of the clone: the daemon
+  starts no new session for the repository, and the rollout of a lead
+  asks for no wave there. The sessions that run go on to their end.
+  `riff host leave --now` ends them too: the daemon frees the item of
+  each session on riff-server, then stops its container. The lead is not
+  one of them. `riff host leave --host HOST` asks the daemon of HOST. A
+  host with no part `workers` and no session to end fails with a line
+  that names `riff host join`. The leave holds over a restart of the
+  daemon and over an update.
 - **01M6QRDBAD4ZH2P1Y9BMW3VE2Q** The rollout of a lead asks the daemon
   of its machine to run the wave of the repository only when the host
   has the part `workers` there, no wave of the repository runs there,
@@ -6934,6 +6937,42 @@ of this part when they merge.
   and the answer to `riff resume` says so. The wait ends when a lead of
   the repository starts. The record `lead_set` is a change of the plan
   of its repository, so each wave looks at once.
+- **01M77FHCNQCTZPS9M834XN698M** `riff host join` and `riff host leave`
+  take the place of `riff join` and `riff leave`, with the same flags
+  `--host` and `--now` and the same steps. riff has no command `riff
+  join` and no command `riff leave`: each fails as an unknown command,
+  with no shim, and no help names them. The tools `join` and `leave` of
+  a session stay. This supersedes 01M4ZV3B6J89KJQ0F14YWTZMJQ,
+  01M51STPHXSSZMHF9T7Z85097R, 01M53NGVH8A19QS3CQ79ENVVXT,
+  01M53NGW6F5HP1DZ9QRGP50MGT, 01M558EYAJFZK7Y822NVWGBS9H,
+  01M579Z9JE6HY9HG3PWR1RR0RQ, 01M579Z9MPS86MX7890T6HV18S,
+  01M57A7A48A70Y7PTD95A3MBYC, 01M57FJ3WWMQSDBFRRHXN3SMFQ,
+  01M5GXYC201EFKMGA3ZNJM2J7Z, 01M5QVH3MAEPPJN9PPVDX6N2EY,
+  01M5R56GN3DC09GAPAF69GENEZ, 01M5SN561BM9SK24SS0AVJ3P5J,
+  01M5SN566ZH5ZQ52NYT24WYA4P, 01M6QB89JJEM9Z1V3RVZYHKYT0,
+  01M6QRCW5WYMGNPC4WFPKBW08F, 01M6QRDB4WQ1WD3NTZ50XXXJPC,
+  01M6QRDB7KVR8954B00RTETEK4, 01M6QVSJC4V3Z3NB6MJW4XGJSR,
+  01M6WJYQJ58MHQF1XPXXZW2ET6, 01M6WMAXEVZB2XJN4XPR879J6W and
+  01M75WKSD5A66RHQMMM5CMKWJB in part: the names of the two commands.
+- **01M77FHMPV0NQ407TKC2F7J41Q** `riff host join` asks riff-server for
+  the projects of the riff (01M76SG8JVHTKY6N62FQG7XAE6) before each
+  other step. It refuses a repository that is no project, and a host
+  that the project does not allow, with the fix: an admin of the riff
+  who is an admin of the repository on GitHub runs `riff project init`
+  in a clone of it, with a `--host` for each host of the project and one
+  for the new host. A project with no hosts allows each host. After a
+  refusal, riff asks the daemon nothing: no image, no clone and no wave.
+  The rollout of a lead and the daemon of HOST for `riff host join
+  --host HOST` take the same check.
+- **01M77FHMTD5Y5FXRD903S2ZGCX** The daemon runs a wave only for a
+  project of the riff, and only on a host that the project allows. The
+  loop of the wave reads the projects from riff-server before each look.
+  When the repository is no project, or the project does not allow the
+  host, the look reads nothing, the wave starts no new session, and its
+  word in `riff daemon status` says why: `starts nothing: the repository
+  is no project of the riff`, or `starts nothing: the project does not
+  allow the host HOST`. The sessions that run go on to their end. When
+  the project allows the host again, the wave goes on at its next look.
 
 ### The lead, the view and the takeover
 
@@ -7054,7 +7093,7 @@ of this part when they merge.
   holds of a thread. Only the lead can resume the whole riff.
 - **01M5GXYC201EFKMGA3ZNJM2J7Z** In a container, a --host request (riff
   release test --host, riff daemon status --host, riff daemon sweep
-  --host, riff join --host, riff build --host) goes through the
+  --host, riff host join --host, riff build --host) goes through the
   socket of the session. The daemon posts it to the daemon of the host
   through riff-server, as the session. Only the lead can send it. riff
   daemon status with no --host in a container asks the daemon on the
@@ -7146,11 +7185,11 @@ of this part when they merge.
   of the start is the main clone of the wave. With no wave, it is the
   main clone that the clone of the lead links to: the folder in
   `.git/objects/info/alternates` of that clone. The restart starts no
-  session for any item, and `riff join` is no step of it. A host with no
-  part `workers` updates its lead (01M6QRDB4WQ1WD3NTZ50XXXJPC). When the
-  clone links to no main clone, the line in riff chat says that riff has
-  no step that gives the main clone and starts no session, and names
-  `riff join` (#1606).
+  session for any item, and `riff host join` is no step of it. A host
+  with no part `workers` updates its lead (01M6QRDB4WQ1WD3NTZ50XXXJPC).
+  When the clone links to no main clone, the line in riff chat says that
+  riff has no step that gives the main clone and starts no session, and
+  names `riff host join` (#1606).
 - **01M6QPQZ0FNEZFQ1F4Q9C7FEEQ** In a container, riff plan hold and riff
   plan free reach riff-server through the riff daemon on the socket of
   the session (RIFF_SOCKET), as riff who does. They need no RIFF_SERVER
@@ -7161,10 +7200,11 @@ of this part when they merge.
 - **01M6QVSJC4V3Z3NB6MJW4XGJSR** `riff lead start` starts the lead of
   the repository on the host and attaches, and the host gets the part
   `lead`. It starts no wave, no worker and no session of an item, and it
-  does not join the host: the host gives workers only after `riff join`.
-  When the host has no part `workers`, a new lead gets one line that
-  names `riff join`. This supersedes 01M5515CJ7QDJ639VGR7SJTE08 in full,
-  and 01M53NGVE839TRH7XB7CDPQNZE and 01M5QY976MTPRX5J4N1MKXAGDK in part.
+  does not join the host: the host gives workers only after `riff host
+  join`. When the host has no part `workers`, a new lead gets one line
+  that names `riff host join`. This supersedes
+  01M5515CJ7QDJ639VGR7SJTE08 in full, and 01M53NGVE839TRH7XB7CDPQNZE and
+  01M5QY976MTPRX5J4N1MKXAGDK in part.
 - **01M6QVSWQZE41BMQ6YN2963C4V** While a lead runs on a host, the daemon
   of the host serves the repository of the lead (`served.json`), also
   when the host gave no workers. The main clone of the repository is the
@@ -7288,6 +7328,18 @@ of this part when they merge.
   container it takes no socket, and the table riff::reach::COMMANDS
   gives it no riff-server. Supersedes 01M74A84SA5KCBVGVW7M9ETJ3A in
   part: `riff init` through the socket.
+- **01M77FHTT8BZ2YN1SV7H1X3NG8** `riff lead start` and `riff lead move`
+  start a lead only for a project of the riff. For a repository that is
+  no project, riff starts no session on riff-server and no container,
+  and names the fix: `riff project init` in a clone of the repository,
+  by an admin of the riff who is an admin of the repository on GitHub. A
+  lead that runs already stays, and `riff lead start` attaches to it.
+  The hosts of a project are for its wave only: a lead runs on each
+  host.
+- **01M77FHTXBCWA4FG793TEB5XCY** A session in a repository that is no
+  project of the riff works for the chat and the messages only: the
+  daemon runs no wave of the repository (01M77FHMTD5Y5FXRD903S2ZGCX),
+  and no lead starts there (01M77FHTT8BZ2YN1SV7H1X3NG8).
 
 ### The first run
 
@@ -9204,13 +9256,14 @@ that builds it merges.
   with the code of `riff daemon end NAME --host HOST`, and the note line
   shows the reply. NAME is the container that the facts of that daemon
   name. `x` on the row of a daemon asks `HOST stops taking work for REPO
-  (riff leave): y/N`, then sends `leave REPO` with the code of `riff
-  leave --host HOST`, and the note says that the sessions there go on to
-  their end, and that `x` on each one ends it. `t` and `l` on a session
-  of another host put a note with the step there: `ssh HOST`, then `riff
-  takeover NAME` or `riff lead start`. `p` and `P` go to riff-server on
-  each host. This supersedes 01M6VGHC981887SCEKGBNRPHJV in part: `x` on
-  another host, and the note of `l` and `t` there.
+  (riff host leave): y/N`, then sends `leave REPO` with the code of
+  `riff host leave --host HOST`, and the note says that the sessions
+  there go on to their end, and that `x` on each one ends it. `t` and
+  `l` on a session of another host put a note with the step there: `ssh
+  HOST`, then `riff takeover NAME` or `riff lead start`. `p` and `P` go
+  to riff-server on each host. This supersedes
+  01M6VGHC981887SCEKGBNRPHJV in part: `x` on another host, and the note
+  of `l` and `t` there.
 - **01M6XSK4GHNBJCR0RHMBGZE57G** The TUI turns on the bracketed paste of
   the terminal, and turns it off when it gives the terminal back. In the
   Chat tab, also from the log, a paste goes into the prompt at the

@@ -161,8 +161,29 @@ impl Drop for Host {
     }
 }
 
+/// A riff-server whose GitHub is a fake, where the repositories of the
+/// tests are projects that allow each host: a wave runs only for a
+/// project (#1863).
 async fn start_server() -> crate::common::Signed {
-    crate::common::start_signed().await
+    let github = crate::github_apps::fake_github::FakeGitHub::start().await;
+    let settings = riff_server::github::Settings {
+        api: github.url.clone(),
+        web: github.url.clone(),
+        ..riff_server::github::Settings::default()
+    };
+    let (listener, url) = crate::common::listen().await;
+    let server = crate::common::start_signed_config(
+        listener,
+        &url,
+        None,
+        |router| router,
+        |config| config.github = settings,
+    )
+    .await;
+    for repo in ["local/riff", "local/other", "local/third"] {
+        crate::github_apps::enroll(&server, &github, repo, &[]).await;
+    }
+    server
 }
 
 /// A repository with a commit, so that it has a main worktree.
@@ -393,7 +414,7 @@ async fn each_daemon_command_with_host_reaches_the_daemon_of_that_host() {
                 "{out:?}"
             );
         }
-        let out = r.lead(&["leave"], name).await;
+        let out = r.lead(&["host", "leave"], name).await;
         assert!(!out.status.success(), "{out:?}");
         // The host has the part lead only: it gives no workers to leave.
         assert!(
@@ -401,7 +422,7 @@ async fn each_daemon_command_with_host_reaches_the_daemon_of_that_host() {
             "{out:?}"
         );
         // The main clone pins no session image: the daemon starts no wave.
-        let out = r.lead(&["join"], name).await;
+        let out = r.lead(&["host", "join"], name).await;
         assert!(!out.status.success(), "{out:?}");
         assert!(!text(&out.stderr).contains("no daemon"), "{out:?}");
     }
@@ -1245,7 +1266,7 @@ async fn the_daemon_runs_the_test_and_the_build_with_the_release_table_that_orig
 }
 
 /// #1262: a daemon that runs the wave of a repository serves `--host` for
-/// it at its start, with no `riff join`: it writes `served.json`
+/// it at its start, with no `riff host join`: it writes `served.json`
 /// from `waves.json`.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_daemon_with_a_wave_and_no_served_file_serves_host() {
@@ -1381,7 +1402,7 @@ fn clones(tmp: &Path) -> Vec<String> {
 }
 
 /// #1430, 01M5SN561BM9SK24SS0AVJ3P5J, 01M5SN5644YVEPF3D452ZA2JVD:
-/// `riff join --host b` for a repository that `b` does not serve.
+/// `riff host join --host b` for a repository that `b` does not serve.
 /// The daemon of `b` makes the main clone with the `gh` of the user,
 /// serves the repository and runs its wave. A second call changes
 /// nothing: no new clone, the same session, the same files.
@@ -1404,7 +1425,9 @@ async fn wave_run_with_host_makes_the_main_clone_on_a_host_that_does_not_serve_t
     let clone = r.b.dir().join("clones/local/other");
     assert!(!clone.exists());
 
-    let out = r.a.run(&other, &["join", "--host", "b"], Some("l2")).await;
+    let out =
+        r.a.run(&other, &["host", "join", "--host", "b"], Some("l2"))
+            .await;
     let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
     assert!(out.status.success(), "{stdout}\n{stderr}\n{}", r.b.output());
     assert!(
@@ -1457,7 +1480,9 @@ async fn wave_run_with_host_makes_the_main_clone_on_a_host_that_does_not_serve_t
         head(&clone),
         std::fs::metadata(&clone).unwrap().modified().unwrap(),
     );
-    let out = r.a.run(&other, &["join", "--host", "b"], Some("l2")).await;
+    let out =
+        r.a.run(&other, &["host", "join", "--host", "b"], Some("l2"))
+            .await;
     let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
     assert!(out.status.success(), "{stdout}\n{stderr}\n{}", r.b.output());
     assert!(!stdout.contains("cloned"), "{stdout}");
@@ -1477,7 +1502,9 @@ async fn wave_run_with_host_makes_the_main_clone_on_a_host_that_does_not_serve_t
     );
 
     // The person asks for it from a terminal too, for a host that is served.
-    let out = r.a.run(&other, &["join", "--host", "b"], None).await;
+    let out =
+        r.a.run(&other, &["host", "join", "--host", "b"], None)
+            .await;
     assert!(out.status.success(), "{out:?}");
     assert_eq!(clones(tmp.path()).len(), 1);
 }
@@ -1589,7 +1616,9 @@ async fn two_daemons_of_one_wave_give_the_lead_each_notice_one_time() {
     person_posts(&api, &lead).await;
 
     for host in ["a", "b"] {
-        let out = r.a.run(&other, &["join", "--host", host], Some("l2")).await;
+        let out =
+            r.a.run(&other, &["host", "join", "--host", host], Some("l2"))
+                .await;
         assert!(out.status.success(), "{out:?}\n{}", r.host(host).output());
     }
 
@@ -1688,7 +1717,9 @@ async fn two_daemons_that_cannot_read_the_wave_give_the_lead_the_fault_one_time(
     person_posts(&api, &lead).await;
 
     for host in ["a", "b"] {
-        let out = r.a.run(&other, &["join", "--host", host], Some("l2")).await;
+        let out =
+            r.a.run(&other, &["host", "join", "--host", host], Some("l2"))
+                .await;
         assert!(out.status.success(), "{out:?}\n{}", r.host(host).output());
     }
 
@@ -1726,8 +1757,8 @@ async fn two_daemons_that_cannot_read_the_wave_give_the_lead_the_fault_one_time(
     );
 }
 
-/// #1643: `riff join --host b` gives `b` the part workers, and `riff
-/// leave --host b` takes them. A host with no other part stops serving the
+/// #1643: `riff host join --host b` gives `b` the part workers, and `riff
+/// host leave --host b` takes them. A host with no other part stops serving the
 /// repository and removes the main clone that its daemon made. The leave
 /// holds over a restart of the daemon. A host with no daemon of the user
 /// fails with the words of riff.
@@ -1740,7 +1771,9 @@ async fn leave_with_host_stops_serving_and_removes_the_clone_that_the_daemon_mad
     let clone = r.b.dir().join("clones/local/third");
 
     // The person asks from a terminal in the clone.
-    let out = r.a.run(&third, &["join", "--host", "b"], None).await;
+    let out =
+        r.a.run(&third, &["host", "join", "--host", "b"], None)
+            .await;
     let stdout = text(&out.stdout);
     assert!(out.status.success(), "{out:?}\n{}", r.b.output());
     assert!(
@@ -1776,7 +1809,9 @@ async fn leave_with_host_stops_serving_and_removes_the_clone_that_the_daemon_mad
     .await;
 
     // The leave takes the part workers, and the host has no other part.
-    let out = r.a.run(&third, &["leave", "--host", "b"], None).await;
+    let out =
+        r.a.run(&third, &["host", "leave", "--host", "b"], None)
+            .await;
     let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
     assert!(out.status.success(), "{stdout}\n{stderr}\n{}", r.b.output());
     assert!(stdout.contains(&riff::text::leave_stops(repo)), "{stdout}");
@@ -1802,7 +1837,9 @@ async fn leave_with_host_stops_serving_and_removes_the_clone_that_the_daemon_mad
     .await;
 
     // A second leave: the host has nothing to leave.
-    let out = r.a.run(&third, &["leave", "--host", "b"], None).await;
+    let out =
+        r.a.run(&third, &["host", "leave", "--host", "b"], None)
+            .await;
     assert!(!out.status.success(), "{out:?}");
     assert_eq!(
         text(&out.stderr).trim(),
@@ -1820,7 +1857,9 @@ async fn leave_with_host_stops_serving_and_removes_the_clone_that_the_daemon_mad
     assert!(!text(&status.stdout).contains(repo), "{status:?}");
 
     // A host with no daemon of the user.
-    let out = r.a.run(&third, &["join", "--host", "c"], None).await;
+    let out =
+        r.a.run(&third, &["host", "join", "--host", "c"], None)
+            .await;
     assert!(!out.status.success(), "{out:?}");
     assert_eq!(
         text(&out.stderr).trim(),

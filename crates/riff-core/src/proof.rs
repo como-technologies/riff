@@ -145,7 +145,7 @@ pub enum Action {
     TakeOwner,
     /// The end of the session `name` on the host `host`.
     End { host: String, name: String },
-    /// The end of each session of `repo` on `host` now: `riff leave
+    /// The end of each session of `repo` on `host` now: `riff host leave
     /// --now`.
     Leave { host: String, repo: String },
     /// The stop of the lead of `repo` on `host`.

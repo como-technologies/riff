@@ -333,10 +333,10 @@ async fn plan_hold_and_free_show_the_refusal_of_the_daemon() {
     }
 }
 
-/// #1430, 01M5SN566ZH5ZQ52NYT24WYA4P: `riff join` in the container of
+/// #1430, 01M5SN566ZH5ZQ52NYT24WYA4P: `riff host join` in the container of
 /// the lead starts no wave:
 /// the container has no daemon of its own. It names the hosts of the user
-/// with a daemon that does not serve the repository, and `riff join
+/// with a daemon that does not serve the repository, and `riff host join
 /// --host` as the way to add one.
 #[tokio::test(flavor = "multi_thread")]
 async fn join_names_the_hosts_that_give_no_workers() {
@@ -365,7 +365,7 @@ async fn join_names_the_hosts_that_give_no_workers() {
         Some("who") => Ok(json!({"sessions": sessions})),
         _ => Err(format!("unexpected call {call}")),
     });
-    let out = container.riff(&socket, &["join"]).await;
+    let out = container.riff(&socket, &["host", "join"]).await;
     assert_eq!(out.status.code(), Some(1), "{out:?}");
     let hosts = ["pangolin".to_owned()];
     assert_eq!(
@@ -375,14 +375,14 @@ async fn join_names_the_hosts_that_give_no_workers() {
     assert_eq!(common::call_names(&asked), ["roster", "who"]);
 }
 
-/// #1643: `riff leave` in the container of the lead stops no workers: the
-/// container has no daemon of its own. It names `riff leave --host`.
+/// #1643: `riff host leave` in the container of the lead stops no workers: the
+/// container has no daemon of its own. It names `riff host leave --host`.
 #[tokio::test(flavor = "multi_thread")]
 async fn leave_in_a_container_names_the_host_flag() {
     let container = Container::new();
     let (_dir, socket, asked) =
         common::session_socket(|call| Err(format!("unexpected call {call}")));
-    let out = container.riff(&socket, &["leave"]).await;
+    let out = container.riff(&socket, &["host", "leave"]).await;
     assert_eq!(out.status.code(), Some(1), "{out:?}");
     assert_eq!(
         text(&out.stderr).trim(),
