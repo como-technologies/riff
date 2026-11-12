@@ -883,11 +883,11 @@ impl Top<'_> {
     /// };
     /// let text = anstream::adapter::strip_str(&top.view()).to_string();
     /// // The lead of each project, with its host (01M77XYFZW86MCXD22GDCXMS00).
+    /// // o/s is no project: its lead has no fact `lead`.
     /// assert!(
     ///     text.starts_with(
     ///         "riff   running\n\
     ///          lead   o/r on thelio: mike@thelio:r (aaaa1111)\n\
-    ///          lead   o/s on pangolin: mike@pangolin:s (eeee5555)\n\
     ///          build  "
     ///     ),
     ///     "{text}"
@@ -898,7 +898,7 @@ impl Top<'_> {
     /// );
     /// // o/s is no project: no board, and no error line.
     /// assert!(text.contains("\n\nWave 3 (o/r)\n  free: #14\n  held: #16 (a reading at 19:40 UTC)\n  claimed: #12\n  verify: #13 #15\n\n"), "{text}");
-    /// assert!(!text.lines().any(|l| l.contains("o/s") && !l.starts_with("lead ")), "{text}");
+    /// assert!(!text.contains("o/s"), "{text}");
     /// let tree: Vec<&str> = text.rsplit("\n\n").next().unwrap().lines().collect();
     /// assert_eq!(tree, [
     ///     "ann  admin  offline  seen 1h ago",
@@ -966,6 +966,7 @@ impl Top<'_> {
         facts.extend(view::lead_facts(
             self.pauses,
             self.sessions.on_server(),
+            self.projects,
             false,
         ));
         facts.extend(view::build_facts(self.server));
@@ -1703,8 +1704,9 @@ mod tests {
 
     /// 01M77XYFZW86MCXD22GDCXMS00: the header names the lead of each
     /// project and its host, as `riff who` does, after the facts of the
-    /// pauses. A repository with no live lead has `none`: a lead that is
-    /// gone is no lead, and a worker is none.
+    /// pauses. A project with no live lead has `none`: a lead that is
+    /// gone is no lead, and a worker is none. A repository that is no
+    /// project has no fact `lead` (#2050).
     #[test]
     fn the_header_names_the_lead_of_each_project_and_its_host() {
         let gone = info(
@@ -1721,16 +1723,22 @@ mod tests {
                 SessionState::Busy,
             ),
             gone,
+            info(
+                "riff://mike@thelio/o/theme?session=7a8b9c0d&lead=true",
+                SessionState::Idle,
+            ),
         ];
         let pauses = RiffReply {
-            no_lead: vec!["o/strata".parse().unwrap()],
+            no_lead: vec!["local/theme".parse().unwrap(), "o/strata".parse().unwrap()],
             repositories: vec![riff_core::wire::RepositoryPause {
                 repository: "o/strata".parse().unwrap(),
                 pause: riff_core::wire::PauseInfo { by: None, at_ms: 0 },
             }],
             ..riff_core::wire::RiffState::Running.into()
         };
-        let text = shown_paused(&sessions, &BTreeMap::new(), &Show::default(), &[], &pauses);
+        let projects = ["o/riff", "o/strata"].map(|repo| (repo.to_owned(), Issues::default()));
+        let issues = BTreeMap::from(projects);
+        let text = shown_paused(&sessions, &issues, &Show::default(), &[], &pauses);
         let head: Vec<&str> = text.lines().take_while(|l| !l.is_empty()).collect();
         assert_eq!(
             head[..4],
@@ -1743,6 +1751,7 @@ mod tests {
             "{text}"
         );
         assert!(head[4].starts_with("build   "), "{text}");
+        assert!(!head.iter().any(|l| l.contains("theme")), "{text}");
     }
 
     /// The holds of strata: #355 and #356 with one reason, #88 with a

@@ -9685,7 +9685,7 @@ that builds it merges.
 - **01M77XYFZW86MCXD22GDCXMS00** `riff who` and `riff top` show a fact
   `lead` for each project with a live lead, after the facts of the
   pauses: `OWNER/REPO on HOST: NAME`, with the name and the short
-  session ID of the lead. Each repository with no live lead
+  session ID of the lead. Each project with no live lead
   (01M776RSYKJK9NETFAD8G0CCVQ) has the fact `lead` `OWNER/REPO: none`,
   in yellow. The `who` tool of a session shows the same facts, plain.
 - **01M77XYN04KX35QZ06NDPSXHRP** In the Sessions tab of the TUI, the
@@ -9699,6 +9699,12 @@ that builds it merges.
   When the lead runs on another host, the note names that host and the
   step there. On a repository that waits for a lead, `l` starts no lead:
   the note gives the step.
+- **01M78V5NSEH2JK52473SQ64E24** `riff who`, `riff top` and the `who`
+  tool of a session show the fact `lead` only for a project of the riff
+  (01M77F7HPBNJY9QFG3HA6YH5F4). A repository that is no project gets no
+  fact `lead`: not its live lead, and not the `none` of a repository
+  that riff-server names in `no_lead`, for example the repository of a
+  session that is gone. Supersedes 01M77XYFZW86MCXD22GDCXMS00 in part.
 
 ## The notes of the lead
 

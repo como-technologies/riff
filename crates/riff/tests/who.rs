@@ -216,15 +216,18 @@ fn leads(who: &str) -> Vec<String> {
 }
 
 /// 01M77XYFZW86MCXD22GDCXMS00: `riff who` names the lead of each project
-/// and the host where it runs, and `none` for a repository with no live
-/// lead. The `who` tool of a session shows the same facts, plain.
+/// and the host where it runs, and `none` for a project with no live
+/// lead. A repository that a record names and that is no project gets no
+/// fact `lead` (#2050). The `who` tool of a session shows the same facts,
+/// plain.
 #[tokio::test(flavor = "multi_thread")]
 async fn who_names_the_lead_of_each_project_and_its_host() {
     use riff::tools::Tools;
     use rmcp::ServiceExt;
     use rmcp::model::CallToolRequestParams;
 
-    let server = start_server().await;
+    let server =
+        common::start_signed_log(vec![common::project(THREAD), common::project("o/strata")]).await;
     let dir = repo();
     let dir = dir.path();
     // The lead a1 of mike on pangolin, and a session of strata on thelio:
@@ -235,6 +238,21 @@ async fn who_names_the_lead_of_each_project_and_its_host() {
     let b2: SessionUri = "riff://mike@thelio/o/strata?session=b2".parse().unwrap();
     let api_b2 = server.api("mike", Some("b2"));
     api_b2.register(&b2).await.unwrap();
+    // The records name o/theme and o/gone, which are no projects: the lead
+    // c3 of o/theme, and the session d4 of o/gone, which ended.
+    let c3: SessionUri = "riff://mike@thelio/o/theme?session=c3".parse().unwrap();
+    server.api("mike", Some("c3")).register(&c3).await.unwrap();
+    common::name_lead(&server.api("mike", None), &c3).await;
+    let d4: SessionUri = "riff://mike@thelio/o/gone?session=d4".parse().unwrap();
+    let api_d4 = server.api("mike", Some("d4"));
+    api_d4.register(&d4).await.unwrap();
+    api_d4.end(&d4).await.unwrap();
+    let person = common::person_of(&a1);
+    let pauses = server.api("mike", None).pauses(&person).await.unwrap();
+    assert!(
+        pauses.waits_for_lead(&"o/gone".parse().unwrap()),
+        "{pauses:?}"
+    );
 
     let who = output(riff(&server, dir, None, &["who", "--color", "never"])).await;
     let want = [
