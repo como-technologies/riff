@@ -4,7 +4,9 @@
 //! callers" (#1582). A `Gh::for_repo(..)` with no `.by(..)` counts as
 //! "other" too (#1629). A `gh` that riff starts with no `Gh` counts
 //! nothing, and in the daemon it can ask the keyring for an unlock prompt
-//! (01M77AB7XZV8KG8RRZ8C6R5A8X). The code is the source of each crate: the
+//! (01M77AB7XZV8KG8RRZ8C6R5A8X). A `git` that talks to a remote can start
+//! `gh` for a credential, so its function looks at the keyring first
+//! (01M78TSH2VNHA75RR1HXC5Z27G). The code is the source of each crate: the
 //! check reads the files, as `no_skill.rs` does.
 
 use std::fs;
@@ -359,5 +361,160 @@ fn the_guide_names_no_call_that_counts_as_other() {
         !limit_section().contains(&format!("`{other}`")),
         "the section \"See how the daemon uses the GitHub limit\" names a caller `{other}`: \
          each call of riff has a name"
+    );
+}
+
+/// The starts of the arguments of a `git` that talks to a remote. Such a
+/// `git` can start `gh` for a credential (01M78TSH2VNHA75RR1HXC5Z27G).
+const REMOTE_GIT: [&str; 6] = [
+    "[\"fetch\"",
+    "[\"push\"",
+    "[\"clone\"",
+    "[\"ls-remote\"",
+    "[\"pull\"",
+    "\"git\", \"fetch\"",
+];
+
+/// The calls that look at the keyring before a `git` that talks to a
+/// remote: `git_credential::run`, `git_credential::keyring_open`, and the
+/// `remote_git` of a module that calls `keyring_open`.
+const GUARDS: [&str; 2] = ["git_credential::", "remote_git("];
+
+/// The places of a remote `git` that need no look at the keyring: a file,
+/// and a text of the line or of its function. Each runs only in a command
+/// that a person types, or starts no `git`.
+const NO_LOOK: [(&str, &str); 6] = [
+    // `riff claim` and `riff run`: the earlier work of an item.
+    ("dropped.rs", "pub async fn fetch("),
+    // `riff cloud create`.
+    ("cloud.rs", "fn fetch("),
+    // `riff project init`, which an agent session cannot run.
+    ("project.rs", "pub fn pull("),
+    // `podman pull`.
+    ("podman.rs", "[\"pull\", image]"),
+    // The subcommands of `gh`.
+    ("ghcalls.rs", "(\"label\", &[\"clone\""),
+    // `git ls-remote --get-url` reads the config, and talks to no remote.
+    ("git_credential.rs", "pub fn urls("),
+];
+
+/// True when the line `line` starts a function.
+fn starts_fn(line: &str) -> bool {
+    let mut code = line.trim_start();
+    for word in [
+        "pub(crate) ",
+        "pub(super) ",
+        "pub ",
+        "async ",
+        "const ",
+        "unsafe ",
+    ] {
+        code = code.strip_prefix(word).unwrap_or(code);
+    }
+    code.starts_with("fn ")
+}
+
+/// The lines of the function of `source` around the line `at`, from 0:
+/// its first line, and its lines up to the `}` that closes it.
+fn function_of(source: &str, at: usize) -> Vec<&str> {
+    let lines: Vec<&str> = source.lines().collect();
+    let Some(start) = (0..=at).rev().find(|&n| starts_fn(lines[n])) else {
+        return vec![lines[at]];
+    };
+    let indent = |line: &str| line.len() - line.trim_start().len();
+    let end = (start + 1..lines.len())
+        .find(|&n| {
+            indent(lines[n]) == indent(lines[start]) && lines[n].trim_start().starts_with('}')
+        })
+        .unwrap_or(lines.len() - 1);
+    lines[start..=end.max(at)].to_vec()
+}
+
+/// Each line of `source` outside its tests that starts a `git` that
+/// talks to a remote in a function with no look at the keyring, and is
+/// not on the list `no_look`: the number of the line, and the text.
+fn unguarded(source: &str, no_look: &[&str]) -> Vec<(usize, String)> {
+    outside_tests(source)
+        .into_iter()
+        .filter(|(_, line)| REMOTE_GIT.iter().any(|start| line.contains(start)))
+        .filter(|(n, line)| {
+            let function = function_of(source, n - 1);
+            let guarded = function
+                .iter()
+                .any(|l| GUARDS.iter().any(|guard| l.contains(guard)));
+            let allowed = no_look
+                .iter()
+                .any(|text| line.contains(text) || function[0].contains(text));
+            !guarded && !allowed
+        })
+        .map(|(n, line)| (n, line.trim().to_owned()))
+        .collect()
+}
+
+#[test]
+fn the_check_finds_a_remote_git_with_no_look_at_the_keyring() {
+    let source = "\
+fn a(dir: &Path) {
+    run::output(\"git\", dir, &[\"fetch\", \"-q\", \"origin\"])?;
+}
+fn b(dir: &Path) {
+    git_credential::run(dir, \"origin\", &[\"fetch\", \"-q\", \"origin\"])?;
+}
+fn c(dir: &Path) {
+    let push = [\"push\", \"origin\"];
+    crate::git_credential::keyring_open(dir, \"origin\", &push)?;
+    git(&push)?;
+}
+fn d(&self) {
+    self.remote_git(&self.dir, &[\"ls-remote\", \"origin\"])?;
+}
+pub fn person(dir: &Path) {
+    git(dir, &[\"pull\", \"origin\"])?;
+}
+// git(dir, &[\"clone\", url])
+#[cfg(test)]
+mod tests {
+    fn e() { git(&[\"push\", \"origin\"]); }
+}
+fn f() {
+    let args = [\"GIT_TERMINAL_PROMPT=0\", \"git\", \"fetch\", \"-q\"];
+}
+";
+    assert_eq!(
+        unguarded(source, &["pub fn person("]),
+        [
+            (
+                2,
+                "run::output(\"git\", dir, &[\"fetch\", \"-q\", \"origin\"])?;".to_owned()
+            ),
+            (
+                24,
+                "let args = [\"GIT_TERMINAL_PROMPT=0\", \"git\", \"fetch\", \"-q\"];".to_owned()
+            ),
+        ]
+    );
+}
+
+#[test]
+fn each_git_that_talks_to_a_remote_looks_at_the_keyring_first() {
+    let mut found = Vec::new();
+    for path in sources() {
+        let source = fs::read_to_string(&path).unwrap();
+        let name = path.file_name().unwrap().to_string_lossy();
+        let no_look: Vec<&str> = NO_LOOK
+            .iter()
+            .filter(|(file, _)| *file == name)
+            .map(|(_, text)| *text)
+            .collect();
+        for (n, line) in unguarded(&source, &no_look) {
+            found.push(format!("{}:{n}: {line}", path.display()));
+        }
+    }
+    assert!(
+        found.is_empty(),
+        "each git that talks to a remote can start gh for a credential: in the daemon, run it \
+         with git_credential::run, or call git_credential::keyring_open first \
+         (01M78TSH2VNHA75RR1HXC5Z27G):\n{}",
+        found.join("\n")
     );
 }

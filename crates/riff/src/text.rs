@@ -4284,6 +4284,18 @@ pub fn gh_not_run(args: &str) -> String {
     format!("riff did not run gh {args}")
 }
 
+/// The context of a call `git ARGS` that the riff daemon did not run: git
+/// would start `gh` for a credential, and `gh` would ask for an unlock
+/// prompt of the keyring (01M78TSH2VNHA75RR1HXC5Z27G). The line of the
+/// locked keyring follows it.
+///
+/// ```
+/// assert_eq!(riff::text::git_not_run("fetch -q origin"), "riff did not run git fetch -q origin");
+/// ```
+pub fn git_not_run(args: &str) -> String {
+    format!("riff did not run git {args}")
+}
+
 /// The error of a step of the host, `program ARGS`, that gave no answer
 /// in `limit` (#1858): riff stopped it.
 ///

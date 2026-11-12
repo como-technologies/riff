@@ -230,7 +230,7 @@ use tokio::signal::unix::{SignalKind, signal};
 use crate::daemon::{self, Ask, Ended, Say};
 use crate::runtime::{Bind, Env, SessionSpec, Source};
 use crate::session_setup::Setup;
-use crate::{dropped, home, identity, pr, rollout, session_image, text};
+use crate::{dropped, git_credential, home, identity, pr, rollout, session_image, text};
 use riff_client::api::{self, Api};
 
 /// riff starts no session while the access token of `claude` has less
@@ -1793,9 +1793,9 @@ pub(crate) fn make_clone(main: &Path, clone: &Path, branch: &str) -> Result<bool
     let remote = output("git", main, &["remote", "get-url", "origin"])?;
     let top = main.to_string_lossy();
     let path = clone.to_string_lossy();
-    output(
-        "git",
+    git_credential::run(
         main,
+        &remote,
         &["clone", "-q", "--reference", &top, "--", &remote, &path],
     )?;
     let earlier = output(

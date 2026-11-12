@@ -3020,7 +3020,7 @@ impl GitHub {
     /// The forge of the clone `dir`. It fetches `origin` and its tags.
     pub fn new(gh: Gh, dir: &Path) -> Result<Self> {
         let forge = Self::at(gh, dir);
-        forge.git(&["fetch", "-q", "--tags", "--force", "origin"])?;
+        forge.remote_git(&forge.dir, &["fetch", "-q", "--tags", "--force", "origin"])?;
         Ok(forge)
     }
 
@@ -3052,6 +3052,14 @@ impl GitHub {
 
     fn git(&self, args: &[&str]) -> Result<String> {
         self.git_in(&self.dir, args)
+    }
+
+    /// [`GitHub::git_in`] of a `git` that talks to `origin`. In the
+    /// daemon, a `git` that would ask a locked `gh` for a credential does
+    /// not run (01M78TSH2VNHA75RR1HXC5Z27G).
+    fn remote_git(&self, dir: &Path, args: &[&str]) -> Result<String> {
+        crate::git_credential::keyring_open(dir, "origin", args)?;
+        self.git_in(dir, args)
     }
 
     /// The state of the commit status `context` of `commit`, or `None`.
@@ -3383,7 +3391,7 @@ impl Forge for GitHub {
             // A cut that stopped can leave the branch: the new commit
             // replaces it.
             let refspec = format!("+HEAD:refs/heads/{branch}");
-            self.git_in(&path, &["push", "-q", "origin", &refspec])?;
+            self.remote_git(&path, &["push", "-q", "origin", &refspec])?;
             Ok(self
                 .git_in(&path, &["rev-parse", "HEAD"])?
                 .trim()
@@ -3525,7 +3533,7 @@ impl Forge for GitHub {
     fn tag_exists(&self, tag: &str) -> Result<bool> {
         let name = format!("refs/tags/{tag}");
         Ok(!self
-            .git(&["ls-remote", "--tags", "origin", &name])?
+            .remote_git(&self.dir, &["ls-remote", "--tags", "origin", &name])?
             .trim()
             .is_empty())
     }
@@ -3534,7 +3542,7 @@ impl Forge for GitHub {
         let message = format!("Release {tag}");
         self.git(&["tag", "-a", tag, commit, "-m", &message])?;
         let name = format!("refs/tags/{tag}");
-        if let Err(e) = self.git(&["push", "-q", "origin", &name]) {
+        if let Err(e) = self.remote_git(&self.dir, &["push", "-q", "origin", &name]) {
             let _ = self.git(&["tag", "-d", tag]);
             bail!("{} {e}", crate::text::tag_refused(tag));
         }

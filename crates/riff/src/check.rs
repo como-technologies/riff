@@ -36,7 +36,7 @@ use std::process::Stdio;
 use anyhow::{Context, Result, bail};
 
 use crate::run::output;
-use crate::text;
+use crate::{git_credential, text};
 
 /// The one clone of a check on the machine of `home`.
 pub fn dir(home: &Path) -> PathBuf {
@@ -79,9 +79,9 @@ pub fn build(here: &Path, check: &Path, just: &Path) -> Result<PathBuf> {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("cannot make {}", parent.display()))?;
         let path = check.to_string_lossy();
-        output("git", parent, &["clone", "-q", "--", &remote, &path])?;
+        git_credential::run(parent, &remote, &["clone", "-q", "--", &remote, &path])?;
     }
-    output("git", check, &["fetch", "-q", "origin"])?;
+    git_credential::run(check, "origin", &["fetch", "-q", "origin"])?;
     output("git", check, &["checkout", "-q", "--detach", "origin/HEAD"])?;
     let status = std::process::Command::new(just)
         .arg("static")

@@ -333,8 +333,12 @@ pub fn merges(main: &Path, lanes: &mut BTreeMap<u64, Lane>) {
         let mut args = [fetch.as_slice(), &["--no-write-fetch-head", "origin"]].concat();
         args.extend(missing.iter().map(String::as_str));
         // A failed fetch brings no head: the merges of those heads do not
-        // run, and their pull requests stay in one group.
-        let _ = crate::run::output_within("env", main, &args, FETCH_WAIT);
+        // run, and their pull requests stay in one group. So does a fetch
+        // that would ask a locked `gh` for a credential
+        // (01M78TSH2VNHA75RR1HXC5Z27G).
+        if crate::git_credential::keyring_open(main, "origin", &args[2..]).is_ok() {
+            let _ = crate::run::output_within("env", main, &args, FETCH_WAIT);
+        }
     }
     for (one, two) in pairs {
         let (Some(a), Some(b)) = (lanes.get(&one), lanes.get(&two)) else {

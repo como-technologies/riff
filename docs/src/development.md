@@ -6375,9 +6375,11 @@ each login and each unlock of the screen. That is normal.
 
 The riff daemon starts after your desktop (see
 [When the daemon starts](#when-the-daemon-starts)). It never asks for
-the unlock prompt, and it runs no `gh` that would ask for it. It waits
-for an open keyring, and the waves say `unlock it at the desktop`.
-Only a command that you type asks for the prompt.
+the unlock prompt, and it runs no `gh` that would ask for it. It also
+runs no `git` that would start `gh` for a credential: a fetch, a clone
+or a push of a repository over HTTPS, after `gh auth setup-git`. It
+waits for an open keyring, and the waves say `unlock it at the
+desktop`. Only a command that you type asks for the prompt.
 
 ```mermaid
 sequenceDiagram
@@ -6409,6 +6411,23 @@ riff daemon status
 ```
 
 It shows `claude token: set.` when the daemon reads the keyring.
+
+To see whether git asks `gh` for a credential, run this in the main
+clone of a project:
+
+```sh
+git config --get-regexp '^credential\..*helper$'
+```
+
+A line with `gh auth git-credential` for the host of
+`git remote get-url origin` says that git asks `gh`. While the keyring
+is locked, the daemon then runs no such `git`, and says:
+
+```text
+riff did not run git fetch -q origin: the OS keyring of pangolin is locked or does not answer: unlock it at the desktop. gh uses the same keyring, so gh stops too
+```
+
+A remote over SSH asks `gh` for nothing, so its `git` runs.
 
 #### When the keyring does not answer
 
