@@ -6513,16 +6513,21 @@ calls:
 flowchart LR
     P[a riff process] -->|first call: one session| K[(OS keyring)]
     P -->|later calls: the kept value| P
-    C[riff top, a clean of the worktrees] -->|gh auth token: one time| G[gh]
+    C[riff top, the TUI, riff chat, the look of the wave] -->|gh auth token: one time| G[gh]
     G --> K
     C -->|GH_TOKEN| V[each gh call]
+    V -->|Bad credentials, HTTP 401| C
 ```
 
 - A process opens the keyring at most one time, and reads each secret
   at most one time. Only a refresh of the sign-in reads it again.
-- The `gh` calls of one clean of the worktrees share one token. So do
-  the `gh` calls of `riff top`, and of the rollout and the look of the
-  lead: they read it again each 10 minutes.
+- The `gh` calls of `riff top`, of the TUI and of `riff chat` share one
+  token. The look of the wave in the riff daemon shares one token for
+  each repository.
+- riff reads the `gh` token again with `gh auth token` each 10 minutes.
+  When GitHub refuses the token with `Bad credentials` or HTTP 401,
+  riff reads it again at the next call. Each refusal gives at most one
+  new read, and riff does not run the refused call again.
 
 To see the calls of one `riff` command, give it a file in
 `RIFF_KEYRING_LOG`. Each line has the process ID and the call, for
@@ -6548,6 +6553,19 @@ To see the locked memory of GNOME Keyring, run the command below. At
 ```sh
 grep VmLck /proc/"$(pidof gnome-keyring-daemon)"/status
 ```
+
+#### After a new sign-in of `gh`
+
+When GitHub refuses the token of `gh`, for example after a revoke, sign
+in to `gh` again:
+
+```sh
+gh auth login
+```
+
+riff takes the new token by itself: at its next call after a refusal,
+and at the latest after 10 minutes. A restart of `riff top`, of the TUI
+or of `riff.service` is not necessary.
 
 ### See the kind of each keyring session
 

@@ -111,6 +111,22 @@
 //! [`ghcalls::LimitOut`]: the reset of the counter that failed, and what
 //! to run then (01M6QB459TJVK6CS9FHWH6EVK2). The release commands use it.
 //!
+//! A [`Gh`] made with [`Gh::with_one_token`] gives each call the token of
+//! one read of `gh auth token`, so a call opens no session of the keyring
+//! (#1003). `riff top`, the TUI, `riff chat` and the look of the wave in
+//! the riff daemon use it. It reads the token again after [`TOKEN_KEEP`],
+//! and at the next call after GitHub refused the kept token
+//! ([`token_refused`], 01M7AYFSCTMVB342AYDPS2FBPC).
+//!
+//! ```mermaid
+//! flowchart LR
+//!     C["a call"] --> K{"a kept token,<br/>under 10 minutes old?"}
+//!     K -- no --> R["gh auth token"] --> G
+//!     K -- yes --> G["gh with GH_TOKEN"]
+//!     G --> F{"Bad credentials<br/>or HTTP 401?"}
+//!     F -- yes --> D["drop the kept token:<br/>the next call reads it"]
+//! ```
+//!
 //! The full check of a commit is its one full test run
 //! (01M49HAZ5BZYGAR9PGC089RM3F). In the repository of riff it is the job
 //! `Gate`. In another repository it is each check that the ruleset of the
@@ -260,13 +276,40 @@ pub fn etag_of(reply: &str) -> Option<String> {
 /// assert!(!gateway_fault("", "GraphQL: API rate limit already exceeded"));
 /// ```
 pub fn gateway_fault(stdout: &str, stderr: &str) -> bool {
-    const CODES: [&str; 3] = ["502", "503", "504"];
-    if http_status(stdout).is_some_and(|code| CODES.contains(&code)) {
+    has_status(stdout, stderr, &["502", "503", "504"])
+}
+
+/// True when GitHub refused the token of a failed call of `gh`:
+/// `Bad credentials`, or the HTTP status 401 in `stderr` or in the
+/// status line of `gh api --include` in `stdout`. Then a `gh` with one
+/// token reads the token again at its next call
+/// ([`Gh::with_token_kept`], 01M7AYFSCTMVB342AYDPS2FBPC).
+///
+/// ```
+/// use riff::pr::token_refused;
+///
+/// assert!(token_refused("", "HTTP 401: Bad credentials (https://api.github.com/graphql)"));
+/// assert!(token_refused("", "gh: Bad credentials (HTTP 401)\n"));
+/// assert!(token_refused("HTTP/2.0 401 Unauthorized\r\n", ""));
+/// assert!(token_refused("", "gh: Requires authentication (HTTP 401)"));
+/// assert!(!token_refused("", "HTTP 403: Resource not accessible by integration"));
+/// assert!(!token_refused("", "HTTP 4010: no such thing"));
+/// assert!(!token_refused("", "GraphQL: API rate limit already exceeded"));
+/// ```
+pub fn token_refused(stdout: &str, stderr: &str) -> bool {
+    stderr.contains("Bad credentials") || has_status(stdout, stderr, &["401"])
+}
+
+/// True when a failed call of `gh` ended in one of the HTTP status
+/// `codes`: `HTTP CODE` in `stderr`, or the status line of
+/// `gh api --include` in `stdout`.
+fn has_status(stdout: &str, stderr: &str, codes: &[&str]) -> bool {
+    if http_status(stdout).is_some_and(|code| codes.contains(&code)) {
         return true;
     }
     stderr.match_indices("HTTP ").any(|(at, word)| {
         let after = &stderr[at + word.len()..];
-        CODES.iter().any(|code| {
+        codes.iter().any(|code| {
             after
                 .strip_prefix(code)
                 .is_some_and(|rest| !rest.starts_with(|c: char| c.is_ascii_digit()))
@@ -375,6 +418,9 @@ impl Default for Gh {
 struct Shared {
     keep: Duration,
     read: Arc<Mutex<Option<GhToken>>>,
+    /// True for a token that the caller gave ([`Gh::with_given_token`]):
+    /// riff never reads it again, also after a refusal of GitHub.
+    given: bool,
 }
 
 /// One read of the token of `gh`: its time, and the token, or `None`
@@ -393,7 +439,8 @@ impl fmt::Debug for GhToken {
 
 /// How long the calls of a `gh` with one token use one read of it
 /// ([`Gh::with_one_token`]). A process that runs for a long time reads
-/// it again after this time, so a new sign-in of `gh` reaches it.
+/// it again after this time, so a new sign-in of `gh` reaches it. A
+/// refusal of the token reads it again sooner ([`token_refused`]).
 pub const TOKEN_KEEP: Duration = Duration::from_secs(600);
 
 /// The variables that give `gh` its token. When one is set, a call of
@@ -743,8 +790,8 @@ impl Gh {
     }
 
     /// The same `gh`, whose calls share the token of one read in each
-    /// [`TOKEN_KEEP`] (01M54510SFK1Z9VPFYBYYSV10F). See
-    /// [`Gh::with_token_kept`].
+    /// [`TOKEN_KEEP`], and read it again after a refusal of GitHub
+    /// (01M7AYFSCTMVB342AYDPS2FBPC). See [`Gh::with_token_kept`].
     pub fn with_one_token(self) -> Self {
         self.with_token_kept(TOKEN_KEEP)
     }
@@ -786,19 +833,56 @@ impl Gh {
     /// # }
     /// # Ok::<(), anyhow::Error>(())
     /// ```
+    ///
+    /// A call that GitHub refuses for its token ([`token_refused`]) drops
+    /// the kept token, so the next call reads it again
+    /// (01M7AYFSCTMVB342AYDPS2FBPC): a new sign-in of `gh` reaches the
+    /// process at once. Each refusal gives at most one new read: the
+    /// refusal of a token that a newer read replaced drops nothing. riff
+    /// does not run the refused call again.
+    ///
+    /// ```
+    /// let dir = tempfile::tempdir()?;
+    /// let log = dir.path().join("gh.log");
+    /// // The first read gives the old token, and GitHub refuses it.
+    /// let script = format!(
+    ///     "#!/bin/sh\necho \"${{GH_TOKEN:-none}} $*\" >> {log}\n\
+    ///      if [ \"$1 $2\" = \"auth token\" ]; then\n\
+    ///        [ -e {log}.read ] && echo gho_new || {{ touch {log}.read; echo gho_old; }}\n\
+    ///        exit 0\n\
+    ///      fi\n\
+    ///      [ \"$GH_TOKEN\" = gho_old ] && {{ echo 'gh: Bad credentials (HTTP 401)' >&2; exit 1; }}\n\
+    ///      exit 0\n",
+    ///     log = log.display(),
+    /// );
+    /// let gh = isolated::write_program(dir.path().join("gh"), &script);
+    /// let shared = riff::pr::Gh::at(&gh).with_one_token();
+    /// assert!(shared.run(&["pr", "view", "a"], None).is_err());
+    /// shared.run(&["pr", "view", "b"], None)?;
+    /// shared.run(&["pr", "view", "c"], None)?;
+    /// # if std::env::var_os("GH_TOKEN").is_none() && std::env::var_os("GITHUB_TOKEN").is_none() {
+    /// assert_eq!(
+    ///     std::fs::read_to_string(&log)?,
+    ///     "none auth token\ngho_old pr view a\n\
+    ///      none auth token\ngho_new pr view b\ngho_new pr view c\n",
+    /// );
+    /// # }
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
     pub fn with_token_kept(self, keep: Duration) -> Self {
         Self {
             token: Some(Shared {
                 keep,
                 read: Arc::default(),
+                given: false,
             }),
             ..self
         }
     }
 
     /// The same `gh`, whose calls get `token` in `GH_TOKEN`, and read no
-    /// token: a call with the token of a session, for example its revoke
-    /// ([`crate::daemon::gh_token::revoke`]).
+    /// token, also after a refusal of GitHub: a call with the token of a
+    /// session, for example its revoke ([`crate::daemon::gh_token::revoke`]).
     ///
     /// ```
     /// let dir = tempfile::tempdir()?;
@@ -817,6 +901,7 @@ impl Gh {
             token: Some(Shared {
                 keep: Duration::MAX,
                 read: Arc::new(Mutex::new(Some(read))),
+                given: true,
             }),
             writer: None,
             ..self
@@ -883,6 +968,25 @@ impl Gh {
             });
         }
         read.as_ref()?.token.clone()
+    }
+
+    /// Drops the kept read of the token when it is `refused`, a token
+    /// that GitHub refused ([`token_refused`]): the next call reads the
+    /// token again (01M7AYFSCTMVB342AYDPS2FBPC). A given token stays
+    /// ([`Gh::with_given_token`]), and so does a newer read: each refusal
+    /// gives at most one new read.
+    fn forget(&self, refused: &str) {
+        let Some(shared) = self.token.as_ref().filter(|shared| !shared.given) else {
+            return;
+        };
+        let mut read = shared.read.lock().unwrap_or_else(PoisonError::into_inner);
+        if read
+            .as_ref()
+            .and_then(|r| r.token.as_deref())
+            .is_some_and(|kept| kept.as_str() == refused)
+        {
+            *read = None;
+        }
     }
 
     /// One read of the token with `gh auth token`, or `None` when the
@@ -1451,17 +1555,36 @@ impl Gh {
     /// `input` gives its status and its stderr, not a broken pipe
     /// (#1803, 01M6Y4XHQADF27SHMMMV8RQ7Q1). A `gh` that would ask for an
     /// unlock prompt of the riff daemon does not run ([`keyring_open`]).
+    /// A call that GitHub refuses for the kept token drops that token
+    /// ([`Gh::forget`]).
     fn spawn(&self, args: &[&str], input: Option<&str>) -> Result<(bool, String, String)> {
+        let token = self.token_for(args);
+        if token.is_none() {
+            keyring_open(args)?;
+        }
+        let result = self.spawn_with(args, input, token.as_deref().map(String::as_str));
+        if let (Some(token), Ok((false, stdout, stderr))) = (&token, &result)
+            && token_refused(stdout, stderr)
+        {
+            self.forget(token);
+        }
+        result
+    }
+
+    /// [`Gh::spawn`] with `token` in `GH_TOKEN`, when it has one.
+    fn spawn_with(
+        &self,
+        args: &[&str],
+        input: Option<&str>,
+        token: Option<&str>,
+    ) -> Result<(bool, String, String)> {
         use std::os::unix::process::CommandExt;
         let mut command = Command::new(&self.program);
         if let Some(repo) = &self.repo {
             command.env("GH_REPO", repo);
         }
-        match self.token_for(args) {
-            Some(token) => {
-                command.env("GH_TOKEN", token.as_str());
-            }
-            None => keyring_open(args)?,
+        if let Some(token) = token {
+            command.env("GH_TOKEN", token);
         }
         if self.tally.is_some() {
             command.env(crate::gh_wrapper::COUNTED_VAR, "1");
@@ -4125,6 +4248,111 @@ mod tests {
         assert!(
             error.ends_with("GraphQL: Head sha did not match"),
             "{error}"
+        );
+    }
+
+    /// A fake `gh` in `dir` that logs `GH_TOKEN` and the arguments of
+    /// each call to `dir/log`. `gh auth token` gives `gho_old` at the
+    /// first read and `gho_new` after it. GitHub refuses `gho_old` and
+    /// `ghs_revoked` with `Bad credentials`, and fails `issue view 404`
+    /// with a 404.
+    fn refusing_gh(dir: &std::path::Path) -> Gh {
+        let script = format!(
+            "#!/bin/sh\necho \"${{GH_TOKEN:-none}} $*\" >> {log}\n\
+             if [ \"$1 $2\" = 'auth token' ]; then\n\
+               [ -e {log}.read ] && echo gho_new || {{ touch {log}.read; echo gho_old; }}\n\
+               exit 0\n\
+             fi\n\
+             case \"$GH_TOKEN\" in gho_old|ghs_revoked) echo 'HTTP 401: Bad credentials (https://api.github.com/graphql)' >&2; exit 1 ;; esac\n\
+             [ \"$3\" = 404 ] && {{ echo 'HTTP 404: Not Found' >&2; exit 1; }}\n\
+             exit 0\n",
+            log = dir.join("log").display(),
+        );
+        Gh::at(isolated::write_program(dir.join("gh"), script))
+    }
+
+    fn log(dir: &std::path::Path) -> String {
+        std::fs::read_to_string(dir.join("log")).unwrap_or_default()
+    }
+
+    /// #1012, 01M7AYFSCTMVB342AYDPS2FBPC: GitHub refuses the old token,
+    /// and the next call reads the token again and works with the new
+    /// one. riff does not run the refused call again. The control: a
+    /// `gh` with no new read keeps the old token, and its next call fails
+    /// too.
+    #[test]
+    fn a_refused_token_is_read_again_at_the_next_call() {
+        if super::token_given() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let gh = refusing_gh(dir.path()).with_one_token();
+        let error = gh.run(&["issue", "view", "1"], None).unwrap_err();
+        assert!(error.to_string().contains("Bad credentials"), "{error:#}");
+        gh.clone().run(&["issue", "view", "2"], None).unwrap();
+        gh.run(&["issue", "view", "3"], None).unwrap();
+        assert_eq!(
+            log(dir.path()),
+            "none auth token\ngho_old issue view 1\n\
+             none auth token\ngho_new issue view 2\ngho_new issue view 3\n"
+        );
+
+        let control = tempfile::tempdir().unwrap();
+        let gh = refusing_gh(control.path()).with_given_token("gho_old");
+        assert!(gh.run(&["issue", "view", "1"], None).is_err());
+        assert!(gh.run(&["issue", "view", "2"], None).is_err());
+        assert_eq!(
+            log(control.path()),
+            "gho_old issue view 1\ngho_old issue view 2\n"
+        );
+    }
+
+    /// #1012: each refusal gives at most one new read. The refusal of a
+    /// token that a newer read replaced drops nothing, and a failure that
+    /// is no refusal keeps the token.
+    #[test]
+    fn a_refusal_gives_at_most_one_new_read() {
+        if super::token_given() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let gh = refusing_gh(dir.path()).with_one_token();
+        assert!(gh.run(&["issue", "view", "1"], None).is_err());
+        gh.run(&["issue", "view", "2"], None).unwrap();
+        // A late refusal of the old token, for example of a call on
+        // another thread.
+        gh.forget("gho_old");
+        assert!(gh.run(&["issue", "view", "404"], None).is_err());
+        gh.run(&["issue", "view", "3"], None).unwrap();
+        assert_eq!(
+            log(dir.path()),
+            "none auth token\ngho_old issue view 1\n\
+             none auth token\ngho_new issue view 2\n\
+             gho_new issue view 404\ngho_new issue view 3\n"
+        );
+    }
+
+    /// #1012: a refusal of the token of the writer, a token of a GitHub
+    /// App, does not drop the token of the reads.
+    #[test]
+    fn a_refused_writer_keeps_the_token_of_the_reads() {
+        if super::token_given() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let gh = refusing_gh(dir.path())
+            .with_one_token()
+            .writing_as("riff-acme-lead[bot]", "ghs_revoked");
+        assert!(gh.run(&["issue", "view", "1"], None).is_err());
+        gh.run(&["issue", "view", "2"], None).unwrap();
+        let write = gh.run(&["issue", "comment", "3", "--body", "x"], None);
+        assert!(write.is_err());
+        gh.run(&["issue", "view", "4"], None).unwrap();
+        assert_eq!(
+            log(dir.path()),
+            "none auth token\ngho_old issue view 1\n\
+             none auth token\ngho_new issue view 2\n\
+             ghs_revoked issue comment 3 --body x\ngho_new issue view 4\n"
         );
     }
 }
