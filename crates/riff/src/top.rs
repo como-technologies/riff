@@ -322,7 +322,7 @@ pub fn with_pulls(issues: Issues, pulls: &[crate::rollout::Pull]) -> Issues {
 /// the issues (01M6GX4HYR3755G6EJW1XHEFVE). A read that works and gives
 /// no issue is `Ok` with no issue. `riff top` gives each read the same
 /// `gh`, whose calls share one token
-/// ([`crate::pr::Gh::with_one_token`], 01M54510SFK1Z9VPFYBYYSV10F).
+/// ([`crate::pr::Gh::with_one_token`], 01M7AYFSCTMVB342AYDPS2FBPC).
 pub fn issues_from_gh(gh: &crate::pr::Gh, repo: &str) -> anyhow::Result<Issues> {
     issues_and_pulls(gh, repo).map(|(issues, _)| issues)
 }

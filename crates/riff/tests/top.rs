@@ -1371,8 +1371,8 @@ async fn riff_wave_list_signs_in_to_a_riff_server_that_needs_a_sign_in() {
 }
 
 /// The `gh` calls of `riff top` share the token of one read
-/// (01M54510SFK1Z9VPFYBYYSV10F): one `gh auth token`, then the token in
-/// `GH_TOKEN` of each call.
+/// (01M7AYFSCTMVB342AYDPS2FBPC): one `gh auth token`, then the token in
+/// `GH_TOKEN` of each call (01M54510SFK1Z9VPFYBYYSV10F).
 #[tokio::test(flavor = "multi_thread")]
 async fn the_gh_calls_of_top_share_the_token_of_one_read() {
     let (server, _) = start_server().await;
@@ -1400,6 +1400,71 @@ async fn the_gh_calls_of_top_share_the_token_of_one_read() {
         calls,
         "none auth token\ngho_one_read issue list\ngho_one_read pr list\ngho_one_read api graphql\n"
     );
+}
+
+/// A fake `gh` in `bin` that logs `GH_TOKEN`, the first two arguments
+/// and the repository of each call to `bin/gh.log`. `gh auth token` gives
+/// the old token `gho_old` at the first read and `gho_new` after it, or
+/// `gho_old` each time when `new` is false. GitHub refuses `gho_old`
+/// with `Bad credentials`.
+fn refusing_gh(bin: &Path, new: bool) -> PathBuf {
+    let log = bin.join("gh.log");
+    let next = if new { "gho_new" } else { "gho_old" };
+    script(
+        bin,
+        "gh",
+        &format!(
+            "repo=\nfor a in \"$@\"; do case \"$a\" in como-technologies/*) repo=$a ;; esac; done\n\
+             echo \"${{GH_TOKEN:-none}} $1 $2 $repo\" >> {log}\n\
+             if [ \"$1 $2\" = 'auth token' ]; then\n  \
+               [ -e {log}.read ] && echo {next} || {{ : > {log}.read; echo gho_old; }}\n  exit 0\nfi\n\
+             [ \"$GH_TOKEN\" = gho_old ] && {{ echo 'HTTP 401: Bad credentials (https://api.github.com/graphql)' >&2; exit 1; }}\n\
+             case \"$1 $2\" in\n  'pr list') echo '[]' ;;\n  \
+             *) echo '[{{\"number\": 12, \"title\": \"t\", \"milestone\": {{\"title\": \"Wave 3\"}}}}]' ;;\nesac",
+            log = log.display(),
+        ),
+    );
+    log
+}
+
+/// #1012, 01M7AYFSCTMVB342AYDPS2FBPC: GitHub refuses the old token of
+/// `gh` at the read of the first project, and the next call reads the
+/// token again. The second project gets its board with the new token,
+/// and riff does not run the refused call again. The control: with no
+/// new token, the second project gets no board.
+#[tokio::test(flavor = "multi_thread")]
+async fn top_reads_a_refused_gh_token_again_at_the_next_call() {
+    let (server, _) = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    session_at(&server, "como-technologies/riff", "a1", None).await;
+    session_at(&server, "como-technologies/strata", "b2", None).await;
+
+    let bin = bin(false);
+    let log = refusing_gh(bin.path(), true);
+    let top = output(riff(&server, dir, None, bin.path(), &["top", "--once"])).await;
+    assert!(!top.contains("Wave 3 (como-technologies/riff)"), "{top}");
+    assert!(top.contains("Wave 3 (como-technologies/strata)"), "{top}");
+    let calls = std::fs::read_to_string(&log).unwrap();
+    assert_eq!(
+        calls.lines().take(4).collect::<Vec<_>>(),
+        [
+            "none auth token ",
+            "gho_old issue list como-technologies/riff",
+            "none auth token ",
+            "gho_new issue list como-technologies/strata",
+        ],
+        "{calls}"
+    );
+    assert_eq!(calls.matches("gho_old").count(), 1, "{calls}");
+    assert_eq!(calls.matches("auth token").count(), 2, "{calls}");
+
+    let control = self::bin(false);
+    let log = refusing_gh(control.path(), false);
+    let top = output(riff(&server, dir, None, control.path(), &["top", "--once"])).await;
+    assert!(!top.contains("Wave 3 (como-technologies/strata)"), "{top}");
+    let calls = std::fs::read_to_string(&log).unwrap();
+    assert!(!calls.contains("gho_new"), "{calls}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

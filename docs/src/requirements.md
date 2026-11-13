@@ -4328,14 +4328,11 @@
   crate did: an item in the default collection with the attributes
   `service` and `username`. So it reads and writes the secrets of an
   older `riff`.
-- **01M54510SFK1Z9VPFYBYYSV10F** The `gh` calls of one clean of the
-  worktrees (01M3ZV0TKSHNW5QC2NG1XTJEJB), of `riff top`, and of the
-  rollout and the look of the lead share one token. riff reads it with
-  `gh auth token` at the first call, and again at the first call after
-  10 minutes. It gives the token to each call in `GH_TOKEN`: in the
-  environment of `gh` only, never in a command line or a file. With no
-  `gh` call, riff reads no token. When the environment has `GH_TOKEN`
-  or `GITHUB_TOKEN`, riff reads no token.
+- **01M54510SFK1Z9VPFYBYYSV10F** riff gives the shared token of the
+  `gh` calls to each call in `GH_TOKEN`: in the environment of `gh`
+  only, never in a command line or a file. With no `gh` call, riff reads
+  no token. When the environment has `GH_TOKEN` or `GITHUB_TOKEN`, riff
+  reads no token. Superseded in part by 01M7AYFSCTMVB342AYDPS2FBPC.
 - **01M54510W507A3T5JRTZ55H0ZQ** When `RIFF_KEYRING_LOG` names a file,
   `riff` adds one line to it for each call to the keyring store: the
   process ID and `read NAME`, `write NAME` or `delete NAME`. The first
@@ -4451,6 +4448,15 @@
   daemon waits for an open keyring: the next try of the step runs the
   `git`. A remote over SSH, a path and a `file://` URL use no helper, so
   their `git` runs.
+- **01M7AYFSCTMVB342AYDPS2FBPC** The `gh` calls of `riff top`, of the
+  TUI and of `riff chat` share one token in each process. The `gh` calls
+  of the look of the wave in the riff daemon share one token for each
+  repository. riff reads the token with `gh auth token` at the first
+  call, and again at the first call after 10 minutes. When GitHub
+  refuses the kept token with `Bad credentials` or HTTP 401, riff reads
+  the token again at the next call. Each refusal gives at most one new
+  read. riff does not run the refused call again. Supersedes
+  01M54510SFK1Z9VPFYBYYSV10F in part.
 
 ## Terminal
 

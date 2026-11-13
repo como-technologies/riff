@@ -3047,7 +3047,7 @@ pub struct Live {
     /// time in a row.
     told: Mutex<HashMap<String, String>>,
     /// The `gh` of the look of each repository: its calls share one token
-    /// (01M54510SFK1Z9VPFYBYYSV10F).
+    /// (01M7AYFSCTMVB342AYDPS2FBPC).
     ghs: Mutex<HashMap<String, Arc<pr::Gh>>>,
     /// The token of the writes of the daemon on each repository
     /// (01M6XZJFE2ZTR5RE3AWM30R704).

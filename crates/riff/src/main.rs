@@ -4649,7 +4649,7 @@ async fn draw_top(
     use std::time::Instant;
     // One read of `gh` for each project with a live session
     // (01M42KHN80V49HDDZF953HXDT0, 01M77F8JFFWV6KFTPQT9DNB26M). The calls
-    // share one token (01M54510SFK1Z9VPFYBYYSV10F).
+    // share one token (01M7AYFSCTMVB342AYDPS2FBPC).
     let gh = pr::Gh::here("top").with_one_token();
     let fetch = |repos: std::collections::BTreeSet<String>| {
         let gh = gh.clone();
