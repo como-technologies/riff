@@ -615,8 +615,8 @@ An example of the log:
 
 - People see the seq: "message 287" in the repo thread, "message 51" in
   chat. The positions of one thread have gaps (1041, 1045).
-- A read cursor is a seq for each thread. The unread count is the last
-  seq less the cursor.
+- A read cursor is a seq for each thread, and a mark of what set it: a
+  join or a read. The unread count is the last seq less the cursor.
 - A replay checks the positions: each record is the last position plus
   1. A gap or a repeat shows a bad or a missing chunk. `riff-server log
   verify` finds it.

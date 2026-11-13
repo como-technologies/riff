@@ -573,6 +573,40 @@ async fn a_new_lead_reads_only_what_the_lead_before_it_did_not_read() {
     assert_eq!(out, "No unread messages.\n");
 }
 
+/// A session that read more than the lead before it keeps what it read
+/// when it becomes the lead (01M7B2K63PX1PG34HC6X3TCM0E).
+#[tokio::test]
+async fn a_new_lead_keeps_the_messages_that_it_read_before_as_read() {
+    let server = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+
+    // b2 starts before the messages. The lead a1 reads three of five,
+    // and b2 reads the five.
+    lead(&server, dir, "mike", "a1").await;
+    let (out, _) = agent(&server, dir, "mike", "b2", &["read"]).await;
+    assert_eq!(out, "No unread messages.\n");
+    for body in ["old-1", "old-2", "old-3"] {
+        riff(&server, dir, "brett", &["post", body]).await;
+    }
+    let (out, _) = agent(&server, dir, "mike", "a1", &["read"]).await;
+    assert!(out.contains("old-3"), "{out}");
+    for body in ["old-4", "old-5"] {
+        riff(&server, dir, "brett", &["post", body]).await;
+    }
+    let (out, _) = agent(&server, dir, "mike", "b2", &["read"]).await;
+    assert!(out.contains("old-1") && out.contains("old-5"), "{out}");
+
+    // As the new lead, b2 finds none of the five unread.
+    lead(&server, dir, "mike", "b2").await;
+    let (out, code) = agent(&server, dir, "mike", "b2", &["read"]).await;
+    assert_eq!(code, 0);
+    assert_eq!(out, "No unread messages.\n");
+    riff(&server, dir, "brett", &["post", "new-6"]).await;
+    let (out, _) = agent(&server, dir, "mike", "b2", &["read"]).await;
+    assert!(out.contains("new-6") && !out.contains("old-"), "{out}");
+}
+
 /// The lead frees the claim of another session, and the next session
 /// claims the item. A note of the server in the thread names the lead,
 /// the item and the holder. A session that is not the lead is refused,

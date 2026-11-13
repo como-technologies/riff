@@ -3728,12 +3728,22 @@
   above, in the part of 01M588J4XNV1TXEPMGTKRVY9VK, and names the thread
   for its other messages.
 - **01M7AYPPAT8C40NJQSSTGHZVP1** A session that becomes the lead of a
-  project joins `chat`. In each thread that it joined, its read cursor
-  becomes the newest cursor of the leads of the project before it, of
-  each person, that joined or read the thread. So its unread messages
-  are the messages that the lead before it did not read, also each line
-  of `chat` that came while the project had no lead. This supersedes
+  project joins `chat`. In each thread that it joined, the cursor of the
+  leads before it is the newest cursor of the leads of the project
+  before it, of each person, that joined or read the thread. A new lead
+  whose cursor a join set takes it. So its unread messages are the
+  messages that the lead before it did not read, also each line of
+  `chat` that came while the project had no lead. This supersedes
   01M5QVD3B1GT7STHBQS7NK4DR0 in part.
+- **01M7B2K63PX1PG34HC6X3TCM0E** Each read cursor knows what set it: a
+  join or a read. A join sets only a new cursor. A read sets the cursor
+  when it moves it. A session that becomes the lead keeps, in each
+  thread, its own cursor when a read set it and it is not before the
+  cursor of the leads before it (01M7AYPPAT8C40NJQSSTGHZVP1). Else it
+  takes that cursor, with its mark. So a new lead finds no message
+  unread that it read before. The checkpoint keeps the mark. A cursor of
+  a checkpoint with no mark counts as set by a read. This supersedes
+  01M7AYPPAT8C40NJQSSTGHZVP1 in part.
 
 ## Security
 
