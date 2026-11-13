@@ -3648,11 +3648,13 @@ the pass: the PASS in the thread counts over it.
 riff post --to lead=true "verify request: issue-12, PR #40, branch worktree-issue-12, commit 1a2b3c4"
 ```
 
-Only a request that comes after the FAIL in the thread counts. The
-wave starts no second verify of a failed commit with no new request,
-also before the event of the failure comes from GitHub. When the daemon
-stops such a verify at its read of the status before the claim, its
-log has a line for it:
+Only a request that comes after the FAIL in the thread counts. When the
+new verify fails too, send a new request after that FAIL. The wave
+starts no new verify of a failed commit with no new request, also
+before the event of the failure comes from GitHub, and also when a look
+of the wave read the thread before the FAIL came. When the daemon stops
+such a verify at its read of the status before the claim, its log has a
+line for it:
 
 ```sh
 journalctl --user -u riff | grep 'no new verify request'

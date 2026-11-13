@@ -335,6 +335,11 @@
 //!   does not count. So does a failure, unless the look shows a new
 //!   verify request of the head after its result ([`Waiting::again`],
 //!   [`asked_again`]).
+//! - A look that started before the daemon kept a FAIL can have read the
+//!   thread before that FAIL: its new verify request is then the request
+//!   of the verify that failed. Such a FAIL stays kept
+//!   ([`Verdicts::fresh`]), and the next look counts a new request
+//!   (01M78VFEVC5HZF8RATE11W28PB).
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -350,6 +355,20 @@
 //!     W->>W: a look: a new request after the FAIL
 //!     W->>G: the read before the claim: failure, asked again
 //!     Note over W: claim verify-issue-12: a new verify of c1
+//! ```
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant W as the loop of the wave
+//!     participant J as the job of the second verify of c1
+//!     participant T as the thread
+//!     W->>T: a look starts: the thread ends with the request of the lead
+//!     J->>T: verify result: FAIL for issue-12, commit c1
+//!     Note over J: the daemon keeps verify-issue-12@c1: FAIL, fresh
+//!     J->>J: the job ends
+//!     W->>W: the look ends: c1 waits, with a request after a result
+//!     Note over W: drop_verified: the FAIL is fresh, no third verify
+//!     W->>T: the next look: the thread ends with the FAIL
 //! ```
 //!
 //! # A merge that leaves the issue open
@@ -1664,6 +1683,11 @@ pub struct Verdicts {
     /// The verifies that the last look showed with a new verify request
     /// after their result ([`Waiting::again`]), as [`Work::key`].
     pub again: BTreeSet<String>,
+    /// The heads of `heads` that the daemon kept after the start of the
+    /// last look ([`Verdicts::look`]). That look can have read the thread
+    /// before their result: a verify request that it shows after a result
+    /// can be the request from before this verdict.
+    pub fresh: BTreeSet<String>,
 }
 
 impl Verdicts {
@@ -1687,9 +1711,36 @@ impl Verdicts {
         stops(&self.again, key, verdict)
     }
 
+    /// Keeps the `verdict` of the head of the verify `key`, as a verdict
+    /// that the last look can have missed ([`Verdicts::fresh`]).
+    ///
+    /// ```
+    /// use riff::pr::Verdict;
+    /// use riff::wave::Verdicts;
+    ///
+    /// let mut verdicts = Verdicts::default();
+    /// verdicts.keep("verify-issue-1@c1".into(), Verdict::Fail);
+    /// assert_eq!(verdicts.heads["verify-issue-1@c1"], Verdict::Fail);
+    /// assert!(verdicts.fresh.contains("verify-issue-1@c1"));
+    /// // The next look reads the thread after the result.
+    /// verdicts.look();
+    /// assert!(verdicts.fresh.is_empty());
+    /// assert_eq!(verdicts.heads["verify-issue-1@c1"], Verdict::Fail);
+    /// ```
+    pub fn keep(&mut self, key: String, verdict: Verdict) {
+        self.fresh.insert(key.clone());
+        self.heads.insert(key, verdict);
+    }
+
+    /// A look starts: it reads the thread after the result of each
+    /// verdict that is kept now, so none is fresh.
+    pub fn look(&mut self) {
+        self.fresh.clear();
+    }
+
     /// True when it keeps no verdict and no new verify request.
     pub fn is_empty(&self) -> bool {
-        self.heads.is_empty() && self.again.is_empty()
+        self.heads.is_empty() && self.again.is_empty() && self.fresh.is_empty()
     }
 }
 
@@ -1712,7 +1763,10 @@ fn stops(again: &BTreeSet<String>, key: &str, verdict: Verdict) -> bool {
 /// now. A head whose item the look shows as claimed or held stays: such a
 /// look cannot show the head as waiting, for example a look that read the
 /// claims while the verify ran. A FAIL with a new verify request leaves
-/// too: the lead asks for a new verify.
+/// too: the lead asks for a new verify. A fresh FAIL stays
+/// ([`Verdicts::fresh`]): the look can have read the thread before the
+/// FAIL, and its request is then the request of the verify that failed.
+/// A look that starts after the FAIL counts the request.
 ///
 /// ```
 /// use riff::pr::Verdict;
@@ -1740,10 +1794,22 @@ fn stops(again: &BTreeSet<String>, key: &str, verdict: Verdict) -> bool {
 /// assert!(verdicts.heads.contains_key("verify-issue-5@c5"));
 /// // The lead asks for a new verify of c2 after its FAIL.
 /// let (_, asked) = waiting(2, "c2");
-/// let mut now = look(vec![waiting(1, "c1"), (2, Waiting { again: true, ..asked })]);
+/// let mut now = look(vec![waiting(1, "c1"), (2, Waiting { again: true, ..asked.clone() })]);
 /// drop_verified(&mut now, &mut verdicts);
 /// assert_eq!(now.free, ["verify-issue-2"]);
 /// assert!(!verdicts.stops("verify-issue-2@c2", Verdict::Fail));
+/// // That verify fails too, while a look runs that read the thread
+/// // before the new FAIL: the request is the old one.
+/// verdicts.keep("verify-issue-2@c2".into(), Verdict::Fail);
+/// let mut now = look(vec![waiting(1, "c1"), (2, Waiting { again: true, ..asked.clone() })]);
+/// drop_verified(&mut now, &mut verdicts);
+/// assert!(now.free.is_empty());
+/// assert!(verdicts.stops("verify-issue-2@c2", Verdict::Fail));
+/// // A look that starts after the FAIL counts a new request.
+/// verdicts.look();
+/// let mut now = look(vec![waiting(1, "c1"), (2, Waiting { again: true, ..asked })]);
+/// drop_verified(&mut now, &mut verdicts);
+/// assert_eq!(now.free, ["verify-issue-2"]);
 /// // A new head of 1 gets its verify.
 /// let mut now = look(vec![waiting(1, "c1b")]);
 /// drop_verified(&mut now, &mut verdicts);
@@ -1752,10 +1818,14 @@ fn stops(again: &BTreeSet<String>, key: &str, verdict: Verdict) -> bool {
 /// ```
 pub fn drop_verified(look: &mut Look, verdicts: &mut Verdicts) {
     let waits = waiting_keys(look);
-    let Verdicts { heads, again } = verdicts;
+    let Verdicts {
+        heads,
+        again,
+        fresh,
+    } = verdicts;
     *again = waits
         .values()
-        .filter(|(_, again)| *again)
+        .filter(|(key, again)| *again && !fresh.contains(key))
         .map(|(key, _)| key.clone())
         .collect();
     // The item of a key: `verify-issue-N` of `verify-issue-N@COMMIT`.
@@ -1767,6 +1837,7 @@ pub fn drop_verified(look: &mut Look, verdicts: &mut Verdicts) {
         let keep = waits.values().any(|(k, _)| k == key) || busy(key);
         keep && stops(again, key, *verdict)
     });
+    fresh.retain(|key| heads.contains_key(key));
     for (issue, (key, _)) in waits {
         let Some(verdict) = heads.get(&key) else {
             continue;
@@ -2354,6 +2425,9 @@ pub(crate) async fn run<R: Runtime + 'static>(
         events.looks();
         hooks::log_dropped(&events);
         let looked = tokio::time::Instant::now();
+        // A verdict that the daemon keeps from now on can come after the
+        // read of the thread of this look (#2040).
+        daemon.look_starts(&wave.repo);
         let mut wait = LOOK_EVERY;
         // A wave only for a project that allows the host: else the look
         // reads nothing, and the word says why (#1863).
@@ -5205,6 +5279,12 @@ mod tests {
         /// event of the status of a verify did not come yet (#1960). Else
         /// the look shows `pulls`.
         shown: BTreeMap<u64, Pr>,
+        /// The next look reads the new verify requests of `shown` first,
+        /// then waits for a permit of it, then reads the rest: a look that
+        /// read the thread before a change, and ends after it (#2040).
+        look_gate: Option<Arc<tokio::sync::Semaphore>>,
+        /// The looks that waited for a permit of `look_gate`.
+        gated_looks: usize,
         /// The reads of the status `riff/verify` of the head of a verify
         /// before its claim ([`World::verdict`]).
         status_reads: usize,
@@ -5450,6 +5530,21 @@ mod tests {
                 if let Some(gh) = limit_gh {
                     blocking(move || gh.run(&["pr", "list"], None)).await?;
                 }
+                // The thread first: the new verify requests after a FAIL.
+                let (asked, gate) = {
+                    let mut forge = lock(&self.forge);
+                    let asked: BTreeSet<u64> = forge
+                        .pulls
+                        .iter()
+                        .filter(|(n, pr)| forge.shown.get(n).unwrap_or(pr) == &Pr::Reasked)
+                        .map(|(n, _)| *n)
+                        .collect();
+                    (asked, forge.look_gate.take())
+                };
+                if let Some(gate) = gate {
+                    lock(&self.forge).gated_looks += 1;
+                    gate.acquire().await?.forget();
+                }
                 let mut forge = lock(&self.forge);
                 forge.branch_reads += 1;
                 if forge.branch_unread {
@@ -5472,8 +5567,7 @@ mod tests {
                                 commit: forge.head(*n),
                                 gate_done: true,
                                 // A new verify request after the FAIL.
-                                again: forge.shown.get(n).unwrap_or(&forge.pulls[n])
-                                    == &Pr::Reasked,
+                                again: asked.contains(n),
                             };
                             (*n, waiting)
                         })
@@ -7707,6 +7801,65 @@ esac
         let forge = here.forge();
         assert_eq!(forge.works, [verify("c1"), verify("c1")]);
         assert_eq!(forge.status_reads, 2);
+        assert!(forge.told.is_empty(), "{:?}", forge.told);
+    }
+
+    /// 01M78VFEVC5HZF8RATE11W28PB (#2040): the lead asks for a new verify
+    /// of a head after its FAIL, and that verify fails too. A look that
+    /// read the thread before the new FAIL, and ends after the job of the
+    /// verify ends, shows the request of the lead still. The wave starts
+    /// no third verify of the head. A new request of the lead after the
+    /// new FAIL gets one.
+    #[tokio::test]
+    async fn a_look_that_read_the_thread_before_a_second_fail_starts_no_third_verify() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 3, free).await;
+        {
+            let mut forge = here.forge();
+            forge.pulls.insert(1, Pr::Asked);
+            forge.fails = true;
+            // The look does not see the status of the verify yet.
+            forge.shown.insert(1, Pr::Asked);
+        }
+        here.run();
+        verified(&here, 1).await;
+        here.idle(3).await;
+        assert_eq!(here.forge().works, [verify("c1")], "one verify");
+        // The lead asks for a new verify of c1.
+        here.forge().shown.insert(1, Pr::Reasked);
+        here.until(3, |h| h.running("verify-issue-1").is_some())
+            .await;
+        // A look reads the thread with the request of the lead, and waits.
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        here.forge().look_gate = Some(gate.clone());
+        here.until(3, |h| h.forge().gated_looks == 1).await;
+        // The second verify fails, and its job ends. The thread ends with
+        // the new FAIL now.
+        here.end("verify-issue-1").await;
+        here.until(3, |h| h.forge().finished.len() == 2).await;
+        here.forge().shown.insert(1, Pr::Asked);
+        let reads = here.forge().branch_reads;
+        gate.add_permits(1);
+        here.until(3, |h| h.forge().branch_reads > reads).await;
+        here.idle(3).await;
+        {
+            let forge = here.forge();
+            // The look that waited picks no verify: the job of a verify
+            // reads the status before its claim.
+            assert_eq!(forge.status_reads, 2, "no third verify");
+            assert_eq!(forge.works, [verify("c1"), verify("c1")]);
+            assert!(forge.told.is_empty(), "{:?}", forge.told);
+        }
+        // The lead asks again after the new FAIL, and the verify passes.
+        {
+            let mut forge = here.forge();
+            forge.fails = false;
+            forge.shown.insert(1, Pr::Reasked);
+        }
+        verified(&here, 3).await;
+        here.idle(3).await;
+        let forge = here.forge();
+        assert_eq!(forge.works, [verify("c1"), verify("c1"), verify("c1")]);
         assert!(forge.told.is_empty(), "{:?}", forge.told);
     }
 
