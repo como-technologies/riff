@@ -6620,6 +6620,25 @@ sequenceDiagram
     E->>B: messages 4 and 5
 ```
 
+A new lead keeps what it read before. When the session read a thread
+further than the lead before it, it keeps its own read mark in that
+thread. So it finds no message unread that it read. A mark that only
+the join of the session set is not a read: the new lead takes the mark
+of the lead before it, as above.
+
+```mermaid
+sequenceDiagram
+    participant A as old lead
+    participant E as riff-server
+    participant B as new lead
+    A->>E: read the thread up to message 3
+    B->>E: read the thread up to message 5
+    B->>E: named the lead: joins chat
+    Note over E: B keeps its own mark: message 5
+    B->>E: read
+    E->>B: no unread messages
+```
+
 A line in `chat` that names the project, for example `@riff`, waits
 while the project has no lead. The next lead reads it: see
 [When you have no lead](#when-you-have-no-lead).

@@ -481,10 +481,10 @@ impl Given {
 
     /// `me` read `thread` up to `seq`, with no record.
     fn read_to(mut self, me: &SessionUri, thread: &ThreadName, seq: u64) -> Given {
-        self.state
-            .presence
-            .cursors
-            .insert((me.who().clone(), thread.clone()), seq);
+        self.state.presence.cursors.insert(
+            (me.who().clone(), thread.clone()),
+            presence::Cursor::read(seq),
+        );
         self
     }
 

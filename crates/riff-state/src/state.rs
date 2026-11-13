@@ -724,7 +724,9 @@ impl State {
             let threads = self.written.threads();
             if self.presence.knows(&who) && threads.has(&thread) {
                 let seq = seq.min(threads.last_seq(&thread));
-                self.presence.cursors.insert((who, thread), seq);
+                self.presence
+                    .cursors
+                    .insert((who, thread), presence::Cursor::read(seq));
             }
         }
     }
@@ -2203,6 +2205,37 @@ impl State {
     /// // As the lead, it reads what the old lead did not read.
     /// let unread = state.read(&new, &thread, false, now).unwrap();
     /// assert_eq!(unread.iter().map(|m| m.body.as_str()).collect::<Vec<_>>(), ["four"]);
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    ///
+    /// A new lead keeps what it read before (01M7B2K63PX1PG34HC6X3TCM0E):
+    /// a read set its cursor, and the cursor is not before the one of
+    /// the old lead. Above, a join set it, so the new lead took the
+    /// cursor of the old lead:
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::name::SessionUri;
+    /// use riff_core::wire::Post;
+    /// use riff_state::state::State;
+    ///
+    /// let old: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a1".parse()?;
+    /// let new: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=b2".parse()?;
+    /// let brett: SessionUri = "riff://brett@kadomony/como-technologies/riff?session=c3".parse()?;
+    /// let thread = old.default_thread().unwrap();
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// state.register(&old, now);
+    /// state.register(&new, now);
+    /// state.lead(&old, now).unwrap();
+    /// for body in ["one", "two", "three"] {
+    ///     state.post(Post::new(&brett, Some(thread.clone()), vec![], body), now, 0).unwrap();
+    /// }
+    /// // The new session reads the three messages. The old lead reads none.
+    /// assert_eq!(state.read(&new, &thread, false, now).unwrap().len(), 3);
+    /// state.lead(&new, now).unwrap();
+    /// // As the lead, it finds none of them unread.
+    /// assert!(state.read(&new, &thread, false, now).unwrap().is_empty());
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     ///
@@ -4491,7 +4524,8 @@ mod tests {
                      "at_ms": T0, "seen_ms": T0, "worker": true, "must_clear": true,
                      "fresh_ms": T0},
                 ],
-                "cursors": [{"session": ann, "thread": "como-technologies/riff", "seq": 1}],
+                "cursors": [{"session": ann, "thread": "como-technologies/riff", "seq": 1,
+                             "joined": true}],
                 "statuses": [
                     {"session": ann, "status": {"step": "tests"}, "set_ms": T0,
                      "step": {"name": "deploy", "set_ms": T0, "failed": "502"}},
@@ -4694,6 +4728,106 @@ mod tests {
         assert_eq!(unread_in(&state, &next(), &repo(), now), 0);
         // The cursor of A did not move.
         assert_eq!(state.presence.cursor(api().who(), &repo()), 3);
+    }
+
+    /// 01M7B2K63PX1PG34HC6X3TCM0E: the session B read the thread T to the
+    /// message 5, and the old lead A read it to the message 3. B becomes
+    /// the lead: it keeps its own cursor, and finds no message up to 5
+    /// unread.
+    #[test]
+    fn a_new_lead_that_read_further_than_the_lead_before_it_keeps_its_own_cursor() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        five_messages_the_lead_read_three_of(&mut state, now);
+        // B joined T before the five messages, and reads them.
+        assert_eq!(state.read(&docs(), &repo(), false, now).unwrap().len(), 5);
+
+        let reply = state.lead(&docs(), now).unwrap();
+        assert_eq!(reply.replaced.unwrap().who(), api().who());
+        assert_eq!(state.presence.cursor(docs().who(), &repo()), 5);
+        assert_eq!(unread_in(&state, &docs(), &repo(), now), 0);
+        assert!(state.read(&docs(), &repo(), false, now).unwrap().is_empty());
+        // A sixth message is unread.
+        post(&mut state, &tests(), "como-technologies/riff", &[], "m6");
+        assert_eq!(unread_in(&state, &docs(), &repo(), now), 1);
+        assert_eq!(state.presence.cursor(api().who(), &repo()), 3);
+    }
+
+    /// A new lead that read less than the lead before it takes the
+    /// cursor of the lead before it (01M7B2K63PX1PG34HC6X3TCM0E).
+    #[test]
+    fn a_new_lead_that_read_less_than_the_lead_before_it_takes_its_cursor() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        five_messages_the_lead_read_three_of(&mut state, now);
+        let page = state
+            .read_page(&docs(), &repo(), false, None, 2, now)
+            .unwrap();
+        assert_eq!(page.next, Some(2));
+
+        state.lead(&docs(), now).unwrap();
+        assert_eq!(state.presence.cursor(docs().who(), &repo()), 3);
+        let unread = state.read(&docs(), &repo(), false, now).unwrap();
+        let bodies: Vec<&str> = unread.iter().map(|m| m.body.as_str()).collect();
+        assert_eq!(bodies, ["m4", "m5"]);
+    }
+
+    /// The checkpoint keeps what set each cursor
+    /// (01M7B2K63PX1PG34HC6X3TCM0E). After a start from it, a new lead
+    /// whose cursor a join set takes the cursor of the lead before it,
+    /// and a new lead that read further keeps its own.
+    #[test]
+    fn a_checkpoint_keeps_what_set_each_read_cursor() {
+        let now = Instant::now();
+        for (new, unread) in [(next(), 2), (docs(), 0)] {
+            let mut state = setup(now);
+            five_messages_the_lead_read_three_of(&mut state, now);
+            // `next` joins at the fifth message, and `docs` reads to it.
+            state.register(&next(), now);
+            assert_eq!(state.read(&docs(), &repo(), false, now).unwrap().len(), 5);
+            state.take_queue();
+            let json = serde_json::to_value(state.snapshot(now, T0)).unwrap();
+            let cursor = |session: &str| {
+                let cursors = json["cursors"].as_array().unwrap();
+                let of = |c: &&serde_json::Value| c["session"]["session"] == session;
+                cursors.iter().find(of).unwrap().clone()
+            };
+            assert_eq!(cursor("d4")["joined"], true);
+            assert_eq!(cursor("c3").get("joined"), None);
+            let checkpoint = through_json(&state, now);
+            state.lead(&new, now).unwrap();
+            let after = state.take_queue();
+
+            let loaded = State::load(Some(checkpoint), after, now, T0);
+            assert_eq!(unread_in(&loaded, &new, &repo(), now), unread, "{new}");
+            assert_eq!(unread_in(&state, &new, &repo(), now), unread, "{new}");
+        }
+    }
+
+    /// A cursor of a checkpoint with no mark counts as set by a read
+    /// (01M7B2K63PX1PG34HC6X3TCM0E): a new lead keeps it when it is not
+    /// before the cursor of the lead before it.
+    #[test]
+    fn a_cursor_of_a_checkpoint_with_no_mark_counts_as_set_by_a_read() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        five_messages_the_lead_read_three_of(&mut state, now);
+        state.register(&next(), now);
+        state.take_queue();
+        let mut json = serde_json::to_value(state.snapshot(now, T0)).unwrap();
+        let cursors = json["cursors"].as_array_mut().unwrap();
+        let marks = cursors
+            .iter_mut()
+            .filter_map(|c| c.as_object_mut()?.remove("joined"));
+        assert_eq!(marks.count(), 1);
+        state.lead(&next(), now).unwrap();
+        let after = state.take_queue();
+
+        let checkpoint: Snapshot = serde_json::from_value(json).unwrap();
+        let loaded = State::load(Some(checkpoint), after, now, T0);
+        assert_eq!(unread_in(&loaded, &next(), &repo(), now), 0);
+        // Live, the join set the cursor: the new lead took the cursor 3.
+        assert_eq!(unread_in(&state, &next(), &repo(), now), 2);
     }
 
     /// The new lead takes the cursors of the threads that it joined, and

@@ -8,7 +8,9 @@
 //!
 //! A session that joins a thread starts its cursor at the newest
 //! message (01M5QVD3B1GT7STHBQS7NK4DR0), and a new lead takes the
-//! cursors of the leads before it (01M7AYPPAT8C40NJQSSTGHZVP1). See
+//! cursors of the leads before it (01M7AYPPAT8C40NJQSSTGHZVP1). Each
+//! cursor knows if a join or a read set it, so a new lead keeps a
+//! cursor that it read further (01M7B2K63PX1PG34HC6X3TCM0E). See
 //! `Presence::applied`.
 //!
 //! The presence also holds what the sessions show by facts, not by a
@@ -62,9 +64,9 @@ use super::{CLAIM_GRACE, GONE};
 #[derive(Default)]
 pub struct Presence {
     pub(super) sessions: BTreeMap<Who, Session>,
-    /// The last sequence number that each session read in each thread.
-    /// A thread that a session joins starts at its newest message.
-    pub(super) cursors: BTreeMap<(Who, ThreadName), u64>,
+    /// The read cursor of each session in each thread. A thread that a
+    /// session joins starts at its newest message.
+    pub(super) cursors: BTreeMap<(Who, ThreadName), Cursor>,
     /// The newest message after the page of a read that woke the
     /// session, and that the read showed, by session and thread
     /// (01M588J4XNV1TXEPMGTKRVY9VK). The checkpoint does not keep it.
@@ -84,6 +86,29 @@ pub struct Presence {
     /// The time of the last look at the plan of each repository thread
     /// (01M4A4YTYVHFGK0CJVACJQ8DQ3).
     pub(super) looks: BTreeMap<ThreadName, Instant>,
+}
+
+/// A read cursor: the last sequence number that a session read in a
+/// thread, and what set it (01M7B2K63PX1PG34HC6X3TCM0E). A join sets
+/// only a new cursor. A read sets the cursor when it moves it. Of two
+/// cursors at the same message, the one that a read set is the later.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) struct Cursor {
+    pub(super) seq: u64,
+    /// True when a read set `seq`, false when a join set it.
+    pub(super) read: bool,
+}
+
+impl Cursor {
+    /// The cursor that a read sets at `seq`.
+    pub(super) fn read(seq: u64) -> Cursor {
+        Cursor { seq, read: true }
+    }
+
+    /// The cursor that a join sets at `seq`.
+    pub(super) fn joined(seq: u64) -> Cursor {
+        Cursor { seq, read: false }
+    }
 }
 
 // ANCHOR: signal
@@ -181,9 +206,10 @@ pub enum Signal {
     /// The session ended (R205).
     Ended,
     /// The session read `thread` up to `seq`. A read of all the
-    /// messages (`all`) never moves the cursor back. `woken` is the
-    /// newest message after `seq` that woke the session and that the
-    /// read showed, or 0 (01M588J4XNV1TXEPMGTKRVY9VK).
+    /// messages (`all`) never moves the cursor back. A read that moves
+    /// the cursor marks it as read (01M7B2K63PX1PG34HC6X3TCM0E). `woken`
+    /// is the newest message after `seq` that woke the session and that
+    /// the read showed, or 0 (01M588J4XNV1TXEPMGTKRVY9VK).
     Read {
         thread: ThreadName,
         seq: u64,
@@ -212,8 +238,12 @@ impl Signal {
                 let shown = presence.shown.entry(key.clone()).or_insert(0);
                 *shown = (*shown).max(woken);
             }
-            let cursor = presence.cursors.entry(key).or_insert(0);
-            *cursor = if all { (*cursor).max(seq) } else { seq };
+            let cursor = presence.cursors.entry(key).or_default();
+            let seq = if all { cursor.seq.max(seq) } else { seq };
+            // A read that leaves the cursor where it was does not set it.
+            if seq != cursor.seq {
+                *cursor = Cursor::read(seq);
+            }
             return;
         }
         if let Signal::Facts { thread, items, all } = self {
@@ -394,7 +424,9 @@ impl Presence {
     ///   So a new session finds no old message unread.
     /// - `lead_set`: in each thread that the new lead joined, it takes the
     ///   newest read cursor of the leads `before` that joined or read the
-    ///   thread (01M7AYPPAT8C40NJQSSTGHZVP1).
+    ///   thread (01M7AYPPAT8C40NJQSSTGHZVP1). It keeps its own cursor
+    ///   when a read set it and it is not before that one
+    ///   (01M7B2K63PX1PG34HC6X3TCM0E).
     /// - `claimed` and `released`: the time of the last change of the
     ///   claims of the session (01M3Q551WCMPQRCNJ8FXQEBFY4). A session
     ///   whose item another session takes has a `released` record of
@@ -452,11 +484,11 @@ impl Presence {
             Change::SessionForgotten(forgotten) => {
                 let who = forgotten.session.who();
                 self.sessions.remove(who);
-                let kept = |(reader, thread): &(Who, ThreadName), _: &mut u64| {
+                let kept = |(reader, thread): &(Who, ThreadName)| {
                     reader != who && riff.threads().has(thread)
                 };
-                self.cursors.retain(kept);
-                self.shown.retain(kept);
+                self.cursors.retain(|key, _| kept(key));
+                self.shown.retain(|key, _| kept(key));
             }
             Change::JoinedThread(member) => {
                 let who = member.session.who();
@@ -468,7 +500,7 @@ impl Presence {
                     record.envelope.command.as_deref() == Some(CommandKind::Import.as_str());
                 if who.session().is_some() && newest > 0 && !import {
                     let key = (who.clone(), member.thread.clone());
-                    self.cursors.entry(key).or_insert(newest);
+                    self.cursors.entry(key).or_insert(Cursor::joined(newest));
                 }
             }
             Change::LeadSet(member) => self.handed_over(before, member.session.who(), riff),
@@ -551,26 +583,33 @@ impl Presence {
     }
 
     /// The lead `to` takes, in each thread that it joined, the newest
-    /// read cursor of the leads `from` that joined or read the thread. A
-    /// lead that joined it and has no cursor read no message of it. It
-    /// replaces the cursor that `to` had.
+    /// read cursor of the leads `from` that joined or read the thread,
+    /// with its mark. A lead that joined it and has no cursor read no
+    /// message of it. `to` keeps its own cursor when a read set it and it
+    /// is not before the newest one (01M7B2K63PX1PG34HC6X3TCM0E). Else
+    /// the newest one replaces it.
     fn handed_over(&mut self, from: &[Who], to: &Who, riff: &Riff) {
         let joined = riff.threads().by_name.iter();
         let joined = joined.filter(|(_, t)| t.members.contains(to));
-        let mut taken: Vec<(ThreadName, u64)> = Vec::new();
+        let mut taken: Vec<(ThreadName, Cursor)> = Vec::new();
         for (thread, t) in joined {
             let newest = from
                 .iter()
                 .filter(|old| *old != to)
                 .filter_map(|old| {
                     let read = self.cursors.get(&(old.clone(), thread.clone())).copied();
-                    read.or(t.members.contains(old).then_some(0))
+                    read.or(t.members.contains(old).then_some(Cursor::joined(0)))
                 })
                 .max();
-            taken.extend(newest.map(|seq| (thread.clone(), seq)));
+            let Some(newest) = newest else {
+                continue;
+            };
+            let own = self.cursors.get(&(to.clone(), thread.clone()));
+            let own = own.copied().filter(|own| own.read);
+            taken.push((thread.clone(), own.map_or(newest, |own| own.max(newest))));
         }
-        for (thread, seq) in taken {
-            self.cursors.insert((to.clone(), thread), seq);
+        for (thread, cursor) in taken {
+            self.cursors.insert((to.clone(), thread), cursor);
         }
     }
 
@@ -578,8 +617,7 @@ impl Presence {
     pub(super) fn cursor(&self, who: &Who, thread: &ThreadName) -> u64 {
         self.cursors
             .get(&(who.clone(), thread.clone()))
-            .copied()
-            .unwrap_or(0)
+            .map_or(0, |cursor| cursor.seq)
     }
 
     /// The last sequence number that `who` saw in `thread` of the
@@ -607,10 +645,11 @@ impl Presence {
         Saved {
             cursors: cursors
                 .iter()
-                .map(|((session, thread), seq)| SavedCursor {
+                .map(|((session, thread), cursor)| SavedCursor {
                     session: session.clone(),
                     thread: thread.clone(),
-                    seq: *seq,
+                    seq: cursor.seq,
+                    joined: !cursor.read,
                 })
                 .collect(),
             statuses: sessions
@@ -713,20 +752,32 @@ struct SavedStatus {
     set_ms: u64,
 }
 
-/// A read cursor: the map entry of [`Presence::cursors`].
+/// A read cursor: the map entry of [`Presence::cursors`]. `joined` is
+/// true when a join set it (01M7B2K63PX1PG34HC6X3TCM0E). A cursor that
+/// a read set has no `joined`, as each cursor of an older checkpoint,
+/// so such a cursor counts as set by a read:
+///
+/// ```json
+/// {"cursors": [{"session": {"user": "ann", "session": "a1"},
+///               "thread": "acme/app", "seq": 5, "joined": true},
+///              {"session": {"user": "bob", "session": "b1"},
+///               "thread": "acme/app", "seq": 3}]}
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 struct SavedCursor {
     session: Who,
     thread: ThreadName,
     seq: u64,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    joined: bool,
 }
 
 impl Saved {
-    /// Puts the read cursors of a checkpoint in `presence`. The load
-    /// does it before it applies the records after the checkpoint, so
-    /// that a join or a new lead in those records changes the cursors
-    /// as it did live (01M5QVD3B1GT7STHBQS7NK4DR0,
-    /// 01M7AYPPAT8C40NJQSSTGHZVP1).
+    /// Puts the read cursors of a checkpoint in `presence`, each with
+    /// its mark. The load does it before it applies the records after
+    /// the checkpoint, so that a join or a new lead in those records
+    /// changes the cursors as it did live (01M5QVD3B1GT7STHBQS7NK4DR0,
+    /// 01M7AYPPAT8C40NJQSSTGHZVP1, 01M7B2K63PX1PG34HC6X3TCM0E).
     pub(super) fn restore_cursors(&mut self, presence: &mut Presence) {
         presence.cursors = std::mem::take(&mut self.cursors)
             .into_iter()
@@ -735,7 +786,8 @@ impl Saved {
                      session,
                      thread,
                      seq,
-                 }| ((session, thread), seq),
+                     joined,
+                 }| ((session, thread), Cursor { seq, read: !joined }),
             )
             .collect();
     }
@@ -1124,7 +1176,9 @@ mod tests {
         let now = Instant::now();
         let mut presence = presence(now);
         for (me, thread) in [(ann(), repo()), (bob(), repo()), (bob(), design())] {
-            presence.cursors.insert((me.who().clone(), thread), 3);
+            presence
+                .cursors
+                .insert((me.who().clone(), thread), Cursor::read(3));
         }
         // The riff after the record has the repository thread, and no
         // thread `design`.
@@ -1145,7 +1199,9 @@ mod tests {
         let since = Instant::now();
         let at = since + Duration::from_secs(9);
         let mut presence = presence(since);
-        presence.cursors.insert((ann().who().clone(), repo()), 3);
+        presence
+            .cursors
+            .insert((ann().who().clone(), repo()), Cursor::read(3));
         presence.applied(
             &record(joined(&ann(), &design())),
             &Riff::default(),
@@ -1215,6 +1271,70 @@ mod tests {
         assert_eq!(presence.cursor(carl.who(), &repo()), 0);
     }
 
+    /// 01M7B2K63PX1PG34HC6X3TCM0E: a join sets only a new cursor, and a
+    /// read sets a cursor when it moves it.
+    #[test]
+    fn a_cursor_knows_if_a_join_or_a_read_set_it() {
+        let now = Instant::now();
+        let mut presence = presence(now);
+        let mut riff = Riff::default();
+        post_to(&mut riff, &repo(), 1, 5);
+        join(&mut presence, &mut riff, &bob(), &repo());
+        let key = (bob().who().clone(), repo());
+        assert_eq!(presence.cursors[&key], Cursor::joined(5));
+        let read = |seq, all| Signal::Read {
+            thread: repo(),
+            seq,
+            all,
+            woken: 0,
+        };
+
+        // A read that leaves the cursor where it was does not set it, nor
+        // does a read of all that ends before it.
+        read(5, false).set(&mut presence, bob().who(), now);
+        read(3, true).set(&mut presence, bob().who(), now);
+        assert_eq!(presence.cursors[&key], Cursor::joined(5));
+
+        // A read that moves it sets it, and a join keeps it.
+        post_to(&mut riff, &repo(), 6, 7);
+        read(7, false).set(&mut presence, bob().who(), now);
+        join(&mut presence, &mut riff, &bob(), &repo());
+        assert_eq!(presence.cursors[&key], Cursor::read(7));
+    }
+
+    /// 01M7B2K63PX1PG34HC6X3TCM0E: a new lead keeps its own cursor when
+    /// a read set it and it is not before the cursor of the lead before
+    /// it. Else it takes that cursor, with its mark.
+    #[test]
+    fn a_new_lead_keeps_its_own_cursor_when_a_read_set_it_and_it_is_not_before() {
+        let mut presence = presence(Instant::now());
+        let mut riff = Riff::default();
+        post_to(&mut riff, &repo(), 1, 5);
+        join(&mut presence, &mut riff, &bob(), &repo());
+        let set = record(Change::LeadSet(Member {
+            session: bob(),
+            thread: repo(),
+        }));
+        let (own_key, old_key) = ((bob().who().clone(), repo()), (ann().who().clone(), repo()));
+        let (read, joined) = (Cursor::read, Cursor::joined);
+        for (own, old, after) in [
+            // A join set the cursor of bob: it takes the one of ann.
+            (joined(5), read(3), read(3)),
+            // A read set it, and it is later: bob keeps it.
+            (read(5), read(3), read(5)),
+            // A read set it, and it is before: bob takes the one of ann.
+            (read(2), joined(4), joined(4)),
+            // At the same message, the read is the later.
+            (read(4), joined(4), read(4)),
+        ] {
+            presence.cursors.insert(own_key.clone(), own);
+            presence.cursors.insert(old_key.clone(), old);
+            presence.applied(&set, &riff, &[ann().who().clone()], None);
+            assert_eq!(presence.cursors[&own_key], after, "{own:?} and {old:?}");
+            assert_eq!(presence.cursors[&old_key], old);
+        }
+    }
+
     /// 01M7AYPPAT8C40NJQSSTGHZVP1: in each thread that the new lead
     /// joined, it takes the newest cursor of the leads before it that
     /// joined or read the thread.
@@ -1229,7 +1349,9 @@ mod tests {
         join(&mut presence, &mut riff, &bob(), &repo());
         join(&mut presence, &mut riff, &bob(), &chat);
         for (me, thread, seq) in [(ann(), repo(), 3), (ann(), design(), 2)] {
-            presence.cursors.insert((me.who().clone(), thread), seq);
+            presence
+                .cursors
+                .insert((me.who().clone(), thread), Cursor::read(seq));
         }
         let set = record(Change::LeadSet(Member {
             session: bob(),
@@ -1255,7 +1377,9 @@ mod tests {
 
         // Carl read more of the repository thread than ann.
         for (thread, seq) in [(repo(), 4), (chat.clone(), 2)] {
-            presence.cursors.insert((carl.who().clone(), thread), seq);
+            presence
+                .cursors
+                .insert((carl.who().clone(), thread), Cursor::read(seq));
         }
         presence.applied(&set, &riff, &before, None);
         assert_eq!(presence.cursor(bob().who(), &repo()), 4);
