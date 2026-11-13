@@ -35,7 +35,9 @@
 //! refusal `held` ([`Did::Taken`]).
 //!
 //! The loop looks at each change of the plan of the thread on riff-server
-//! ([`crate::wave::World::plan_changes`]) and each [`LOOK_EVERY`]. The end
+//! ([`crate::wave::World::plan_changes`]) and each [`LOOK_EVERY`]. Its
+//! follower of the plan starts again after a failed start, as the
+//! followers of the wave do ([`crate::followers`]). The end
 //! of the claim lead is a change of the plan: the end of the session of
 //! the lead, and 5 minutes after its last sign of life, when riff-server
 //! wakes the daemons of the project
@@ -114,6 +116,7 @@ use tokio::sync::Notify;
 use tokio::time::Instant;
 
 use crate::daemon::{Daemon, LEAD_SHORT};
+use crate::followers::{self, Follower, Followers};
 use crate::runtime::Runtime;
 use crate::wave::{BoxFuture, Wave};
 use crate::{identity, text};
@@ -426,11 +429,20 @@ pub async fn run(ground: Arc<dyn Ground>, wave: Wave, changed: Arc<Notify>) {
 }
 
 /// The lead loop of the daemon for `wave` ([`run`] with [`Hosted`]), with
-/// the changes of the plan of its thread on riff-server. It never ends.
-pub(crate) async fn follow<R: Runtime + 'static>(daemon: Arc<Daemon<R>>, wave: Wave) {
+/// the changes of the plan of its thread on riff-server. A start of the
+/// follower of the plan that fails, for example on a locked keyring, goes
+/// in `followers`, the followers of the wave, and the follower starts
+/// again ([`followers::follow`], 01M7B2RQPTFVK02YAZGMN2SYAR). It never
+/// ends.
+pub(crate) async fn follow<R: Runtime + 'static>(
+    daemon: Arc<Daemon<R>>,
+    wave: Wave,
+    followers: Followers,
+) {
     let changed = Arc::new(Notify::new());
-    let world = daemon.world();
-    let plans = world.plan_changes(&wave, &changed);
+    let (world, every) = (daemon.world(), daemon.follow_every());
+    let start = || world.plan_changes(&wave, &changed);
+    let plans = followers::follow(&wave.repo, Follower::Lead, &followers, every, start);
     let ground: Arc<dyn Ground> = Arc::new(Hosted(daemon));
     tokio::join!(plans, run(ground, wave.clone(), changed.clone()));
 }
