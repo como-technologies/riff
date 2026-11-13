@@ -34,6 +34,8 @@ struct Host {
     name: &'static str,
     server: String,
     daemon: Option<Child>,
+    /// True while the keyring of this host is locked ([`Host::lock_keyring`]).
+    locked: bool,
     /// More variables for each command and for the daemon.
     extra: Vec<(String, String)>,
 }
@@ -46,15 +48,18 @@ impl Host {
             server: server.into(),
             daemon: None,
             extra: Vec::new(),
+            locked: false,
         }
     }
 
     /// `riff ARGS` of mike on this host in `dir`, as the session
     /// `session`, or as the person. Each host has numbers of its own:
     /// its machine and its disk. Its daemon sends its facts each
-    /// [`LOOK_MS`].
+    /// [`LOOK_MS`]. While its keyring is locked, it writes no sign-in.
     fn riff(&self, dir: &Path, args: &[&str], session: Option<&str>) -> Command {
-        crate::common::sign_in(&self.server, &self.env.riff_home(), "mike");
+        if !self.locked {
+            crate::common::sign_in(&self.server, &self.env.riff_home(), "mike");
+        }
         let mut cmd = self.env.riff();
         let (cores, free) = if self.name == "a" {
             (16, 100)
@@ -111,6 +116,33 @@ impl Host {
         }
     }
 
+    /// The folder of the secrets of this host: its keyring.
+    fn secrets(&self) -> PathBuf {
+        self.env.riff_home().join("secrets")
+    }
+
+    /// Locks the keyring of this host after the sign-in of mike, as a
+    /// login with a security key leaves it (#2075): riff may not read the
+    /// folder of its secrets. False when riff reads it still: the test
+    /// runs as root.
+    fn lock_keyring(&mut self) -> bool {
+        use std::os::unix::fs::PermissionsExt;
+        crate::common::sign_in(&self.server, &self.env.riff_home(), "mike");
+        let shut = std::fs::Permissions::from_mode(0o000);
+        std::fs::set_permissions(self.secrets(), shut).unwrap();
+        self.locked = true;
+        std::fs::read_dir(self.secrets()).is_err()
+    }
+
+    /// Unlocks the keyring of this host, as the person does at the
+    /// desktop.
+    fn unlock_keyring(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+        let open = std::fs::Permissions::from_mode(0o700);
+        std::fs::set_permissions(self.secrets(), open).unwrap();
+        self.locked = false;
+    }
+
     /// What a lead on this host leaves in the folder of its daemon (#1643):
     /// the daemon serves the repository of `main`, and the host has the part
     /// lead and not the part workers. The daemon of a host that never
@@ -158,6 +190,12 @@ impl Drop for Host {
         if let Some(mut child) = self.daemon.take() {
             let _ = child.kill();
             let _ = child.wait();
+        }
+        // The home goes with its folder of secrets.
+        if self.locked {
+            use std::os::unix::fs::PermissionsExt;
+            let open = std::fs::Permissions::from_mode(0o700);
+            let _ = std::fs::set_permissions(self.secrets(), open);
         }
     }
 }
@@ -923,6 +961,95 @@ async fn a_failed_send_of_the_facts_is_one_warning_line_with_its_cause() {
     let out = r.b.run(&r.main, &["daemon", "status"], None).await;
     let status = text(&out.stdout);
     assert!(!status.contains("Facts:"), "{status}");
+}
+
+/// #2075, 01M7AYXJ4VR06W2C9G3XV59FE1, 01M7AYXJ7TBRHAANV6S5TV5EP1: the
+/// keyring of `b` is locked at the start of its daemon, as at a login
+/// with a security key. The start of the session of the daemon on
+/// riff-server fails: the log gets one line, also after many looks, and
+/// `riff daemon status` on `b` names the repository and the cause. After
+/// the unlock at the desktop, the next look starts the session: the log
+/// gets one line, and `riff daemon status --host b` of the lead on `a`
+/// works with no `riff host join`.
+#[tokio::test(flavor = "multi_thread")]
+async fn after_the_unlock_of_the_keyring_the_daemon_serves_with_no_host_join() {
+    let server = start_server().await;
+    let root = tempfile::tempdir().unwrap();
+    let main = repository(root.path());
+    let lead = session(&main, "mike", "a", "l1");
+    let api = crate::common::api_of(&server, &lead);
+    api.register(&lead).await.unwrap();
+    crate::common::name_lead(&server.api("mike", None), &lead).await;
+    api.set_riff(&lead, RiffState::Running).await.unwrap();
+    let a = Host::new("a", &server);
+    let mut b = Host::new("b", &server);
+    b.claude_ends_in(300);
+    b.serve_lead(&main);
+    if !b.lock_keyring() {
+        eprintln!("skip: root reads each folder");
+        return;
+    }
+    b.start().await;
+
+    let repo = lead.place().repo_text();
+    let failed = |host: &Host| -> Vec<String> {
+        let out = host.output();
+        let lines = out
+            .lines()
+            .filter(|l| l.contains(": cannot serve the lead: "));
+        lines.map(str::to_owned).collect()
+    };
+    until("the failed start", || async {
+        (!failed(&b).is_empty()).then_some(())
+    })
+    .await;
+    // Many looks later: still one line.
+    tokio::time::sleep(Duration::from_millis(LOOK_MS * 5)).await;
+    let lines = failed(&b);
+    assert_eq!(lines.len(), 1, "{}", b.output());
+    let start = format!("riff daemon: {repo}: cannot serve the lead: ");
+    assert!(lines[0].starts_with(&start), "{}", lines[0]);
+    assert!(
+        lines[0].contains("the OS keyring of b is locked"),
+        "{}",
+        lines[0]
+    );
+    assert!(
+        lines[0].ends_with("riff tries again at each look."),
+        "{}",
+        lines[0]
+    );
+    let out = b.run(&main, &["daemon", "status"], None).await;
+    let status = text(&out.stdout);
+    assert!(out.status.success(), "{out:?}");
+    let line = format!("riff-server: this daemon has no session for {repo}. ");
+    assert!(status.contains(&line), "{status}");
+    assert!(status.contains("the OS keyring of b is locked"), "{status}");
+
+    b.unlock_keyring();
+    let r = Riff {
+        server,
+        a,
+        b,
+        main,
+        lead,
+        _root: root,
+    };
+    r.daemon_of("b").await;
+    let out = r.lead(&["daemon", "status"], "b").await;
+    let status = text(&out.stdout);
+    assert!(out.status.success(), "{out:?}");
+    let folder = format!("Its folder: {}", r.b.dir().display());
+    assert!(status.contains(&folder), "{status}");
+    assert!(!status.contains("riff-server:"), "{status}");
+    let output = r.b.output();
+    assert_eq!(failed(&r.b).len(), 1, "{output}");
+    let serves = output
+        .lines()
+        .filter(|l| l.contains("The riff daemon serves the lead of"));
+    assert_eq!(serves.count(), 1, "{output}");
+    let again = format!("The riff daemon serves the lead of {repo}, after ");
+    assert!(output.contains(&again), "{output}");
 }
 
 /// 01M57D3FC5PB5EQ6Y38Y5R2DBB: the lead gets one note when the sign-in

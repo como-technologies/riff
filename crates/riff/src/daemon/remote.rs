@@ -12,6 +12,32 @@
 //! new start of the daemon serves with the same session. Its status is
 //! [`PREFIX`] with its pid and its build: the lead finds it in `who`.
 //!
+//! The start of a session reads the user and the key of the device from
+//! the keyring. At a login with a security key, the keyring is locked, so
+//! the start fails. The task of the session then tries again at each look
+//! of the daemon, until the start works ([`serve`], #2075,
+//! 01M7AYXJ4VR06W2C9G3XV59FE1). [`Starts`] keeps the failures: the log
+//! gets one line at the first failure and one line at the start, not one
+//! line for each look. While the starts fail, `riff daemon status` names
+//! the repository and the last cause (01M7AYXJ7TBRHAANV6S5TV5EP1).
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant D as riff daemon on thelio
+//!     participant K as the keyring
+//!     participant S as riff-server
+//!     D->>K: the user and the key, with no prompt
+//!     K-->>D: locked: one line in the log
+//!     loop each look while the keyring is locked
+//!         D->>K: the user and the key
+//!         K-->>D: locked: no line
+//!     end
+//!     Note over K: the person unlocks it at the desktop
+//!     D->>K: the user and the key, at the next look
+//!     K-->>D: the secrets
+//!     D->>S: watch, status: one line in the log
+//! ```
+//!
 //! `riff daemon status`, `riff daemon limit`, `riff daemon cache`, `riff
 //! daemon events`, `riff daemon sweep`, `riff daemon end`, `riff daemon
 //! restart`, `riff host join` and `riff host leave` take `--host HOST`
@@ -124,7 +150,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -1603,27 +1629,135 @@ pub async fn state(api: &Api, me: &SessionUri, host: &str) -> Result<super::Stat
     serde_json::from_str(&text).with_context(|| text::daemon_no_page(host))
 }
 
+/// A repository that the daemon serves, whose session on riff-server
+/// does not run: its starts failed (#2075).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Unserved {
+    /// The repository, `OWNER/NAME`.
+    pub repo: String,
+    /// The first failed start, in milliseconds since the epoch.
+    pub since_ms: i64,
+    /// The cause of the last failed start, in one line.
+    pub cause: String,
+    /// The failed starts.
+    pub count: u64,
+}
+
+/// The failed starts of the session on riff-server of each repository
+/// that the daemon serves (#2075, 01M7AYXJ4VR06W2C9G3XV59FE1,
+/// 01M7AYXJ7TBRHAANV6S5TV5EP1). The task of a session keeps each
+/// failure ([`Starts::failed`]), and forgets them at its start
+/// ([`Starts::started`]) and at its end. `riff daemon status` shows them
+/// ([`super::Status::unserved`]).
+///
+/// The first failure gives one line for the log, with its cause. The next
+/// failures give no line, and keep the newest cause. The start gives one
+/// line:
+///
+/// ```
+/// use riff::daemon::remote::Starts;
+///
+/// let starts = Starts::default();
+/// let locked = "riff cannot find your user.\nUnlock the keyring";
+/// assert_eq!(
+///     starts.failed("o/r", 1_000, locked).as_deref(),
+///     Some("o/r: cannot serve the lead: riff cannot find your user. Unlock the keyring. riff \
+///           tries again at each look.")
+/// );
+/// assert_eq!(starts.failed("o/r", 31_000, "cannot read the key"), None);
+/// assert_eq!(starts.failed("o/r", 61_000, "the keyring is locked"), None);
+/// let shown = starts.shown();
+/// assert_eq!((shown[0].since_ms, shown[0].count), (1_000, 3));
+/// assert_eq!(shown[0].cause, "the keyring is locked");
+///
+/// assert_eq!(
+///     starts.started("o/r", "thelio", 91_000),
+///     "The riff daemon serves the lead of o/r, after 3 failed starts in 1m: riff daemon status \
+///      --host thelio, and the other commands with --host thelio, reach it."
+/// );
+/// assert!(starts.shown().is_empty());
+/// // A start with no failure before it.
+/// assert_eq!(starts.started("o/r", "thelio", 92_000), riff::text::daemon_serves("o/r", "thelio"));
+/// starts.failed("o/r", 93_000, "locked");
+/// starts.forget("o/r");
+/// assert!(starts.shown().is_empty());
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct Starts(Arc<Mutex<BTreeMap<String, Unserved>>>);
+
+impl Starts {
+    /// Keeps a start of the session for `repo` that failed at the time
+    /// `now_ms` with `cause`, and gives the line for the log at the first
+    /// failure.
+    pub fn failed(&self, repo: &str, now_ms: i64, cause: &str) -> Option<String> {
+        let cause = cause.split_whitespace().collect::<Vec<_>>().join(" ");
+        let mut all = self.lock();
+        if let Some(unserved) = all.get_mut(repo) {
+            unserved.cause = cause;
+            unserved.count += 1;
+            return None;
+        }
+        let line = text::daemon_host_failed(repo, &cause);
+        let unserved = Unserved {
+            repo: repo.to_owned(),
+            since_ms: now_ms,
+            cause,
+            count: 1,
+        };
+        all.insert(repo.to_owned(), unserved);
+        Some(line)
+    }
+
+    /// The session for `repo` on `host` started at the time `now_ms`: it
+    /// forgets the failures, and gives the line for the log.
+    pub fn started(&self, repo: &str, host: &str, now_ms: i64) -> String {
+        match self.lock().remove(repo) {
+            Some(failed) => {
+                let secs = u64::try_from((now_ms - failed.since_ms) / 1000).unwrap_or(0);
+                text::daemon_serves_again(repo, host, failed.count, secs)
+            }
+            None => text::daemon_serves(repo, host),
+        }
+    }
+
+    /// Forgets the failures for `repo`: its task ended.
+    pub fn forget(&self, repo: &str) {
+        self.lock().remove(repo);
+    }
+
+    /// The failures of each repository, by repository.
+    pub fn shown(&self) -> Vec<Unserved> {
+        self.lock().values().cloned().collect()
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, Unserved>> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
 /// The session of the daemon in the folder `dir` on riff-server for
 /// the repository of `served`, until the task ends. It sets its status,
 /// keeps the session alive, and answers each request. Each `every`
 /// ([`super::facts::every`]) it sends the facts of the host, keeps the
 /// outcome in `sends` ([`super::facts::Sends`], #1858), and sends the
 /// notes for the lead in `news` ([`super::facts`]). A send that fails
-/// holds up no next look: the next tick sends the facts again.
-pub async fn serve(dir: PathBuf, served: Served, news: News, sends: Sends, every: Duration) {
+/// holds up no next look: the next tick sends the facts again. A start
+/// that fails goes in `starts` ([`Starts`]), and the task tries again
+/// each `every` (#2075, 01M7AYXJ4VR06W2C9G3XV59FE1).
+pub async fn serve(
+    dir: PathBuf,
+    served: Served,
+    news: News,
+    sends: Sends,
+    starts: Starts,
+    every: Duration,
+) {
     let repo = served.wave.repo.clone();
-    let session = match Session::new(&dir, &served) {
-        Ok(session) => Arc::new(session),
-        Err(e) => {
-            eprintln!(
-                "riff daemon: {repo}: {}",
-                text::daemon_host_failed(&format!("{e:#}"))
-            );
-            return;
-        }
+    let _forget = Forget(&sends, &starts, &repo);
+    let Some(session) = start(&dir, &served, &starts, every).await else {
+        return;
     };
-    println!("{}", text::daemon_serves(&repo, &served.wave.host));
-    let _forget = Forget(&sends, &repo);
+    let session = Arc::new(session);
     let (api, me) = (session.api.clone(), session.me.clone());
     let alive = tokio::spawn(async move {
         riff_client::api::keep_alive_of_host(&api, &me, riff_core::wire::ALIVE_EVERY).await;
@@ -1674,6 +1808,38 @@ pub async fn serve(dir: PathBuf, served: Served, news: News, sends: Sends, every
     }
 }
 
+/// Starts the session of the daemon in the folder `dir` for `served`
+/// (#2075). A start that fails, for example on a locked keyring, goes in
+/// `starts`, and the next try comes after `every`, until a start works.
+/// Each line for the log comes from `starts`. It gives none when the
+/// daemon serves the repository no more: with no session, no reply waits
+/// to go out.
+async fn start(dir: &Path, served: &Served, starts: &Starts, every: Duration) -> Option<Session> {
+    let (repo, host) = (&served.wave.repo, &served.wave.host);
+    loop {
+        // A keyring that does not answer holds a read for up to
+        // `KEYRING_WAIT`: it holds up no task of the runtime.
+        let (folder, entry) = (dir.to_owned(), served.clone());
+        let started = tokio::task::spawn_blocking(move || Session::new(&folder, &entry)).await;
+        match started.map_err(anyhow::Error::from).and_then(|s| s) {
+            Ok(session) => {
+                println!("{}", starts.started(repo, host, crate::run::now_ms()));
+                return Some(session);
+            }
+            Err(e) => {
+                let cause = format!("{e:#}");
+                if let Some(line) = starts.failed(repo, crate::run::now_ms(), &cause) {
+                    eprintln!("riff daemon: {line}");
+                }
+            }
+        }
+        tokio::time::sleep(every).await;
+        if !is_served(dir, served) {
+            return None;
+        }
+    }
+}
+
 /// False when [`SERVED_FILE`] in the folder `dir` has no entry for the
 /// repository of `served` with its session. A file that cannot be read
 /// counts as served.
@@ -1684,13 +1850,14 @@ fn is_served(dir: &Path, served: &Served) -> bool {
     })
 }
 
-/// Forgets the sends of the facts for a repository when the session of
-/// the daemon for it ends.
-struct Forget<'a>(&'a Sends, &'a str);
+/// Forgets the sends of the facts and the failed starts for a repository
+/// when the task of the session of the daemon for it ends.
+struct Forget<'a>(&'a Sends, &'a Starts, &'a str);
 
 impl Drop for Forget<'_> {
     fn drop(&mut self) {
-        self.0.forget(self.1);
+        self.0.forget(self.2);
+        self.1.forget(self.2);
     }
 }
 

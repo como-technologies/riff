@@ -1494,8 +1494,9 @@ enum DaemonCommand {
     /// Show the riff daemon and its sessions
     ///
     /// It shows the process, the build and the folder of the daemon, the
-    /// limit of the host, each session, each start that waits for room,
-    /// and each wave. Last it shows the calls of gh of the last hour,
+    /// limit of the host, each repository whose session on riff-server
+    /// does not run and why, each session, each start that waits for
+    /// room, and each wave. Last it shows the calls of gh of the last hour,
     /// with their GraphQL points, and the points that GitHub says are
     /// left. It exits with 1 when no daemon answers in 20 seconds, and
     /// shows the state of the unit: riff.service on Linux, the launchd

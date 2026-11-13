@@ -6432,6 +6432,17 @@ of this part when they merge.
 - **01M7AZENRZY9YGYVJ6FYYZ1TKK** For `riff ps`, the daemon asks the
   runtime for the processes of all its containers at the same time, each
   with its own limit of 5 seconds (#1923).
+- **01M7AYXJ4VR06W2C9G3XV59FE1** When the daemon cannot start its
+  session on riff-server for a repository that it serves, for example
+  because the keyring is locked, it tries again at each look of its
+  facts, each 30 seconds, until the start works. A person runs no `riff
+  host join` for it. The first failed start logs one line with its
+  cause. The next failed starts log no line. The start logs one line
+  with the count of the failed starts and their time.
+- **01M7AYXJ7TBRHAANV6S5TV5EP1** While the starts of the session on
+  riff-server of a repository fail, `riff daemon status` names the
+  repository, the count of the failed starts, their time and the last
+  cause.
 
 ### riff relay
 

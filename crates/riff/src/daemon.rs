@@ -1697,6 +1697,11 @@ pub struct Status {
     /// (01M6XZJFE2ZTR5RE3AWM30R704). An old daemon gives none.
     #[serde(default)]
     pub writes: Vec<WritesShown>,
+    /// The repositories that the daemon serves whose session on
+    /// riff-server does not run: the failed starts, their time and the
+    /// last cause ([`remote::Starts`], #2075). An old daemon gives none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unserved: Vec<remote::Unserved>,
     /// The sends of the facts of this host for each repository that the
     /// daemon serves: the last one that went out, and the failures after
     /// it with the last cause ([`facts::Sends`], #1858). An old daemon
@@ -2625,6 +2630,9 @@ pub struct Daemon<R> {
     /// The notes for the lead of each repository that a session of
     /// [`remote::serve`] sends ([`facts::News`]).
     news: facts::News,
+    /// The failed starts of each session of [`remote::serve`]
+    /// ([`remote::Starts`], #2075).
+    starts: remote::Starts,
     /// The sends of the facts of each session of [`remote::serve`]
     /// ([`facts::Sends`], #1858).
     sends: facts::Sends,
@@ -2808,6 +2816,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             again: None,
             serving: Mutex::new(BTreeMap::new()),
             news: facts::News::default(),
+            starts: remote::Starts::default(),
             sends: facts::Sends::default(),
             ends: Mutex::new(BTreeMap::new()),
             pulls: Mutex::new(BTreeMap::new()),
@@ -3012,6 +3021,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             served.clone(),
             news,
             sends,
+            self.starts.clone(),
             every,
         ));
         serving.insert(served.wave.repo.clone(), (served, task));
@@ -4284,6 +4294,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                 .writes()
                 .map(gh_token::Writes::shown)
                 .unwrap_or_default(),
+            unserved: self.starts.shown(),
             sends: self.sends.shown(),
             events: {
                 let now = now_ms();
@@ -12897,6 +12908,7 @@ mod tests {
                 served,
                 here.daemon.news.clone(),
                 here.daemon.sends.clone(),
+                here.daemon.starts.clone(),
                 facts::every(),
             ));
             both.push(here);
@@ -13548,6 +13560,7 @@ mod tests {
             served,
             here.daemon.news.clone(),
             here.daemon.sends.clone(),
+            here.daemon.starts.clone(),
             every,
         ));
 
@@ -13598,6 +13611,76 @@ mod tests {
         serving.abort();
         let _ = serving.await;
         assert!(here.daemon.status().await.sends.is_empty());
+    }
+
+    /// #2075, 01M7AYXJ4VR06W2C9G3XV59FE1, 01M7AYXJ7TBRHAANV6S5TV5EP1: the
+    /// keyring is locked at the start of the session of the daemon on
+    /// riff-server, as at a login with a security key. The start fails,
+    /// and `riff daemon status` names the repository and the cause. The
+    /// keyring answers at the next look: the session starts, riff-server
+    /// lists it, and the status has no such line.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_start_on_a_locked_keyring_fails_and_the_next_look_starts_the_session() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, riff_server::router()).await.unwrap() });
+        let server = format!("http://{addr}");
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        parts::set(&here.dir, REPO, |p| p.workers = true).unwrap();
+        // The keyring refuses the next read of the sign-in at this server.
+        let name = riff_client::login::secret_name(&server);
+        let entry = keyring_core::Entry::new(riff_client::secrets::SERVICE, &name).unwrap();
+        let cred: &keyring_core::mock::Cred = entry.as_any().downcast_ref().unwrap();
+        let locked = std::io::Error::other("object locked");
+        cred.set_error(keyring_core::Error::NoStorageAccess(Box::new(locked)));
+
+        let wave = Wave {
+            repo: REPO.into(),
+            main: here.root.path().to_owned(),
+            server: server.clone(),
+            host: "a".into(),
+        };
+        let served = remote::serve_in_file(&here.dir, &wave).unwrap();
+        // The time to the next look lets the test see the failure first.
+        let every = Duration::from_secs(2);
+        let serving = tokio::spawn(remote::serve(
+            here.dir.clone(),
+            served,
+            here.daemon.news.clone(),
+            here.daemon.sends.clone(),
+            here.daemon.starts.clone(),
+            every,
+        ));
+
+        until_async(|| async { !here.daemon.status().await.unserved.is_empty() }).await;
+        let status = here.daemon.status().await;
+        let unserved = &status.unserved[0];
+        assert_eq!((unserved.repo.as_str(), unserved.count), (REPO, 1));
+        assert!(unserved.cause.contains("is locked"), "{unserved:?}");
+        let shown = text::daemon_status(&status, now_ms());
+        let line = format!("riff-server: this daemon has no session for {REPO}. 1 start failed in");
+        assert!(shown.contains(&line), "{shown}");
+
+        // The next look starts the session: riff-server lists it.
+        let api = riff_client::api::Api::new(&server);
+        let place = crate::identity::place_from_text(&format!("a/{REPO}")).unwrap();
+        let person = crate::identity::person(&place, &server).unwrap();
+        let me = SessionUri::new(
+            riff_core::name::Who::new(person.who().user(), Some("p1")).unwrap(),
+            place,
+        );
+        api.register(&me).await.unwrap();
+        until_async(|| async {
+            let who = api.who(&me, false).await.unwrap();
+            remote::find(&who, me.who().user(), REPO, "a").is_some()
+        })
+        .await;
+        let status = here.daemon.status().await;
+        assert!(status.unserved.is_empty(), "{:?}", status.unserved);
+        let shown = text::daemon_status(&status, now_ms());
+        assert!(!shown.contains("riff-server:"), "{shown}");
+        serving.abort();
+        let _ = serving.await;
     }
 
     /// 01M57D4FX5VHQR150QTDS6BA1C, 01M57D4G1TS8BHJF5A8PW2D79C: the lead
@@ -15515,6 +15598,12 @@ mod tests {
             writes: vec![WritesShown {
                 repo: "o/r".into(),
                 acts: gh_token::ActsAs::NoGitHub,
+            }],
+            unserved: vec![remote::Unserved {
+                repo: "o/s".into(),
+                since_ms: 15,
+                cause: "the OS keyring of thelio is locked".into(),
+                count: 2,
             }],
             sends: vec![facts::Sent {
                 repo: "o/r".into(),

@@ -6457,13 +6457,15 @@ sequenceDiagram
     participant P as you
     participant K as the keyring
     participant D as the riff daemon
+    participant S as riff-server
     Note over K: locked after the login
     D->>K: a read, with no prompt
-    K-->>D: locked: the wave waits
+    K-->>D: locked: the wave waits, no session on riff-server
     P->>K: gh auth status: the unlock prompt
     P->>K: the password of the keyring
     D->>K: a read at the next look
     K-->>D: the secret: riff and gh work
+    D->>S: the session of the daemon: --host reaches it
 ```
 
 At each login, unlock the keyring one time. Open a terminal at the
@@ -6482,6 +6484,26 @@ riff daemon status
 ```
 
 It shows `claude token: set.` when the daemon reads the keyring.
+
+At the same next look, the daemon starts its session on riff-server.
+Then the commands with `--host` reach the host again. You run no
+`riff host join`. From the lead, or from a terminal on another host,
+check it:
+
+```sh
+riff daemon status --host HOST
+```
+
+While the keyring is locked, the daemon has no session on riff-server.
+A command with `--host HOST` then says `no daemon of your user on HOST
+serves OWNER/REPO`. The daemon tries again at each look, each 30
+seconds. Its log gets one line at the first failure and one line at the
+start. `riff daemon status` on the host names each repository with no
+session, and why:
+
+```text
+riff-server: this daemon has no session for o/r. 12 starts failed in 6m. The last cause: riff cannot find your user. Unlock the keyring, or set RIFF_USER: the OS keyring of thelio is locked or does not answer: unlock it at the desktop. gh uses the same keyring, so gh stops too. riff tries again at each look.
+```
 
 To see whether git asks `gh` for a credential, run this in the main
 clone of a project:

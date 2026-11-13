@@ -9137,6 +9137,7 @@ const LIMIT_GUESS: &str = " riff cannot read the reset: this time is the end of 
 ///     no_starts: vec![],
 ///     no_tokens: vec![],
 ///     writes: vec![],
+///     unserved: vec![],
 ///     sends: vec![],
 ///     events: vec![],
 /// };
@@ -9244,6 +9245,17 @@ const LIMIT_GUESS: &str = " riff cannot read the reset: this time is the end of 
 /// let line = "Facts: 3 sends of the facts of this host for o/r failed in 5m. The last cause: machine failed\n";
 /// assert!(text.contains(line), "{text}");
 /// assert!(!text.contains("o/s"), "{text}");
+/// // A repository whose session on riff-server does not run (#2075).
+/// status.unserved.push(riff::daemon::remote::Unserved {
+///     repo: "o/t".into(),
+///     since_ms: 0,
+///     cause: "the OS keyring of thelio is locked".into(),
+///     count: 2,
+/// });
+/// let text = riff::text::daemon_status(&status, 300_000);
+/// let line = "riff-server: this daemon has no session for o/t. 2 starts failed in 5m. The last \
+///             cause: the OS keyring of thelio is locked. riff tries again at each look.\n";
+/// assert!(text.contains(line), "{text}");
 /// ```
 pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
     let age = |since: i64| ago(u64::try_from((now_ms - since) / 1000).unwrap_or(0));
@@ -9278,6 +9290,9 @@ pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
     }
     for writes in &status.writes {
         let _ = writeln!(out, "{}", daemon_writes(&writes.repo, &writes.acts));
+    }
+    for unserved in &status.unserved {
+        let _ = writeln!(out, "{}", daemon_unserved(unserved, now_ms));
     }
     for sent in &status.sends {
         if let Some(line) = daemon_facts_status(sent, now_ms) {
@@ -11009,6 +11024,7 @@ pub const INIT_CONTAINER_DONE: &str =
 ///     no_starts: vec![],
 ///     no_tokens: vec![],
 ///     writes: vec![],
+///     unserved: vec![],
 ///     sends: vec![],
 ///     events: vec![],
 /// };
@@ -11466,9 +11482,70 @@ pub fn daemon_no_page(host: &str) -> String {
     )
 }
 
-/// The daemon cannot start its session on riff-server for a repository.
-pub fn daemon_host_failed(error: &str) -> String {
-    format!("cannot serve the lead: {error}")
+/// The line in the log of the daemon at the first start of its session on
+/// riff-server for `repo` that fails, with its `cause` (#2075).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::daemon_host_failed("o/r", "the OS keyring of thelio is locked"),
+///     "o/r: cannot serve the lead: the OS keyring of thelio is locked. riff tries again at \
+///      each look."
+/// );
+/// ```
+pub fn daemon_host_failed(repo: &str, cause: &str) -> String {
+    format!("{repo}: cannot serve the lead: {cause}. riff tries again at each look.")
+}
+
+/// The line in the log of the daemon at the start of its session on
+/// riff-server for `repo` on `host` after `count` failed starts in `secs`
+/// (#2075).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::daemon_serves_again("o/r", "thelio", 1, 30),
+///     "The riff daemon serves the lead of o/r, after 1 failed start in 30s: riff daemon status \
+///      --host thelio, and the other commands with --host thelio, reach it."
+/// );
+/// ```
+pub fn daemon_serves_again(repo: &str, host: &str, count: u64, secs: u64) -> String {
+    let s = if count == 1 { "" } else { "s" };
+    format!(
+        "The riff daemon serves the lead of {repo}, after {count} failed start{s} in {}: riff \
+         daemon status --host {host}, and the other commands with --host {host}, reach it.",
+        ago(secs)
+    )
+}
+
+/// The line of `riff daemon status` for a repository whose session on
+/// riff-server does not run, at the time `now_ms` (#2075): the count of
+/// the failed starts, their time and the last cause.
+///
+/// ```
+/// use riff::daemon::remote::Unserved;
+///
+/// let unserved = Unserved {
+///     repo: "o/r".into(),
+///     since_ms: 60_000,
+///     cause: "the OS keyring of thelio is locked".into(),
+///     count: 9,
+/// };
+/// assert_eq!(
+///     riff::text::daemon_unserved(&unserved, 300_000),
+///     "riff-server: this daemon has no session for o/r. 9 starts failed in 4m. The last \
+///      cause: the OS keyring of thelio is locked. riff tries again at each look."
+/// );
+/// ```
+pub fn daemon_unserved(unserved: &crate::daemon::remote::Unserved, now_ms: i64) -> String {
+    let secs = u64::try_from((now_ms - unserved.since_ms) / 1000).unwrap_or(0);
+    let s = if unserved.count == 1 { "" } else { "s" };
+    format!(
+        "riff-server: this daemon has no session for {}. {} start{s} failed in {}. The last \
+         cause: {}. riff tries again at each look.",
+        unserved.repo,
+        unserved.count,
+        ago(secs),
+        unserved.cause
+    )
 }
 
 /// The daemon serves the lead of `repo` on `host`
