@@ -4312,7 +4312,9 @@ impl<R: Runtime + 'static> Daemon<R> {
     }
 
     /// [`Daemon::ps_of`] that waits for the processes of one container at
-    /// most `wait`.
+    /// most `wait`. It asks for the processes of all the containers at the
+    /// same time, so the answer comes in about `wait`, also when each list
+    /// hangs (#1923, 01M7AZENRZY9YGYVJ6FYYZ1TKK).
     async fn ps_within(
         &self,
         processes: impl FnOnce() -> Vec<crate::platform::Process> + Send + 'static,
@@ -4332,10 +4334,13 @@ impl<R: Runtime + 'static> Daemon<R> {
         crate::ps::count_calls(&mut host, "", &calls, now);
         let mut records = self.records();
         records.sort_by(|a, b| a.live.name.cmp(&b.live.name));
+        let lists = records
+            .iter()
+            .map(|record| tokio::time::timeout(wait, self.runtime.processes(&record.live.name)));
+        let lists = futures::future::join_all(lists).await;
         let mut containers = Vec::new();
-        for record in records {
+        for (record, listed) in records.into_iter().zip(lists) {
             let live = record.live;
-            let listed = tokio::time::timeout(wait, self.runtime.processes(&live.name)).await;
             let (mut procs, error) = match listed {
                 Ok(Ok(procs)) => (procs, None),
                 Ok(Err(e)) => (Vec::new(), Some(format!("{e:#}"))),
@@ -6658,13 +6663,54 @@ pub(crate) async fn says_once(dir: &Path, line: &'static str) -> JoinHandle<()> 
 /// daemon ([`status_within`], 01M558EY88CACNZ55FWMRT8RP7).
 pub const STATUS_WAIT: Duration = Duration::from_secs(5);
 
+/// The variable that gives [`answer_wait`] in milliseconds. Only a test
+/// sets it.
+///
+/// ```
+/// assert_eq!(riff::daemon::ANSWER_VAR, "RIFF_DAEMON_ANSWER_MS");
+/// ```
+pub const ANSWER_VAR: &str = "RIFF_DAEMON_ANSWER_MS";
+
+/// The longest wait of `riff ps` and `riff daemon status` for each
+/// answer of the daemon, on the host and in a container (#1923,
+/// 01M7AZENPBNJ530XH0TNZPNSM9): [`facts::DAEMON_WAIT`], or the
+/// milliseconds of [`ANSWER_VAR`].
+///
+/// ```
+/// assert_eq!(riff::daemon::answer_wait(), riff::daemon::facts::DAEMON_WAIT);
+/// ```
+pub fn answer_wait() -> Duration {
+    std::env::var(ANSWER_VAR)
+        .ok()
+        .and_then(|ms| ms.parse().ok())
+        .map_or(facts::DAEMON_WAIT, Duration::from_millis)
+}
+
+/// The answer `answer` of the daemon, with the time limit `limit`. At
+/// the limit, it gives the error [`text::daemon_silent`].
+///
+/// ```
+/// use std::time::Duration;
+///
+/// # tokio::runtime::Runtime::new().unwrap().block_on(async {
+/// let limit = Duration::from_millis(10);
+/// let silent = std::future::pending::<anyhow::Result<()>>();
+/// let error = riff::daemon::within(limit, silent).await.unwrap_err();
+/// assert_eq!(error.to_string(), "The riff daemon gave no answer in 0.01 s.");
+/// assert_eq!(riff::daemon::within(limit, async { Ok(7) }).await.unwrap(), 7);
+/// # });
+/// ```
+pub async fn within<T>(limit: Duration, answer: impl Future<Output = Result<T>>) -> Result<T> {
+    tokio::time::timeout(limit, answer)
+        .await
+        .map_err(|_| anyhow!("{}", text::daemon_silent(limit)))?
+}
+
 /// [`status`], with the time limit `limit`. A daemon that takes the
 /// connection and gives no answer in `limit`, for example a status that
 /// waits on a lock, gives an error: it stops no caller.
 pub async fn status_within(dir: &Path, limit: Duration) -> Result<Status> {
-    tokio::time::timeout(limit, status(dir))
-        .await
-        .map_err(|_| anyhow!("{}", text::daemon_silent(limit)))?
+    within(limit, status(dir)).await
 }
 
 /// The riff processes of the daemon in the folder `dir`, as `riff ps`
@@ -6679,6 +6725,11 @@ pub async fn ps(dir: &Path) -> Result<crate::ps::Ps> {
     }
 }
 
+/// [`ps`], with the time limit `limit` (#1923).
+pub async fn ps_within(dir: &Path, limit: Duration) -> Result<crate::ps::Ps> {
+    within(limit, ps(dir)).await
+}
+
 /// The line of the state `state` of the unit of `manager`, with the way
 /// to start it and to see its log (01M6Z4A521PMRBK1R1E7NNADCQ).
 fn unit_state(manager: &impl crate::service::ServiceManager, state: &str) -> String {
@@ -6687,9 +6738,9 @@ fn unit_state(manager: &impl crate::service::ServiceManager, state: &str) -> Str
 
 /// The build of the daemon in the folder `dir`, as its status names it.
 /// A status of another shape names it too ([`Unreadable`]). `None` when
-/// the daemon does not answer, or names no build.
-async fn daemon_build(dir: &Path) -> Option<String> {
-    match status(dir).await {
+/// the daemon does not answer in `limit`, or names no build.
+async fn daemon_build(dir: &Path, limit: Duration) -> Option<String> {
+    match status_within(dir, limit).await {
         Ok(status) => Some(status.build),
         Err(e) => e.downcast::<Unreadable>().ok()?.build,
     }
@@ -6700,17 +6751,19 @@ async fn daemon_build(dir: &Path) -> Option<String> {
 /// error `e`. A daemon that runs and answers in a shape that this riff
 /// cannot read gives one line, [`text::daemon_unreadable`], with the
 /// build of the daemon from its status (#1856,
-/// 01M74BPK605BKMRRBQAFJE6CZZ). Else the lines are `e`, and the state of
-/// the unit of `manager` with the way to start it.
+/// 01M74BPK605BKMRRBQAFJE6CZZ). It waits for that status at most
+/// `limit` (#1923). Else the lines are `e`, and the state of the unit of
+/// `manager` with the way to start it.
 pub async fn no_answer(
     dir: &Path,
     e: &anyhow::Error,
     manager: &impl crate::service::ServiceManager,
+    limit: Duration,
 ) -> Vec<String> {
     if let Some(unreadable) = e.downcast_ref::<Unreadable>() {
         let theirs = match &unreadable.build {
             Some(build) => Some(build.clone()),
-            None => daemon_build(dir).await,
+            None => daemon_build(dir, limit).await,
         };
         return vec![text::daemon_unreadable(
             &unreadable.fault,
@@ -6727,21 +6780,22 @@ pub async fn no_answer(
 }
 
 /// `riff ps` on the host: prints the tree of the processes in `width`
-/// columns, and gives the exit code. When no daemon answers, it says so,
-/// shows the state of the unit with the way to start it, and gives 1
-/// ([`no_answer`]).
+/// columns, and gives the exit code. When no daemon answers in `limit`,
+/// it says so, shows the state of the unit with the way to start it,
+/// and gives 1 ([`no_answer`], #1923).
 pub async fn show_ps(
     dir: &Path,
     manager: &impl crate::service::ServiceManager,
     width: usize,
+    limit: Duration,
 ) -> i32 {
-    match ps(dir).await {
+    match ps_within(dir, limit).await {
         Ok(ps) => {
             print!("{}", crate::ps::draw(&ps, width));
             0
         }
         Err(e) => {
-            for line in no_answer(dir, &e, manager).await {
+            for line in no_answer(dir, &e, manager, limit).await {
                 eprintln!("{line}");
             }
             1
@@ -6954,17 +7008,21 @@ pub async fn ask_end(dir: &Path, name: &str, show: impl FnMut(&str)) -> Result<(
 
 /// `riff daemon status`: shows the daemon in the folder `dir` and its
 /// sessions, or, with no daemon, the state of its unit ([`no_answer`]).
-/// It gives the exit code: 1 when no daemon answers, or when this riff
-/// cannot read its answer (01M4ZDTVNBKDM64043GGWQEV4S).
-pub async fn show_status(dir: &Path, manager: &impl crate::service::ServiceManager) -> i32 {
-    match status(dir).await {
+/// It gives the exit code: 1 when no daemon answers in `limit` (#1923),
+/// or when this riff cannot read its answer (01M4ZDTVNBKDM64043GGWQEV4S).
+pub async fn show_status(
+    dir: &Path,
+    manager: &impl crate::service::ServiceManager,
+    limit: Duration,
+) -> i32 {
+    match status_within(dir, limit).await {
         Ok(status) => {
             print!("{}", text::daemon_status(&status, now_ms()));
             println!("{}", crate::compile_cache::shown());
             0
         }
         Err(e) => {
-            for line in no_answer(dir, &e, manager).await {
+            for line in no_answer(dir, &e, manager, limit).await {
                 println!("{line}");
             }
             1
@@ -9101,10 +9159,12 @@ mod tests {
 
     /// A daemon in the folder `dir` that runs, and answers each ask in a
     /// shape that this riff cannot read: `status` to a status, and
-    /// `other` to each other ask (#1856).
-    async fn unreadable_daemon(dir: &Path, status: Value, other: Value) {
+    /// `other` to each other ask (#1856). With no `status`, it never
+    /// answers a status, and holds the connection (#1923).
+    async fn unreadable_daemon(dir: &Path, status: Option<Value>, other: Value) {
         let listener = listen(dir).await.unwrap();
         tokio::spawn(async move {
+            let mut held = Vec::new();
             while let Ok((conn, _)) = listener.accept().await {
                 let (read, mut write) = conn.into_split();
                 let mut lines = BufReader::new(read).lines();
@@ -9112,10 +9172,13 @@ mod tests {
                     continue;
                 };
                 let hello: Value = serde_json::from_str(&first).unwrap();
-                let say = if hello["ask"]["ask"] == "status" {
-                    &status
-                } else {
-                    &other
+                let say = match &status {
+                    Some(status) if hello["ask"]["ask"] == "status" => status,
+                    None if hello["ask"]["ask"] == "status" => {
+                        held.push((lines, write));
+                        continue;
+                    }
+                    _ => &other,
                 };
                 write
                     .write_all(format!("{say}\n").as_bytes())
@@ -9135,10 +9198,10 @@ mod tests {
         let dir = dir_in(root.path());
         let ours = Build::this().to_string();
         let line = serde_json::json!({"say": "status", "pid": "724", "build": ours});
-        unreadable_daemon(&dir, line.clone(), line.clone()).await;
+        unreadable_daemon(&dir, Some(line.clone()), line.clone()).await;
 
         let e = status(&dir).await.unwrap_err();
-        let lines = no_answer(&dir, &e, &Units::of(Path::new("/r"))).await;
+        let lines = no_answer(&dir, &e, &Units::of(Path::new("/r")), STATUS_WAIT).await;
         let fault = serde_json::from_str::<Say>(&line.to_string())
             .unwrap_err()
             .to_string();
@@ -9171,13 +9234,13 @@ mod tests {
         let old = "0.1.0 aaaa 2020-01-01T00:00:00Z";
         unreadable_daemon(
             &dir,
-            serde_json::json!({"say": "status", "pid": "7", "build": old}),
+            Some(serde_json::json!({"say": "status", "pid": "7", "build": old})),
             serde_json::json!({"say": "ps", "daemon": "812"}),
         )
         .await;
 
         let e = ps(&dir).await.unwrap_err();
-        let lines = no_answer(&dir, &e, &Units::of(Path::new("/r"))).await;
+        let lines = no_answer(&dir, &e, &Units::of(Path::new("/r")), STATUS_WAIT).await;
         assert_eq!(lines.len(), 1, "{lines:?}");
         let line = &lines[0];
         assert!(
@@ -9201,7 +9264,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let dir = dir_in(root.path());
         let e = status(&dir).await.unwrap_err();
-        let lines = no_answer(&dir, &e, &Units::of(Path::new("/r"))).await;
+        let lines = no_answer(&dir, &e, &Units::of(Path::new("/r")), STATUS_WAIT).await;
         assert_eq!(
             lines,
             [
@@ -9218,6 +9281,113 @@ mod tests {
             "{}",
             lines[1]
         );
+    }
+
+    /// A daemon in the folder `dir` that takes each connection and never
+    /// answers (#1923). It holds each connection.
+    async fn silent_daemon(dir: &Path) {
+        let listener = listen(dir).await.unwrap();
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((conn, _)) = listener.accept().await {
+                held.push(conn);
+            }
+        });
+    }
+
+    /// 01M7AZENPBNJ530XH0TNZPNSM9 (#1923): a daemon that takes the
+    /// connection and never answers. `riff ps` and `riff daemon status`
+    /// end at the time limit with the hint of a daemon that does not
+    /// answer: no answer in that time, and the state of the unit with the
+    /// way to start it and to see its log.
+    #[tokio::test]
+    async fn a_daemon_that_never_answers_ends_riff_ps_and_riff_daemon_status_at_the_limit() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = dir_in(root.path());
+        silent_daemon(&dir).await;
+        let units = Units::of(Path::new("/r"));
+        let limit = Duration::from_millis(200);
+        let hint = [
+            text::daemon_silent(limit),
+            text::daemon_unit_state(crate::service::UNIT, "active", "journalctl --user -u riff"),
+        ];
+        let started = std::time::Instant::now();
+
+        let e = ps_within(&dir, limit).await.unwrap_err();
+        assert_eq!(no_answer(&dir, &e, &units, limit).await, hint);
+        let e = status_within(&dir, limit).await.unwrap_err();
+        assert_eq!(no_answer(&dir, &e, &units, limit).await, hint);
+        assert_eq!(show_ps(&dir, &units, 80, limit).await, 1);
+        assert_eq!(show_status(&dir, &units, limit).await, 1);
+
+        let took = started.elapsed();
+        assert!(took >= 4 * limit, "{took:?}");
+        assert!(took < Duration::from_secs(10), "{took:?}");
+    }
+
+    /// 01M7AZENPBNJ530XH0TNZPNSM9 (#1923): the answer of `riff ps` names
+    /// no build, and the status of the daemon never comes. riff waits for
+    /// that status at most the limit, and says that the daemon names no
+    /// build.
+    #[tokio::test]
+    async fn a_ps_that_riff_cannot_read_waits_for_the_status_at_most_the_limit() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = dir_in(root.path());
+        let ps_line = serde_json::json!({"say": "ps", "daemon": "812"});
+        unreadable_daemon(&dir, None, ps_line.clone()).await;
+        let limit = Duration::from_millis(200);
+
+        let e = ps_within(&dir, limit).await.unwrap_err();
+        let fault = serde_json::from_str::<Say>(&ps_line.to_string())
+            .unwrap_err()
+            .to_string();
+        let started = std::time::Instant::now();
+        let lines = no_answer(&dir, &e, &Units::of(Path::new("/r")), limit).await;
+        let took = started.elapsed();
+        assert!(took >= limit && took < Duration::from_secs(10), "{took:?}");
+        let log = "journalctl --user -u riff";
+        assert_eq!(
+            lines,
+            [text::daemon_unreadable(&fault, &Build::this(), None, log)]
+        );
+    }
+
+    /// 01M7AZENRZY9YGYVJ6FYYZ1TKK (#1923): the daemon asks for the
+    /// processes of each container at the same time. When the list of
+    /// each container hangs, the answer of `riff ps` comes in about one
+    /// wait, not in one wait for each container. The three containers are
+    /// the most sessions of the default limit.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_hung_lists_of_the_containers_take_one_wait() {
+        let names = [
+            ("riff-issue-12-1a2b3c4d", "issue-12"),
+            ("riff-issue-13-2b3c4d5e", "issue-13"),
+            ("riff-issue-14-3c4d5e6f", "issue-14"),
+        ];
+        assert_eq!(names.len(), crate::room::Limit::default().sessions as usize);
+        let fake = names
+            .iter()
+            .fold(Fake::default().with_image(IMAGE), |fake, (name, _)| {
+                fake.with_hung_processes(name)
+            });
+        let here = Here::new(fake).await;
+        let mut clients = Vec::new();
+        for (name, item) in names {
+            clients.push(here.started(here.start(name, item)).await);
+        }
+        let wait = Duration::from_secs(2);
+
+        let started = std::time::Instant::now();
+        let ps = here.daemon.ps_within(Vec::new, wait).await;
+        let took = started.elapsed();
+
+        assert_eq!(ps.containers.len(), names.len());
+        let silent = text::ps_silent(wait);
+        for container in &ps.containers {
+            assert_eq!(container.error.as_deref(), Some(silent.as_str()));
+        }
+        // One wait after the other would take 6 s.
+        assert!(took >= wait && took < 2 * wait, "{took:?}");
     }
 
     #[test]
@@ -13014,7 +13184,7 @@ mod tests {
         let Reach::Daemon(socket) = &worker else {
             unreachable!()
         };
-        let status = Reach::daemon_status(socket).await.unwrap();
+        let status = Reach::daemon_status(socket, STATUS_WAIT).await.unwrap();
         assert!(
             status.build.starts_with(env!("CARGO_PKG_VERSION")),
             "{}",
@@ -14308,15 +14478,20 @@ mod tests {
         assert!(ps.containers[2].procs.iter().all(|p| p.calls == 0));
 
         // The lead reads the answer on its socket, and a worker may not.
-        let lead = crate::reach::Reach::daemon_ps(&session_dir(&here.dir, &lead_name).join(SOCKET))
-            .await
-            .unwrap();
+        let lead = crate::reach::Reach::daemon_ps(
+            &session_dir(&here.dir, &lead_name).join(SOCKET),
+            STATUS_WAIT,
+        )
+        .await
+        .unwrap();
         assert_eq!(lead.daemon, me);
         assert_eq!(lead.containers.len(), 3);
-        let refused =
-            crate::reach::Reach::daemon_ps(&session_dir(&here.dir, &verify_name).join(SOCKET))
-                .await
-                .unwrap_err();
+        let refused = crate::reach::Reach::daemon_ps(
+            &session_dir(&here.dir, &verify_name).join(SOCKET),
+            STATUS_WAIT,
+        )
+        .await
+        .unwrap_err();
         assert_eq!(refused.to_string(), text::DAEMON_PS_ONLY_LEAD);
     }
 

@@ -79,6 +79,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use anyhow::{Result, anyhow};
 use riff_core::build::Build;
@@ -296,15 +297,20 @@ impl Reach {
     }
 
     /// The state of the riff daemon on the socket of the session, for
-    /// `riff daemon status` in a container (#1239).
-    pub async fn daemon_status(socket: &std::path::Path) -> Result<crate::daemon::Status> {
-        ask(socket, &ServerCall::Status).await
+    /// `riff daemon status` in a container (#1239). It waits for each
+    /// answer at most `limit` (#1923).
+    pub async fn daemon_status(
+        socket: &std::path::Path,
+        limit: Duration,
+    ) -> Result<crate::daemon::Status> {
+        ask_within(socket, &ServerCall::Status, limit).await
     }
 
     /// The riff processes of the host of the daemon on the socket, for
-    /// `riff ps` in a container (#1610). Only the lead may.
-    pub async fn daemon_ps(socket: &std::path::Path) -> Result<crate::ps::Ps> {
-        ask(socket, &ServerCall::Ps).await
+    /// `riff ps` in a container (#1610). Only the lead may. It waits for
+    /// each answer at most `limit` (#1923).
+    pub async fn daemon_ps(socket: &std::path::Path, limit: Duration) -> Result<crate::ps::Ps> {
+        ask_within(socket, &ServerCall::Ps, limit).await
     }
 
     /// The reply of the daemon of `host` to `request`, through the
@@ -1209,13 +1215,37 @@ fn signed(server: &str) -> Result<(Api, SessionUri)> {
 /// Makes `call` through the daemon on `socket`, and reads its answer. An
 /// answer that this riff cannot read gives the error of
 /// [`text::daemon_other_answer`], with the build of the daemon
-/// ([`daemon_build`], #1693, 01M6WBX2FYPH0K8RAKXMRKDGX7).
+/// ([`daemon_build`], #1693, 01M6WBX2FYPH0K8RAKXMRKDGX7). The call has
+/// no time limit. The ask for the build waits at most
+/// [`answer_wait`](crate::daemon::answer_wait).
 async fn ask<T: DeserializeOwned>(socket: &std::path::Path, call: &ServerCall) -> Result<T> {
     let reply = session_relay::ask_server(socket, call).await?;
+    read_reply(socket, reply, crate::daemon::answer_wait()).await
+}
+
+/// [`ask`], with the time limit `limit` for each answer of the daemon
+/// (#1923): at the limit, the error [`text::daemon_silent`].
+async fn ask_within<T: DeserializeOwned>(
+    socket: &std::path::Path,
+    call: &ServerCall,
+    limit: Duration,
+) -> Result<T> {
+    let reply = crate::daemon::within(limit, session_relay::ask_server(socket, call)).await?;
+    read_reply(socket, reply, limit).await
+}
+
+/// The answer `reply` of the daemon on `socket`, read as a `T`. When
+/// this riff cannot read it, it asks the daemon for its build, and waits
+/// at most `limit` ([`ask`]).
+async fn read_reply<T: DeserializeOwned>(
+    socket: &std::path::Path,
+    reply: serde_json::Value,
+    limit: Duration,
+) -> Result<T> {
     match serde_json::from_value(reply) {
         Ok(answer) => Ok(answer),
         Err(e) => {
-            let theirs = daemon_build(socket).await;
+            let theirs = daemon_build(socket, limit).await;
             let fault = e.to_string();
             Err(anyhow!(text::daemon_other_answer(
                 &fault,
@@ -1228,11 +1258,15 @@ async fn ask<T: DeserializeOwned>(socket: &std::path::Path, call: &ServerCall) -
 
 /// The build of the riff daemon on `socket`, as its status names it. It
 /// reads only the field `build`, so a status of another shape gives it
-/// too. `None` when the daemon does not answer, or names no build.
-pub async fn daemon_build(socket: &std::path::Path) -> Option<String> {
-    let status = session_relay::ask_server(socket, &ServerCall::Status)
-        .await
-        .ok()?;
+/// too. `None` when the daemon does not answer in `limit`, or names no
+/// build.
+pub async fn daemon_build(socket: &std::path::Path, limit: Duration) -> Option<String> {
+    let status = crate::daemon::within(
+        limit,
+        session_relay::ask_server(socket, &ServerCall::Status),
+    )
+    .await
+    .ok()?;
     status.get("build")?.as_str().map(str::to_owned)
 }
 
@@ -1300,7 +1334,7 @@ mod tests {
     async fn an_answer_of_a_daemon_with_no_build_names_the_build_of_this_riff() {
         let dir = tempfile::tempdir().unwrap();
         let socket = other_daemon(dir.path(), None);
-        assert_eq!(daemon_build(&socket).await, None);
+        assert_eq!(daemon_build(&socket, Duration::from_secs(5)).await, None);
         let error = Reach::Daemon(socket).who(false).await.unwrap_err();
         let error = format!("{error:#}");
         assert!(error.contains("names no build"), "{error}");
@@ -1309,5 +1343,37 @@ mod tests {
             "{error}"
         );
         assert!(error.contains("invalid type: map"), "{error}");
+    }
+
+    /// 01M7AZENPBNJ530XH0TNZPNSM9 (#1923): in a container, a daemon that
+    /// takes the connection and never answers ends `riff ps` and `riff
+    /// daemon status` at the time limit, with the error that it gave no
+    /// answer in that time.
+    #[tokio::test]
+    async fn a_daemon_that_never_answers_ends_the_ask_at_the_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("riff.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((conn, _)) = listener.accept().await {
+                held.push(conn);
+            }
+        });
+        let limit = Duration::from_millis(200);
+        let silent = text::daemon_silent(limit);
+        let started = std::time::Instant::now();
+
+        let error = Reach::daemon_ps(&socket, limit).await.unwrap_err();
+        assert_eq!(error.to_string(), silent);
+        let error = Reach::daemon_status(&socket, limit).await.unwrap_err();
+        assert_eq!(error.to_string(), silent);
+        assert_eq!(daemon_build(&socket, limit).await, None);
+
+        let took = started.elapsed();
+        assert!(
+            took >= 3 * limit && took < Duration::from_secs(10),
+            "{took:?}"
+        );
     }
 }

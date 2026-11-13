@@ -2240,7 +2240,7 @@ async fn frames(
                 // In a container, the daemon on the socket of the session
                 // answers (#1733).
                 if let Reach::Daemon(socket) = &reach {
-                    return Reach::daemon_status(socket)
+                    return Reach::daemon_status(socket, crate::daemon::answer_wait())
                         .await
                         .map_err(|e| format!("{e:#}"));
                 }

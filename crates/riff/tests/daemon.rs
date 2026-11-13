@@ -623,6 +623,50 @@ async fn riff_daemon_status_of_a_daemon_that_riff_cannot_read_says_that_it_runs(
     assert_eq!(here.read("systemctl.log"), "");
 }
 
+/// 01M7AZENPBNJ530XH0TNZPNSM9 (#1923): a daemon that takes the
+/// connection and never answers. `riff daemon status` ends at the time
+/// limit, says that the daemon gave no answer in that time, shows the
+/// state of the unit, and exits with 1. In a container, it ends at the
+/// limit too, on the socket of the session.
+#[tokio::test]
+async fn riff_daemon_status_of_a_daemon_that_never_answers_ends_at_the_limit() {
+    let here = Here::new();
+    std::fs::create_dir_all(here.daemon_dir()).unwrap();
+    crate::common::silent_socket(&here.daemon_dir().join("riff.sock"));
+    let most = std::time::Duration::from_secs(30);
+    let mut cmd = here.command(false, &["daemon", "status"]);
+    cmd.env(riff::daemon::ANSWER_VAR, crate::ps::LIMIT_MS);
+    let (out, took) = tokio::task::spawn_blocking(move || crate::common::output_in(cmd, most))
+        .await
+        .unwrap();
+    assert!(took >= std::time::Duration::from_millis(300), "{took:?}");
+    let stdout = text(&out.stdout);
+    assert_eq!(out.status.code(), Some(1), "{stdout}{}", text(&out.stderr));
+    assert!(
+        stdout.starts_with("The riff daemon gave no answer in 0.3 s.\n"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("The unit riff.service is inactive."),
+        "{stdout}"
+    );
+
+    let session = tempfile::tempdir().unwrap();
+    let socket = session.path().join("riff.sock");
+    crate::common::silent_socket(&socket);
+    let mut cmd = here.command(false, &["daemon", "status"]);
+    cmd.env("RIFF_SOCKET", &socket)
+        .env(riff::daemon::ANSWER_VAR, crate::ps::LIMIT_MS);
+    let (out, _) = tokio::task::spawn_blocking(move || crate::common::output_in(cmd, most))
+        .await
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(
+        text(&out.stderr),
+        "The riff daemon gave no answer in 0.3 s.\n"
+    );
+}
+
 #[tokio::test]
 async fn a_second_daemon_does_not_start_while_one_answers() {
     let here = Here::new();

@@ -1,10 +1,11 @@
 //! `riff ps` (#1610): the riff processes of a host as a tree.
 //!
 //! One test runs the real daemon of a `RIFF_HOME`, which reads the real
-//! `/proc`. The others use a fake daemon on the socket of a session, or no
-//! daemon.
+//! `/proc`. The others use a fake daemon on the socket of a session, a
+//! daemon that never answers (#1923), or no daemon.
 
 use std::process::Stdio;
+use std::time::Duration;
 
 use serde_json::json;
 
@@ -87,6 +88,64 @@ async fn riff_ps_with_no_daemon_says_so_and_how_to_start_it() {
     assert!(
         stderr.contains("Start it: riff daemon install."),
         "{stderr}"
+    );
+}
+
+/// The time limit of `riff ps` and `riff daemon status` in a test, in
+/// milliseconds ([`riff::daemon::ANSWER_VAR`]).
+pub(crate) const LIMIT_MS: &str = "300";
+
+/// 01M7AZENPBNJ530XH0TNZPNSM9 (#1923): a daemon that takes the
+/// connection and never answers. `riff ps` ends at the time limit, says
+/// that the daemon gave no answer in that time, shows the state of the
+/// unit, and exits with 1.
+#[tokio::test]
+async fn riff_ps_of_a_daemon_that_never_answers_ends_at_the_limit() {
+    let here = Here::new();
+    std::fs::create_dir_all(here.daemon_dir()).unwrap();
+    common::silent_socket(&here.daemon_dir().join("riff.sock"));
+    let mut cmd = here.command(false, &["ps"]);
+    cmd.env(riff::daemon::ANSWER_VAR, LIMIT_MS);
+    let most = Duration::from_secs(30);
+    let (out, took) = tokio::task::spawn_blocking(move || common::output_in(cmd, most))
+        .await
+        .unwrap();
+    assert!(took >= Duration::from_millis(300), "{took:?}");
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(text(&out.stdout), "");
+    let stderr = text(&out.stderr);
+    assert!(
+        stderr.contains("The riff daemon gave no answer in 0.3 s.\n"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("The unit riff.service is inactive."),
+        "{stderr}"
+    );
+}
+
+/// 01M7AZENPBNJ530XH0TNZPNSM9 (#1923): in the container of the lead, a
+/// daemon that takes the connection on the socket of the session and
+/// never answers. `riff ps` ends at the time limit, says so, and exits
+/// with 1.
+#[tokio::test]
+async fn riff_ps_in_the_lead_container_ends_at_the_limit() {
+    let here = Here::new();
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("riff.sock");
+    common::silent_socket(&socket);
+    let mut cmd = here.command(false, &["ps"]);
+    cmd.env("RIFF_SOCKET", &socket)
+        .env(riff::daemon::ANSWER_VAR, LIMIT_MS);
+    let most = Duration::from_secs(30);
+    let (out, _) = tokio::task::spawn_blocking(move || common::output_in(cmd, most))
+        .await
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(text(&out.stdout), "");
+    assert_eq!(
+        text(&out.stderr),
+        "The riff daemon gave no answer in 0.3 s.\n"
     );
 }
 

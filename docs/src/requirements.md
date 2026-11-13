@@ -6412,6 +6412,17 @@ of this part when they merge.
   the daemon, and for a start out of a unit, as from a terminal
   (01M778VSP6Z29FCPGX5S76ME1T). A live test finds conmon by its PID, for
   a worker and a lead, each way.
+- **01M7AZENPBNJ530XH0TNZPNSM9** Each call of `riff ps` and `riff daemon
+  status` to a socket of the daemon, on the host and in a container,
+  waits at most 20 seconds for its answer. So does the status that gives
+  the build of the daemon when riff cannot read its first answer, and
+  that answer names no build. At the limit, riff says that the daemon
+  gave no answer in that time, and exits with 1. On the host, it also
+  shows the state of the unit of the daemon, with the way to start it
+  and the command that shows its log (#1923).
+- **01M7AZENRZY9YGYVJ6FYYZ1TKK** For `riff ps`, the daemon asks the
+  runtime for the processes of all its containers at the same time, each
+  with its own limit of 5 seconds (#1923).
 
 ### riff relay
 

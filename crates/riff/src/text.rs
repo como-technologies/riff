@@ -7668,16 +7668,25 @@ pub fn daemon_none(socket: &Path) -> String {
 pub const DAEMON_GONE: &str = "The riff daemon closed the connection before its answer.";
 
 /// The daemon took the connection, and gave no answer in its time limit
-/// `limit` (01M558EY88CACNZ55FWMRT8RP7).
+/// `limit` (01M558EY88CACNZ55FWMRT8RP7, #1923).
 ///
 /// ```
+/// use std::time::Duration;
+///
 /// assert_eq!(
-///     riff::text::daemon_silent(std::time::Duration::from_secs(5)),
-///     "The riff daemon gave no answer in 5 s."
+///     riff::text::daemon_silent(Duration::from_secs(20)),
+///     "The riff daemon gave no answer in 20 s."
+/// );
+/// assert_eq!(
+///     riff::text::daemon_silent(Duration::from_millis(300)),
+///     "The riff daemon gave no answer in 0.3 s."
 /// );
 /// ```
 pub fn daemon_silent(limit: std::time::Duration) -> String {
-    format!("The riff daemon gave no answer in {} s.", limit.as_secs())
+    format!(
+        "The riff daemon gave no answer in {} s.",
+        limit.as_secs_f64()
+    )
 }
 
 /// Each step of a session of the daemon on macOS

@@ -1655,9 +1655,26 @@ the build of your riff:
 riff --version
 ```
 
+`riff daemon status` and `riff ps` wait at most 20 seconds for each
+answer of the daemon, on the host and in a container. This includes
+the status that gives the build of the daemon when its first answer
+names none. A daemon that takes the connection and gives no answer in
+that time, for example a daemon that waits for a lock, counts as a
+daemon that does not answer. riff says so, shows the state of the unit
+and exits with 1:
+
+```text
+The riff daemon gave no answer in 20 s.
+The unit riff.service is active. Start it: riff daemon install. See its log: journalctl --user -u riff
+```
+
+When the unit is active, read the log of the daemon, and start it
+again: see [Restart or stop the daemon](#restart-or-stop-the-daemon).
+In a container, riff shows only the first line.
+
 ```mermaid
 flowchart LR
-    S["riff daemon status<br/>riff ps"] --> A{"the daemon answers?"}
+    S["riff daemon status<br/>riff ps"] --> A{"the daemon answers<br/>in 20 s?"}
     A -- "yes, and riff reads it" --> OK["the status"]
     A -- "yes, and riff cannot read it" --> B["the daemon runs:<br/>the two builds and the step"]
     A -- no --> U["the state of the unit:<br/>Start it: riff daemon install"]
@@ -1710,8 +1727,9 @@ when you send the output to a pipe.
 - **Containers** lists each session container: its name, its kind
   (lead, work item or verify), its session ID and the processes in it.
   The process IDs are those in the container. A container with more
-  than 60 processes shows the first 60. When podman gives no list in
-  5 s, the container shows why, and the others show.
+  than 60 processes shows the first 60. The daemon asks podman for the
+  list of each container at the same time. When podman gives no list
+  in 5 s, the container shows why, and the others show.
 - **Outside a container** lists each riff command on the host, for
   example `riff`, `riff top` or `riff wave list`. Each shows its
   parents up to the first process that is not riff, for example
@@ -1736,8 +1754,9 @@ the container of the lead too. A session that is not the lead gets a
 refusal: the answer holds command lines of the host.
 
 When no daemon answers, `riff ps` says so, shows the state of the unit
-and exits with 1. Start the daemon with `riff daemon install`. When
-the daemon runs and riff cannot read its answer, see
+and exits with 1. Start the daemon with `riff daemon install`. For how
+long riff waits, and for a daemon that runs and gives an answer that
+riff cannot read, see
 [When riff cannot read the answer of the daemon](#when-riff-cannot-read-the-answer-of-the-daemon).
 
 ### Restart or stop the daemon
