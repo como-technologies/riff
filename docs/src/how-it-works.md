@@ -231,7 +231,9 @@ The wave reads the list of the open pull requests in three cases:
   for that.
 
 The events of a repository are on while its last wake is less than one
-day old. A riff with no GitHub App, or with no webhook, sends no wake.
+day old, and no dropped event came after it (see
+[The safety look and the dropped events](#the-safety-look-and-the-dropped-events)).
+A riff with no GitHub App, or with no webhook, sends no wake.
 Then its waves read GitHub as before: two cheap reads ask GitHub first
 whether anything changed (see
 [Know how an idle wave reads GitHub](development.md#know-how-an-idle-wave-reads-github)).
@@ -256,6 +258,13 @@ A change of the mergeable state or of a milestone is no dropped event:
 GitHub sends the App no event for it. Each look reads the open
 milestones, so the wave sees the end of a wave at its next look.
 
+A dropped event with no wake after it tells you that the wakes do not
+come. Then the events of the repository are off: each look of the wave
+reads GitHub in full, as the safety look does, and makes no cheap read
+first. The next wake turns the events on again. `riff daemon status`
+says that the events are off (see
+[See how the daemon uses the GitHub limit](development.md#see-how-the-daemon-uses-the-github-limit)).
+
 ```mermaid
 sequenceDiagram
     participant S as riff-server
@@ -267,7 +276,28 @@ sequenceDiagram
     Note over D: 30 minutes after the last full read
     D->>G: the safety look: the full read
     D->>D: a change that no wake told: a dropped event
+    Note over D: no wake after it: the events are off
+    D->>G: each look: the full read
+    S->>D: a wake: the events are on again
 ```
+
+#### The read before a build
+
+The facts that the wakes gave can miss a new pull request when its event
+is lost. So before the wave starts a build of an item, it reads the open
+pull requests on GitHub again. When a pull request of the item waits for
+its verify or for the merge, the wave starts no build, and the start
+does not count. The daemon logs one line:
+
+```text
+The wave of o/r: pull request #41 of issue-12 waits for its verify, at the head 1a2b3c4. riff starts no build of issue-12, and the start does not count.
+```
+
+The read goes into the facts of the wave, so the next look sees the
+pull request, and the wave starts its verify. A change in the read that
+no wake told is a dropped event, as at the safety look. A read that
+fails starts no build either: the next look tries again. A build that
+your lead asks for with `riff run` in its container makes no such read.
 
 `riff daemon status` counts the dropped events of the last day: see
 [See how the daemon uses the GitHub limit](development.md#see-how-the-daemon-uses-the-github-limit).

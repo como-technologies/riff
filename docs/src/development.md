@@ -2778,6 +2778,15 @@ webhook of the App with `riff github events`. A repository with no wake
 for a day shows `no wake for 1d`: its wave reads GitHub as with no
 events, with the two cheap reads before each full read.
 
+A dropped event with no wake after it turns the events off. Then the
+wave reads GitHub in full at each look until the next wake (see
+[The safety look and the dropped events](how-it-works.md#the-safety-look-and-the-dropped-events)),
+and the line says so:
+
+```text
+GitHub events of o/r: off, as no wake came after the last dropped event, so the wave reads GitHub in full at each look until a wake comes. The last wake 12h ago, 12 dropped events in the last day, the last of pull request #2079, check_run, 8m ago.
+```
+
 The daemon is not the only caller. The token of your account also pays
 for `riff top`, `riff pr wait`, `riff verify`, `riff run`,
 `riff project init`, the release commands, and each `gh` that a session

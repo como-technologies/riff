@@ -15653,6 +15653,7 @@ mod tests {
                 repo: "o/r".into(),
                 last_ms: 13,
                 on: true,
+                lost: false,
                 dropped: 1,
                 last_dropped: Some(crate::hooks::Dropped {
                     repo: "o/r".into(),

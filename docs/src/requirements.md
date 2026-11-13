@@ -663,12 +663,11 @@
   stream of a repository has no after. A wake wakes the wave, at most
   one look each 30 seconds: the look takes each wake since the last one
   (#1656).
-- **01M74N34Q330SHBWWTQDPG0W0B** The events of GitHub of a repository
-  are on while its last wake is less than one day old: the ID of a wake
-  is the time of riff-server. While they are on, a look of its wave
-  makes no conditional read and reads no list. It reads only what the
-  wakes since its last look named: a pull request with gh pr view N, an
-  issue with gh issue view N, each with the fields of its list. The look
+- **01M74N34Q330SHBWWTQDPG0W0B** While the events of GitHub of a
+  repository are on, a look of its wave makes no conditional read and
+  reads no list. It reads only what the wakes since its last look named:
+  a pull request with gh pr view N, an issue with gh issue view N, each
+  with the fields of its list. The look
   puts the item into the kept reply of its list, or takes it out when it
   is closed, and makes the kept replies new: the look of the daemon and
   the sweep take them for as long as the safety look waits. A merged
@@ -770,6 +769,15 @@
   because its starts fail, riff daemon status names it under its wave in
   Waves: what it follows, the count of the failed starts, their time and
   the last cause (01M7B2RQPTFVK02YAZGMN2SYAR, #2085).
+- **01M7B3BH0W46KJRKZ4Q5Z96A3N** The events of GitHub of a repository
+  are on while its last wake is less than one day old, and no dropped
+  event (01M74N350YF6KSXGFNCZTDC8QY) came after it: the ID of a wake is
+  the time of riff-server. A dropped event with no wake after it turns
+  the events off, and the next wake turns them on. While they are off
+  for a dropped event, each look of the wave reads GitHub in full, with
+  no conditional read, until a wake comes. riff daemon status says that
+  the events are off for a dropped event. Supersedes
+  01M74N34Q330SHBWWTQDPG0W0B in part (#2082).
 
 ## Issue hygiene on GitHub
 
@@ -7233,6 +7241,20 @@ of this part when they merge.
   the end of the report of the FAIL of a head by the daemon counts no
   verify request of that head. The next look counts a request that comes
   after that FAIL.
+- **01M7B3BH3H8Y26MTERAGDDGJ0V** Before the claim of a build of issue-N,
+  the wave reads the list of the open pull requests on GitHub, also when
+  its look took the kept reply. When a pull request of the item waits
+  for its verify or for the merge (01M3Z9N5HHHS1E17NFGMVBKZ0K), no
+  session starts, the start does not count, and the daemon logs one line
+  that names the pull request. A read that fails starts no build either,
+  and the next look tries again. A build that the lead asks for with
+  riff run in the container of the lead makes no such read (#2082).
+- **01M7B3BH653KXWY3MH45DKB0BK** The read of the open pull requests
+  before a build goes in place of the kept reply of that list, so the
+  next look of the wave sees the pull request with no read of its own.
+  Each change from the kept reply that no wake named waits for its wake,
+  and with none it is a dropped event, as at the safety look
+  (01M74N350YF6KSXGFNCZTDC8QY) (#2082).
 
 ### The lead, the view and the takeover
 
