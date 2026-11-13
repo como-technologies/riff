@@ -7168,6 +7168,10 @@ of this part when they merge.
   only after such a resume, and when that ask fails, the answer says
   that no lead runs. The tool `resume` of the lead gives the same
   answer.
+- **01M78VFEVC5HZF8RATE11W28PB** A look of the wave that started before
+  the end of the report of the FAIL of a head by the daemon counts no
+  verify request of that head. The next look counts a request that comes
+  after that FAIL.
 
 ### The lead, the view and the takeover
 

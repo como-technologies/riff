@@ -3167,7 +3167,9 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// 01M77K0EGH1HF0WA7WZH8BP2BP). The daemon put the PASS or the FAIL on
     /// the pull request, or the read before a claim found it. The loop of
     /// the wave starts no verify of that head that the verdict stops
-    /// ([`Daemon::drop_verified`]).
+    /// ([`Daemon::drop_verified`]). A look that started before this call
+    /// does not count its new verify request of the head
+    /// (01M78VFEVC5HZF8RATE11W28PB, [`crate::wave::Verdicts::fresh`]).
     pub(crate) fn verified(
         &self,
         repo: &str,
@@ -3179,8 +3181,17 @@ impl<R: Runtime + 'static> Daemon<R> {
             .unwrap_or_else(PoisonError::into_inner)
             .entry(repo.to_owned())
             .or_default()
-            .heads
-            .insert(work.key(), verdict);
+            .keep(work.key(), verdict);
+    }
+
+    /// A look of the wave of `repo` starts: it reads the thread after
+    /// each verdict that the daemon keeps now
+    /// ([`crate::wave::Verdicts::look`]).
+    pub(crate) fn look_starts(&self, repo: &str) {
+        let mut verdicts = self.verdicts.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(kept) = verdicts.get_mut(repo) {
+            kept.look();
+        }
     }
 
     /// True when the verify `work` of `repo`, whose head has `verdict`,
@@ -8474,6 +8485,49 @@ mod tests {
         assert_eq!(here.fake.exit(&name), None);
         // The record stays for the next daemon.
         assert!(record_path(&here.dir, &name).exists());
+    }
+
+    /// 01M78VFEVC5HZF8RATE11W28PB (#2040): a FAIL that the daemon keeps
+    /// while a look runs stays, also when that look shows a new verify
+    /// request of its head: the look can have read the thread before the
+    /// FAIL. The next look counts the request.
+    #[tokio::test]
+    async fn a_fail_kept_while_a_look_runs_stays_for_that_look() {
+        use crate::pr::Verdict;
+        use crate::wave::{Look, Waiting, Work};
+
+        let root = tempfile::tempdir().unwrap();
+        let daemon = Daemon::new(Fake::default(), dir_in(root.path())).unwrap();
+        let work = Work::Verify {
+            issue: 1,
+            pull: 41,
+            commit: "c1".into(),
+        };
+        let asked = || Look {
+            free: vec!["verify-issue-1".into()],
+            pulls: [(
+                1,
+                Waiting {
+                    pull: 41,
+                    commit: "c1".into(),
+                    gate_done: true,
+                    again: true,
+                },
+            )]
+            .into(),
+            ..Look::default()
+        };
+        daemon.look_starts("o/r");
+        daemon.verified("o/r", &work, Verdict::Fail);
+        let mut look = asked();
+        daemon.drop_verified("o/r", &mut look);
+        assert!(look.free.is_empty(), "the FAIL stays");
+        assert!(daemon.stops_verify("o/r", &work, Verdict::Fail));
+        daemon.look_starts("o/r");
+        let mut look = asked();
+        daemon.drop_verified("o/r", &mut look);
+        assert_eq!(look.free, ["verify-issue-1"]);
+        assert!(!daemon.stops_verify("o/r", &work, Verdict::Fail));
     }
 
     /// A session of a wave has the grace of 60 s after the result while no
