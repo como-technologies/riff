@@ -423,7 +423,7 @@ async fn top_stays_open_when_the_server_gives_no_reply() {
 /// call, and fails at each later call. It writes the number of its
 /// calls to the file `gh.calls` next to it. `gh auth token` gives a
 /// token, and does not count: it is no read of the forge
-/// (01M54510SFK1Z9VPFYBYYSV10F).
+/// (01M7AYFSCTMVB342AYDPS2FBPC).
 fn gh_that_fails_after_one_call(bin: &Path) {
     let gh = bin.join("gh");
     let script = r#"#!/bin/sh
