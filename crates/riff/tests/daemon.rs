@@ -1244,6 +1244,101 @@ async fn the_daemon_removes_the_folder_of_a_closed_pull_request_at_its_start() {
     stop(daemon).await;
 }
 
+/// #2085, 01M7B2RQPTFVK02YAZGMN2SYAR, 01M7B2RWBQWA6X8BNZEB025SWX: the
+/// keyring is locked at the start of the daemon, as at a login with a
+/// security key. The daemon runs the wave of `waves.json`, and the starts
+/// of its followers on riff-server fail. The log gets one line for each
+/// follower, also after many tries, and `riff daemon status` names each
+/// one under the wave, with the cause. The person unlocks the keyring at
+/// the desktop: the next try starts each follower, with no restart of the
+/// daemon. The log gets one line for each, and the status names none.
+#[tokio::test]
+async fn after_the_unlock_of_the_keyring_the_followers_of_the_wave_start_with_no_restart() {
+    use std::os::unix::fs::PermissionsExt;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let server = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, riff_server::router()).await.unwrap() });
+    let here = Here::new();
+    let dir = here.daemon_dir();
+    std::fs::create_dir_all(&dir).unwrap();
+    let wave = riff::wave::Wave {
+        repo: "o/r".into(),
+        main: here.env.home().join("src/r"),
+        server,
+        host: "thelio".into(),
+    };
+    riff::wave::write_waves(&dir, &BTreeMap::from([(wave.repo.clone(), wave)])).unwrap();
+    // riff may not read the folder of its secrets: the keyring is locked.
+    let secrets = here.secrets();
+    std::fs::create_dir_all(&secrets).unwrap();
+    let _opens = Opens(secrets.clone());
+    std::fs::set_permissions(&secrets, std::fs::Permissions::from_mode(0o000)).unwrap();
+    if std::fs::read_dir(&secrets).is_ok() {
+        eprintln!("skip: root reads each folder");
+        return;
+    }
+    let every = riff::daemon::facts::EVERY_VAR;
+    let daemon = here.daemon_with("locked.out", &[(every, "200")]).await;
+    let log = here.bin.path().join("locked.out");
+    let whats = ["the wakes of GitHub", "the changes of the plan"];
+    let failed = |what: &str| format!("riff daemon: o/r: cannot follow {what} on riff-server: ");
+    let again =
+        |what: &str| format!("riff daemon: o/r: follows {what} on riff-server again, after ");
+    let count = |said: &str, start: &str| said.lines().filter(|l| l.starts_with(start)).count();
+    for what in whats {
+        wait_for(&log, &failed(what)).await;
+    }
+    // Many tries later: still one line for each.
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    let said = here.output("locked.out");
+    for what in whats {
+        assert_eq!(count(&said, &failed(what)), 1, "{said}");
+    }
+    assert!(
+        said.contains("riff cannot find your user. Unlock the keyring"),
+        "{said}"
+    );
+    let out = here.run(false, &["daemon", "status"]).await;
+    let status = text(&out.stdout);
+    assert!(out.status.success(), "{status}\n{}", text(&out.stderr));
+    for what in whats {
+        let line = format!("\n    cannot follow {what} on riff-server: ");
+        assert!(status.contains(&line), "{status}");
+    }
+    assert!(
+        status.contains("The last cause: riff cannot find your user."),
+        "{status}"
+    );
+
+    // The person unlocks the keyring at the desktop.
+    std::fs::set_permissions(&secrets, std::fs::Permissions::from_mode(0o700)).unwrap();
+    for what in whats {
+        wait_for(&log, &again(what)).await;
+    }
+    let out = here.run(false, &["daemon", "status"]).await;
+    let status = text(&out.stdout);
+    assert!(out.status.success(), "{status}");
+    assert!(status.contains("Waves:\n  o/r  "), "{status}");
+    assert!(!status.contains("cannot follow"), "{status}");
+    let said = here.output("locked.out");
+    for what in whats {
+        assert_eq!(count(&said, &failed(what)), 1, "{said}");
+        assert_eq!(count(&said, &again(what)), 1, "{said}");
+    }
+    stop(daemon).await;
+}
+
+/// Opens the folder `0` of the secrets at the end of a test that locked
+/// it, so that its home goes.
+struct Opens(PathBuf);
+
+impl Drop for Opens {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o700));
+    }
+}
+
 impl Here {
     /// Starts `riff daemon` of the `RIFF_HOME`, writes its output to
     /// `name`, and waits until it listens.

@@ -1772,7 +1772,7 @@ impl Status {
     /// assert_eq!(run.busy(), 1);
     /// let wave = riff::daemon::Status {
     ///     waiting: vec![riff::text::wave_slot("o/r")],
-    ///     waves: vec![riff::daemon::WaveShown { repo: "o/r".into(), word: "waits".into(), waits: Default::default() }],
+    ///     waves: vec![riff::daemon::WaveShown { repo: "o/r".into(), word: "waits".into(), waits: Default::default(), unfollowed: vec![] }],
     ///     ..status.clone()
     /// };
     /// assert_eq!(wave.busy(), 0);
@@ -1842,6 +1842,12 @@ pub struct WaveShown {
         with = "riff_core::number_keys"
     )]
     pub waits: BTreeMap<u64, u64>,
+    /// The followers of the wave on riff-server that do not run: their
+    /// failed starts, their time and the last cause
+    /// ([`crate::followers::Followers`], 01M7B2RWBQWA6X8BNZEB025SWX). An
+    /// old daemon gives none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unfollowed: Vec<crate::followers::Unfollowed>,
 }
 
 /// How a session ended.
@@ -2615,6 +2621,9 @@ pub struct Daemon<R> {
     /// The wait of a full host before a claim of a wave
     /// ([`crate::wave::CLAIM_WAIT`], #1729).
     claim_wait: Duration,
+    /// The time between two starts of a follower of a wave on riff-server
+    /// that failed ([`facts::every`], [`crate::followers`], #2085).
+    follow_every: Duration,
     /// A session ended, or a job of a wave ended: the waves look again.
     changed: Notify,
     /// The folders of the sessions: the jobs that run, and one sweep at
@@ -2756,6 +2765,9 @@ struct Running {
     word: Arc<Mutex<String>>,
     /// The verifies and the rebases that wait for another pull request.
     waits: crate::wave::Waits,
+    /// The failed starts of its followers on riff-server
+    /// ([`crate::followers`], #2085).
+    followers: crate::followers::Followers,
 }
 
 impl Running {
@@ -2811,6 +2823,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             waves: Mutex::new(BTreeMap::new()),
             look_every: crate::look::LOOK_EVERY,
             claim_wait: crate::wave::CLAIM_WAIT,
+            follow_every: facts::every(),
             changed: Notify::new(),
             folders: Arc::default(),
             again: None,
@@ -2949,6 +2962,20 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// The wait of a full host before a claim of a wave ([`crate::wave::claim_wait`]).
     pub(crate) fn claim_wait(&self) -> Duration {
         self.claim_wait
+    }
+
+    /// The daemon whose waves start a follower that failed again each
+    /// `every` in place of [`facts::every`], for a test (#2085).
+    #[must_use]
+    pub fn with_follow_every(mut self, every: Duration) -> Self {
+        self.follow_every = every;
+        self
+    }
+
+    /// The time between two starts of a follower of a wave on riff-server
+    /// that failed ([`crate::followers::follow`]).
+    pub(crate) fn follow_every(&self) -> Duration {
+        self.follow_every
     }
 
     /// The daemon with a session on riff-server for each repository that
@@ -4480,6 +4507,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
                     .clone(),
+                unfollowed: running.followers.shown(),
             })
             .collect()
     }
@@ -4538,7 +4566,8 @@ impl<R: Runtime + 'static> Daemon<R> {
                 if !leads && let Some(lead) = old.lead.take() {
                     lead.abort();
                 } else if leads && !runs {
-                    let follow = crate::lead_host::follow(self.clone(), wave.clone());
+                    let followers = old.followers.clone();
+                    let follow = crate::lead_host::follow(self.clone(), wave.clone(), followers);
                     old.lead = Some(tokio::spawn(follow));
                 }
                 drop(running);
@@ -4554,6 +4583,7 @@ impl<R: Runtime + 'static> Daemon<R> {
         let starts = crate::wave::Starts::default();
         let word = Arc::new(Mutex::new(text::wave_starts()));
         let waits = crate::wave::Waits::default();
+        let followers = crate::followers::Followers::default();
         let task = tokio::spawn(crate::wave::run(
             self.clone(),
             wave.clone(),
@@ -4561,10 +4591,13 @@ impl<R: Runtime + 'static> Daemon<R> {
             starts.clone(),
             word.clone(),
             waits.clone(),
+            followers.clone(),
         ));
         let look = tokio::spawn(crate::wave::watch(self.clone(), wave.clone()));
-        let lead =
-            leads.then(|| tokio::spawn(crate::lead_host::follow(self.clone(), wave.clone())));
+        let lead = leads.then(|| {
+            let follow = crate::lead_host::follow(self.clone(), wave.clone(), followers.clone());
+            tokio::spawn(follow)
+        });
         running.insert(
             wave.repo.clone(),
             Running {
@@ -4576,6 +4609,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                 starts,
                 word,
                 waits,
+                followers,
             },
         );
     }
@@ -15500,6 +15534,7 @@ mod tests {
             repo: repo.into(),
             word: "no free work now".into(),
             waits: waits.iter().copied().collect(),
+            unfollowed: Vec::new(),
         };
         let full = |waves: Vec<WaveShown>| Status {
             pid: 4242,
@@ -15637,6 +15672,17 @@ mod tests {
                 wave("o/r", &[(724, 728), (725, 728), (730, 731)]),
                 wave("o/s", &[(12, 14)]),
             ],
+            // A follower of the wave that does not run (#2085).
+            vec![WaveShown {
+                unfollowed: vec![crate::followers::Unfollowed {
+                    follower: crate::followers::Follower::Wakes,
+                    since_ms: 15,
+                    cause: "the OS keyring of thelio is locked".into(),
+                    count: 2,
+                    every_secs: 30,
+                }],
+                ..wave("o/r", &[])
+            }],
         ] {
             let said = Say::Status(Box::new(full(waves)));
             let (ours, theirs) = UnixStream::pair().unwrap();

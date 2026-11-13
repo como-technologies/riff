@@ -755,6 +755,21 @@
   all closed is free. A claim, a verify, a stuck pull request, a
   tracker, a question and a hold win over the group. A pause hides no
   item of the group.
+- **01M7B2RQPTFVK02YAZGMN2SYAR** When the riff daemon cannot start a
+  follower of a wave on riff-server, for example because the keyring is
+  locked, it tries again each 30 seconds until the start works. The
+  followers are the stream of the wakes of GitHub
+  (01M74N2SDHCYTY4M6RD1BDAFWZ), and the stream of the changes of the
+  plan for the loop of the wave and for its lead loop
+  (01M6WJNV9KP5TN5SVBVT4JDN66). A person runs no `riff host join` and no
+  restart of the daemon for it. The first failed start of a follower
+  logs one line with its cause. The next failed starts log no line. The
+  start logs one line with the count of the failed starts and their time
+  (#2085).
+- **01M7B2RWBQWA6X8BNZEB025SWX** While a follower of a wave does not run
+  because its starts fail, riff daemon status names it under its wave in
+  Waves: what it follows, the count of the failed starts, their time and
+  the last cause (01M7B2RQPTFVK02YAZGMN2SYAR, #2085).
 
 ## Issue hygiene on GitHub
 

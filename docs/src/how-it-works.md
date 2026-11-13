@@ -274,6 +274,25 @@ sequenceDiagram
 Many dropped events tell you that the events do not come. Then look at
 the last events of the repository with `riff github events`.
 
+The daemon opens the streams of a wave with your sign-in from the
+keyring: the stream of the wakes, and the stream of the changes of the
+plan. When the keyring is locked, for example after a login with a
+security key, the start of a stream fails. Until a stream runs, the wave
+gets no wake, and waits for its safety look. The daemon tries the start
+again each 30 seconds, until it works. You restart nothing. The log of
+the daemon gets one line at the first failure, and one line at the
+start:
+
+```text
+riff daemon: o/r: cannot follow the wakes of GitHub on riff-server: riff cannot find your user. Unlock the keyring, or set RIFF_USER: the OS keyring of thelio is locked or does not answer: unlock it at the desktop. gh uses the same keyring, so gh stops too. riff tries again each 30s.
+riff daemon: o/r: follows the wakes of GitHub on riff-server again, after 12 failed starts in 6m.
+```
+
+The stream then opens after the ID of the last wake, so the wave gets
+the wakes of the last hour that it missed. While a stream does not run,
+`riff daemon status` names it under its wave: see
+[See that the wakes come again after the unlock](development.md#see-that-the-wakes-come-again-after-the-unlock).
+
 `riff top` and the TUI follow the same stream for the repository of
 their folder. A wake of an issue or of a pull request makes them read
 GitHub again at once, at most one time each 5 seconds. So a change shows

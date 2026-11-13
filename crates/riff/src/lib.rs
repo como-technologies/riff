@@ -79,6 +79,7 @@ pub mod dropped;
 pub mod ends;
 
 pub mod first_run;
+pub mod followers;
 pub mod gh_wrapper;
 pub mod ghcalls;
 pub mod git_credential;

@@ -31,6 +31,11 @@
 //!   that broke, gets the wakes of the queue of riff-server. The first
 //!   stream of a repository has no `after`: the first look of the wave
 //!   reads in full.
+//! - **A failed start** (01M7B2RQPTFVK02YAZGMN2SYAR). The follower signs
+//!   in at its start. A start that fails, for example on a locked
+//!   keyring, comes again each 30 seconds until it works
+//!   ([`crate::followers`]). Then the stream opens with `after=ID`, so the
+//!   wave gets the wakes that came in the meantime.
 //! - **Events on** (01M74N34Q330SHBWWTQDPG0W0B). The events of a
 //!   repository are on while its last wake is less than [`EVENTS_FOR`] old
 //!   ([`Told::on`]): the ID of a wake is the time of riff-server. A riff

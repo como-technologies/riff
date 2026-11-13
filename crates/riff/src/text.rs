@@ -6619,6 +6619,104 @@ pub fn github_no_wakes(error: &str) -> String {
     )
 }
 
+/// What the follower `follower` of a wave follows on riff-server, in
+/// words ([`crate::followers`], #2085).
+///
+/// ```
+/// use riff::followers::Follower;
+///
+/// assert_eq!(riff::text::follower(Follower::Wakes), "the wakes of GitHub");
+/// assert_eq!(riff::text::follower(Follower::Plan), "the changes of the plan");
+/// assert_eq!(
+///     riff::text::follower(Follower::Lead),
+///     "the changes of the plan for the lead loop"
+/// );
+/// ```
+pub fn follower(follower: crate::followers::Follower) -> &'static str {
+    use crate::followers::Follower;
+    match follower {
+        Follower::Wakes => "the wakes of GitHub",
+        Follower::Plan => "the changes of the plan",
+        Follower::Lead => "the changes of the plan for the lead loop",
+    }
+}
+
+/// The line in the log of the daemon at the first start of the follower
+/// `follower` of a wave that fails, with its `cause`: riff tries again
+/// each `every_secs` (#2085, 01M7B2RQPTFVK02YAZGMN2SYAR).
+///
+/// ```
+/// use riff::followers::Follower;
+///
+/// assert_eq!(
+///     riff::text::follow_failed(Follower::Plan, "the OS keyring of thelio is locked", 30),
+///     "cannot follow the changes of the plan on riff-server: the OS keyring of thelio is \
+///      locked. riff tries again each 30s."
+/// );
+/// ```
+pub fn follow_failed(follower: crate::followers::Follower, cause: &str, every_secs: u64) -> String {
+    format!(
+        "cannot follow {} on riff-server: {cause}. riff tries again each {}.",
+        self::follower(follower),
+        ago(every_secs)
+    )
+}
+
+/// The line in the log of the daemon at the start of the follower
+/// `follower` of a wave after `count` failed starts in `secs` (#2085,
+/// 01M7B2RQPTFVK02YAZGMN2SYAR).
+///
+/// ```
+/// use riff::followers::Follower;
+///
+/// assert_eq!(
+///     riff::text::follows_again(Follower::Wakes, 1, 30),
+///     "follows the wakes of GitHub on riff-server again, after 1 failed start in 30s."
+/// );
+/// ```
+pub fn follows_again(follower: crate::followers::Follower, count: u64, secs: u64) -> String {
+    let s = if count == 1 { "" } else { "s" };
+    format!(
+        "follows {} on riff-server again, after {count} failed start{s} in {}.",
+        self::follower(follower),
+        ago(secs)
+    )
+}
+
+/// The line of `riff daemon status` under a wave for its follower that
+/// does not run, at the time `now_ms` (#2085, 01M7B2RWBQWA6X8BNZEB025SWX):
+/// the count of the failed starts, their time and the last cause.
+///
+/// ```
+/// use riff::followers::{Follower, Unfollowed};
+///
+/// let unfollowed = Unfollowed {
+///     follower: Follower::Wakes,
+///     since_ms: 60_000,
+///     cause: "the OS keyring of thelio is locked".into(),
+///     count: 9,
+///     every_secs: 30,
+/// };
+/// assert_eq!(
+///     riff::text::daemon_unfollowed(&unfollowed, 300_000),
+///     "cannot follow the wakes of GitHub on riff-server: 9 starts failed in 4m. The last \
+///      cause: the OS keyring of thelio is locked. riff tries again each 30s."
+/// );
+/// ```
+pub fn daemon_unfollowed(unfollowed: &crate::followers::Unfollowed, now_ms: i64) -> String {
+    let secs = u64::try_from((now_ms - unfollowed.since_ms) / 1000).unwrap_or(0);
+    let s = if unfollowed.count == 1 { "" } else { "s" };
+    format!(
+        "cannot follow {} on riff-server: {} start{s} failed in {}. The last cause: {}. riff \
+         tries again each {}.",
+        follower(unfollowed.follower),
+        unfollowed.count,
+        ago(secs),
+        unfollowed.cause,
+        ago(unfollowed.every_secs)
+    )
+}
+
 /// A read of an item that a wake of the GitHub App named failed, for the
 /// reason `error` (#1656): the look reads the forge in full.
 ///
@@ -9166,7 +9264,7 @@ const LIMIT_GUESS: &str = " riff cannot read the reset: this time is the end of 
 ///     lead: false,
 /// });
 /// status.waiting.push("the wave of o/r".into());
-/// status.waves.push(WaveShown { repo: "o/r".into(), word: "starts issue-12".into(), waits: Default::default() });
+/// status.waves.push(WaveShown { repo: "o/r".into(), word: "starts issue-12".into(), waits: Default::default(), unfollowed: vec![] });
 /// let text = riff::text::daemon_status(&status, 300_000);
 /// assert!(text.contains(
 ///     "  riff-issue-12-1a2b3c4d  issue-12  session 1a2b3c4d-0000  for 1m  works: > Bash: just check\n"
@@ -9182,6 +9280,20 @@ const LIMIT_GUESS: &str = " riff cannot read the reset: this time is the end of 
 /// let text = riff::text::daemon_status(&status, 300_000);
 /// assert!(text.contains("Waves:\n  o/r  starts issue-12\n    waits for #728: #724 #725\n"), "{text}");
 /// status.waves[0].waits.clear();
+/// // A follower of the wave that does not run (01M7B2RWBQWA6X8BNZEB025SWX).
+/// status.waves[0].unfollowed.push(riff::followers::Unfollowed {
+///     follower: riff::followers::Follower::Plan,
+///     since_ms: 0,
+///     cause: "the OS keyring of thelio is locked".into(),
+///     count: 10,
+///     every_secs: 30,
+/// });
+/// let text = riff::text::daemon_status(&status, 300_000);
+/// let line = "Waves:\n  o/r  starts issue-12\n    cannot follow the changes of the plan on \
+///             riff-server: 10 starts failed in 5m. The last cause: the OS keyring of thelio is \
+///             locked. riff tries again each 30s.\n";
+/// assert!(text.contains(line), "{text}");
+/// status.waves[0].unfollowed.clear();
 /// // A watch of an async operation (01M5RGCW5NCKQYA61RM63914TX).
 /// status.watches.push(riff::daemon::WatchShown {
 ///     repo: "o/r".into(),
@@ -9338,6 +9450,9 @@ pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
             let _ = writeln!(out, "  {}  {}", wave.repo, wave.word);
             for line in daemon_wave_waits(&wave.waits) {
                 let _ = writeln!(out, "    {line}");
+            }
+            for unfollowed in &wave.unfollowed {
+                let _ = writeln!(out, "    {}", daemon_unfollowed(unfollowed, now_ms));
             }
         }
     }

@@ -6522,6 +6522,39 @@ riff did not run git fetch -q origin: the OS keyring of pangolin is locked or do
 
 A remote over SSH asks `gh` for nothing, so its `git` runs.
 
+##### See that the wakes come again after the unlock
+
+While the keyring is locked, each wave has no stream of the wakes of
+GitHub and no stream of the changes of the plan on riff-server. So it
+waits up to 30 minutes for its safety look (see
+[The safety look and the dropped events](how-it-works.md#the-safety-look-and-the-dropped-events)).
+The daemon tries to open the streams again each 30 seconds. After the
+unlock, the wakes come again within 30 seconds, with no restart of the
+daemon. On the host, check it:
+
+```sh
+riff daemon status
+```
+
+While a stream does not run, the status names it under its wave, with
+the count of the failed starts and the last cause:
+
+```text
+Waves:
+  o/r  no free work now
+    cannot follow the wakes of GitHub on riff-server: 12 starts failed in 6m. The last cause: riff cannot find your user. Unlock the keyring, or set RIFF_USER: the OS keyring of thelio is locked or does not answer: unlock it at the desktop. gh uses the same keyring, so gh stops too. riff tries again each 30s.
+    cannot follow the changes of the plan on riff-server: 12 starts failed in 6m. The last cause: riff cannot find your user. Unlock the keyring, or set RIFF_USER: the OS keyring of thelio is locked or does not answer: unlock it at the desktop. gh uses the same keyring, so gh stops too. riff tries again each 30s.
+```
+
+After the unlock, these lines go. The first change on GitHub then gives
+a fresh last wake in the line `GitHub events of o/r: the last wake 1m
+ago`. From the lead, or from a terminal on another host, check it with
+the name of the host:
+
+```sh
+riff daemon status --host HOST
+```
+
 #### When the keyring does not answer
 
 When the keyring shows no unlock prompt, or `gh` hangs, start the

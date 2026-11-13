@@ -83,6 +83,13 @@
 //!     N -- "a session or a job ends,<br/>a change of the plan, a wake of GitHub" --> L
 //! ```
 //!
+//! Each follower of the loop signs in at its start: the follower of the
+//! wakes and the follower of the changes of the plan. A start that fails,
+//! for example on a locked keyring, comes again each
+//! [`crate::daemon::facts::every`] until it works, and `riff daemon
+//! status` names the follower under the wave until then
+//! ([`crate::followers`], 01M7B2RQPTFVK02YAZGMN2SYAR).
+//!
 //! # The hosts of a wave
 //!
 //! A wave can run on more hosts. The claims on riff-server give each item
@@ -745,6 +752,7 @@ use crate::daemon::gh_token;
 use crate::daemon::remote::Abort;
 use crate::daemon::sweep::{self, Fate, InJob};
 use crate::daemon::{Daemon, Ended, Out, PullFailed, Record, Say, Start};
+use crate::followers::{self, Follow, Follower, Followers};
 use crate::pr::Verdict;
 use crate::room::Slot;
 use crate::run::{self, Facts};
@@ -2001,19 +2009,32 @@ pub trait World: Send + Sync {
         Box::pin(async { Ok(HashSet::new()) })
     }
 
-    /// Tells `changed` at each change of the free work of the repository of
-    /// `wave` on riff-server (#1729): a hold, a free, a release, a plan, a
-    /// new item of a wave or a merge on GitHub (#1655). It never ends. The
-    /// default tells nothing.
-    fn plan_changes<'a>(&'a self, _wave: &'a Wave, _changed: &'a Notify) -> BoxFuture<'a, ()> {
-        Box::pin(std::future::pending())
+    /// Starts the follower that tells `changed` at each change of the free
+    /// work of the repository of `wave` on riff-server (#1729): a hold, a
+    /// free, a release, a plan, a new item of a wave or a merge on GitHub
+    /// (#1655). The follower never ends. The error is a start that failed,
+    /// for example on a locked keyring: the caller tries again
+    /// ([`followers::follow`], 01M7B2RQPTFVK02YAZGMN2SYAR). The default
+    /// tells nothing.
+    fn plan_changes<'a>(
+        &'a self,
+        _wave: &'a Wave,
+        _changed: &'a Notify,
+    ) -> BoxFuture<'a, Result<Follow<'a>>> {
+        Box::pin(async { Ok(Box::pin(std::future::pending()) as Follow<'a>) })
     }
 
-    /// Follows the wakes of the GitHub App of the repository of `wave` on
-    /// riff-server into `told` ([`hooks::follow`], #1656). It never ends.
-    /// The default follows none: the events stay off.
-    fn github_wakes<'a>(&'a self, _wave: &'a Wave, _told: &'a hooks::Told) -> BoxFuture<'a, ()> {
-        Box::pin(std::future::pending())
+    /// Starts the follower of the wakes of the GitHub App of the
+    /// repository of `wave` on riff-server into `told` ([`hooks::follow`],
+    /// #1656). The follower never ends. The error is a start that failed,
+    /// as for [`World::plan_changes`]. The default follows none: the
+    /// events stay off.
+    fn github_wakes<'a>(
+        &'a self,
+        _wave: &'a Wave,
+        _told: &'a hooks::Told,
+    ) -> BoxFuture<'a, Result<Follow<'a>>> {
+        Box::pin(async { Ok(Box::pin(std::future::pending()) as Follow<'a>) })
     }
 
     /// Posts `body` of `kind` as the person of the wave: to the session
@@ -2346,8 +2367,10 @@ async fn say_merged(world: &dyn World, wave: &Wave, look: &Look, said: &mut BTre
 
 /// The loop of the wave `wave` in `daemon`, until the daemon stops it.
 /// `taken` holds the items of its jobs before the start, `starts` the
-/// starts of each item, `word` what it did last, and `ordered` the verifies
-/// that wait for another pull request at its last look ([`order()`]).
+/// starts of each item, `word` what it did last, `ordered` the verifies
+/// that wait for another pull request at its last look ([`order()`]), and
+/// `followers` the failed starts of its followers on riff-server
+/// ([`followers::follow`], 01M7B2RQPTFVK02YAZGMN2SYAR).
 pub(crate) async fn run<R: Runtime + 'static>(
     daemon: Arc<Daemon<R>>,
     wave: Wave,
@@ -2355,6 +2378,7 @@ pub(crate) async fn run<R: Runtime + 'static>(
     starts: Starts,
     word: Arc<Mutex<String>>,
     ordered: Waits,
+    followers: Followers,
 ) {
     let say = |text: String| *lock(&word) = text;
     // The starts of the spent items that the lead heard of ([`Work::key`]).
@@ -2374,11 +2398,16 @@ pub(crate) async fn run<R: Runtime + 'static>(
     // The key of the limit of GitHub that the lead heard of.
     let mut limited: Option<String> = None;
     // A change of the plan on riff-server: the wave looks at once (#1729).
+    // Each follower starts again after a failed start, for example on a
+    // locked keyring (#2085).
+    let every = daemon.follow_every();
     let plan = Arc::new(Notify::new());
     let _follow = {
         let (world, wave, plan) = (daemon.world(), wave.clone(), plan.clone());
+        let followers = followers.clone();
         Abort(tokio::spawn(async move {
-            world.plan_changes(&wave, &plan).await;
+            let start = || world.plan_changes(&wave, &plan);
+            followers::follow(&wave.repo, Follower::Plan, &followers, every, start).await;
         }))
     };
     // New rights of an install: the writes of the wave ask for a new
@@ -2392,7 +2421,8 @@ pub(crate) async fn run<R: Runtime + 'static>(
     let _wakes = {
         let (world, wave, events) = (daemon.world(), wave.clone(), events.clone());
         Abort(tokio::spawn(async move {
-            world.github_wakes(&wave, &events).await;
+            let start = || world.github_wakes(&wave, &events);
+            followers::follow(&wave.repo, Follower::Wakes, &followers, every, start).await;
         }))
     };
     loop {
@@ -3052,6 +3082,22 @@ pub struct Live {
     /// The token of the writes of the daemon on each repository
     /// (01M6XZJFE2ZTR5RE3AWM30R704).
     writes: gh_token::Writes,
+}
+
+/// The start of a follower of `wave` on riff-server
+/// ([`World::plan_changes`], [`World::github_wakes`]): the person of the
+/// wave, signed in at its riff-server, and the thread of the wave. A
+/// locked keyring fails it (#2085). It reads the keyring on a thread of
+/// its own: a keyring that does not answer holds up no task of the
+/// runtime.
+async fn follower_sign_in(wave: &Wave) -> Result<(Api, SessionUri, ThreadName)> {
+    let wave = wave.clone();
+    tokio::task::spawn_blocking(move || {
+        let person = identity::person(&wave.place(None)?, &wave.server)?;
+        let api = Api::new(&wave.server).signed_in(None)?;
+        anyhow::Ok((api, person, wave.thread()?))
+    })
+    .await?
 }
 
 /// Posts `body` of `kind` as the person of `wave`: to the session that
@@ -4971,41 +5017,33 @@ impl World for Live {
         })
     }
 
-    fn plan_changes<'a>(&'a self, wave: &'a Wave, changed: &'a Notify) -> BoxFuture<'a, ()> {
+    fn plan_changes<'a>(
+        &'a self,
+        wave: &'a Wave,
+        changed: &'a Notify,
+    ) -> BoxFuture<'a, Result<Follow<'a>>> {
         Box::pin(async move {
-            let follow = async {
-                let person = identity::person(&wave.place(None)?, &wave.server)?;
-                let api = Api::new(&wave.server).signed_in(None)?;
-                follow_plan(&api, &person, &wave.thread()?, changed).await;
-                anyhow::Ok(())
-            };
-            if let Err(e) = follow.await {
-                eprintln!(
-                    "riff daemon: {}: {}",
-                    wave.repo,
-                    text::wave_no_plan(&format!("{e:#}"))
-                );
-            }
-            std::future::pending().await
+            let (api, person, thread) = follower_sign_in(wave).await?;
+            let follow: Follow<'a> = Box::pin(async move {
+                follow_plan(&api, &person, &thread, changed).await;
+                std::future::pending().await
+            });
+            Ok(follow)
         })
     }
 
-    fn github_wakes<'a>(&'a self, wave: &'a Wave, told: &'a hooks::Told) -> BoxFuture<'a, ()> {
+    fn github_wakes<'a>(
+        &'a self,
+        wave: &'a Wave,
+        told: &'a hooks::Told,
+    ) -> BoxFuture<'a, Result<Follow<'a>>> {
         Box::pin(async move {
-            let follow = async {
-                let person = identity::person(&wave.place(None)?, &wave.server)?;
-                let api = Api::new(&wave.server).signed_in(None)?;
-                hooks::follow(&api, &person, &wave.thread()?, told).await;
-                anyhow::Ok(())
-            };
-            if let Err(e) = follow.await {
-                eprintln!(
-                    "riff daemon: {}: {}",
-                    wave.repo,
-                    text::github_no_wakes(&format!("{e:#}"))
-                );
-            }
-            std::future::pending().await
+            let (api, person, thread) = follower_sign_in(wave).await?;
+            let follow: Follow<'a> = Box::pin(async move {
+                hooks::follow(&api, &person, &thread, told).await;
+                std::future::pending().await
+            });
+            Ok(follow)
         })
     }
 
@@ -5210,7 +5248,7 @@ fn is_not_found(error: &anyhow::Error) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::time::Instant;
 
     use super::*;
@@ -5572,6 +5610,25 @@ mod tests {
         /// ([`look_told`]), with the events of the wave (#1656). Else the
         /// look takes the forge in memory.
         reads: Mutex<Option<Arc<pr::Gh>>>,
+        /// True while the keyring is locked: each start of a follower of
+        /// the wave fails, as a sign-in fails then (#2085).
+        locked: AtomicBool,
+    }
+
+    /// The cause of a sign-in on a locked keyring ([`identity::person`]).
+    const LOCKED: &str = "riff cannot find your user. Unlock the keyring, or set RIFF_USER: the \
+                          OS keyring of thelio is locked or does not answer: unlock it at the \
+                          desktop";
+
+    impl Fakes {
+        /// The sign-in of the start of a follower: it fails while the
+        /// keyring is locked.
+        fn sign_in(&self) -> Result<()> {
+            if self.locked.load(Ordering::SeqCst) {
+                bail!(LOCKED);
+            }
+            Ok(())
+        }
     }
 
     impl World for Fakes {
@@ -5908,23 +5965,39 @@ mod tests {
             Box::pin(async move { Ok(holds) })
         }
 
-        fn plan_changes<'a>(&'a self, _: &'a Wave, changed: &'a Notify) -> BoxFuture<'a, ()> {
+        fn plan_changes<'a>(
+            &'a self,
+            _: &'a Wave,
+            changed: &'a Notify,
+        ) -> BoxFuture<'a, Result<Follow<'a>>> {
             let plan = lock(&self.plan).clone();
             Box::pin(async move {
-                if let Some((api, me, thread)) = plan {
-                    follow_plan(&api, &me, &thread, changed).await;
-                }
-                std::future::pending().await
+                self.sign_in()?;
+                let follow: Follow<'a> = Box::pin(async move {
+                    if let Some((api, me, thread)) = plan {
+                        follow_plan(&api, &me, &thread, changed).await;
+                    }
+                    std::future::pending().await
+                });
+                Ok(follow)
             })
         }
 
-        fn github_wakes<'a>(&'a self, _: &'a Wave, told: &'a hooks::Told) -> BoxFuture<'a, ()> {
+        fn github_wakes<'a>(
+            &'a self,
+            _: &'a Wave,
+            told: &'a hooks::Told,
+        ) -> BoxFuture<'a, Result<Follow<'a>>> {
             let github = lock(&self.github).clone();
             Box::pin(async move {
-                if let Some((api, me, thread)) = github {
-                    hooks::follow(&api, &me, &thread, told).await;
-                }
-                std::future::pending().await
+                self.sign_in()?;
+                let follow: Follow<'a> = Box::pin(async move {
+                    if let Some((api, me, thread)) = github {
+                        hooks::follow(&api, &me, &thread, told).await;
+                    }
+                    std::future::pending().await
+                });
+                Ok(follow)
             })
         }
 
@@ -6078,6 +6151,7 @@ mod tests {
                 plan: Mutex::new(None),
                 github: Mutex::new(None),
                 reads: Mutex::new(None),
+                locked: AtomicBool::new(false),
             });
             let memory: crate::room::Memory =
                 Arc::new(move || Some(free.load(Ordering::SeqCst) * GB));
@@ -6089,6 +6163,7 @@ mod tests {
                 .with_world(world.clone())
                 .with_look_every(every)
                 .with_claim_wait(claim_wait)
+                .with_follow_every(Duration::from_millis(100))
                 .with_relay(crate::release::fake_riff(&relay, None));
             Limit {
                 sessions,
@@ -6718,6 +6793,178 @@ mod tests {
         assert!(told.last() > last);
         assert!(told.on(crate::daemon::now_ms()));
         again.stop_wave("o/r").unwrap();
+    }
+
+    /// Waits until the daemon of `here` shows the followers of its wave
+    /// that do not run as `done` wants them, and gives the status.
+    async fn unfollowed_until(
+        here: &Here,
+        done: impl Fn(&[followers::Unfollowed]) -> bool,
+    ) -> crate::daemon::Status {
+        let started = Instant::now();
+        loop {
+            let status = here.daemon.status().await;
+            if done(&status.waves[0].unfollowed) {
+                return status;
+            }
+            let shown = &status.waves[0].unfollowed;
+            assert!(started.elapsed() < isolated::HANG, "{shown:?}");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    /// #2085, 01M7B2RQPTFVK02YAZGMN2SYAR, 01M7B2RWBQWA6X8BNZEB025SWX: the
+    /// keyring is locked at the start of the wave, as at a login with a
+    /// security key. The starts of the follower of the wakes of GitHub and
+    /// of the follower of the changes of the plan fail, also at the next
+    /// tries, and `riff daemon status` names each one under the wave with
+    /// the cause. The person unlocks the keyring: the next try starts each
+    /// one, and the status names none. Then the wave gets the next change
+    /// of the plan and the next wake of GitHub on a real riff-server.
+    #[tokio::test]
+    async fn after_a_failed_sign_in_the_wave_gets_the_next_change_of_the_plan_and_the_next_wake() {
+        let secret = &isolated::fake_secret();
+        let (_service, server, _keys) = riff_with_a_webhook(secret).await;
+        let api = Api::new(&server);
+        let place = crate::identity::place_from_text("thelio/o/r").unwrap();
+        let who = riff_core::name::Who::new("mike", Some("lead1")).unwrap();
+        let lead = SessionUri::new(who, place);
+        api.start(&lead, StartReason::Process, false).await.unwrap();
+        let thread: ThreadName = "o/r".parse().unwrap();
+
+        let here = Here::new(&[], 2, Arc::new(AtomicU64::new(64))).await;
+        here.world.locked.store(true, Ordering::SeqCst);
+        *lock(&here.world.plan) = Some((api.clone(), lead.clone(), thread.clone()));
+        *lock(&here.world.github) = Some((api.clone(), lead.clone(), thread.clone()));
+        here.run();
+        let status = unfollowed_until(&here, |shown| {
+            shown.len() == 2 && shown.iter().all(|u| u.count >= 2)
+        })
+        .await;
+        let shown = &status.waves[0].unfollowed;
+        let which: Vec<Follower> = shown.iter().map(|u| u.follower).collect();
+        assert_eq!(which, [Follower::Wakes, Follower::Plan]);
+        assert!(shown.iter().all(|u| u.cause == LOCKED), "{shown:?}");
+        let text = text::daemon_status(&status, crate::daemon::now_ms());
+        for what in ["the wakes of GitHub", "the changes of the plan"] {
+            let line = format!("\n    cannot follow {what} on riff-server: ");
+            assert!(text.contains(&line), "{text}");
+        }
+        assert!(
+            text.contains(&format!("The last cause: {LOCKED}.")),
+            "{text}"
+        );
+
+        // The person unlocks the keyring at the desktop.
+        here.world.locked.store(false, Ordering::SeqCst);
+        let status = unfollowed_until(&here, <[_]>::is_empty).await;
+        let text = text::daemon_status(&status, crate::daemon::now_ms());
+        assert!(!text.contains("cannot follow"), "{text}");
+
+        // The wave is idle: only the next change of the plan wakes it.
+        here.until(2, |h| h.forge().branch_reads >= 2).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let looks = here.forge().branch_reads;
+        let mut probe = 0;
+        let woken = async {
+            while here.forge().branch_reads == looks {
+                probe += 1;
+                let item = format!("issue-{}", 900 + probe);
+                api.hold(&lead, &thread, &item, "a probe").await.unwrap();
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+        };
+        isolated::in_time(LOOK_EVERY / 3, woken)
+            .await
+            .expect("the change of the plan woke the wave");
+
+        // The next wake of GitHub comes into the events of the wave: a
+        // probe of a merge goes through once the stream is open.
+        let told = here.daemon.told("o/r");
+        let mut probe = 0;
+        let opened = async {
+            while told.last().is_none() {
+                probe += 1;
+                let id = format!("probe-{probe}");
+                deliver(
+                    &server,
+                    secret,
+                    "pull_request",
+                    &id,
+                    &merge_event(900 + probe),
+                )
+                .await;
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+        };
+        isolated::in_time(LOOK_EVERY, opened)
+            .await
+            .expect("the stream opened");
+        deliver(
+            &server,
+            secret,
+            "pull_request",
+            "merge-41",
+            &merge_event(41),
+        )
+        .await;
+        let got = named(&told, &[41]).await;
+        assert_eq!(got[&Some(41)], [riff_core::wire::GitHubEvent::PullRequest]);
+        here.daemon.stop_wave("o/r").unwrap();
+    }
+
+    /// #2085, 01M7B2RQPTFVK02YAZGMN2SYAR: the start of a follower of the
+    /// real world signs in as the person. The keyring refuses the read of
+    /// the sign-in, as a locked keyring does at a login with a security
+    /// key: the start fails with the cause. The next start reads the
+    /// keyring again and follows: the wakes of GitHub on a real
+    /// riff-server come into the events of the wave.
+    #[tokio::test]
+    async fn the_start_of_a_live_follower_fails_on_a_locked_keyring_and_the_next_one_follows() {
+        let secret = &isolated::fake_secret();
+        let (_service, server, _keys) = riff_with_a_webhook(secret).await;
+        riff_client::secrets::mock_store();
+        let wave = Wave {
+            repo: "o/r".into(),
+            main: "/src/r".into(),
+            server: server.clone(),
+            host: "thelio".into(),
+        };
+        // The keyring refuses the next read of the sign-in at this server.
+        let name = riff_client::login::secret_name(&server);
+        let entry = keyring_core::Entry::new(riff_client::secrets::SERVICE, &name).unwrap();
+        let cred: &keyring_core::mock::Cred = entry.as_any().downcast_ref().unwrap();
+        let locked = std::io::Error::other("object locked");
+        cred.set_error(keyring_core::Error::NoStorageAccess(Box::new(locked)));
+
+        let live = Live::default();
+        let told = hooks::Told::new("o/r");
+        let Err(e) = live.github_wakes(&wave, &told).await else {
+            panic!("the start on a locked keyring followed");
+        };
+        assert!(format!("{e:#}").contains("is locked"), "{e:#}");
+
+        let follow = live.github_wakes(&wave, &told).await.unwrap();
+        let mut probe = 0;
+        let woken = async {
+            while told.last().is_none() {
+                probe += 1;
+                let id = format!("probe-{probe}");
+                deliver(
+                    &server,
+                    secret,
+                    "pull_request",
+                    &id,
+                    &merge_event(900 + probe),
+                )
+                .await;
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+        };
+        tokio::select! {
+            () = follow => panic!("the follower ended"),
+            got = isolated::in_time(LOOK_EVERY, woken) => got.expect("the wake came"),
+        }
     }
 
     /// A fake `gh` for a look that reads the forge as the real look does
@@ -11352,6 +11599,7 @@ esac
             plan: Mutex::new(None),
             github: Mutex::new(None),
             reads: Mutex::new(None),
+            locked: AtomicBool::new(false),
         };
         let none = BTreeSet::new();
         look_with(&gh.clone().by("wave"), "o/r", none.clone(), none, &[]).unwrap();
@@ -11393,6 +11641,7 @@ esac
                 plan: Mutex::new(None),
                 github: Mutex::new(None),
                 reads: Mutex::new(None),
+                locked: AtomicBool::new(false),
             };
             let wave = Wave {
                 repo: "o/r".into(),
