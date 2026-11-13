@@ -6734,14 +6734,16 @@ pub fn github_no_patch(error: &str) -> String {
 /// The line of `riff daemon status` for the events of one repository at
 /// `now_ms` (01M74N3544C338R6BV06DQ1DH0): the age of the last wake, and the
 /// dropped events of the last day. A repository with no wake for a day
-/// reads GitHub as with no events.
+/// reads GitHub as with no events. One with a dropped event and no wake
+/// after it reads GitHub in full at each look, until a wake comes
+/// (01M7B3BH0W46KJRKZ4Q5Z96A3N).
 ///
 /// ```
 /// use riff::hooks::{Change, Dropped, Shown};
 /// use riff_core::wire::GitHubEvent;
 ///
 /// let now = 1_762_850_000_000;
-/// let shown = Shown { repo: "o/r".into(), last_ms: now - 120_000, on: true, dropped: 0, last_dropped: None };
+/// let shown = Shown { repo: "o/r".into(), last_ms: now - 120_000, on: true, lost: false, dropped: 0, last_dropped: None };
 /// assert_eq!(
 ///     riff::text::daemon_github_events(&shown, now),
 ///     "GitHub events of o/r: the last wake 2m ago, the safety look each 30 minutes, no dropped \
@@ -6755,6 +6757,13 @@ pub fn github_no_patch(error: &str) -> String {
 ///     "GitHub events of o/r: the last wake 2m ago, the safety look each 30 minutes, 3 dropped \
 ///      events in the last day, the last of pull request #41, check_run, 14m ago."
 /// );
+/// let lost = Shown { on: false, lost: true, last_ms: now - 12 * 3_600_000, ..shown.clone() };
+/// assert_eq!(
+///     riff::text::daemon_github_events(&lost, now),
+///     "GitHub events of o/r: off, as no wake came after the last dropped event, so the wave \
+///      reads GitHub in full at each look until a wake comes. The last wake 12h ago, 3 dropped \
+///      events in the last day, the last of pull request #41, check_run, 14m ago."
+/// );
 /// let off = Shown { on: false, last_ms: now - 2 * 86_400_000, ..shown };
 /// assert_eq!(
 ///     riff::text::daemon_github_events(&off, now),
@@ -6764,7 +6773,7 @@ pub fn github_no_patch(error: &str) -> String {
 pub fn daemon_github_events(shown: &crate::hooks::Shown, now_ms: i64) -> String {
     let age = |at: i64| ago(u64::try_from((now_ms - at) / 1000).unwrap_or(0));
     let repo = &shown.repo;
-    if !shown.on {
+    if !shown.on && !shown.lost {
         return format!(
             "GitHub events of {repo}: no wake for {}, so the wave reads GitHub as with no events.",
             age(shown.last_ms)
@@ -6781,6 +6790,14 @@ pub fn daemon_github_events(shown: &crate::hooks::Shown, now_ms: i64) -> String 
             age(last.at_ms)
         ),
     };
+    if shown.lost {
+        return format!(
+            "GitHub events of {repo}: off, as no wake came after the last dropped event, so the \
+             wave reads GitHub in full at each look until a wake comes. The last wake {} ago, \
+             {dropped}.",
+            age(shown.last_ms)
+        );
+    }
     format!(
         "GitHub events of {repo}: the last wake {} ago, the safety look each {minutes} minutes, \
          {dropped}.",
@@ -12713,6 +12730,50 @@ pub fn wave_verify_done(repo: &str, item: &str, commit: &str, verdict: Verdict) 
         "The wave of {repo}: the head {short} of {item} has a riff/verify {}{asked}. riff starts \
          no verify of it, and the start does not count.",
         verdict.state()
+    )
+}
+
+/// The read of the open pull requests before the claim of the build of
+/// `issue` found its pull request `pull` with the head `commit` waiting for
+/// its verify, or for the merge when `merge` (01M7B3BH3H8Y26MTERAGDDGJ0V).
+/// The look of the wave did not show it yet: its kept list missed it.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::wave_build_waits("o/r", 12, 40, "1a2b3c4d5e", false),
+///     "The wave of o/r: pull request #40 of issue-12 waits for its verify, at the head 1a2b3c4. \
+///      riff starts no build of issue-12, and the start does not count."
+/// );
+/// assert!(riff::text::wave_build_waits("o/r", 12, 40, "1a2b3c4d5e", true).contains("waits for the merge,"));
+/// ```
+pub fn wave_build_waits(repo: &str, issue: u64, pull: u64, commit: &str, merge: bool) -> String {
+    let short: String = commit.chars().take(7).collect();
+    let what = match merge {
+        true => "the merge",
+        false => "its verify",
+    };
+    format!(
+        "The wave of {repo}: pull request #{pull} of issue-{issue} waits for {what}, at the head \
+         {short}. riff starts no build of issue-{issue}, and the start does not count."
+    )
+}
+
+/// The read of the open pull requests before the claim of the build of
+/// `issue` failed for the reason `error` (#2082). The next look tries
+/// again.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::wave_build_no_read("o/r", 12, "HTTP 502"),
+///     "The wave of o/r: the read of the open pull requests before the build of issue-12 \
+///      failed: HTTP 502. riff starts no build of issue-12 now, and the start does not count."
+/// );
+/// ```
+pub fn wave_build_no_read(repo: &str, issue: u64, error: &str) -> String {
+    format!(
+        "The wave of {repo}: the read of the open pull requests before the build of \
+         issue-{issue} failed: {error}. riff starts no build of issue-{issue} now, and the start \
+         does not count."
     )
 }
 

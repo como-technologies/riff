@@ -36,11 +36,13 @@
 //!   keyring, comes again each 30 seconds until it works
 //!   ([`crate::followers`]). Then the stream opens with `after=ID`, so the
 //!   wave gets the wakes that came in the meantime.
-//! - **Events on** (01M74N34Q330SHBWWTQDPG0W0B). The events of a
-//!   repository are on while its last wake is less than [`EVENTS_FOR`] old
-//!   ([`Told::on`]): the ID of a wake is the time of riff-server. A riff
-//!   with no App, or with no webhook, sends no wake, so its waves look as
-//!   before ([`crate::changes`]).
+//! - **Events on** (01M7B3BH0W46KJRKZ4Q5Z96A3N). The events of a
+//!   repository are on while its last wake is less than [`EVENTS_FOR`] old,
+//!   and no dropped event came after it ([`Told::on`]): the ID of a wake is
+//!   the time of riff-server. A riff with no App, or with no webhook, sends
+//!   no wake, so its waves look as before ([`crate::changes`]). While the
+//!   events are off for a dropped event, each look reads in full until the
+//!   next wake ([`Told::lost`]).
 //! - **The reads of a wake** ([`Told::facts`], 01M74N34Q330SHBWWTQDPG0W0B,
 //!   01M74N34TD0ZKRNB5ASHQ90TP6). While the events are on, a look reads
 //!   only what the wakes since the last look named, and patches the kept
@@ -63,7 +65,15 @@
 //!   way to the daemon. Then it is a dropped event ([`Dropped`]): the
 //!   daemon logs the repository, the item and the kind, and `riff daemon
 //!   status` counts the dropped events of the last [`DROPPED_FOR`]
-//!   ([`Shown`]).
+//!   ([`Shown`]). A dropped event turns the events off until the next wake:
+//!   the wakes do not come, so the kept replies miss changes.
+//! - **The read before a build** (01M7B3BH3H8Y26MTERAGDDGJ0V,
+//!   01M7B3BH653KXWY3MH45DKB0BK). The kept list of the open pull
+//!   requests can miss a new pull request that no wake told. So the wave
+//!   reads that list again before it starts a build
+//!   ([`crate::wave::build_waits`]). The read goes into the kept reply
+//!   ([`Told::pulls_read`]), and each change in it that no wake named
+//!   waits for its wake, as at the safety look.
 //! - **`riff top` and the TUI** (01M74N357CC7DN6B8QX8GDR0ZM) follow the
 //!   same stream for the repository of their folder, and read GitHub again
 //!   soon after a wake of an issue or a pull request ([`Shows`]).
@@ -77,6 +87,7 @@
 //!     D -- yes --> F["the safety look: a full read"]
 //!     F --> X["each change that no wake named"]
 //!     X -- "no wake in GRACE" --> R["a dropped event: the log,<br/>riff daemon status"]
+//!     R --> E["events off until the next wake:<br/>each look reads in full"]
 //! ```
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -179,6 +190,10 @@ pub struct Shown {
     pub last_ms: i64,
     /// True while the events are on ([`Told::on`]).
     pub on: bool,
+    /// True when the events are off for a dropped event with no wake after
+    /// it ([`Told::on`], #2082).
+    #[serde(default)]
+    pub lost: bool,
     /// The dropped events of the last [`DROPPED_FOR`].
     pub dropped: usize,
     /// The last dropped event.
@@ -211,6 +226,24 @@ struct State {
     /// The changes of the safety looks that wait for their wake.
     suspects: Vec<(Change, i64)>,
     dropped: VecDeque<Dropped>,
+}
+
+impl State {
+    /// True when the events are off for a dropped event at `now_ms`: a
+    /// dropped event, or a change that waited `grace` for its wake, came
+    /// after the last wake. The ID of a wake is the time of riff-server.
+    fn lost(&self, now_ms: i64, grace: i64) -> bool {
+        let last = self.last.and_then(|id| i64::try_from(id).ok());
+        let dropped = self.dropped.iter().map(|d| d.at_ms);
+        let waited = self
+            .suspects
+            .iter()
+            .filter(|(_, at)| now_ms - at >= grace)
+            .map(|(_, at)| *at);
+        dropped
+            .chain(waited)
+            .any(|at| last.is_none_or(|last| at > last))
+    }
 }
 
 impl Told {
@@ -284,33 +317,61 @@ impl Told {
     }
 
     /// True while the events of the repository are on at `now_ms`: its last
-    /// wake is less than [`EVENTS_FOR`] old. The ID of a wake is the time
-    /// of riff-server when it went out.
+    /// wake is less than [`EVENTS_FOR`] old, and no dropped event came
+    /// after it (#2082). The ID of a wake is the time of riff-server when
+    /// it went out. While the events are off, the wave reads GitHub as with
+    /// no events ([`crate::changes`]), and in full at each look after a
+    /// dropped event ([`Told::lost`]). The next wake turns them on.
     ///
     /// ```
-    /// use riff::hooks::Told;
+    /// use std::time::Duration;
+    /// use riff::hooks::{Change, Told};
     /// use riff_core::wire::{GitHubEvent, GitHubWake};
     ///
     /// let told = Told::new("o/r");
     /// assert!(!told.on(1_000), "no wake yet");
     /// let at = 1_762_850_000_000;
-    /// told.add(&GitHubWake { id: at, repo: "o/r".parse()?, kinds: vec![GitHubEvent::Issues], number: Some(12), events: 1 });
-    /// assert!(told.on(at as i64 + 60_000));
+    /// let wake = |id| GitHubWake { id, repo: "o/r".parse().unwrap(), kinds: vec![GitHubEvent::Issues], number: Some(12), events: 1 };
+    /// told.add(&wake(at));
+    /// let now = at as i64 + 60_000;
+    /// assert!(told.on(now));
     /// assert!(!told.on(at as i64 + 25 * 3_600_000), "a day with no wake");
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    ///
+    /// // A safety look finds a change of #13, and no wake tells it.
+    /// let told = told.with_times(Duration::ZERO, Duration::from_secs(60), Duration::ZERO);
+    /// told.found(vec![Change { number: 13, pull: false, kind: GitHubEvent::Issues }], now);
+    /// assert!(told.on(now + 59_000), "it waits for its wake");
+    /// assert!(!told.on(now + 60_000), "a dropped event");
+    /// assert_eq!(told.confirm(now + 60_000).len(), 1);
+    /// assert!(!told.on(now + 120_000));
+    /// // A wake comes again.
+    /// told.add(&wake(at + 120_000));
+    /// assert!(told.on(now + 120_000));
     /// ```
     pub fn on(&self, now_ms: i64) -> bool {
         let for_ms = i64::try_from(EVENTS_FOR.as_millis()).unwrap_or(i64::MAX);
-        lock(&self.state)
+        let grace = i64::try_from(self.grace.as_millis()).unwrap_or(i64::MAX);
+        let state = lock(&self.state);
+        let recent = state
             .last
             .and_then(|id| i64::try_from(id).ok())
-            .is_some_and(|at| now_ms - at < for_ms)
+            .is_some_and(|at| now_ms - at < for_ms);
+        recent && !state.lost(now_ms, grace)
+    }
+
+    /// True when the events are off at `now_ms` for a dropped event with no
+    /// wake after it ([`Told::on`], #2082). The wakes do not come, so each
+    /// look reads GitHub in full until a wake comes.
+    pub fn lost(&self, now_ms: i64) -> bool {
+        let grace = i64::try_from(self.grace.as_millis()).unwrap_or(i64::MAX);
+        lock(&self.state).lost(now_ms, grace)
     }
 
     /// Takes the wake `wake`: its number and kinds go to the next look, its
     /// ID to the file, and it wakes the wave. It clears each change of the
-    /// same number that waits for its wake. A wake that is not newer than
-    /// the last one changes nothing.
+    /// same number that waits for its wake, and turns the events on after a
+    /// dropped event ([`Told::on`]). A wake that is not newer than the last
+    /// one changes nothing.
     pub fn add(&self, wake: &GitHubWake) {
         {
             let mut state = lock(&self.state);
@@ -426,7 +487,8 @@ impl Told {
 
     /// The changes that waited [`GRACE`] for their wake at `now_ms` with
     /// none: they are dropped events now, and the caller logs them. The
-    /// daemon keeps them for [`DROPPED_FOR`].
+    /// daemon keeps them for [`DROPPED_FOR`]. A dropped event turns the
+    /// events off until the next wake ([`Told::on`], #2082).
     ///
     /// ```
     /// use std::time::Duration;
@@ -481,6 +543,59 @@ impl Told {
             .extend(changes.into_iter().map(|change| (change, now_ms)));
     }
 
+    /// Takes `reply`, a new read of the list of the open pull requests of
+    /// the repository at `now_ms`: the read before a build (#2082). It goes
+    /// in place of the kept reply ([`Gh::keep`]), so the next look sees it.
+    /// After a full read while the events are on, each change from the
+    /// kept reply that no wake named waits for its wake, as at the safety
+    /// look ([`changes`], [`Told::confirm`]).
+    ///
+    /// ```
+    /// use std::time::Duration;
+    /// use riff::hooks::{Change, Told};
+    /// use riff::pr::Gh;
+    /// use riff_core::wire::{GitHubEvent, GitHubWake};
+    ///
+    /// let gh = Gh::at("/no/gh/pulls-read").with_shared_reads();
+    /// let args = ["pr", "list", "--repo", "o/r", "--state", "open", "--limit", "100", "--json",
+    ///     riff::rollout::PULL_FIELDS];
+    /// let told = Told::new("o/r").with_times(Duration::ZERO, Duration::ZERO, Duration::ZERO);
+    /// told.add(&GitHubWake { id: 1, repo: "o/r".parse()?, kinds: vec![GitHubEvent::Issues], number: Some(12), events: 1 });
+    /// // The first look of the events reads in full, and keeps the list.
+    /// let read = |gh: &Gh| {
+    ///     gh.keep(&args, "[]");
+    ///     Ok(riff::changes::Facts { branch: "main".into(), open: Default::default() })
+    /// };
+    /// told.facts(&gh, 0, read)?;
+    /// // Pull request #41 came, and its event is lost.
+    /// let pull = r#"[{"number":41,"headRefName":"worktree-issue-1","headRefOid":"c1"}]"#;
+    /// told.pulls_read(&gh, pull, 1_000);
+    /// assert_eq!(gh.peek(&args, Duration::from_secs(60)).as_deref(), Some(pull));
+    /// let dropped = told.confirm(1_000);
+    /// assert_eq!(dropped[0].change, Change { number: 41, pull: true, kind: GitHubEvent::PullRequest });
+    /// assert!(!told.on(1_000));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn pulls_read(&self, gh: &Gh, reply: &str, now_ms: i64) {
+        let args = rollout::pull_args(&self.repo);
+        let before = kept(gh, &args).ok();
+        gh.keep(&args, reply);
+        let mut state = lock(&self.state);
+        let after = serde_json::from_str::<Vec<Value>>(reply).ok();
+        let (Some(_), Some(before), Some(after)) = (state.full_ms, before, after) else {
+            return;
+        };
+        let told: BTreeSet<u64> = state.named.keys().flatten().copied().collect();
+        let lists = |pulls| Lists {
+            pulls,
+            ..Lists::default()
+        };
+        let found = changes(&lists(before), &lists(after))
+            .into_iter()
+            .filter(|change| !told.contains(&change.number));
+        state.suspects.extend(found.map(|change| (change, now_ms)));
+    }
+
     /// The events of the repository at `now_ms` for `riff daemon status`:
     /// `None` before its first wake. The count has each change that waited
     /// [`GRACE`] for its wake.
@@ -488,6 +603,7 @@ impl Told {
         let on = self.on(now_ms);
         let grace = i64::try_from(self.grace.as_millis()).unwrap_or(i64::MAX);
         let keep = i64::try_from(DROPPED_FOR.as_millis()).unwrap_or(i64::MAX);
+        let lost = self.lost(now_ms);
         let state = lock(&self.state);
         let last_ms = i64::try_from(state.last?).unwrap_or(i64::MAX);
         let mut dropped: Vec<Dropped> = state
@@ -511,6 +627,7 @@ impl Told {
             repo: self.repo.clone(),
             last_ms,
             on,
+            lost,
             dropped: dropped.len(),
             last_dropped: dropped.into_iter().max_by_key(|d| d.at_ms),
         })
@@ -1267,6 +1384,102 @@ esac
         let told = Told::new("o/r");
         told.facts(&forge.gh, 0, read).unwrap();
         assert!(told.confirm(10 * MINUTE).is_empty());
+    }
+
+    /// 01M7B3BH0W46KJRKZ4Q5Z96A3N: a dropped event with no wake after it
+    /// turns the events off, and `riff daemon status` says so. The next
+    /// wake turns them on, and the first full read after it finds no
+    /// dropped event.
+    #[test]
+    fn a_dropped_event_turns_the_events_off_until_a_wake() {
+        const AT: u64 = 1_762_850_000_000;
+        let at = |minutes: i64| AT as i64 + minutes * MINUTE;
+        let forge = Forge::new();
+        forge.put("issues", &serde_json::json!([issue(12, "twelve")]));
+        let told = Told::new("o/r");
+        told.add(&wake(AT, GitHubEvent::Issues, Some(12)));
+        told.facts(&forge.gh, at(0), read).unwrap();
+        // Issue 13 comes, and its event is lost.
+        forge.put(
+            "issues",
+            &serde_json::json!([issue(13, "thirteen"), issue(12, "twelve")]),
+        );
+        told.expire();
+        told.facts(&forge.gh, at(30), read).unwrap();
+        assert!(told.on(at(30)), "the change waits for its wake");
+        assert_eq!(told.confirm(at(31)).len(), 1);
+        assert!(!told.on(at(31)));
+        let shown = told.shown(at(31)).unwrap();
+        assert_eq!((shown.on, shown.lost, shown.dropped), (false, true, 1));
+        assert!(!told.on(at(60)), "no wake came");
+
+        // The looks of the wave read in full while the events are off.
+        told.off();
+        told.add(&wake(AT + 61 * 60_000, GitHubEvent::Issues, Some(14)));
+        assert!(told.on(at(61)));
+        let shown = told.shown(at(61)).unwrap();
+        assert_eq!((shown.on, shown.lost), (true, false));
+        assert!(told.due(at(61)), "a full read first");
+        forge.put("issues", &serde_json::json!([issue(15, "fifteen")]));
+        told.facts(&forge.gh, at(61), read).unwrap();
+        assert!(told.confirm(at(70)).is_empty());
+        assert!(told.on(at(70)));
+    }
+
+    /// 01M7B3BH0W46KJRKZ4Q5Z96A3N: a dropped event before the last wake
+    /// turns no events off: the wakes come.
+    #[test]
+    fn a_dropped_event_before_the_last_wake_keeps_the_events_on() {
+        const AT: u64 = 1_762_850_000_000;
+        let told = Told::new("o/r");
+        told.add(&wake(AT, GitHubEvent::Issues, Some(12)));
+        let change = Change {
+            number: 13,
+            pull: false,
+            kind: GitHubEvent::Issues,
+        };
+        told.found(vec![change], AT as i64 + MINUTE);
+        // A wake of another item comes while the change waits for its own.
+        told.add(&wake(AT + 90_000, GitHubEvent::Issues, Some(14)));
+        let now = AT as i64 + 3 * MINUTE;
+        assert_eq!(told.confirm(now).len(), 1);
+        assert!(told.on(now));
+        assert!(!told.shown(now).unwrap().lost);
+    }
+
+    /// 01M7B3BH653KXWY3MH45DKB0BK: the read before a build goes into the
+    /// kept list, so the next look sees the new pull request with no read.
+    /// Its change waits for its wake, but for a pull request that a wake
+    /// since the last look named.
+    #[test]
+    fn the_read_before_a_build_goes_into_the_kept_list() {
+        let forge = Forge::new();
+        let told = Told::new("o/r");
+        told.facts(&forge.gh, 0, read).unwrap();
+        forge.calls();
+        // #41 comes with no wake, and #42 with one that no look took yet.
+        let pulls = serde_json::json!([pull(42, "c2"), pull(41, "c1")]);
+        let mut view = pull(42, "c2");
+        view["state"] = "OPEN".into();
+        forge.put("pull-42", &view);
+        told.add(&wake(1, GitHubEvent::PullRequest, Some(42)));
+        told.pulls_read(&forge.gh, &pulls.to_string(), MINUTE);
+        let facts = told.facts(&forge.gh, MINUTE, |gh| {
+            let mut facts = read(gh)?;
+            facts.open.pulls.sort_by_key(|p| p.number);
+            Ok(facts)
+        });
+        let numbers: Vec<u64> = facts.unwrap().open.pulls.iter().map(|p| p.number).collect();
+        assert_eq!(numbers, [41, 42]);
+        let calls = forge.calls();
+        assert!(!calls.iter().any(|c| c.starts_with("pr list")), "{calls:?}");
+        let grace = i64::try_from(GRACE.as_millis()).unwrap();
+        let found: Vec<u64> = told
+            .confirm(MINUTE + grace)
+            .iter()
+            .map(|d| d.change.number)
+            .collect();
+        assert_eq!(found, [41]);
     }
 
     /// A pull request that a wake of `issue_comment` names reads as a pull

@@ -70,7 +70,11 @@
 //! no conditional read ([`look_told`]). The safety look reads in full each
 //! [`hooks::SAFETY_LOOK_EVERY`], and an idle wave waits as long. It finds
 //! each change that no wake told: a dropped event. The look of the daemon
-//! takes the replies of the loop for as long.
+//! takes the replies of the loop for as long. A dropped event with no wake
+//! after it turns the events off: each look reads in full until a wake
+//! comes ([`hooks::Told::lost`], #2082). The kept list of the open pull
+//! requests can miss a new pull request, so the job reads that list again
+//! before the claim of a build ([`build_waits`]).
 //!
 //! ```mermaid
 //! flowchart TD
@@ -1915,6 +1919,22 @@ pub trait World: Send + Sync {
         Box::pin(async { None })
     }
 
+    /// The open pull request of the issue `issue` of `wave` that waits for
+    /// its verify or for the merge on the forge now ([`build_waits`],
+    /// #2082). The job reads it before the claim of a build: the kept
+    /// reply of the look can miss a new pull request when the wakes of
+    /// GitHub stop. The new read goes into `told`
+    /// ([`hooks::Told::pulls_read`]). The error is a fault of the read. The
+    /// default is none.
+    fn build_waits<'a>(
+        &'a self,
+        _wave: &'a Wave,
+        _issue: u64,
+        _told: Arc<hooks::Told>,
+    ) -> BoxFuture<'a, Result<Option<rollout::Pull>>> {
+        Box::pin(async { Ok(None) })
+    }
+
     /// True when the forge says now that the pull request `pull` of `wave`
     /// is open, out of the merge queue, at the head commit `head`, and with
     /// auto-merge off ([`rollout::merge_off`], 01M777N148MY8NR5RNDKXE9EVJ).
@@ -2760,6 +2780,11 @@ pub(crate) async fn job<R: Runtime + 'static>(
             take_back(&starts, &work);
             Some(line.clone())
         }
+        Err(ref e) if let Some(NoBuild(line)) = e.downcast_ref::<NoBuild>() => {
+            println!("{line}");
+            take_back(&starts, &work);
+            Some(line.clone())
+        }
         Err(e) if paused(&e) => {
             println!("{}", text::wave_claim_paused(&wave.repo, &item));
             take_back(&starts, &work);
@@ -2834,6 +2859,22 @@ impl std::fmt::Display for Verified {
 
 impl std::error::Error for Verified {}
 
+/// The read before the claim of a build ([`World::build_waits`],
+/// 01M7B3BH3H8Y26MTERAGDDGJ0V) found a pull request of the item that waits
+/// for its verify or for the merge, or it failed, with the line for the
+/// log ([`text::wave_build_waits`], [`text::wave_build_no_read`]). No
+/// session starts, the start does not count, and the lead hears nothing.
+#[derive(Debug)]
+pub(crate) struct NoBuild(String);
+
+impl std::fmt::Display for NoBuild {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for NoBuild {}
+
 /// The wait before the claim of `work` (#1729): the host with the most
 /// free room claims first. The host waits [`claim_wait`] for its live
 /// sessions and its limit now: an empty host does not wait. After a
@@ -2862,9 +2903,35 @@ async fn wait_to_claim<R: Runtime + 'static>(
     }
 }
 
+/// The read before the claim of the build of `issue` (#2082): the open
+/// pull requests of the item on the forge now ([`World::build_waits`]),
+/// into the events of the repository in `daemon`. The error is
+/// [`NoBuild`] when one waits for its verify or for the merge, or when
+/// the read fails.
+async fn read_before_build<R: Runtime + 'static>(
+    daemon: &Daemon<R>,
+    world: &dyn World,
+    wave: &Wave,
+    issue: u64,
+) -> Result<()> {
+    let line = match world
+        .build_waits(wave, issue, daemon.told(&wave.repo))
+        .await
+    {
+        Ok(None) => return Ok(()),
+        Ok(Some(pull)) => {
+            let merge = pull.verify() == Some(rollout::Verify::Passed);
+            text::wave_build_waits(&wave.repo, issue, pull.number, &pull.head, merge)
+        }
+        Err(e) => text::wave_build_no_read(&wave.repo, issue, &format!("{e:#}")),
+    };
+    Err(NoBuild(line).into())
+}
+
 /// The steps of a job up to the end of its session: the wait before the
-/// claim ([`wait_to_claim`]) when the lead did not ask for the job
-/// (`asked`), the read of the status `riff/verify` of the head of a
+/// claim ([`wait_to_claim`]) and the read of the open pull requests
+/// before a build ([`read_before_build`]) when the lead did not ask for
+/// the job (`asked`), the read of the status `riff/verify` of the head of a
 /// verify ([`World::verdict`]: a verdict that stops the verify,
 /// [`Verdicts::stops`], is the error [`Verified`]), the image that the
 /// wave pins, the steps before the start, and the session.
@@ -2881,6 +2948,11 @@ async fn start_job<R: Runtime + 'static>(
     let world = daemon.world();
     if !asked {
         wait_to_claim(daemon, &*world, wave, work).await?;
+        // The kept reply of the look can miss a new pull request of the
+        // item when the wakes of GitHub stop (#2082).
+        if let Work::Build { issue } = work {
+            read_before_build(daemon, &*world, wave, *issue).await?;
+        }
     }
     // The look can show a head as waiting after its verify passed or
     // failed: on another host, or before the event of the status (#1960,
@@ -4364,8 +4436,9 @@ pub fn look_with(
 /// [`look_with`] with the events of GitHub of the repository in `told`
 /// (#1656). While they are on ([`hooks::Told::on`]), the look reads only
 /// what the wakes since the last look named, and reads in full at the
-/// safety look ([`hooks::Told::facts`]). Else it asks GitHub first whether
-/// anything changed ([`crate::changes`]).
+/// safety look ([`hooks::Told::facts`]). After a dropped event with no
+/// wake after it, it reads in full ([`hooks::Told::lost`], #2082). Else it
+/// asks GitHub first whether anything changed ([`crate::changes`]).
 pub fn look_told(
     gh: &pr::Gh,
     repo: &str,
@@ -4401,6 +4474,11 @@ fn look_from(
     let now = crate::daemon::now_ms();
     let changes::Facts { branch, mut open } = match told {
         Some(told) if told.on(now) => told.facts(gh, now, read)?,
+        // The wakes do not come: the look reads in full (#2082).
+        Some(told) if told.lost(now) => {
+            told.off();
+            read(gh)?
+        }
         Some(told) => {
             told.off();
             changes::facts(gh, repo, || read(gh))?
@@ -4439,6 +4517,46 @@ fn look_from(
         merged,
         branch,
     })
+}
+
+/// The read before the claim of the build of the issue `issue` of `repo`
+/// with `gh` (01M7B3BH3H8Y26MTERAGDDGJ0V): a new read of the list of the
+/// open pull requests (`gh pr list` with [`rollout::PULL_FIELDS`]), and of
+/// the head of the pull request of the item that waits for a verify
+/// ([`rollout::head_wip`]). The read goes
+/// into `told` ([`hooks::Told::pulls_read`]), so the next look sees it. It
+/// gives the pull request of the item that waits for its verify or for the
+/// merge ([`rollout::waits_of`]).
+///
+/// ```
+/// let dir = tempfile::tempdir()?;
+/// let script = r#"#!/bin/sh
+/// case "$*" in
+///   "pr list"*) echo '[{"number":41,"headRefName":"worktree-issue-1","headRefOid":"c1","statusCheckRollup":[]}]' ;;
+///   *) echo 'Add it' ;;
+/// esac
+/// "#;
+/// let gh = riff::pr::Gh::at(isolated::write_program(dir.path().join("gh"), script));
+/// let told = riff::hooks::Told::new("o/r");
+/// let waits = riff::wave::build_waits(&gh, "o/r", 1, &told)?.unwrap();
+/// assert_eq!((waits.number, waits.verify()), (41, Some(riff::rollout::Verify::Asked)));
+/// assert!(riff::wave::build_waits(&gh, "o/r", 2, &told)?.is_none());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn build_waits(
+    gh: &pr::Gh,
+    repo: &str,
+    issue: u64,
+    told: &hooks::Told,
+) -> Result<Option<rollout::Pull>> {
+    let args = rollout::pull_args(repo);
+    let reply = gh.run(&args, None)?;
+    let pulls: Vec<rollout::Pull> =
+        serde_json::from_str(&reply).with_context(|| format!("gh {}", args.join(" ")))?;
+    told.pulls_read(gh, &reply, crate::daemon::now_ms());
+    Ok(rollout::waits_of(pulls, issue, |pull| {
+        rollout::head_wip(gh, repo, &pull.head)
+    }))
 }
 
 /// The lanes of the order of the verifies and the rebases ([`order()`],
@@ -4676,6 +4794,18 @@ impl World for Live {
                 }
             }
         })
+    }
+
+    fn build_waits<'a>(
+        &'a self,
+        wave: &'a Wave,
+        issue: u64,
+        told: Arc<hooks::Told>,
+    ) -> BoxFuture<'a, Result<Option<rollout::Pull>>> {
+        let repo = wave.repo.clone();
+        Box::pin(blocking(move || {
+            build_waits(&forge(&repo), &repo, issue, &told)
+        }))
     }
 
     fn merge_off<'a>(&'a self, wave: &'a Wave, pull: u64, head: &'a str) -> BoxFuture<'a, bool> {
@@ -5389,6 +5519,9 @@ mod tests {
         /// The reads of the status `riff/verify` of the head of a verify
         /// before its claim ([`World::verdict`]).
         status_reads: usize,
+        /// The reads of the open pull requests before the claim of a build
+        /// ([`World::build_waits`]).
+        build_reads: usize,
         /// The messages of the thread of the repository, oldest first,
         /// for a look that reads the fake `gh` of `reads`.
         thread: Vec<Message>,
@@ -5757,6 +5890,25 @@ mod tests {
                 };
                 let state = blocking(move || pr::verify_state(&gh, "o/r", &commit)).await;
                 state.ok().flatten().as_deref().and_then(Verdict::of_state)
+            })
+        }
+
+        /// The read of the real job from the fake `gh` of `reads`
+        /// ([`build_waits`]). Else none: the forge in memory has no kept
+        /// list.
+        fn build_waits<'a>(
+            &'a self,
+            _: &'a Wave,
+            issue: u64,
+            told: Arc<hooks::Told>,
+        ) -> BoxFuture<'a, Result<Option<rollout::Pull>>> {
+            let reads = lock(&self.reads).clone();
+            lock(&self.forge).build_reads += 1;
+            Box::pin(async move {
+                let Some(gh) = reads else {
+                    return Ok(None);
+                };
+                blocking(move || build_waits(&gh, "o/r", issue, &told)).await
             })
         }
 
@@ -7039,10 +7191,15 @@ esac
     /// `bin`, with the events of GitHub on: the safety look waits an hour,
     /// and a change waits no time for its wake.
     async fn reading(bin: &Path) -> (Here, Arc<hooks::Told>) {
+        reading_with(bin, Duration::ZERO).await
+    }
+
+    /// [`reading`], where a change waits `grace` for its wake.
+    async fn reading_with(bin: &Path, grace: Duration) -> (Here, Arc<hooks::Told>) {
         let here = Here::new(&[], 2, Arc::new(AtomicU64::new(64))).await;
         let gh = pr::Gh::at(isolated::write_program(bin.join("gh"), READ_GH)).with_shared_reads();
         *lock(&here.world.reads) = Some(Arc::new(gh));
-        let times = (Duration::from_secs(3600), Duration::ZERO, Duration::ZERO);
+        let times = (Duration::from_secs(3600), grace, Duration::ZERO);
         let told = hooks::Told::new("o/r").with_times(times.0, times.1, times.2);
         let told = here.daemon.set_told(told);
         let now = u64::try_from(crate::daemon::now_ms()).unwrap();
@@ -7138,6 +7295,120 @@ esac
             (change.number, change.pull, change.kind),
             (2, false, issues)
         );
+    }
+
+    /// 01M7B3BH3H8Y26MTERAGDDGJ0V, 01M7B3BH653KXWY3MH45DKB0BK (#2082): a
+    /// wave with a fake `gh` and the events of GitHub on. Pull request #41
+    /// of issue 1 comes, and no wake tells it: the kept list of the look
+    /// misses it, so the look shows issue-1 as free work. The read before
+    /// the build finds #41 waiting for its verify: the wave starts no build
+    /// of issue-1. The read goes into the kept list, so the next looks read
+    /// no list, and the wave starts the verify of #41. The change of #41
+    /// waits for its wake: the events stay on.
+    #[tokio::test]
+    async fn a_look_whose_kept_list_misses_the_new_pull_request_starts_no_build() {
+        let bin = tempfile::tempdir().unwrap();
+        let put = |name: &str, value: serde_json::Value| {
+            isolated::write_whole(bin.path().join(name), value.to_string());
+        };
+        put("issues", serde_json::json!([open_issue(1)]));
+        let (here, told) = reading_with(bin.path(), Duration::from_secs(3600)).await;
+        here.forge().holds.insert("issue-1".into());
+        here.run();
+        here.until(0, |h| h.forge().branch_reads >= 1).await;
+
+        // #41 waits for the verify of its head c1, and its event is lost.
+        let mut pull = pull_41();
+        pull["statusCheckRollup"].as_array_mut().unwrap().remove(0);
+        put("pulls", serde_json::json!([pull]));
+        item_reads(bin.path());
+        here.forge().holds.remove("issue-1");
+        here.until(1, |h| {
+            h.forge()
+                .starts
+                .iter()
+                .any(|(item, _)| item == "verify-issue-1")
+        })
+        .await;
+        here.idle(1).await;
+        {
+            let forge = here.forge();
+            let started: Vec<&str> = forge.starts.iter().map(|(i, _)| i.as_str()).collect();
+            assert_eq!(started, ["verify-issue-1"], "no build of issue-1");
+            assert_eq!(forge.build_reads, 1, "one read before the build");
+        }
+        let reads = item_reads(bin.path());
+        let lists: Vec<&String> = reads
+            .iter()
+            .filter(|c| c.starts_with("pr list --repo o/r --state open"))
+            .collect();
+        assert_eq!(lists.len(), 1, "{reads:?}");
+        assert!(told.on(crate::daemon::now_ms()), "it waits for its wake");
+    }
+
+    /// 01M7B3BH0W46KJRKZ4Q5Z96A3N (#2082): a wave with a fake `gh` and the
+    /// events of GitHub on. Issue 2 comes, and its event is lost: the safety
+    /// look finds a dropped event. With no wake after it, the events are
+    /// off, and each look reads GitHub in full, with no conditional read. A
+    /// wake turns them on: the looks read only what the wakes name again.
+    #[tokio::test]
+    async fn a_dropped_event_turns_the_events_off_and_a_wake_turns_them_on() {
+        let bin = tempfile::tempdir().unwrap();
+        let put = |name: &str, value: serde_json::Value| {
+            isolated::write_whole(bin.path().join(name), value.to_string());
+        };
+        put("issues", serde_json::json!([open_issue(1)]));
+        let (here, told) = reading(bin.path()).await;
+        here.forge()
+            .holds
+            .extend(["issue-1".into(), "issue-2".into()]);
+        here.run();
+        here.until(0, |h| h.forge().branch_reads >= 1).await;
+        item_reads(bin.path());
+        here.idle(0).await;
+        let reads = item_reads(bin.path());
+        assert!(reads.is_empty(), "the looks read no list: {reads:?}");
+
+        // Issue 2 comes with no event. The safety look finds it.
+        put("issues", serde_json::json!([open_issue(2), open_issue(1)]));
+        told.expire();
+        here.until(0, |_| {
+            let now = crate::daemon::now_ms();
+            told.shown(now).is_some_and(|s| s.dropped == 1) && !told.on(now)
+        })
+        .await;
+        let shown = told.shown(crate::daemon::now_ms()).unwrap();
+        assert_eq!((shown.on, shown.lost), (false, true));
+        item_reads(bin.path());
+        here.idle(0).await;
+        let log = std::fs::read_to_string(bin.path().join("gh.log")).unwrap_or_default();
+        assert!(!log.contains("api -i"), "no conditional read: {log}");
+        let reads = item_reads(bin.path());
+        let full = reads.iter().filter(|c| c.starts_with("issue list")).count();
+        assert!(full >= 2, "each look reads in full: {reads:?}");
+
+        // A wake comes. The first look reads in full, then the looks read
+        // only what the wakes name.
+        let mut view = open_issue(2);
+        view["state"] = "OPEN".into();
+        view["url"] = "https://github.com/o/r/issues/2".into();
+        put("issue-2", view);
+        let now = u64::try_from(crate::daemon::now_ms()).unwrap();
+        told.add(&riff_core::wire::GitHubWake {
+            id: now.max(told.last().unwrap() + 1),
+            repo: "o/r".parse().unwrap(),
+            kinds: vec![riff_core::wire::GitHubEvent::Issues],
+            number: Some(2),
+            events: 1,
+        });
+        assert!(told.on(crate::daemon::now_ms()));
+        here.idle(0).await;
+        item_reads(bin.path());
+        here.idle(0).await;
+        let reads = item_reads(bin.path());
+        assert!(reads.is_empty(), "{reads:?}");
+        let shown = told.shown(crate::daemon::now_ms()).unwrap();
+        assert_eq!((shown.on, shown.lost, shown.dropped), (true, false, 1));
     }
 
     /// 01M75WEDFKXGHMRFR73D1QDZCE (#1975): a wave with a fake forge and the

@@ -784,6 +784,38 @@ pub fn in_verify(pulls: &[Pull]) -> HashSet<u64> {
         .collect()
 }
 
+/// The open pull request of the issue `issue` in `pulls` that waits for a
+/// verify or for the merge, as [`in_verify`] finds it: the read before a
+/// build (#2082). `wip` tells whether the head of one that waits for a
+/// verify is a WIP commit ([`head_wip`]): a WIP head is a build again.
+/// It reads no thread ([`Pull::said`]): a failed head is a build.
+///
+/// ```
+/// use riff::rollout::{Check, Pull, Verify, waits_of};
+///
+/// let pull = |number, branch: &str, checks| Pull { number, branch: branch.into(), checks, ..Pull::default() };
+/// let pulls = vec![
+///     pull(40, "worktree-issue-12", vec![Check::verify("FAILURE")]),
+///     pull(41, "worktree-issue-13", vec![]),
+///     pull(42, "worktree-issue-12", vec![Check::verify("SUCCESS")]),
+/// ];
+/// let waits = waits_of(pulls.clone(), 12, |_| true).unwrap();
+/// assert_eq!((waits.number, waits.verify()), (42, Some(Verify::Passed)));
+/// assert_eq!(waits_of(pulls.clone(), 13, |_| false).unwrap().number, 41);
+/// // A WIP head is a build again.
+/// assert!(waits_of(pulls.clone(), 13, |_| true).is_none());
+/// assert!(waits_of(pulls, 14, |_| false).is_none());
+/// ```
+pub fn waits_of(pulls: Vec<Pull>, issue: u64, wip: impl Fn(&Pull) -> bool) -> Option<Pull> {
+    pulls
+        .into_iter()
+        .filter(|p| p.issue() == Some(issue))
+        .find_map(|mut pull| {
+            pull.wip = pull.verify() == Some(Verify::Asked) && wip(&pull);
+            matches!(pull.verify(), Some(Verify::Asked | Verify::Passed)).then_some(pull)
+        })
+}
+
 /// The fields of `gh pr list --json` that [`Pull`] reads. It names no
 /// field of [`CONNECTIONS`]: GitHub refuses a query of more than 500,000
 /// possible nodes (01M5QDWWSYK0J3N24GF8J123JQ). The WIP check reads the
