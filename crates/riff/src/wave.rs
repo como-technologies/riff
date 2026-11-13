@@ -2010,6 +2010,8 @@ pub trait World: Send + Sync {
     /// Frees the item of the session of `record` on riff-server at once,
     /// ends that session, and stops its keep-alive: a person ends the
     /// session ([`crate::daemon::Ask::End`], 01M579Z9VRD12FRK6DSYVKDHQB).
+    /// The error is of the free only: a failed end call goes to the log
+    /// (01M78VWTRY5XX9JPQHE3CMH6T2).
     fn free<'a>(&'a self, record: &'a Record) -> BoxFuture<'a, Result<()>>;
 
     /// Waits for the next wake of the session of `record` on riff-server,
@@ -3429,6 +3431,40 @@ pub(crate) async fn end_session(api: &Api, me: &SessionUri) -> bool {
     }
 }
 
+/// A riff-server in this test process that answers the first `failed`
+/// end calls with `status`, for a test of [`end_session`]. It gives its
+/// URL, and the count of its end calls.
+#[cfg(test)]
+pub(crate) async fn server_that_fails_ends(
+    status: axum::http::StatusCode,
+    failed: usize,
+) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+    use axum::response::IntoResponse;
+    use riff_core::wire::Call;
+
+    let ends = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = ends.clone();
+    let fails = axum::middleware::from_fn(
+        move |request: axum::extract::Request, next: axum::middleware::Next| {
+            let counted = counted.clone();
+            async move {
+                let end = request.uri().path() == riff_core::wire::End::PATH;
+                if end && counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < failed {
+                    return status.into_response();
+                }
+                next.run(request).await
+            }
+        },
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let server = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move {
+        let router = riff_server::router().layer(fails);
+        axum::serve(listener, router).await.unwrap();
+    });
+    (server, ends)
+}
+
 impl Live {
     /// Starts the keep-alive of the claim of the session `me`, a session
     /// in a container: it is live while the keep-alive comes
@@ -4751,7 +4787,8 @@ impl World for Live {
             if let Some(task) = lock(&self.alive).remove(&record.live.session) {
                 task.abort();
             }
-            api.end(&record.me).await
+            end_session(&api, &record.me).await;
+            Ok(())
         })
     }
 
@@ -6158,31 +6195,8 @@ mod tests {
     /// session ended, and `riff who` of another session does not show it.
     #[tokio::test]
     async fn a_failed_end_call_gets_one_more_try() {
-        use std::sync::atomic::AtomicUsize;
-
-        use axum::response::IntoResponse;
-        use riff_core::wire::Call;
-
-        let ends = Arc::new(AtomicUsize::new(0));
-        let counted = ends.clone();
-        let fails_first = axum::middleware::from_fn(
-            move |request: axum::extract::Request, next: axum::middleware::Next| {
-                let counted = counted.clone();
-                async move {
-                    let end = request.uri().path() == riff_core::wire::End::PATH;
-                    if end && counted.fetch_add(1, Ordering::SeqCst) == 0 {
-                        return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
-                    }
-                    next.run(request).await
-                }
-            },
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let server = format!("http://{}", listener.local_addr().unwrap());
-        tokio::spawn(async move {
-            let router = riff_server::router().layer(fails_first);
-            axum::serve(listener, router).await.unwrap();
-        });
+        let unavailable = axum::http::StatusCode::SERVICE_UNAVAILABLE;
+        let (server, ends) = server_that_fails_ends(unavailable, 1).await;
         let api = Api::new(&server).one_try(Duration::from_secs(20));
         let place = crate::identity::place_from_text("thelio/o/r").unwrap();
         let job = |id| {
@@ -6211,6 +6225,36 @@ mod tests {
             place,
         );
         assert!(!end_session(&Api::new("http://127.0.0.1:9"), &me).await);
+    }
+
+    /// 01M579Z9VRD12FRK6DSYVKDHQB, 01M78VWTRY5XX9JPQHE3CMH6T2: a person
+    /// ends a session, and riff-server refuses each end call. The free
+    /// worked, so it gives no error: the item is free, and the end gets
+    /// one more try ([`end_session`]).
+    #[tokio::test]
+    async fn a_free_with_a_failed_end_call_frees_the_item() {
+        let conflict = axum::http::StatusCode::CONFLICT;
+        let (server, ends) = server_that_fails_ends(conflict, usize::MAX).await;
+        let built = Built::at(server).await;
+        let person = riff_core::name::Who::new("mike", None).unwrap();
+        let person = SessionUri::new(person, built.wave.place(None).unwrap());
+        let (scope, running) = (api::PauseScope::Riff, RiffState::Running);
+        built.api.set_pause(&person, &scope, running).await.unwrap();
+        let thread: ThreadName = "o/r".parse().unwrap();
+        let me = &built.record.me;
+        assert!(
+            built
+                .api
+                .claim(me, &thread, "issue-12")
+                .await
+                .unwrap()
+                .granted
+        );
+
+        Live::default().free(&built.record).await.unwrap();
+        assert_eq!(ends.load(Ordering::SeqCst), 2);
+        let claimed = built.api.claim(&built.lead, &thread, "issue-12").await;
+        assert!(claimed.unwrap().granted, "the item is not free");
     }
 
     /// #1729: a free on riff-server wakes an idle wave at once. The lead
@@ -10148,6 +10192,11 @@ esac
             tokio::spawn(async move {
                 axum::serve(listener, riff_server::router()).await.unwrap();
             });
+            Self::at(server).await
+        }
+
+        /// The same riff on the riff-server at the URL `server`.
+        async fn at(server: String) -> Self {
             let api = Api::new(&server);
             let wave = Wave {
                 repo: "o/r".into(),

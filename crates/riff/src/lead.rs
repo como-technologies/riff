@@ -944,13 +944,7 @@ async fn launch_new(
             .and_then(|led| led.map_err(|held| Held(held).into())),
         false => person.lead(&named, &session).await,
     };
-    let led = match led {
-        Ok(reply) => reply,
-        Err(e) => {
-            let _ = api.end(&me).await;
-            return Err(e);
-        }
-    };
+    let led = or_end(&api, &me, led).await?;
     println!("{}", text::lead_made(&repo, led.replaced.as_ref()));
     let parts = Parts {
         repo: &repo,
@@ -964,11 +958,18 @@ async fn launch_new(
     };
     let start = parts.start(spec, start);
     println!("{}", text::lead_starts(&repo, &name_of(&repo), &session));
-    if let Err(e) = ask_start(dir, start).await {
-        let _ = api.end(&me).await;
-        return Err(e);
-    }
+    or_end(&api, &me, ask_start(dir, start).await).await?;
     Ok(session)
+}
+
+/// The result `step` of a step of [`launch_new`] after the start of the
+/// session `me` of the new lead. When the step failed, the session ends
+/// ([`crate::wave::end_session`]), and the error stays.
+async fn or_end<T>(api: &Api, me: &SessionUri, step: Result<T>) -> Result<T> {
+    if step.is_err() {
+        crate::wave::end_session(api, me).await;
+    }
+    step
 }
 
 /// What a start of the lead takes from the host and from the repository:
@@ -1515,6 +1516,41 @@ mod tests {
             ]
         );
         assert!(fake.running(NAME).await.unwrap());
+    }
+
+    /// 01M78VWTRY5XX9JPQHE3CMH6T2, #1791: another session holds the claim
+    /// lead of the project, so the start of a new lead fails after the
+    /// start of its session. riff-server refuses the first end call of
+    /// that session: the session ends with one more try ([`or_end`]), and
+    /// the error stays [`Held`].
+    #[tokio::test]
+    async fn a_failed_lead_start_ends_its_session_also_after_a_failed_end_call() {
+        use std::sync::atomic::Ordering;
+
+        use riff_core::name::Who;
+
+        let conflict = axum::http::StatusCode::CONFLICT;
+        let (server, ends) = crate::wave::server_that_fails_ends(conflict, 1).await;
+        let api = Api::new(&server);
+        let place = identity::place_from_text("thelio/o/r").unwrap();
+        let person = SessionUri::new(Who::new("mike", None).unwrap(), place.clone());
+        let lead = |id| SessionUri::new(Who::new("mike", Some(id)).unwrap(), place.clone());
+        let (first, second) = (lead("lead1"), lead("lead2"));
+        for me in [&first, &second] {
+            api.start(me, StartReason::Process, false).await.unwrap();
+        }
+        assert!(api.claim_lead(&person, "lead1").await.unwrap().is_ok());
+
+        let held = api.claim_lead(&person, "lead2").await.unwrap();
+        let held = held.map_err(|held| Held(held).into());
+        let error = or_end(&api, &second, held).await.unwrap_err();
+        assert!(error.downcast_ref::<Held>().is_some(), "{error:#}");
+        assert_eq!(ends.load(Ordering::SeqCst), 2);
+        let who = api.who(&first, false).await.unwrap();
+        assert!(!who.iter().any(|s| s.uri.who() == second.who()), "{who:?}");
+        // A step that worked ends no session.
+        assert_eq!(or_end(&api, &first, anyhow::Ok(7)).await.unwrap(), 7);
+        assert_eq!(ends.load(Ordering::SeqCst), 2);
     }
 
     /// 01M51PD7Q24N252V66NFEHY49N
