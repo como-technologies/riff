@@ -4572,7 +4572,9 @@ mod tests {
         assert_eq!(facts.no_checkpoint, None);
         let chunks = store.store.list(log::LOG).await.unwrap().len();
         assert_eq!(facts.chunks, chunks as u64);
-        assert_eq!((facts.sessions, facts.threads), (2, 1));
+        // The thread of the repository, and `chat`: the lead joined it
+        // (01M7AYPPAT8C40NJQSSTGHZVP1).
+        assert_eq!((facts.sessions, facts.threads), (2, 2));
         assert_eq!(facts.sign_ins, 0);
         assert!(facts.memory_bytes.is_none_or(|bytes| bytes > 0));
         assert!(facts.started_at_ms > 0 && facts.started_at_ms <= facts.now_ms);

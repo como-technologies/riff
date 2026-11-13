@@ -91,6 +91,14 @@ impl Work {
         self.claims.get(&(thread.clone(), item.to_owned()))
     }
 
+    /// The lead of each user in `thread`.
+    pub(super) fn leads_in<'a>(&'a self, thread: &'a ThreadName) -> impl Iterator<Item = &'a Who> {
+        self.leads
+            .iter()
+            .filter(move |((_, lead), _)| lead == thread)
+            .map(|(_, who)| who)
+    }
+
     /// Each thread where `user` has a lead (#1666).
     pub(super) fn lead_threads<'a>(
         &'a self,
@@ -601,6 +609,11 @@ impl Command for ReleaseFor {
 /// the claim gets the refusal `held`, which names it. Else the new lead
 /// takes the claim: a `released` record for the old holder, then the
 /// `claimed` record.
+///
+/// A new lead joins `chat`, before its `lead_set` record
+/// (01M7AYPPAT8C40NJQSSTGHZVP1). So it takes the read cursor of `chat` of
+/// the leads before it, and reads each line that they did not read: see
+/// [`State::lead`](super::State::lead).
 impl Command for Lead {
     const KIND: CommandKind = CommandKind::Lead;
     type Reply = LeadReply;
@@ -629,6 +642,13 @@ impl Command for Lead {
             .filter(|old| **old != who)
             .cloned();
         if lead != Some(&who) {
+            let chat = ThreadName::chat();
+            if !view.riff.threads().member(&who, &chat) {
+                changes.push(Change::JoinedThread(Member {
+                    session: view.plain(&who),
+                    thread: chat,
+                }));
+            }
             changes.push(Change::LeadSet(Member {
                 session: view.plain(&who),
                 thread,
@@ -710,12 +730,9 @@ impl View<'_> {
             return None;
         }
         let work = self.riff.work();
-        let last = work.holder(thread, LEAD_CLAIM).or_else(|| {
-            work.leads
-                .iter()
-                .find(|((_, lead), _)| lead == thread)
-                .map(|(_, who)| who)
-        })?;
+        let last = work
+            .holder(thread, LEAD_CLAIM)
+            .or_else(|| work.leads_in(thread).next())?;
         let session = self.presence.sessions.get(last)?;
         Some(session.place.host().to_owned())
     }

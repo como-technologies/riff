@@ -541,7 +541,7 @@ async fn lead_marks_the_lead_and_tell_lead_reaches_it() {
 
 /// A new lead finds only the messages unread that the lead before it did
 /// not read, and a new session finds the messages from before its join
-/// read (01M5QVD3B1GT7STHBQS7NK4DR0).
+/// read (01M5QVD3B1GT7STHBQS7NK4DR0, 01M7AYPPAT8C40NJQSSTGHZVP1).
 #[tokio::test]
 async fn a_new_lead_reads_only_what_the_lead_before_it_did_not_read() {
     let server = start_server().await;

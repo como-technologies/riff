@@ -3501,11 +3501,7 @@
   instructions of the riff tools name this selector.
 - **01M5QVD3B1GT7STHBQS7NK4DR0** A session starts each thread that it
   joins at the newest message of the thread: the messages before its
-  join are not unread, and `read` with `all` shows them. A session that
-  becomes the lead of its user in a repository takes the read cursors of
-  the lead before it, in each thread that both joined. So its unread
-  messages in those threads are the messages that the lead before it did
-  not read.
+  join are not unread, and `read` with `all` shows them.
 - **01M5TKG2K1AYK1KE7C2AA2W9DS** A post can carry a key. `riff-server`
   drops a post whose key is the key of a kept message of the same user
   in the same thread: it adds no message, wakes no session, and answers
@@ -3731,6 +3727,13 @@
   that woke the session, the line of that thread says that they show
   above, in the part of 01M588J4XNV1TXEPMGTKRVY9VK, and names the thread
   for its other messages.
+- **01M7AYPPAT8C40NJQSSTGHZVP1** A session that becomes the lead of a
+  project joins `chat`. In each thread that it joined, its read cursor
+  becomes the newest cursor of the leads of the project before it, of
+  each person, that joined or read the thread. So its unread messages
+  are the messages that the lead before it did not read, also each line
+  of `chat` that came while the project had no lead. This supersedes
+  01M5QVD3B1GT7STHBQS7NK4DR0 in part.
 
 ## Security
 

@@ -817,17 +817,16 @@ impl State {
             }
             _ => None,
         };
-        let replaced = match &record.change {
+        let before: Vec<Who> = match &record.change {
             Change::LeadSet(member) => {
                 let who = member.session.who();
-                let key = (who.user().to_owned(), member.thread.clone());
-                self.written.work().leads.get(&key).cloned()
+                let leads = self.written.work().leads_in(&member.thread);
+                leads.filter(|lead| *lead != who).cloned().collect()
             }
-            _ => None,
+            _ => Vec::new(),
         };
         apply(&mut self.written, record);
-        self.presence
-            .applied(record, &self.written, replaced.as_ref(), at);
+        self.presence.applied(record, &self.written, &before, at);
         let who = cleared.filter(|who| !self.must_clear(who))?;
         let wake = self.missed(&who)?;
         Some((who, wake))
@@ -2173,7 +2172,7 @@ impl State {
     /// ```
     ///
     /// The new lead takes the read cursors of the old lead
-    /// (01M5QVD3B1GT7STHBQS7NK4DR0). It finds unread only what the old
+    /// (01M7AYPPAT8C40NJQSSTGHZVP1). It finds unread only what the old
     /// lead did not read, not the kept history of the thread:
     ///
     /// ```
@@ -2204,6 +2203,43 @@ impl State {
     /// // As the lead, it reads what the old lead did not read.
     /// let unread = state.read(&new, &thread, false, now).unwrap();
     /// assert_eq!(unread.iter().map(|m| m.body.as_str()).collect::<Vec<_>>(), ["four"]);
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    ///
+    /// A new lead joins `chat`, and takes the cursor of the leads before
+    /// it there too, of each person. So a line to the project that came
+    /// while the project had no lead waits for the next lead:
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::name::{SessionUri, ThreadName};
+    /// use riff_core::selector::Selector;
+    /// use riff_core::wire::Post;
+    /// use riff_state::state::State;
+    ///
+    /// let old: SessionUri = "riff://mike@thelio/como-technologies/riff?session=m1".parse()?;
+    /// let new: SessionUri = "riff://brett@heron/como-technologies/riff?session=b1".parse()?;
+    /// let mike: SessionUri = "riff://mike@thelio".parse()?;
+    /// let chat = Some(ThreadName::chat());
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// state.register(&old, now);
+    /// state.lead(&old, now).unwrap();
+    /// state.post(Post::new(&mike, chat.clone(), vec![], "hi"), now, 0).unwrap();
+    /// assert_eq!(state.read_threads(&old, false, now)[0].messages[0].body, "hi");
+    /// state.end(&old, now);
+    ///
+    /// // No lead runs: the line wakes no session, and waits.
+    /// let to = vec![Selector::name("riff")];
+    /// let waits = state.post(Post::new(&mike, chat, to, "@riff is #12 done?"), now, 0).unwrap();
+    /// assert!(waits.woken.is_empty());
+    ///
+    /// // The new lead is a session of brett: it reads the line.
+    /// state.register(&new, now);
+    /// state.lead(&new, now).unwrap();
+    /// let pages = state.read_threads(&new, false, now);
+    /// let lines: Vec<&str> = pages.iter().flat_map(|p| &p.messages).map(|m| m.body.as_str()).collect();
+    /// assert_eq!(lines, ["@riff is #12 done?"]);
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     pub fn lead(&mut self, session: &SessionUri, now: Instant) -> Result<LeadReply, String> {
@@ -3258,14 +3294,19 @@ mod tests {
             .unwrap()
     }
 
+    /// Each session joins the thread of its repository. The lead joins
+    /// `chat` too (01M7AYPPAT8C40NJQSSTGHZVP1).
     #[test]
     fn register_joins_the_repository_thread() {
         let now = Instant::now();
         let mut state = setup(now);
-        let threads = state.threads(&api(), now);
+        let threads = state.threads(&tests(), now);
         assert_eq!(threads.len(), 1);
         assert_eq!(threads[0].thread, repo());
         assert_eq!(threads[0].members.len(), 3);
+        let threads = state.threads(&api(), now);
+        let names: Vec<&ThreadName> = threads.iter().map(|t| &t.thread).collect();
+        assert_eq!(names, [&ThreadName::chat(), &repo()]);
     }
 
     /// The riff of a session comes from the keep-alive that names one,
@@ -4629,7 +4670,7 @@ mod tests {
         }
     }
 
-    /// 01M5QVD3B1GT7STHBQS7NK4DR0: the lead A reads the thread T to the
+    /// 01M7AYPPAT8C40NJQSSTGHZVP1: the lead A reads the thread T to the
     /// message N. The session B becomes the lead. B finds only the
     /// messages after N unread.
     #[test]
@@ -4655,14 +4696,15 @@ mod tests {
         assert_eq!(state.presence.cursor(api().who(), &repo()), 3);
     }
 
-    /// The new lead takes the cursors only of the threads that both
-    /// joined. It takes none of another lead.
+    /// The new lead takes the cursors of the threads that it joined, and
+    /// it joins `chat` (01M7AYPPAT8C40NJQSSTGHZVP1). It takes none of a
+    /// thread that only the lead before it joined.
     #[test]
-    fn a_new_lead_takes_only_the_cursors_of_the_threads_that_both_joined() {
+    fn a_new_lead_takes_the_cursors_of_its_threads_and_of_the_chat() {
         let now = Instant::now();
         let mut state = setup(now);
-        let (design, chat) = (thread("design"), thread("chat"));
-        for name in ["design", "chat"] {
+        let (design, chat, release) = (thread("design"), thread("chat"), thread("release"));
+        for name in ["design", "chat", "release"] {
             post(&mut state, &tests(), name, &["session=a1"], "one");
             post(&mut state, &tests(), name, &["session=a1"], "two");
             assert_eq!(
@@ -4671,13 +4713,67 @@ mod tests {
             );
         }
         post(&mut state, &tests(), "design", &["session=a1"], "three");
+        post(&mut state, &tests(), "chat", &[], "three");
         state.register(&next(), now);
         state.join(&next(), &design, now);
         state.lead(&next(), now).unwrap();
         // Both joined `design`: B takes the cursor 2 of A.
         assert_eq!(state.presence.cursor(next().who(), &design), 2);
-        // B joined no `chat`: it has no cursor there.
-        assert_eq!(state.presence.cursor(next().who(), &chat), 0);
+        // B joined `chat` as the lead: it takes the cursor 2 of A there.
+        assert_eq!(state.presence.cursor(next().who(), &chat), 2);
+        assert_eq!(unread_in(&state, &next(), &chat, now), 1);
+        // B joined no `release`: it has no cursor there.
+        assert_eq!(state.presence.cursor(next().who(), &release), 0);
+    }
+
+    /// The old lead `api` reads the chat and ends. A line to the project
+    /// comes, and wakes no session. Then `new` starts and becomes the
+    /// lead. Gives the lines of `chat` in the read of `new` with no
+    /// thread (01M7AYPPAT8C40NJQSSTGHZVP1).
+    fn a_line_between_two_leads(new: &SessionUri, now: Instant) -> Vec<String> {
+        let mut state = setup(now);
+        let mike = uri("riff://mike@pangolin");
+        let chat = Some(ThreadName::chat());
+        state
+            .post(Post::new(&mike, chat.clone(), vec![], "old"), now, 0)
+            .unwrap();
+        assert_eq!(
+            state
+                .read(&api(), &thread("chat"), false, now)
+                .unwrap()
+                .len(),
+            1
+        );
+        state.end(&api(), now);
+        let to = vec![Selector::name("riff")];
+        let line = Post::new(&mike, chat, to, "@riff is #12 done?");
+        assert!(state.post(line, now, 0).unwrap().woken.is_empty());
+
+        state.register(new, now);
+        assert_eq!(unread_in(&state, new, &thread("chat"), now), 0);
+        state.lead(new, now).unwrap();
+        let pages = state.read_threads(new, false, now);
+        let page = pages.iter().find(|p| p.thread == ThreadName::chat());
+        page.map_or(Vec::new(), |p| {
+            p.messages.iter().map(|m| m.body.clone()).collect()
+        })
+    }
+
+    /// A new lead of the same person reads the line of `chat` that came
+    /// while the project had no lead, and not the line that the lead
+    /// before it read.
+    #[test]
+    fn a_new_lead_reads_the_line_of_the_chat_that_came_between_two_leads() {
+        let lines = a_line_between_two_leads(&next(), Instant::now());
+        assert_eq!(lines, ["@riff is #12 done?"]);
+    }
+
+    /// The same with a new lead of another person.
+    #[test]
+    fn a_new_lead_of_another_person_reads_the_line_of_the_chat_that_came_between_two_leads() {
+        let brett = uri("riff://brett@heron/como-technologies/riff?session=e5");
+        let lines = a_line_between_two_leads(&brett, Instant::now());
+        assert_eq!(lines, ["@riff is #12 done?"]);
     }
 
     /// A lead with no lead before it keeps the cursors that it has.
@@ -4753,11 +4849,12 @@ mod tests {
         assert_eq!(unread_in(&loaded, &next(), &repo(), now), 2);
         assert_eq!(unread_in(&loaded, &api(), &repo(), now), 2);
 
-        // The log holds no read. In a full replay the lead before has no
-        // cursor to give, and B keeps the cursor of its join.
+        // The log holds no read. In a full replay the lead before joined
+        // the thread and read no message of it: B finds the five unread,
+        // as A does (01M7AYPPAT8C40NJQSSTGHZVP1).
         let replayed = State::replay(before.into_iter().chain(after), now, T0);
         assert_eq!(unread_in(&replayed, &api(), &repo(), now), 5);
-        assert_eq!(unread_in(&replayed, &next(), &repo(), now), 0);
+        assert_eq!(unread_in(&replayed, &next(), &repo(), now), 5);
     }
 
     #[test]

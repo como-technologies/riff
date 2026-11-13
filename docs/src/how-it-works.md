@@ -4373,7 +4373,9 @@ A chat line wakes only the names that it holds. `@riff` wakes the lead
 of the project riff, also when the lead is a session of another person:
 the name of a project is its repository after the slash. `@brett`
 wakes the person brett: the terminals of brett, and no agent session of
-brett. A line can hold more than one name.
+brett. A line can hold more than one name. When the project has no
+lead, the next lead reads the line: see
+[When you have no lead](#when-you-have-no-lead).
 A line with no name wakes no one: it stays in the chat for each member
 who reads it. A line that names a person, with `@USER` or with `USER:`
 at the start, is also a highlight on the terminal of that person
@@ -6597,8 +6599,9 @@ flowchart TD
 ### What a new lead reads
 
 A new lead does not find the kept history of each thread unread. It
-takes the read marks of the lead before it, in each thread that both
-joined. So its unread messages are the messages that the old lead did
+joins `chat`, and takes the read marks of the lead before it, in each
+thread that it joined. The lead before it can be a session of another
+person. So its unread messages are the messages that the old lead did
 not read. This holds for each new lead: after `riff lead move`, after
 `riff lead restart`, and when a host starts a new lead after the end
 of the old one.
@@ -6611,11 +6614,15 @@ sequenceDiagram
     A->>E: read the thread up to message 3
     Note over E: messages 4 and 5 come
     B->>E: start: joins the thread at message 5
-    B->>E: named the lead
+    B->>E: named the lead: joins chat
     Note over E: B takes the mark of A: message 3
     B->>E: read
     E->>B: messages 4 and 5
 ```
+
+A line in `chat` that names the project, for example `@riff`, waits
+while the project has no lead. The next lead reads it: see
+[When you have no lead](#when-you-have-no-lead).
 
 A thread that the new lead joins after it is the lead starts at its
 newest message, as for each session: see
@@ -6640,6 +6647,22 @@ see:
   claim.
 - No session of the project can pause or resume the riff. You can,
   from a terminal.
+- A line in `chat` that names the project, for example `@riff`, wakes
+  no session. The line waits. The next lead of the project finds it
+  unread, also when the next lead is a session of another person.
+
+```mermaid
+sequenceDiagram
+    participant P as you, in riff chat
+    participant E as riff-server
+    participant B as the next lead
+    Note over E: the project has no lead
+    P->>E: @riff is #12 done?
+    Note over E: the line wakes no session, and waits
+    B->>E: named the lead: joins chat
+    B->>E: read
+    E->>B: @riff is #12 done?
+```
 
 To get a lead, give workers from a host in a clone of the repository:
 its riff daemon claims the lead and starts it. See

@@ -53,6 +53,11 @@ fn design() -> ThreadName {
     "design".parse().unwrap()
 }
 
+/// The join of `me` to `chat`: a new lead joins it (01M7AYPPAT8C40NJQSSTGHZVP1).
+fn joined_chat(me: &SessionUri) -> Change {
+    joined(me, &ThreadName::chat())
+}
+
 fn joined(me: &SessionUri, thread: &ThreadName) -> Change {
     Change::JoinedThread(Member {
         session: me.clone(),
@@ -1134,7 +1139,13 @@ fn a_person_makes_a_session_the_lead_and_tells_the_old_lead() {
     given(&team())
         .live(&[ann(), ann2()])
         .when(&person_here(), Lead("a2"))
-        .then(&[claimed(&ann2(), LEAD_CLAIM), lead_set(&ann2()), join, told]);
+        .then(&[
+            claimed(&ann2(), LEAD_CLAIM),
+            joined_chat(&ann2()),
+            lead_set(&ann2()),
+            join,
+            told,
+        ]);
     given(&[team(), vec![claimed(&ann(), LEAD_CLAIM)]].concat())
         .live(&[ann()])
         .when(&person_here(), Lead("a1"))
@@ -1154,6 +1165,7 @@ fn a_person_takes_the_lead_of_the_project_from_the_lead_of_another_user() {
         .then(&[
             released(&bob(), LEAD_CLAIM),
             claimed(&ann(), LEAD_CLAIM),
+            joined_chat(&ann()),
             lead_set(&ann()),
             join,
             told,
@@ -1170,6 +1182,21 @@ fn a_person_makes_a_lead_with_no_live_lead() {
     given(&[joined(&ann(), &repo())])
         .live(&[ann()])
         .when(&person_here(), Lead("a1"))
+        .then(&[
+            claimed(&ann(), LEAD_CLAIM),
+            joined_chat(&ann()),
+            lead_set(&ann()),
+        ]);
+}
+
+/// A new lead joins `chat` before its `lead_set` record, so it takes the
+/// cursor of the leads before it there. A new lead in `chat` joins it
+/// no more (01M7AYPPAT8C40NJQSSTGHZVP1).
+#[test]
+fn a_new_lead_joins_the_chat() {
+    given(&[joined(&ann(), &repo()), joined_chat(&ann())])
+        .live(&[ann()])
+        .when(&person_here(), Lead("a1"))
         .then(&[claimed(&ann(), LEAD_CLAIM), lead_set(&ann())]);
 }
 
@@ -1182,7 +1209,11 @@ fn a_claim_lead_if_free_gives_the_one_lead_of_the_project() {
     given(&[joined(&ann(), &repo())])
         .live(&[ann()])
         .when(&person_here(), LeadIfFree("a1"))
-        .then(&[claimed(&ann(), LEAD_CLAIM), lead_set(&ann())]);
+        .then(&[
+            claimed(&ann(), LEAD_CLAIM),
+            joined_chat(&ann()),
+            lead_set(&ann()),
+        ]);
     let led = [
         joined(&ann(), &repo()),
         joined(&thelio, &repo()),
@@ -1202,6 +1233,7 @@ fn a_claim_lead_if_free_gives_the_one_lead_of_the_project() {
         .then(&[
             released(&thelio, LEAD_CLAIM),
             claimed(&ann(), LEAD_CLAIM),
+            joined_chat(&ann()),
             lead_set(&ann()),
         ]);
 }
@@ -1224,6 +1256,7 @@ fn a_person_moves_the_claim_lead_to_the_lead_that_it_names() {
     .then(&[
         released(&ann(), LEAD_CLAIM),
         claimed(&thelio, LEAD_CLAIM),
+        joined_chat(&thelio),
         lead_set(&thelio),
         join,
         told,
