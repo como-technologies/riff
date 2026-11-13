@@ -12027,6 +12027,41 @@ pub fn wave_claim_paused(repo: &str, item: &str) -> String {
     )
 }
 
+/// The end call of the session `session` of the daemon failed with
+/// `error`. The daemon tries it one more time
+/// (01M78VWTRY5XX9JPQHE3CMH6T2).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::end_failed("riff://ann@heron/o/r?session=a1#issue-12", "no reply"),
+///     "riff-server did not end the session riff://ann@heron/o/r?session=a1#issue-12: \
+///      no reply. riff tries again."
+/// );
+/// ```
+pub fn end_failed(session: &str, error: &str) -> String {
+    format!("riff-server did not end the session {session}: {error}. riff tries again.")
+}
+
+/// The second end call of the session `session` of the daemon failed
+/// with `error`: the session stays until riff-server finds it gone
+/// (01M78VWTRY5XX9JPQHE3CMH6T2).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::end_stays("riff://ann@heron/o/r?session=a1#issue-12", "no reply"),
+///     "riff-server did not end the session riff://ann@heron/o/r?session=a1#issue-12: \
+///      no reply. The session stays in riff who until riff-server finds it gone, 3 \
+///      minutes after its last call or keep-alive."
+/// );
+/// ```
+pub fn end_stays(session: &str, error: &str) -> String {
+    format!(
+        "riff-server did not end the session {session}: {error}. The session stays in \
+         riff who until riff-server finds it gone, 3 minutes after its last call or \
+         keep-alive."
+    )
+}
+
 /// A session of a wave ended.
 pub fn wave_ended(repo: &str, item: &str, code: Option<i32>, failed: bool) -> String {
     let how = match (code, failed) {

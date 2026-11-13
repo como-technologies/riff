@@ -4848,6 +4848,19 @@ already (see
 When the daemon stops during a session, the session runs on. A new
 daemon takes it up, and does the steps after its end.
 
+### Find a session that did not end
+
+The daemon ends each of its sessions on riff-server. When riff-server
+does not take the end, the daemon logs the error, and tries one more
+time. When that try fails too, the log says that the session stays.
+Then `riff who` shows the session until riff-server finds it gone, 3
+minutes after its last call or keep-alive. Find these lines in the log
+of the daemon:
+
+```sh
+journalctl --user -u riff | grep 'did not end the session'
+```
+
 ## Run the lead and watch the riff
 
 The lead is a session of the riff daemon too: `claude` in

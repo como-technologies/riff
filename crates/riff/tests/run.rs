@@ -3600,10 +3600,13 @@ async fn a_claim_refused_for_a_pause_ends_the_session_of_the_job() {
     )
     .await;
 
+    // The daemon ends the session before the line, and logs a failed
+    // end call (01M78VWTRY5XX9JPQHE3CMH6T2).
     let who = machine.ok(None, &["who", "--long"]).await;
     assert!(
         !who.contains("#issue-12"),
-        "the session of the job lives: {who}"
+        "the session of the job lives: {who}\n{}",
+        machine.read("daemon.out")
     );
     assert!(!bin.join("run.args").exists(), "a container started");
     let thread = machine.ok(Some("lead1"), &["read", "--all"]).await;

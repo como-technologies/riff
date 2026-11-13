@@ -5342,6 +5342,11 @@ of this part when they merge.
   (#887), the removal of riff-server (#888), and the steps of #889 that
   end riff-server. A new design brings them back when Mike decides that
   riff-server goes.
+- **01M78VWTRY5XX9JPQHE3CMH6T2** When the end call of a session of the
+  riff daemon fails, the daemon logs one line with the error, and sends
+  the end call one more time. When that call fails too, the daemon logs
+  one line that says that the session stays until riff-server finds it
+  gone.
 
 ### Shape
 
