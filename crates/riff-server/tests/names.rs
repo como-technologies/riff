@@ -1,11 +1,12 @@
 //! The names of the chat over HTTP (01M6XZ27XV8RAC8B72DCM937ST,
 //! 01M6XZ280AMTAMPD6R4212YC2T, 01M77XW0X8Z4M3EXGRDEXV6S2B): the query
 //! `names`, and the resolve of each name of a post, on a real server with
-//! no sign-in.
+//! no sign-in. A line to a project with no lead waits for the next lead
+//! (01M7AYPPAT8C40NJQSSTGHZVP1).
 
 use crate::common;
 
-use riff_core::wire::{NameKind, NamesReply, Posted, ReadReply};
+use riff_core::wire::{NameKind, NamesReply, Posted, ReadReply, ReadThreadsReply};
 use serde_json::{Value, json};
 
 /// The terminal of mike: the sender of the chat lines.
@@ -149,4 +150,36 @@ async fn a_project_with_no_lead_wakes_no_one_and_a_name_stands_alone() {
     assert_eq!(refused.status(), 400);
     let text = refused.text().await.unwrap();
     assert!(text.contains("a name stands alone"), "{text}");
+}
+
+/// A line to a project between two leads (01M7AYPPAT8C40NJQSSTGHZVP1):
+/// the lead of mike reads the chat and ends, a line to the project wakes
+/// no one, and the next lead, a session of brett, reads the line with
+/// its read of no thread. It does not find the line that the lead before
+/// it read unread.
+#[tokio::test]
+async fn the_next_lead_of_another_person_reads_a_line_that_came_with_no_lead() {
+    let (_service, base) = common::start(false, &[]).await;
+    lead(&base, "mike", "como-technologies/riff", "m1").await;
+    let old = "riff://mike@thelio/como-technologies/riff?session=m1";
+    chat(&base, &[], "the release is out").await;
+    let read = json!({ "me": old, "thread": "chat" });
+    let reply: ReadReply = ok(&base, "/v1/read", read).await;
+    assert_eq!(reply.messages.len(), 1);
+    let _: Value = ok(&base, "/v1/end", json!({ "me": old })).await;
+
+    let waits = chat(&base, &["riff"], "@riff is #12 done?").await;
+    assert!(waits.woken.is_empty(), "{:?}", waits.woken);
+
+    lead(&base, "brett", "como-technologies/riff", "b1").await;
+    let new = "riff://brett@heron/como-technologies/riff?session=b1";
+    let reply: ReadThreadsReply = ok(&base, "/v1/read/threads", json!({ "me": new })).await;
+    let lines: Vec<&str> = reply
+        .pages
+        .iter()
+        .filter(|page| page.thread.to_string() == "chat")
+        .flat_map(|page| &page.messages)
+        .map(|m| m.body.as_str())
+        .collect();
+    assert_eq!(lines, ["@riff is #12 done?"]);
 }

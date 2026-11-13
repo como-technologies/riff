@@ -28,9 +28,11 @@
 //! | neither | no session: the line still goes | none |
 //!
 //! A project with no live lead wakes no session: the line waits in the
-//! log. A name never wakes a free session in the place of a lead, as a
-//! `lead=true` selector of a thread does (01M3JY1TBPQHH6WPPBTF42T64H). A
-//! post with no selector wakes no session.
+//! log, and the next lead of the project reads it as unread
+//! (01M7AYPPAT8C40NJQSSTGHZVP1). A name never wakes a free session in
+//! the place of a lead, as a `lead=true` selector of a thread does
+//! (01M3JY1TBPQHH6WPPBTF42T64H). A post with no selector wakes no
+//! session.
 //!
 //! ```mermaid
 //! flowchart LR
@@ -39,6 +41,7 @@
 //!     R -- "a project" --> L["the lead of the project"]
 //!     R -- "neither" --> N["no session: the line goes"]
 //!     L -- "no live lead" --> W["no session: the line waits in the log"]
+//!     W -- "a new lead starts" --> X["the new lead reads the line"]
 //! ```
 //!
 //! [`State::names`](super::State::names) gives the list for the
