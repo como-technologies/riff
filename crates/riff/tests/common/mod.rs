@@ -301,6 +301,48 @@ pub fn session_socket(
     (dir, path.to_string_lossy().into_owned(), asked)
 }
 
+/// A socket at `path` that takes each connection and never answers, as a
+/// riff daemon that hangs (#1923). It holds each connection.
+pub fn silent_socket(path: &std::path::Path) {
+    let listener = std::os::unix::net::UnixListener::bind(path).unwrap();
+    std::thread::spawn(move || {
+        let mut held = Vec::new();
+        for conn in listener.incoming().flatten() {
+            held.push(conn);
+        }
+    });
+}
+
+/// The output of `cmd`, and the time that it took. A command that does
+/// not end in `most` fails the test: the test stops it, so it does not
+/// hang the run.
+pub fn output_in(
+    mut cmd: std::process::Command,
+    most: std::time::Duration,
+) -> (std::process::Output, std::time::Duration) {
+    use std::process::Stdio;
+    let started = std::time::Instant::now();
+    let mut child = cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    while child.try_wait().unwrap().is_none() {
+        if started.elapsed() > most {
+            let _ = child.kill();
+            let out = child.wait_with_output().unwrap();
+            panic!(
+                "no end in {most:?}: {}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let took = started.elapsed();
+    (child.wait_with_output().unwrap(), took)
+}
+
 /// The names of the calls that `asked` holds, in order.
 pub fn call_names(asked: &Asked) -> Vec<String> {
     let asked = asked.lock().unwrap();

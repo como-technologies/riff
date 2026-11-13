@@ -650,6 +650,8 @@ enum Command {
     /// cut to the width of the terminal. A process that called GitHub shows
     /// its calls and GraphQL points of the last hour. The riff daemon reads
     /// the processes, so riff ps works in the container of the lead too.
+    /// It waits at most 20 seconds for the answer of the daemon, and exits
+    /// with 1 when no daemon answers in that time.
     Ps,
     /// Run the riff daemon, or install, remove or show it
     ///
@@ -1495,8 +1497,9 @@ enum DaemonCommand {
     /// limit of the host, each session, each start that waits for room,
     /// and each wave. Last it shows the calls of gh of the last hour,
     /// with their GraphQL points, and the points that GitHub says are
-    /// left. It exits with 1 when no daemon answers, and shows the state
-    /// of the unit: riff.service on Linux, the launchd agent on a Mac.
+    /// left. It exits with 1 when no daemon answers in 20 seconds, and
+    /// shows the state of the unit: riff.service on Linux, the launchd
+    /// agent on a Mac.
     Status {
         /// Ask the riff daemon of HOST, through riff-server. riff waits
         /// for its reply. Only you in a terminal and your lead in this
@@ -3063,7 +3066,7 @@ async fn daemon_command(command: Option<&DaemonCommand>, server: Option<&str>) -
                 return status_in_container(&socket).await;
             }
             let manager = riff::platform::service_manager()?;
-            let code = riff::daemon::show_status(&dir, &manager).await;
+            let code = riff::daemon::show_status(&dir, &manager, riff::daemon::answer_wait()).await;
             if code != 0 {
                 std::process::exit(code);
             }
@@ -3153,7 +3156,7 @@ async fn ps_command() -> Result<()> {
         usize::MAX
     };
     if let Ok(socket) = riff::session_relay::socket_here() {
-        return match Reach::daemon_ps(&socket).await {
+        return match Reach::daemon_ps(&socket, riff::daemon::answer_wait()).await {
             Ok(ps) => {
                 print!("{}", riff::ps::draw(&ps, width));
                 Ok(())
@@ -3165,7 +3168,8 @@ async fn ps_command() -> Result<()> {
         };
     }
     let manager = riff::platform::service_manager()?;
-    let code = riff::daemon::show_ps(&riff::daemon::dir()?, &manager, width).await;
+    let wait = riff::daemon::answer_wait();
+    let code = riff::daemon::show_ps(&riff::daemon::dir()?, &manager, width, wait).await;
     if code != 0 {
         std::process::exit(code);
     }
@@ -3175,7 +3179,7 @@ async fn ps_command() -> Result<()> {
 /// `riff daemon status` in a container: asks the daemon on the socket of
 /// the session (#1239). It looks for no socket and no unit of the host.
 async fn status_in_container(socket: &std::path::Path) -> Result<()> {
-    match Reach::daemon_status(socket).await {
+    match Reach::daemon_status(socket, riff::daemon::answer_wait()).await {
         Ok(status) => {
             print!("{}", text::daemon_status(&status, riff::daemon::now_ms()));
             Ok(())

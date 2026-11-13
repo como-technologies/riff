@@ -105,7 +105,9 @@ pub const NEWS_MOST: usize = 50;
 
 /// The longest wait of a look, and of the status of the session of the
 /// daemon, for the status of the daemon (#1858). The status asks podman
-/// for the digest of each new container, up to 5 s each.
+/// for the digest of each new container, up to 5 s each. `riff ps` and
+/// `riff daemon status` wait as long for each answer of the daemon
+/// ([`super::answer_wait`], #1923).
 pub const DAEMON_WAIT: Duration = Duration::from_secs(20);
 
 /// The longest time of one `podman` or `gh` of a look (#1858). A step
