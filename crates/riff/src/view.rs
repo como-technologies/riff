@@ -237,9 +237,38 @@ pub fn waits_for_lead<'a>(
 ) -> bool {
     repo.parse::<ThreadName>()
         .is_ok_and(|thread| pauses.waits_for_lead(&thread))
-        && riff_client::daemons::hosts(sessions)
-            .iter()
-            .any(|host| host.facts.waves.iter().any(|wave| wave.repo == repo))
+        && wave_runs(sessions, repo)
+}
+
+/// True when the daemon of a host in the facts of `sessions` runs the
+/// loop of the wave of the repository `repo` (`OWNER/REPO`,
+/// [`riff_client::daemons::hosts`]). The answer to `riff resume` of a
+/// repository with no lead names the cause with it
+/// (01M78V5MB2RRR40B5QYHPC6ZC4).
+///
+/// ```
+/// use riff_client::daemons::{Facts, Wave};
+/// use riff_core::wire::{MachineInfo, SessionInfo};
+///
+/// let facts = Facts {
+///     waves: vec![Wave { repo: "o/r".into(), word: String::new(), image: None, waits: Default::default() }],
+///     ..Facts::default()
+/// };
+/// let mut daemon: SessionInfo = serde_json::from_value(serde_json::json!({
+///     "uri": "riff://mike@thelio/o/r?session=d1", "live": true,
+/// })).unwrap();
+/// daemon.machine = Some(MachineInfo { numbers: facts.line(), age_secs: 5 });
+/// assert!(riff::view::wave_runs([&daemon], "o/r"));
+/// assert!(!riff::view::wave_runs([&daemon], "o/s"));
+/// // Facts older than 3 minutes count as none.
+/// daemon.machine = Some(MachineInfo { numbers: facts.line(), age_secs: 600 });
+/// assert!(!riff::view::wave_runs([&daemon], "o/r"));
+/// assert!(!riff::view::wave_runs([], "o/r"));
+/// ```
+pub fn wave_runs<'a>(sessions: impl IntoIterator<Item = &'a SessionInfo>, repo: &str) -> bool {
+    riff_client::daemons::hosts(sessions)
+        .iter()
+        .any(|host| host.facts.waves.iter().any(|wave| wave.repo == repo))
 }
 
 /// The live lead of each project in `sessions`, by its repository

@@ -112,15 +112,16 @@ async fn a_new_riff_is_paused_and_refuses_each_claim() {
     assert_ne!(code, 0, "a paused riff refuses a claim");
 
     // A resume of the repository leaves the new riff paused. The
-    // repository has no lead (01M776RT1GW3N4MJDMPXZ8JAJE).
+    // repository has no lead, and no host runs its wave
+    // (01M776RT1GW3N4MJDMPXZ8JAJE, 01M78V5MB2RRR40B5QYHPC6ZC4).
     let (out, code) = run(&server, dir, "mike", None, &["resume"]).await;
     assert_eq!(code, 0);
     assert_eq!(
         out,
         "The repository como-technologies/riff was running already. The whole riff is still \
-         paused: an admin resumes it with `riff resume --riff`. No lead of \
-         como-technologies/riff runs, so its wave starts no session: a host that joined \
-         como-technologies/riff starts the lead (riff host join).\n"
+         paused: an admin resumes it with `riff resume --riff`. No host runs the wave of \
+         como-technologies/riff, so no lead and no session of it start: a host that joins \
+         como-technologies/riff runs its wave and starts its lead (riff host join).\n"
     );
     let (_, code) = riff(&server, dir, "mike", &["claim", "issue-12"]).await;
     assert_ne!(code, 0, "the riff is still paused");
