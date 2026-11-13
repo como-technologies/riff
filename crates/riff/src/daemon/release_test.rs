@@ -56,6 +56,21 @@
 //! ([`super::remote::SERVED_FILE`]). `riff run` in the test then reaches
 //! the riff-server of the repository, also when it is not on the host
 //! (01M5MR8CM887EFGMKZM5BQA9JJ). See [`command`].
+//!
+//! The person on the host works while the test runs. When a program of
+//! the person writes in the home, the lead leaves the path out of the
+//! home check with `riff release test --skip PATH`
+//! (01M78TS03FK4908GVSTFH1DKYY). riff sends each path relative to the
+//! home of the caller ([`skip_path`]), so `~/.mozilla` in the container
+//! of the lead names `~/.mozilla` of the host. The request holds the
+//! paths, and the daemon gives each one to `just real-session` as
+//! `--skip PATH`. The test puts a relative path in the home of the host.
+//!
+//! ```mermaid
+//! flowchart LR
+//!     L["riff release test --skip ~/.mozilla<br/>in the container of the lead"] -- "release test COMMIT TAG --skip .mozilla" --> D["riff daemon on HOST"]
+//!     D -- "just real-session --skip .mozilla" --> T["the test: ~/.mozilla of HOST"]
+//! ```
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -156,11 +171,65 @@ fn set_status(gh: &Gh, commit: &str, state: TestState, why: &str) -> Result<()> 
     gh.run(&args, None).map(drop)
 }
 
+/// The path of `riff release test --skip PATH` for the request
+/// (01M78TS03FK4908GVSTFH1DKYY): a path in `home`, the home of the
+/// caller, goes relative to the home, so it names the same path in the
+/// home of the host. `~` and `~/` name the home too. Each other path
+/// goes as it is. An error for an empty path and a path with a space: a
+/// request is words.
+///
+/// ```
+/// use std::path::Path;
+/// use riff::daemon::release_test::skip_path;
+///
+/// let home = Some(Path::new("/home/claude"));
+/// assert_eq!(skip_path("/home/claude/.mozilla", home).as_deref(), Ok(".mozilla"));
+/// assert_eq!(skip_path("~/.config/gcloud", home).as_deref(), Ok(".config/gcloud"));
+/// assert_eq!(skip_path(".cargo/bin", home).as_deref(), Ok(".cargo/bin"));
+/// assert_eq!(skip_path("/home/mike/.mozilla", home).as_deref(), Ok("/home/mike/.mozilla"));
+/// assert_eq!(skip_path("/home/claudette/x", home).as_deref(), Ok("/home/claudette/x"));
+/// assert_eq!(skip_path("/home/claude", home).as_deref(), Ok("."));
+/// assert_eq!(skip_path("/home/claude/.mozilla", None).as_deref(), Ok("/home/claude/.mozilla"));
+/// assert!(skip_path("", home).is_err());
+/// assert!(skip_path("~/My Files", home).unwrap_err().contains("a space"));
+/// ```
+pub fn skip_path(path: &str, home: Option<&Path>) -> Result<String, String> {
+    if path.is_empty() {
+        return Err(text::RELEASE_TEST_EMPTY_SKIP.to_owned());
+    }
+    if path.chars().any(char::is_whitespace) {
+        return Err(text::RELEASE_TEST_SPACED_SKIP.to_owned());
+    }
+    let rest = match Path::new(path).strip_prefix("~") {
+        Ok(rest) => Some(rest),
+        Err(_) => home.and_then(|home| Path::new(path).strip_prefix(home).ok()),
+    };
+    Ok(match rest {
+        Some(rest) if rest.as_os_str().is_empty() => ".".to_owned(),
+        Some(rest) => rest.to_string_lossy().into_owned(),
+        None => path.to_owned(),
+    })
+}
+
+/// [`skip_path`] in the home of this process (`HOME`): the parser of
+/// `riff release test --skip`.
+pub fn skip_arg(path: &str) -> Result<String, String> {
+    let home = std::env::var_os("HOME").filter(|home| !home.is_empty());
+    skip_path(path, home.as_deref().map(Path::new))
+}
+
 /// Starts the test on `commit` in the folder `dir` of the daemon: a
 /// clone of the `origin` of the main clone of `served`, detached at the
 /// commit, and the status `pending`. The run goes on in a thread of its
-/// own. It gives the line for the reply.
-pub fn start(dir: &Path, served: &Served, commit: &str, tag: &str) -> Result<String> {
+/// own, with `--skip PATH` for each of `skips`
+/// (01M78TS03FK4908GVSTFH1DKYY). It gives the line for the reply.
+pub fn start(
+    dir: &Path,
+    served: &Served,
+    commit: &str,
+    tag: &str,
+    skips: &[String],
+) -> Result<String> {
     if !is_commit(commit) {
         bail!("\"{commit}\" is not a commit ID");
     }
@@ -194,8 +263,9 @@ pub fn start(dir: &Path, served: &Served, commit: &str, tag: &str) -> Result<Str
             let owned = commit.to_owned();
             let log = clone.with_extension("log");
             let server = served.wave.server.clone();
+            let skips = skips.to_vec();
             std::thread::spawn(move || {
-                finish(&gh, &clone, &log, (&owned, &tag), &server);
+                finish(&gh, &clone, &log, (&owned, &tag), (&server, &skips));
                 *running_lock() = None;
             });
             Ok(format!(
@@ -220,11 +290,9 @@ fn prepare(dir: &Path, served: &Served, gh: &Gh, commit: &str) -> Result<PathBuf
     }
     let origin = run(&served.wave.main, "git", &["remote", "get-url", "origin"])?;
     let clone_text = clone.to_string_lossy().into_owned();
-    run(
-        &folder,
-        "git",
-        &["clone", "-q", "--no-checkout", &origin, &clone_text],
-    )?;
+    let args = ["clone", "-q", "--no-checkout", &origin, &clone_text];
+    crate::git_credential::keyring_open(&folder, &origin, &args)?;
+    run(&folder, "git", &args)?;
     run(&clone, "git", &["checkout", "-q", "--detach", commit])?;
     let host = &served.wave.host;
     set_status(
@@ -236,12 +304,19 @@ fn prepare(dir: &Path, served: &Served, gh: &Gh, commit: &str) -> Result<PathBuf
     Ok(clone)
 }
 
-/// Runs the test in `clone` on the riff-server `server`, then sets the
-/// final status and removes the clone. A fail goes on the release issue
-/// of the tag with the failed step and the end of the log, and its step
-/// is the description of the status (#1255).
-fn finish(gh: &Gh, clone: &Path, log: &Path, (commit, tag): (&str, &str), server: &str) {
-    let (state, why) = match run_test(clone, log, server) {
+/// Runs the test in `clone` on the riff-server `server`, with `skips`
+/// for its home check, then sets the final status and removes the
+/// clone. A fail goes on the release issue of the tag with the failed
+/// step and the end of the log, and its step is the description of the
+/// status (#1255).
+fn finish(
+    gh: &Gh,
+    clone: &Path,
+    log: &Path,
+    (commit, tag): (&str, &str),
+    (server, skips): (&str, &[String]),
+) {
+    let (state, why) = match run_test(clone, log, server, skips) {
         Ok(true) => (TestState::Passed, "passed".to_owned()),
         Ok(false) => {
             let text = std::fs::read_to_string(log).unwrap_or_default();
@@ -395,7 +470,8 @@ fn comment_failure(gh: &Gh, tag: &str, body: &str) -> Result<u64> {
 }
 
 /// The command of the test on the riff-server `server`: the program
-/// `run` (the value of [`RUN_VAR`]), else `just real-session`. It has
+/// `run` (the value of [`RUN_VAR`]), else `just real-session`, with
+/// `--skip PATH` for each of `skips` (01M78TS03FK4908GVSTFH1DKYY). It has
 /// `RIFF_SERVER` set to `server` (01M5MR8CM887EFGMKZM5BQA9JJ).
 ///
 /// ```
@@ -403,17 +479,24 @@ fn comment_failure(gh: &Gh, tag: &str, body: &str) -> Result<u64> {
 /// use riff::daemon::release_test::command;
 ///
 /// let server = "https://riff.example";
-/// let test = command(None, server);
+/// let test = command(None, server, &[]);
 /// assert_eq!(test.get_program(), "just");
 /// assert_eq!(test.get_args().collect::<Vec<_>>(), ["real-session"]);
 /// let env: Vec<_> = test.get_envs().collect();
 /// assert_eq!(env, [(OsStr::new("RIFF_SERVER"), Some(OsStr::new(server)))]);
 ///
-/// let fake = command(Some("/bin/fake".into()), server);
+/// let skips = [".mozilla".to_owned(), "src/other".to_owned()];
+/// let test = command(None, server, &skips);
+/// assert_eq!(
+///     test.get_args().collect::<Vec<_>>(),
+///     ["real-session", "--skip", ".mozilla", "--skip", "src/other"]
+/// );
+///
+/// let fake = command(Some("/bin/fake".into()), server, &[]);
 /// assert_eq!(fake.get_program(), "/bin/fake");
 /// assert_eq!(fake.get_args().count(), 0);
 /// ```
-pub fn command(run: Option<std::ffi::OsString>, server: &str) -> Command {
+pub fn command(run: Option<std::ffi::OsString>, server: &str, skips: &[String]) -> Command {
     let mut command = match run {
         Some(program) => Command::new(program),
         None => {
@@ -422,13 +505,16 @@ pub fn command(run: Option<std::ffi::OsString>, server: &str) -> Command {
             command
         }
     };
+    for skip in skips {
+        command.args(["--skip", skip]);
+    }
     command.env("RIFF_SERVER", server);
     command
 }
 
-fn run_test(clone: &Path, log: &Path, server: &str) -> Result<bool> {
+fn run_test(clone: &Path, log: &Path, server: &str, skips: &[String]) -> Result<bool> {
     let file = std::fs::File::create(log)?;
-    let status = command(std::env::var_os(RUN_VAR), server)
+    let status = command(std::env::var_os(RUN_VAR), server, skips)
         .current_dir(clone)
         .stdin(Stdio::null())
         .stdout(file.try_clone()?)
@@ -473,7 +559,7 @@ mod tests {
             ),
         );
         let server = "https://riff-server.example";
-        let status = command(Some(program.into()), server)
+        let status = command(Some(program.into()), server, &[])
             .current_dir(tmp.path())
             .status()
             .unwrap();

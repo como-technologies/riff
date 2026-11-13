@@ -293,14 +293,16 @@ fi
 }
 
 /// A fake `systemd-run` that logs each call to `bin/systemd-run.log`, and
-/// runs the command after the `--` in its place, as `systemd-run --scope`
-/// does (01M5RG2AS2CYJPWGKTV7N2HNYP).
+/// runs the command after the `--` in its place, with the
+/// `INVOCATION_ID` of its scope, as `systemd-run --scope` does
+/// (01M5RG2AS2CYJPWGKTV7N2HNYP, 01M78TQ48B5JQXGRSDBGWMZDS7).
 fn fake_systemd_run(bin: &Path) {
     let body = r#"#!/bin/sh
 dir=$(dirname "$0")
 echo "systemd-run $*" >> "$dir/systemd-run.log"
 while [ "$1" != -- ]; do shift; done
 shift
+export INVOCATION_ID=riff-test-scope
 exec "$@"
 "#;
     script(&bin.join("systemd-run"), body);
@@ -1208,8 +1210,9 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         "{asked}"
     );
     assert_eq!(asked["permissions"]["contents"], "write", "{asked}");
-    // The daemon runs podman with no INVOCATION_ID of systemd, so
-    // conmon is not in the cgroup of the daemon.
+    // The daemon runs podman with no INVOCATION_ID of systemd, also not
+    // the one of its scope, so conmon is in a scope of its own
+    // (01M78TQ48B5JQXGRSDBGWMZDS7).
     assert_eq!(machine.read("run.invocation"), "");
     // 01M5RG2AS2CYJPWGKTV7N2HNYP: the daemon runs in a unit, so it starts
     // podman in a scope of its own. Else pasta, the network of the
@@ -1217,8 +1220,8 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
     assert_eq!(
         machine.read("systemd-run.log").lines().next().unwrap(),
         format!(
-            "systemd-run --user --scope --slice riff.slice --collect --quiet -- nice -n 19 \
-             podman {}",
+            "systemd-run --user --scope --slice riff.slice --collect --quiet -- \
+             env -u INVOCATION_ID nice -n 19 podman {}",
             args.join(" ")
         )
     );
@@ -3013,15 +3016,18 @@ async fn the_daemon_starts_the_lead_with_a_terminal_and_riff_lead_start_attaches
     let args: Vec<&str> = args.lines().collect();
     assert_eq!(args[..5], ["run", "--rm", "-d", "-i", "-t"]);
     // 01M5RG2AS2CYJPWGKTV7N2HNYP: in a scope of its own, so a stop of the
-    // unit leaves the network of the lead.
+    // unit leaves the network of the lead. 01M78TQ48B5JQXGRSDBGWMZDS7:
+    // podman gets no INVOCATION_ID of the scope, so its conmon is in a
+    // scope of its own too.
     assert_eq!(
         machine.read("systemd-run.log").trim_end(),
         format!(
-            "systemd-run --user --scope --slice riff.slice --collect --quiet -- nice -n 19 \
-             podman {}",
+            "systemd-run --user --scope --slice riff.slice --collect --quiet -- \
+             env -u INVOCATION_ID nice -n 19 podman {}",
             args.join(" ")
         )
     );
+    assert_eq!(machine.read("run.invocation"), "");
     // 01M7755V17SGY2NW231WJ12WXN: the lead runs at nice 19, with the
     // lowest CPU weight.
     assert_eq!(machine.read("run.nice").trim(), "19");
@@ -3127,6 +3133,67 @@ async fn the_daemon_starts_the_lead_with_a_terminal_and_riff_lead_start_attaches
         assert!(started.elapsed() < isolated::HANG, "the lead did not end");
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+}
+
+/// 01M77PT9TNP97MA89SYZPBJ6QY, 01M51STPHXSSZMHF9T7Z85097R: the riff daemon
+/// starts the lead only from a wave of the repository that it runs
+/// ([`riff::lead::claim_start`]): from the main clone of the wave, with
+/// the image of the merged `riff.toml`. A host that runs no wave of the
+/// repository starts no lead, also with the riff running and the claude
+/// token there.
+#[tokio::test]
+async fn the_daemon_starts_the_lead_from_the_main_clone_of_its_wave_with_the_merged_image() {
+    let machine = Machine::new().await;
+    machine.claude_token();
+    let hold = machine.bin.path().join("hold");
+    std::fs::write(&hold, "").unwrap();
+    // The working tree pins another image: only the merged pin counts.
+    let local = format!(
+        "ghcr.io/como-technologies/riff-session@sha256:{}",
+        "f".repeat(64)
+    );
+    let config = format!("[session]\nimage = \"{local}\"\n");
+    std::fs::write(machine.main.join("riff.toml"), config).unwrap();
+
+    // No wave of the repository runs on the host: no lead starts.
+    machine.ok(None, &["resume", "--riff"]).await;
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert!(machine.read("run.args").is_empty());
+    let status = machine.ok(None, &["daemon", "status"]).await;
+    assert!(!status.contains(LEAD_NAME), "{status}");
+
+    // `riff host join` runs the wave, and its lead loop starts the lead.
+    machine.ok(None, &["host", "join"]).await;
+    machine.lead_starts().await;
+    machine.ok(None, &["host", "leave"]).await;
+    let args: Vec<String> = machine.read("run.args").lines().map(String::from).collect();
+    assert!(args.iter().any(|a| a == PINNED), "{args:?}");
+    assert!(!args.contains(&local), "{args:?}");
+    // The clone of the lead links to the main clone of the wave, and the
+    // container binds the objects of that main clone, with no write.
+    let clone = machine
+        .env
+        .riff_home()
+        .join("leads/como-technologies-riff/clone");
+    let linked = riff::lead::linked_main(&clone).unwrap();
+    assert_eq!(
+        std::fs::canonicalize(linked).unwrap(),
+        std::fs::canonicalize(&machine.main).unwrap()
+    );
+    let objects = PathBuf::from(git(
+        &machine.main,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    ))
+    .join("objects");
+    let o = objects.display().to_string();
+    let bind = format!("{o}:{o}:ro");
+    assert!(
+        args.windows(2).any(|w| w[0] == "-v" && w[1] == bind),
+        "{args:?}"
+    );
+
+    std::fs::remove_file(&hold).unwrap();
+    machine.lead_ends().await;
 }
 
 /// 01M77Y6ZQ76DTX470STN8ATTA9: with no claude token, the riff daemon of a

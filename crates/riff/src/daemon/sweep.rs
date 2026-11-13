@@ -605,7 +605,9 @@ fn other_branches(clone: &Path) -> Result<Vec<String>> {
 /// track: a scratch file or a log can hold a secret. A clone with only
 /// such files pushes nothing. The commit has no signature
 /// (01M5TKETGZP9NTHBXFBP1RM1HP): the git of the host can sign each commit
-/// and have no key for riff.
+/// and have no key for riff. In the daemon, a push that would ask a
+/// locked `gh` for a credential fails before the commit, so each try of
+/// the sweep adds no commit (01M78TSH2VNHA75RR1HXC5Z27G).
 ///
 /// ```
 /// use riff::daemon::sweep::{Pushed, push_kept};
@@ -661,6 +663,11 @@ pub fn push_kept(clone: &Path, branch: &str) -> Result<Pushed> {
         .lines()
         .count();
     let lost = all - tracked;
+    let push = ["push", "--no-verify", "origin"];
+    if ahead > 0 || tracked > 0 || !other.is_empty() {
+        // No commit for a push that cannot run (01M78TSH2VNHA75RR1HXC5Z27G).
+        crate::git_credential::keyring_open(clone, "origin", &push)?;
+    }
     let mut branches = Vec::new();
     let mut targets = Vec::new();
     if ahead > 0 || tracked > 0 {
@@ -689,7 +696,7 @@ pub fn push_kept(clone: &Path, branch: &str) -> Result<Pushed> {
         branches.push(kept);
     }
     if !targets.is_empty() {
-        let args = ["push", "--no-verify", "origin"]
+        let args = push
             .into_iter()
             .chain(targets.iter().map(String::as_str))
             .collect::<Vec<_>>();

@@ -1462,7 +1462,7 @@ async fn server_call(record: &Record, call: &ServerCall) -> Result<Value> {
             let (reply, posted) = signed()?
                 .set_pause(&record.me, &PauseScope::Riff, state)
                 .await?;
-            Value::String(text::riff_set(None, state, &reply, &posted))
+            Value::String(text::riff_set(None, state, &reply, &posted, true))
         }
         ServerCall::Roster => {
             let reply = signed()?.roster(&record.me, false).await?;
@@ -6831,7 +6831,9 @@ pub async fn follow_events(
 /// The stop stops no session (01M4ZDTVH57VE77YT20G65A4BQ). Its runtime
 /// is the runtime of this OS ([`crate::runtime::here`]): on macOS, it
 /// starts no session (01M6Z49R87D50VD4RS0BP641MM). It asks the OS keyring
-/// for no unlock prompt, also for its `gh` (01M77AB7XZV8KG8RRZ8C6R5A8X).
+/// for no unlock prompt, also for its `gh` (01M77AB7XZV8KG8RRZ8C6R5A8X),
+/// and for the `gh` that its `git` starts for a credential
+/// ([`crate::git_credential`], 01M78TSH2VNHA75RR1HXC5Z27G).
 pub async fn serve_here() -> Result<()> {
     // Only a command that a person types asks for the prompt.
     riff_client::secrets::ask_no_prompt();

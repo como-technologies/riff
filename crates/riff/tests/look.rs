@@ -165,21 +165,17 @@ async fn who_is_a_table_and_long_shows_the_uri() {
     let out = stdout(riff(&env, &server, dir, Some("a6cf2205-1"), &["who"])).await;
     let lines: Vec<&str> = out.lines().collect();
     assert_eq!(lines[0], "riff   paused by the server", "{out}");
-    // The lead of the project and its host (01M77XYFZW86MCXD22GDCXMS00).
+    // The riff has no project: no fact `lead` (01M77XYFZW86MCXD22GDCXMS00),
+    // and the rows group under `no project` (01M77F8JN1SE2H4DZBZH1YX7WD).
+    assert!(lines[1].starts_with("build  v"), "{out}");
+    assert_eq!(lines[2], "", "{out}");
     assert_eq!(
-        lines[1], "lead   como-technologies/riff on pangolin: mike@pangolin:riff (a6cf2205)",
+        lines[3], "SESSION                        STATE   ROLE      DETAIL",
         "{out}"
     );
-    assert_eq!(lines[3], "", "{out}");
+    assert_eq!(lines[4], "no project", "{out}");
     assert_eq!(
-        lines[4], "SESSION                        STATE   ROLE      DETAIL",
-        "{out}"
-    );
-    // The riff has no project: the rows group under `no project`
-    // (01M77F8JN1SE2H4DZBZH1YX7WD).
-    assert_eq!(lines[5], "no project", "{out}");
-    assert_eq!(
-        lines[6], "mike@pangolin:riff (a6cf2205)  paused  you lead  stopped at: write the tests",
+        lines[5], "mike@pangolin:riff (a6cf2205)  paused  you lead  stopped at: write the tests",
         "{out}"
     );
     assert!(!out.contains("riff://"), "{out}");

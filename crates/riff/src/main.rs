@@ -1278,6 +1278,13 @@ enum ReleaseCommand {
         /// The host with podman. riff daemon status --host lists them.
         #[arg(long)]
         host: String,
+        /// A path in the home of HOST that the home check of the test
+        /// leaves out, for example .mozilla: a program of the person on
+        /// HOST writes there. A relative path, and a path in your home,
+        /// name that path in the home of HOST. No space. Give it one time
+        /// for each path.
+        #[arg(long, value_name = "PATH", value_parser = riff::daemon::release_test::skip_arg)]
+        skip: Vec<String>,
     },
     /// Deploy an older release again
     ///
@@ -4032,7 +4039,7 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
             let held = reach.release_hold(&tag, reason).await?;
             println!("{}", text::release_hold_done(&tag, &held));
         }
-        ReleaseCommand::Test { tag, host } => {
+        ReleaseCommand::Test { tag, host, skip } => {
             if let Some(why) = release_caller(server, false).await.test_step() {
                 refuse("test", why);
             }
@@ -4045,6 +4052,7 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
             let request = riff::daemon::remote::Request::ReleaseTest {
                 commit,
                 tag: cycle::tag(cycle::tag_version(tag)?),
+                skips: skip.clone(),
             };
             ask_daemon(host, &request, &identity::place(&here)?, reach).await?;
             next(&forge, tag);

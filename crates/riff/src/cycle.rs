@@ -24,7 +24,7 @@
 //!
 //! | Command | Who | What |
 //! |---|---|---|
-//! | `riff release test vX.Y.Z --host HOST` | the lead or a person; not a worker | the real-session test of the last commit of `origin/main` on the daemon of a host, and the release issue ([`test_target`], [`crate::daemon::release_test`], 01M76428TRD7KWC4C8V5NNPNC7) |
+//! | `riff release test vX.Y.Z --host HOST [--skip PATH]...` | the lead or a person; not a worker | the real-session test of the last commit of `origin/main` on the daemon of a host, with each `--skip` for its home check, and the release issue ([`test_target`], [`crate::daemon::release_test`], 01M76428TRD7KWC4C8V5NNPNC7, 01M78TS03FK4908GVSTFH1DKYY) |
 //! | `riff release cut X.Y.Z` | an admin of the riff, or its lead; the ruleset `releases` lets the admin role and the lead App push the tag | the tag on the last commit of `origin/main`, the GitHub release, the pull request of the next version, the chat line to each admin, when each alert has a review ([`cut`], [`crate::alerts`], 01M7641BHHND5JJA8DGJPFNAN7, 01M7641T7FX9416CYY1XKHTJE6) |
 //! | `riff release status` | each session | the versions, what waits, the state and the next step ([`status`], 01M76428NPN7HZCNFCJW8H67RS) |
 //! | `riff release approve vX.Y.Z` | only a person in a terminal: never a session, also not the lead (01M6WZ40SFVZ6CRQ1H4Z27CWP4) | the pause of the riff, then the approval of `production`; it refuses while a lead holds the version, unless a person passes `--over-holds` ([`approve`], 01M58KMM3NFGJRW4CCV50KJQB2, 01M5SNV7E775DRY9QY60E8JPJR) |
@@ -3020,7 +3020,7 @@ impl GitHub {
     /// The forge of the clone `dir`. It fetches `origin` and its tags.
     pub fn new(gh: Gh, dir: &Path) -> Result<Self> {
         let forge = Self::at(gh, dir);
-        forge.git(&["fetch", "-q", "--tags", "--force", "origin"])?;
+        forge.remote_git(&forge.dir, &["fetch", "-q", "--tags", "--force", "origin"])?;
         Ok(forge)
     }
 
@@ -3052,6 +3052,14 @@ impl GitHub {
 
     fn git(&self, args: &[&str]) -> Result<String> {
         self.git_in(&self.dir, args)
+    }
+
+    /// [`GitHub::git_in`] of a `git` that talks to `origin`. In the
+    /// daemon, a `git` that would ask a locked `gh` for a credential does
+    /// not run (01M78TSH2VNHA75RR1HXC5Z27G).
+    fn remote_git(&self, dir: &Path, args: &[&str]) -> Result<String> {
+        crate::git_credential::keyring_open(dir, "origin", args)?;
+        self.git_in(dir, args)
     }
 
     /// The state of the commit status `context` of `commit`, or `None`.
@@ -3383,7 +3391,7 @@ impl Forge for GitHub {
             // A cut that stopped can leave the branch: the new commit
             // replaces it.
             let refspec = format!("+HEAD:refs/heads/{branch}");
-            self.git_in(&path, &["push", "-q", "origin", &refspec])?;
+            self.remote_git(&path, &["push", "-q", "origin", &refspec])?;
             Ok(self
                 .git_in(&path, &["rev-parse", "HEAD"])?
                 .trim()
@@ -3525,7 +3533,7 @@ impl Forge for GitHub {
     fn tag_exists(&self, tag: &str) -> Result<bool> {
         let name = format!("refs/tags/{tag}");
         Ok(!self
-            .git(&["ls-remote", "--tags", "origin", &name])?
+            .remote_git(&self.dir, &["ls-remote", "--tags", "origin", &name])?
             .trim()
             .is_empty())
     }
@@ -3534,7 +3542,7 @@ impl Forge for GitHub {
         let message = format!("Release {tag}");
         self.git(&["tag", "-a", tag, commit, "-m", &message])?;
         let name = format!("refs/tags/{tag}");
-        if let Err(e) = self.git(&["push", "-q", "origin", &name]) {
+        if let Err(e) = self.remote_git(&self.dir, &["push", "-q", "origin", &name]) {
             let _ = self.git(&["tag", "-d", tag]);
             bail!("{} {e}", crate::text::tag_refused(tag));
         }

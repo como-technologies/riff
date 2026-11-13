@@ -69,6 +69,78 @@ async fn the_read_tool_with_no_thread_gives_at_most_20000_characters() {
     assert_eq!(shown, 300);
 }
 
+/// The page of docs takes the room that the message of brett that woke
+/// bob leaves. The thread of riff has room only for that message: its
+/// line says that it shows above, and names the thread for its other
+/// messages (01M78TFBE2WRNC44MRQBTDW19B). A read of that thread gives
+/// them.
+#[tokio::test]
+async fn a_thread_with_room_only_for_the_message_that_woke_you_says_that_it_shows_above() {
+    let server = common::start_signed().await;
+    let (brett, bob) = (uri(POSTER), uri(READER));
+    let (repo, docs) = (
+        thread("como-technologies/riff"),
+        thread("como-technologies/docs"),
+    );
+    for me in [&brett, &bob] {
+        let api = common::api_of(&server, me);
+        api.register(me).await.unwrap();
+        api.join(me, &docs).await.unwrap();
+    }
+    let api = common::api_of(&server, &brett);
+    let big = |n: usize| format!("{n:03} {}", "x".repeat(996));
+    for n in 0..30 {
+        api.post(&brett, Some(&docs), &[], &big(n), Kind::Message)
+            .await
+            .unwrap();
+    }
+    for n in 0..3 {
+        api.post(&brett, Some(&repo), &[], &big(n), Kind::Message)
+            .await
+            .unwrap();
+    }
+    let posted = api
+        .post(
+            &brett,
+            Some(&repo),
+            &[selector("session=b1")],
+            "Can you look at #2000?",
+            Kind::Message,
+        )
+        .await
+        .unwrap();
+    let woke: Vec<_> = posted.woken.iter().map(|s| s.who()).collect();
+    assert_eq!(woke, [bob.who()]);
+
+    let reader = common::api_of(&server, &bob);
+    let inbox = reader.inbox_page(&bob, None, false, None).await.unwrap();
+    let read = text::inbox(&inbox, &bob);
+    assert!(read.chars().count() <= 20_000, "{}", read.chars().count());
+    let woken = format!("{}\ncomo-technologies/riff\n[4] ", text::WOKEN_HEAD);
+    let (_, part) = read.split_once(&woken).expect(&read);
+    assert!(
+        part.lines()
+            .next()
+            .unwrap()
+            .ends_with(": Can you look at #2000?"),
+        "{read}"
+    );
+    assert!(
+        read.ends_with(
+            "\ncomo-technologies/riff\nThis read has room only for its message that woke you. \
+             It shows above. Read the thread como-technologies/riff for its other messages. \
+             With all, set after to 0.\n"
+        ),
+        "{read}"
+    );
+    let page = reader
+        .inbox_page(&bob, Some(&repo), false, None)
+        .await
+        .unwrap();
+    let seqs: Vec<u64> = page[0].messages.iter().map(|c| c.message.seq).collect();
+    assert_eq!(seqs, [1, 2, 3, 4]);
+}
+
 /// The lead of mike in riff is a member of the thread of strata. The
 /// `read` tool and `riff read` show it only the posts of brett there that
 /// pick it: a note to the lead of mike. Each post in its own thread

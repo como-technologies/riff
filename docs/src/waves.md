@@ -19,6 +19,15 @@ An item can need other items. Its `Needs:` line names them:
 Needs: #51, #58
 ```
 
+An item with an open need is not free: the wave starts no build of it
+until each issue of its `Needs:` line is closed. `riff wave list`,
+`riff top` and the Waves tab show it in the group `needs`, with its
+open needs. Here #1520 waits for #1522:
+
+```text
+needs: #1520 (#1522)
+```
+
 An item is merged when it is closed, or when it has the comment
 `Merged in #PR (COMMIT)`. The author adds this comment when a check
 after the release is left (see
@@ -149,8 +158,9 @@ Run this in a clone of the repository. It shows each open wave in
 number order, then the backlog, with the number of the open and the
 closed items. The current wave has the mark `current` and the hosts
 of its loop. The open items of each wave follow in the groups `free`,
-`held`, `claimed`, `verify`, `verify waits for #N`,
-`rebase waits for #N`, `stuck`, `tracker` and `question` (see
+`held`, `needs` (see [Needs](#needs)), `claimed`, `verify`,
+`verify waits for #N`, `rebase waits for #N`, `stuck`, `tracker` and
+`question` (see
 [See which wave runs, and where](development.md#see-which-wave-runs-and-where)):
 
 ```sh
@@ -306,11 +316,13 @@ items:
 
 - The repositories with a stuck, a held or a free item come first, with
   their boards open. Each other repository is one line with its counts.
-- The rows go in the order `stuck`, `free`, `held`, `asked` (the label
-  `question`), `work`, `verify` and `tracker`. A `work` row shows the
-  session of the claim and its state. A `stuck` or `verify` row shows
-  the pull request and what it waits for: `verify`, `merge`, or why it
-  is stuck, for example `conflict`.
+- The rows go in the order `stuck`, `free`, `held`, `needs`, `asked`
+  (the label `question`), `work`, `verify` and `tracker`. A `work` row
+  shows the session of the claim and its state. A `stuck` or `verify`
+  row shows the pull request and what it waits for: `verify`, `merge`,
+  or why it is stuck, for example `conflict`. A `needs` row shows the
+  open issues of its `Needs:` line, for example `waits for #1522` (see
+  [Needs](#needs)).
 - The `asked` rows have the questions of the later waves too: see
   [See the questions of each wave in the TUI](how-it-works.md#see-the-questions-of-each-wave-in-the-tui).
 - The line `done 4 · closed 1` counts the items that closed in the

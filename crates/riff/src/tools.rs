@@ -423,7 +423,8 @@ your repository) and who set it."
         crate::state::fill(&mut who.sessions, pauses.state);
         // The lead of each project, as in `riff who`, plain
         // (01M77XYFZW86MCXD22GDCXMS00).
-        let leads = crate::view::facts(&crate::view::lead_facts(&pauses, &who.sessions, false));
+        let leads = crate::view::lead_facts(&pauses, &who.sessions, &who.projects, false);
+        let leads = crate::view::facts(&leads);
         let leads = anstream::adapter::strip_str(&leads).to_string();
         Ok(format!(
             "{}\n{leads}{}\n{}",
@@ -794,7 +795,15 @@ impl Tools {
         self.lead_step(&me, text::riff_step(whole, state).into())
             .await;
         let repository = scope.repository(&me);
-        Ok(text::riff_set(repository.as_ref(), state, &reply, &posted))
+        let runs =
+            crate::reach::wave_runs(&self.api, &me, repository.as_ref(), state, &reply).await;
+        Ok(text::riff_set(
+            repository.as_ref(),
+            state,
+            &reply,
+            &posted,
+            runs,
+        ))
     }
 
     /// Sets the step of `me` to `step`, when `me` is the lead: the

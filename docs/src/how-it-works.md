@@ -1565,9 +1565,11 @@ The first lines are facts: the state of the riff, the lead of each
 project, and the build. A row `lead` names the lead of a project and
 the host where it runs. `none`, in yellow, says that the project has
 no live lead: its wave starts no session (see
-[The wave waits for its lead](#the-wave-waits-for-its-lead)). Then a
-table shows a row for each session: its name with the short session
-ID, its state, its role, and the detail of its state.
+[The wave waits for its lead](#the-wave-waits-for-its-lead)). A
+repository that is no project gets no row `lead`, also when a session
+worked in it once. Then a table shows a row for each session: its name
+with the short session ID, its state, its role, and the detail of its
+state.
 
 The rows group by project (see
 [The projects of the riff](#the-projects-of-the-riff)). A bold line
@@ -1633,15 +1635,16 @@ has the same color in both. `running` is green and `paused` is yellow.
 A blocked status is red. The `who` tool of a session stays plain.
 
 ### See the facts of each host
- The riff daemon of each host sends the facts of its host to the riff
+
+The riff daemon of each host sends the facts of its host to the riff
 server each 30 seconds. It does so for each repository where the host
 has a part: after `riff host join` in the main clone on that host, or
 while a lead runs there. `riff who` shows them in its last part,
 `Hosts`. The line `parts` of a host names the parts of the host in each
-repository: `workers`, `lead`, or `workers and lead`. `riff top` shows
-the facts under the row of the host. The `who` tool of a session shows
-the same
-part, so the lead sees the facts in its session:
+repository: `workers`, `lead`, `workers and lead`, or `workers, no
+lead`. `riff top` shows the facts under the row of the host. The `who`
+tool of a session shows the same part, so the lead sees the facts in
+its session:
 
 ```sh
 riff who
@@ -2259,8 +2262,10 @@ project with a live session, and for the repository where you run
 [The projects of the riff](#the-projects-of-the-riff)). A repository
 that is no project gets no board. A board has the current
 wave with its repository, one line for the `free` items, one for the
-`held` items, one for the `claimed` items, one for the items in
-`verify`, and one for the `stuck` items. An item is in `verify` when a
+`held` items, one for the `needs` items, one for the `claimed` items,
+one for the items in `verify`, and one for the `stuck` items. An item
+is in `needs` when an issue of its `Needs:` line is open (see
+[Needs](waves.md#needs)). An item is in `verify` when a
 session verifies it, and when no session holds it and its pull request
 waits for a verify or for the merge. An item is in `stuck` when no
 session holds it and its pull request cannot merge by itself: a
@@ -5131,6 +5136,16 @@ como-technologies/docs
 This read has no room for its messages. Read the thread como-technologies/docs. With all, set after to 0.
 ```
 
+A thread can have room only for its message that woke the session.
+That message shows above, under "Messages to you after this page".
+The line of the thread says so, and names the thread for its other
+messages:
+
+```text
+como-technologies/riff
+This read has room only for its message that woke you. It shows above. Read the thread como-technologies/riff for its other messages. With all, set after to 0.
+```
+
 The next read with no thread goes on with the next page of each
 thread. `riff read` reads each page, with no bound.
 
@@ -6235,8 +6250,10 @@ flowchart LR
     H -- "yes" --> W["the wave runs"]
 ```
 
-`riff host join` and `riff lead move` ask riff-server first. In a
-repository that is no project, both name the fix and start nothing:
+`riff host join` asks riff-server first. `riff lead move` first asks
+the old lead for its handover, and then the daemon of the new host asks
+riff-server. In a repository that is no project, both name the fix and
+start nothing. The old lead stays the lead:
 
 ```text
 Error: acme/app is no project of the riff, so it gets no wave and no lead. A session there has the chat and the messages only. To make it a project, an admin of the riff who is an admin of acme/app on GitHub runs riff project init in a clone of acme/app.
@@ -6258,7 +6275,9 @@ riff project init --host heron --host thelio
 The loop of the wave reads the projects before each look. When the
 project no longer allows the host, or the riff forgot the project, the
 host starts no new session for it. The sessions that run go on to
-their end. To see why:
+their end. The look of the daemon at the pull requests and at `main`
+reads the projects too: on that host it reads nothing with `gh`,
+messages nobody, and files no fix item of a broken `main`. To see why:
 
 ```sh
 riff daemon status
@@ -6700,6 +6719,15 @@ pause: `riff resume` works, and its answer says that no lead runs:
 ```text
 The repository como-technologies/riff is running now. No other session woke. No lead of como-technologies/riff runs, so its wave starts no session: a host that joined como-technologies/riff starts the lead (riff host join).
 ```
+
+When no host runs the wave of the repository, the answer names that
+cause. riff reads it in the facts of the riff daemons in `riff who`:
+
+```text
+The repository como-technologies/riff is running now. No other session woke. No host runs the wave of como-technologies/riff, so no lead and no session of it start: a host that joins como-technologies/riff runs its wave and starts its lead (riff host join).
+```
+
+The step is the same: `riff host join` in a clone of the repository.
 
 ### Ask the lead
 

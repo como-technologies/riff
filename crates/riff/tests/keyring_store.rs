@@ -21,6 +21,7 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -107,6 +108,19 @@ fn the_daemon_asks_for_no_unlock_prompt_and_works_after_an_unlock_at_the_desktop
     on_a_private_keyring("no-prompt");
 }
 
+/// The criteria of #2038 (01M78TSH2VNHA75RR1HXC5Z27G): while the token
+/// of `gh` is locked, the riff daemon runs no `git` that would start
+/// `gh` for a credential. The repository is private, over HTTP, and the
+/// credential helper of git is a fake `gh auth git-credential`, as `gh
+/// auth setup-git` writes it. The clone of the lead and the push of the
+/// work that a session left do not run, and say why. A `git` with a
+/// local remote runs. After the unlock at the desktop, the same `git`
+/// runs, and asks the fake `gh` for the credential.
+#[test]
+fn the_daemon_runs_no_git_that_would_ask_a_locked_gh_for_a_credential() {
+    on_a_private_keyring("git");
+}
+
 /// Runs the check `check` of [`child`] in a child on a private keyring,
 /// and fails when the child fails.
 fn on_a_private_keyring(check: &str) {
@@ -134,6 +148,9 @@ fn on_a_private_keyring(check: &str) {
         .env("XDG_DATA_HOME", path("data"))
         .env("XDG_CONFIG_HOME", path("config"))
         .env("XDG_CACHE_HOME", path("cache"))
+        .env("GIT_CONFIG_GLOBAL", path("home").join(".gitconfig"))
+        .env("NO_PROXY", "127.0.0.1")
+        .env("no_proxy", "127.0.0.1")
         .env_remove("DBUS_SESSION_BUS_ADDRESS")
         .env_remove("GNOME_KEYRING_CONTROL")
         .env_remove("SSH_AUTH_SOCK")
@@ -191,6 +208,7 @@ fn child() {
         "restart" => restart(&mut keyring),
         "prompt" => prompt(&mut keyring),
         "no-prompt" => no_prompt(&keyring),
+        "git" => no_prompt_git(&keyring),
         other => panic!("no check {other}"),
     }
 }
@@ -474,6 +492,169 @@ fn no_prompt(keyring: &Keyring) {
     );
     assert_eq!(unlocks.calls(), 0, "riff asked for an unlock");
     drop(prompter);
+}
+
+/// The `git` of the riff daemon, which asks for no prompt, on a private
+/// repository whose credential helper is `gh`: a keyring that locks,
+/// then an unlock of the same keyring at the desktop.
+fn no_prompt_git(keyring: &Keyring) {
+    secrets::ask_no_prompt();
+    let dir = tempfile::tempdir().unwrap();
+    // Another process keeps the token of `gh`.
+    let other = keyring_store::Store::new().unwrap();
+    let entry = other.build(riff::pr::GH_KEYRING, "", None).unwrap();
+    entry.set_password("gho_not_real").unwrap();
+    // `gh auth setup-git` of the person: the fake `gh` is the helper of
+    // the private repository.
+    let private = Private::start();
+    let log = dir.path().join("gh.log");
+    let script = format!(
+        "#!/bin/sh\necho \"$*\" >> {}\ncat > /dev/null\n\
+         if [ \"$3\" = get ]; then printf 'username=x-access-token\\npassword=gho_not_real\\n'; fi\n",
+        log.display()
+    );
+    let gh = isolated::write_program(dir.path().join("gh"), &script);
+    let global = std::env::var_os("GIT_CONFIG_GLOBAL").expect("the child has a git config");
+    std::fs::write(
+        &global,
+        format!(
+            "[user]\n\tname = t\n\temail = t@t\n\
+             [credential \"{}\"]\n\thelper =\n\thelper = !{} auth git-credential\n",
+            private.base(),
+            gh.display()
+        ),
+    )
+    .unwrap();
+    let git = |at: &Path, args: &[&str]| {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(at)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+    };
+    let main = dir.path().join("main");
+    git(dir.path(), &["init", "-q", "main"]);
+    git(&main, &["commit", "-q", "--allow-empty", "-m", "first"]);
+    git(&main, &["remote", "add", "origin", &private.url()]);
+    // A main clone with a local remote, as in the tests of riff.
+    let local = dir.path().join("local");
+    git(dir.path(), &["init", "-q", "--bare", "origin.git"]);
+    git(dir.path(), &["clone", "-q", "origin.git", "local"]);
+    git(&local, &["commit", "-q", "--allow-empty", "-m", "first"]);
+    git(&local, &["push", "-q", "origin", "HEAD"]);
+
+    // A login with a security key leaves the keyring locked.
+    let unlocks = Monitor::start("Unlock");
+    let prompter = silent_prompter();
+    keyring.lock();
+    let start = Instant::now();
+    let lead = dir.path().join("lead");
+    let error = riff::lead::fresh_clone(&main, &lead).unwrap_err();
+    assert!(secrets::is_locked(&error), "{error:#}");
+    let said = format!("{error:#}");
+    assert!(
+        said.starts_with("riff did not run git clone -q --reference ")
+            && said.contains("unlock it at the desktop"),
+        "{said}"
+    );
+    let head = || {
+        let out = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&main)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let before = head();
+    let error = riff::daemon::sweep::push_kept(&main, "riff-kept/issue-12-1a2b3c4d").unwrap_err();
+    assert!(secrets::is_locked(&error), "{error:#}");
+    assert!(
+        format!("{error:#}")
+            .starts_with("riff did not run git push --no-verify origin: the OS keyring of "),
+        "{error:#}"
+    );
+    // The push did not run, so the sweep made no commit.
+    assert_eq!(head(), before);
+    // A local remote needs no credential: its git runs.
+    let fresh = riff::lead::fresh_clone(&local, &dir.path().join("local-lead")).unwrap();
+    assert_eq!(fresh, riff::lead::Fresh::Made);
+    assert!(start.elapsed() < secrets::KEYRING_WAIT);
+    assert!(
+        !log.exists(),
+        "git asked gh: {:?}",
+        std::fs::read_to_string(&log)
+    );
+    assert_eq!(private.requests(), 0, "git ran");
+
+    // The person unlocks the keyring at the desktop, with no restart of
+    // a service. The same git runs, and asks gh for the credential. The
+    // fake repository refuses it.
+    keyring.unlock();
+    let error = riff::lead::fresh_clone(&main, &lead).unwrap_err();
+    assert!(!secrets::is_locked(&error), "{error:#}");
+    assert!(private.requests() > 0, "git did not run: {error:#}");
+    let asked = std::fs::read_to_string(&log).unwrap();
+    assert!(asked.starts_with("auth git-credential get\n"), "{asked}");
+    let error = riff::daemon::sweep::push_kept(&main, "riff-kept/issue-12-1a2b3c4d").unwrap_err();
+    assert!(!secrets::is_locked(&error), "{error:#}");
+    let asked_again = std::fs::read_to_string(&log).unwrap();
+    assert!(asked_again.len() > asked.len(), "{asked_again}");
+    assert_eq!(unlocks.calls(), 0, "riff asked for an unlock");
+    drop(prompter);
+}
+
+/// A private repository over HTTP on the loopback, as GitHub has: it
+/// refuses each request with 401 and asks for a credential, so git asks
+/// its credential helper. It counts the requests.
+struct Private {
+    port: u16,
+    requests: Arc<AtomicUsize>,
+}
+
+impl Private {
+    /// Starts the server on a free port. It serves up to the end of the
+    /// child.
+    fn start() -> Private {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let requests = Arc::new(AtomicUsize::new(0));
+        let count = requests.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else {
+                    continue;
+                };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                while reader.read_line(&mut line).is_ok_and(|n| n > 0) && line != "\r\n" {
+                    line.clear();
+                }
+                count.fetch_add(1, Ordering::SeqCst);
+                let _ = stream.write_all(
+                    b"HTTP/1.1 401 Unauthorized\r\n\
+                      WWW-Authenticate: Basic realm=\"riff test\"\r\n\
+                      Content-Length: 0\r\nConnection: close\r\n\r\n",
+                );
+            }
+        });
+        Private { port, requests }
+    }
+
+    /// The URL of the server: the pattern of a helper of git.
+    fn base(&self) -> String {
+        format!("http://127.0.0.1:{}", self.port)
+    }
+
+    /// The URL of the repository.
+    fn url(&self) -> String {
+        format!("{}/o/r.git", self.base())
+    }
+
+    /// The number of requests up to now.
+    fn requests(&self) -> usize {
+        self.requests.load(Ordering::SeqCst)
+    }
 }
 
 /// A system prompter of GNOME on the private bus that takes each prompt

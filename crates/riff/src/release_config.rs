@@ -213,7 +213,9 @@ pub fn require_merged(main: &Path) -> Result<()> {
     )
     .map_err(|_| anyhow!("{}", text::image_no_origin_head(main)))?;
     let branch = head.strip_prefix("origin/").unwrap_or(&head);
-    git(main, &["fetch", "--quiet", "origin", branch])
+    let fetch = ["fetch", "--quiet", "origin", branch];
+    crate::git_credential::keyring_open(main, "origin", &fetch)
+        .and_then(|()| git(main, &fetch))
         .with_context(|| format!("riff cannot fetch {head} to read the merged {FILE}"))?;
     let Ok(config) = git(main, &["show", &format!("{head}:{FILE}")]) else {
         bail!("{}", text::NO_RELEASE);

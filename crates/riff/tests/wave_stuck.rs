@@ -21,13 +21,16 @@ const REPO: &str = "o/r";
 /// check of these tests, the file `pulls` for `pr list`, the file `issues`
 /// for `issue list`, a passed Gate for each commit, the file `runs` for the
 /// runs of Actions of a commit, and the file `calls` with each read of
-/// them.
+/// them. Each check run is a job of the run 9 of `ci.yml`, and the Gate
+/// needs none of them (01M78TQ943A6KJQ8JD9PAWEYDW).
 const FAKE_GH: &str = r#"#!/bin/sh
 dir=$(dirname "$0")
 case "$1 $2" in
   api*)
     case "$2" in
       repos/o/r) echo '{"default_branch":"main"}' ;;
+      repos/o/r/actions/runs/9) echo .github/workflows/ci.yml ;;
+      -H) printf 'jobs:\n  gate:\n    name: Gate\n  knurl:\n    name: knurl adapter\n' ;;
       */rules/branches/main*) echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Gate"},{"context":"Hygiene"},{"context":"Lint"},{"context":"ci"},{"context":"buildkite/riff"},{"context":"riff/verify"}]}}]' ;;
       */milestones*) echo '[{"title":"Backlog"},{"title":"Wave 1"}]' ;;
       */check-runs*) echo '{"check_runs":[{"status":"completed","conclusion":"success","head_sha":"x"}]}' ;;

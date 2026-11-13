@@ -8,6 +8,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use isolated::Isolated;
@@ -163,8 +164,15 @@ impl Drop for Host {
 
 /// A riff-server whose GitHub is a fake, where the repositories of the
 /// tests are projects that allow each host: a wave runs only for a
-/// project (#1863).
+/// project (#1863), and riff-server takes the fact of a release only for
+/// a project (01M77F60MR8WZTMFJ5CF2295Q6).
 async fn start_server() -> crate::common::Signed {
+    start_server_of(&["local/riff", "local/other", "local/third"]).await
+}
+
+/// As [`start_server`], where only the repositories `projects` are
+/// projects of the riff.
+async fn start_server_of(projects: &[&str]) -> crate::common::Signed {
     let github = crate::common::fake_github::FakeGitHub::start().await;
     let settings = riff_server::github::Settings {
         api: github.url.clone(),
@@ -180,7 +188,7 @@ async fn start_server() -> crate::common::Signed {
         |config| config.github = settings,
     )
     .await;
-    for repo in ["local/riff", "local/other", "local/third"] {
+    for repo in projects {
         crate::github_apps::enroll(&server, &github, repo, &[]).await;
     }
     server
@@ -567,6 +575,73 @@ async fn a_new_daemon_serves_with_the_same_session() {
     assert_ne!(pid(&old), pid(&new), "{old}\n{new}");
 }
 
+impl Riff {
+    /// The lead `l1` writes its handover to the notes when riff asks for
+    /// it. It gives each ask that it got.
+    fn writes_the_handover(&self) -> Arc<Mutex<Vec<String>>> {
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let (api, me, got) = (self.api(&self.lead), self.lead.clone(), asked.clone());
+        let thread = me.default_thread().unwrap();
+        tokio::spawn(async move {
+            loop {
+                for inbox in api.inbox(&me, None, false).await.unwrap_or_default() {
+                    for checked in inbox.messages {
+                        let body = checked.message.body;
+                        if body.contains("Write your handover") {
+                            api.notes_set(&me, &thread, "Handover: wave 1 runs.")
+                                .await
+                                .unwrap();
+                            got.lock().unwrap().push(body);
+                        }
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        });
+        asked
+    }
+}
+
+/// 01M77FHTT8BZ2YN1SV7H1X3NG8: `riff lead move b` in a repository that is
+/// no project of the riff. riff asks the old lead on `a` for its handover,
+/// then the daemon of `b` refuses with the fix, `riff project init`. It
+/// starts no session and no container, and the old lead stays the lead.
+#[tokio::test(flavor = "multi_thread")]
+async fn riff_lead_move_in_a_repository_that_is_no_project_refuses_and_the_old_lead_stays() {
+    let r = riff_on(start_server_of(&[]).await, (300, 300), &[]).await;
+    let repo = r.lead.place().repo_text();
+    let asked = r.writes_the_handover();
+
+    let out = r.a.run(&r.main, &["lead", "move", "b"], None).await;
+
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let stderr = text(&out.stderr);
+    assert!(stderr.contains(&riff::text::no_project(&repo)), "{stderr}");
+    assert!(!stderr.contains("wrote no handover"), "{stderr}");
+    assert_eq!(
+        asked.lock().unwrap().as_slice(),
+        [riff::text::lead_handover_ask("b")]
+    );
+    // l1 is the lead still, and no other session came: only the daemons.
+    let who = r.api(&r.lead).who(&r.lead, false).await.unwrap();
+    let leads: Vec<&str> = who
+        .iter()
+        .filter(|s| s.live && s.uri.lead())
+        .filter_map(|s| s.uri.who().session())
+        .collect();
+    assert_eq!(leads, ["l1"]);
+    let others: Vec<&str> = who
+        .iter()
+        .filter(|s| s.live && !remote::is_daemon(s))
+        .filter_map(|s| s.uri.who().session())
+        .collect();
+    assert_eq!(others, ["l1"]);
+    let out = r.lead(&["daemon", "status"], "b").await;
+    assert!(out.status.success(), "{out:?}");
+    let status = text(&out.stdout);
+    assert!(!status.contains(&riff::lead::name_of(&repo)), "{status}");
+}
+
 impl Host {
     /// Writes the sign-in file of `claude` of this host: it ends in
     /// `minutes`.
@@ -582,6 +657,17 @@ impl Host {
             r#"{{"claudeAiOauth":{{"accessToken":"sk-a","refreshToken":"sk-r","expiresAt":{at}}}}}"#
         );
         std::fs::write(dir.join(".credentials.json"), file).unwrap();
+    }
+
+    /// The lines of the daemon of this host about a call for `repo` that
+    /// failed: for example a fact of a release that riff-server refused.
+    fn failed_calls(&self, repo: &str) -> Vec<String> {
+        let start = format!("riff daemon: {repo}: ");
+        self.output()
+            .lines()
+            .filter(|line| line.starts_with(&start) && line.contains(" failed ("))
+            .map(str::to_owned)
+            .collect()
     }
 }
 
@@ -599,6 +685,38 @@ impl Riff {
             .map(|m| m.message.body)
             .filter(|body| body.starts_with(start))
             .collect()
+    }
+
+    /// The bodies of the lines of riff-bot in `riff chat`: riff-server
+    /// posts them itself, with the kind `riff`.
+    async fn bot_lines(&self) -> Vec<String> {
+        let chat = riff::chat::thread();
+        let read = match self.api(&self.lead).read(&self.lead, &chat, true).await {
+            Ok(read) => read,
+            // The chat comes with its first line.
+            Err(e) if e.to_string().contains("no thread named chat") => Vec::new(),
+            Err(e) => panic!("{e:#}"),
+        };
+        read.into_iter()
+            .filter(|m| m.message.kind == Kind::Riff && m.message.from == SessionUri::server())
+            .map(|m| m.message.body)
+            .collect()
+    }
+
+    /// Waits until riff chat has the line of riff-bot `line`. A failed call
+    /// of the daemon of `a`, for example a fact that riff-server refused,
+    /// fails the test at once with the line of the daemon.
+    async fn bot_line(&self, line: &str) {
+        let repo = self.lead.place().repo_text();
+        until("the line of riff-bot", || async {
+            assert_eq!(self.a.failed_calls(&repo), Vec::<String>::new());
+            self.bot_lines()
+                .await
+                .iter()
+                .any(|l| l == line)
+                .then_some(())
+        })
+        .await;
     }
 
     /// The bodies of the notes of the daemons to the lead that start
@@ -885,9 +1003,9 @@ async fn the_replies_of_a_daemon_go_only_to_the_person_and_the_lead() {
 }
 
 /// A `gh` that logs its arguments in `log`, and a test that writes its
-/// `RIFF_SERVER` in `dir/server`, waits while the file `dir/hold`
-/// exists, and ends with the code in `code`, in `dir`. Gives the
-/// variables for a host.
+/// `RIFF_SERVER` in `dir/server` and its arguments in `dir/args`, waits
+/// while the file `dir/hold` exists, and ends with the code in `code`, in
+/// `dir`. Gives the variables for a host.
 fn fake_real_session(dir: &Path, log: &Path, code: &Path) -> Vec<(String, String)> {
     let script = |name: &str, body: String| {
         isolated::write_program(dir.join(name), format!("#!/bin/sh\n{body}\n"))
@@ -912,8 +1030,9 @@ fn fake_real_session(dir: &Path, log: &Path, code: &Path) -> Vec<(String, String
     let run = script(
         "run",
         format!(
-            "printf %s \"$RIFF_SERVER\" > {}\necho \"a line\"\necho \"GH_TOKEN=ghp_secret1\"\necho \"real-session: FAIL at step 6 of 10, run the item: exit 1\" >&2\nwhile [ -e {} ]; do sleep 0.1; done\nexit $(cat {})",
+            "printf %s \"$RIFF_SERVER\" > {}\necho \"$*\" > {}\necho \"a line\"\necho \"GH_TOKEN=ghp_secret1\"\necho \"real-session: FAIL at step 6 of 10, run the item: exit 1\" >&2\nwhile [ -e {} ]; do sleep 0.1; done\nexit $(cat {})",
             dir.join("server").display(),
+            dir.join("args").display(),
             dir.join("hold").display(),
             code.display()
         ),
@@ -934,6 +1053,7 @@ fn fake_real_session(dir: &Path, log: &Path, code: &Path) -> Vec<(String, String
 /// failure on a fail. A work session gets the refusal.
 /// 01M5MR8CM887EFGMKZM5BQA9JJ: the daemon has no `RIFF_SERVER`, and the
 /// test gets the riff-server of the repository.
+/// 01M78TS03FK4908GVSTFH1DKYY: the test gets each `--skip` of the request.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_daemon_runs_the_real_session_test_and_sets_the_status() {
     let tmp = tempfile::tempdir().unwrap();
@@ -973,12 +1093,17 @@ async fn the_daemon_runs_the_real_session_test_and_sets_the_status() {
     let commit = git(&r.main, &["rev-parse", "HEAD"]);
 
     let hold = tmp.path().join("hold");
-    for (host, exit, state) in [("a", "0", "success"), ("b", "1", "failure")] {
+    let skips = [".mozilla".to_owned(), "/srv/cache".to_owned()];
+    for (host, exit, state, skips) in [
+        ("a", "0", "success", &skips[..]),
+        ("b", "1", "failure", &[]),
+    ] {
         std::fs::write(&code, exit).unwrap();
         std::fs::write(&hold, "").unwrap();
         let asked = remote::Request::ReleaseTest {
             commit: commit.clone(),
             tag: TAG.to_owned(),
+            skips: skips.to_vec(),
         };
         let reply = remote::ask(
             &r.api(&r.lead),
@@ -1076,6 +1201,9 @@ async fn the_daemon_runs_the_real_session_test_and_sets_the_status() {
         }
         let server = tmp.path().join("server");
         assert_eq!(std::fs::read_to_string(&server).unwrap(), &*r.server);
+        let args = std::fs::read_to_string(tmp.path().join("args")).unwrap();
+        let want: Vec<String> = skips.iter().map(|skip| format!("--skip {skip}")).collect();
+        assert_eq!(args.trim_end(), want.join(" "), "{host}");
         std::fs::remove_file(&log).unwrap();
         std::fs::remove_file(&server).unwrap();
     }
@@ -1089,6 +1217,7 @@ async fn the_daemon_runs_the_real_session_test_and_sets_the_status() {
     let asked = remote::Request::ReleaseTest {
         commit,
         tag: TAG.to_owned(),
+        skips: Vec::new(),
     };
     let err = remote::ask(
         &r.api(&worker),
@@ -1188,6 +1317,7 @@ async fn the_daemon_refuses_the_test_and_the_build_of_a_repository_with_no_relea
     let test = remote::Request::ReleaseTest {
         commit,
         tag: TAG.to_owned(),
+        skips: Vec::new(),
     };
     for asked in [test, remote::Request::Build] {
         let err = remote::ask(
@@ -1240,6 +1370,7 @@ async fn the_daemon_runs_the_test_and_the_build_with_the_release_table_that_orig
     let asked = remote::Request::ReleaseTest {
         commit: merged.clone(),
         tag: TAG.to_owned(),
+        skips: Vec::new(),
     };
     let wait = Duration::from_secs(30);
     let reply = remote::ask(&r.api(&r.lead), &r.lead, "a", &asked, wait)
@@ -1936,7 +2067,10 @@ async fn watch_deploy(dir: &Path, repo: &str) {
 /// 01M5SNV75DRFHR26BT2M8243VV: the watch of the daemon gives the lead of
 /// another repository one note when the job `Deploy` waits, one when it
 /// passes and one when it fails, with a real riff-server. The lead of the
-/// release gets its own message, and none of the notes.
+/// release gets its own message, and none of the notes. The repository is
+/// a project, so riff-server takes the fact of the wait, and each admin
+/// gets one line of riff-bot (01M77F60MR8WZTMFJ5CF2295Q6). No call of the
+/// daemon fails.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_watch_of_a_deploy_gives_the_other_lead_one_note_for_each_step() {
     let tmp = tempfile::tempdir().unwrap();
@@ -2000,6 +2134,9 @@ async fn the_watch_of_a_deploy_gives_the_other_lead_one_note_for_each_step() {
         (!r.messages(&lead("waits for a person")).await.is_empty()).then_some(())
     })
     .await;
+    // Each admin gets the line of riff-bot of the wait in riff chat.
+    let waits = waits_line(&repo);
+    r.bot_line(&waits).await;
 
     // The job passes: one more note, and the watch goes.
     isolated::write_whole(
@@ -2042,6 +2179,8 @@ async fn the_watch_of_a_deploy_gives_the_other_lead_one_note_for_each_step() {
     );
     assert_eq!(r.messages(&lead("passed")).await.len(), 1);
     assert_eq!(r.messages(&lead("failed")).await.len(), 1);
+    assert_eq!(r.bot_lines().await, [waits], "one line of riff-bot");
+    assert_eq!(r.a.failed_calls(&repo), Vec::<String>::new());
 }
 
 /// The file `status` of [`fake_deploy`]: the status `riff/deploy-check` of
@@ -2049,6 +2188,18 @@ async fn the_watch_of_a_deploy_gives_the_other_lead_one_note_for_each_step() {
 fn deploy_status(state: &str, description: &str) -> String {
     format!(
         r#"{{"sha":"abc","statuses":[{{"context":"riff/deploy-check","state":"{state}","description":"{description}","updated_at":"2026-10-18T20:09:10Z"}}]}}"#
+    )
+}
+
+/// The line of riff-bot while the job `Deploy` of the run 9 of `TAG` of
+/// `repo` waits (01M74BPHQZHXFYYNXAJ1WFASQQ): it names each admin, brett
+/// and mike (01M7767T5VSWN9EYDVSTCEJ8AM), and the giver, mike: the daemon
+/// of mike gives the fact as the person (01M77F60MR8WZTMFJ5CF2295Q6).
+fn waits_line(repo: &str) -> String {
+    format!(
+        "@brett @mike riff release {TAG} waits for your approval: \
+         https://github.com/{repo}/actions/runs/9. mike gave this fact. In a terminal, run: \
+         riff release approve {TAG}"
     )
 }
 
@@ -2060,7 +2211,8 @@ const LOG_PASSED: &str = "503 run: 0 s, 500: 0, token store: 0, old lease: no";
 /// watch of a deploy that passed gives the lead the step of the check, and
 /// the other lead its note, only after the job Check the deploy set the
 /// status `riff/deploy-check`. A status `error`, and a job that failed with
-/// no status, wake the lead with the reason.
+/// no status, wake the lead with the reason. The job `Deploy` never waits,
+/// so riff chat has no line of riff-bot, and no call of the daemon fails.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_watch_of_a_deploy_gives_the_step_of_the_check_only_after_the_job_check_the_deploy() {
     let tmp = tempfile::tempdir().unwrap();
@@ -2158,13 +2310,16 @@ async fn the_watch_of_a_deploy_gives_the_step_of_the_check_only_after_the_job_ch
         riff::text::deploy_check_none("https://github.com/o/r/actions/runs/9", Some("cancelled"))
     );
     assert_eq!(told(none).await, 3);
+    assert!(r.bot_lines().await.is_empty(), "the job never waited");
+    assert_eq!(r.a.failed_calls(&repo), Vec::<String>::new());
 }
 
 /// 01M6XTS7RGXB30MFM6DZ7PVZ75: `riff who` says the state of an open release
 /// at each step, in the same line as the header of the TUI. The watch of the
 /// deploy, then the watch of the check, give the step to the facts of the
 /// host, with a real riff-server and a fake `gh`. With no open release, `riff
-/// who` has no line `release`.
+/// who` has no line `release`. The wait gives each admin one line of riff-bot
+/// (01M77F60MR8WZTMFJ5CF2295Q6), and no call of the daemon fails.
 #[tokio::test(flavor = "multi_thread")]
 async fn riff_who_says_the_state_of_an_open_release_at_each_step() {
     let tmp = tempfile::tempdir().unwrap();
@@ -2203,6 +2358,8 @@ async fn riff_who_says_the_state_of_an_open_release_at_each_step() {
         "{TAG}: the deploy waits for a person (riff release approve {TAG})"
     )))
     .await;
+    let waits = waits_line(&repo);
+    r.bot_line(&waits).await;
 
     // A person approves: the riff is paused, and the job runs.
     lead.set_riff(&r.lead, RiffState::Paused).await.unwrap();
@@ -2244,6 +2401,8 @@ async fn riff_who_says_the_state_of_an_open_release_at_each_step() {
         .then_some(())
     })
     .await;
+    assert_eq!(r.bot_lines().await, [waits], "one line of riff-bot");
+    assert_eq!(r.a.failed_calls(&repo), Vec::<String>::new());
 }
 
 /// A fake `gh` on the PATH for the watch of a wave: the open wave `Wave 41`

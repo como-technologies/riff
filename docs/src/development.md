@@ -2656,14 +2656,17 @@ job `Gate` has no run until the other jobs end. A failed check next to
 a check with no run is not done either.
 
 Only a failed check that the ruleset of `main` requires holds the
-verify. It gets its fix before the verify, because the verify of a head
+verify, or a failed job that such a check needs, as the Gate needs
+`macOS` (see
+[See a failed job that the Gate needs](#see-a-failed-job-that-the-gate-needs)).
+It gets its fix before the verify, because the verify of a head
 with a failed required check can only fail. The wave starts no verify
 of that head. It starts a session that fixes the failed checks (see
 [See a pull request that cannot merge](#see-a-pull-request-that-cannot-merge)).
 After its push, the new head gets a new full check, and then its verify.
 
-A failed check that the ruleset does not require holds no verify:
-`riff verify pass` needs only the required checks. The verify goes on,
+Another failed check holds no verify: `riff verify pass` needs only
+the required checks. The verify goes on,
 and your lead gets one message for the check (see
 [See a failed check that no rule requires](#see-a-failed-check-that-no-rule-requires)).
 
@@ -3287,7 +3290,7 @@ flowchart TD
 | The pull request | What the wave does | In `riff top` |
 |---|---|---|
 | A conflict, auto-merge on | A session rebases it at its turn (see [Run the wave](#run-the-wave)) | `stuck: #12 (conflict)` |
-| The verify passed or waits, a required run of GitHub Actions failed | A session fixes the check. The wave starts no verify of this commit (see [See why a verify waits](#see-why-a-verify-waits)) | `stuck: #12 (checks)` |
+| The verify passed or waits, a required run of GitHub Actions failed, or a job that a required check needs | A session fixes the check. The wave starts no verify of this commit (see [See why a verify waits](#see-why-a-verify-waits) and [See a failed job that the Gate needs](#see-a-failed-job-that-the-gate-needs)) | `stuck: #12 (checks)` |
 | The verify passed or waits, a required check of another app failed | Your lead gets one message for the check. No session starts (see [Fix a failed check of another app](#fix-a-failed-check-of-another-app)) | `stuck: #12 (checks)` |
 | The verify passed or waits, a check that the ruleset does not require failed | Your lead gets one message for the check. The verify goes on, and no session starts (see [See a failed check that no rule requires](#see-a-failed-check-that-no-rule-requires)) | not stuck |
 | The verify passed, auto-merge off | Your lead gets one message. No session starts | `stuck: #12 (auto-merge off)` |
@@ -3540,9 +3543,43 @@ gh api -X PATCH repos/OWNER/REPO/code-scanning/alerts/128 -f state=dismissed -f 
 The next scan still finds the flow of a dismissed alert, but GitHub
 keeps the alert dismissed and opens no new alert for it.
 
+#### See a failed job that the Gate needs
+
+The ruleset of `main` requires the Gate, not `macOS`. But the Gate needs
+`macOS`, and fails when `macOS` fails. So the wave counts a failed job
+that a required check needs as a failed required check. The look reads
+the workflow of the run at the head commit, and follows `needs:` from
+the job of each required check, also through other jobs.
+
+A failed `macOS` holds the verify, and a session fixes it, as for a
+failed Gate. That starts at once, also while the Gate waits for the
+tests. `riff top` shows `stuck: #12 (checks)`. A failed job that no
+required check needs, for example `Crate audit`, keeps the message of
+[See a failed check that no rule requires](#see-a-failed-check-that-no-rule-requires).
+
+```mermaid
+flowchart LR
+    M["macOS failed"] --> N{"does a required check<br/>need its job?"}
+    N -- "yes: the Gate needs macOS" --> F["a session fixes it:<br/>no verify of this head"]
+    N -- "no: Crate audit" --> L["a message to your lead:<br/>the verify goes on"]
+```
+
+To see the jobs that the Gate needs, and the checks of the pull request
+40:
+
+```sh
+grep -n "needs:" .github/workflows/ci.yml
+gh pr checks 40
+```
+
+When the look cannot read the workflow, it fails, and says why. The
+wave starts no work at that look, and reads again at the next one.
+
 #### See a failed check that no rule requires
 
-A check that the ruleset of `main` does not require blocks no merge.
+A check that the ruleset of `main` does not require, and that no
+required check needs, blocks no merge (see
+[See a failed job that the Gate needs](#see-a-failed-job-that-the-gate-needs)).
 An example is a new workflow whose secret is not there yet. Its failure
 holds no verify, and no session fixes it. The verify goes on, and the
 pull request merges when its required checks and its verify pass. Your
@@ -3972,10 +4009,12 @@ riff wave list
 
 The current wave has the mark `current`, and `runs on HOST` for each
 host whose daemon runs its loop. Under each wave come its open items
-in the groups of the board of `riff top`: `free`, `held`, `claimed`,
-`verify`, `stuck`, `tracker` and `question`. A held item has the reason
-of the lead, and the wave does not start it. The wave never starts a
-tracker (see [Track a group of items](waves.md#track-a-group-of-items)).
+in the groups of the board of `riff top`: `free`, `held`, `needs`,
+`claimed`, `verify`, `stuck`, `tracker` and `question`. A held item has
+the reason of the lead, and the wave does not start it. An item in
+`needs` has its open needs, and the wave does not start it either (see
+[Needs](waves.md#needs)). The wave never starts a tracker (see
+[Track a group of items](waves.md#track-a-group-of-items)).
 An item in `question` waits for the answer of a person (see
 [Ask the person a question](#ask-the-person-a-question)). A verify that
 waits for the merge of the pull request #N is in the group
@@ -3991,14 +4030,15 @@ Wave 33: Hosts  current  runs on thelio  4 open, 21 closed
   claimed: #1103
   tracker: #1248
   question: #1596
-Wave 34  1 open, 0 closed
+Wave 34  2 open, 0 closed
   free: #1106
+  needs: #1107 (#1103)
 Backlog  61 open, 4 closed
 ```
 
 When the wave says "no free work now" while items are open, look at
-the groups: the items are held, claimed, in verify, stuck, trackers or
-waiting for an answer.
+the groups: the items are held, wait for their needs, claimed, in
+verify, stuck, trackers or waiting for an answer.
 
 The lead runs the same command in its container. There, riff reads
 the sessions and the holds through the riff daemon of the host.
@@ -4424,8 +4464,11 @@ So riff sets each of them:
   the CPU weight 1, the lowest. The default weight is 100. So when
   your programs and the sessions all want the CPU, your programs get
   100 parts and the sessions 1.
+- conmon, the monitor of podman that holds the container, runs in
+  `riff.slice` too, in a scope of its own. It is so when the daemon
+  starts the container, and when riff starts it from your terminal.
 - Each container also gets `--cgroup-conf cpu.weight=1`: in the slice,
-  it yields to podman and its network.
+  it yields to podman, conmon and the network.
 
 The priority has no setting. riff writes it in no file of yours:
 systemd keeps the weight of the slice in the runtime folder of your
@@ -4436,6 +4479,7 @@ flowchart TD
     M["user@UID.service:<br/>the systemd manager of your user"] --> A["app.slice: weight 100<br/>your programs"]
     M --> R["riff.slice: weight 1"]
     R --> C["each session container:<br/>cpu.weight 1, each process at nice 19"]
+    R --> O["libpod-conmon-ID.scope:<br/>the conmon of each container"]
 ```
 
 To see the CPU weight of `riff.slice` and of each slice next to it:
@@ -4473,6 +4517,29 @@ podman exec riff-issue-12-21c026a1 cat /sys/fs/cgroup/cpu.weight
 
 It shows `1`. A session that an older riff started keeps its old
 priority and its old slice until it ends.
+
+##### See where the conmon of a container runs
+
+To see the cgroup of the conmon of one container, for example
+`riff-issue-12-21c026a1`:
+
+```sh
+cat /proc/$(podman container inspect --format '{{.State.ConmonPid}}' riff-issue-12-21c026a1)/cgroup
+```
+
+It shows one line that ends with
+`/user@UID.service/riff.slice/libpod-conmon-ID.scope`, with your user
+ID and the ID of the container.
+
+To check the priority of the sessions on your machine, run the live
+test of riff in a clone of riff. It starts a worker and a lead in two
+ways: as the daemon starts them, and as from your terminal. On a
+machine with no rootless podman or no session image, each test says
+`skip:` and why:
+
+```sh
+cargo test -p riff --test all priority:: -- --nocapture
+```
 
 ### Set the effort of the sessions
 
@@ -5036,7 +5103,7 @@ These keys act on the containers of this machine:
 
 | Key | Does |
 |---|---|
-| `l` | Attach to the lead of the repository of the row, else to the first lead. Ctrl-P Ctrl-Q, or the end of the lead, comes back to the tab. On a repository whose wave waits for a lead, start the lead after `y` (see [The wave waits for its lead](how-it-works.md#the-wave-waits-for-its-lead)). |
+| `l` | Attach to the lead of the repository of the row, else to the first lead. Ctrl-P Ctrl-Q, or the end of the lead, comes back to the tab. On a repository whose wave waits for a lead, a note gives the step: `l` starts no lead (see [The wave waits for its lead](how-it-works.md#the-wave-waits-for-its-lead)). |
 | `Enter` on a lead | Attach to that lead. |
 | `t` | Stop the turn of the selected session, and take it over, after `y` (see [Take over a session](#take-over-a-session)). |
 | `x` | End the selected session, and free its item, after `y`, as `riff daemon end` does. |
@@ -5353,10 +5420,11 @@ The files that riff must not write:
 A line of a git config can run code at your next git command, for
 example `core.hooksPath`, `core.fsmonitor` or an alias. So the test
 also reads `.git/config` and `.git/config.worktree` of each git clone
-of your home, also of your clone of the test. A new section
-`[branch "NAME"]` does not count: each `git push -u` of a session
-writes one. Each other change of a key fails the test, and the message
-names the file and the key:
+of your home, also of your clone of the test, but not of a clone in
+the work tree of another clone. A new section `[branch "NAME"]` does
+not count: each `git push -u` of a session writes one. Each other
+change of a key fails the test, and the message names the file and
+the key:
 
 ```text
   /home/ada/src/riff/.git/config (changed: core.hookspath)
@@ -5380,10 +5448,10 @@ home while the test runs, for example a browser. It also fails when
 you change a file that riff must not write, for example your
 `~/.bashrc`. The message lists each path. Leave out the folder of that
 program, or the file, with `--skip`, and run the test again. Give
-`--skip` one time for each path:
+`--skip` one time for each path. A relative path is in your home:
 
 ```sh
-just real-session --skip ~/.mozilla --skip ~/.config/Code
+just real-session --skip ~/.mozilla --skip .config/Code
 ```
 
 The test leaves out these paths with no `--skip`:
@@ -5392,17 +5460,50 @@ The test leaves out these paths with no `--skip`:
 |---|---|
 | `~/.config/riff`, `~/.local/share/riff`, `~/.local/state/riff`, `~/.cache/riff`, and `RIFF_HOME` | riff |
 | `~/.local/share/containers`, `~/.config/containers` | podman: the images and the volumes |
-| your clone, and the worktree of the test, except the hooks and the config files in their `.git` | the build of the test, and the fetch of `riff run` |
+| the work tree of each git clone of your home: each path in a folder with `.git` in it, except that `.git`. Your clone and the worktree of the test are such clones too | you and your other sessions: a pull, a build and a test; the build of the test, and the fetch of `riff run` |
 | `~/.cache` | the caches of your tools |
+| `~/.cargo/registry`, `~/.cargo/git` | cargo: the crates of a build |
+| `~/.config/gcloud/logs` | `gcloud`: its logs |
 | `~/snap` | the snap apps, for example the Firefox snap |
 | `~/.local/state/claude/locks` | each `claude` on your machine |
 | `~/.local/share/gvfs-metadata` | GNOME: `gvfsd-metadata` writes there when the desktop touches a file |
 | `.claude/worktrees` and `.git` in each git clone of your home, except `.git/hooks`, `.git/config` and `.git/config.worktree`. When your home is itself a git clone, this is also `~/.claude/worktrees` | your other sessions: they build and commit in their worktrees, and git writes in the `.git` of the clone |
 | `~/.claude`, `~/.claude.json`, `~/.claude.json.lock` | your other Claude Code sessions (see [What the home check compares](#what-the-home-check-compares)) |
 
+So you can work on the host while the test runs: pull, build and test
+in your clones, and run `gcloud`. Your home is not such a clone, also
+when it has a `.git`. A clone in the work tree of another clone is
+part of that work tree. A new clone outside a work tree fails the
+test. In a work tree, the files that riff must not write still count,
+and so do `~/.claude` and `~/.claude.json`. For example, when
+`~/.config` is a git clone, a change in `~/.config/gh` still fails the
+test:
+
+```mermaid
+flowchart LR
+    R["~/src/riff: a git clone"] --> W["its work tree: src, target and the rest<br/>left out"]
+    R --> G[".git: the hooks and the config files count"]
+    C["~/.config: a git clone"] --> K["gh, git, fish/config.fish and fish/conf.d<br/>count"]
+    C --> O["each other path: left out"]
+```
+
 The test uses `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME` and
 `XDG_CACHE_HOME` in place of `~/.config`, `~/.local/share`,
-`~/.local/state` and `~/.cache` when you set them.
+`~/.local/state` and `~/.cache` when you set them. It uses
+`CARGO_HOME` in place of `~/.cargo`, and `CLOUDSDK_CONFIG` in place of
+`~/.config/gcloud`.
+
+#### Leave out a path in the test on a host
+
+When the lead runs the test on a host with `riff release test`, give
+`--skip` to that command. The daemon of the host gives each path to
+the test. A relative path, and a path in your home, name that path in
+the home of the host: `~/.mozilla` in the container of the lead is
+`~/.mozilla` of the host. A path cannot have a space:
+
+```sh
+riff release test v3.3.0 --host thelio --skip .mozilla --skip .config/Code
+```
 
 ### Wait longer for the Gate
 
@@ -6324,9 +6425,11 @@ each login and each unlock of the screen. That is normal.
 
 The riff daemon starts after your desktop (see
 [When the daemon starts](#when-the-daemon-starts)). It never asks for
-the unlock prompt, and it runs no `gh` that would ask for it. It waits
-for an open keyring, and the waves say `unlock it at the desktop`.
-Only a command that you type asks for the prompt.
+the unlock prompt, and it runs no `gh` that would ask for it. It also
+runs no `git` that would start `gh` for a credential: a fetch, a clone
+or a push of a repository over HTTPS, after `gh auth setup-git`. It
+waits for an open keyring, and the waves say `unlock it at the
+desktop`. Only a command that you type asks for the prompt.
 
 ```mermaid
 sequenceDiagram
@@ -6358,6 +6461,23 @@ riff daemon status
 ```
 
 It shows `claude token: set.` when the daemon reads the keyring.
+
+To see whether git asks `gh` for a credential, run this in the main
+clone of a project:
+
+```sh
+git config --get-regexp '^credential\..*helper$'
+```
+
+A line with `gh auth git-credential` for the host of
+`git remote get-url origin` says that git asks `gh`. While the keyring
+is locked, the daemon then runs no such `git`, and says:
+
+```text
+riff did not run git fetch -q origin: the OS keyring of pangolin is locked or does not answer: unlock it at the desktop. gh uses the same keyring, so gh stops too
+```
+
+A remote over SSH asks `gh` for nothing, so its `git` runs.
 
 #### When the keyring does not answer
 

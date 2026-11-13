@@ -8,7 +8,9 @@
 //! session and the look told nothing, #1549), until `riff host leave`
 //! (`crate::wave::watch`, 01M5QVH3MAEPPJN9PPVDX6N2EY). It reads the
 //! forge with the `gh` of the person, and posts as the person: to the
-//! lead, or to the session that holds an item.
+//! lead, or to the session that holds an item. On a host that the
+//! projects of the riff refuse, it reads nothing and posts nothing, as the
+//! loop of the wave (01M78THTMTGMFZ3SNET2072P4H).
 //!
 //! ```mermaid
 //! flowchart LR

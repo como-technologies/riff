@@ -747,6 +747,14 @@
   `question`. The issue stays blocked until the people agree. Then the
   lead records the decision that they agree on, and removes the label.
   The rules of the lead (`text::LEAD_RULES`) name the rule.
+- **01M78TW2TPG6JM99RN73NV5GB9** `riff wave list`, the board of `riff
+  top` and the Waves tab of the TUI show the group `needs`: each open
+  item of the wave with an open issue in its `Needs:` line, with its
+  open needs, for example `needs: #1520 (#1522)`. Such an item is never
+  in `free`, as the wave starts no build of it. An item whose needs are
+  all closed is free. A claim, a verify, a stuck pull request, a
+  tracker, a question and a hold win over the group. A pause hides no
+  item of the group.
 
 ## Issue hygiene on GitHub
 
@@ -3718,6 +3726,11 @@
   each line that names its project, of each person. This supersedes
   01M6XZ27XV8RAC8B72DCM937ST, 01M6XZ280AMTAMPD6R4212YC2T and
   01M6Y1FB84QN0C70AJ5K1JCNMT in part.
+- **01M78TFBE2WRNC44MRQBTDW19B** When the read of
+  01M76SB9ACMZWMY9Z6CC4WW3HD has room in a thread only for its messages
+  that woke the session, the line of that thread says that they show
+  above, in the part of 01M588J4XNV1TXEPMGTKRVY9VK, and names the thread
+  for its other messages.
 
 ## Security
 
@@ -4426,6 +4439,18 @@
   the keyring does not answer, the daemon runs no such `gh`: the call
   fails with the line of a locked keyring. The daemon waits for an open
   keyring: the next look of each wave tries again.
+- **01M78TSH2VNHA75RR1HXC5Z27G** Before each `git` of the riff daemon
+  that talks to a remote, for example a fetch, a clone or a push, the
+  daemon reads the credential helpers that git starts for the URL of
+  that remote. When one of them is `gh`, for example `gh auth
+  git-credential` of `gh auth setup-git`, and `GH_TOKEN` and
+  `GITHUB_TOKEN` are empty, the daemon looks at the item of `gh` in the
+  keyring, as before a `gh` call (01M77AB7XZV8KG8RRZ8C6R5A8X). While
+  that item is locked, or the keyring does not answer, the daemon runs
+  no such `git`: the call fails with the line of a locked keyring. The
+  daemon waits for an open keyring: the next try of the step runs the
+  `git`. A remote over SSH, a path and a `file://` URL use no helper, so
+  their `git` runs.
 
 ## Terminal
 
@@ -6378,6 +6403,15 @@ of this part when they merge.
   link of an older unit to the new target. A write of the unit after an
   update keeps its target. Supersedes 01M4ZDTVK74596M0ZA46N51NKV in
   part.
+- **01M78TQ48B5JQXGRSDBGWMZDS7** systemd-run --scope sets
+  `INVOCATION_ID` in its command. So in a unit, the scope of each
+  `podman run` starts `env -u INVOCATION_ID nice -n 19 podman run`, and
+  podman gets no `INVOCATION_ID` (01M4ZDTW00B7N6T9P3MK066KA7). podman
+  then puts the conmon of each session container in
+  `libpod-conmon-ID.scope` in riff.slice, for a start in a unit, as from
+  the daemon, and for a start out of a unit, as from a terminal
+  (01M778VSP6Z29FCPGX5S76ME1T). A live test finds conmon by its PID, for
+  a worker and a lead, each way.
 
 ### riff relay
 
@@ -6952,18 +6986,12 @@ of this part when they merge.
   the token of a session (01M6WPMNXN1BSBEH74TG5DDRTF), the check of the
   push right and the revoke, under the caller `token` of DAEMON
   (01M6QCDH3VXFFEFEWJT1H2HQT0).
-- **01M749P62T24VDPX20D40KRJEK** Only a failed check that the ruleset of
-  the default branch requires (01M5QYDE41FVFX26EC8K5QGYH4) starts the
-  fix of the failed checks and holds the verify. A pull request whose
-  head has such a check gets the fix also when its verify waits: the
-  wave starts no verify of that head, and the verify comes after the
-  fix. For a failed check that the ruleset does not require, of any app,
-  the verify goes on and no session starts. The lead gets one message
-  for each such check and head commit, with the name of the check and
-  its link, and riff top and riff wave list do not show the pull request
-  as stuck. The look reads the ruleset when a head has a failed check.
-  When a session of a wave for failed checks ends with the same head
-  commit, only the required runs of Actions count as failed. Supersedes
+- **01M749P62T24VDPX20D40KRJEK** A failed check that the ruleset of the
+  default branch requires (01M5QYDE41FVFX26EC8K5QGYH4) starts the fix of
+  the failed checks and holds the verify. A pull request whose head has
+  such a check gets the fix also when its verify waits: the wave starts
+  no verify of that head, and the verify comes after the fix. The look
+  reads the ruleset when a head has a failed check. Supersedes
   01M5SN0PY23JDWND8DGGAF9XMB and 01M6JEQEQ45YMNR1WTX2RRTQ5B in part.
 - **01M74BJ5Y03F5DGT44N8EENFBG** A call that fails on a limit of GitHub
   less than one minute after the end of the last wait of its resource is
@@ -7110,6 +7138,41 @@ of this part when they merge.
   head while its look still shows the head as waiting for a verify, and
   neither does it for a head whose FAIL the daemon put on the pull
   request.
+- **01M78THTMTGMFZ3SNET2072P4H** The look of the daemon at the pull
+  requests and at `main` (01M5QVH3MAEPPJN9PPVDX6N2EY) runs only where
+  the loop of the wave runs. It reads the projects from riff-server
+  before each look, as the loop of the wave does
+  (01M77FHMTD5Y5FXRD903S2ZGCX). On a host that the projects refuse, it
+  reads nothing with "gh", posts no message, and files no fix item of a
+  broken `main`. When the project allows the host again, it looks again
+  at its next look.
+- **01M78TQ943A6KJQ8JD9PAWEYDW** A failed run of GitHub Actions counts
+  as a failed required check (01M749P62T24VDPX20D40KRJEK) when a check
+  that the ruleset of the default branch requires needs it: in the
+  workflow of the run, at the head commit of the pull request, the job
+  of the required check needs the job of the run, also through other
+  jobs. An example is the job macOS, which the Gate needs. Such a run
+  starts the fix of the failed checks and holds the verify, also while
+  the required check waits for the other jobs. For each other failed
+  check that the ruleset does not require, of any app, the verify goes
+  on and no session starts. The lead gets one message for each such
+  check and head commit, with the name of the check and its link, and
+  riff top and riff wave list do not show the pull request as stuck.
+  When a session of a wave for failed checks ends with the same head
+  commit, only the runs of Actions that count as required count as
+  failed. The look reads the workflow when a head has a failed run of
+  Actions that the ruleset does not name. A look that cannot read the
+  workflow fails, and says why. Supersedes 01M749P62T24VDPX20D40KRJEK in
+  part.
+- **01M78V5MB2RRR40B5QYHPC6ZC4** The answer to `riff resume` of a
+  repository with no lead names the cause of the wait
+  (01M776RT1GW3N4MJDMPXZ8JAJE). When the riff daemon of a host in `riff
+  who` runs the wave of the repository, it says that no lead runs. Else
+  it says that no host runs the wave, so no lead and no session start.
+  Each names `riff host join`. riff asks riff-server for the sessions
+  only after such a resume, and when that ask fails, the answer says
+  that no lead runs. The tool `resume` of the lead gives the same
+  answer.
 
 ### The lead, the view and the takeover
 
@@ -8851,18 +8914,17 @@ of this part when they merge.
   `.claude/worktrees` of each git clone of the home (a folder with
   `.git` in it). The other sessions of the person build and commit in
   their worktrees, and make new worktrees, while the test runs. A new
-  path in the rest of each clone still counts, also a new hook and a
-  new config file of git.
+  hook and a new config file of git still count.
 - **01M51X6JA3W2CMV1S5VZEY7FC3** The home check of the real-session
   test also reads `config` and `config.worktree` in the folder `.git`
-  of each git clone of the home, before and after `riff run`. This
-  includes the main clone and the worktree of the test: the check
-  leaves out the rest of them. A new, a changed or a removed key fails
-  the test, and the message names the file and each key. A key of a
-  section `[branch "NAME"]` does not count. A change to a file in
-  `.git/hooks` fails the test too. `config.worktree` in
-  `.git/worktrees/NAME`, and the git folder of each submodule in
-  `.git/modules`, stay left out.
+  of each git clone of the home outside the work tree of another clone,
+  before and after `riff run`. This includes the main clone and the
+  worktree of the test: the check leaves out the rest of them. A new, a
+  changed or a removed key fails the test, and the message names the
+  file and each key. A key of a section `[branch "NAME"]` does not
+  count. A change to a file in `.git/hooks` fails the test too.
+  `config.worktree` in `.git/worktrees/NAME`, and the git folder of each
+  submodule in `.git/modules`, stay left out.
 - **01M51X6JCHZB8HJ8C8M3J1G6GZ** When the home is itself a git clone,
   the home check of the real-session test leaves out
   `.claude/worktrees` in the home, as in each other clone.
@@ -8967,6 +9029,31 @@ of this part when they merge.
   pass, `next:` names `riff release cut X.Y.Z`. Supersedes
   01M5924C8BTT6CW05Q0YZJ1GCY, 01M5NBZRJ71MREAJCPNVFYVKCM,
   01M4ZCFGKDKH16KGKR5NBEK3Y4 and 01M58KMKZ2EG8NZG4F085S6NQX in part.
+- **01M78TRZQYZC2PCTDG48CS17EB** The home check of the real-session test
+  leaves out, with no flag, the work tree of each git clone in the home:
+  each path in a folder with `.git` in it, except that `.git`. A person
+  and the other sessions pull, build and test there while the test runs.
+  The home is no such clone. A clone in a work tree is part of that work
+  tree. In a work tree, the files that the check guards
+  (01M51K051FR0WN71NJXNA86XWY), the Claude folder and `.claude.json`
+  still count. Supersedes 01M51SPS50QQ9Y5C6VE26A18FZ in part: a new path
+  in the rest of each clone. Supersedes 01M51X6JA3W2CMV1S5VZEY7FC3 in
+  part: the git config of a clone in a work tree.
+- **01M78TRZWQ9XN3QKHJBYEB4D6Q** The home check of the real-session test
+  also leaves out, with no flag, `registry` and `git` in `CARGO_HOME`,
+  else in `~/.cargo`, and `logs` in `CLOUDSDK_CONFIG`, else in
+  `~/.config/gcloud`. cargo and `gcloud` of the person write there while
+  the test runs.
+- **01M78TS004W7TF4D86B8V8A3PW** A relative path of `--skip` of the
+  real-session test is in the home, and so is a path that starts with
+  `~/`.
+- **01M78TS03FK4908GVSTFH1DKYY** `riff release test vX.Y.Z --host HOST
+  --skip PATH` takes `--skip` one time for each path, and the daemon of
+  HOST gives each one to the test as `--skip PATH`. A path in the home
+  of the caller goes as a path relative to the home, so it names the
+  same path in the home of HOST. riff refuses an empty path and a path
+  with a space. `just real-session` gives its arguments to the test as
+  they are: no shell reads them.
 
 ## The UIs
 
@@ -9662,13 +9749,13 @@ that builds it merges.
 - **01M77F7R7RERVQH7XS39GWJJKF** The Waves tab of the TUI shows a board
   for each project of the person: the projects that `riff questions`
   reads (01M77F889Q3D6VCEDNNNXSWGNK). A repository of a session that is
-  no project gets no board.
-  With no such project, the tab says that none of your repositories is a
-  project of the riff. Supersedes 01M6VFG882T794B1CTHK5AKPDG in part.
+  no project gets no board. With no such project, the tab says that none
+  of your repositories is a project of the riff. Supersedes
+  01M6VFG882T794B1CTHK5AKPDG in part.
 - **01M77XYFZW86MCXD22GDCXMS00** `riff who` and `riff top` show a fact
   `lead` for each project with a live lead, after the facts of the
   pauses: `OWNER/REPO on HOST: NAME`, with the name and the short
-  session ID of the lead. Each repository with no live lead
+  session ID of the lead. Each project with no live lead
   (01M776RSYKJK9NETFAD8G0CCVQ) has the fact `lead` `OWNER/REPO: none`,
   in yellow. The `who` tool of a session shows the same facts, plain.
 - **01M77XYN04KX35QZ06NDPSXHRP** In the Sessions tab of the TUI, the
@@ -9682,6 +9769,12 @@ that builds it merges.
   When the lead runs on another host, the note names that host and the
   step there. On a repository that waits for a lead, `l` starts no lead:
   the note gives the step.
+- **01M78V5NSEH2JK52473SQ64E24** `riff who`, `riff top` and the `who`
+  tool of a session show the fact `lead` only for a project of the riff
+  (01M77F7HPBNJY9QFG3HA6YH5F4). A repository that is no project gets no
+  fact `lead`: not its live lead, and not the `none` of a repository
+  that riff-server names in `no_lead`, for example the repository of a
+  session that is gone. Supersedes 01M77XYFZW86MCXD22GDCXMS00 in part.
 
 ## The notes of the lead
 

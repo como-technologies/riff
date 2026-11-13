@@ -196,6 +196,9 @@ struct GhIssue {
     #[serde(default)]
     labels: Vec<crate::rollout::Label>,
     milestone: Option<GhMilestone>,
+    /// Only its `Needs:` line counts ([`crate::rollout::needs`]).
+    #[serde(default)]
+    body: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -216,17 +219,19 @@ pub fn issue_args(repo: &str) -> Vec<String> {
         "--limit",
         "1000",
         "--json",
-        "number,title,milestone,labels",
+        "number,title,milestone,labels,body",
     ]
     .map(String::from)
     .to_vec()
 }
 
 /// The issues ([`Issues`]) in the JSON of `gh issue list --json
-/// number,title,milestone,labels`. A tracker issue
+/// number,title,milestone,labels,body`. A tracker issue
 /// ([`riff_client::waves::is_tracker`]) is in [`Issues::trackers`]. An issue
 /// with the label [`riff_client::waves::QUESTION`] is in
-/// [`Issues::questions`]. `None` for other text.
+/// [`Issues::questions`]. An issue with an open issue in its `Needs:` line
+/// is in [`Issues::needs`] (01M78TW2TPG6JM99RN73NV5GB9). `None` for other
+/// text.
 ///
 /// ```
 /// use riff::top::parse_issues;
@@ -238,12 +243,15 @@ pub fn issue_args(repo: &str) -> Vec<String> {
 ///   {"number": 4, "title": "Kept", "milestone": {"title": "Backlog"}},
 ///   {"number": 5, "title": "New", "milestone": null},
 ///   {"number": 6, "title": "The parts", "milestone": null, "labels": [{"name": "tracker"}]},
-///   {"number": 7, "title": "Which design?", "milestone": null, "labels": [{"name": "question"}]}
+///   {"number": 7, "title": "Which design?", "milestone": null, "labels": [{"name": "question"}]},
+///   {"number": 8, "title": "After the old one", "milestone": {"title": "Wave 10"}, "body": "Needs: #9, #3"}
 /// ]"#;
 /// let issues = parse_issues(json).unwrap();
 /// assert_eq!(issues.titles[&12], "Show the wave");
 /// assert_eq!(issues.trackers, [6].into());
 /// assert_eq!(issues.questions, [7].into());
+/// // #9 is open, and #3 is not.
+/// assert_eq!(issues.needs, [(8, vec![9])].into());
 /// assert_eq!(issues.wave(), Some(&("Wave 9: Cloud".into(), vec![9])));
 /// assert_eq!(parse_issues("not json"), None);
 /// ```
@@ -260,6 +268,7 @@ pub fn parse_issues(json: &str) -> Option<Issues> {
                     .labels
                     .iter()
                     .any(|l| l.name == riff_client::waves::QUESTION),
+                needs: crate::rollout::needs(i.body.as_deref().unwrap_or_default()),
                 number: i.number,
                 title: i.title,
                 milestone: i.milestone.map(|m| m.title),
@@ -735,9 +744,10 @@ impl Top<'_> {
     ///   01M77F8JFFWV6KFTPQT9DNB26M): the current wave
     ///   with its repository, then one line for each group of its open
     ///   items: `free`, `held` with the reason of each hold
-    ///   (01M58ATZ1F42DWNNB24C2HJPEY), `claimed`, and `verify` for an item with a
-    ///   verify claim, and for an item with no claim whose pull request
-    ///   waits for a verify or for the merge. Only a claim in that
+    ///   (01M58ATZ1F42DWNNB24C2HJPEY), `needs` with the open needs of each
+    ///   item (01M78TW2TPG6JM99RN73NV5GB9), `claimed`, and `verify` for an
+    ///   item with a verify claim, and for an item with no claim whose pull
+    ///   request waits for a verify or for the merge. Only a claim in that
     ///   repository counts. A repository with no issues has no board,
     ///   and no error line. When the whole riff or the repository is
     ///   paused, the wave line ends with `paused` and the board has no
@@ -883,11 +893,11 @@ impl Top<'_> {
     /// };
     /// let text = anstream::adapter::strip_str(&top.view()).to_string();
     /// // The lead of each project, with its host (01M77XYFZW86MCXD22GDCXMS00).
+    /// // o/s is no project: its lead has no fact `lead`.
     /// assert!(
     ///     text.starts_with(
     ///         "riff   running\n\
     ///          lead   o/r on thelio: mike@thelio:r (aaaa1111)\n\
-    ///          lead   o/s on pangolin: mike@pangolin:s (eeee5555)\n\
     ///          build  "
     ///     ),
     ///     "{text}"
@@ -898,7 +908,7 @@ impl Top<'_> {
     /// );
     /// // o/s is no project: no board, and no error line.
     /// assert!(text.contains("\n\nWave 3 (o/r)\n  free: #14\n  held: #16 (a reading at 19:40 UTC)\n  claimed: #12\n  verify: #13 #15\n\n"), "{text}");
-    /// assert!(!text.lines().any(|l| l.contains("o/s") && !l.starts_with("lead ")), "{text}");
+    /// assert!(!text.contains("o/s"), "{text}");
     /// let tree: Vec<&str> = text.rsplit("\n\n").next().unwrap().lines().collect();
     /// assert_eq!(tree, [
     ///     "ann  admin  offline  seen 1h ago",
@@ -966,6 +976,7 @@ impl Top<'_> {
         facts.extend(view::lead_facts(
             self.pauses,
             self.sessions.on_server(),
+            self.projects,
             false,
         ));
         facts.extend(view::build_facts(self.server));
@@ -1239,10 +1250,11 @@ fn block_line(s: &SessionInfo) -> String {
 }
 
 /// The lines of `board`: one line for each group of its open items that
-/// is not empty, `free`, `held`, `claimed` and `verify`
+/// is not empty, `free`, `held`, `needs`, `claimed` and `verify`
 /// ([`Board::groups`], 01M3Z9N6X92KT051P10CKKV7EK,
-/// 01M58ATZ1F42DWNNB24C2HJPEY). A `paused` board has no group `free`:
-/// nobody can claim its items (01M588G5K0B58QXD35AA5MTZ6E).
+/// 01M58ATZ1F42DWNNB24C2HJPEY, 01M78TW2TPG6JM99RN73NV5GB9). A `paused`
+/// board has no group `free`: nobody can claim its items
+/// (01M588G5K0B58QXD35AA5MTZ6E).
 fn board_lines(board: &Board, paused: bool) -> Vec<Line> {
     board
         .groups(paused)
@@ -1703,8 +1715,9 @@ mod tests {
 
     /// 01M77XYFZW86MCXD22GDCXMS00: the header names the lead of each
     /// project and its host, as `riff who` does, after the facts of the
-    /// pauses. A repository with no live lead has `none`: a lead that is
-    /// gone is no lead, and a worker is none.
+    /// pauses. A project with no live lead has `none`: a lead that is
+    /// gone is no lead, and a worker is none. A repository that is no
+    /// project has no fact `lead` (#2050).
     #[test]
     fn the_header_names_the_lead_of_each_project_and_its_host() {
         let gone = info(
@@ -1721,16 +1734,22 @@ mod tests {
                 SessionState::Busy,
             ),
             gone,
+            info(
+                "riff://mike@thelio/o/theme?session=7a8b9c0d&lead=true",
+                SessionState::Idle,
+            ),
         ];
         let pauses = RiffReply {
-            no_lead: vec!["o/strata".parse().unwrap()],
+            no_lead: vec!["local/theme".parse().unwrap(), "o/strata".parse().unwrap()],
             repositories: vec![riff_core::wire::RepositoryPause {
                 repository: "o/strata".parse().unwrap(),
                 pause: riff_core::wire::PauseInfo { by: None, at_ms: 0 },
             }],
             ..riff_core::wire::RiffState::Running.into()
         };
-        let text = shown_paused(&sessions, &BTreeMap::new(), &Show::default(), &[], &pauses);
+        let projects = ["o/riff", "o/strata"].map(|repo| (repo.to_owned(), Issues::default()));
+        let issues = BTreeMap::from(projects);
+        let text = shown_paused(&sessions, &issues, &Show::default(), &[], &pauses);
         let head: Vec<&str> = text.lines().take_while(|l| !l.is_empty()).collect();
         assert_eq!(
             head[..4],
@@ -1743,6 +1762,7 @@ mod tests {
             "{text}"
         );
         assert!(head[4].starts_with("build   "), "{text}");
+        assert!(!head.iter().any(|l| l.contains("theme")), "{text}");
     }
 
     /// The holds of strata: #355 and #356 with one reason, #88 with a

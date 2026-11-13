@@ -25,7 +25,7 @@
 //! assert_eq!(plain, "PANE  STATE\n%3    live\n%10   idle 2m\n");
 //! ```
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 use std::path::Path;
 
@@ -237,9 +237,38 @@ pub fn waits_for_lead<'a>(
 ) -> bool {
     repo.parse::<ThreadName>()
         .is_ok_and(|thread| pauses.waits_for_lead(&thread))
-        && riff_client::daemons::hosts(sessions)
-            .iter()
-            .any(|host| host.facts.waves.iter().any(|wave| wave.repo == repo))
+        && wave_runs(sessions, repo)
+}
+
+/// True when the daemon of a host in the facts of `sessions` runs the
+/// loop of the wave of the repository `repo` (`OWNER/REPO`,
+/// [`riff_client::daemons::hosts`]). The answer to `riff resume` of a
+/// repository with no lead names the cause with it
+/// (01M78V5MB2RRR40B5QYHPC6ZC4).
+///
+/// ```
+/// use riff_client::daemons::{Facts, Wave};
+/// use riff_core::wire::{MachineInfo, SessionInfo};
+///
+/// let facts = Facts {
+///     waves: vec![Wave { repo: "o/r".into(), word: String::new(), image: None, waits: Default::default() }],
+///     ..Facts::default()
+/// };
+/// let mut daemon: SessionInfo = serde_json::from_value(serde_json::json!({
+///     "uri": "riff://mike@thelio/o/r?session=d1", "live": true,
+/// })).unwrap();
+/// daemon.machine = Some(MachineInfo { numbers: facts.line(), age_secs: 5 });
+/// assert!(riff::view::wave_runs([&daemon], "o/r"));
+/// assert!(!riff::view::wave_runs([&daemon], "o/s"));
+/// // Facts older than 3 minutes count as none.
+/// daemon.machine = Some(MachineInfo { numbers: facts.line(), age_secs: 600 });
+/// assert!(!riff::view::wave_runs([&daemon], "o/r"));
+/// assert!(!riff::view::wave_runs([], "o/r"));
+/// ```
+pub fn wave_runs<'a>(sessions: impl IntoIterator<Item = &'a SessionInfo>, repo: &str) -> bool {
+    riff_client::daemons::hosts(sessions)
+        .iter()
+        .any(|host| host.facts.waves.iter().any(|wave| wave.repo == repo))
 }
 
 /// The live lead of each project in `sessions`, by its repository
@@ -287,20 +316,26 @@ pub fn leads<'a>(
 /// The facts `lead` of `riff who` and of `riff top`
 /// (01M77XYFZW86MCXD22GDCXMS00): a row for each project with a live lead
 /// ([`leads`]), `OWNER/REPO on HOST: NAME` with the [`text::name`] of the
-/// lead in its color, and a row for each repository that riff-server
-/// names with no live lead ([`RiffReply::no_lead`]), `OWNER/REPO: none`
-/// in yellow. With `long`, the full URI of the lead takes the place of
-/// its name, as in the table of `riff who --long`. The rows come in the
-/// order of the repositories. The `who` tool of a session shows them
-/// plain.
+/// lead in its color, and a row for each project that riff-server names
+/// with no live lead ([`RiffReply::no_lead`]), `OWNER/REPO: none` in
+/// yellow. A repository that is not in `projects`, the projects of the
+/// reply to `who` (01M77F7HPBNJY9QFG3HA6YH5F4), gets no row: for example
+/// the repository of a session that is gone. With `long`, the full URI
+/// of the lead takes the place of its name, as in the table of `riff
+/// who --long`. The rows come in the order of the repositories. The
+/// `who` tool of a session shows them plain.
 ///
 /// ```
 /// use riff_core::wire::{RiffReply, RiffState, SessionInfo};
 ///
+/// let session = |uri: &str| -> SessionInfo {
+///     serde_json::from_value(serde_json::json!({ "uri": uri, "live": true })).unwrap()
+/// };
 /// let uri = "riff://mike@thelio/como-technologies/riff?session=4e54d4e5-1&lead=true";
-/// let lead: SessionInfo = serde_json::from_value(serde_json::json!({ "uri": uri, "live": true }))?;
+/// let lead = session(uri);
 /// let pauses = RiffReply { no_lead: vec!["o/strata".parse()?], ..RiffState::Running.into() };
-/// let rows = riff::view::lead_facts(&pauses, [&lead], false);
+/// let projects = ["como-technologies/riff".parse()?, "o/strata".parse()?];
+/// let rows = riff::view::lead_facts(&pauses, [&lead], &projects, false);
 /// let plain = anstream::adapter::strip_str(&riff::view::facts(&rows)).to_string();
 /// assert_eq!(
 ///     plain,
@@ -308,21 +343,39 @@ pub fn leads<'a>(
 /// );
 /// let yellow = riff::style::WARNING;
 /// assert_eq!(rows[1].1, format!("{yellow}o/strata: none{yellow:#}"));
-/// assert!(riff::view::lead_facts(&RiffState::Running.into(), [], false).is_empty());
+/// assert!(riff::view::lead_facts(&RiffState::Running.into(), [], &projects, false).is_empty());
 ///
 /// // --long: the URI in place of the name.
-/// let rows = riff::view::lead_facts(&pauses, [&lead], true);
+/// let rows = riff::view::lead_facts(&pauses, [&lead], &projects, true);
 /// let plain = anstream::adapter::strip_str(&rows[0].1).to_string();
 /// assert_eq!(plain, format!("como-technologies/riff on thelio: {uri}"));
+///
+/// // A repository that is no project gets no row: not the lead of
+/// // o/theme, and not the wait for a lead of local/theme (#2050).
+/// let theme = session("riff://mike@thelio/o/theme?session=9c0d&lead=true");
+/// let pauses = RiffReply {
+///     no_lead: vec!["local/theme".parse()?, "o/strata".parse()?],
+///     ..RiffState::Running.into()
+/// };
+/// let rows = riff::view::lead_facts(&pauses, [&lead, &theme], &projects, false);
+/// let plain = anstream::adapter::strip_str(&riff::view::facts(&rows)).to_string();
+/// assert_eq!(
+///     plain,
+///     "lead  como-technologies/riff on thelio: mike@thelio:riff (4e54d4e5)\nlead  o/strata: none\n"
+/// );
+/// assert!(riff::view::lead_facts(&pauses, [&lead, &theme], &[], false).is_empty());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn lead_facts<'a>(
     pauses: &RiffReply,
     sessions: impl IntoIterator<Item = &'a SessionInfo>,
+    projects: &[ThreadName],
     long: bool,
 ) -> Vec<(&'static str, String)> {
+    let projects: BTreeSet<String> = projects.iter().map(ToString::to_string).collect();
     let mut rows: BTreeMap<String, String> = leads(sessions)
         .into_iter()
+        .filter(|(repo, _)| projects.contains(repo))
         .map(|(repo, s)| {
             let host = s.uri.place().host();
             let name = if long {
@@ -334,9 +387,11 @@ pub fn lead_facts<'a>(
             (repo, row)
         })
         .collect();
-    for repo in &pauses.no_lead {
-        let row = styled(WARNING, &format!("{}: none", safe(&repo.to_string())));
-        rows.insert(repo.to_string(), row);
+    for repo in pauses.no_lead.iter().map(ToString::to_string) {
+        if projects.contains(&repo) {
+            let row = styled(WARNING, &format!("{}: none", safe(&repo)));
+            rows.insert(repo, row);
+        }
     }
     rows.into_values().map(|row| ("lead", row)).collect()
 }
@@ -595,12 +650,13 @@ pub fn whoami(
 ///         machine: None,
 ///     },
 /// ];
-/// // The repository strata has no live lead (01M77XYFZW86MCXD22GDCXMS00).
+/// // The project strata has no live lead (01M77XYFZW86MCXD22GDCXMS00), and
+/// // no session.
 /// let running = RiffReply {
 ///     no_lead: vec!["como-technologies/strata".parse()?],
 ///     ..RiffState::Running.into()
 /// };
-/// let projects = ["como-technologies/riff".parse()?];
+/// let projects = ["como-technologies/riff".parse()?, "como-technologies/strata".parse()?];
 /// let text = riff::view::who(&running, &list, &projects, &list[0].uri, false);
 /// let plain = anstream::adapter::strip_str(&text).to_string();
 /// let lines: Vec<&str> = plain.lines().collect();
@@ -629,10 +685,12 @@ pub fn whoami(
 /// assert!(plain.contains(&format!("\nlead   como-technologies/riff on pangolin: {}\n", list[0].uri)));
 /// assert!(!plain.contains("(a6cf)"), "{plain}");
 ///
-/// // With no project, each row is in the group `no project`.
+/// // With no project, each row is in the group `no project`, and no
+/// // fact `lead` names a repository.
 /// let text = riff::view::who(&running, &list, &[], &list[0].uri, false);
 /// let plain = anstream::adapter::strip_str(&text).to_string();
 /// assert!(plain.contains("DETAIL\nno project\nmike@pangolin:riff#issue-6 (a6cf) "), "{plain}");
+/// assert!(plain.starts_with("riff   running\nbuild  v"), "{plain}");
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 pub fn who(
@@ -646,7 +704,7 @@ pub fn who(
     if let Some(line) = release(pauses, sessions) {
         rows.insert(1, ("release", styled(WARNING, &line)));
     }
-    rows.extend(lead_facts(pauses, sessions, long));
+    rows.extend(lead_facts(pauses, sessions, projects, long));
     let actions: Vec<String> = paused.into_iter().collect();
     rows.extend(build_facts(riff_client::link::server_build().as_ref()));
     let mut out = facts(&rows);

@@ -2,6 +2,9 @@
 //! cgroup of the container has the lowest CPU weight, and the container
 //! runs in the slice of riff, with the lowest CPU weight of its level
 //! (#1990, #2001, 01M7755V17SGY2NW231WJ12WXN, 01M778VSP6Z29FCPGX5S76ME1T).
+//! The conmon of each container runs in the slice too, in a scope of its
+//! own, for a start in a unit, as from the daemon, and for a start out
+//! of a unit, as from a terminal (#2051, 01M78TQ48B5JQXGRSDBGWMZDS7).
 //! `all.rs` builds this file on Linux only.
 //!
 //! The test uses the real podman, the real manager of systemd for the
@@ -29,11 +32,15 @@
 //!     T->>P: podman exec NAME cat /sys/fs/cgroup/cpu.weight
 //!     T->>T: /proc/PID/cgroup: riff.slice in user@UID.service
 //!     T->>T: cpu.weight of riff.slice and of each cgroup beside it
+//!     T->>P: Podman.start_as and start_terminal_as, in a unit and out of it
+//!     T->>P: podman container inspect NAME: the PID of conmon
+//!     T->>T: /proc/CONMON/cgroup: riff.slice/libpod-conmon-ID.scope
 //! ```
 
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use riff::runtime::{Env, Runtime, SessionSpec};
 use tokio::io::AsyncReadExt;
@@ -105,9 +112,9 @@ async fn each_process_of_a_new_lead_container_has_nice_19_and_its_cgroup_the_low
     );
 }
 
-/// The container and its conmon run in `riff.slice` of the manager of
-/// the user, next to `app.slice`. No cgroup beside the slice has a lower
-/// CPU weight. With `--nocapture`, the test shows each of them.
+/// The container runs in `riff.slice` of the manager of the user, next
+/// to `app.slice`. No cgroup beside the slice has a lower CPU weight.
+/// With `--nocapture`, the test shows each of them.
 #[tokio::test]
 async fn the_slice_of_riff_has_the_lowest_cpu_weight_of_its_level() {
     if let Err(why) = ready() {
@@ -125,31 +132,8 @@ async fn the_slice_of_riff_has_the_lowest_cpu_weight_of_its_level() {
         .await
         .unwrap();
 
-    // The cgroup of PID 1 of the container, as the host sees it:
-    // /user.slice/user-UID.slice/user@UID.service/riff.slice/libpod-ID.scope/...
-    let pid = podman(&["container", "inspect", "--format", "{{.State.Pid}}", &name]).unwrap();
-    let cgroups = std::fs::read_to_string(format!("/proc/{pid}/cgroup")).unwrap();
-    let path = cgroups
-        .lines()
-        .find_map(|line| line.strip_prefix("0::"))
-        .unwrap();
-    let parts: Vec<&str> = path.split('/').collect();
-    let at = parts
-        .iter()
-        .position(|part| *part == riff::podman::SLICE)
-        .unwrap_or_else(|| panic!("the container is not in riff.slice: {path}"));
-    let uid = std::fs::metadata("/proc/self").unwrap().uid();
-    assert_eq!(parts[at - 1], format!("user@{uid}.service"), "{path}");
-    let scope = parts[at + 1];
-    assert!(scope.starts_with("libpod-"), "{path}");
-
-    let slice = Path::new("/sys/fs/cgroup").join(parts[1..=at].join("/"));
-    let id = scope.trim_start_matches("libpod-");
-    assert!(
-        slice.join(format!("libpod-conmon-{id}")).is_dir(),
-        "no conmon of the container in {}",
-        slice.display()
-    );
+    let (slice, _) = slice_of(&name);
+    let slice = Path::new("/sys/fs/cgroup").join(slice.trim_start_matches('/'));
     let ours = weight(&slice).unwrap();
     assert_eq!(ours.to_string(), WEIGHT);
 
@@ -169,6 +153,103 @@ async fn the_slice_of_riff_has_the_lowest_cpu_weight_of_its_level() {
         lower.is_empty(),
         "a lower CPU weight than riff.slice: {lower:?}"
     );
+}
+
+/// The conmon of each container runs in `riff.slice`, in
+/// `libpod-conmon-ID.scope` beside the scope of the container: for a
+/// worker and a lead, in a unit, as the daemon starts them, and out of a
+/// unit, as from a terminal (#2051, 01M78TQ48B5JQXGRSDBGWMZDS7). With
+/// `--nocapture`, the test shows the cgroup of each conmon.
+#[tokio::test]
+async fn the_conmon_of_each_container_runs_in_the_slice_of_riff_in_a_unit_and_out_of_it() {
+    if let Err(why) = ready() {
+        eprintln!("skip: {why}");
+        return;
+    }
+    for in_unit in [true, false] {
+        let start = if in_unit { "unit" } else { "plain" };
+        let name =
+            |kind: &str| format!("riff-priority-conmon-{kind}-{start}-{}", std::process::id());
+        let worker = spec(&name("worker"), &["sleep", "600"]);
+        let _clean_worker = Clean(worker.name.clone());
+        let _running = riff::podman::Podman
+            .start_as(&worker, &[], in_unit)
+            .await
+            .unwrap();
+        let lead = spec(&name("lead"), &["sleep", "600"]);
+        let _clean_lead = Clean(lead.name.clone());
+        let _end = riff::podman::Podman
+            .start_terminal_as(&lead, &[], in_unit)
+            .await
+            .unwrap();
+
+        for name in [&worker.name, &lead.name] {
+            runs(name).await;
+            let (slice, id) = slice_of(name);
+            let conmon = cgroup(&inspect(name, "{{.State.ConmonPid}}"));
+            eprintln!("{name}: conmon in {conmon}");
+            assert_eq!(
+                conmon,
+                format!("{slice}/libpod-conmon-{id}.scope"),
+                "the conmon of {name}, in a unit: {in_unit}"
+            );
+        }
+    }
+}
+
+/// The cgroup of `riff.slice` that holds the container `name`, and the
+/// ID of the container. The cgroup of its PID 1, as the host sees it, is
+/// `/user.slice/user-UID.slice/user@UID.service/riff.slice/libpod-ID.scope/...`.
+fn slice_of(name: &str) -> (String, String) {
+    let path = cgroup(&inspect(name, "{{.State.Pid}}"));
+    let parts: Vec<&str> = path.split('/').collect();
+    let at = parts
+        .iter()
+        .position(|part| *part == riff::podman::SLICE)
+        .unwrap_or_else(|| panic!("the container is not in riff.slice: {path}"));
+    let uid = std::fs::metadata("/proc/self").unwrap().uid();
+    assert_eq!(parts[at - 1], format!("user@{uid}.service"), "{path}");
+    let id = parts
+        .get(at + 1)
+        .and_then(|scope| scope.strip_prefix("libpod-")?.strip_suffix(".scope"))
+        .unwrap_or_else(|| panic!("the container is in no scope of its own: {path}"));
+    assert_eq!(id, inspect(name, "{{.Id}}"), "{path}");
+    (parts[..=at].join("/"), id.to_owned())
+}
+
+/// The cgroup of the process `pid` on the host: the line `0::` of
+/// `/proc/PID/cgroup`, cgroup v2.
+fn cgroup(pid: &str) -> String {
+    let cgroups = std::fs::read_to_string(format!("/proc/{pid}/cgroup")).unwrap();
+    cgroups
+        .lines()
+        .find_map(|line| line.strip_prefix("0::"))
+        .unwrap_or_else(|| panic!("no cgroup v2 of the process {pid}: {cgroups}"))
+        .to_owned()
+}
+
+/// The value of `format` in `podman container inspect` of `name`.
+fn inspect(name: &str, format: &str) -> String {
+    podman(&["container", "inspect", "--format", format, name])
+        .unwrap_or_else(|why| panic!("podman container inspect {name}: {why}"))
+}
+
+/// Waits until the container `name` runs, for at most one minute.
+async fn runs(name: &str) {
+    let end = Instant::now() + Duration::from_secs(60);
+    while podman(&[
+        "container",
+        "inspect",
+        "--format",
+        "{{.State.Running}}",
+        name,
+    ])
+    .as_deref()
+        != Ok("true")
+    {
+        assert!(Instant::now() < end, "the container {name} does not run");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 }
 
 /// The CPU weight of the cgroup `dir`, or `None` when it has none.

@@ -766,8 +766,10 @@ pub fn build_line(server: Option<&Build>) -> String {
 /// repository `repository` or of the whole riff, the sessions that
 /// woke, the leads that it told (a lead of a repository with a pause of
 /// its own, 01M6FYGVTCBKC9C8AXMFD7WMW2), and each pause that still stops
-/// work (01M3XAHZSJ5914BRQBZ2G4ZBSA). A resume of a repository whose wave
-/// waits for a lead says so (01M776RT1GW3N4MJDMPXZ8JAJE).
+/// work (01M3XAHZSJ5914BRQBZ2G4ZBSA). A resume of a repository with no
+/// lead names the cause of the wait ([`resume_waits`],
+/// 01M78V5MB2RRR40B5QYHPC6ZC4): `wave_runs` is true when the daemon of a
+/// host runs the wave of the repository ([`crate::view::wave_runs`]).
 ///
 /// ```
 /// use riff_core::wire::{PauseInfo, Posted, RepositoryPause, RiffReply, RiffState};
@@ -780,28 +782,36 @@ pub fn build_line(server: Option<&Build>) -> String {
 ///     unmatched: vec![],
 /// };
 /// assert_eq!(
-///     riff::text::riff_set(None, RiffState::Paused, &reply, &[posted]),
+///     riff::text::riff_set(None, RiffState::Paused, &reply, &[posted], true),
 ///     "The riff is paused now. Woke brett@heron:riff#tests (77e0)."
 /// );
 /// let again = RiffReply::from(RiffState::Paused);
 /// assert_eq!(
-///     riff::text::riff_set(None, RiffState::Paused, &again, &[]),
+///     riff::text::riff_set(None, RiffState::Paused, &again, &[], true),
 ///     "The riff was paused already."
 /// );
 /// // A resume of a repository while the whole riff is paused.
 /// let riff = "como-technologies/riff".parse()?;
 /// assert_eq!(
-///     riff::text::riff_set(Some(&riff), RiffState::Running, &reply, &[]),
+///     riff::text::riff_set(Some(&riff), RiffState::Running, &reply, &[], true),
 ///     "The repository como-technologies/riff is running now. No other session woke. The \
 ///      whole riff is still paused: an admin resumes it with `riff resume --riff`."
 /// );
 /// // A resume of a repository with no live lead: its wave still waits.
 /// let no_lead = RiffReply { no_lead: vec![riff.clone()], ..RiffReply { changed: true, ..RiffState::Running.into() } };
 /// assert_eq!(
-///     riff::text::riff_set(Some(&riff), RiffState::Running, &no_lead, &[]),
+///     riff::text::riff_set(Some(&riff), RiffState::Running, &no_lead, &[], true),
 ///     "The repository como-technologies/riff is running now. No other session woke. No lead \
 ///      of como-technologies/riff runs, so its wave starts no session: a host that joined \
 ///      como-technologies/riff starts the lead (riff host join)."
+/// );
+/// // With no host that runs its wave, the answer names that cause.
+/// assert_eq!(
+///     riff::text::riff_set(Some(&riff), RiffState::Running, &no_lead, &[], false),
+///     "The repository como-technologies/riff is running now. No other session woke. No host \
+///      runs the wave of como-technologies/riff, so no lead and no session of it start: a \
+///      host that joins como-technologies/riff runs its wave and starts its lead (riff host \
+///      join)."
 /// );
 /// // A resume of the whole riff while a repository has a pause of its own:
 /// // its lead hears it, and no worker of it wakes.
@@ -815,7 +825,7 @@ pub fn build_line(server: Option<&Build>) -> String {
 ///     unmatched: vec![],
 /// };
 /// assert_eq!(
-///     riff::text::riff_set(None, RiffState::Running, &running, &[lead]),
+///     riff::text::riff_set(None, RiffState::Running, &running, &[lead], true),
 ///     "The riff is running now. Told the lead of como-technologies/strata: brett@heron:strata \
 ///      (62b2). Still paused: como-technologies/strata. Its user or its lead resumes it with \
 ///      `riff resume`."
@@ -827,6 +837,7 @@ pub fn riff_set(
     state: RiffState,
     reply: &RiffReply,
     posted: &[Posted],
+    wave_runs: bool,
 ) -> String {
     let subject = riff_client::text::pause_subject(repository);
     let mut out = if reply.changed {
@@ -860,12 +871,8 @@ pub fn riff_set(
         }
         // A resume does not end the wait for a lead (01M776RT1GW3N4MJDMPXZ8JAJE).
         if let Some(repository) = repository.filter(|r| reply.waits_for_lead(r)) {
-            let repo = safe(&repository.to_string());
-            let _ = write!(
-                out,
-                " No lead of {repo} runs, so its wave starts no session: a host that joined {repo} \
-                 starts the lead (riff host join)."
-            );
+            out.push(' ');
+            out.push_str(&resume_waits(&safe(&repository.to_string()), wave_runs));
         }
         if repository.is_none() && !reply.repositories.is_empty() {
             let names: Vec<String> = reply
@@ -881,6 +888,37 @@ pub fn riff_set(
         }
     }
     out
+}
+
+/// Why the wave of `repo` starts no session after a resume of `repo`, which
+/// has no lead (01M78V5MB2RRR40B5QYHPC6ZC4): no lead runs, while the daemon
+/// of a host runs the wave (`wave_runs`), or no host runs the wave. Each
+/// names the step `riff host join` (01M77Y6ZQ76DTX470STN8ATTA9).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::resume_waits("o/r", true),
+///     "No lead of o/r runs, so its wave starts no session: a host that joined o/r starts the \
+///      lead (riff host join)."
+/// );
+/// assert_eq!(
+///     riff::text::resume_waits("o/r", false),
+///     "No host runs the wave of o/r, so no lead and no session of it start: a host that joins \
+///      o/r runs its wave and starts its lead (riff host join)."
+/// );
+/// ```
+pub fn resume_waits(repo: &str, wave_runs: bool) -> String {
+    if wave_runs {
+        format!(
+            "No lead of {repo} runs, so its wave starts no session: a host that joined {repo} \
+             starts the lead (riff host join)."
+        )
+    } else {
+        format!(
+            "No host runs the wave of {repo}, so no lead and no session of it start: a host that \
+             joins {repo} runs its wave and starts its lead (riff host join)."
+        )
+    }
 }
 
 /// The note to the lead when the rollout asked the riff daemon of its
@@ -1477,6 +1515,7 @@ pub fn setup_check(path: &std::path::Path, left: &Rules) -> String {
 ///     wave: wave.into(),
 ///     free,
 ///     held,
+///     needs: vec![],
 ///     claimed,
 ///     verify: vec![],
 ///     stuck: vec![],
@@ -2881,6 +2920,16 @@ pub fn release_holds_unread(fault: &str) -> String {
     format!("riff: cannot read the holds of the release: {fault}. riff shows no hold.")
 }
 
+/// `riff release test --skip` with an empty path
+/// (01M78TS03FK4908GVSTFH1DKYY).
+pub const RELEASE_TEST_EMPTY_SKIP: &str =
+    "an empty path leaves out nothing: give a path in the home of HOST, for example .mozilla";
+
+/// `riff release test --skip` with a path with a space: the request to
+/// the daemon is words (01M78TS03FK4908GVSTFH1DKYY).
+pub const RELEASE_TEST_SPACED_SKIP: &str = "a path with a space cannot go to the daemon: give a \
+     folder of it with no space";
+
 /// `riff release hold` with an empty reason.
 pub const RELEASE_HOLD_NO_REASON: &str = "riff: riff release hold needs a reason, in one line for the other leads. riff changed \
      nothing. next: riff release hold vX.Y.Z REASON";
@@ -3379,6 +3428,38 @@ pub fn action(from: &SessionUri, body: &str) -> Option<String> {
 /// assert!(text.contains(&woken), "{text}");
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
+///
+/// A thread with room only for its messages that woke the reader says
+/// that they show above, and names the thread for its other messages
+/// (01M78TFBE2WRNC44MRQBTDW19B):
+///
+/// ```
+/// # use riff_client::api::{Checked, Inbox};
+/// # use riff_core::name::SessionUri;
+/// # use riff_core::wire::Message;
+/// # let me: SessionUri = "riff://brett@heron".parse()?;
+/// # let message = |seq, body: &str| Checked {
+/// #     message: Message {
+/// #         seq, from: "riff://mike@pangolin".parse().unwrap(), to: vec![], body: body.into(),
+/// #         at_ms: 0, kind: Default::default(), sig: None, payload: None,
+/// #     },
+/// #     verified: true,
+/// # };
+/// let inbox = Inbox {
+///     thread: "o/r".parse()?,
+///     members: vec![],
+///     messages: vec![],
+///     next: Some(40),
+///     woken: vec![message(327, "brett?")],
+/// };
+/// let text = riff::text::inbox(&[inbox], &me);
+/// assert!(text.contains("\no/r\n[327] mike@pangolin (verified): brett?\n"), "{text}");
+/// assert!(text.ends_with(
+///     "\no/r\nThis read has room only for its message that woke you. It shows above. Read \
+///      the thread o/r for its other messages. With all, set after to 40.\n"
+/// ));
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
 pub fn inbox(list: &[Inbox], me: &SessionUri) -> String {
     if list.is_empty() {
         return "No unread messages.".into();
@@ -3409,18 +3490,29 @@ pub fn inbox(list: &[Inbox], me: &SessionUri) -> String {
         }
         if let Some(next) = t.next {
             let name = thread_to_read(&t.name, me);
-            let _ = if t.lines.is_empty() {
-                writeln!(
-                    out,
-                    "This read has no room for its messages. Read the thread {name}. With all, \
-                     set after to {next}."
-                )
-            } else {
-                writeln!(
+            let _ = match (t.lines.is_empty(), t.woken.len()) {
+                (false, _) => writeln!(
                     out,
                     "More messages follow. Read the thread {name} again. With all, set after to \
                      {next}."
-                )
+                ),
+                (true, 0) => writeln!(
+                    out,
+                    "This read has no room for its messages. Read the thread {name}. With all, \
+                     set after to {next}."
+                ),
+                (true, 1) => writeln!(
+                    out,
+                    "This read has room only for its message that woke you. It shows above. \
+                     Read the thread {name} for its other messages. With all, set after to \
+                     {next}."
+                ),
+                (true, n) => writeln!(
+                    out,
+                    "This read has room only for its {n} messages that woke you. They show \
+                     above. Read the thread {name} for its other messages. With all, set after \
+                     to {next}."
+                ),
             };
         }
     }
@@ -4228,6 +4320,18 @@ pub fn gh_no_answer(args: &str, limit: std::time::Duration) -> String {
 /// ```
 pub fn gh_not_run(args: &str) -> String {
     format!("riff did not run gh {args}")
+}
+
+/// The context of a call `git ARGS` that the riff daemon did not run: git
+/// would start `gh` for a credential, and `gh` would ask for an unlock
+/// prompt of the keyring (01M78TSH2VNHA75RR1HXC5Z27G). The line of the
+/// locked keyring follows it.
+///
+/// ```
+/// assert_eq!(riff::text::git_not_run("fetch -q origin"), "riff did not run git fetch -q origin");
+/// ```
+pub fn git_not_run(args: &str) -> String {
+    format!("riff did not run git {args}")
 }
 
 /// The error of a step of the host, `program ARGS`, that gave no answer
@@ -10619,10 +10723,10 @@ pub fn init_issues_unread(repo: &str, why: &str) -> String {
 /// (01M5RGGD6YR36EXZEG61XCJVRY).
 ///
 /// ```
-/// let one = riff::text::init_failed(&[("the ruleset of main", "make it")]);
+/// let one = riff::text::init_failed(&[("the init of podman", "install catatonit")]);
 /// assert_eq!(
 ///     one,
-///     "1 check failed. riff installed no daemon and pulled no image. Do each fix, then run riff init again:\n  the ruleset of main: make it"
+///     "1 check failed. riff installed no daemon and pulled no image. Do each fix, then run riff init again:\n  the init of podman: install catatonit"
 /// );
 /// let two = riff::text::init_failed(&[("podman", "install it"), ("cgroup v2", "enable\nit")]);
 /// assert!(two.starts_with("2 checks failed."), "{two}");
@@ -15394,6 +15498,71 @@ mod tests {
         let text = block(&line, &Names::default(), &at, Some(at.date_naive()), 80);
         let plain = anstream::adapter::strip_str(&text).to_string();
         assert!(plain.ends_with("\n       one\n\n       two"), "{plain:?}");
+    }
+
+    /// #2000: a thread with room only for its messages that woke the
+    /// reader says that they show above (01M78TFBE2WRNC44MRQBTDW19B). A
+    /// thread with no room at all, and a page with lines, keep their
+    /// lines.
+    #[test]
+    fn a_thread_with_room_only_for_its_wakes_says_that_they_show_above() {
+        let me: SessionUri = "riff://brett@heron".parse().unwrap();
+        let message = |seq| Checked {
+            message: riff_core::wire::Message {
+                seq,
+                from: "riff://mike@pangolin".parse().unwrap(),
+                to: vec![],
+                body: format!("message {seq}"),
+                at_ms: 0,
+                kind: Kind::Message,
+                sig: None,
+                payload: None,
+            },
+            verified: true,
+        };
+        let page = |thread: &str, messages: Vec<u64>, woken: Vec<u64>| Inbox {
+            thread: thread.parse().unwrap(),
+            members: vec![],
+            messages: messages.into_iter().map(message).collect(),
+            next: Some(7),
+            woken: woken.into_iter().map(message).collect(),
+        };
+        let list = [
+            page("o/a", vec![], vec![9, 12]),
+            page("o/b", vec![], vec![]),
+            page("o/c", vec![6, 7], vec![30]),
+            page("o/d", vec![], vec![15]),
+        ];
+        let text = inbox(&list, &me);
+        assert!(text.contains(&format!("{WOKEN_HEAD}\no/a\n[9] ")), "{text}");
+        assert!(
+            text.contains(
+                "\no/a\nThis read has room only for its 2 messages that woke you. They show \
+                 above. Read the thread o/a for its other messages. With all, set after to 7.\n"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "\no/b\nThis read has no room for its messages. Read the thread o/b. With all, \
+                 set after to 7.\n"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "\n[7] mike@pangolin (verified): message 7\nMore messages follow. Read the \
+                 thread o/c again."
+            ),
+            "{text}"
+        );
+        assert!(
+            text.ends_with(
+                "\no/d\nThis read has room only for its message that woke you. It shows above. \
+                 Read the thread o/d for its other messages. With all, set after to 7.\n"
+            ),
+            "{text}"
+        );
     }
 
     #[test]
