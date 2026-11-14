@@ -15,7 +15,9 @@
 //!
 //! [`of_wave`] reads both and runs the audit: `riff audit --wave N` prints
 //! its report, and the Audit report of the TUI shows it
-//! (01M6VT3JMABMEXSBPE414MBJZP).
+//! (01M6VT3JMABMEXSBPE414MBJZP). The report also counts the faults that
+//! a passed verify of the wave missed: see
+//! [The faults that a verify missed](#the-faults-that-a-verify-missed).
 //!
 //! [`audit`] replays the records in log order, and checks each rule at
 //! each record. The span of a wave starts when the wave became the
@@ -28,7 +30,9 @@
 //! flowchart LR
 //!     S[riff-server: POST /v1/log] -->|records of the repository| A[audit]
 //!     G[gh: milestones, issues, pull requests, statuses] -->|Forge| A
+//!     E[gh: the issues with the label escaped] -->|Forge| A
 //!     A --> R[Report: each rule with pass, fail or not checked]
+//!     A --> C[Report: the count of the faults that a verify missed]
 //! ```
 //!
 //! | Rule | It checks | From |
@@ -44,6 +48,26 @@
 //! A rule with nothing to check in the span is "not checked", with the
 //! reason. So is a record that the facts cannot prove, for example a
 //! claim of an item that is in no wave.
+//!
+//! # The faults that a verify missed
+//!
+//! The lead puts the label [`ESCAPED`] on the issue of a fault that a
+//! passed verify missed, and a line `Cause: #PR` in its body ([`CAUSE`],
+//! [`cause`]): PR is the pull request whose verify passed with the fault
+//! (01M7CF3P6251E29KNSBG24YJH3). [`Forge::read`] reads the open and the
+//! closed issues with the label. [`escapes`] counts each of them whose PR
+//! is a pull request of the wave, and names apart each one with no such
+//! line. The count is a measure, not a rule: [`Report::failed`] does not
+//! read it, so it does not change the exit status of `riff audit`.
+//!
+//! ```mermaid
+//! flowchart LR
+//!     I["an issue with the label escaped"] --> L{"a line<br/>Cause: #PR?"}
+//!     L -- no --> N["named apart"]
+//!     L -- yes --> W{"PR is a pull request<br/>of the wave?"}
+//!     W -- yes --> C["counted, with its PR"]
+//!     W -- no --> O["in the count of the wave of PR"]
+//! ```
 //!
 //! # After a prune
 //!
@@ -98,6 +122,7 @@
 //!     waves: vec![Wave { title: "Wave 1".into(), number: 1, created_ms: 0, closed_ms: None }],
 //!     issues: [(7, Issue { wave: Some("Wave 1".into()), needs: vec![], merged_ms: Some(3500) })].into(),
 //!     pulls: vec![Pull { number: 40, issue: 7, merged_ms: Some(3500), verified: true }],
+//!     escaped: vec![],
 //! };
 //! let report = audit("Wave 1", &records, None, &forge, 10_000)?;
 //! assert_eq!(report.rules[0].verdict(), Verdict::Pass);
@@ -156,6 +181,24 @@ pub struct Pull {
     pub verified: bool,
 }
 
+/// The label of the issue of a fault that a passed verify missed
+/// (01M7CF3P6251E29KNSBG24YJH3).
+pub const ESCAPED: &str = "escaped";
+
+/// The start of the line `Cause: #PR` in the body of an issue
+/// [`ESCAPED`]: PR is the pull request whose verify passed with the
+/// fault.
+pub const CAUSE: &str = "Cause:";
+
+/// An issue with the label [`ESCAPED`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Escaped {
+    pub number: u64,
+    /// The pull request of its line `Cause: #PR` ([`cause`]). `None` when
+    /// its body has no such line.
+    pub cause: Option<u64>,
+}
+
 /// The facts of the forge for an audit.
 #[derive(Clone, Debug, Default)]
 pub struct Forge {
@@ -165,6 +208,88 @@ pub struct Forge {
     pub issues: BTreeMap<u64, Issue>,
     /// Each pull request of the wave.
     pub pulls: Vec<Pull>,
+    /// Each issue with the label [`ESCAPED`], open and closed.
+    pub escaped: Vec<Escaped>,
+}
+
+/// The pull request of the first line `Cause: #PR` of `body`
+/// (01M7CF3P6251E29KNSBG24YJH3). `None` when the body has no such line.
+///
+/// ```
+/// use riff::audit::cause;
+///
+/// assert_eq!(cause("riff top shows no lead line.\n\nCause: #2100\n"), Some(2100));
+/// assert_eq!(cause("  Cause: #2100."), Some(2100));
+/// assert_eq!(cause("Cause: 2100"), Some(2100));
+/// assert_eq!(cause("Cause: a race\nCause: #2100"), Some(2100));
+/// assert_eq!(cause("Cause: a race"), None);
+/// assert_eq!(cause("The cause: #2100"), None);
+/// assert_eq!(cause("No line."), None);
+/// ```
+pub fn cause(body: &str) -> Option<u64> {
+    body.lines()
+        .filter_map(|line| line.trim().strip_prefix(CAUSE))
+        .find_map(|rest| {
+            let word = rest.split_whitespace().next()?;
+            let number = word.strip_prefix('#').unwrap_or(word);
+            number
+                .trim_end_matches(|c: char| !c.is_ascii_digit())
+                .parse()
+                .ok()
+        })
+}
+
+/// The faults that a passed verify of a wave missed
+/// (01M7CF3P6251E29KNSBG24YJH3). It is a measure, not a rule:
+/// [`Report::failed`] does not read it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Escapes {
+    /// Each issue [`ESCAPED`] whose line `Cause: #PR` names a pull
+    /// request of the wave, with that pull request, in the order of the
+    /// issues.
+    pub counted: Vec<(u64, u64)>,
+    /// Each issue [`ESCAPED`] with no line `Cause: #PR`, in order.
+    pub no_cause: Vec<u64>,
+}
+
+/// The count of the faults that a passed verify of the wave of `forge`
+/// missed (01M7CF3P6251E29KNSBG24YJH3): each issue [`ESCAPED`] whose
+/// line `Cause: #PR` names a pull request of the wave
+/// ([`Forge::pulls`]). Each issue with the label and no such line is
+/// apart: it names no wave.
+///
+/// ```
+/// use riff::audit::{Escaped, Escapes, Forge, Pull, escapes};
+///
+/// let pull = |number| Pull { number, issue: 7, merged_ms: Some(1), verified: true };
+/// let escaped = |number, cause| Escaped { number, cause };
+/// let forge = Forge {
+///     pulls: vec![pull(40), pull(41)],
+///     escaped: vec![escaped(52, Some(41)), escaped(50, Some(40)), escaped(51, Some(99)), escaped(53, None)],
+///     ..Forge::default()
+/// };
+/// // #51 is a fault of #99, a pull request of another wave.
+/// assert_eq!(escapes(&forge), Escapes { counted: vec![(50, 40), (52, 41)], no_cause: vec![53] });
+/// ```
+pub fn escapes(forge: &Forge) -> Escapes {
+    let wave: BTreeSet<u64> = forge.pulls.iter().map(|p| p.number).collect();
+    let mut counted = BTreeMap::new();
+    let mut no_cause = BTreeSet::new();
+    for issue in &forge.escaped {
+        match issue.cause {
+            Some(pull) if wave.contains(&pull) => {
+                counted.insert(issue.number, pull);
+            }
+            Some(_) => {}
+            None => {
+                no_cause.insert(issue.number);
+            }
+        }
+    }
+    Escapes {
+        counted: counted.into_iter().collect(),
+        no_cause: no_cause.into_iter().collect(),
+    }
 }
 
 /// The result of a rule, or of one check of a rule.
@@ -263,10 +388,14 @@ pub struct Report {
     pub pruned: Option<Pruned>,
     /// The rules 1 to 7, in order.
     pub rules: Vec<Rule>,
+    /// The faults that a passed verify of the wave missed ([`escapes`]).
+    pub escaped: Escapes,
 }
 
 impl Report {
-    /// True when a rule fails.
+    /// True when a rule fails. The count of the faults that a verify
+    /// missed is a measure, not a rule: it does not change the result
+    /// (01M7CF3P6251E29KNSBG24YJH3).
     pub fn failed(&self) -> bool {
         self.rules.iter().any(|r| r.verdict() == Verdict::Fail)
     }
@@ -587,6 +716,7 @@ pub fn audit(
         to_ms: wave.closed_ms,
         pruned,
         rules,
+        escaped: escapes(forge),
     })
 }
 
@@ -893,15 +1023,19 @@ fn time(ms: u64) -> String {
 
 /// The report for people. Rule 1 has a line for each item. Each other
 /// rule has the number of its checks that pass, and a line for each
-/// check that fails or is not checked.
+/// check that fails or is not checked. The count of the faults that a
+/// verify missed comes after the rules ([`escapes`]).
 ///
 /// ```
-/// use riff::audit::{Report, Rule, render};
+/// use riff::audit::{Escapes, Report, Rule, render};
 ///
-/// let report = Report { wave: "Wave 1".into(), from_ms: 0, to_ms: None, pruned: None, rules: vec![] };
+/// let report = Report { wave: "Wave 1".into(), from_ms: 0, to_ms: None, pruned: None, rules: vec![], escaped: Escapes::default() };
 /// assert_eq!(
 ///     render(&report, "acme/app"),
-///     "Audit of Wave 1 in acme/app, from 1970-01-01 00:00 UTC to now.\n\nResult: each rule passes.\n"
+///     "Audit of Wave 1 in acme/app, from 1970-01-01 00:00 UTC to now.\n\n\
+///      Faults that a verify missed: 0\n\
+///      \x20 A measure, not a rule: the issues escaped whose line Cause: names a pull request of the wave.\n\n\
+///      Result: each rule passes.\n"
 /// );
 ///
 /// // After a prune, the report says which records the audit does not see.
@@ -954,6 +1088,7 @@ pub fn render(report: &Report, repo: &str) -> String {
             let _ = writeln!(out, "  {}: {}", finding.verdict.word(), finding.text);
         }
     }
+    render_escapes(&mut out, &report.escaped);
     let failed: Vec<String> = report
         .rules
         .iter()
@@ -973,6 +1108,58 @@ pub fn render(report: &Report, repo: &str) -> String {
     };
     let _ = writeln!(out, "\nResult: {result}");
     out
+}
+
+/// The lines of the faults that a verify of the wave missed
+/// (01M7CF3P6251E29KNSBG24YJH3): the count, a line for each counted
+/// issue with its pull request, and apart the issues with no line
+/// `Cause: #PR`.
+///
+/// ```
+/// use riff::audit::{Escapes, Report, render};
+///
+/// let escaped = Escapes { counted: vec![(2130, 2101), (2131, 2104)], no_cause: vec![2140] };
+/// let report = Report { wave: "Wave 59".into(), from_ms: 0, to_ms: None, pruned: None, rules: vec![], escaped };
+/// assert!(render(&report, "acme/app").contains(
+///     "\nFaults that a verify missed: 2\n\
+///      \x20 A measure, not a rule: the issues escaped whose line Cause: names a pull request of the wave.\n\
+///      \x20 #2130: the verify of #2101 passed with the fault.\n\
+///      \x20 #2131: the verify of #2104 passed with the fault.\n\
+///      \n\
+///      Issues escaped with no line Cause: #PR: 1\n\
+///      \x20 #2140\n\
+///      \n\
+///      Result: each rule passes.\n"
+/// ));
+/// ```
+fn render_escapes(out: &mut String, escaped: &Escapes) {
+    let _ = writeln!(
+        out,
+        "\nFaults that a verify missed: {}",
+        escaped.counted.len()
+    );
+    let _ = writeln!(
+        out,
+        "  A measure, not a rule: the issues {ESCAPED} whose line {CAUSE} names a pull request \
+         of the wave."
+    );
+    for (issue, pull) in &escaped.counted {
+        let _ = writeln!(
+            out,
+            "  #{issue}: the verify of #{pull} passed with the fault."
+        );
+    }
+    if escaped.no_cause.is_empty() {
+        return;
+    }
+    let _ = writeln!(
+        out,
+        "\nIssues {ESCAPED} with no line {CAUSE} #PR: {}",
+        escaped.no_cause.len()
+    );
+    for issue in &escaped.no_cause {
+        let _ = writeln!(out, "  #{issue}");
+    }
 }
 
 /// A milestone in the reply of `gh api .../milestones`.
@@ -999,6 +1186,15 @@ struct GhIssue {
 #[derive(Deserialize)]
 struct GhTitle {
     title: String,
+}
+
+/// An issue [`ESCAPED`] in the reply of `gh issue list --json
+/// number,body`.
+#[derive(Deserialize)]
+struct GhEscaped {
+    number: u64,
+    #[serde(default)]
+    body: String,
 }
 
 #[derive(Deserialize)]
@@ -1045,7 +1241,9 @@ impl Forge {
     /// with `gh` (01M3ZWRC9F7TGSHB966TPVVS9Q): each milestone `Wave N`,
     /// each issue with its milestone, its `Needs:` line, its close and
     /// its comments `Merged in`, each pull request of the milestone, and
-    /// the statuses of the head of each of them.
+    /// the statuses of the head of each of them. It also reads the open
+    /// and the closed issues with the label [`ESCAPED`], with the line
+    /// `Cause: #PR` of each (01M7CF3P6251E29KNSBG24YJH3).
     pub fn read(gh: &Gh, repo: &str, title: &str) -> Result<Forge> {
         let milestones: Vec<GhMilestone> = gh.json(&[
             "api",
@@ -1135,10 +1333,32 @@ impl Forge {
                 verified,
             });
         }
+        let list: Vec<GhEscaped> = gh.json(&[
+            "issue",
+            "list",
+            "--repo",
+            repo,
+            "--state",
+            "all",
+            "--label",
+            ESCAPED,
+            "--limit",
+            "1000",
+            "--json",
+            "number,body",
+        ])?;
+        let escaped = list
+            .into_iter()
+            .map(|issue| Escaped {
+                number: issue.number,
+                cause: cause(&issue.body),
+            })
+            .collect();
         Ok(Forge {
             waves,
             issues,
             pulls,
+            escaped,
         })
     }
 }
@@ -1331,6 +1551,7 @@ mod tests {
                     verified: true,
                 },
             ],
+            escaped: vec![],
         }
     }
 
@@ -1767,6 +1988,128 @@ mod tests {
                 Verdict::Fail,
                 "issue-8 at record 10 by ann/l1: it was the lead of ann."
             )
+        );
+    }
+
+    /// 01M7CF3P6251E29KNSBG24YJH3: the audit of a wave counts each issue
+    /// `escaped` whose line `Cause:` names a pull request of the wave,
+    /// and names each with its pull request. A fault of a pull request
+    /// of another wave is not in the count.
+    #[test]
+    fn the_count_takes_the_faults_that_a_verify_of_the_wave_missed() {
+        let mut forge = forge();
+        forge.escaped = vec![
+            Escaped {
+                number: 52,
+                cause: Some(41),
+            },
+            Escaped {
+                number: 50,
+                cause: Some(40),
+            },
+            // #99 is a pull request of another wave.
+            Escaped {
+                number: 51,
+                cause: Some(99),
+            },
+        ];
+        let report = audit(WAVE, &good(), None, &forge, 100_000).unwrap();
+        assert_eq!(report.escaped.counted, [(50, 40), (52, 41)]);
+        assert!(report.escaped.no_cause.is_empty());
+        let text = render(&report, "acme/app");
+        assert!(
+            text.contains(
+                "\nFaults that a verify missed: 2\n  A measure, not a rule: the issues escaped \
+                 whose line Cause: names a pull request of the wave.\n  #50: the verify of #40 \
+                 passed with the fault.\n  #52: the verify of #41 passed with the fault.\n\n\
+                 Result: each rule passes.\n"
+            ),
+            "{text}"
+        );
+        assert!(!text.contains("#51"), "{text}");
+        assert!(!text.contains("no line Cause"), "{text}");
+    }
+
+    /// 01M7CF3P6251E29KNSBG24YJH3: an issue `escaped` with no line
+    /// `Cause: #PR` is named apart. The count is a measure, not a rule:
+    /// the result and the exit status of the audit stay as they were.
+    #[test]
+    fn an_issue_escaped_with_no_cause_is_apart_and_the_exit_status_stays() {
+        let mut escaped = forge();
+        escaped.escaped = vec![
+            Escaped {
+                number: 53,
+                cause: None,
+            },
+            Escaped {
+                number: 50,
+                cause: Some(40),
+            },
+        ];
+        let mut bad = good();
+        // No verify of issue 7: rule 1 fails.
+        bad.retain(|r| r.envelope.position != 17 && r.envelope.position != 18);
+        for (records, fails) in [(good(), false), (bad, true)] {
+            let plain = audit(WAVE, &records, None, &forge(), 100_000).unwrap();
+            let report = audit(WAVE, &records, None, &escaped, 100_000).unwrap();
+            assert_eq!(report.escaped.counted, [(50, 40)]);
+            assert_eq!(report.escaped.no_cause, [53]);
+            assert_eq!((report.failed(), plain.failed()), (fails, fails));
+            assert_eq!(report.rules, plain.rules);
+            let text = render(&report, "acme/app");
+            assert!(
+                text.contains("\nIssues escaped with no line Cause: #PR: 1\n  #53\n"),
+                "{text}"
+            );
+            let result = |text: &str| text.lines().last().unwrap().to_owned();
+            assert_eq!(result(&text), result(&render(&plain, "acme/app")));
+        }
+    }
+
+    /// 01M7CF3P6251E29KNSBG24YJH3: the read of the forge asks `gh` for
+    /// the open and the closed issues with the label `escaped`, and
+    /// takes the line `Cause: #PR` of each.
+    #[test]
+    fn the_read_of_the_forge_takes_the_issues_escaped_and_their_cause() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = r#"#!/bin/sh
+echo "$*" >> "$(dirname "$0")/calls"
+case "$*" in
+  'api repos/o/r/milestones?state=all&per_page=100')
+    printf '%s' '[{"title":"Wave 2","created_at":"1970-01-01T00:00:01Z","closed_at":null}]' ;;
+  'issue list --repo o/r --state all --limit 5000 --json number,milestone,body,closedAt,comments')
+    printf '%s' '[{"number":7,"milestone":{"title":"Wave 2"},"body":"","closedAt":null,"comments":[]}]' ;;
+  'pr list --repo o/r --state all --limit 1000 --search milestone:"Wave 2" --json number,body,headRefOid,mergedAt')
+    printf '%s' '[{"number":40,"body":"Text.\n\nIssue: #7","headRefOid":"abc1234","mergedAt":null}]' ;;
+  'api repos/o/r/commits/abc1234/statuses?per_page=100')
+    printf '%s' '[{"context":"riff/verify","state":"success"}]' ;;
+  'issue list --repo o/r --state all --label escaped --limit 1000 --json number,body')
+    printf '%s' '[{"number":51,"body":"No line."},{"number":50,"body":"The lead line is gone.\n\nCause: #40\n"}]' ;;
+  *) echo "gh: no such call: $*" >&2; exit 1 ;;
+esac
+"#;
+        let gh = isolated::write_program(dir.path().join("gh"), script);
+        let forge = Forge::read(&Gh::at(gh), "o/r", WAVE).unwrap();
+        assert_eq!(
+            forge.escaped,
+            [
+                Escaped {
+                    number: 51,
+                    cause: None
+                },
+                Escaped {
+                    number: 50,
+                    cause: Some(40)
+                },
+            ]
+        );
+        let escapes = escapes(&forge);
+        assert_eq!(escapes.counted, [(50, 40)]);
+        assert_eq!(escapes.no_cause, [51]);
+        let calls = std::fs::read_to_string(dir.path().join("calls")).unwrap();
+        assert!(
+            calls.contains("issue list --repo o/r --state all --label escaped "),
+            "{calls}"
         );
     }
 }

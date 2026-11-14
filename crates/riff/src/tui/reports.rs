@@ -65,8 +65,9 @@
 //! - **Audit** (01M6VT3JMABMEXSBPE414MBJZP): before `Enter`, the report
 //!   says that the audit reads the log of riff-server and the forge.
 //!   `Enter` runs it in a task of its own, and the report shows each
-//!   rule with `pass`, `fail` or `not checked`, as `riff audit` prints
-//!   it ([`crate::audit::render`]).
+//!   rule with `pass`, `fail` or `not checked`, and the count of the
+//!   faults that a verify missed (01M7CF3P6251E29KNSBG24YJH3), as `riff
+//!   audit` prints them ([`crate::audit::render`]).
 //! - **Session log** (01M6VT3JPQXRWMX9PWYADT4MJX): `Enter` on a worker in
 //!   the Sessions tab opens it with that session ([`State::open_log`]).
 //!   It shows each line of `riff daemon events NAME`, and follows the

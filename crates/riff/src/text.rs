@@ -1030,6 +1030,16 @@ pub const TRACKER_LABEL: &str = "a tracker: its parts are separate items, and no
 pub const QUESTION_LABEL: &str =
     "a lead waits for your answer: the wave starts no build of the issue";
 
+/// The description of the label `escaped` that riff makes in a repository
+/// that has none ([`crate::audit::ESCAPED`], 01M7CF3P6251E29KNSBG24YJH3).
+/// GitHub takes a description of 100 characters at most.
+///
+/// ```
+/// assert!(riff::text::ESCAPED_LABEL.chars().count() <= 100);
+/// ```
+pub const ESCAPED_LABEL: &str =
+    "a fault that a passed verify missed: the line Cause: #PR names the pull request";
+
 /// The first 7 characters of a commit.
 fn short(commit: &str) -> String {
     commit.chars().take(7).collect()
@@ -13801,7 +13811,9 @@ not. Do not run a raw shell \
 one-liner for a task that a riff command does: use the riff command. Run each riff command \
 alone, as one command: do not join it with `&&`, `;` or a pipe. Start each `tell` with the \
 request, in the first words, then the reason. Put each finding in a GitHub issue: a \
-finding only in chat or in a note is lost. When a guard refuses a good \
+finding only in chat or in a note is lost. On the issue of a fault that a passed verify missed, \
+put the label `escaped`, and a line `Cause: #PR` in the body: PR is the pull request whose \
+verify passed with the fault. The audit of a wave counts these issues. When a guard refuses a good \
 action, file an issue to fix the guard in code: do not work around the refusal. State facts \
 that you read, and say \"I do not know\" for the rest: do not speculate. Read each line of \
 the riff chat at your next read. Answer only a line that names your project, of any person: `@` \
@@ -13832,9 +13844,9 @@ notes."
 /// for (name, phrase) in riff::text::LEAD_RULES {
 ///     assert!(riff::text::MCP_LEAD.contains(phrase), "{name}: {phrase}");
 /// }
-/// assert_eq!(riff::text::LEAD_RULES.len(), 23);
+/// assert_eq!(riff::text::LEAD_RULES.len(), 24);
 /// ```
-pub const LEAD_RULES: [(&str, &str); 23] = [
+pub const LEAD_RULES: [(&str, &str); 24] = [
     (
         "one-lead-of-the-project",
         "You are the one lead of the project: you serve each person of it",
@@ -13851,6 +13863,10 @@ pub const LEAD_RULES: [(&str, &str); 23] = [
         "Start each `tell` with the request",
     ),
     ("findings-in-issues", "Put each finding in a GitHub issue"),
+    (
+        "escaped-faults",
+        "On the issue of a fault that a passed verify missed, put the label `escaped`",
+    ),
     (
         "fix-refusals-in-code",
         "file an issue to fix the guard in code",
@@ -15464,6 +15480,23 @@ mod tests {
         for tool in crate::tools::LEAD_TOOLS {
             assert!(MCP_LEAD.contains(&format!("`{tool}`")), "{tool}");
         }
+    }
+
+    /// 01M7CF3P6251E29KNSBG24YJH3: the instructions of the lead name the
+    /// label and the line that `riff audit` counts: the names of
+    /// [`crate::audit::ESCAPED`] and [`crate::audit::CAUSE`].
+    #[test]
+    fn the_instructions_of_the_lead_name_the_label_escaped_and_the_line_cause() {
+        let label = format!("put the label `{}`", crate::audit::ESCAPED);
+        let line = format!("a line `{} #PR` in the body", crate::audit::CAUSE);
+        for phrase in [
+            label.as_str(),
+            line.as_str(),
+            "The audit of a wave counts these issues",
+        ] {
+            assert_eq!(MCP_LEAD.matches(phrase).count(), 1, "{phrase}");
+        }
+        assert!(MCP_LEAD.contains("PR is the pull request whose verify passed with the fault."));
     }
 
     /// The tools of a worker or a verifier in a container do not

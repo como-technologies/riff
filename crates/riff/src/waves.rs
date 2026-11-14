@@ -200,21 +200,20 @@ fn make_tracker_label(gh: &Gh) {
     );
 }
 
-/// Makes the label [`QUESTION`] when it is missing (#1605). GitHub makes it
-/// in each new repository, with the description "Further information is
-/// requested". `gh label create` with no `--force` fails for a label that is
-/// there, so a label that a person changed keeps its color and its
-/// description. No label is no reason to refuse a wave.
-fn make_question_label(gh: &Gh) {
+/// Makes the label `name` when it is missing. `gh label create` with no
+/// `--force` fails for a label that is there, so a label that a person
+/// changed keeps its color and its description. No label is no reason to
+/// refuse a wave.
+fn make_missing_label(gh: &Gh, name: &str, color: &str, description: &str) {
     let _ = gh.run(
         &[
             "label",
             "create",
-            QUESTION,
+            name,
             "--color",
-            "D876E3",
+            color,
             "--description",
-            text::QUESTION_LABEL,
+            description,
         ],
         None,
     );
@@ -224,12 +223,16 @@ fn make_question_label(gh: &Gh) {
 /// (01M5R1672NF56P15VD0JEX51K4).
 pub const FIRST_WAVE: &str = "Wave 1";
 
-/// Makes the first wave [`FIRST_WAVE`], and the labels [`TRACKER`] and
-/// [`QUESTION`], for a repository with no open wave (#1605). It makes no
-/// Backlog: that is a step of its own.
+/// Makes the first wave [`FIRST_WAVE`] for a repository with no open
+/// wave, and the labels [`TRACKER`], [`QUESTION`] (#1605) and
+/// [`crate::audit::ESCAPED`] (01M7CJMWGNFF57BAEHDF6BC2DX). It makes the
+/// last two only when they are missing: GitHub makes [`QUESTION`] in each
+/// new repository, with the description "Further information is
+/// requested". It makes no Backlog: that is a step of its own.
 pub fn make_first(gh: &Gh) -> Result<Milestone> {
     make_tracker_label(gh);
-    make_question_label(gh);
+    make_missing_label(gh, QUESTION, "D876E3", text::QUESTION_LABEL);
+    make_missing_label(gh, crate::audit::ESCAPED, "B60205", text::ESCAPED_LABEL);
     new_milestone(gh, FIRST_WAVE)
 }
 

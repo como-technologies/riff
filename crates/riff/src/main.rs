@@ -687,9 +687,12 @@ enum Command {
     /// It reads the log of the repository of this directory from the
     /// riff, and the issues and pull requests of the wave with gh. It
     /// prints each rule with pass, fail or not checked, and the records
-    /// that show it. It exits with 1 when a rule fails. Only an admin
-    /// can. The lead runs it in its container too: the riff daemon
-    /// of the host reads the log for it.
+    /// that show it. It exits with 1 when a rule fails. Then it counts
+    /// the issues with the label escaped whose line Cause: #PR names a
+    /// pull request of the wave: the faults that a verify missed. The
+    /// count does not change the exit status. Only an admin can. The
+    /// lead runs it in its container too: the riff daemon of the host
+    /// reads the log for it.
     Audit {
         /// The wave: its number, for example 3 or "Wave 3". The name of
         /// the wave is not necessary.

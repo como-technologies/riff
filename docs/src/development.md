@@ -6351,7 +6351,9 @@ line for each item of the wave. Each other rule has the number of its
 checks that pass, and a line for each check that fails. A line names
 the records of the log by their position. Find a record with
 `riff-server log` (see "Print the log"). The command exits with 1 when
-a rule fails.
+a rule fails. After the rules comes the count of the faults that a
+verify of the wave missed: see
+[Count the faults that a verify missed](#count-the-faults-that-a-verify-missed).
 
 | Rule | It checks |
 |---|---|
@@ -6367,7 +6369,9 @@ a rule fails.
 flowchart LR
     L[log of the riff] -->|the records of this repository| A[riff audit]
     F[forge, with gh] -->|waves, issues, pull requests, verify status| A
+    E[forge, with gh] -->|the issues with the label escaped| A
     A --> R[each rule: pass, fail or not checked]
+    A --> C[the count of the faults that a verify missed]
 ```
 
 - A wave starts when it is the current wave: when the wave before it
@@ -6392,9 +6396,10 @@ riff
 ```
 
 The audit is the heaviest read of the TUI. So it runs only when you
-press `Enter`, and again when you press `r`. It shows each rule as
-`riff audit --wave N` prints it, with `pass` in green, `fail` in red
-and `not checked` in yellow. It audits the wave of the Usage report:
+press `Enter`, and again when you press `r`. It shows each rule and the
+count of the faults that a verify missed as `riff audit --wave N`
+prints them, with `pass` in green, `fail` in red and `not checked` in
+yellow. It audits the wave of the Usage report:
 `[` and `]` show the wave before or after.
 
 ### What the audit sees after a prune
@@ -6441,7 +6446,9 @@ with the label `escaped`. The body of the issue has a line
 fault. These issues are the measure of the verify: see
 [The levers of a verify](how-it-works.md#the-levers-of-a-verify).
 
-Make the label one time in the repository:
+`riff project init` makes the label with the first wave, when the
+repository has none. In a repository that has waves, make the label
+one time:
 
 ```sh
 gh label create escaped --description "A fault that a passed verify missed"
@@ -6455,16 +6462,30 @@ verify in place of 2100. Then file the issue:
 gh issue create --label escaped --title "riff top shows no lead line" --body-file fault.md
 ```
 
-To list the faults that a verify missed:
+`riff audit` counts the faults that a verify of a wave missed: each
+issue with the label `escaped`, open or closed, whose line `Cause:`
+names a pull request of the wave. The count comes after the rules, and
+names each issue with its pull request:
 
 ```sh
-gh issue list --label escaped --state all
+riff audit --wave 59
 ```
 
-`riff audit` does not count them yet:
-[#2117](https://github.com/como-technologies/riff/issues/2117) adds the
-count to `riff audit --wave N`. It will count the issues whose line
-`Cause:` names a pull request of wave N.
+```text
+Faults that a verify missed: 2
+  A measure, not a rule: the issues escaped whose line Cause: names a pull request of the wave.
+  #2130: the verify of #2101 passed with the fault.
+  #2131: the verify of #2104 passed with the fault.
+
+Issues escaped with no line Cause: #PR: 1
+  #2140
+```
+
+An issue with the label and no line `Cause: #PR` names no wave, so
+the audit of each wave names it apart. Add the line to its body. The
+count is a measure, not a rule: it does not change the exit status of
+`riff audit`. The Audit report of the TUI shows the same lines: see
+[Audit a wave in the TUI](#audit-a-wave-in-the-tui).
 
 ## Sign in on this machine
 

@@ -408,7 +408,8 @@ fn the_usage_is_read_when_it_shows_and_on_r() {
 
 /// 01M6VT3JMABMEXSBPE414MBJZP: the audit runs only on `Enter`, shows
 /// each rule as `riff audit` prints it, with the color of its verdict,
-/// and runs again on `r`.
+/// and runs again on `r`. It shows the count of the faults that a verify
+/// missed as `riff audit` prints it too (01M7CF3P6251E29KNSBG24YJH3).
 #[test]
 fn the_audit_runs_on_enter_and_shows_each_rule() {
     let mut state = mock_up();
@@ -443,6 +444,10 @@ fn the_audit_runs_on_enter_and_shows_each_rule() {
                 none: "no session posted a request".into(),
             },
         ],
+        escaped: crate::audit::Escapes {
+            counted: vec![(1001, 990)],
+            no_cause: vec![],
+        },
     };
     let audited = Audited {
         repo: RIFF.into(),
@@ -459,6 +464,8 @@ fn the_audit_runs_on_enter_and_shows_each_rule() {
         "{rows:#?}"
     );
     assert!(rows.contains(&"   fail: #994 has no pull request.".to_owned()));
+    assert!(rows.contains(&" Faults that a verify missed: 1".to_owned()));
+    assert!(rows.contains(&"   #1001: the verify of #990 passed with the fault.".to_owned()));
     assert_eq!(rows[22], " The audit ran 1m ago.");
     let mut buffer = Buffer::empty(Rect::new(0, 0, 80, 24));
     render(&compute_view(&state, buffer.area, NOW), &mut buffer);

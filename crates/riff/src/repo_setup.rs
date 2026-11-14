@@ -576,9 +576,9 @@ pub enum Step {
     /// Make the open milestone [`BACKLOG`]
     /// ([`crate::waves::make_backlog`]).
     Backlog,
-    /// Make the open wave [`FIRST_WAVE`], and the labels `tracker` and
-    /// `question` when they are missing ([`crate::waves::make_first`],
-    /// #1605).
+    /// Make the open wave [`FIRST_WAVE`], the label `tracker`, and the
+    /// labels `question` and `escaped` when they are missing
+    /// ([`crate::waves::make_first`], #1605, 01M7CJMWGNFF57BAEHDF6BC2DX).
     Wave,
     /// Make the ruleset [`RULESET`] with the checks of the CI:
     /// `gh api -X POST .../rulesets`, or `PUT` when a ruleset named `riff`
@@ -2451,6 +2451,7 @@ mod tests {
                 "api -X POST repos/{owner}/{repo}/milestones -f title=Backlog",
                 "label create tracker",
                 "label create question",
+                "label create escaped",
                 "api -X POST repos/{owner}/{repo}/milestones -f title=Wave 1",
                 "api -X POST repos/{owner}/{repo}/rulesets",
             ],
@@ -2519,6 +2520,39 @@ mod tests {
         // The label of the tracker is still forced, as before.
         let tracker = calls.iter().find(|c| c.starts_with("label create tracker"));
         assert!(tracker.is_some_and(|c| c.contains("--force")), "{calls:#?}");
+    }
+
+    /// 01M7CF3P6251E29KNSBG24YJH3, 01M7CJMWGNFF57BAEHDF6BC2DX: the step of
+    /// the first wave makes the label `escaped` when it is missing, and
+    /// leaves the label as it is when it is there.
+    #[test]
+    fn init_makes_the_label_escaped_when_it_is_missing_and_leaves_it_when_it_is_there() {
+        let escaped = crate::audit::ESCAPED;
+        let missing = Fake::bare();
+        let mut github = missing.github();
+        let done = setup(&missing.forge(), &[Step::Wave], &mut github);
+        assert!(done.iter().all(|(_, done)| done.is_ok()), "{done:?}");
+        assert!(missing.read_file("labels").lines().any(|l| l == escaped));
+        assert_eq!(
+            missing.read_file("label_escaped"),
+            crate::text::ESCAPED_LABEL
+        );
+
+        let there = Fake::new(&[("labels", "escaped\n"), ("label_escaped", "ours")]);
+        let mut github = there.github();
+        let done = setup(&there.forge(), &[Step::Wave], &mut github);
+        assert!(done.iter().all(|(_, done)| done.is_ok()), "{done:?}");
+        assert_eq!(there.read_file("label_escaped"), "ours");
+        let labels = there.read_file("labels");
+        assert_eq!(labels.lines().filter(|l| *l == escaped).count(), 1);
+        // riff never forces it, so gh changes no label that is there.
+        let calls = there.calls();
+        let made = calls
+            .iter()
+            .find(|c| c.starts_with("label create escaped"))
+            .unwrap();
+        assert!(!made.contains("--force"), "{made}");
+        assert!(there.read_file("milestones").contains(FIRST_WAVE));
     }
 
     #[test]

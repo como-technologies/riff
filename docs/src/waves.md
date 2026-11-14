@@ -404,6 +404,8 @@ the waves, and riff ignores them.
 | `broken-main` | a label | A fix item for a broken `main`. It is free work before each other item. |
 | `no-verify` | a label | riff offers no verify for the pull request of the issue. |
 | `release` | a label | A release issue or pull request: the wave starts no session for it. |
+| `escaped` | a label | A fault that a passed verify missed. `riff audit --wave N` counts it in the wave of the pull request of its line `Cause:` (see [Count the faults that a verify missed](development.md#count-the-faults-that-a-verify-missed)). |
+| `Cause:` | the start of a line `Cause: #PR` in the body of an issue with the label `escaped` | PR is the pull request whose verify passed with the fault. |
 | `worktree-issue-N` | a branch | The branch of the session that works on issue N. |
 
 ```mermaid
@@ -426,7 +428,7 @@ gh label list
 ```
 
 `riff project init` makes the milestone `Backlog`, and `Wave 1` when
-the repository has no open wave. With `Wave 1` it makes the label
-`question`, when the repository has none. It also counts the open
-issues with no `Done when:` line: see
+the repository has no open wave. With `Wave 1` it makes the labels
+`question` and `escaped`, when the repository has none. It also counts
+the open issues with no `Done when:` line: see
 [Find the issues with no Done when line](development.md#find-the-issues-with-no-done-when-line).
