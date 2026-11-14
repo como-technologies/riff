@@ -3225,6 +3225,35 @@ in the repository, of any person: each live session with no claim. Each
 other session sees it at its next read. A verify request is free work: a
 session picks it like any other item.
 
+### The levers of a verify
+
+A verify must find what its author missed. Each lever for that has one
+place:
+
+| Lever | Where it lives |
+|---|---|
+| A check of each criterion of the `Done when:` line, and the Gate | Each verify, as this section says. The verify reads the Gate, and does not run it again. |
+| A control: a test that finds the fault | The prompt of each verify. Today the prompt does not give it: [#1871](https://github.com/como-technologies/riff/issues/1871) puts it back. |
+| A test for each new requirement | The job `Hygiene` of each pull request: [#2116](https://github.com/como-technologies/riff/issues/2116) adds the check. |
+| An adversarial review: what can break, invalid states, round trips, the docs and security | The council of the verify, a design: [#581](https://github.com/como-technologies/riff/issues/581). |
+| A person and a risk level | The gates before the code and the sign-off of a person, a design: [#585](https://github.com/como-technologies/riff/issues/585). |
+| Another model | None. Each session runs on the model of `riff.toml`: see [Set the model of the sessions](development.md#set-the-model-of-the-sessions). A verify has its own effort: see [Set the effort of the sessions](development.md#set-the-effort-of-the-sessions). |
+| A second verify | None. A head commit gets one verify that passes. The council gives the second view. |
+| A mutation test and a stress run | Not in the Gate. Run `just stress` by hand: see [Run a test on a busy machine](development.md#run-a-test-on-a-busy-machine). |
+| The measure of the faults that a verify missed | The label `escaped` on the issue of each such fault: see [Count the faults that a verify missed](development.md#count-the-faults-that-a-verify-missed). |
+
+```mermaid
+flowchart LR
+    P["a pull request"] --> H["Hygiene: a file under crates/<br/>names each new requirement"]
+    P --> G["the Gate"]
+    H --> V["the verify: each criterion,<br/>a control, the council"]
+    G --> V
+    V -- "PASS" --> M["the merge"]
+    M --> F{"a fault<br/>later?"}
+    F -- "yes" --> E["an issue with the label escaped<br/>and the line Cause: #PR"]
+    E --> C["the count of the faults<br/>that a verify missed"]
+```
+
 ### Who may send a verify request and a result
 
 The wave reads the verify requests and the verify results in the

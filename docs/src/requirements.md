@@ -188,6 +188,16 @@
   command is one short line of at most 60 characters.
   `riff help server` shows the forms of a value and the default. No
   help, and no error for a missing command, names a hidden command.
+- **01M7CF3FPNSR0G8EZ3JY3CA34S** Each lever of an independent verify has
+  one place. The council of the verify gives an adversarial review: what
+  can break, invalid states, round trips, the docs and security. The
+  gates before the code give a person and a risk level. Each session
+  runs on `model` in `riff.toml`, and a verify has its own effort (`riff
+  daemon limit --effort-verify`). The prompt of each verify gives the
+  control of 01M5174ASF376JDNBQ4423TTAR.
+- **01M7CF3NYSQX8WFHSQNKV0Q3QN** riff runs no second verify of a head
+  commit for a second view. The council of the verify gives the second
+  view (01M7CF3FPNSR0G8EZ3JY3CA34S).
 
 ## Waves
 
@@ -398,6 +408,14 @@
   after a failed fetch, the two pull requests are in one group.
   Supersedes 01M6WCGNCC3HWS47158WTWNQ8B and 01M6YPYTGR2JEBDHGX4K1RDCAW
   in part.
+- **01M7CF3P6251E29KNSBG24YJH3** The lead puts the label `escaped` on
+  the issue of a fault that a passed verify missed. The body of the
+  issue has a line `Cause: #PR`: PR is the pull request whose verify
+  passed with the fault. `riff audit --wave N` counts the issues with
+  the label `escaped` whose line `Cause:` names a pull request of wave
+  N, and names each issue with its pull request. It names apart each
+  issue with the label and no such line. The count is a measure, not a
+  rule: it does not change the exit status.
 
 ## Waves on GitHub
 
@@ -841,6 +859,13 @@
   both sides of the line, and `hygiene pr` puts the line in the message
   that the squash will make. Supersedes 01M5RP9PSKWXCD1F2SKCQN5379 in
   part.
+- **01M7CF3P17SDFBB5MY5TP3QXVM** `hygiene pr` fails a pull request that
+  adds a requirement ID that no file under `crates/` names at the head
+  of the pull request (`unnamed`). A new ID is an ID of
+  `docs/src/requirements.md` at the head that neither page of the
+  requirements has at the merge base. The error names each such ID. The
+  pull request of an issue with the label `design` does not get the
+  rule. The rule is one of the rules of riff (`rules = "riff"`).
 ## Pull requests on GitHub
 
 - **01M3JFEXG85AJK8ZE8N807EQVB** `just github` sets up the repository
@@ -5115,6 +5140,9 @@
   `universal_prefixed`. When the Rust target `aarch64-apple-darwin` is
   missing, the script runs no cargo, names `rustup target add
   aarch64-apple-darwin`, and exits with 1. `just init` adds the target.
+- **01M7CF3P3MQ2T8BHFNAV63P5QR** The Gate runs no mutation test and no
+  `just stress` (01M517P9QE2SQ45SPV3K2SM71B). A person runs `just
+  stress` by hand.
 
 ## The phone app
 
