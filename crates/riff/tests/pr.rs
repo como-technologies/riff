@@ -952,14 +952,15 @@ async fn verify_pass_refuses_a_body_that_closes_an_issue_with_a_live_line() {
 async fn verify_pass_refuses_a_result_with_no_line_for_a_member_of_the_council() {
     let machine = Machine::new(VERIFY).await;
     machine.claim("author", "issue-12").await;
-    let names = |names: &[&str]| -> Vec<riff::council::Name> {
-        names.iter().map(|name| name.parse().unwrap()).collect()
+    let no_line = |first: &str, rest: &[&str]| riff::council::result::NoLine {
+        first: first.parse().unwrap(),
+        rest: rest.iter().map(|name| name.parse().unwrap()).collect(),
     };
     let no_part = machine.write("result.md", "1. The wave shows.\n");
     let no_docs = machine.write("no-docs.md", &RESULT.replace("- docs: no finding.\n", ""));
     for (result, members) in [
-        (&no_part, names(&["design", "testing", "docs", "rust"])),
-        (&no_docs, names(&["docs"])),
+        (&no_part, no_line("design", &["testing", "docs", "rust"])),
+        (&no_docs, no_line("docs", &[])),
     ] {
         let pass = [
             "verify", "pass", "40", "--file", result, "--commit", "1a2b3c4d",
@@ -986,7 +987,7 @@ async fn verify_pass_refuses_a_result_with_no_line_for_a_member_of_the_council()
         assert!(!inbox.contains("verify result:"), "{inbox}");
     }
     assert!(
-        riff::text::verify_no_council_line(&names(&["design", "testing", "docs", "rust"]))
+        riff::text::verify_no_council_line(&no_line("design", &["testing", "docs", "rust"]))
             .contains("for design, testing, docs and rust.")
     );
 
@@ -2215,13 +2216,17 @@ fn the_book_shows_the_line_of_a_pass_refused_for_an_image_that_a_host_cannot_pul
     assert!(part.contains("(start-a-riff.md#check-that-each-host-can-pull-the-image)"));
 }
 
-/// 01M7CFBZSQEEZNZBR9H1S54GS1: "Report a verify" says that `riff verify
-/// pass` refuses a result with no line for a member of the council, and
-/// shows the line that it prints.
+/// 01M7CFBZSQEEZNZBR9H1S54GS1, 01M7D11KGEJ8ACFJK6Y10WENJZ: "Report a
+/// verify" says where the part `## The council` starts and ends, and
+/// that `riff verify pass` refuses a result with no line for a member of
+/// the council. It shows the line that `riff verify pass` prints.
 #[test]
 fn the_book_shows_the_line_of_a_pass_with_no_line_for_a_member_of_the_council() {
     let part = how_to("Report a verify");
-    let members = ["docs".parse().unwrap(), "rust".parse().unwrap()];
+    let members = riff::council::result::NoLine {
+        first: "docs".parse().unwrap(),
+        rest: vec!["rust".parse().unwrap()],
+    };
     let line = riff::text::verify_no_council_line(&members);
     assert!(
         part.contains(&format!("```text\n{line}\n```")),
@@ -2229,6 +2234,9 @@ fn the_book_shows_the_line_of_a_pass_with_no_line_for_a_member_of_the_council() 
     );
     let flat = part.split_whitespace().collect::<Vec<_>>().join(" ");
     for words in [
+        "The part starts at the heading `## The council`, with that case, and ends at the next \
+         `#` or `##` heading.",
+        "also after a list mark such as `-` or `1.`",
         "When the part has no line for a member, or the result has no such part, `riff verify \
          pass` reports nothing and prints one line that names each member with no line",
         "A fail needs no part `## The council`",

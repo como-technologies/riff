@@ -4033,7 +4033,9 @@ Last, a pass needs a line for each member of the council in the part
 `## The council` of the result. riff reads the council of the pull
 request as `riff council show 40` does (see
 [See the council of a pull request](#see-the-council-of-a-pull-request)).
-A line of a member starts with its name, for example
+The part starts at the heading `## The council`, with that case, and
+ends at the next `#` or `##` heading. A line of a member starts with
+its name, also after a list mark such as `-` or `1.`, for example
 `- rust: no finding.`. When the part has no line for a member, or the
 result has no such part, `riff verify pass` reports nothing and prints
 one line that names each member with no line:

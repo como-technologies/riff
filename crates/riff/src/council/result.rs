@@ -8,13 +8,14 @@
 //! ([`super::pick::of_pull`]), after the checks of the head commit and
 //! before the squash message ([`crate::pr::report`]). [`check`] then finds
 //! the line of each member in the part `## The council` of the result. A
-//! member with no line is a [`NoLine`]: `riff verify pass` reports nothing
-//! and prints its line, and the daemon reads such a PASS of the wave as a
-//! result with no verdict ([`crate::wave`]). A fail needs no such part.
+//! member with no line makes a [`NoLine`]: `riff verify pass` reports
+//! nothing and prints its line, and the daemon reads such a PASS of the
+//! wave as a result with no verdict ([`crate::wave`]). A fail needs no
+//! such part.
 //!
 //! ```mermaid
 //! flowchart TD
-//!     R["the result of a pass"] --> P["the part ## The council:<br/>up to the next heading of its level"]
+//!     R["the result of a pass"] --> P["the part ## The council:<br/>up to the next # or ## heading"]
 //!     C["the council of the pull request,<br/>as riff council show picks it"] --> K{"a line for each member?"}
 //!     P --> K
 //!     K -- yes --> G["the comment, the status, the post"]
@@ -23,9 +24,11 @@
 //!
 //! A line of a member is a line of the part whose first word is the name
 //! of the member, in any case ([`first_word`]). A list mark can come
-//! before it, and `:`, `*`, `_` or `` ` `` around it. The part runs from
-//! its heading to the next heading with as many `#` or fewer, and each
-//! such part counts. A line in a code block is no heading.
+//! before it ([`crate::markdown::item`]), and `:`, `*`, `_` or `` ` ``
+//! around it. The part runs from the heading [`HEADING`], of that level
+//! and case, to the next heading of one or two `#`, and each such part
+//! counts. A line in a code block is no heading
+//! ([`crate::markdown::headings`]).
 //!
 //! ```
 //! use riff::council::default_set;
@@ -41,7 +44,7 @@
 //!               - rust: no finding.\n";
 //! assert!(check(&council, result).is_ok());
 //! let fault = check(&council, &result.replace("- rust: no finding.\n", "")).unwrap_err();
-//! assert_eq!(fault.members.iter().map(|m| m.as_str()).collect::<Vec<_>>(), ["rust"]);
+//! assert_eq!(fault.members().map(|m| m.as_str()).collect::<Vec<_>>(), ["rust"]);
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
@@ -49,27 +52,34 @@ use std::fmt;
 
 use super::Name;
 use super::pick::Council;
-use crate::text;
+use crate::{markdown, text};
 
-/// The heading of the part, as the start text of a verify gives it.
+/// The heading of the part of the council in a result, as the start text
+/// of a verify gives it ([`text::wave_verify_start`]).
 pub const HEADING: &str = "## The council";
 
-/// The text of [`HEADING`]: a heading of another level or case with this
-/// text starts the part too.
-const TITLE: &str = "The council";
-
 /// The members of a council with no line in the part `## The council` of
-/// a result (01M7CFBZSQEEZNZBR9H1S54GS1). Its text is the line of `riff
-/// verify pass` ([`text::verify_no_council_line`]).
+/// a result (01M7CFBZSQEEZNZBR9H1S54GS1): one member or more, in the
+/// order of the council. Its text is the line of `riff verify pass`
+/// ([`text::verify_no_council_line`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NoLine {
-    /// Each member with no line, in the order of the council.
-    pub members: Vec<Name>,
+    /// The first member with no line.
+    pub first: Name,
+    /// Each other member with no line.
+    pub rest: Vec<Name>,
+}
+
+impl NoLine {
+    /// Each member with no line, the first one first.
+    pub fn members(&self) -> impl Iterator<Item = &Name> {
+        std::iter::once(&self.first).chain(&self.rest)
+    }
 }
 
 impl fmt::Display for NoLine {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&text::verify_no_council_line(&self.members))
+        f.write_str(&text::verify_no_council_line(self))
     }
 }
 
@@ -87,13 +97,13 @@ impl std::error::Error for NoLine {}
 ///
 /// let council = pick(default_set()?, &Change { paths: vec!["justfile".into()], labels: vec![] });
 /// let fault = check(&council, "PASS\n\n- It works.\n").unwrap_err();
-/// assert_eq!(fault.members.len(), 3);
+/// assert_eq!(fault.members().count(), 3);
 /// assert!(fault.to_string().contains("for design, testing and docs."), "{fault}");
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn check(council: &Council, result: &str) -> Result<(), NoLine> {
     let words: Vec<&str> = part(result).into_iter().filter_map(first_word).collect();
-    let members: Vec<Name> = council
+    let mut members = council
         .seats
         .iter()
         .map(|seat| &seat.member.name)
@@ -102,55 +112,38 @@ pub fn check(council: &Council, result: &str) -> Result<(), NoLine> {
                 .iter()
                 .any(|word| word.eq_ignore_ascii_case(name.as_str()))
         })
-        .cloned()
-        .collect();
-    match members.is_empty() {
-        true => Ok(()),
-        false => Err(NoLine { members }),
+        .cloned();
+    match members.next() {
+        None => Ok(()),
+        Some(first) => Err(NoLine {
+            first,
+            rest: members.collect(),
+        }),
     }
 }
 
-/// The lines of each part `## The council` of `result`, each from the
-/// line after its heading up to the next heading with as many `#` or
-/// fewer. A line in a code block is no heading. No line when the result
-/// has no such part.
+/// The lines of each part [`HEADING`] of `result`, each from the line
+/// after its heading up to the next heading of one or two `#`. A line in
+/// a code block is no heading. No line when the result has no such part.
 fn part(result: &str) -> Vec<&str> {
-    let mut fenced = false;
-    // The level of the heading of the part that the line is in.
-    let mut level = None;
+    let start = markdown::heading(HEADING);
+    let mut inside = false;
     let mut lines = Vec::new();
-    for line in result.lines() {
-        let heading = match fenced {
-            true => None,
-            false => heading(line),
-        };
-        if line.trim_start().starts_with("```") {
-            fenced = !fenced;
-        }
+    for (line, heading) in markdown::headings(result.lines()) {
         match heading {
-            Some((n, text)) if text.eq_ignore_ascii_case(TITLE) => level = Some(n),
-            Some((n, _)) if level.is_some_and(|at| n <= at) => level = None,
-            _ if level.is_some() => lines.push(line),
+            Some(_) if heading == start => inside = true,
+            Some((level, _)) if start.is_some_and(|(at, _)| level <= at) => inside = false,
+            _ if inside => lines.push(line),
             _ => {}
         }
     }
     lines
 }
 
-/// The level and the text of the heading `line`: `(2, "The council")` for
-/// `## The council`. `None` for a line that is no heading.
-fn heading(line: &str) -> Option<(usize, &str)> {
-    let marks = line.chars().take_while(|&c| c == '#').count();
-    let text = line[marks..].strip_prefix(' ')?;
-    (1..=6)
-        .contains(&marks)
-        .then(|| (marks, text.trim().trim_end_matches('#').trim_end()))
-}
-
-/// The first word of a line of the part, with no list mark before it and
-/// no `:`, `*`, `_` or `` ` `` around it: `docs` for `- docs: no
-/// finding.`, `* **docs**: no finding.` and `` `docs`: no finding.``.
-/// `None` for a line with no word.
+/// The first word of a line of the part, with no list mark before it
+/// ([`markdown::item`]) and no `:`, `*`, `_` or `` ` `` around it: `docs`
+/// for `- docs: no finding.`, `1. **docs**: no finding.` and `` `docs`:
+/// no finding.``. `None` for a line with no word.
 ///
 /// ```
 /// use riff::council::result::first_word;
@@ -158,18 +151,15 @@ fn heading(line: &str) -> Option<(usize, &str)> {
 /// assert_eq!(first_word("- docs: no finding."), Some("docs"));
 /// assert_eq!(first_word("  * **docs**: no finding."), Some("docs"));
 /// assert_eq!(first_word("+ `docs`: no finding."), Some("docs"));
+/// assert_eq!(first_word("1. docs: no finding."), Some("docs"));
 /// assert_eq!(first_word("- **docs:** no finding."), Some("docs"));
 /// assert_eq!(first_word("docs no finding"), Some("docs"));
 /// assert_eq!(first_word("- Each member reviewed it."), Some("Each"));
 /// assert_eq!(first_word("- "), None);
 /// ```
 pub fn first_word(line: &str) -> Option<&str> {
-    let line = line.trim_start();
-    let line = ["- ", "* ", "+ "]
-        .iter()
-        .find_map(|mark| line.strip_prefix(mark))
-        .unwrap_or(line);
-    line.split(|c: char| c.is_whitespace() || c == ':')
+    markdown::item(line)
+        .split(|c: char| c.is_whitespace() || c == ':')
         .map(|word| word.trim_matches(|c: char| "*_`".contains(c)))
         .find(|word| !word.is_empty())
 }
@@ -206,7 +196,7 @@ mod tests {
     fn no_line(result: &str) -> Vec<String> {
         match check(&council(), result) {
             Ok(()) => Vec::new(),
-            Err(fault) => fault.members.iter().map(ToString::to_string).collect(),
+            Err(fault) => fault.members().map(ToString::to_string).collect(),
         }
     }
 
@@ -221,7 +211,13 @@ mod tests {
             Ok(())
         );
         let fault = check(&council, &result(&["design", "testing", "rust"])).unwrap_err();
-        assert_eq!(fault.members, ["docs".parse::<Name>().unwrap()]);
+        assert_eq!(
+            fault,
+            NoLine {
+                first: "docs".parse().unwrap(),
+                rest: vec![]
+            }
+        );
         let line = fault.to_string();
         assert!(
             line.contains("has no line in the part `## The council` for docs."),
@@ -247,15 +243,51 @@ mod tests {
         );
     }
 
-    /// 01M7D11KGEJ8ACFJK6Y10WENJZ: the part ends at the next heading with
-    /// as many `#` or fewer. A line under a heading with more `#`, a
-    /// heading of another case, marks around a name and a line after a
-    /// code block count. A `#` line in a code block ends no part, and the
-    /// name must be the whole first word. Each part `## The council`
-    /// counts.
+    /// 01M7D11KGEJ8ACFJK6Y10WENJZ: a line of a member counts after each
+    /// list mark of [`markdown::item`], a number with `.` or `)` too.
+    #[test]
+    fn a_line_of_a_member_counts_after_a_numbered_list_mark() {
+        let result = "PASS\n\n## The council\n\n1. design: no finding.\n2) testing: no finding.\n\
+                      10. **docs**: no finding.\n+ rust: no finding.\n";
+        assert_eq!(no_line(result), Vec::<String>::new());
+    }
+
+    /// 01M7D11KGEJ8ACFJK6Y10WENJZ: the part starts only at the heading
+    /// `## The council`, of that level and case.
+    #[test]
+    fn the_part_starts_only_at_its_heading_of_that_level_and_case() {
+        let all = "- design: no finding.\n- testing: no finding.\n- docs: no finding.\n\
+                   - rust: no finding.\n";
+        assert_eq!(
+            no_line(&format!("## The council\n\n{all}")),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            no_line(&format!("  ## The council  \n\n{all}")),
+            Vec::<String>::new()
+        );
+        for other in [
+            "## The Council",
+            "### The council",
+            "# The council",
+            "## The council:",
+        ] {
+            assert_eq!(
+                no_line(&format!("{other}\n\n{all}")),
+                ["design", "testing", "docs", "rust"],
+                "{other}"
+            );
+        }
+    }
+
+    /// 01M7D11KGEJ8ACFJK6Y10WENJZ: the part ends at the next heading of
+    /// one or two `#`. A line under a heading of three `#`, marks around a
+    /// name and a line after a code block count. A `#` line in a code
+    /// block ends no part, and the name must be the whole first word. Each
+    /// part `## The council` counts.
     #[test]
     fn the_part_ends_at_the_next_heading_of_its_level() {
-        let after = "PASS\n\n## The Council\n\n- design: no finding.\n- testing: no finding.\n\n\
+        let after = "PASS\n\n## The council\n\n- design: no finding.\n- testing: no finding.\n\n\
                      ## Notes\n\n- docs: no finding.\n- rust: no finding.\n";
         assert_eq!(no_line(after), ["docs", "rust"]);
         let deeper = "# Result\n\nPASS\n\n## The council\n\n- **Design**: no finding.\n\
@@ -269,13 +301,14 @@ mod tests {
         assert_eq!(no_line(twice), ["testing"]);
     }
 
-    /// A heading is one to six `#`, then a space.
+    /// The members of a [`NoLine`] are its first member, then the rest.
     #[test]
-    fn a_heading_has_marks_and_a_space() {
-        assert_eq!(heading("## The council"), Some((2, "The council")));
-        assert_eq!(heading("### The council ##"), Some((3, "The council")));
-        assert_eq!(heading("##The council"), None);
-        assert_eq!(heading("####### Seven"), None);
-        assert_eq!(heading("- design"), None);
+    fn the_members_of_a_no_line_start_with_the_first() {
+        let fault = check(&council(), &result(&["testing"])).unwrap_err();
+        assert_eq!(fault.first.as_str(), "design");
+        assert_eq!(
+            fault.members().map(Name::as_str).collect::<Vec<_>>(),
+            ["design", "docs", "rust"]
+        );
     }
 }

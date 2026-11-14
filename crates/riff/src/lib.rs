@@ -111,6 +111,7 @@ pub mod local;
 pub mod login;
 pub mod look;
 pub mod machine;
+pub mod markdown;
 pub mod order;
 pub mod permissions;
 pub mod platform;

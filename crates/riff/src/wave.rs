@@ -3638,7 +3638,7 @@ async fn after_verify(
 /// 01M7CFBZSQEEZNZBR9H1S54GS1, 01M7D11KGEJ8ACFJK6Y10WENJZ).
 pub(crate) fn no_report(item: &str, pull: u64, error: &anyhow::Error, open: bool) -> String {
     match error.downcast_ref::<crate::council::result::NoLine>() {
-        Some(no_line) => text::wave_no_council_line(item, pull, &no_line.members, open),
+        Some(no_line) => text::wave_no_council_line(item, pull, no_line, open),
         None => text::wave_no_report(item, pull, &format!("{error:#}"), open),
     }
 }
@@ -12956,9 +12956,9 @@ esac
     }
 
     /// The fake `gh` of the report of a PASS of pull request 7 at `head`,
-    /// in `bin`: a repository with no CI, a body with `Refs #12`, the path
-    /// `a` and no label. It logs each call to `bin/gh.log`, and fails each
-    /// other call.
+    /// in `bin`: an open pull request, a repository with no CI, a body with
+    /// `Refs #12`, the path `a` and no label. It logs each call to
+    /// `bin/gh.log`, and fails each other call.
     fn pass_gh(bin: &Path, head: &str) -> pr::Gh {
         let script = format!(
             r#"#!/bin/sh
@@ -12966,6 +12966,7 @@ dir=$(dirname "$0")
 printf '%s\n' "$*" >> "$dir/gh.log"
 case "$*" in
   'pr view 7 --json headRefOid,body,title,autoMergeRequest') printf '%s' '{{"headRefOid":"{head}","title":"Two","autoMergeRequest":null,"body":"Refs #12\n\nIssue: #12\nMilestone: Wave 1\n"}}' ;;
+  'pr view 7 --json number,url,headRefOid,state') printf '%s' '{{"number":7,"url":"https://github.com/o/r/pull/7","headRefOid":"{head}","state":"OPEN"}}' ;;
   'api repos/o/r') echo '{{"default_branch":"main"}}' ;;
   'api repos/o/r/rules/branches/main?per_page=100') echo '[]' ;;
   'api repos/o/r/pulls/7/files --paginate --jq .[].filename') echo a ;;
@@ -13032,7 +13033,10 @@ esac
         };
 
         let (record, done) = verify(1, "- design: no finding.\n- testing: no finding.\n").await;
-        let docs = ["docs".parse().unwrap()];
+        let docs = crate::council::result::NoLine {
+            first: "docs".parse().unwrap(),
+            rest: vec![],
+        };
         let message = text::wave_no_council_line("verify-issue-12", 7, &docs, true);
         assert_eq!(done.lines, std::slice::from_ref(&message));
         assert!(!done.reported(), "no verdict: the start counts");
@@ -13069,5 +13073,81 @@ esac
         let log = calls(bin.path());
         let status = format!("api repos/o/r/statuses/{} -f state=success", fork.head);
         assert!(log.contains(&status), "{log}");
+    }
+
+    /// 01M7CFBZSQEEZNZBR9H1S54GS1, 01M6H1N332TZ17CQQ8A5CQKG7B: the report
+    /// of a kept PASS reads the council of the pull request in the clone
+    /// of its folder. A kept PASS with no line for docs is a result with
+    /// no verdict: no squash message, no comment and no status. The
+    /// folder goes, and the lead gets the message that names docs. A kept
+    /// PASS with the line of docs is on the pull request.
+    #[tokio::test]
+    async fn a_kept_pass_reads_the_council_in_the_clone_of_its_folder() {
+        let built = Built::new().await;
+        let fork = Fork::new();
+        let bin = tempfile::tempdir().unwrap();
+        let gh = pass_gh(bin.path(), &fork.head);
+        let sessions = tempfile::tempdir().unwrap();
+        let keep = |n: usize, council: &str| {
+            let folder = sessions.path().join(format!("verify-issue-12-{n}"));
+            clone_at(&fork.main, &folder.join("clone"), 7, &fork.head).unwrap();
+            kept::Kept {
+                repo: "o/r".into(),
+                item: "verify-issue-12".into(),
+                pull: 7,
+                commit: fork.head.clone(),
+                verdict: Verdict::Pass,
+                result: format!("- It works.\n\n## The council\n\n{council}"),
+            }
+            .keep(&folder)
+            .unwrap();
+            folder
+        };
+        let report =
+            || kept::report_all(&gh, &built.api, &built.lead, &built.wave, sessions.path());
+
+        let folder = keep(1, "- design: no finding.\n- testing: no finding.\n");
+        let docs = crate::council::result::NoLine {
+            first: "docs".parse().unwrap(),
+            rest: vec![],
+        };
+        let message = text::wave_no_council_line("verify-issue-12", 7, &docs, true);
+        assert_eq!(report().await, std::slice::from_ref(&message));
+        assert!(!folder.exists(), "the folder of the kept result goes");
+        let log = calls(bin.path());
+        assert!(
+            log.contains("pr view 7 --json baseRefName,body,labels"),
+            "{log}"
+        );
+        assert!(!log.contains("pr merge"), "{log}");
+        assert!(!log.contains("pr comment"), "{log}");
+        assert!(!log.contains("/statuses/"), "{log}");
+        let thread = built.wave.thread().unwrap();
+        let got = built.api.read(&built.lead, &thread, true).await.unwrap();
+        let [one] = &got[..] else {
+            panic!("one message: {got:?}");
+        };
+        assert_eq!(
+            (one.message.kind, &one.message.body),
+            (Kind::Message, &message)
+        );
+
+        let all = "- design: no finding.\n- testing: no finding.\n- docs: no finding.\n";
+        let folder = keep(2, all);
+        let lines = report().await;
+        let [line] = &lines[..] else {
+            panic!("one line: {lines:?}");
+        };
+        assert!(
+            line.starts_with("Put PASS for issue-12 on pull request #7"),
+            "{line}"
+        );
+        let status = format!("api repos/o/r/statuses/{} -f state=success", fork.head);
+        assert!(calls(bin.path()).contains(&status));
+        assert!(kept::Kept::read(&folder).is_none(), "reported one time");
+        assert!(
+            folder.join("clone").exists(),
+            "the sweep removes the folder"
+        );
     }
 }

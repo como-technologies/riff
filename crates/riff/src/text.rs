@@ -8,6 +8,7 @@ use std::path::Path;
 
 use chrono::{DateTime, NaiveDate, TimeZone};
 
+use crate::council::result::{HEADING as COUNCIL_HEADING, NoLine};
 use crate::permissions::Rules;
 use crate::pr::{Reported, Verdict};
 use riff_core::build::Build;
@@ -215,26 +216,28 @@ pub fn verify_closes_live(number: u64, issue: u64) -> String {
 }
 
 /// The line of `riff verify pass` for a result with no line in the part
-/// `## The council` for the members `members` of the council of the pull
-/// request (01M7CFBZSQEEZNZBR9H1S54GS1).
+/// `## The council` for the members of `no_line`
+/// (01M7CFBZSQEEZNZBR9H1S54GS1).
 ///
 /// ```
-/// let members = ["docs".parse()?, "rust".parse()?];
+/// use riff::council::result::NoLine;
+///
+/// let no_line = NoLine { first: "docs".parse()?, rest: vec!["rust".parse()?] };
 /// assert_eq!(
-///     riff::text::verify_no_council_line(&members),
+///     riff::text::verify_no_council_line(&no_line),
 ///     "riff verify pass: the result has no line in the part `## The council` for docs and \
 ///      rust. Fix: add one line for each member of the council, for example `- docs: no \
 ///      finding.`, and report again. Nothing is reported."
 /// );
 /// # Ok::<(), anyhow::Error>(())
 /// ```
-pub fn verify_no_council_line(members: &[crate::council::Name]) -> String {
-    let first = members.first().map_or("design", |name| name.as_str());
+pub fn verify_no_council_line(no_line: &NoLine) -> String {
     format!(
-        "riff verify pass: the result has no line in the part `## The council` for {}. Fix: add \
-         one line for each member of the council, for example `- {first}: no finding.`, and \
+        "riff verify pass: the result has no line in the part `{COUNCIL_HEADING}` for {}. Fix: \
+         add one line for each member of the council, for example `- {}: no finding.`, and \
          report again. Nothing is reported.",
-        and_joined(members)
+        and_joined(&no_line.members().collect::<Vec<_>>()),
+        no_line.first
     )
 }
 
@@ -12851,31 +12854,28 @@ pub fn wave_no_report(item: &str, pull: u64, error: &str, open: bool) -> String 
 }
 
 /// A verify of a wave ended with a PASS whose part `## The council` has no
-/// line for the members `members`: a result with no verdict
+/// line for the members of `no_line`: a result with no verdict
 /// (01M7CFBZSQEEZNZBR9H1S54GS1, 01M7D11KGEJ8ACFJK6Y10WENJZ). Only a pull
 /// request that is still `open` waits for a new verify.
 ///
 /// ```
-/// let members = ["docs".parse()?];
+/// use riff::council::result::NoLine;
+///
+/// let no_line = NoLine { first: "docs".parse()?, rest: vec![] };
 /// assert_eq!(
-///     riff::text::wave_no_council_line("verify-issue-12", 40, &members, true),
+///     riff::text::wave_no_council_line("verify-issue-12", 40, &no_line, true),
 ///     "verify-issue-12: the verify session of pull request #40 ended with a PASS that has no \
 ///      line in the part `## The council` for docs. riff read it as a result with no verdict, \
 ///      and reported nothing. The pull request waits for a new verify."
 /// );
 /// # Ok::<(), anyhow::Error>(())
 /// ```
-pub fn wave_no_council_line(
-    item: &str,
-    pull: u64,
-    members: &[crate::council::Name],
-    open: bool,
-) -> String {
+pub fn wave_no_council_line(item: &str, pull: u64, no_line: &NoLine, open: bool) -> String {
     format!(
         "{item}: the verify session of pull request #{pull} ended with a PASS that has no line in \
-         the part `## The council` for {}. riff read it as a result with no verdict, and \
+         the part `{COUNCIL_HEADING}` for {}. riff read it as a result with no verdict, and \
          reported nothing. {}",
-        and_joined(members),
+        and_joined(&no_line.members().collect::<Vec<_>>()),
         verify_waits(open)
     )
 }
@@ -13690,7 +13690,7 @@ pub fn wave_verify_start(
          result.\n\
          11. Your last reply is the result, in markdown, and nothing else. The first line is \
          PASS or FAIL. Then each criterion: for a pass, what you did to check it; for a fail, \
-         the steps to see the failure. Then the part `## The council`, with one line for each \
+         the steps to see the failure. Then the part `{COUNCIL_HEADING}`, with one line for each \
          member of the council: its findings, each after shown or not shown, or no finding. \
          For example:\n   \
          - design: no finding.\n   \

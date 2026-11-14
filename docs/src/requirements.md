@@ -298,11 +298,13 @@
 - **01M7D11KGEJ8ACFJK6Y10WENJZ** `riff verify pass` reads the council of
   the pull request as `riff council show` does, after the checks of the
   head commit and before the squash message. A line of a member is a
-  line of the part `## The council` whose first word, in any case, is
-  the name of the member, also after a list mark and with `:`, `*`, `_`
-  or `` ` `` around it. The part ends at the next heading with as many
-  `#` or fewer, out of a code block. For a PASS of the wave with no line
-  for a member, the message to the lead names each member with no line
+  line of a part `## The council` whose first word, in any case, is the
+  name of the member, also after a list mark (`-`, `*`, `+`, or a
+  number with `.` or `)`) and with `:`, `*`, `_` or `` ` `` around it.
+  A part starts at a heading `## The council`, of that level and case,
+  and ends at the next heading of one or two `#`, out of a code block.
+  Each such part counts. For a PASS of the wave with no line for a
+  member, the message to the lead names each member with no line
   (01M7CFBZSQEEZNZBR9H1S54GS1).
 
 ## Waves
