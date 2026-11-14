@@ -2875,8 +2875,10 @@ async fn approve_in_the_lead_container_refuses_and_asks_the_daemon_nothing() {
 
 /// #1983, 01M76SBEV64SNKCS1AE1KXWNFM: the steps of the release pull
 /// request are gone. No workflow reads a label, the hygiene crate has no
-/// rule of a label, the notes of GitHub have no rule of the label
-/// `release`, and `riff release` has no `verify`.
+/// rule of the label `release`, the notes of GitHub have no rule of the
+/// label `release`, and `riff release` has no `verify`. The one label
+/// that the hygiene crate reads is `design`, for the rule `unnamed`
+/// (01M7CF3P17SDFBB5MY5TP3QXVM).
 #[test]
 fn hygiene_and_ci_have_no_rule_of_the_label_release_and_riff_release_has_no_verify() {
     let workflows = std::fs::read_dir(top().join(".github/workflows")).unwrap();
@@ -2888,12 +2890,13 @@ fn hygiene_and_ci_have_no_rule_of_the_label_release_and_riff_release_has_no_veri
         read += 1;
     }
     assert!(read >= 2, "the workflows of CI and Hygiene");
+    assert_eq!(hygiene::DESIGN, "design");
     for entry in std::fs::read_dir(top().join("crates/hygiene/src")).unwrap() {
         let path = entry.unwrap().path();
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(
-            !text.contains("label"),
-            "{} has a rule of a label",
+            !text.contains("\"release\""),
+            "{} has a rule of the label release",
             path.display()
         );
     }
@@ -2907,6 +2910,9 @@ fn hygiene_and_ci_have_no_rule_of_the_label_release_and_riff_release_has_no_veri
     let pr = hygiene::PullRequest::new("Set the next version 3.4.0", body, Some(wave));
     let issue = hygiene::Issue::new(7, "OPEN", Some(wave));
     let errors = hygiene::check_pr(&pr, Some(&issue));
+    assert!(errors.is_empty(), "{errors:?}");
+    let release = issue.with_label("release");
+    let errors = hygiene::check_pr(&pr, Some(&release));
     assert!(errors.is_empty(), "{errors:?}");
 
     let riff = |args: &[&str]| Isolated::shared().riff().args(args).output().unwrap();

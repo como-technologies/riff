@@ -52,6 +52,11 @@
 //!     T -- yes --> K[ok]
 //! ```
 //!
+//! A change that adds a requirement also adds its test: a file under
+//! `crates/` names the new ID (01M7CF3P17SDFBB5MY5TP3QXVM). [`added`]
+//! finds the IDs that the change adds, and [`names`] finds an ID in a
+//! text. The job `Hygiene` runs them (`hygiene pr`, rule `unnamed`).
+//!
 //! `just req SECTION "text"` adds a requirement ([`add`]): it gets an ID
 //! like `just rid`, wraps the text at 72 characters, and writes it after
 //! the last requirement of the section, never inside one. It writes to
@@ -70,7 +75,7 @@
 //! assert!(report.errors.is_empty() && report.warnings.is_empty());
 //! ```
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// The 32 characters of Crockford base32, in value order.
@@ -376,6 +381,47 @@ pub fn uncut(old: &str, new: &str) -> Vec<InPart> {
             unmarked(&pair.id, was) == unmarked(&pair.id, is)
         })
         .collect()
+}
+
+/// Each requirement ID that a change adds: an ID of `new` (the text of
+/// [`REQUIREMENTS`] after the change) that neither `old` (the text of
+/// [`REQUIREMENTS`] before) nor `history` (the text of [`HISTORY`]
+/// before) has. In the order of the page, each once. A move to the
+/// history page, a move back, a cut and a new wrap add no ID. The job
+/// `Hygiene` checks that a file under `crates/` names each one (`hygiene
+/// pr`, rule `unnamed`, 01M7CF3P17SDFBB5MY5TP3QXVM).
+///
+/// ```
+/// let old = "- **R1** One. Two.\n- **R2** Old.\n";
+/// let history = "- **R3** Older.\n";
+/// let id = reqs::new_id();
+/// let new = format!("- **R1** One.\n- **R3** Older.\n- **{id}** New,\n  wrapped.\n");
+/// assert_eq!(reqs::added(old, history, &new), [id.as_str()]);
+/// assert!(reqs::added(old, history, old).is_empty());
+/// ```
+pub fn added<'a>(old: &str, history: &str, new: &'a str) -> Vec<&'a str> {
+    let mut known: BTreeSet<&str> = old
+        .lines()
+        .chain(history.lines())
+        .filter_map(defined)
+        .collect();
+    new.lines()
+        .filter_map(defined)
+        .filter(|id| known.insert(id))
+        .collect()
+}
+
+/// True when `text` names the requirement `id`: it has `id` as a word, a
+/// run of ASCII letters and digits ([`check`] reads a citation the same
+/// way).
+///
+/// ```
+/// assert!(reqs::names("/// 01M7CF3P17SDFBB5MY5TP3QXVM: the rule.", "01M7CF3P17SDFBB5MY5TP3QXVM"));
+/// assert!(reqs::names("(R12)", "R12"));
+/// assert!(!reqs::names("R123 and R12a", "R12"));
+/// ```
+pub fn names(text: &str, id: &str) -> bool {
+    words(text).any(|word| word == id)
 }
 
 /// The ID and the text of each requirement of `requirements`, in the
@@ -826,6 +872,27 @@ mod tests {
         ] {
             assert_eq!(in_part(&text), [], "{text}");
         }
+    }
+
+    #[test]
+    fn a_change_adds_only_the_ids_that_neither_page_had() {
+        let (new, moved) = (new_id(), new_id());
+        let before = format!("{BEFORE}- **{moved}** To move.\n");
+        let history = "- **R2** Old.\n";
+        let after = format!(
+            "## A\n\n- **R1** The old\n  rule.\n- **R2** Old, back.\n- **{new}** New.\n- **{new}** Twice.\n"
+        );
+        assert_eq!(added(&before, history, &after), [new.as_str()]);
+        assert_eq!(added(&before, history, &before), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn a_text_names_an_id_only_as_a_whole_word() {
+        let id = new_id();
+        assert!(names(&format!("// {id}: the rule.\n"), &id));
+        assert!(names(&format!("fn x() {{}}\n/// ({id})"), &id));
+        assert!(!names(&format!("// {id}X\n"), &id));
+        assert!(!names("", &id));
     }
 
     #[test]

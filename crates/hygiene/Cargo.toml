@@ -14,10 +14,10 @@ autotests = false
 reqs = { path = "../reqs" }
 serde.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
 
 [dev-dependencies]
 isolated = { path = "../isolated" }
-tempfile.workspace = true
 
 [[test]]
 name = "all"
