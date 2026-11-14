@@ -643,7 +643,7 @@ fn pull_requests_that_change_one_file_with_no_conflict_verify_side_by_side() {
     assert_eq!(again.lanes, first.lanes);
 }
 
-/// #2128, strata PR #861: the head of 1 is stale. `main` moved after it,
+/// #2128: the head of 1 is stale. `main` moved after it,
 /// and changed the line of section A that 1 changes, so 1 has a conflict.
 /// The heads of 2 and 3 hold that `main`, and each adds a line to section
 /// B. So a plain `git merge-tree` of the head of 1 and each newer head

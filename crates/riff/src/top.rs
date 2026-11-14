@@ -1016,11 +1016,15 @@ impl Top<'_> {
             lines.push(Line::new("", vec![(block_line(s), ERROR)]));
         }
         let no_holds = BTreeMap::new();
+        // The rebases that do not start, from the facts of the daemons
+        // (01M7E4ZSYWZHY0VD28Y9Y30MJR).
+        let daemons = riff_client::daemons::hosts(self.sessions.on_server());
         for repo in project_boards(self.sessions, self.show, self.repo, self.projects) {
             let Some(board) = self.issues.get(&repo).and_then(|i| {
+                let stops = riff_client::daemons::stops(&daemons, &repo);
                 Board::of(
                     &repo,
-                    i,
+                    &i.clone().with_stops(stops),
                     self.sessions,
                     self.holds.get(&repo).unwrap_or(&no_holds),
                 )
@@ -1728,6 +1732,43 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("\nWave 9 (o/riff)\n"), "{text}");
+    }
+
+    /// 01M7E4ZSYWZHY0VD28Y9Y30MJR (#2128): the board names the cause of a
+    /// conflict whose rebase the daemon of the wave does not start, from
+    /// the facts of the daemon, as `riff wave list` does.
+    #[test]
+    fn the_board_names_why_the_rebase_of_a_conflict_does_not_start() {
+        use riff_client::waves::{CONFLICT, NoRebase};
+        let facts = riff_client::daemons::Facts {
+            waves: vec![riff_client::daemons::Wave {
+                repo: "o/strata".into(),
+                stops: BTreeMap::from([(355, NoRebase::Tried)]),
+                ..riff_client::daemons::Wave::default()
+            }],
+            ..riff_client::daemons::Facts::default()
+        };
+        let mut daemon = info("riff://mike@thelio/o/strata?session=d1", SessionState::Idle);
+        daemon.machine = Some(riff_core::wire::MachineInfo {
+            numbers: facts.line(),
+            age_secs: 5,
+        });
+        let mut sessions = riff_of_two();
+        sessions.push(daemon);
+        let mut issues = boards_with_free_items();
+        let strata = issues.remove("o/strata").unwrap();
+        let stuck = [355, 356].map(|n| (n, CONFLICT.to_owned()));
+        let strata = strata.with_verify([355, 356]).with_stuck(stuck);
+        issues.insert("o/strata".into(), strata);
+        let pauses: RiffReply = riff_core::wire::RiffState::Running.into();
+        let text = shown_paused(&sessions, &issues, &Show::default(), &[], &pauses);
+        assert!(
+            text.contains(
+                "\n  stuck: #355 (conflict, its rebase was tried: riff host join starts it again), \
+                 #356 (conflict)\n"
+            ),
+            "{text}"
+        );
     }
 
     /// 01M77XYFZW86MCXD22GDCXMS00: the header names the lead of each

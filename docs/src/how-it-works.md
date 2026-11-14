@@ -3696,7 +3696,7 @@ and no message of the conflict of a rebase that waits for its turn (see
 message for each rebase that waits, with the pull request before it:
 
 ```text
-PR #861 of issue-635 has a conflict with main at commit 1e50c30. Its rebase waits for its turn after PR #883 in the order of the verifies: it starts when #883 merges or its verify fails. See the order: riff wave list
+PR #40 of issue-12 has a conflict with main at commit 1a2b3c4. Its rebase waits for its turn after PR #44 in the order of the verifies: it starts when #44 merges or its verify fails. See the order: riff wave list
 ```
 
 To keep a verify out of the order, hold it (see

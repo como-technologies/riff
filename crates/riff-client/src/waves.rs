@@ -1104,21 +1104,21 @@ mod tests {
             question,
             needs: vec![],
         };
-        let conflicts = [635, 636, 637, 638, 639, 640];
+        let conflicts = [12, 13, 14, 15, 16, 17];
         let issues = Issues::of(vec![
-            issue(635, false),
-            issue(636, false),
-            issue(637, true),
-            issue(638, false),
-            issue(639, false),
-            issue(640, false),
+            issue(12, false),
+            issue(13, false),
+            issue(14, true),
+            issue(15, false),
+            issue(16, false),
+            issue(17, false),
         ])
         .with_verify(conflicts)
         .with_stuck(conflicts.map(|n| (n, CONFLICT.to_owned())))
-        .with_waits([(640, 883)])
-        .with_stops([(635, NoRebase::Tried), (638, NoRebase::Record)]);
+        .with_waits([(17, 44)])
+        .with_stops([(12, NoRebase::Tried), (15, NoRebase::Record)]);
         let holds = BTreeMap::from([(
-            "issue-636".to_owned(),
+            "issue-13".to_owned(),
             HoldInfo {
                 reason: "later".into(),
                 by: None,
@@ -1130,12 +1130,12 @@ mod tests {
         assert_eq!(
             board.groups(false),
             [
-                "rebase waits for #883: #640",
-                "stuck: #635 (conflict, its rebase was tried: riff host join starts it again), \
-                 #636 (conflict, its item is held: riff plan free starts its rebase), \
-                 #637 (conflict, its issue has the label question: the rebase waits for the \
-                 answer), #638 (conflict, a session of the daemon still has its item: see riff \
-                 daemon status), #639 (conflict)",
+                "rebase waits for #44: #17",
+                "stuck: #12 (conflict, its rebase was tried: riff host join starts it again), \
+                 #13 (conflict, its item is held: riff plan free starts its rebase), \
+                 #14 (conflict, its issue has the label question: the rebase waits for the \
+                 answer), #15 (conflict, a session of the daemon still has its item: see riff \
+                 daemon status), #16 (conflict)",
             ]
         );
     }

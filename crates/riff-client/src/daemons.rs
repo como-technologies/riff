@@ -829,15 +829,15 @@ pub fn waits(hosts: &[Host], repo: &str) -> BTreeMap<u64, u64> {
 ///
 /// let host = |repo: &str, stops: BTreeMap<u64, NoRebase>| Host {
 ///     user: "mike".into(),
-///     host: "kadomony".into(),
+///     host: "host-a".into(),
 ///     age_secs: 5,
 ///     facts: Facts {
 ///         waves: vec![Wave { repo: repo.into(), stops, ..Wave::default() }],
 ///         ..Facts::default()
 ///     },
 /// };
-/// let hosts = [host("o/r", BTreeMap::from([(635, NoRebase::Tried)])), host("o/s", BTreeMap::new())];
-/// assert_eq!(stops(&hosts, "o/r"), BTreeMap::from([(635, NoRebase::Tried)]));
+/// let hosts = [host("o/r", BTreeMap::from([(12, NoRebase::Tried)])), host("o/s", BTreeMap::new())];
+/// assert_eq!(stops(&hosts, "o/r"), BTreeMap::from([(12, NoRebase::Tried)]));
 /// assert!(stops(&hosts, "o/s").is_empty());
 /// ```
 pub fn stops(hosts: &[Host], repo: &str) -> BTreeMap<u64, crate::waves::NoRebase> {

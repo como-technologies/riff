@@ -3401,8 +3401,8 @@ the wave does not start it again. Your lead gets one message (see
 the row of the item:
 
 ```text
-Wave 59  current  runs on kadomony  3 open, 9 closed
-  stuck: #635 (conflict, its rebase was tried: riff host join starts it again)
+Wave 59  current  runs on host-a  3 open, 9 closed
+  stuck: #12 (conflict, its rebase was tried: riff host join starts it again)
 ```
 
 Read why the session ended first (see
@@ -3416,7 +3416,7 @@ riff host join
 On another machine, name the host of the message:
 
 ```sh
-riff host join --host kadomony
+riff host join --host host-a
 ```
 
 The starts of each item of the wave go back to 0, and the wave starts
@@ -3430,8 +3430,8 @@ cause:
 | The row | Why no rebase starts | What starts it |
 |---|---|---|
 | `conflict, its rebase was tried: riff host join starts it again` | The rebase of this commit ran in this run of the wave | `riff host join`, or `riff host join --host HOST` |
-| `conflict, its item is held: riff plan free starts its rebase` | Your lead holds the item | `riff plan free issue-635` |
-| `conflict, its issue has the label question: the rebase waits for the answer` | The issue waits for the answer of a person (see [Ask the person a question](#ask-the-person-a-question)) | The answer, then `gh issue edit 635 --remove-label question` |
+| `conflict, its item is held: riff plan free starts its rebase` | Your lead holds the item | `riff plan free issue-12` |
+| `conflict, its issue has the label question: the rebase waits for the answer` | The issue waits for the answer of a person (see [Ask the person a question](#ask-the-person-a-question)) | The answer, then `gh issue edit 12 --remove-label question` |
 | `conflict, a session of the daemon still has its item: see riff daemon status` | A session of the daemon of the host still has the item, with no claim on riff-server | The end of that session |
 
 A rebase that waits for its turn is in the group `rebase waits for #N`,
@@ -3441,13 +3441,13 @@ not in `stuck`. Your lead gets one message for it too (see
 `riff daemon status` shows the same causes in the line of the wave:
 
 ```sh
-riff daemon status --host kadomony
+riff daemon status --host host-a
 ```
 
 ```text
 Waves:
-  como-technologies/strata  no free work now
-    no rebase of #635: its rebase was tried: riff host join starts it again
+  como-technologies/riff  no free work now
+    no rebase of #12: its rebase was tried: riff host join starts it again
 ```
 
 #### Turn on auto-merge for a pull request

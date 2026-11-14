@@ -540,6 +540,13 @@
   rebase that waits for its turn (01M6YPYTPG8RJY7PRERR2ZM10H): the pull
   request, the head commit and the pull request before it. It comes one
   time for each head commit and each pull request before it.
+- **01M7E4ZSWBC0H3EP24Y2AQHC4W** The message of a spent rebase start
+  (01M7E075FAD9CH3FT957W8C9W8) comes one time while that start is spent.
+  A look that does not show the conflict, for example while GitHub reads
+  UNKNOWN after a move of the default branch, does not give it again.
+- **01M7E4ZSYWZHY0VD28Y9Y30MJR** riff top names the cause of
+  01M7E075HSSYBXN34JY1K4HDEG on the row of the pull request, as riff
+  wave list does, from the facts of the daemons.
 
 ## Waves on GitHub
 

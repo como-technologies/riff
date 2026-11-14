@@ -9483,9 +9483,9 @@ const LIMIT_GUESS: &str = " riff cannot read the reset: this time is the end of 
 /// assert!(text.contains("Waves:\n  o/r  starts issue-12\n    waits for #728: #724 #725\n"), "{text}");
 /// status.waves[0].waits.clear();
 /// // A rebase that does not start, with the cause (#2128).
-/// status.waves[0].stops = [(635, riff_client::waves::NoRebase::Tried)].into();
+/// status.waves[0].stops = [(12, riff_client::waves::NoRebase::Tried)].into();
 /// let text = riff::text::daemon_status(&status, 300_000);
-/// let line = "    no rebase of #635: its rebase was tried: riff host join starts it again\n";
+/// let line = "    no rebase of #12: its rebase was tried: riff host join starts it again\n";
 /// assert!(text.contains(line), "{text}");
 /// status.waves[0].stops.clear();
 /// // A follower of the wave that does not run (01M7B2RWBQWA6X8BNZEB025SWX).
@@ -9721,12 +9721,12 @@ pub fn daemon_wave_waits(waits: &std::collections::BTreeMap<u64, u64>) -> Vec<St
 /// ```
 /// use riff_client::waves::NoRebase;
 ///
-/// let stops = [(635, NoRebase::Tried), (636, NoRebase::Record)].into();
+/// let stops = [(12, NoRebase::Tried), (13, NoRebase::Record)].into();
 /// assert_eq!(
 ///     riff::text::daemon_wave_stops(&stops),
 ///     [
-///         "no rebase of #635: its rebase was tried: riff host join starts it again",
-///         "no rebase of #636: a session of the daemon still has its item: see riff daemon status",
+///         "no rebase of #12: its rebase was tried: riff host join starts it again",
+///         "no rebase of #13: a session of the daemon still has its item: see riff daemon status",
 ///     ]
 /// );
 /// ```
@@ -13276,27 +13276,27 @@ pub fn wave_not_rebased(
 /// ```
 /// use riff_client::waves::NoRebase;
 ///
-/// let text = |stop| riff::text::wave_no_rebase(861, 635, "main", "1e50c307a9", "kadomony", stop, "exit code 0");
+/// let text = |stop| riff::text::wave_no_rebase(40, 12, "main", "1a2b3c4d5e", "host-a", stop, "exit code 0");
 /// assert_eq!(
 ///     text(NoRebase::Tried),
-///     "PR #861 of issue-635 has a conflict with main at commit 1e50c30, and the riff daemon of \
-///      kadomony will not start its rebase again: the rebase of this commit started in this run \
+///     "PR #40 of issue-12 has a conflict with main at commit 1a2b3c4, and the riff daemon of \
+///      host-a will not start its rebase again: the rebase of this commit started in this run \
 ///      of the wave, and the conflict is still there. The last session ended: exit code 0. Start \
-///      the rebase again with riff host join on kadomony, or on another machine with riff host \
-///      join --host kadomony"
+///      the rebase again with riff host join on host-a, or on another machine with riff host \
+///      join --host host-a"
 /// );
 /// assert!(text(NoRebase::Held).ends_with(
-///     "the lead holds issue-635, so the wave starts no rebase of it. Free the item to start the \
-///      rebase: riff plan free issue-635"
+///     "the lead holds issue-12, so the wave starts no rebase of it. Free the item to start the \
+///      rebase: riff plan free issue-12"
 /// ));
 /// assert!(text(NoRebase::Question).ends_with(
-///     "issue #635 has the label question, so the wave starts no rebase of it until the answer. \
-///      After the answer, remove the label: gh issue edit 635 --remove-label question"
+///     "issue #12 has the label question, so the wave starts no rebase of it until the answer. \
+///      After the answer, remove the label: gh issue edit 12 --remove-label question"
 /// ));
 /// assert!(text(NoRebase::Record).ends_with(
-///     "a session of the riff daemon of kadomony still has issue-635 with no claim on \
+///     "a session of the riff daemon of host-a still has issue-12 with no claim on \
 ///      riff-server, so the wave starts no rebase of it. The rebase starts after that session \
-///      ends. See the session: riff daemon status --host kadomony"
+///      ends. See the session: riff daemon status --host host-a"
 /// ));
 /// ```
 pub fn wave_no_rebase(
@@ -13342,9 +13342,9 @@ pub fn wave_no_rebase(
 ///
 /// ```
 /// assert_eq!(
-///     riff::text::wave_rebase_waits(861, 635, "main", "1e50c307a9", 883),
-///     "PR #861 of issue-635 has a conflict with main at commit 1e50c30. Its rebase waits for its \
-///      turn after PR #883 in the order of the verifies: it starts when #883 merges or its verify \
+///     riff::text::wave_rebase_waits(40, 12, "main", "1a2b3c4d5e", 44),
+///     "PR #40 of issue-12 has a conflict with main at commit 1a2b3c4. Its rebase waits for its \
+///      turn after PR #44 in the order of the verifies: it starts when #44 merges or its verify \
 ///      fails. See the order: riff wave list"
 /// );
 /// ```

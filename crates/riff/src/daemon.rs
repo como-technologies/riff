@@ -15984,19 +15984,19 @@ mod tests {
         // #2128: the rebases that do not start, with their causes, read
         // again too, and the facts keep them.
         use riff_client::waves::NoRebase;
-        let stops = BTreeMap::from([(635, NoRebase::Tried), (636, NoRebase::Record)]);
+        let stops = BTreeMap::from([(12, NoRebase::Tried), (13, NoRebase::Record)]);
         here.daemon.waves_lock()["o/r"].waits.lock().unwrap().stops = stops.clone();
         let read = status(&here.dir).await.unwrap();
         assert_eq!(read.waves[0].stops, stops);
         let line = facts::of_status(&read).line();
         assert!(
-            line.contains(r#""stops":{"635":"tried","636":"record"}"#),
+            line.contains(r#""stops":{"12":"tried","13":"record"}"#),
             "{line}"
         );
         let facts = riff_client::daemons::Facts::parse(&line).unwrap();
         assert_eq!(facts.waves[0].stops, stops, "{line}");
         let text = text::daemon_status(&read, now_ms());
-        let line = "    no rebase of #635: its rebase was tried: riff host join starts it again\n";
+        let line = "    no rebase of #12: its rebase was tried: riff host join starts it again\n";
         assert!(text.contains(line), "{text}");
     }
 

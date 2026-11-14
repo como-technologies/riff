@@ -322,7 +322,7 @@ pub const FETCH_WAIT: Duration = Duration::from_secs(60);
 ///
 /// A head with a conflict with the default branch `branch`
 /// ([`Lane::conflict`]) conflicts with each newer head that holds the
-/// change of the default branch, as strata PR #861 did (#2128,
+/// change of the default branch (#2128,
 /// 01M7E06YMNMF92TDW21XED5JZ8). So the test of such a head and a head
 /// with no conflict takes as its base the merge base of the other head
 /// and `refs/remotes/origin/BRANCH`, after a fetch of the branch: only a
