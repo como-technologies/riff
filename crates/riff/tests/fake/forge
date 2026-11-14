@@ -31,6 +31,9 @@
 #                   made; a person who is not an admin sees no bypass actors
 #   token           the token that gh auth token prints; with no file, gh
 #                   has no token
+#   labels          the names of the labels, one on a line; gh label create
+#                   with no --force fails for a label that is there
+#   label_NAME      the description of the label NAME
 dir=$(dirname "$0")
 echo "$*" >> "$dir/calls"
 flag() { [ -f "$dir/$1" ]; }
@@ -132,7 +135,12 @@ case "$*" in
     printf '{"number":9,"title":"%s","open_issues":0,"closed_issues":0}' "${last#title=}" ;;
   'issue list --state open --limit 1000 --json number,title,body,labels')
     if flag issues; then cat "$dir/issues"; else printf '[]'; fi ;;
-  'label create '*) ;;
+  'label create '*)
+    # gh label create NAME --color COLOR --description TEXT [--force]
+    if grep -qx "$3" "$dir/labels" 2>/dev/null; then
+      [ "$last" = --force ] || { echo "label with name \"$3\" already exists; use \`--force\` to update its color and description" >&2; exit 1; }
+    else echo "$3" >> "$dir/labels"; fi
+    printf '%s' "$7" > "$dir/label_$3" ;;
   'auth token')
     flag token || { echo 'no oauth token found for github.com' >&2; exit 1; }
     cat "$dir/token" ;;

@@ -796,6 +796,9 @@
   no conditional read, until a wake comes. riff daemon status says that
   the events are off for a dropped event. Supersedes
   01M74N34Q330SHBWWTQDPG0W0B in part (#2082).
+- **01M7CJMWGNFF57BAEHDF6BC2DX** `riff project init` makes the label
+  `escaped` (01M7CF3P6251E29KNSBG24YJH3) with the first wave, when the
+  repository has none. It never changes a label that is there.
 
 ## Issue hygiene on GitHub
 
