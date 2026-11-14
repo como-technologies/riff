@@ -553,25 +553,26 @@ enum Command {
     },
     /// Get this machine ready for riff run: check, install, pull
     ///
-    /// The first run of riff on a machine. It checks rootless podman:
-    /// podman runs and riff does not run as root, podman has its init
-    /// (catatonit), /etc/subuid and /etc/subgid give you 65536 IDs or more,
-    /// and cgroup v2 gives cpu and memory to your user. It checks that
-    /// riff.toml of the repository of this folder pins the session image,
-    /// and that the riff binary is static. It reads no repository on
-    /// GitHub and asks riff-server nothing: riff project init sets up a
-    /// repository. It writes no rule into your user settings of Claude
-    /// Code. It names each allow rule of your user, project and local
-    /// settings of Claude Code that is wider than the steps of riff, and
-    /// asks one question before it removes them. It prints the fix of each
-    /// check that fails, and stops. When each check passes, it installs and
-    /// starts the riff daemon, as riff daemon install does, and the daemon
-    /// pulls the session image. A daemon that answers stays: riff init
-    /// does not start it again. In a session container (RIFF_SOCKET is
-    /// set), for example the container of a lead, riff init skips the
-    /// checks of the machine, says so in one line, and checks only the
-    /// session image and the riff binary: the host runs the machine, the
-    /// daemon and the image. There it only checks, also with --yes.
+    /// The first run of riff on a machine. It checks rootless podman: podman
+    /// runs and riff does not run as root, podman has its init (catatonit),
+    /// /etc/subuid and /etc/subgid give you 65536 IDs or more, and cgroup v2
+    /// gives cpu and memory to your user. It checks that git has the fixes of
+    /// May 2024: 2.45.1 or later, or 2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4 or
+    /// 2.44.1 or later in an older line. It checks that riff.toml of the
+    /// repository of this folder pins the session image, and that the riff
+    /// binary is static. It reads no repository on GitHub and asks riff-server
+    /// nothing: riff project init sets up a repository. It writes no rule into
+    /// your user settings of Claude Code. It names each allow rule of your
+    /// user, project and local settings of Claude Code that is wider than the
+    /// steps of riff, and asks one question before it removes them. It prints
+    /// the fix of each check that fails, and stops. When each check passes, it
+    /// installs and starts the riff daemon, as riff daemon install does, and
+    /// the daemon pulls the session image. A daemon that answers stays: riff
+    /// init does not start it again. In a session container (RIFF_SOCKET is
+    /// set), for example the container of a lead, riff init skips the checks
+    /// of the machine, says so in one line, and checks only the session image
+    /// and the riff binary: the host runs the machine, the daemon and the
+    /// image. There it only checks, also with --yes.
     Init {
         /// Change nothing. Print the fix of each check that fails, and
         /// each wide allow rule. Exit with status 1 when a check fails.

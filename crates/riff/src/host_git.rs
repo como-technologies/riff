@@ -38,6 +38,24 @@
 //! of a verify read the main clone ([`crate::council::pick::of_pull`],
 //! 01M7DZ4E5BZAD38E3K9A3N277E).
 //!
+//! # The git that the host needs
+//!
+//! A person can still fetch the work of a session from its clone: see
+//! "Get back the work of a clone" in the book. That `git fetch` runs
+//! `git upload-pack` in the clone. Only a git with the fixes of May 2024
+//! (CVE-2024-32004) runs no program there that the config of the clone
+//! names: the first release of each line in [`FIXED`], or a later one.
+//! So `riff init` and each start of the riff daemon check the version
+//! of the git of the host ([`version`], [`Version::fixed`],
+//! [`crate::first_run::machine_checks`], 01M7E6A47JB516A5FF30DNE47X).
+//!
+//! ```mermaid
+//! flowchart LR
+//!     V["git --version"] --> L{"the release of FIXED<br/>of its line, or later?"}
+//!     L -- yes --> P["pass"]
+//!     L -- "no, or no version" --> F["riff init: fail, with the fix<br/>the daemon: needs you"]
+//! ```
+//!
 //! ```
 //! use riff::host_git::refused;
 //!
@@ -193,6 +211,125 @@ pub fn within(dir: &Path, args: &[&str], limit: Duration) -> Result<String> {
     let program = ["GIT_TERMINAL_PROMPT=0", "git", "-C", &dir_text];
     let all = [&program[..], args].concat();
     crate::run::output_within("env", dir, &all, limit)
+}
+
+/// The name of the check of the git of the host in the checks of the
+/// machine ([`crate::first_run::machine_checks`]).
+pub const CHECK: &str = "git";
+
+/// A version of git: the major, the minor and the patch number.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Version(pub u32, pub u32, pub u32);
+
+/// The first release with the fixes of May 2024 (CVE-2024-32004) in each
+/// line of git that got them, oldest first. Each line after the last one
+/// has them from its start.
+pub const FIXED: [Version; 7] = [
+    Version(2, 39, 4),
+    Version(2, 40, 2),
+    Version(2, 41, 1),
+    Version(2, 42, 2),
+    Version(2, 43, 4),
+    Version(2, 44, 1),
+    Version(2, 45, 1),
+];
+
+/// The number at the start of `part`, for example 0 of `0-rc1`.
+fn number(part: &str) -> Option<u32> {
+    let end = part
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(part.len());
+    part[..end].parse().ok()
+}
+
+impl Version {
+    /// The version in the first line `line` of `git --version`: the
+    /// numbers after `git version`. A version with no patch number has
+    /// the patch 0. What comes after the patch number does not count, for
+    /// example `.windows.1`, `.rc1` or ` (Apple Git-154)`.
+    ///
+    /// ```
+    /// use riff::host_git::Version;
+    ///
+    /// assert_eq!(Version::parse("git version 2.43.0"), Some(Version(2, 43, 0)));
+    /// assert_eq!(Version::parse("git version 2.39.5 (Apple Git-154)"), Some(Version(2, 39, 5)));
+    /// assert_eq!(Version::parse("git version 2.45.1.windows.1"), Some(Version(2, 45, 1)));
+    /// assert_eq!(Version::parse("git version 2.51.0.rc1"), Some(Version(2, 51, 0)));
+    /// assert_eq!(Version::parse("git version 3.0"), Some(Version(3, 0, 0)));
+    /// assert_eq!(Version::parse("git version unknown"), None);
+    /// assert_eq!(Version::parse("podman version 5.7.0"), None);
+    /// ```
+    pub fn parse(line: &str) -> Option<Version> {
+        let word = line
+            .trim()
+            .strip_prefix("git version ")?
+            .split_whitespace()
+            .next()?;
+        let mut parts = word.split('.');
+        let major = number(parts.next()?)?;
+        let minor = number(parts.next()?)?;
+        let patch = parts.next().map_or(Some(0), number)?;
+        Some(Version(major, minor, patch))
+    }
+
+    /// True when this git has the fixes of May 2024: it is the release of
+    /// [`FIXED`] of its line or a later one, or its line comes after each
+    /// line of [`FIXED`].
+    ///
+    /// ```
+    /// use riff::host_git::Version;
+    ///
+    /// // An old git.
+    /// assert!(!Version(2, 34, 1).fixed());
+    /// assert!(!Version(2, 39, 3).fixed());
+    /// assert!(!Version(2, 43, 0).fixed());
+    /// assert!(!Version(2, 45, 0).fixed());
+    /// // The first fixed release of its line.
+    /// assert!(Version(2, 39, 4).fixed());
+    /// assert!(Version(2, 43, 4).fixed());
+    /// assert!(Version(2, 45, 1).fixed());
+    /// // A newer git.
+    /// assert!(Version(2, 39, 5).fixed());
+    /// assert!(Version(2, 46, 0).fixed());
+    /// assert!(Version(3, 0, 0).fixed());
+    /// ```
+    pub fn fixed(self) -> bool {
+        let Version(major, minor, _) = self;
+        let last = FIXED[FIXED.len() - 1];
+        match FIXED
+            .iter()
+            .find(|first| (first.0, first.1) == (major, minor))
+        {
+            Some(first) => self >= *first,
+            None => (major, minor) > (last.0, last.1),
+        }
+    }
+}
+
+impl std::fmt::Display for Version {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}.{}", self.0, self.1, self.2)
+    }
+}
+
+/// The first line of `git --version` of the host, or why riff cannot run
+/// it (01M7E6A47JB516A5FF30DNE47X). It runs in `/`, so the config of no
+/// repository counts.
+pub fn version() -> Result<String, String> {
+    let out = Command::new("git")
+        .arg("--version")
+        .current_dir("/")
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|_| text::INIT_NO_GIT.to_owned())?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let first = stdout.lines().next().unwrap_or_default().trim();
+    if !out.status.success() || first.is_empty() {
+        return Err(text::init_git_failed(
+            String::from_utf8_lossy(&out.stderr).trim(),
+        ));
+    }
+    Ok(first.to_owned())
 }
 
 /// Makes a clone at `clone`, with the origin `o/r` on GitHub and one

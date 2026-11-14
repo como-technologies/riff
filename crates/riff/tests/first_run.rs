@@ -67,6 +67,37 @@ exit 0
     script(&bin.join("podman"), body);
 }
 
+/// The `git` of the machine, as the first `git` in `PATH`.
+fn real_git() -> PathBuf {
+    let path = std::env::var("PATH").unwrap();
+    std::env::split_paths(&path)
+        .map(|dir| dir.join("git"))
+        .find(|git| git.is_file())
+        .expect("a git in PATH")
+}
+
+/// The first line of `git --version` of the fake `git` of a machine
+/// with each part: a git with the fixes of May 2024.
+const GIT: &str = "git version 2.45.1";
+
+/// A fake `git` in `bin`: `git --version` prints the text of
+/// `bin/git-version`, else [`GIT`]. Each other call runs the real
+/// `git`.
+fn fake_git(bin: &Path) {
+    let body = format!(
+        r#"#!/bin/sh
+dir=$(dirname "$0")
+if [ "$*" = --version ]; then
+  if [ -f "$dir/git-version" ]; then cat "$dir/git-version"; else echo "{GIT}"; fi
+  exit 0
+fi
+exec {} "$@"
+"#,
+        real_git().display()
+    );
+    script(&bin.join("git"), &body);
+}
+
 /// A machine with fakes, and a repository that pins [`IMAGE`].
 struct Machine {
     env: Isolated,
@@ -95,6 +126,7 @@ impl Machine {
             std::fs::create_dir_all(dir).unwrap();
         }
         fake_podman(&bin);
+        fake_git(&bin);
         script(&init.join("catatonit"), "#!/bin/sh\nexec \"$@\"\n");
         fake_systemctl(&bin);
         let uid = std::fs::metadata(&root).unwrap().uid();
@@ -203,6 +235,7 @@ async fn riff_init_installs_the_daemon_and_the_daemon_pulls_the_image() {
             machine.init.join("catatonit").display()
         ),
         format!("  pass  cgroup v2: user@{uid}.service has cpu and memory"),
+        format!("  pass  git: {GIT}"),
         format!("  pass  the session image: {IMAGE}"),
         format!(
             "riff wrote the unit {}, and started it again.",
@@ -410,7 +443,7 @@ async fn riff_init_check_changes_nothing() {
     let out = machine.init(&machine.repo, &["--check"]).await;
     let stdout = text(&out.stdout);
     assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
-    assert_eq!(stdout.matches("  pass  ").count(), 7, "{stdout}");
+    assert_eq!(stdout.matches("  pass  ").count(), 8, "{stdout}");
     assert!(
         stdout.ends_with("Each check passed. riff changed nothing: --check.\n"),
         "{stdout}"
@@ -420,15 +453,84 @@ async fn riff_init_check_changes_nothing() {
     assert!(!machine.unit().exists());
 }
 
+/// 01M7E6A47JB516A5FF30DNE47X: `riff init` reads the first line of `git
+/// --version`. A git with the fixes of May 2024 passes: the first fixed
+/// release of its line, or a newer git. An old git fails the check with
+/// its fix, and `riff init` installs nothing. At its start, the riff
+/// daemon logs the check of the old git as a step that needs you, and
+/// the status line shows its fix.
+#[tokio::test]
+async fn riff_init_refuses_an_old_git_and_the_daemon_names_it_at_its_start() {
+    use riff::text;
+    let machine = Machine::new();
+    for good in ["git version 2.43.4", "git version 2.47.1"] {
+        machine.set_git(good);
+        let out = machine.init(&machine.repo, &["--check"]).await;
+        let stdout = self::text(&out.stdout);
+        assert!(out.status.success(), "{good}: {stdout}");
+        let line = format!("  pass  git: {good}");
+        assert!(
+            stdout.lines().any(|l| l == line),
+            "{line}\nnot in\n{stdout}"
+        );
+    }
+
+    let old = "git version 2.43.0";
+    machine.set_git(old);
+    let (found, fix) = (text::init_git_old(old), text::init_fix_git());
+    let line = format!("  fail  git: {found}. Fix: {fix}");
+    for args in [&["--check"][..], &["--yes"]] {
+        let out = machine.init(&machine.repo, args).await;
+        let stdout = self::text(&out.stdout);
+        assert_eq!(out.status.code(), Some(1), "{args:?}: {stdout}");
+        assert_eq!(failed_lines(&stdout), [line.as_str()], "{args:?}");
+        assert!(stdout.contains("\n1 check failed. "), "{args:?}: {stdout}");
+    }
+    assert_eq!(machine.read("systemctl.log"), "");
+    assert!(!machine.unit().exists());
+
+    // The start of the daemon on the same machine.
+    let log = machine.bin.join("daemon.out");
+    let mut daemon = machine.command(&machine.repo, &["daemon"]);
+    daemon
+        .stdout(std::fs::File::create(&log).unwrap())
+        .stderr(std::process::Stdio::null());
+    let mut daemon = daemon.spawn().unwrap();
+    wait_for(&log, &format!("needs you  git: {found}. Fix: {fix}")).await;
+    let local = machine.env.path().join("run/riff");
+    let started = std::time::Instant::now();
+    while riff::local::needs_you(&local).is_none() {
+        assert!(started.elapsed() < isolated::HANG, "no step that needs you");
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert_eq!(riff::local::needs_you(&local), Some(format!("git: {fix}")));
+
+    nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(daemon.id() as i32),
+        nix::sys::signal::Signal::SIGTERM,
+    )
+    .unwrap();
+    wait_for(&log, "The riff daemon stops").await;
+    daemon.wait().unwrap();
+}
+
 impl Machine {
     /// Breaks each part of the machine that `riff init` checks: no
-    /// podman, no init of podman, no `subuid`, no `subgid`, no cgroup v2.
+    /// podman, no init of podman, no `subuid`, no `subgid`, no cgroup v2,
+    /// and a git with no fix of May 2024.
     fn break_machine(&self) {
         std::fs::write(self.bin.join("no-podman"), "").unwrap();
         std::fs::remove_file(self.init.join("catatonit")).unwrap();
         std::fs::remove_file(self.etc.join("subuid")).unwrap();
         std::fs::remove_file(self.etc.join("subgid")).unwrap();
         std::fs::remove_file(self.cgroup.join("cgroup.controllers")).unwrap();
+        self.set_git("git version 2.39.3");
+    }
+
+    /// Gives `line` as the first line of `git --version` of the fake
+    /// `git`.
+    fn set_git(&self, line: &str) {
+        std::fs::write(self.bin.join("git-version"), format!("{line}\n")).unwrap();
     }
 
     /// `riff init ARGS` in the folder `dir`, in a session container of the
@@ -452,9 +554,9 @@ fn names_of<'a>(lines: &[&'a str]) -> Vec<&'a str> {
 
 /// 01M5SMJMR5KS1Z1Z7CEPH9JVBB: `riff init` in a session container
 /// (`RIFF_SOCKET` is set) prints no line of podman, its init, `subuid`,
-/// `subgid` or cgroup v2. It prints the line of the skip, and checks only
-/// the session image and the riff binary, also with `--yes`. On a host,
-/// the same machine prints the five lines.
+/// `subgid`, cgroup v2 or git. It prints the line of the skip, and checks
+/// only the session image and the riff binary, also with `--yes`. On a
+/// host, the same machine prints the six lines.
 #[tokio::test]
 async fn riff_init_check_in_a_session_container_skips_the_checks_of_the_machine() {
     let machine = Machine::new();
@@ -468,7 +570,8 @@ async fn riff_init_check_in_a_session_container_skips_the_checks_of_the_machine(
             "the init of podman",
             "/etc/subuid",
             "/etc/subgid",
-            "cgroup v2"
+            "cgroup v2",
+            "git"
         ],
         "{host}"
     );
@@ -524,7 +627,7 @@ async fn riff_init_reads_no_repository_on_github_and_asks_no_riff_server() {
     let out = machine.init(&machine.repo, &["--check"]).await;
     let stdout = text(&out.stdout);
     assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
-    assert_eq!(stdout.matches("  pass  ").count(), 7, "{stdout}");
+    assert_eq!(stdout.matches("  pass  ").count(), 8, "{stdout}");
     for word in ["GitHub", "riff-server", "the guard", "riff.toml on main"] {
         assert!(!stdout.contains(word), "{word}\nin\n{stdout}");
     }

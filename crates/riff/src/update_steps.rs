@@ -31,7 +31,7 @@
 //!
 //! A step that needs a person is never done by the daemon: the checks
 //! of the machine of `riff init`, which are podman, the init of podman,
-//! `/etc/subuid`, `/etc/subgid` and cgroup v2
+//! `/etc/subuid`, `/etc/subgid`, cgroup v2 and git
 //! ([`first_run::machine_checks`]). Their fix needs `sudo`
 //! (01M51QFPW37EXVH4AXH70MSXBT). The daemon keeps the line of the first
 //! one, with its fix, in the local files ([`local::needs_you`]). The

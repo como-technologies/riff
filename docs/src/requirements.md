@@ -8140,6 +8140,17 @@ of this part when they merge.
   when, its hosts (`each host` when it names none) and the users of its
   leads (`no lead` when it has none). It runs in a terminal and in a
   session.
+- **01M7E6A47JB516A5FF30DNE47X** After the check of cgroup v2, `riff
+  init` checks the git of the host: the first line of `git --version`
+  names a git with the fixes of May 2024 (CVE-2024-32004): 2.45.1 or
+  later, or in an older line 2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4 or
+  2.44.1 or later. With an older git, a `git fetch` from the clone of a
+  session can run a program that the config of that clone names. riff
+  reads only the version, so an older version with the fixes of a
+  distribution fails too. The fix names a newer git. It is a check of
+  the machine: a session container skips it
+  (01M5SMJMR5KS1Z1Z7CEPH9JVBB), and at each start the riff daemon shows
+  it as a step that needs a person (01M51QFPW37EXVH4AXH70MSXBT).
 
 ### The permission rules
 

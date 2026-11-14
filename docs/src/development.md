@@ -2321,8 +2321,11 @@ one note to the lead with each branch that it deleted.
 While the folder is there, fetch its work into a clone of your own. Do
 not run git in the clone of the session on your machine: its git
 config can name a program. A fetch from it runs no program of its
-config. A riff command that runs git refuses in that folder, and says
-why.
+config only with a git that has the fixes of May 2024: 2.45.1 or later,
+or in an older line 2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4 or 2.44.1 or
+later. `riff init` checks it: see
+[Get a git with the fixes of May 2024](start-a-riff.md#get-a-git-with-the-fixes-of-may-2024).
+A riff command that runs git refuses in that folder, and says why.
 
 ```sh
 git -C ~/src/riff fetch ~/.local/share/riff/sessions/issue-735-7788e301/clone worktree-issue-735

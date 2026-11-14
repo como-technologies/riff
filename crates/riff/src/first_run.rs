@@ -11,7 +11,7 @@
 //!
 //! ```mermaid
 //! flowchart LR
-//!     C["the checks<br/>podman, its init, subuid, subgid,<br/>cgroup v2, riff.toml,<br/>the riff binary"] --> X{"wide<br/>rules?"}
+//!     C["the checks<br/>podman, its init, subuid, subgid,<br/>cgroup v2, git, riff.toml,<br/>the riff binary"] --> X{"wide<br/>rules?"}
 //!     X -- "one question:<br/>y in a terminal" --> V["remove them"]
 //!     X -- "no" --> E{"each check<br/>passed?"}
 //!     V --> E
@@ -52,6 +52,7 @@
 //! | `/etc/subuid` | the lines of the person, by name or by user ID | [`MIN_IDS`] IDs or more, added over the lines |
 //! | `/etc/subgid` | the same | the same |
 //! | cgroup v2 | `/sys/fs/cgroup/cgroup.controllers`, and `cgroup.controllers` of `user@UID.service` | the file is there, and the controllers of the user have `cpu` and `memory` |
+//! | git | the first line of `git --version` ([`crate::host_git::version`]) | its version has the fixes of May 2024 ([`crate::host_git::Version::fixed`]), so a `git fetch` from the clone of a session runs no program of its config (01M7E6A47JB516A5FF30DNE47X) |
 //! | the session image | `riff.toml` of the repository of the current folder ([`crate::session_image::of_folder`]) | it pins an image by its digest. The fix names `riff project init` ([`text::INIT_FIX_IMAGE`]) |
 //! | the riff binary | the ELF of the riff of this process ([`crate::release::check_file`]) | it has no interpreter, so `riff relay` starts in each session image. The fix is `riff update` (01M510NW68CTZBHHW7ZYFV7Q3X) |
 //!
@@ -66,7 +67,7 @@
 //!
 //! A session container, for example a lead, runs no podman: the host
 //! runs the containers. When `RIFF_SOCKET` is set ([`Facts::container`]),
-//! `riff init` skips the first five checks, prints the line
+//! `riff init` skips the first six checks, prints the line
 //! [`text::INIT_MACHINE_SKIPPED`] in their place, and checks only the
 //! session image and the riff binary. It only checks there, also with
 //! `--yes`, and stops after the checks: the host has the daemon and the
@@ -91,6 +92,7 @@
 //!     subgid: Some("1000:100000:65536\n".into()),
 //!     cgroup: Some("cpuset cpu io memory pids\n".into()),
 //!     user_cgroup: Some("cpu memory pids\n".into()),
+//!     git: Ok("git version 2.45.1".into()),
 //!     image: Ok(format!("ghcr.io/o/i@sha256:{}", "0".repeat(64))),
 //!     wide: vec![],
 //!     riff: Ok("/home/mike/.cargo/bin/riff is static".into()),
@@ -215,6 +217,9 @@ pub struct Facts {
     /// The controllers of `user@UID.service`, or `None` when riff
     /// cannot read them.
     pub user_cgroup: Option<String>,
+    /// The first line of `git --version`, or why riff cannot run git
+    /// ([`crate::host_git::version`]).
+    pub git: Result<String, String>,
     /// The session image that `riff.toml` pins, or why riff has none.
     pub image: Result<String, String>,
     /// The settings files of Claude Code with allow rules that are wider
@@ -375,6 +380,7 @@ impl Facts {
             subgid: read(etc.join("subgid")),
             cgroup: cgroups.root,
             user_cgroup: cgroups.user,
+            git: crate::host_git::version(),
             image: crate::session_image::of_folder(dir)
                 .map(|image| image.to_string())
                 .map_err(|e| format!("{e:#}")),
@@ -605,6 +611,21 @@ fn cgroup_check(facts: &Facts) -> Check {
     }
 }
 
+/// The check of the git of the host (01M7E6A47JB516A5FF30DNE47X): its
+/// version has the fixes of May 2024.
+fn git_check(facts: &Facts) -> Check {
+    use crate::host_git::{CHECK, Version};
+    let found = match &facts.git {
+        Err(why) => why.clone(),
+        Ok(line) => match Version::parse(line) {
+            Some(version) if version.fixed() => return Check::pass(CHECK, line.clone()),
+            Some(_) => text::init_git_old(line),
+            None => text::init_git_unread(line),
+        },
+    };
+    Check::fail(CHECK, found, text::init_fix_git())
+}
+
 /// Each check of the first run on `facts`, in order
 /// (01M4ZJN6TEWCYCB39XTH6BBD9H): the checks of the machine, then the
 /// session image and the riff binary. In a session container, only the
@@ -632,7 +653,7 @@ pub fn checks(facts: &Facts) -> Vec<Check> {
 }
 
 /// The checks of the machine on `facts`, in order: podman, the init of
-/// podman, `/etc/subuid`, `/etc/subgid` and cgroup v2. Only a person
+/// podman, `/etc/subuid`, `/etc/subgid`, cgroup v2 and git. Only a person
 /// can do their fix, for example with `sudo`, so the riff daemon never
 /// does it (01M51QFPW37EXVH4AXH70MSXBT, [`crate::update_steps`]).
 pub fn machine_checks(facts: &Facts) -> Vec<Check> {
@@ -657,6 +678,7 @@ pub fn machine_checks(facts: &Facts) -> Vec<Check> {
         sub_check("uid", facts.subuid.as_deref(), facts),
         sub_check("gid", facts.subgid.as_deref(), facts),
         cgroup_check(facts),
+        git_check(facts),
     ]
 }
 
@@ -868,6 +890,7 @@ mod tests {
             subgid: Some("mike:100000:65536\n".into()),
             cgroup: Some("cpuset cpu io memory hugetlb pids rdma misc\n".into()),
             user_cgroup: Some("cpu memory pids\n".into()),
+            git: Ok("git version 2.45.1".into()),
             image: Ok(IMAGE.into()),
             wide: vec![],
             riff: Ok("/home/mike/.cargo/bin/riff is static".into()),
@@ -895,6 +918,7 @@ mod tests {
                 "pass  /etc/subuid: 65536 IDs for mike",
                 "pass  /etc/subgid: 65536 IDs for mike",
                 "pass  cgroup v2: user@1000.service has cpu and memory",
+                "pass  git: git version 2.45.1",
                 &format!("pass  the session image: {IMAGE}"),
                 "pass  the riff binary: /home/mike/.cargo/bin/riff is static",
             ]
@@ -974,6 +998,16 @@ mod tests {
                 },
                 "fail  cgroup v2: user@1000.service has no cpu and no memory.",
                 "Delegate=cpu cpuset io memory pids",
+            ),
+            (
+                "an old git",
+                Facts {
+                    git: Ok("git version 2.43.0".into()),
+                    ..ready()
+                },
+                "fail  git: git version 2.43.0 has no fix of May 2024 (CVE-2024-32004), so a \
+                 git fetch from the clone of a session can run a program that its config names.",
+                "install git 2.45.1 or later",
             ),
             (
                 "no image",
@@ -1065,6 +1099,56 @@ mod tests {
         );
     }
 
+    /// 01M7E6A47JB516A5FF30DNE47X: an old git fails the check with the
+    /// fix, and a git with the fixes of May 2024 passes it: the first
+    /// fixed release of its line, or a later one.
+    #[test]
+    fn the_check_of_git_fails_an_old_git_and_passes_a_fixed_or_newer_one() {
+        let line = |git: Result<&str, &str>| {
+            let facts = Facts {
+                git: git.map(str::to_owned).map_err(str::to_owned),
+                ..ready()
+            };
+            let check = machine_checks(&facts).pop().unwrap();
+            assert_eq!(check.name, "git");
+            check.line()
+        };
+        let fix = format!("Fix: {}", text::init_fix_git());
+        for old in [
+            "git version 2.34.1",
+            "git version 2.39.3",
+            "git version 2.39.3 (Apple Git-146)",
+            "git version 2.43.0",
+            "git version 2.44.0.windows.1",
+            "git version 2.45.0",
+        ] {
+            assert_eq!(
+                line(Ok(old)),
+                format!("fail  git: {}. {fix}", text::init_git_old(old)),
+            );
+        }
+        for good in [
+            "git version 2.39.4",
+            "git version 2.39.5 (Apple Git-154)",
+            "git version 2.40.2",
+            "git version 2.43.4",
+            "git version 2.45.1",
+            "git version 2.47.1",
+            "git version 2.51.0.rc1",
+            "git version 3.0.0",
+        ] {
+            assert_eq!(line(Ok(good)), format!("pass  git: {good}"));
+        }
+        assert_eq!(
+            line(Ok("git version unknown")),
+            format!("fail  git: riff finds no version of git in \"git version unknown\". {fix}")
+        );
+        assert_eq!(
+            line(Err(text::INIT_NO_GIT)),
+            format!("fail  git: riff cannot start git. {fix}")
+        );
+    }
+
     /// A service manager that installs nothing, and logs each call.
     #[derive(Default)]
     struct Manager(Arc<Mutex<Vec<String>>>);
@@ -1149,9 +1233,10 @@ mod tests {
             subgid: None,
             cgroup: None,
             user_cgroup: None,
+            git: Err(text::INIT_NO_GIT.into()),
             ..ready()
         };
-        assert_eq!(failed(&broken).len(), 5);
+        assert_eq!(failed(&broken).len(), 6);
         let container = Facts {
             container: true,
             ..broken

@@ -1082,7 +1082,7 @@ flowchart TD
 |---|---|---|
 | 1. The unit of the daemon | `riff.service` is the text that the new riff writes for it, with your riff and your variables | writes it again, and starts again on it when it runs no session |
 | 2. The session image of each wave | podman has the merged pin: the image that `riff.toml` on the default branch of `origin` pins (see [Only a merged pin counts](development.md#only-a-merged-pin-counts)) | pulls it |
-| 3. The checks of the machine: podman, the init of podman, `/etc/subuid`, `/etc/subgid`, cgroup v2 | the check of `riff init` passes | never changes them: the fix needs you, for example with `sudo` |
+| 3. The checks of the machine: podman, the init of podman, `/etc/subuid`, `/etc/subgid`, cgroup v2, git | the check of `riff init` passes | never changes them: the fix needs you, for example with `sudo` |
 
 - Only a release does a step: a `riff` whose SHA-256 is in
   `SHA256SUMS` of the GitHub release of its version, or on a Mac in
@@ -1136,6 +1136,7 @@ needs you  the init of podman: podman has no init: no catatonit in /usr/local/li
 in step  /etc/subuid: 65536 IDs for mike
 in step  /etc/subgid: 65536 IDs for mike
 in step  cgroup v2: user@1000.service has cpu and memory
+in step  git: git version 2.47.1
 ```
 
 - Each line starts with `in step`, `not in step`, `needs you` or
