@@ -3773,8 +3773,10 @@ release](development.md#leave-the-issue-open-for-a-check-after-the-release).
 
 After a pull request with `Refs #12` merges, issue 12 stays open. The
 wave starts no session for it: `riff wave list` shows it in the group
-`merged`, for example `merged: #12 (in #40)`. When the issue has more
-work, the lead tells the wave:
+`merged`, for example `merged: #12 (in #40)`, and the Waves tab shows a
+`merged` row (see
+[See the merged items in the TUI](#see-the-merged-items-in-the-tui)).
+When the issue has more work, the lead tells the wave:
 
 ```sh
 riff wave next 12
@@ -5856,6 +5858,40 @@ flowchart LR
     L -- "Wave N · TITLE" --> A
     N --> Q["riff questions"]
 ```
+
+### See the merged items in the TUI
+
+An open issue whose pull request merged with `Refs #N` is no free work:
+the wave starts no session for it (see
+[Start the next pull request of an issue](#start-the-next-pull-request-of-an-issue)).
+The Waves tab shows it as `riff wave list` does. Run riff with no
+command, and press `3` for the Waves tab:
+
+```sh
+riff
+```
+
+The board of the current wave has a `merged` row for each such item,
+with the pull request that merged:
+
+```text
+   ○   free    #1620  Add the flag --format           -                    -
+   ✓   merged  #1622  The book names the flag         PR #1630 merged      -
+   ✓   merged  #1640  Run it on pangolin              PR #1650 live check  -
+```
+
+- `PR #1630 merged`: the item is in the group `merged` of
+  `riff wave list`. When it has more work, run `riff wave next 1622`.
+  At the next read of the tab, it is a `free` row.
+- `PR #1650 live check`: the "Done when" of the item has a `Live:`
+  line. It waits for its check after the release, and is in the group
+  `live check` of `riff wave list`.
+- `o` on a `merged` row shows the URL of the pull request that merged.
+
+The tab reads the comments `Merged in #PR` and `More work after #PR`
+of the items of the current wave, and the last 100 merged pull
+requests, as the wave does. So the tab, `riff wave list` and the wave
+agree on each item.
 
 ## Pause the riff
 

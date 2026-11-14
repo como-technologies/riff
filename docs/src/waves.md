@@ -317,12 +317,15 @@ items:
 - The repositories with a stuck, a held or a free item come first, with
   their boards open. Each other repository is one line with its counts.
 - The rows go in the order `stuck`, `free`, `held`, `needs`, `asked`
-  (the label `question`), `work`, `verify` and `tracker`. A `work` row
-  shows the session of the claim and its state. A `stuck` or `verify`
-  row shows the pull request and what it waits for: `verify`, `merge`,
-  or why it is stuck, for example `conflict`. A `needs` row shows the
-  open issues of its `Needs:` line, for example `waits for #1522` (see
-  [Needs](#needs)).
+  (the label `question`), `work`, `verify`, `tracker` and `merged`. A
+  `work` row shows the session of the claim and its state. A `stuck` or
+  `verify` row shows the pull request and what it waits for: `verify`,
+  `merge`, or why it is stuck, for example `conflict`. A `needs` row
+  shows the open issues of its `Needs:` line, for example `waits for
+  #1522` (see [Needs](#needs)).
+- A `merged` row shows the pull request that merged with `Refs #N`:
+  see
+  [See the merged items in the TUI](how-it-works.md#see-the-merged-items-in-the-tui).
 - The `asked` rows have the questions of the later waves too: see
   [See the questions of each wave in the TUI](how-it-works.md#see-the-questions-of-each-wave-in-the-tui).
 - The line `done 4 · closed 1` counts the items that closed in the
@@ -358,10 +361,13 @@ Here the verify of #1599 and the rebase of #1601 wait for the merge of
 
 The tab reads `gh` each minute while it shows. It asks GitHub whether
 the list of the open issues changed: the answer "no change" costs no
-point. It reads the pull requests with `gh pr list` only while one is
-open, and the check of `main` with a few REST calls. Its calls show as
-`tui` in `riff daemon status`. Under 80 columns, a row has the mark,
-the state, the item and the title.
+point. It reads the open pull requests with `gh pr list` only while one
+is open, and the merged pull requests only when the list of the open
+issues changed. It asks for the comments of each item of the current
+wave that has a comment in the same way, and reads the check of `main`
+with a few REST calls. Its calls show as `tui` in `riff daemon status`.
+Under 80 columns, a row has the mark, the state, the item and the
+title.
 
 To list the open items of a wave with `gh`, use the full title of the
 milestone, as `riff wave list` shows it. `"Wave 6"` does not find the

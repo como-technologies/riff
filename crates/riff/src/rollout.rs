@@ -2803,8 +2803,15 @@ pub fn closing(at: &str, now: i64) -> bool {
 /// also before the comment `Merged in`, and before its close reaches the
 /// look.
 pub fn merges(gh: &Gh, repo: &str) -> Result<HashMap<u64, Merge>> {
-    let pulls: Vec<MergedPull> = gh.read_json(&merged_args(repo))?;
-    Ok(merges_of(&pulls, crate::daemon::now_ms()))
+    Ok(merges_of(&merged_pulls(gh, repo)?, crate::daemon::now_ms()))
+}
+
+/// The last 100 merged pull requests of the repository `repo`
+/// (`OWNER/REPO`), with one `gh pr list`: the read of [`merges`]. The
+/// Waves tab of the TUI keeps them while the open issues do not change
+/// ([`crate::tui::forge::Kept::merges`]).
+pub fn merged_pulls(gh: &Gh, repo: &str) -> Result<Vec<MergedPull>> {
+    gh.read_json(&merged_args(repo))
 }
 
 /// The arguments of `gh` for the last 100 merged pull requests of `repo`

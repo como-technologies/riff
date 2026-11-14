@@ -9637,10 +9637,10 @@ that builds it merges.
   a conditional REST read of each page of the list of the open issues,
   with the ETag of the last reply, so a `304` costs no point. The list
   has the pull requests too: the read drops them from the items. The tab
-  calls `gh pr list` only when the list has an open pull request. A read
-  that fails keeps the last facts of its repository, and the note line
-  names the error of `gh`. The calls of `gh` of the TUI count as the
-  caller `tui`.
+  reads the open pull requests with `gh pr list` only when the list has
+  one. A read that fails keeps the last facts of its repository, and the
+  note line names the error of `gh`. The calls of `gh` of the TUI count
+  as the caller `tui`.
 - **01M6VFGK79JGRF919BM8SJ6E08** While the Waves tab shows, each look of
   the TUI also reads the holds of each board from riff-server.
 - **01M6VFGK9XXWCA8X7CE8EZNSJV** In the Waves tab, `h` holds the
@@ -10065,6 +10065,18 @@ that builds it merges.
   fact `lead`: not its live lead, and not the `none` of a repository
   that riff-server names in `no_lead`, for example the repository of a
   session that is gone. Supersedes 01M77XYFZW86MCXD22GDCXMS00 in part.
+- **01M7E25WB42HQQ34CRNXPZFHHR** The Waves tab reads the facts of `riff
+  wave list` (01M7DYX2Q2VJW5V4RNQEEHCVKS): the last 100 merged pull
+  requests, and the comments of each open issue of the current wave that
+  has a comment, each with a conditional REST read with the ETag of its
+  last reply. It reads the merged pull requests again only when the list
+  of the open issues changed since its last read of them. An open item
+  of the current wave that a merged pull request keeps out of the free
+  work is a `merged` row, after the tracker rows, with the mark `✓`
+  and its pull request: `PR #882 merged`. For an item with a `Live:`
+  line in its "Done when", the pull request says `live check` in place
+  of `merged`: `PR #1866 live check`. Such an item is never a `free`
+  row. Supersedes 01M6VFGK4P2FWMFQHBZKR3JXSZ in part.
 
 ## The notes of the lead
 
