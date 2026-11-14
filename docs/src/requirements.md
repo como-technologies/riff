@@ -130,7 +130,8 @@
   holds the issue in the repository, the post also wakes the lead in
   that repository.
 - **01M3W62QG36F9RD4SZ1X508T3A** A verify result holds only the check
-  of the item against its `Done when:` line. No public text on the
+  of the item against its `Done when:` line, and the findings of its
+  council (01M7CFBZSQEEZNZBR9H1S54GS1). No public text on the
   forge holds a live security fault: a security fault in the code of
   the default branch, or in a server that runs. The public text is a
   verify result, the body of a pull request, a comment on a pull
@@ -198,6 +199,66 @@
 - **01M7CF3NYSQX8WFHSQNKV0Q3QN** riff runs no second verify of a head
   commit for a second view. The council of the verify gives the second
   view (01M7CF3FPNSR0G8EZ3JY3CA34S).
+- **01M7CFBNAKQ0CKCCY9S7WM62FE** Each verify runs a council of focused
+  reviewers (#581): each member reviews the change in one area only. The
+  verifier runs the council in its own session, with one subagent for
+  each member, on the model of the session (`model` of `riff.toml`). No
+  member claims an item or has a container of its own. The start text of
+  a verify of the wave gives each step of the council.
+- **01M7CFBZ7839WHMFARR4T6W13W** Each member of the council has one file
+  in the repository: `.riff/council/NAME.md`. riff builds in a default
+  set: the files of `.riff/council/` of the riff repository. A file of a
+  repository with the name of a default member takes its place, and a
+  file with a new name adds a member. The council of a pull request
+  reads the files of its base branch, not of its head: a pull request
+  does not change the council of its own verify.
+- **01M7CFBZ9TJ83FNHN0APY41175** A member file starts with a TOML table
+  between two lines `+++`. Its key `files` lists the globs of the paths
+  of its area, and its key `labels` lists the labels of its area. A
+  member with neither key joins each council. After the table come a `#`
+  heading with the name of the member, the text of its area, and one
+  `##` heading for each rule. riff refuses a file with no table or no
+  `#` heading, and names the file and the line.
+- **01M7CFBZCDFGG1MV4DEAACQVXK** Design, testing and docs join each
+  council. The Rust expert, `rust`, joins the council of each pull
+  request that changes a `.rs` file. It reviews for idiomatic Rust and
+  for the patterns of its file: an invalid state cannot be made (#552,
+  #553), one type for each layout, and each conversion names each field.
+- **01M7CFBZF1BZ0E7H0D4Q7KKY1T** The members by area join from the files
+  and the labels of the change: `security` (the tokens, the sign-in,
+  riff-server, the deploy, CI), `operations` (the daemon, the release,
+  the cloud) and `requirements` (`requirements.md`, the book). Two
+  personas join by area too: `newcomer`, a person who knows nothing
+  about riff, for a change of the book, and `attacker`, for a change of
+  security. A glob of `files` matches the path of each file that the
+  pull request adds, changes, removes or renames. A label matches a
+  label of the pull request or of its issue.
+- **01M7CFBZHQZ8FDT3Q0NGYKBZWB** A council has at most 6 members. riff
+  takes first the members that join each council, then the others. In
+  each group, the default set comes in the order design, testing, docs,
+  rust, security, attacker, requirements, newcomer, operations, and each
+  other member of the repository comes after it, in the order of its
+  name.
+- **01M7CFBZMCE36ZRXD0GBCM4MFX** `riff council list` prints each member
+  of the folder: the files of `.riff/council/` over the default set,
+  with the source of each member and when it joins. `riff council show
+  PR` prints the council of a pull request: each member, why it joins,
+  and the text of its file; then each member that the limit of 6 leaves
+  out.
+- **01M7CFBZQ0QNE65WBQ31FSDWGR** Each member of the council gives its
+  findings. A finding names the file, the line and the rule: the member
+  file and the heading of the rule. The verifier checks each finding in
+  the code. A finding that the verifier shows, with a test, a run or a
+  read of the code, fails the verify. A finding that it cannot show goes
+  in the result as not shown, and does not fail the verify.
+- **01M7CFBZSQEEZNZBR9H1S54GS1** The result of a verify has the part `##
+  The council`, with one line for each member of the council: its
+  findings, or `no finding`. A finding of a live security fault goes to
+  the lead with `tell`, not into the result. `riff verify pass` refuses
+  a result with no line for a member of the council, and names the
+  member. `riff verify fail` takes such a result. The daemon reads such
+  a PASS of a verify of the wave as a result with no verdict. Supersedes
+  01M3W62QG36F9RD4SZ1X508T3A in part.
 
 ## Waves
 

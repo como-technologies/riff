@@ -6003,6 +6003,72 @@ EOF
 
 `riff pr open` reads `riff.toml` in your clone. It stops with the file
 name when `rules` has another value, or when the file is not TOML.
+
+## Add a member to the council
+
+The council of a verify will review each change in focused areas, with
+one member for each area (see
+[The council of a verify](how-it-works.md#the-council-of-a-verify)).
+Each member is one file in `.riff/council/` of your repository. To add
+a member, write its file, and merge it with a pull request. This member
+will review the time and the memory of riff-server. It will join for a
+change of the files of riff-server, or for the label `performance`:
+
+```sh
+mkdir -p .riff/council
+cat > .riff/council/performance.md <<'EOF'
++++
+files = ["crates/riff-server/**"]
+labels = ["performance"]
++++
+
+# Performance
+
+You review the time and the memory of riff-server.
+
+## A read of the log reads each line one time
+
+A second pass over the log is a finding.
+EOF
+git add .riff/council/performance.md
+git commit -m "The council gets a member for performance"
+```
+
+Then push the branch, and open its pull request as for each change.
+
+The file starts with a TOML table between two lines `+++`. The key
+`files` lists the globs of the paths of the area, and the key `labels`
+lists the labels of the area. A member with neither key will join each
+council. After the table come a `#` heading with the name of the
+member, the text of its area, and one `##` heading for each rule. A
+finding will name its rule by that heading.
+
+A file with the name of a member of the default set, for example
+`rust.md`, will take the place of that member. The new member will
+join the councils of the pull requests after the merge, because the
+council of a pull request will read the files of its base branch.
+
+### Add a rule to a member
+
+Each `##` heading of a member file is one rule. To add a rule, add a
+heading and its text at the end of the file, and merge it with a pull
+request. In your clone of riff, this adds a pattern to the Rust expert:
+
+```sh
+cat >> .riff/council/rust.md <<'EOF'
+
+## A time has a type
+
+A time in milliseconds is a newtype, not a plain `u64`.
+EOF
+git add .riff/council/rust.md
+git commit -m "The Rust expert gets the pattern: a time has a type"
+```
+
+In another repository, copy the file of the default set from
+[`.riff/council/`](https://github.com/como-technologies/riff/tree/main/.riff/council)
+of riff first. Then add the rule to your copy.
+
 ## Merge by pull request on GitHub
 
 No session and no person pushes to `main`. Each change goes in by a
