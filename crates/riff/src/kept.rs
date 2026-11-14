@@ -14,7 +14,8 @@
 //! the wave reports each kept result of its repository after the reset
 //! ([`report_all`]), in the same way as the end step. The folder stays: the
 //! sweep removes it when the pull request merges or closes
-//! ([`crate::daemon::sweep`]).
+//! ([`crate::daemon::sweep`]). The report of a kept PASS reads the council
+//! of the pull request in the clone of the folder ([`crate::pr::report`]).
 //!
 //! ```mermaid
 //! flowchart TD
@@ -175,8 +176,11 @@ async fn report_one(
             commit.clone(),
             result.clone(),
         );
-        let (pull, verdict) = (*pull, *verdict);
-        crate::wave::blocking(move || pr::report(&gh, &repo, pull, &tested, verdict, &shown)).await
+        let (pull, verdict, clone) = (*pull, *verdict, folder.join("clone"));
+        crate::wave::blocking(move || {
+            pr::report(&gh, &repo, &clone, pull, &tested, verdict, &shown)
+        })
+        .await
     };
     let thread = wave.thread()?;
     let reported = match reported {
@@ -186,7 +190,7 @@ async fn report_one(
             // The same end as a report that fails with no kept result.
             let _ = std::fs::remove_dir_all(folder);
             // The read above found the pull request open.
-            let body = text::wave_no_report(item, *pull, &format!("{e:#}"), true);
+            let body = crate::wave::no_report(item, *pull, &e, true);
             let to = [riff_core::selector::Selector::lead(&wave.repo)];
             api.post(
                 me,

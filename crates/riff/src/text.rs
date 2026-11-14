@@ -214,6 +214,40 @@ pub fn verify_closes_live(number: u64, issue: u64) -> String {
     )
 }
 
+/// The line of `riff verify pass` for a result with no line in the part
+/// `## The council` for the members `members` of the council of the pull
+/// request (01M7CFBZSQEEZNZBR9H1S54GS1).
+///
+/// ```
+/// let members = ["docs".parse()?, "rust".parse()?];
+/// assert_eq!(
+///     riff::text::verify_no_council_line(&members),
+///     "riff verify pass: the result has no line in the part `## The council` for docs and \
+///      rust. Fix: add one line for each member of the council, for example `- docs: no \
+///      finding.`, and report again. Nothing is reported."
+/// );
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn verify_no_council_line(members: &[crate::council::Name]) -> String {
+    let first = members.first().map_or("design", |name| name.as_str());
+    format!(
+        "riff verify pass: the result has no line in the part `## The council` for {}. Fix: add \
+         one line for each member of the council, for example `- {first}: no finding.`, and \
+         report again. Nothing is reported.",
+        and_joined(members)
+    )
+}
+
+/// The words `words`, with `, ` between them and ` and ` before the last:
+/// `design, testing and docs`.
+fn and_joined(words: &[impl ToString]) -> String {
+    let words: Vec<String> = words.iter().map(ToString::to_string).collect();
+    match &words[..] {
+        [init @ .., last] if !init.is_empty() => format!("{} and {last}", init.join(", ")),
+        _ => words.concat(),
+    }
+}
+
 /// The line of `riff verify pass` for pull request `number` when the
 /// squash message did not go to its auto-merge
 /// (01M6Y95BMYDXFDYG3DKE2KG2PP). The error of `gh` comes after it.
@@ -12241,10 +12275,7 @@ pub fn watch_not_registered(what: &str, error: &str) -> String {
 /// );
 /// ```
 pub fn watch_fault(whats: &[String], error: &str) -> String {
-    let what = match whats {
-        [init @ .., last] if !init.is_empty() => format!("{} and {last}", init.join(", ")),
-        _ => whats.concat(),
-    };
+    let what = and_joined(whats);
     let dot = if error.ends_with('.') { "" } else { "." };
     format!(
         "riff cannot read the state of {what}: {error}{dot} riff tries again each minute, and \
@@ -12815,6 +12846,36 @@ pub fn wave_no_result(item: &str, pull: u64, open: bool) -> String {
 pub fn wave_no_report(item: &str, pull: u64, error: &str, open: bool) -> String {
     format!(
         "{item}: riff could not report the verify of pull request #{pull}: {error}. {}",
+        verify_waits(open)
+    )
+}
+
+/// A verify of a wave ended with a PASS whose part `## The council` has no
+/// line for the members `members`: a result with no verdict
+/// (01M7CFBZSQEEZNZBR9H1S54GS1, 01M7D11KGEJ8ACFJK6Y10WENJZ). Only a pull
+/// request that is still `open` waits for a new verify.
+///
+/// ```
+/// let members = ["docs".parse()?];
+/// assert_eq!(
+///     riff::text::wave_no_council_line("verify-issue-12", 40, &members, true),
+///     "verify-issue-12: the verify session of pull request #40 ended with a PASS that has no \
+///      line in the part `## The council` for docs. riff read it as a result with no verdict, \
+///      and reported nothing. The pull request waits for a new verify."
+/// );
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn wave_no_council_line(
+    item: &str,
+    pull: u64,
+    members: &[crate::council::Name],
+    open: bool,
+) -> String {
+    format!(
+        "{item}: the verify session of pull request #{pull} ended with a PASS that has no line in \
+         the part `## The council` for {}. riff read it as a result with no verdict, and \
+         reported nothing. {}",
+        and_joined(members),
         verify_waits(open)
     )
 }

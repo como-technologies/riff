@@ -2,7 +2,8 @@
 //! file, the default set that riff builds in, and `riff council list`
 //! (01M7CFBZ7839WHMFARR4T6W13W, 01M7CFBZ9TJ83FNHN0APY41175,
 //! 01M7CFBZMCE36ZRXD0GBCM4MFX). [`pick`] picks the council of a pull
-//! request, for `riff council show`.
+//! request, for `riff council show`. [`result`] checks that the result of
+//! a pass has a line for each member of that council.
 //!
 //! # Design
 //!
@@ -104,6 +105,7 @@ use crate::session_image::top;
 use crate::{text, view};
 
 pub mod pick;
+pub mod result;
 
 /// The folder of the member files, from the top of the work tree.
 pub const FOLDER: &str = ".riff/council";

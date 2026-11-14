@@ -30,7 +30,7 @@ case "$1 $2" in
 'api repos/acme/app/milestones?state=open&per_page=100')
     printf '%s' '[{"title":"Wave 4: CloBADud"}]' ;;
 'issue list') printf '%s' '[{"number":7,"title":"Release v1.2.3","milestone":{"title":"Wave 4: NBADew"}}]' ;;
-'issue view') printf '%s' '{"number":7,"state":"OPEN","milestone":{"title":"Wave 4: NBADew"}}' ;;
+'issue view') printf '%s' '{"number":7,"state":"OPEN","milestone":{"title":"Wave 4: NBADew"},"labels":[]}' ;;
 'api repos/acme/app') printf '%s' '{"default_branch":"main"}' ;;
 'api repos/acme/app/rules/branches/main?per_page=100')
     printf '%s' '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Gate"},{"context":"LintBAD"},{"context":"riff/verify"}]}}]' ;;
@@ -41,7 +41,7 @@ case "$1 $2" in
 'api repos/acme/app/commits/'*'/check-runs?check_name=Gate')
     printf '%s' '{"check_runs":[{"status":"completed","conclusion":"success"}]}' ;;
 'pr list') printf '%s' '[{"number":39,"title":"Old","headRefName":"worktree-issue-6BAD","headRefOid":"0","isDraft":false,"statusCheckRollup":[]},{"number":40,"title":"Release v1.2.3","headRefName":"worktree-issue-7","headRefOid":"abc1234BADdef","isDraft":false,"statusCheckRollup":[{"context":"riff/verify","state":"FAILURE","targetUrl":"https://e.test/cBAD"}],"milestone":{"title":"Wave 4: NBADew"}}]' ;;
-'pr view') printf '%s' '{"state":"MERGED","mergeCommit":{"oid":"9f8eBAD7d6c"},"headRefOid":"abc1234BADdef","body":"Closes #7\n\nIssue: #7\nMilestone: Wave 4\n"}' ;;
+'pr view') printf '%s' '{"state":"MERGED","mergeCommit":{"oid":"9f8eBAD7d6c"},"headRefOid":"abc1234BADdef","baseRefName":"main","labels":[],"body":"Closes #7\n\nIssue: #7\nMilestone: Wave 4\n"}' ;;
 'pr checks') printf '%s' '[{"name":"GateBAD","bucket":"pass"}]' ;;
 'pr create') printf 'https://e.test/pull/41\n' ;;
 'pr comment') printf 'https://e.test/c\033]0;owned\007\033[2K\r\nend\n' ;;
@@ -116,8 +116,28 @@ fn each_reply_of_the_forge_that_riff_reads_has_no_control_character() {
     assert_eq!(gate, riff::pr::Gate::Ended("fail  ure".into()));
     clean(&riff::text::gate_not_passed(40, "ended", &full, &gate));
 
-    // `riff verify`: the commit and the URL go into the result.
-    let reported = riff::pr::report(&gh, "acme/app", 40, "abc1234", Verdict::Pass, "ok").unwrap();
+    // `riff verify`: the commit and the URL go into the result. A pass
+    // reads the council in a clone: design, testing and docs. The clone
+    // has no `origin`, so the fetch fails at once.
+    let clone = tempfile::tempdir().unwrap();
+    let init = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(clone.path())
+        .status();
+    assert!(init.unwrap().success());
+    crate::common::base_branch(clone.path());
+    let result = "ok\n\n## The council\n\n- design: no finding.\n- testing: no finding.\n\
+                  - docs: no finding.\n";
+    let reported = riff::pr::report(
+        &gh,
+        "acme/app",
+        clone.path(),
+        40,
+        "abc1234",
+        Verdict::Pass,
+        result,
+    )
+    .unwrap();
     clean(&reported.commit);
     assert_eq!(reported.url, "https://e.test/c  end");
     let comment = std::fs::read_to_string(bin.path().join("body")).unwrap();

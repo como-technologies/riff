@@ -12,7 +12,7 @@
 //! |---|---|
 //! | `riff pr open` | `issue view`, `pr create`, `pr merge --auto --squash` |
 //! | `riff pr wait N` | `pr view`, `pr checks --required`, again at the [`pace`] of `--every`. After the merge: the total of the tokens of the issue ([`crate::usage`]) |
-//! | `riff verify pass\|fail N` | `pr view`, `issue view` (a pass of a body with `Closes #N`), `api …/rules/branches/BRANCH`, `api …/commits/COMMIT/check-runs`, `api …/pulls/N/files` and `pr merge --auto --squash` with the squash message (a pass), `pr comment`, `api …/statuses/COMMIT` |
+//! | `riff verify pass\|fail N` | `pr view`, `issue view` (a pass of a body with `Closes #N`), `api …/rules/branches/BRANCH`, `api …/commits/COMMIT/check-runs`, `api …/pulls/N/files`, the reads of `riff council show` and `pr merge --auto --squash` with the squash message (a pass), `pr comment`, `api …/statuses/COMMIT` |
 //!
 //! `riff pr open` takes the issue from the claim of the session, and
 //! writes the body in the form of the hygiene check: the link line and
@@ -145,6 +145,15 @@
 //! new session of the repository on that host. The verify of the wave
 //! uses the same rule, because it calls [`report`]. A fail needs no
 //! such check.
+//!
+//! Last, a pass needs a line for each member of the council of the pull
+//! request in the part `## The council` of the result
+//! (01M7CFBZSQEEZNZBR9H1S54GS1, 01M7D11KGEJ8ACFJK6Y10WENJZ). riff reads
+//! the council in the clone, as `riff council show` does
+//! ([`crate::council::pick::of_pull`]), and checks the part
+//! ([`crate::council::result::check`]). The error of a member with no
+//! line is a [`crate::council::result::NoLine`], so the verify of the wave
+//! can read it as a result with no verdict. A fail needs no such part.
 //!
 //! The author of a pull request releases its item at the verify
 //! request. So the issue can have no holder. Then the result wakes the
@@ -3373,6 +3382,19 @@ fn closes_no_live_check(gh: &Gh, number: u64, body: &str) -> Result<()> {
     Ok(())
 }
 
+/// Refuses a pass of pull request `number` whose `result` has no line in
+/// the part `## The council` for a member of its council
+/// (01M7CFBZSQEEZNZBR9H1S54GS1, 01M7D11KGEJ8ACFJK6Y10WENJZ). It reads the
+/// council in the clone of `dir` as `riff council show` does, and a fetch
+/// that fails says so on stderr. The error is a
+/// [`crate::council::result::NoLine`] that names each member with no
+/// line.
+fn council_named(gh: &Gh, dir: &Path, number: u64, result: &str) -> Result<()> {
+    let (council, _) = crate::council::pick::of_pull(gh, dir, number, |line| eprintln!("{line}"))?;
+    crate::council::result::check(&council, result)?;
+    Ok(())
+}
+
 /// The state of the status `riff/verify` ([`VERIFY_CONTEXT`]) of `commit`
 /// in `repo` on GitHub now, for example `success`: the newest status of
 /// that context, from the combined status of the commit. `None` when the
@@ -3415,13 +3437,17 @@ pub fn verify_state(gh: &Gh, repo: &str, commit: &str) -> Result<Option<String>>
 /// request pins is one that a host cannot pull with no login
 /// (01M5SMRRAG1WPBJMQKKTPSRHRP). It reports no pass of a pull request
 /// whose body closes an issue with a line `Live:` in "Done when"
-/// ([`rollout::has_live_check`], 01M6WW5WSSRMTBP882FQP3TS2Q). Before
-/// the comment of a pass, it gives the squash message to the auto-merge
-/// ([`squash`], 01M748RKC7BYP8FC6W2E20SQA7). The caller
-/// posts it to the holder of the issue.
+/// ([`rollout::has_live_check`], 01M6WW5WSSRMTBP882FQP3TS2Q), and no
+/// pass whose result has no line for a member of the council
+/// ([`crate::council::result::check`], 01M7CFBZSQEEZNZBR9H1S54GS1).
+/// `dir` is a folder of a clone of `repo`: riff reads the council there.
+/// Before the comment of a pass, it gives the squash message to the
+/// auto-merge ([`squash`], 01M748RKC7BYP8FC6W2E20SQA7). The caller posts
+/// it to the holder of the issue.
 pub fn report(
     gh: &Gh,
     repo: &str,
+    dir: &Path,
     number: u64,
     tested: &str,
     verdict: Verdict,
@@ -3443,6 +3469,7 @@ pub fn report(
             bail!("{}", text::gate_not_passed(number, &commit, &checks, &gate));
         }
         image_pullable(gh, repo, number, &commit)?;
+        council_named(gh, dir, number, result)?;
         let message = squash(number, &head.title, &head.body);
         give_squash(
             gh,

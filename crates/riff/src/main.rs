@@ -499,7 +499,10 @@ enum Command {
     /// ruleset of the default branch requires, but riff/verify. A repository
     /// with no CI has none: riff/verify is its only check. riff refuses a
     /// pass when the body has Closes #N for an issue with a line Live: in
-    /// Done when: change that line to Refs #N. Before its comment, a pass
+    /// Done when: change that line to Refs #N. A pass needs the part
+    /// "## The council" in the result, with one line for each member of the
+    /// council of the pull request (riff council show N), for example
+    /// "- docs: no finding.". Before its comment, a pass
     /// gives the squash message to the auto-merge: the title with (#N), and
     /// the body with its trailers as the last paragraph. This turns
     /// auto-merge on, also when it was off: to keep a pull request from the
@@ -509,7 +512,8 @@ enum Command {
         verdict: VerdictArg,
         /// The number of the pull request.
         number: u64,
-        /// The result: each criterion, and what you did to check it.
+        /// The result: each criterion, what you did to check it, and for a
+        /// pass the part "## The council".
         #[arg(long)]
         file: std::path::PathBuf,
         /// The commit that you tested. The default is HEAD of this
@@ -2772,15 +2776,17 @@ async fn cli() -> Result<()> {
         } => {
             let result = std::fs::read_to_string(&file)
                 .with_context(|| format!("cannot read {}", file.display()))?;
+            let dir = identity::working_dir()?;
             let tested = match commit {
                 Some(commit) => commit,
-                None => pr::head_here(&identity::working_dir()?)?,
+                None => pr::head_here(&dir)?,
             };
             let thread = thread_or_default(None, &here)?;
             let verdict = verdict.into();
             let reported = pr::report(
                 &pr::Gh::here("verify"),
                 &thread.to_string(),
+                &dir,
                 number,
                 &tested,
                 verdict,

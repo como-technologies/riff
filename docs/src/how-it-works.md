@@ -3533,13 +3533,12 @@ crates/riff-core/src/record.rs:120: .riff/council/rust.md "Each conversion names
 
 In the part `## The council` of the result, each member has one line:
 `- NAME: no finding.`, or its findings, each after `shown:` or
-`not shown:`. `riff verify pass` does not check the part yet. It will
-refuse a result with no line for a member of the council (see
-[The build items of the council](#the-build-items-of-the-council)).
+`not shown:`. `riff verify pass` refuses a result with no line for a
+member of the council (see [Report a verify](#report-a-verify)).
 
 #### The build items of the council
 
-Each build item needs the one before it. The first three are done:
+Each build item needs the one before it. All four are done:
 
 1. #2119: the form of a member file, the default set in riff, and
    `riff council list`.
@@ -3547,7 +3546,7 @@ Each build item needs the one before it. The first three are done:
 3. #2121: the start text of a verify runs the council, with one
    subagent for each member.
 4. #2122: `riff verify pass` refuses a result that does not name
-   each member of the council. This item is not done yet.
+   each member of the council.
 
 The council of a design issue, and the gates before the code, will
 come later (#585).
@@ -4029,6 +4028,25 @@ A pull request with `Closes #N` for an issue with a line `Live:` in
 prints the fix. See
 [Leave the issue open for a check after the
 release](development.md#leave-the-issue-open-for-a-check-after-the-release).
+
+Last, a pass needs a line for each member of the council in the part
+`## The council` of the result. riff reads the council of the pull
+request as `riff council show 40` does (see
+[See the council of a pull request](#see-the-council-of-a-pull-request)).
+A line of a member starts with its name, for example
+`- rust: no finding.`. When the part has no line for a member, or the
+result has no such part, `riff verify pass` reports nothing and prints
+one line that names each member with no line:
+
+```text
+riff verify pass: the result has no line in the part `## The council` for docs and rust. Fix: add one line for each member of the council, for example `- docs: no finding.`, and report again. Nothing is reported.
+```
+
+Add the lines, then report again. A fail needs no part
+`## The council`: a fail can stop early. The verify of the wave reads
+its result in the same way. Its PASS with no line for a member is a
+result with no verdict: your lead gets a message that names each
+member with no line, and the pull request waits for a new verify.
 
 The wave starts the verify of a pull request in the same way: it waits
 until each check of the full check has a run that ended on the head
