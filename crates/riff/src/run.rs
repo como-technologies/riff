@@ -1459,11 +1459,53 @@ pub enum HostFault {
     /// host. The daemon cannot read the token
     /// (01M58XZF928T82YAMF4DSJBKBF).
     KeyringLocked(String),
+    /// The riff daemon did not run `gh`: the OS keyring of the host holds
+    /// the token of `gh` and keeps it locked, or does not answer
+    /// (01M77AB7XZV8KG8RRZ8C6R5A8X). The text says so.
+    GhLocked(String),
     /// Another fact is missing: the text that says the fix.
     Missing(String),
 }
 
+/// True when `error` comes of a locked OS keyring, or of one that does
+/// not answer: a [`riff_client::secrets::Locked`], or a [`HostFault`]
+/// that ends at the unlock ([`HostFault::locked`]). Then the step works
+/// again after the unlock (01M7BN2EPE81NEN3YZ78VSSG3W).
+///
+/// ```
+/// use riff::run::{HostFault, keyring_locked};
+/// use riff_client::secrets::Locked;
+///
+/// let locked = anyhow::Error::msg(Locked { host: "thelio".into() });
+/// assert!(keyring_locked(&locked.context("riff cannot find your user")));
+/// assert!(keyring_locked(&HostFault::GhLocked("riff did not run gh auth token".into()).into()));
+/// assert!(keyring_locked(&HostFault::KeyringLocked("thelio".into()).into()));
+/// assert!(!keyring_locked(&HostFault::Missing("set HOME".into()).into()));
+/// assert!(!keyring_locked(&anyhow::anyhow!("the image is broken")));
+/// ```
+pub fn keyring_locked(error: &anyhow::Error) -> bool {
+    riff_client::secrets::is_locked(error)
+        || error
+            .downcast_ref::<HostFault>()
+            .is_some_and(HostFault::locked)
+}
+
 impl HostFault {
+    /// True when the OS keyring of the host is locked, or does not
+    /// answer: the fault ends at the unlock.
+    ///
+    /// ```
+    /// use riff::run::HostFault;
+    ///
+    /// assert!(HostFault::KeyringLocked("thelio".into()).locked());
+    /// assert!(HostFault::GhLocked("riff did not run gh auth token".into()).locked());
+    /// assert!(!HostFault::TokenRefused.locked());
+    /// assert!(!HostFault::Missing("set HOME".into()).locked());
+    /// ```
+    pub fn locked(&self) -> bool {
+        matches!(self, HostFault::KeyringLocked(_) | HostFault::GhLocked(_))
+    }
+
     /// The fault of a sign-in of `claude` with `minutes` left, or `None`
     /// when it has [`MIN_MINUTES`] or more.
     ///
@@ -1495,7 +1537,7 @@ impl HostFault {
             HostFault::SignInEnds(minutes) => text::wave_sign_in_ends(*minutes),
             HostFault::TokenRefused => text::CLAUDE_TOKEN_REFUSED.to_owned(),
             HostFault::KeyringLocked(host) => text::claude_token_locked(host),
-            HostFault::Missing(text) => text.clone(),
+            HostFault::GhLocked(text) | HostFault::Missing(text) => text.clone(),
         }
     }
 }
@@ -1506,7 +1548,7 @@ impl std::fmt::Display for HostFault {
             HostFault::SignInEnds(minutes) => f.write_str(&text::run_sign_in_ends(*minutes)),
             HostFault::TokenRefused => f.write_str(text::CLAUDE_TOKEN_REFUSED),
             HostFault::KeyringLocked(host) => f.write_str(&text::claude_token_locked(host)),
-            HostFault::Missing(text) => f.write_str(text),
+            HostFault::GhLocked(text) | HostFault::Missing(text) => f.write_str(text),
         }
     }
 }
@@ -1562,9 +1604,34 @@ pub fn host_gh() -> pr::Gh {
 /// The fact of the host that `gh` has a sign-in, with `gh auth token`.
 /// riff keeps no token of it (01M6Z87A04EXTT1FFJSJ1EM6TB). A `gh` that
 /// the riff daemon does not run, because the keyring is locked
-/// (01M77AB7XZV8KG8RRZ8C6R5A8X), is a fault that says to unlock it at the
-/// desktop. A `gh` with no answer in its time limit is a fault that says
-/// so (01M77AB80MEFD9K8Y7FPDATY3D).
+/// (01M77AB7XZV8KG8RRZ8C6R5A8X), is the fault [`HostFault::GhLocked`]: it
+/// says to unlock it at the desktop, and it ends at the unlock
+/// (01M7BN2EPE81NEN3YZ78VSSG3W). A `gh` with no answer in its time limit
+/// is a fault that says so (01M77AB80MEFD9K8Y7FPDATY3D).
+///
+/// ```standalone_crate
+/// # keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
+/// use keyring_core::{Entry, Error, mock};
+/// use riff::run::{HostFault, gh_signed_in};
+///
+/// let dir = tempfile::tempdir()?;
+/// let gh = riff::pr::Gh::at(isolated::write_program(dir.path().join("gh"), "#!/bin/sh\necho gho_not_real\n"));
+/// # if !riff::pr::token_given() {
+/// // The keyring holds the token of gh, and keeps it locked: the daemon runs no gh.
+/// let entry = Entry::new(riff::pr::GH_KEYRING, "")?;
+/// entry.set_password("gho_not_real")?;
+/// let cred: &mock::Cred = entry.as_any().downcast_ref().unwrap();
+/// cred.set_error(Error::NoStorageAccess(Box::new(std::io::Error::other("locked"))));
+/// riff_client::secrets::ask_no_prompt();
+/// let fault = gh_signed_in(&gh).unwrap_err();
+/// assert!(matches!(fault, HostFault::GhLocked(_)) && fault.locked(), "{fault:?}");
+/// let text = fault.to_string();
+/// assert!(text.starts_with("riff did not run gh auth token: the OS keyring of "), "{text}");
+/// // The keyring is open again: gh runs.
+/// assert_eq!(gh_signed_in(&gh), Ok(()));
+/// # }
+/// # Ok::<(), anyhow::Error>(())
+/// ```
 ///
 /// ```
 /// use std::time::{Duration, Instant};
@@ -1594,7 +1661,7 @@ pub fn gh_signed_in(gh: &pr::Gh) -> Result<(), HostFault> {
             drop(zeroize::Zeroizing::new(token));
             Ok(())
         }
-        Err(e) if riff_client::secrets::is_locked(&e) => Err(HostFault::Missing(format!("{e:#}"))),
+        Err(e) if riff_client::secrets::is_locked(&e) => Err(HostFault::GhLocked(format!("{e:#}"))),
         Err(e) => Err(HostFault::Missing(format!("{}: {e:#}", text::RUN_NO_GH))),
     }
 }

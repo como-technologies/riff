@@ -2420,7 +2420,7 @@ pub(crate) async fn run<R: Runtime + 'static>(
     // A change of the plan on riff-server: the wave looks at once (#1729).
     // Each follower starts again after a failed start, for example on a
     // locked keyring (#2085).
-    let every = daemon.follow_every();
+    let every = daemon.retry_every();
     let plan = Arc::new(Notify::new());
     let _follow = {
         let (world, wave, plan) = (daemon.world(), wave.clone(), plan.clone());
@@ -6315,7 +6315,7 @@ mod tests {
                 .with_world(world.clone())
                 .with_look_every(every)
                 .with_claim_wait(claim_wait)
-                .with_follow_every(Duration::from_millis(100))
+                .with_retry_every(Duration::from_millis(100))
                 .with_relay(crate::release::fake_riff(&relay, None));
             Limit {
                 sessions,

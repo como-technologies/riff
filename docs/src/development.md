@@ -6470,11 +6470,13 @@ sequenceDiagram
     Note over K: locked after the login
     D->>K: a read, with no prompt
     K-->>D: locked: the wave waits, no session on riff-server
+    Note over D: the lead waits, and keeps its session
     P->>K: gh auth status: the unlock prompt
     P->>K: the password of the keyring
     D->>K: a read at the next look
     K-->>D: the secret: riff and gh work
     D->>S: the session of the daemon: --host reaches it
+    D->>D: the lead starts again: claude --resume
 ```
 
 At each login, unlock the keyring one time. Open a terminal at the
@@ -6530,6 +6532,48 @@ riff did not run git fetch -q origin: the OS keyring of pangolin is locked or do
 ```
 
 A remote over SSH asks `gh` for nothing, so its `git` runs.
+
+##### See that the lead starts again after the unlock
+
+A restart of the host ends the container of the lead. At its start, the
+daemon starts the lead again with `claude --resume`, as the same
+session, so the lead keeps its conversation (see
+[Where the lead runs](how-it-works.md#where-the-lead-runs)). While the
+keyring is locked, that start fails. The lead keeps its session, and
+the daemon tries again each 30 seconds. The first try after the unlock
+starts the lead, so it starts within 30 seconds of the unlock. You run
+no `riff lead start` for it. While the lead waits, the daemon starts no
+new lead of the project.
+
+The log of the daemon gets one line at the first failed try:
+
+```text
+riff cannot start the lead riff-lead-como-technologies-riff again yet: riff did not run gh auth token: the OS keyring of thelio is locked or does not answer: unlock it at the desktop. gh uses the same keyring, so gh stops too. It keeps its session, and riff tries again each 30s: the first try after the unlock starts it with claude --resume.
+```
+
+It gets one line at the start:
+
+```text
+The lead riff-lead-como-technologies-riff ended. riff starts it again with claude --resume, as the same session.
+```
+
+See both lines on the host:
+
+```sh
+journalctl --user -u riff | grep 'riff-lead-'
+```
+
+Then attach to the lead, in your clone of the repository:
+
+```sh
+riff lead start
+```
+
+When the keyring stays locked for more than 5 minutes, riff-server ends
+the claim `lead` of the old session. At the unlock, the daemon claims
+the lead for the old session again, and starts no second lead. In that
+time, another host of the project can claim the lead and start a new
+lead. Then the old lead does not start again, and its session ends.
 
 ##### See that the wakes come again after the unlock
 

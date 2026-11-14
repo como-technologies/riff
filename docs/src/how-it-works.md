@@ -6509,9 +6509,12 @@ project, and each minute:
   claim is still free.
 - A lead that ends by itself, for example with `/exit`, a crash or a
   reboot, starts again with `claude --resume`: the same session and the
-  same conversation. A lead that ends less than a minute after its start
-  does not start again: its session ends, and a host claims the lead
-  again. A lead that fails to start makes its host wait: see
+  same conversation. On a locked keyring, it keeps its session, and
+  starts again at the first try after the unlock: see
+  [See that the lead starts again after the unlock](development.md#see-that-the-lead-starts-again-after-the-unlock).
+  A lead that ends less than a minute after its start does not start
+  again: its session ends, and a host claims the lead again. A lead that
+  fails to start makes its host wait: see
   [When the lead fails to start](#when-the-lead-fails-to-start).
 - One start of the lead runs at a time on a host: `riff lead move` and
   the riff daemon share a lock. A start that comes while another start
@@ -6574,7 +6577,9 @@ that host waits before its next start of the lead, longer each time:
 
 - A fault is a start of a new lead that fails, and a lead that ends
   less than a minute after its start. A lead that cannot start again
-  with `claude --resume` after 3 tries is a fault too.
+  with `claude --resume` after 3 tries is a fault too. A start again
+  that fails on a locked keyring is no fault: the lead waits for the
+  unlock.
 - After the first fault, the daemon starts no lead of the project for
   10 s. After the next faults in a row, it waits 30 s, then 2 min, then
   10 min after each fault.

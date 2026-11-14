@@ -283,3 +283,40 @@ fn the_book_starts_and_stops_the_lead_with_the_commands_of_today() {
         }
     }
 }
+
+/// #2098, 01M7BN2EPE81NEN3YZ78VSSG3W: "At a login with a security key"
+/// in `development.md` says when the daemon starts the lead again after
+/// the unlock. It shows the lines of the log of the daemon, as the daemon
+/// writes them, and the commands to see them and to attach, each in a
+/// block of its own.
+#[test]
+fn the_book_says_when_the_lead_starts_again_after_the_unlock() {
+    let part = part("development.md", "When the keyring is locked");
+    let heading = "\n##### See that the lead starts again after the unlock\n";
+    let how = part.split(heading).nth(1).expect("the how-to of the lead");
+    let how = &how[..how.find("\n##### ").unwrap_or(how.len())];
+    let locked = riff_client::secrets::Locked {
+        host: "thelio".into(),
+    };
+    let why = format!("{}: {locked}", riff::text::gh_not_run("auth token"));
+    let name = "riff-lead-como-technologies-riff";
+    let every = std::time::Duration::from_secs(30);
+    for words in [
+        format!("\n{}\n", riff::text::lead_back_locked(name, &why, every)),
+        format!("\n{}\n", riff::text::lead_back(name)),
+        "```sh\njournalctl --user -u riff | grep 'riff-lead-'\n```".to_owned(),
+        "```sh\nriff lead start\n```".to_owned(),
+    ] {
+        assert!(how.contains(&words), "the how-to has no {words:?}");
+    }
+    // The words of the how-to on one line, as the wrap breaks the lines.
+    let prose = how.split_whitespace().collect::<Vec<_>>().join(" ");
+    for words in [
+        "The lead keeps its session, and the daemon tries again each 30 seconds.",
+        "within 30 seconds of the unlock",
+        "You run no `riff lead start` for it.",
+        "starts no second lead",
+    ] {
+        assert!(prose.contains(words), "the how-to has no {words:?}");
+    }
+}
