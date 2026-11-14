@@ -643,14 +643,15 @@ fn pull_requests_that_change_one_file_with_no_conflict_verify_side_by_side() {
     assert_eq!(again.lanes, first.lanes);
 }
 
-/// #2128: the head of 1 is stale. `main` moved after it,
-/// and changed the line of section A that 1 changes, so 1 has a conflict.
-/// The heads of 2 and 3 hold that `main`, and each adds a line to section
-/// B. So a plain `git merge-tree` of the head of 1 and each newer head
-/// gives a conflict. The verify of 2 passed, and the verify of 3 runs:
-/// both go before 1 in the order. The merge test over `main` finds that 1
-/// clashes only with `main`: its rebase starts at once, and waits for
-/// neither.
+/// #2128: the head of 1 is stale. `main` moved after it, and added a line
+/// to section A where 1 adds one, so 1 has a conflict. The heads of 2 and
+/// 3 hold that `main`. 2 adds a line next to the line of `main`, and 3
+/// adds a line to section B. So a plain `git merge-tree` of the head of 1
+/// and each newer head gives a conflict. So does the tree of the head of 1
+/// over the base of 2: it does not have the line of `main`. The verify of
+/// 2 passed, and the verify of 3 runs: both go before 1 in the order. The
+/// merge test over `main` finds that 1 clashes only with `main`: its
+/// rebase starts at once, and waits for neither.
 #[test]
 fn a_stale_head_that_clashes_only_with_main_gets_its_rebase_at_once() {
     let dir = tempfile::tempdir().unwrap();
@@ -678,21 +679,22 @@ fn a_stale_head_that_clashes_only_with_main_gets_its_rebase_at_once() {
     git(&work, &["switch", "-q", "main"]);
     commit(page("- main\n", ""), "main moves");
     push("refs/heads/main");
-    let fresh = |pull: u64, line: &str| {
+    let fresh = |pull: u64, a: &str, b: &str| {
         git(
             &work,
             &["switch", "-q", "-c", &format!("pr-{pull}"), "main"],
         );
-        let head = commit(page("- main\n", line), &format!("pr {pull}"));
+        let head = commit(page(a, b), &format!("pr {pull}"));
         push(&format!("refs/pull/{pull}/head"));
         head
     };
-    let (two, three) = (fresh(42, "- four\n"), fresh(43, "- five\n"));
+    let two = fresh(42, "- main\n- four\n", "");
+    let three = fresh(43, "- main\n", "- five\n");
     git(dir.path(), &["clone", "-q", "--", &url, "main"]);
     let main = dir.path().join("main");
-    let plain = |head: &str| {
+    let merge = |one: &str, head: &str| {
         Command::new("git")
-            .args(["merge-tree", "--write-tree", &stale, head])
+            .args(["merge-tree", "--write-tree", one, head])
             .current_dir(&main)
             .output()
             .unwrap()
@@ -711,10 +713,14 @@ fn a_stale_head_that_clashes_only_with_main_gets_its_rebase_at_once() {
         ],
     );
     assert_eq!(
-        (plain(&two), plain(&three)),
+        (merge(&stale, &two), merge(&stale, &three)),
         (Some(1), Some(1)),
         "a plain test: a conflict"
     );
+    let base = git(&main, &["merge-base", &two, "origin/main"]);
+    let tree = format!("{stale}^{{tree}}");
+    let whole = git(&main, &["commit-tree", &tree, "-p", &base, "-m", "x"]);
+    assert_eq!(merge(&whole, &two), Some(1), "the whole tree: a conflict");
 
     let page_files: &[&str] = &[PAGE];
     let pulls = [

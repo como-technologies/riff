@@ -3632,8 +3632,12 @@ them, and the others wait until it merges or its verify fails:
   that holds that `main`. So the test of such a head and a head with
   no conflict merges the two over the merge base of the newer head and
   `main`: only a conflict of the changes of the two pull requests
-  counts. The daemon fetches `main` for this test. A pull request whose
-  head conflicts only with `main` gets its rebase at once.
+  counts. The test puts the changes of the old head over the lines of
+  `main`. Where the two changed the same lines, it keeps the lines of
+  both. So a newer head that changes lines next to a change of `main`
+  does not clash with the old head. The daemon fetches `main` for this
+  test. A pull request whose head conflicts only with `main` gets its
+  rebase at once.
 - So after a merge, only the next pull request of the order gets its
   rebase. The others keep their conflict until their turn.
 - A pull request that cannot merge by itself for another reason does

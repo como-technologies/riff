@@ -547,6 +547,13 @@
 - **01M7E4ZSYWZHY0VD28Y9Y30MJR** riff top names the cause of
   01M7E075HSSYBXN34JY1K4HDEG on the row of the pull request, as riff
   wave list does, from the facts of the daemons.
+- **01M7E7ER1Z43M1Q07GWT8RSBMC** In the merge test of
+  01M7E06YMNMF92TDW21XED5JZ8, the head with the conflict goes over the
+  lines of the default branch: a merge of that head into the merge base,
+  with the merge driver union of git. Where the head and the default
+  branch changed the same lines, the test keeps the lines of both, those
+  of the head first. A newer head that changes lines next to a change of
+  the default branch does not clash with the head.
 
 ## Waves on GitHub
 
