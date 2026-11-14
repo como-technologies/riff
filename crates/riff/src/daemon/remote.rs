@@ -1206,13 +1206,14 @@ impl Restart {
     }
 }
 
-/// Does `request` with the daemon in the folder `dir`, through its
-/// control socket, as the command does on this host. It gives the reply
-/// text, or the error.
+/// Does `request` of `from` with the daemon in the folder `dir`, through
+/// its control socket, as the command does on this host. It gives the
+/// reply text, or the error.
 pub async fn answer(
     dir: &Path,
     served: &Served,
     request: &Request,
+    from: &SessionUri,
 ) -> std::result::Result<String, String> {
     let done = match request {
         Request::Status => super::status(dir).await.map(|status| {
@@ -1250,7 +1251,7 @@ pub async fn answer(
             };
             lines_of(dir, ask).await
         }
-        Request::LeadMove => crate::lead::take(dir, &served.wave).await,
+        Request::LeadMove => crate::lead::take(dir, &served.wave, from).await,
         Request::LeadRestart => {
             let ask = Ask::StopLead {
                 repo: served.wave.repo.clone(),
@@ -1971,7 +1972,7 @@ impl Session {
     /// as a direct note to its sender (01M57D4FTP2NXAE18XFRXCJ79H).
     async fn reply(&self, checked: &Checked, judged: std::result::Result<Request, String>) {
         let reply = match judged {
-            Ok(request) => answer(&self.dir, &self.served, &request).await,
+            Ok(request) => answer(&self.dir, &self.served, &request, &checked.message.from).await,
             Err(refusal) => Err(refusal),
         };
         let body = reply_body(checked.message.seq, &self.served.wave.host, &reply);

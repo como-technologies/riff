@@ -1980,6 +1980,7 @@ esac
                 phase: Default::default(),
                 last: String::new(),
                 lead: false,
+                cause: None,
             },
             folder: folder.clone(),
             server: wave.server.clone(),

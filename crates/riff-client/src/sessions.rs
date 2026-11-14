@@ -67,6 +67,7 @@
 //!     phase: Phase::Works,
 //!     last: String::new(),
 //!     lead: false,
+//!     cause: None,
 //! };
 //! let sessions = Sessions::new(
 //!     vec![
@@ -167,6 +168,48 @@ pub struct Live {
     /// daemon on an old riff (an old daemon gives false).
     #[serde(default)]
     pub lead: bool,
+    /// What started the lead (#2099). `None` for a session that is not
+    /// the lead, and for a lead of an old daemon.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cause: Option<LeadCause>,
+}
+
+/// What started a lead (#2099, 01M7BNP4ZYJCCEK7ZHCJ3EX3SJ): the line of the
+/// start in the log of the riff daemon and the line of the lead in `riff
+/// daemon status` name it.
+///
+/// ```
+/// use riff_client::sessions::LeadCause;
+///
+/// let by = "riff://mike@pangolin/o/r".parse()?;
+/// let cause = LeadCause::Command { command: "riff lead move".into(), by: Box::new(by) };
+/// let json = serde_json::to_value(&cause)?;
+/// assert_eq!(json["cause"], "command");
+/// assert_eq!(serde_json::from_value::<LeadCause>(json)?, cause);
+/// let loop_cause = serde_json::to_value(LeadCause::LeadLoop)?;
+/// assert_eq!(loop_cause, serde_json::json!({ "cause": "lead_loop" }));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "cause", rename_all = "snake_case")]
+pub enum LeadCause {
+    /// The start of the daemon: the lead had no container, for example
+    /// after a reboot.
+    DaemonStart,
+    /// The lead loop of the daemon: no host held the claim lead.
+    LeadLoop,
+    /// A start again after a fault: the container of the lead ended by
+    /// itself, for example with `/exit` or a crash.
+    Fault,
+    /// An update of riff: the lead starts again on the new riff.
+    Update,
+    /// A command of a person.
+    Command {
+        /// The command, for example `riff lead move`.
+        command: String,
+        /// Who ran it: the person, or the lead of the person.
+        by: Box<riff_core::name::SessionUri>,
+    },
 }
 
 /// One session of the model: a session of riff-server, a container
@@ -606,6 +649,7 @@ mod tests {
             since_ms: 0,
             phase,
             lead: false,
+            cause: None,
             last: String::new(),
         }
     }

@@ -3807,6 +3807,7 @@ impl Live {
             me: me.clone(),
             terminal: false,
             no_github: false,
+            cause: None,
         })
     }
 }
@@ -6003,6 +6004,7 @@ mod tests {
                     me,
                     terminal: false,
                     no_github: false,
+                    cause: None,
                 }))
             })
         }
@@ -9039,6 +9041,7 @@ esac
                 phase: Default::default(),
                 last: String::new(),
                 lead: true,
+                cause: None,
             },
             folder: PathBuf::new(),
             server: wave.server.clone(),
@@ -10893,6 +10896,7 @@ esac
                     phase: Default::default(),
                     last: String::new(),
                     lead: false,
+                    cause: None,
                 },
                 folder: dir.path().to_owned(),
                 server,

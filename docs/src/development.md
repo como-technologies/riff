@@ -4982,6 +4982,51 @@ The command claude --resume that claude shows works only in the container of the
 
 `riff lead start` attaches to the lead that started again.
 
+#### See what started the lead
+
+Each start of a lead writes one line in the log of the riff daemon of
+its host. The line names the cause of the start. `riff daemon status`
+shows the same cause on the line of the lead:
+
+```sh
+riff daemon status
+```
+
+```text
+Sessions:
+  riff-lead-como-technologies-riff  lead  session cc1b0616-6d1e-4b8a-9f3c-2a7e5d0b4c91  for 15s  lead  cause: the lead loop (no host held the claim lead)
+```
+
+From another host, or in the terminal of the lead, name the host of the
+lead:
+
+```sh
+riff daemon status --host thelio
+```
+
+To see each start of a lead in the log of the daemon on Linux:
+
+```sh
+journalctl --user -u riff | grep "The cause:"
+```
+
+```text
+The lead of como-technologies/riff starts in the container riff-lead-como-technologies-riff: session cc1b0616-6d1e-4b8a-9f3c-2a7e5d0b4c91. The cause: the lead loop (no host held the claim lead).
+```
+
+The log file of the daemon has the same lines (see
+[Read the log file of the daemon](#read-the-log-file-of-the-daemon)).
+
+| The cause | What started the lead |
+|---|---|
+| the start of the daemon | The daemon started, and the lead had no container, for example after a reboot. The lead starts again with `claude --resume`. |
+| the lead loop | No host held the claim lead, for example after `riff lead restart`, or after the end of the session of the old lead. A new session starts. |
+| a start again after a fault | The container of the lead ended by itself, for example with `/exit` or a crash. The lead starts again with `claude --resume`. |
+| an update of riff | After `riff update`, the daemon started the lead again on the new riff, with `claude --resume`. |
+| a command of a person | `riff lead move`, and who ran it: the person, for example `mike@pangolin:riff`, or the lead of the person. |
+
+`riff lead start` starts no lead, so no line names it.
+
 #### Fix a stale sign-in of the lead
 
 A lead of an older riff can run with no token: it holds the sign-in

@@ -2397,6 +2397,7 @@ async fn work(
             me: me.clone(),
             terminal: false,
             no_github,
+            cause: None,
         },
         signals,
     )

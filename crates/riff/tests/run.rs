@@ -19,6 +19,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use isolated::Isolated;
+use riff_client::sessions::LeadCause;
 use riff_server::keys::At;
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -2264,6 +2265,13 @@ async fn a_new_daemon_starts_the_idle_lead_again_on_the_new_riff_with_claude_res
     isolated::write_whole(machine.bin.path().join("links"), "1\n");
     let status = machine.ok(None, &["daemon", "status"]).await;
     assert!(status.contains(name), "{status}");
+    // #2099: the log and the status name the update as the cause.
+    let cause = LeadCause::Update;
+    let log = machine.read("daemon.out");
+    let starts = riff::text::lead_starts(REPO, name, &session, &cause);
+    assert!(log.contains(&starts), "{log}");
+    let shown = format!("  cause: {}\n", riff::text::lead_cause(&cause));
+    assert!(status.contains(&shown), "{status}");
 
     // The person ends the lead: the daemon ends its session.
     std::fs::remove_file(machine.bin.path().join("hold")).unwrap();
@@ -2986,11 +2994,16 @@ async fn the_daemon_starts_the_lead_with_a_terminal_and_riff_lead_start_attaches
     std::fs::write(machine.bin.path().join("hold"), "").unwrap();
     let name = LEAD_NAME;
     let session = machine.daemon_lead().await;
+    // #2099: the log and the status name the lead loop as the cause.
+    let cause = LeadCause::LeadLoop;
     let log = machine.read("daemon.out");
     assert!(
-        log.contains(&riff::text::lead_starts(REPO, name, &session)),
+        log.contains(&riff::text::lead_starts(REPO, name, &session, &cause)),
         "{log}"
     );
+    let status = machine.ok(None, &["daemon", "status"]).await;
+    let shown = format!("  cause: {}\n", riff::text::lead_cause(&cause));
+    assert!(status.contains(&shown), "{status}");
     // On another host: the host of the lead and the step there.
     let there = machine.run_on("pangolin", &["lead", "start"]).await;
     assert_eq!(there.status.code(), Some(1), "{there:?}");
@@ -3287,7 +3300,12 @@ async fn a_new_lead_keeps_a_clone_that_git_cannot_fast_forward_and_starts() {
     );
     let second = lead_session_of(&machine);
     assert!(
-        out.contains(&riff::text::lead_starts(REPO, name, &second)),
+        out.contains(&riff::text::lead_starts(
+            REPO,
+            name,
+            &second,
+            &LeadCause::LeadLoop
+        )),
         "{out}"
     );
     assert_eq!(git(&clone, &["rev-parse", "HEAD"]), old);
@@ -3349,6 +3367,48 @@ async fn riff_host_join_with_no_lead_claims_no_lead_and_a_join_without_it_starts
     assert!(machine.read("run.args").is_empty());
     machine.status_until(&parts("workers, no lead")).await;
     machine.ok(None, &["host", "leave"]).await;
+}
+
+/// #2099, 01M7BNP4ZYJCCEK7ZHCJ3EX3SJ: `riff lead move` of the person starts the
+/// lead on a host that claims no lead by itself. The log of the daemon and
+/// `riff daemon status`, also with `--host`, name the command and the
+/// person as the cause of the start.
+#[tokio::test]
+async fn a_lead_of_riff_lead_move_names_the_command_and_the_person_as_its_cause() {
+    let machine = Machine::new().await;
+    machine.claude_token();
+    let hold = machine.bin.path().join("hold");
+    std::fs::write(&hold, "").unwrap();
+    machine.ok(None, &["resume", "--riff"]).await;
+    machine.ok(None, &["host", "join", "--no-lead"]).await;
+    // The daemon of the host has its session on riff-server.
+    let remote = ["daemon", "status", "--host", "thelio"];
+    let started = Instant::now();
+    while machine.run(None, &remote).await.status.code() != Some(0) {
+        assert!(started.elapsed() < isolated::HANG, "no daemon");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    machine.ok(None, &["lead", "move", "thelio"]).await;
+    machine.lead_starts().await;
+    let session = lead_session_of(&machine);
+    let by = format!("riff://mike@thelio/{REPO}").parse().unwrap();
+    let cause = LeadCause::Command {
+        command: "riff lead move".into(),
+        by: Box::new(by),
+    };
+    let log = machine.read("daemon.out");
+    let starts = riff::text::lead_starts(REPO, LEAD_NAME, &session, &cause);
+    assert!(log.contains(&starts), "{log}");
+    let shown = format!("  cause: {}\n", riff::text::lead_cause(&cause));
+    let status = machine.ok(None, &["daemon", "status"]).await;
+    assert!(status.contains(&shown), "{status}");
+    let status = machine.ok(None, &remote).await;
+    assert!(status.contains(&shown), "{status}");
+
+    machine.ok(None, &["host", "leave"]).await;
+    std::fs::remove_file(&hold).unwrap();
+    machine.lead_ends().await;
 }
 
 /// The lead plays along with `riff lead restart`: it waits for the ask for
