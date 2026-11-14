@@ -4852,7 +4852,13 @@ branch to your lead, and releases the item.
 When riff-server refuses the claim, the daemon ends the new worker
 session at once. A pause can come after the look, before the claim.
 Then the start does not count as one of the 3, and your lead gets no
-message. For each other refusal, your lead gets a message.
+message. Another session can hold the item, or the lead can hold it.
+`riff who` shows no session that is gone, but riff-server keeps its
+claim for 5 minutes after its last keep-alive. So the look can see an
+item free that riff-server still gives to another session. Then the
+start does not count either, and your lead gets no message. The daemon
+claims the item again 30 seconds later at the earliest. For each other
+refusal, your lead gets a message.
 
 A verify session gets a clone at the head commit of the pull request.
 It checks the work against the `Done when:` line of the issue, or its
@@ -4875,6 +4881,47 @@ already (see
 
 When the daemon stops during a session, the session runs on. A new
 daemon takes it up, and does the steps after its end.
+
+#### At a restart of the host
+
+A restart of the host ends the container of each session of the wave.
+At its start, the daemon finds each session whose container does not
+run. For each one, it does the steps after the end, as for a session
+that ended: it releases the item, and ends the old session on
+riff-server. Then the wave starts the item again in a new session. You
+run no `riff host join`. The 3 starts of an item count again from 0 at
+the start of the daemon.
+
+```mermaid
+sequenceDiagram
+    participant D as the riff daemon
+    participant S as riff-server
+    participant W as the wave
+    Note over D: the host starts again:<br/>the container of issue-12 does not run
+    D->>S: release issue-12, end the old session
+    S->>W: a change of the plan
+    W->>S: claim issue-12: a new session
+```
+
+The steps after the end need the keyring. While it is locked, for
+example after a login with a security key (see
+[At a login with a security key](#at-a-login-with-a-security-key)),
+the steps wait, and the daemon tries again each 30 seconds. Until the
+steps are done, riff-server still gives the item to the old session,
+and the wave starts no session of the item. The first try after the
+unlock releases the item, so the wave starts it within a minute of the
+unlock. The log of the daemon gets one line for each item at the first
+failed try:
+
+```text
+riff cannot do the steps after the end of riff-issue-12-1a2b3c4d yet: the OS keyring of thelio is locked or does not answer: unlock it at the desktop. gh uses the same keyring, so gh stops too. riff tries again each 30s: the first try after the unlock releases issue-12 and ends its session on riff-server. Until then, the wave starts no session of issue-12.
+```
+
+After the unlock, see these lines, and the claim of each new session:
+
+```sh
+journalctl --user -u riff | grep -e 'steps after the end' -e 'claims issue-'
+```
 
 ### Find a session that did not end
 
@@ -6653,6 +6700,9 @@ the claim `lead` of the old session. At the unlock, the daemon claims
 the lead for the old session again, and starts no second lead. In that
 time, another host of the project can claim the lead and start a new
 lead. Then the old lead does not start again, and its session ends.
+
+The items of the wave that ran at the restart start again after the
+unlock too (see [At a restart of the host](#at-a-restart-of-the-host)).
 
 ##### See that the wakes come again after the unlock
 

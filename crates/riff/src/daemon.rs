@@ -2646,9 +2646,10 @@ pub struct Daemon<R> {
     claim_wait: Duration,
     /// The time between two tries of a step that failed, and that the
     /// daemon tries again by itself ([`facts::every`]): a start of a
-    /// follower of a wave on riff-server ([`crate::followers`], #2085), and
-    /// a start again of a lead on a locked keyring ([`Daemon::lead_back`],
-    /// #2098).
+    /// follower of a wave on riff-server ([`crate::followers`], #2085), a
+    /// start again of a lead on a locked keyring ([`Daemon::lead_back`],
+    /// #2098), the steps after the end of a session on a locked keyring,
+    /// and a claim that another session holds (#2114).
     retry_every: Duration,
     /// A session ended, or a job of a wave ended: the waves look again.
     changed: Notify,
@@ -2673,6 +2674,14 @@ pub struct Daemon<R> {
     sends: facts::Sends,
     /// The reason of the last end of each item of a wave ([`crate::ends`]).
     ends: Mutex<BTreeMap<String, String>>,
+    /// The repository and the item of each job of a wave whose session
+    /// ended while no daemon ran, until the steps after its end are done
+    /// ([`Daemon::recover`], #2114).
+    ending: Mutex<BTreeSet<(String, String)>>,
+    /// When riff-server refused the claim of an item of a wave because
+    /// another session holds it, or a hold keeps it, by repository and
+    /// item (#2114).
+    refused: Mutex<BTreeMap<(String, String), tokio::time::Instant>>,
     /// The pull of the session image that failed for the wave of each
     /// repository, until a pull works (01M5SMSB3H1E9NXMBDN8ZDJ6CD).
     pulls: Mutex<BTreeMap<String, Pulled>>,
@@ -2858,6 +2867,8 @@ impl<R: Runtime + 'static> Daemon<R> {
             starts: remote::Starts::default(),
             sends: facts::Sends::default(),
             ends: Mutex::new(BTreeMap::new()),
+            ending: Mutex::default(),
+            refused: Mutex::default(),
             pulls: Mutex::new(BTreeMap::new()),
             stale: Mutex::default(),
             lead_idle: lead_idle(),
@@ -2999,9 +3010,11 @@ impl<R: Runtime + 'static> Daemon<R> {
     }
 
     /// The time between two tries of a step that failed: a start of a
-    /// follower of a wave on riff-server ([`crate::followers::follow`]),
-    /// and a start again of a lead on a locked keyring
-    /// ([`Daemon::lead_back`]).
+    /// follower of a wave on riff-server ([`crate::followers::follow`]), a
+    /// start again of a lead on a locked keyring ([`Daemon::lead_back`]),
+    /// the steps after the end of a session on a locked keyring
+    /// ([`crate::wave::finish`]), and a claim that another session holds
+    /// ([`Daemon::refused_claims`]).
     pub(crate) fn retry_every(&self) -> Duration {
         self.retry_every
     }
@@ -3197,6 +3210,49 @@ impl<R: Runtime + 'static> Daemon<R> {
             .unwrap_or_else(PoisonError::into_inner)
             .get(item)
             .cloned()
+    }
+
+    fn ending_lock(&self) -> std::sync::MutexGuard<'_, BTreeSet<(String, String)>> {
+        self.ending.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The items of the wave of `repo` whose session ended while no daemon
+    /// ran, while the daemon does the steps after their end
+    /// ([`Daemon::recover`], #2114). Their claims on riff-server end with
+    /// these steps.
+    pub(crate) fn ending(&self, repo: &str) -> BTreeSet<String> {
+        self.ending_lock()
+            .iter()
+            .filter(|(r, _)| r == repo)
+            .map(|(_, item)| item.clone())
+            .collect()
+    }
+
+    fn refused_lock(
+        &self,
+    ) -> std::sync::MutexGuard<'_, BTreeMap<(String, String), tokio::time::Instant>> {
+        self.refused.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Keeps that riff-server refused the claim of `item` of the wave of
+    /// `repo` now: another session holds it, or a hold keeps it (#2114).
+    pub(crate) fn claim_refused(&self, repo: &str, item: &str) {
+        let key = (repo.to_owned(), item.to_owned());
+        self.refused_lock().insert(key, tokio::time::Instant::now());
+    }
+
+    /// The items of the wave of `repo` whose claim riff-server refused in
+    /// the last [`Daemon::retry_every`] ([`Daemon::claim_refused`]): the
+    /// wave claims them again after that time (#2114).
+    pub(crate) fn refused_claims(&self, repo: &str) -> BTreeSet<String> {
+        let every = self.retry_every;
+        let mut refused = self.refused_lock();
+        refused.retain(|_, at| at.elapsed() < every);
+        refused
+            .keys()
+            .filter(|(r, _)| r == repo)
+            .map(|(_, item)| item.clone())
+            .collect()
     }
 
     pub fn dir(&self) -> &Path {
@@ -6398,6 +6454,29 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// (01M4ZHT01HH88KPA8628M7VBEY). Call it after [`listen`], before
     /// [`Daemon::serve`]. For each session that it took up, a task looks if
     /// the container reaches the network (`lost_network`).
+    ///
+    /// The job of a wave whose container does not run, for example after a
+    /// restart of the host, gets its steps after the end
+    /// (`wave::finish`): they release the item and end the session
+    /// on riff-server. On a locked keyring they wait for the unlock. Until
+    /// they are done, the item is in `Daemon::ending`, and the wave starts
+    /// no session of it: its claim on riff-server still holds (#2114).
+    ///
+    /// ```mermaid
+    /// sequenceDiagram
+    ///     participant D as the new daemon
+    ///     participant K as the keyring
+    ///     participant S as riff-server
+    ///     participant W as the wave
+    ///     Note over D: the container of issue-12 does not run
+    ///     D->>K: the sign-in of the steps after the end
+    ///     K-->>D: locked: wait 30 s, and try again
+    ///     W->>W: a look: issue-12 ends, no claim
+    ///     Note over K: the person unlocks the keyring
+    ///     D->>S: release issue-12, end the old session
+    ///     D->>W: a change: look now
+    ///     W->>S: claim issue-12: granted, one new start
+    /// ```
     pub async fn recover(self: &Arc<Self>) {
         let Ok(entries) = std::fs::read_dir(self.dir.join(LIVE)) else {
             return;
@@ -6437,14 +6516,24 @@ impl<R: Runtime + 'static> Daemon<R> {
                 }
                 // The job of a wave does its steps after the end now:
                 // the session ended while no daemon ran. The sweep keeps
-                // its folder from now on (01M53S7WDPQ2GWHJWJ6SZXZ5PN).
-                if record.job.is_some() {
+                // its folder from now on (01M53S7WDPQ2GWHJWJ6SZXZ5PN). The
+                // wave starts no session of the item until these steps
+                // end its claim, also while they wait for the keyring
+                // (01M7CGA8PN39YQ67S3N0MAHR7Y).
+                if let Some(job) = &record.job {
                     let ended = Ended {
                         code: None,
                         failed: true,
                     };
-                    let job = self.in_job(&record.live.item);
-                    tokio::spawn(crate::wave::finish(self.clone(), record, ended, job));
+                    let key = (job.wave.repo.clone(), record.live.item.clone());
+                    self.ending_lock().insert(key.clone());
+                    let held = self.in_job(&record.live.item);
+                    let daemon = self.clone();
+                    tokio::spawn(async move {
+                        crate::wave::finish(daemon.clone(), record, ended, held).await;
+                        daemon.ending_lock().remove(&key);
+                        daemon.tell_changed();
+                    });
                 }
                 continue;
             }

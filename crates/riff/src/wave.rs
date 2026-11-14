@@ -299,8 +299,11 @@
 //!   keeps these waits for the look and for `riff wave list`
 //!   ([`Daemon::order_waits`]);
 //! - an item that started [`STARTS`] times in this run of the wave. The
-//!   lead gets one message for it. A start whose claim riff-server
-//!   refused for a pause does not count (01M558EYCXPFW8CJV3XJ7HK3NR).
+//!   lead gets one message for it, with the end of the last start that
+//!   counted (01M7CGA8SBVMCASA6NJB41CFC0). A start whose claim riff-server
+//!   refused for a pause does not count (01M558EYCXPFW8CJV3XJ7HK3NR), nor
+//!   one whose claim another session holds, or a hold keeps
+//!   (01M7CGA8M0RARH6KG3PV7EYNJE).
 //!   `riff host join` on the wave clears the starts
 //!   (01M57A7A48A70Y7PTD95A3MBYC). The starts of a verify are for its head
 //!   commit ([`Work::key`], 01M6QQ7H2B88AT3KS8NGM3DKCZ): a new head starts
@@ -690,8 +693,33 @@
 //! session at once, so no idle worker with no item stays
 //! (01M558EYCXPFW8CJV3XJ7HK3NR). A pause can come between the look and
 //! the claim. Its refusal (`paused`) is no fault: the lead gets no
-//! message, and the start does not count. Each other refusal is a failed
-//! start: the lead gets a message, and the start counts.
+//! message, and the start does not count. Nor is a claim that another
+//! session holds, or that a hold keeps (`held`, `on_hold`,
+//! 01M7CGA8M0RARH6KG3PV7EYNJE): the look can see the item free while the
+//! claim of a gone session still holds, for the grace of a claim. The wave
+//! claims that item again after `Daemon::retry_every`
+//! (`Daemon::refused_claims`). Each other refusal is a failed start: the
+//! lead gets a message, and the start counts.
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant W as the wave
+//!     participant S as riff-server
+//!     Note over S: the session a1 of issue-12 is gone,<br/>its claim holds for 5 minutes
+//!     W->>S: who: no claim of issue-12
+//!     W->>S: claim issue-12: held by a1
+//!     Note over W: no start counts, no message:<br/>no claim of issue-12 for 30 s
+//!     W->>S: claim issue-12 after the grace: granted
+//! ```
+//!
+//! A restart of the host ends the containers of the jobs. At its start,
+//! the new daemon does the steps after the end of each of them
+//! ([`crate::daemon::Daemon::recover`]): they release the item, and end
+//! the old session on riff-server. On a locked keyring, the steps wait
+//! for the unlock ([`World::unlocked`], 01M7CGA8PN39YQ67S3N0MAHR7Y). Until
+//! the steps are done, the wave starts no session of the item
+//! (`Daemon::ending`). Then the item is free, and the wave starts it
+//! again, with no `riff host join`.
 //!
 //! After the end ([`Live::finish`]):
 //!
@@ -1965,6 +1993,14 @@ pub trait World: Send + Sync {
     /// line for each step, and tells if the end reported a verdict.
     fn finish<'a>(&'a self, record: &'a Record, ended: Ended) -> BoxFuture<'a, Result<Finish>>;
 
+    /// Ok when the steps after the end of the session of `record` can read
+    /// the OS keyring: the sign-in of riff at its riff-server, and the
+    /// token of `gh` (#2114). On a locked keyring, or one that does not
+    /// answer, the error is one of [`run::keyring_locked`].
+    fn unlocked<'a>(&'a self, _record: &'a Record) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async { Ok(()) })
+    }
+
     /// The marks of this machine and the `gh` of the repository `repo`:
     /// the daemon reports the tokens of each container session with them
     /// ([`usage::Meter::session_ended`]). `None` counts nothing.
@@ -2208,7 +2244,11 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 /// The items that the daemon runs for the wave `wave`: its jobs before
-/// the start (`taken`), and its live sessions.
+/// the start (`taken`), and its live sessions. With them, the items that
+/// the wave starts no session of now (#2114): the items of the sessions
+/// that ended while no daemon ran, until the steps after their end are
+/// done ([`Daemon::ending`]), and the items whose claim another session
+/// held at the last try ([`Daemon::refused_claims`]).
 fn running<R: Runtime + 'static>(
     daemon: &Daemon<R>,
     wave: &Wave,
@@ -2222,6 +2262,8 @@ fn running<R: Runtime + 'static>(
             .filter(|r| r.job.as_ref().is_some_and(|j| j.wave.repo == wave.repo))
             .map(|r| r.live.item),
     );
+    items.extend(daemon.ending(&wave.repo));
+    items.extend(daemon.refused_claims(&wave.repo));
     items
 }
 
@@ -2729,7 +2771,10 @@ fn take_back(starts: &Starts, work: &Work) {
 /// claim that riff-server refused for a pause takes back its start in
 /// `starts`, and tells the lead nothing (01M558EYCXPFW8CJV3XJ7HK3NR). So
 /// does a fault of the host that came after the look of the loop
-/// (01M57A7A1W2K9440WZA1QZ3M9T): the next look waits for it.
+/// (01M57A7A1W2K9440WZA1QZ3M9T): the next look waits for it. So does a
+/// claim that another session holds, or that a hold keeps (#2114): the
+/// wave claims the item again after [`Daemon::retry_every`]
+/// ([`Daemon::claim_refused`]).
 ///
 /// A job that the lead asked for (`asked`: `riff run` in the container
 /// of the lead, #1338) has no next look. So each case that stops its
@@ -2766,8 +2811,13 @@ pub(crate) async fn job<R: Runtime + 'static>(
             }
             no_token
         }
+        // Another session holds the item, or a hold keeps it: no failed
+        // start. The wave claims it again after a wait
+        // (01M7CGA8M0RARH6KG3PV7EYNJE).
         Ok(None) => {
             println!("{}", text::wave_not_claimed(&wave.repo, &item));
+            daemon.claim_refused(&wave.repo, &item);
+            take_back(&starts, &work);
             Some(text::RUN_NOT_CLAIMED.to_owned())
         }
         Err(ref e) if e.downcast_ref::<Taken>().is_some() => {
@@ -3057,7 +3107,8 @@ impl From<Vec<String>> for Finish {
 /// the last step: a step reads the folder of the session, so the sweep
 /// keeps it to then (01M53S7WDPQ2GWHJWJ6SZXZ5PN). The verdict of a verify
 /// that riff reported goes into [`Daemon::verified`] before the job ends
-/// (#1960, #2019).
+/// (#1960, #2019). The steps wait while the OS keyring is locked
+/// ([`unlocked`], #2114).
 pub(crate) async fn finish<R: Runtime + 'static>(
     daemon: Arc<Daemon<R>>,
     record: Record,
@@ -3067,6 +3118,7 @@ pub(crate) async fn finish<R: Runtime + 'static>(
     // The reason of the end, for the lead that reads "started N times".
     let end = crate::ends::End::of(&record, ended, &crate::run::Scrub::new([]));
     daemon.note_end(&record.live.item, end.reason());
+    unlocked(&daemon, &record).await;
     let done = daemon.world().finish(&record, ended).await;
     if let (
         Ok(Finish {
@@ -3085,6 +3137,31 @@ pub(crate) async fn finish<R: Runtime + 'static>(
         eprintln!("riff daemon: {}: {error}", record.live.name);
         vec![error].into()
     })
+}
+
+/// Waits until the steps after the end of the session of `record` can read
+/// the OS keyring ([`World::unlocked`], 01M7CGA8PN39YQ67S3N0MAHR7Y).
+/// While it is locked, or does not answer, the daemon tries again each
+/// [`Daemon::retry_every`], and the log gets one line at the first try. So
+/// the release of the item and the end of the session on riff-server come
+/// with the first try after the unlock. Each other fault goes to the
+/// steps, which log it.
+async fn unlocked<R: Runtime + 'static>(daemon: &Daemon<R>, record: &Record) {
+    let mut told = false;
+    loop {
+        match daemon.world().unlocked(record).await {
+            Err(e) if run::keyring_locked(&e) => {
+                if !std::mem::replace(&mut told, true) {
+                    let (name, item) = (&record.live.name, &record.live.item);
+                    let why = format!("{e:#}");
+                    let every = daemon.retry_every();
+                    println!("{}", text::wave_end_locked(name, item, &why, every));
+                }
+                tokio::time::sleep(daemon.retry_every()).await;
+            }
+            _ => return,
+        }
+    }
 }
 
 /// The text of the last result of `claude` in the file `events` of a
@@ -4941,6 +5018,17 @@ impl World for Live {
         })
     }
 
+    fn unlocked<'a>(&'a self, record: &'a Record) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
+            Api::new(&record.server).signed_in(Some(&record.live.session))?;
+            // `gh` keeps its token in the same keyring.
+            match tokio::task::spawn_blocking(run::host_facts).await {
+                Ok(Err(fault)) if fault.locked() => Err(fault.into()),
+                _ => Ok(()),
+            }
+        })
+    }
+
     fn meter(&self, repo: &str) -> Option<usage::Meter> {
         Some(usage::Meter {
             dir: crate::local::marks()?,
@@ -5448,6 +5536,13 @@ mod tests {
         holds: BTreeSet<String>,
         /// The claims: the item, and the session that holds it.
         claims: BTreeMap<String, String>,
+        /// The sessions whose claims the look does not see, and that still
+        /// hold (#2114): `riff who` shows no gone session, and its claims
+        /// hold for the grace of a claim.
+        unseen: BTreeSet<String>,
+        /// Each claim that riff-server did not grant, because another
+        /// session holds the item or a hold keeps it, and when.
+        not_granted: Vec<(String, Instant)>,
         /// The pull requests, by issue.
         pulls: BTreeMap<u64, Pr>,
         /// The files that the pull request of each issue changes, for the
@@ -5604,6 +5699,16 @@ mod tests {
     }
 
     impl Forge {
+        /// The items that the look sees claimed: none of the sessions
+        /// in `unseen`.
+        fn seen_claims(&self) -> BTreeSet<String> {
+            self.claims
+                .iter()
+                .filter(|(_, session)| !self.unseen.contains(*session))
+                .map(|(item, _)| item.clone())
+                .collect()
+        }
+
         /// The fault of the host now.
         fn host(&self) -> Result<(), run::HostFault> {
             if self.token_refused {
@@ -5770,8 +5875,7 @@ mod tests {
             Box::pin(async move {
                 let reads = lock(&self.reads).clone();
                 if let Some(gh) = reads {
-                    let claims: BTreeSet<String> =
-                        lock(&self.forge).claims.keys().cloned().collect();
+                    let claims = lock(&self.forge).seen_claims();
                     let holds = lock(&self.forge).holds.clone();
                     let thread = lock(&self.forge).thread.clone();
                     let look =
@@ -5807,7 +5911,7 @@ mod tests {
                 // The free work of the forge, as `look_on` takes it. The
                 // pick skips a held item.
                 let open = forge.open();
-                let claims: HashSet<String> = forge.claims.keys().cloned().collect();
+                let claims: HashSet<String> = forge.seen_claims().into_iter().collect();
                 let (free, fixes) = fixes(&open, open.free_work(&claims, &HashSet::new()));
                 let no_done_when = open.no_done_when(&claims, &HashSet::new());
                 let pulls = match forge.checked {
@@ -5838,7 +5942,7 @@ mod tests {
                     paused: false,
                     no_lead: forge.no_lead,
                     free,
-                    claims: forge.claims.keys().cloned().collect(),
+                    claims: forge.seen_claims(),
                     holds: forge.holds.clone(),
                     pulls,
                     lanes,
@@ -5938,6 +6042,7 @@ mod tests {
                 let item = work.item();
                 let mut forge = lock(&self.forge);
                 if forge.holds.contains(&item) || forge.claims.contains_key(&item) {
+                    forge.not_granted.push((item, Instant::now()));
                     return Ok(None);
                 }
                 // As `run::host_facts` in the steps of `Live`.
@@ -6010,6 +6115,21 @@ mod tests {
         }
 
         fn resume(&self, _: &Record) {}
+
+        /// The sign-in of the steps after the end fails while the keyring
+        /// is locked, as [`identity::person`] fails then.
+        fn unlocked<'a>(&'a self, _: &'a Record) -> BoxFuture<'a, Result<()>> {
+            let locked = self.locked.load(Ordering::SeqCst);
+            Box::pin(async move {
+                if locked {
+                    let locked = riff_client::secrets::Locked {
+                        host: "thelio".into(),
+                    };
+                    return Err(anyhow::Error::msg(locked).context("riff cannot find your user"));
+                }
+                Ok(())
+            })
+        }
 
         fn finish<'a>(&'a self, record: &'a Record, _: Ended) -> BoxFuture<'a, Result<Finish>> {
             Box::pin(async move {
@@ -8715,6 +8835,181 @@ esac
         assert_eq!(forge.refused, vec!["issue-1"; pauses]);
         assert_eq!(forge.starts.len(), 1);
         assert!(forge.told.is_empty(), "{:?}", forge.told);
+    }
+
+    /// The record of a worker of `o/r` for `issue` in the folder of the
+    /// daemon of `here`, as an old daemon left it: the session `session`,
+    /// whose container does not run.
+    fn dead_job(here: &Here, issue: u64, session: &str) -> Record {
+        let wave = Wave {
+            repo: "o/r".into(),
+            main: "/src/r".into(),
+            server: "http://127.0.0.1:1".into(),
+            host: "thelio".into(),
+        };
+        let item = format!("issue-{issue}");
+        let name = format!("riff-{item}-{session}");
+        let who = riff_core::name::Who::new("mike", Some(session)).unwrap();
+        let record = Record {
+            live: riff_client::sessions::Live {
+                digest: String::new(),
+                name: name.clone(),
+                session: session.into(),
+                item: item.clone(),
+                image: IMAGE.into(),
+                since_ms: 0,
+                phase: Default::default(),
+                last: String::new(),
+                lead: false,
+                cause: None,
+            },
+            folder: here._root.path().join("sessions").join(&name),
+            server: wave.server.clone(),
+            me: SessionUri::new(who, wave.place(Some(&item)).unwrap()),
+            inputs: Vec::new(),
+            closed: false,
+            failed: false,
+            job: Some(Job {
+                wave,
+                work: Work::Build { issue },
+            }),
+            terminal: false,
+            takeover: false,
+            interrupt: false,
+            model: None,
+            github: None,
+        };
+        let path = crate::daemon::record_path(here.daemon.dir(), &name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+        record
+    }
+
+    /// The items `items` as a set.
+    fn items(items: &[&str]) -> BTreeSet<String> {
+        items.iter().map(|item| (*item).to_owned()).collect()
+    }
+
+    /// The test of #2114, 01M7CGA8PN39YQ67S3N0MAHR7Y: a restart of the host
+    /// ended the containers of 3 workers of the wave, and the keyring is
+    /// locked at the start of the new daemon, as after a login with a
+    /// security key. riff-server shows the old sessions as gone, but their
+    /// claims still hold. While the steps after the end of each old session
+    /// wait for the keyring, the wave claims none of the items. After the
+    /// unlock, those steps release each item and end its old session, and
+    /// the wave starts each item one time, with no `riff host join`, and no
+    /// stop of the guard of three starts.
+    #[tokio::test]
+    async fn a_restart_with_dead_workers_on_a_locked_keyring_starts_each_item_once_after_the_unlock()
+     {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1, 2, 3], 4, free).await;
+        here.world.locked.store(true, Ordering::SeqCst);
+        {
+            let mut forge = here.forge();
+            // A new session of an item builds it again: no pull request.
+            forge.no_pull = true;
+            for n in 1..=3 {
+                let session = format!("old{n}");
+                forge.claims.insert(format!("issue-{n}"), session.clone());
+                forge.unseen.insert(session);
+            }
+        }
+        for n in 1..=3 {
+            dead_job(&here, n, &format!("old{n}"));
+        }
+        here.daemon.recover().await;
+        let all = items(&["issue-1", "issue-2", "issue-3"]);
+        assert_eq!(here.daemon.ending("o/r"), all);
+        here.run();
+        here.until(4, |h| h.forge().branch_reads >= 3).await;
+        here.idle(4).await;
+        {
+            let forge = here.forge();
+            assert!(forge.not_granted.is_empty(), "{:?}", forge.not_granted);
+            assert!(forge.starts.is_empty(), "{:?}", forge.starts);
+            assert!(forge.finished.is_empty(), "the steps wait for the keyring");
+        }
+        assert_eq!(here.daemon.ending("o/r"), all);
+
+        // The person unlocks the keyring at the desktop.
+        here.world.locked.store(false, Ordering::SeqCst);
+        here.until(4, |h| h.forge().starts.len() == 3).await;
+        here.idle(4).await;
+        let forge = here.forge();
+        let started: BTreeSet<String> = forge.starts.iter().map(|(i, _)| i.clone()).collect();
+        assert_eq!(started, all);
+        assert_eq!(forge.starts.len(), 3, "one start of each item");
+        let finished: BTreeSet<String> = forge.finished.iter().cloned().collect();
+        assert_eq!(finished, all, "the old sessions ended");
+        assert!(forge.not_granted.is_empty(), "{:?}", forge.not_granted);
+        assert!(forge.told.is_empty(), "{:?}", forge.told);
+        assert!(here.daemon.ending("o/r").is_empty());
+    }
+
+    /// #2114, 01M7CGA8M0RARH6KG3PV7EYNJE: the look sees an item free, but
+    /// another session holds its claim: riff-server shows no gone session,
+    /// and its claim holds for the grace of a claim. Each refused claim is
+    /// no start of the item, and the lead hears nothing of it. The wave
+    /// claims the item again only after [`Daemon::retry_every`]. When the
+    /// other session ends, the item starts: more refusals than [`STARTS`]
+    /// did not stop it.
+    #[tokio::test]
+    async fn a_claim_that_another_session_holds_is_no_start_of_the_item() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 3, free).await;
+        {
+            let mut forge = here.forge();
+            forge.claims.insert("issue-1".into(), "other".into());
+            forge.unseen.insert("other".into());
+        }
+        here.run();
+        let tries = STARTS as usize + 2;
+        here.until(3, |h| h.forge().not_granted.len() >= tries)
+            .await;
+        assert_eq!(here.daemon.refused_claims("o/r"), items(&["issue-1"]));
+
+        // The other session ends: its claim goes.
+        here.forge().claims.remove("issue-1");
+        here.until(3, |h| h.running("issue-1").is_some()).await;
+        let forge = here.forge();
+        assert_eq!(forge.starts.len(), 1);
+        assert!(forge.told.is_empty(), "{:?}", forge.told);
+        let every = here.daemon.retry_every();
+        for pair in forge.not_granted.windows(2) {
+            assert!(pair[1].1 - pair[0].1 >= every, "{:?}", forge.not_granted);
+        }
+    }
+
+    /// #2114, 01M7CGA8SBVMCASA6NJB41CFC0: the message of a spent item names
+    /// the end of the last start that counted in this run of the wave, not
+    /// the end of a session from before the restart of the daemon.
+    #[tokio::test]
+    async fn a_spent_item_names_the_end_of_its_last_start_and_not_of_a_session_before_the_restart()
+    {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 3, free).await;
+        {
+            let mut forge = here.forge();
+            forge.no_pull = true;
+            forge.claims.insert("issue-1".into(), "old1".into());
+            forge.refusals = vec!["must_clear".into(); STARTS as usize];
+        }
+        dead_job(&here, 1, "old1");
+        here.daemon.recover().await;
+        here.run();
+        let reason = text::wave_no_start("claim failed (409 Conflict): refused: must_clear");
+        let spent = text::wave_spent("issue-1", None, STARTS, &reason);
+        here.until(3, |h| h.forge().told.contains(&spent)).await;
+        here.idle(3).await;
+        let forge = here.forge();
+        assert_eq!(
+            forge.finished,
+            ["issue-1"],
+            "the session before the restart"
+        );
+        let before = text::wave_spent("issue-1", None, STARTS, &stopped());
+        assert!(!forge.told.contains(&before), "{:?}", forge.told);
     }
 
     /// 01M558EYCXPFW8CJV3XJ7HK3NR: each other refusal of the claim is a

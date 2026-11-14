@@ -5321,8 +5321,7 @@ of this part when they merge.
   a job of a wave, the daemon ends the new worker session of the job at
   once. A refusal for a pause does not count as one of the 3 starts of
   the item (01M4ZV3B6PSRH40EYQEVYH2MBA), and the lead gets no message
-  for it. Each other refusal counts, and the lead gets the message of a
-  failed start.
+  for it.
 - **01M57A7A1W2K9440WZA1QZ3M9T** Before each start of a wave, the
   daemon checks the facts of the host that no item changes: the
   sign-in of `gh`, and the sign-in of `claude` with 60 minutes or more
@@ -7288,6 +7287,27 @@ of this part when they merge.
   base commit of the pull request, the merge base of the head with the
   default branch, never by an edit of the code, or one of the other ways
   of that requirement. The result says which way the verifier used.
+- **01M7CGA8M0RARH6KG3PV7EYNJE** When riff-server refuses the claim of a
+  job of a wave because another session holds the item, or a hold keeps
+  it, the start does not count as one of the 3 starts of the item
+  (01M4ZV3B6PSRH40EYQEVYH2MBA), and the lead gets no message for it. The
+  wave claims that item again after 30 seconds at the earliest. Each
+  refusal of the claim for another reason than a pause counts, and the
+  lead gets the message of a failed start. Supersedes
+  01M558EYCXPFW8CJV3XJ7HK3NR in part.
+- **01M7CGA8PN39YQ67S3N0MAHR7Y** At its start, the riff daemon does the
+  steps after the end of each job of a wave whose container does not run
+  (01M4ZHT01HH88KPA8628M7VBEY): they release the item and end the
+  session on riff-server. While the OS keyring of the host is locked, or
+  does not answer, the steps after the end of a session of a wave wait:
+  the daemon tries them again each 30 seconds, and logs one line at the
+  first try. Until the steps after the end of such a job are done, the
+  wave starts no session of its item. Then the wave starts the item
+  again, with no riff host join.
+- **01M7CGA8SBVMCASA6NJB41CFC0** The message of an item that started 3
+  times in a run of the wave (01M4ZV3B6PSRH40EYQEVYH2MBA) names the end
+  of the last start that counted in that run, not the end of a session
+  before the start of the daemon.
 
 ### The lead, the view and the takeover
 

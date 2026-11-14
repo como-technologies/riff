@@ -12233,10 +12233,51 @@ pub fn wave_claimed(repo: &str, item: &str, session: &str) -> String {
 }
 
 /// The claim of a wave failed: another session holds the item, or it is
-/// held.
+/// held. The start does not count (#2114).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::wave_not_claimed("o/r", "issue-12"),
+///     "The wave of o/r: the claim of issue-12 failed. Another session holds it, or it is held. \
+///      The start does not count."
+/// );
+/// ```
 pub fn wave_not_claimed(repo: &str, item: &str) -> String {
     format!(
-        "The wave of {repo}: the claim of {item} failed. Another session holds it, or it is held."
+        "The wave of {repo}: the claim of {item} failed. Another session holds it, or it is held. \
+         The start does not count."
+    )
+}
+
+/// The steps after the end of the session `name` of `item` wait for the
+/// OS keyring: their sign-in failed with `why`. The daemon tries again
+/// each `every` (#2114).
+///
+/// ```
+/// use std::time::Duration;
+///
+/// let why = "the OS keyring of thelio is locked or does not answer";
+/// let text = riff::text::wave_end_locked(
+///     "riff-issue-12-1a2b3c4d",
+///     "issue-12",
+///     why,
+///     Duration::from_secs(30),
+/// );
+/// assert_eq!(
+///     text,
+///     "riff cannot do the steps after the end of riff-issue-12-1a2b3c4d yet: the OS keyring of \
+///      thelio is locked or does not answer. riff tries again each 30s: the first try after the \
+///      unlock releases issue-12 and ends its session on riff-server. Until then, the wave starts \
+///      no session of issue-12."
+/// );
+/// ```
+pub fn wave_end_locked(name: &str, item: &str, why: &str, every: std::time::Duration) -> String {
+    let why = why.trim_end_matches('.');
+    format!(
+        "riff cannot do the steps after the end of {name} yet: {why}. riff tries again each {}: \
+         the first try after the unlock releases {item} and ends its session on riff-server. \
+         Until then, the wave starts no session of {item}.",
+        ago(every.as_secs())
     )
 }
 
