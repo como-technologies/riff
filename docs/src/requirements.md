@@ -6272,19 +6272,14 @@ of this part when they merge.
   and the new daemon waits for room for it again, also with the limit 0.
   A start of `riff run` that waits for room keeps the daemon on the old
   riff, as a session and a job of a wave do.
-- **01M5NVKNKN3PTCWB45BV03M1TW** The sweep never pushes or removes the
-  folder of a session that runs, of a job of the daemon, or of an item
-  whose pull request is open or whose issue is open with no pull
-  request. The folder of an open item stays.
+- **01M5NVKNKN3PTCWB45BV03M1TW** The sweep never removes the folder of a
+  session that runs or of a job of the daemon.
 - **01M5NVKNPD938ASWY4TD5BGK67** The sweep deletes each branch
   riff-kept/* of origin whose tip commit is older than 30 days, for each
   repository of the folders that it looked at.
 - **01M5NVKNS35SC8P514GYDJSRQM** After a sweep that deleted a riff-kept
   branch, the daemon posts one digest note to the lead of the
   repository.
-- **01M5NVKNVTVR722EA148V5127M** The book says where the kept work goes,
-  riff-kept/ITEM-ID8 of origin, and how to get it back with git fetch
-  origin riff-kept/ITEM-ID8.
 - **01M5P1XBJ6ZX3Q8ZVHR1EJFMFF** The lead does not keep the daemon of
   its host on an old riff. The daemon counts no lead (a session with a
   terminal) as work: with only the lead, `riff update` and the look of
@@ -6594,15 +6589,19 @@ of this part when they merge.
   requests of the branch of its item and for the state of its issue. A
   folder whose session does not run goes when its work is over on the
   forge, or when it is 30 days old: 30 days with no change of the folder
-  itself and of its `events.jsonl`. A folder with no file `repo` stays
-  until it is 30 days old. The work of the clone that is not on `origin`
-  goes with the folder. `riff daemon sweep` prints each folder that
-  stays because it has no file `repo` or because the forge gave no
-  answer, with the reason. The log of the daemon gets that line one
-  time, and again when the reason changes. This supersedes
-  01M53S7WAXD46YPN0DR96XSTMG, 01M5NVKNGZPK0GG7B7ZWBS0DFE,
-  01M5QVCAXF5ANTTT46XHR6SF7H and 01M57D3FEJPHD962GW0H82N8E6, and
-  01M53NJ5V27BCHDNHK2THQQZZQ and 01M5NVKNS35SC8P514GYDJSRQM in part.
+  itself and of its `events.jsonl`. An old folder goes also when the
+  pull request or the issue of its item is open. A folder with no file
+  `repo` stays until it is 30 days old. The work of the clone that is
+  not on `origin` goes with the folder. The book says how to fetch that
+  work from the folder while the folder is there. `riff daemon sweep`
+  prints each folder that stays because it has no file `repo` or
+  because the forge gave no answer, with the reason. The log of the
+  daemon gets that line one time, and again when the reason changes.
+  This supersedes 01M53S7WAXD46YPN0DR96XSTMG,
+  01M5NVKNGZPK0GG7B7ZWBS0DFE, 01M5QVCAXF5ANTTT46XHR6SF7H,
+  01M57D3FEJPHD962GW0H82N8E6 and 01M5NVKNVTVR722EA148V5127M in full,
+  and 01M53NJ5V27BCHDNHK2THQQZZQ, 01M5NVKNS35SC8P514GYDJSRQM and
+  01M5NVKNKN3PTCWB45BV03M1TW in part.
 
 ### riff relay
 
@@ -8331,7 +8330,7 @@ of this part when they merge.
 - **01M53NJ5Y2CMY5MWF9328KW7DE** `riff daemon sweep` asks the daemon to
   remove the folders of 01M53NJ5V27BCHDNHK2THQQZZQ at once. It prints
   each folder that the daemon removed and each folder that stays, with
-  the reason (01M53S7WAXD46YPN0DR96XSTMG), or one line that it removed
+  the reason (01M7DZ4E02PX5Y0WMHFCJ9KS14), or one line that it removed
   none.
 - **01M53S7WDPQ2GWHJWJ6SZXZ5PN** A job of the daemon keeps each folder
   of its item from before the clone of its session to the end of its

@@ -2130,6 +2130,9 @@ page [Requirements](requirements.md) holds the rules of today.
   (01M5P26VSA7AA99K1RYG83R8J9) run with `-c commit.gpgsign=false`. A
   host whose git signs each commit keeps no folder for that reason, and
   riff saves the work. Superseded by 01M7DZ4E2P5RJMQE0W9K1AAA4P.
+- **01M5NVKNVTVR722EA148V5127M** The book says where the kept work goes,
+  riff-kept/ITEM-ID8 of origin, and how to get it back with git fetch
+  origin riff-kept/ITEM-ID8. Superseded by 01M7DZ4E02PX5Y0WMHFCJ9KS14.
 
 ### riff relay
 
