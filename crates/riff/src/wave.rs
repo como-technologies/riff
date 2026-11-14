@@ -11068,6 +11068,13 @@ esac
             }
         }
 
+        /// The clone of the verify, in the folder of a session under
+        /// `sessions/`. So the new clone of [`run::clone_in_new`] is in
+        /// `new-clones/` of this test, and no other test shares it.
+        fn verify_clone(&self) -> PathBuf {
+            self.dir.path().join("sessions/verify-7-1a2b3c4d/clone")
+        }
+
         /// Whether the repository `repo` has the commit `commit`.
         fn has(repo: &Path, commit: &str) -> bool {
             std::process::Command::new("git")
@@ -11087,7 +11094,7 @@ esac
     fn the_clone_of_a_verify_has_the_head_commit_of_a_pull_request_from_a_fork() {
         let fork = Fork::new();
         assert!(!Fork::has(&fork.main, &fork.head), "origin has no branch");
-        let clone = fork.dir.path().join("verify/clone");
+        let clone = fork.verify_clone();
         clone_at(&fork.main, &clone, 7, &fork.head).unwrap();
         assert_eq!(git_in(&clone, &["rev-parse", "HEAD"]), fork.head);
         assert_eq!(git_in(&clone, &["branch", "--show-current"]), "");
@@ -11105,7 +11112,7 @@ esac
             &fork.fork,
             &["push", "-q", "origin", "HEAD:refs/pull/7/head"],
         );
-        let clone = fork.dir.path().join("verify/clone");
+        let clone = fork.verify_clone();
         clone_at(&fork.main, &clone, 7, &fork.head).unwrap();
         assert_eq!(git_in(&clone, &["rev-parse", "HEAD"]), fork.head);
         assert_eq!(std::fs::read_to_string(clone.join("a")).unwrap(), "two");
@@ -11116,7 +11123,7 @@ esac
     #[test]
     fn the_clone_of_a_verify_fails_with_the_ref_when_origin_does_not_have_it() {
         let fork = Fork::new();
-        let clone = fork.dir.path().join("verify/clone");
+        let clone = fork.verify_clone();
         let error = clone_at(&fork.main, &clone, 8, &fork.head).unwrap_err();
         assert!(error.to_string().contains("refs/pull/8/head"), "{error}");
     }
