@@ -3628,6 +3628,12 @@ them, and the others wait until it merges or its verify fails:
   with `git merge-tree` in its clone of the repository. It fetches each
   head that the clone does not have. When the test cannot run, for
   example after a failed fetch, the two wait for each other.
+- A head with a conflict with `main` conflicts with each newer head
+  that holds that `main`. So the test of such a head and a head with
+  no conflict merges the two over the merge base of the newer head and
+  `main`: only a conflict of the changes of the two pull requests
+  counts. The daemon fetches `main` for this test. A pull request whose
+  head conflicts only with `main` gets its rebase at once.
 - So after a merge, only the next pull request of the order gets its
   rebase. The others keep their conflict until their turn.
 - A pull request that cannot merge by itself for another reason does
@@ -3686,8 +3692,14 @@ The Waves tab shows each of them as a `verify` row with `after #N` (see
 
 The lead gets no message that these pull requests wait for a verify,
 and no message of the conflict of a rebase that waits for its turn (see
-[When a pull request stops](#when-a-pull-request-stops)). To keep
-a verify out of the order, hold it (see
+[When a pull request stops](#when-a-pull-request-stops)). It gets one
+message for each rebase that waits, with the pull request before it:
+
+```text
+PR #861 of issue-635 has a conflict with main at commit 1e50c30. Its rebase waits for its turn after PR #883 in the order of the verifies: it starts when #883 merges or its verify fails. See the order: riff wave list
+```
+
+To keep a verify out of the order, hold it (see
 [Keep the verify of an item from the
 workers](#keep-the-verify-of-an-item-from-the-workers)).
 
@@ -3864,9 +3876,14 @@ flowchart TD
   and pushes. When no session holds it, the lead gives it to a free
   session. The wave of the riff daemon starts a session for it by
   itself (see [Run the wave](development.md#run-the-wave)). While the
-  rebase waits for its turn, no message comes (see
+  rebase waits for its turn, no message of the conflict comes: the wave
+  sends one message that the rebase waits (see
   [The order of the verifies of a
-  wave](#the-order-of-the-verifies-of-a-wave)).
+  wave](#the-order-of-the-verifies-of-a-wave)). When the wave does not
+  start the rebase, for example after a rebase that did not fix the
+  conflict, the wave sends one message with the cause and the fix (see
+  [Start the rebase of a conflict
+  again](development.md#start-the-rebase-of-a-conflict-again)).
 - A verify that no session claims for 30 minutes: the lead gives the
   verify to a free session, or starts a worker. No message comes while
   the pull request has a conflict, while the lead holds its verify, or

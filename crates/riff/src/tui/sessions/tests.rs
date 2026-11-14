@@ -624,6 +624,7 @@ fn with_no_lead() -> State {
             word: text::wave_no_lead("como-technologies/riff"),
             image: None,
             waits: Default::default(),
+            stops: Default::default(),
         }],
         ..riff_client::daemons::Facts::default()
     };
@@ -642,6 +643,7 @@ fn with_no_lead() -> State {
         repo: "como-technologies/riff".into(),
         word: text::wave_no_lead("como-technologies/riff"),
         waits: Default::default(),
+        stops: Default::default(),
         unfollowed: Vec::new(),
     }];
     state.daemon_looked(Ok(daemon));

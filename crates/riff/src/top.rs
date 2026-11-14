@@ -1703,6 +1703,7 @@ mod tests {
                 word: text::wave_no_lead("o/strata"),
                 image: None,
                 waits: BTreeMap::new(),
+                stops: BTreeMap::new(),
             }],
             ..riff_client::daemons::Facts::default()
         };

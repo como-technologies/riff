@@ -218,6 +218,7 @@ pub fn of_status(status: &Status) -> Facts {
                 word: w.word.clone(),
                 image: None,
                 waits: w.waits.clone(),
+                stops: w.stops.clone(),
             })
             .collect(),
         parts: status.parts.clone(),
@@ -398,7 +399,7 @@ fn podman_has(image: &str) -> bool {
 ///     ("o/sens".to_owned(), known("o/sens", sens)),
 /// ]))?;
 ///
-/// let wave = |repo: &str| Wave { repo: repo.into(), word: "waits".into(), image: None, waits: BTreeMap::new() };
+/// let wave = |repo: &str| Wave { repo: repo.into(), word: "waits".into(), image: None, waits: BTreeMap::new(), stops: BTreeMap::new() };
 /// let mut waves = vec![wave("o/riff"), wave("o/sens"), wave("o/other")];
 /// pins(&folder, &mut waves, |image| image == pin("a"));
 /// let image = |digit: &str, here| Some(Image { digest: digit.repeat(12), here });
@@ -718,6 +719,7 @@ mod tests {
             word: "waits".into(),
             image: None,
             waits: BTreeMap::new(),
+            stops: BTreeMap::new(),
         }
     }
 

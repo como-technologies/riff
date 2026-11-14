@@ -213,7 +213,7 @@ pub struct Session {
 }
 
 /// A wave that the daemon runs.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Wave {
     /// The repository, as `OWNER/REPO`.
     pub repo: String,
@@ -234,6 +234,16 @@ pub struct Wave {
         with = "riff_core::number_keys"
     )]
     pub waits: BTreeMap<u64, u64>,
+    /// The pull requests with a conflict whose rebase the wave does not
+    /// start, by issue, with the cause (#2128). `riff wave list` names the
+    /// cause on the row of each ([`crate::waves::Issues::no_rebase`]). The
+    /// keys are text on the wire, as for `waits`.
+    #[serde(
+        default,
+        skip_serializing_if = "BTreeMap::is_empty",
+        with = "riff_core::number_keys"
+    )]
+    pub stops: BTreeMap<u64, crate::waves::NoRebase>,
 }
 
 /// What a host does in one repository: it gives workers (the daemon runs
@@ -792,7 +802,7 @@ pub fn hosts<'a>(sessions: impl IntoIterator<Item = &'a SessionInfo>) -> Vec<Hos
 ///     host: "thelio".into(),
 ///     age_secs: 5,
 ///     facts: Facts {
-///         waves: vec![Wave { repo: repo.into(), word: String::new(), image: None, waits }],
+///         waves: vec![Wave { repo: repo.into(), word: String::new(), image: None, waits, ..Wave::default() }],
 ///         ..Facts::default()
 ///     },
 /// };
@@ -806,6 +816,36 @@ pub fn waits(hosts: &[Host], repo: &str) -> BTreeMap<u64, u64> {
         .flat_map(|h| h.facts.waves.iter())
         .filter(|w| w.repo == repo)
         .flat_map(|w| w.waits.iter().map(|(n, pull)| (*n, *pull)))
+        .collect()
+}
+
+/// The rebases of the waves of `repo` that do not start ([`Wave::stops`],
+/// #2128), from the daemons of `hosts`, by issue, with the cause.
+///
+/// ```
+/// use std::collections::BTreeMap;
+/// use riff_client::daemons::{Facts, Host, Wave, stops};
+/// use riff_client::waves::NoRebase;
+///
+/// let host = |repo: &str, stops: BTreeMap<u64, NoRebase>| Host {
+///     user: "mike".into(),
+///     host: "kadomony".into(),
+///     age_secs: 5,
+///     facts: Facts {
+///         waves: vec![Wave { repo: repo.into(), stops, ..Wave::default() }],
+///         ..Facts::default()
+///     },
+/// };
+/// let hosts = [host("o/r", BTreeMap::from([(635, NoRebase::Tried)])), host("o/s", BTreeMap::new())];
+/// assert_eq!(stops(&hosts, "o/r"), BTreeMap::from([(635, NoRebase::Tried)]));
+/// assert!(stops(&hosts, "o/s").is_empty());
+/// ```
+pub fn stops(hosts: &[Host], repo: &str) -> BTreeMap<u64, crate::waves::NoRebase> {
+    hosts
+        .iter()
+        .flat_map(|h| h.facts.waves.iter())
+        .filter(|w| w.repo == repo)
+        .flat_map(|w| w.stops.iter().map(|(n, stop)| (*n, *stop)))
         .collect()
 }
 
@@ -836,6 +876,7 @@ mod tests {
                     here: true,
                 }),
                 waits: BTreeMap::from([(13, 41)]),
+                stops: BTreeMap::new(),
             }],
             parts: vec![RepoParts {
                 repo: "o/r".into(),
@@ -908,6 +949,7 @@ mod tests {
             word: "no free work now".into(),
             image: None,
             waits: BTreeMap::from([(724, 728), (725, 728), (730, 731)]),
+            stops: BTreeMap::new(),
         };
         let facts = Facts {
             waves: vec![wave.clone()],

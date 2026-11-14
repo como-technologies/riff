@@ -513,6 +513,33 @@
   N, and names each issue with its pull request. It names apart each
   issue with the label and no such line. The count is a measure, not a
   rule: it does not change the exit status.
+- **01M7E06YMNMF92TDW21XED5JZ8** When one of two open pull requests has
+  a conflict with the default branch and the other has none, the merge
+  test of 01M750ED646BKBZSA9KHF0953Y merges their two heads over the
+  merge base of the other head and the default branch. The riff daemon
+  fetches the default branch for this test. A pull request whose head
+  conflicts only with the default branch is in no group with the other,
+  and gets its rebase at once.
+- **01M7E075FAD9CH3FT957W8C9W8** When the riff daemon will not start the
+  rebase of a head commit again in a run of the wave
+  (01M57FJ3WWMQSDBFRRHXN3SMFQ), the lead gets one message with the pull
+  request, the head commit, the cause and the fix: riff host join on
+  that host, or riff host join --host HOST. This is the message of
+  01M57FJ3Z8AFDY9G0KTAYZJESY. The end of a rebase session with no push
+  gives the lead a note.
+- **01M7E075HSSYBXN34JY1K4HDEG** riff wave list names the cause on the
+  row of each pull request with a conflict whose rebase the wave does
+  not start: stuck: #N (conflict, its rebase was tried: riff host join
+  starts it again) for a spent start, and words of their own for a hold
+  of the item, for the label question, and for a session of the daemon
+  that still has the item with no claim. The lead gets one message for
+  each pull request, head commit and cause. The riff daemon sends these
+  causes in its facts, and riff daemon status shows them in the line of
+  the wave.
+- **01M7E075M743X8TE00T5PFMTVR** The lead gets one message for each
+  rebase that waits for its turn (01M6YPYTPG8RJY7PRERR2ZM10H): the pull
+  request, the head commit and the pull request before it. It comes one
+  time for each head commit and each pull request before it.
 
 ## Waves on GitHub
 

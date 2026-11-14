@@ -646,6 +646,7 @@ async fn a_resume_with_no_lead_names_the_cause_of_the_wait() {
         word: String::new(),
         image: None,
         waits: Default::default(),
+        stops: Default::default(),
     };
     let facts = Facts {
         waves: vec![wave],

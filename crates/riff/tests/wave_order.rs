@@ -28,7 +28,11 @@ dir=$(dirname "$0")
 case "$1 $2" in
   api*)
     case "$2" in
-      repos/o/r) echo '{"default_branch":"main"}' ;;
+      repos/o/r)
+        case "$4" in
+          .default_branch) echo main ;;
+          *) echo '{"default_branch":"main"}' ;;
+        esac ;;
       */rules/branches/main*) echo '[]' ;;
       */milestones*) echo '[{"title":"Backlog"},{"title":"Wave 1"}]' ;;
       */check-runs*) echo '{"check_runs":[{"status":"completed","conclusion":"success","head_sha":"x"}]}' ;;
@@ -606,7 +610,7 @@ fn pull_requests_that_change_one_file_with_no_conflict_verify_side_by_side() {
     );
     assert!(!has(&main, &heads[0]), "origin has the head on no branch");
 
-    riff::order::merges(&main, &mut first.lanes);
+    riff::order::merges(&main, "main", &mut first.lanes);
     assert!(heads.iter().all(|head| has(&main, head)), "the fetch");
     assert_eq!(first.lanes[&1].clean, BTreeSet::from([42]));
     assert_eq!(first.lanes[&2].clean, BTreeSet::from([41, 43]));
@@ -635,6 +639,110 @@ fn pull_requests_that_change_one_file_with_no_conflict_verify_side_by_side() {
     // The clone keeps the heads: a second test needs no `origin`.
     std::fs::remove_dir_all(dir.path().join("origin.git")).unwrap();
     let mut again = look(&gh, &messages);
-    riff::order::merges(&main, &mut again.lanes);
+    riff::order::merges(&main, "main", &mut again.lanes);
     assert_eq!(again.lanes, first.lanes);
+}
+
+/// #2128, strata PR #861: the head of 1 is stale. `main` moved after it,
+/// and changed the line of section A that 1 changes, so 1 has a conflict.
+/// The heads of 2 and 3 hold that `main`, and each adds a line to section
+/// B. So a plain `git merge-tree` of the head of 1 and each newer head
+/// gives a conflict. The verify of 2 passed, and the verify of 3 runs:
+/// both go before 1 in the order. The merge test over `main` finds that 1
+/// clashes only with `main`: its rebase starts at once, and waits for
+/// neither.
+#[test]
+fn a_stale_head_that_clashes_only_with_main_gets_its_rebase_at_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let (bare, work) = (dir.path().join("origin.git"), dir.path().join("work"));
+    let url = format!("file://{}", bare.display());
+    git(
+        dir.path(),
+        &["init", "-q", "--bare", "-b", "main", "origin.git"],
+    );
+    std::fs::create_dir_all(work.join("docs/src")).unwrap();
+    git(&work, &["init", "-q", "-b", "main"]);
+    git(&work, &["remote", "add", "origin", &url]);
+    let commit = |text: String, words: &str| {
+        std::fs::write(work.join(PAGE), text).unwrap();
+        git(&work, &["add", "."]);
+        git(&work, &["commit", "-q", "-m", words]);
+        git(&work, &["rev-parse", "HEAD"])
+    };
+    let push = |to: &str| git(&work, &["push", "-q", "origin", &format!("HEAD:{to}")]);
+    commit(page("", ""), "base");
+    push("refs/heads/main");
+    git(&work, &["switch", "-q", "-c", "stale"]);
+    let stale = commit(page("- three\n", ""), "pr 41");
+    push("refs/pull/41/head");
+    git(&work, &["switch", "-q", "main"]);
+    commit(page("- main\n", ""), "main moves");
+    push("refs/heads/main");
+    let fresh = |pull: u64, line: &str| {
+        git(
+            &work,
+            &["switch", "-q", "-c", &format!("pr-{pull}"), "main"],
+        );
+        let head = commit(page("- main\n", line), &format!("pr {pull}"));
+        push(&format!("refs/pull/{pull}/head"));
+        head
+    };
+    let (two, three) = (fresh(42, "- four\n"), fresh(43, "- five\n"));
+    git(dir.path(), &["clone", "-q", "--", &url, "main"]);
+    let main = dir.path().join("main");
+    let plain = |head: &str| {
+        Command::new("git")
+            .args(["merge-tree", "--write-tree", &stale, head])
+            .current_dir(&main)
+            .output()
+            .unwrap()
+            .status
+            .code()
+    };
+    git(
+        &main,
+        &[
+            "fetch",
+            "-q",
+            "origin",
+            "refs/pull/41/head",
+            "refs/pull/42/head",
+            "refs/pull/43/head",
+        ],
+    );
+    assert_eq!(
+        (plain(&two), plain(&three)),
+        (Some(1), Some(1)),
+        "a plain test: a conflict"
+    );
+
+    let page_files: &[&str] = &[PAGE];
+    let pulls = [
+        pull_in(1, &stale, None, "CONFLICTING"),
+        pull(2, &two, Some("SUCCESS")),
+        pull(3, &three, None),
+    ];
+    let files = [(41, page_files), (42, page_files), (43, page_files)];
+    let gh = forge(dir.path(), &pulls, &files);
+    let messages = [request(1, &stale), request(3, &three)];
+    let three_runs: BTreeSet<String> = ["verify-issue-3".to_owned()].into();
+    let starts = BTreeMap::new();
+
+    // With no merge test, 1 waits for the passed verify of 2.
+    let mut first = look(&gh, &messages);
+    assert_eq!(first.branch, "main");
+    assert!(first.lanes[&1].conflict);
+    assert_eq!(
+        wave::order(&first, &three_runs, &starts),
+        BTreeMap::from([(1, 42)])
+    );
+    assert_eq!(wave::pick(&first, &three_runs, &starts), None);
+
+    riff::order::merges(&main, &first.branch.clone(), &mut first.lanes);
+    assert_eq!(first.lanes[&1].clean, BTreeSet::from([42, 43]));
+    assert!(wave::order(&first, &three_runs, &starts).is_empty());
+    assert_eq!(
+        wave::pick(&first, &three_runs, &starts),
+        Some(rebase(1, &stale))
+    );
 }

@@ -8833,12 +8833,14 @@ pub fn load_part(m: &riff_client::machines::Machine) -> (String, anstyle::Style)
 ///             word: "started issue-12".into(),
 ///             image: Some(Image { digest: "1a2b3c4d5e6f".into(), here: true }),
 ///             waits: Default::default(),
+///             stops: Default::default(),
 ///         },
 ///         Wave {
 ///             repo: "o/s".into(),
 ///             word: "waits".into(),
 ///             image: Some(Image { digest: "9f8e7d6c5b4a".into(), here: false }),
 ///             waits: Default::default(),
+///             stops: Default::default(),
 ///         },
 ///     ],
 ///     machine: Some(Machine { threads: 16, mhz: 4500, now_mhz: 4400, mem_gb: 32, avail_gb: 24, load: 1.5 }),
@@ -8887,7 +8889,7 @@ pub fn load_part(m: &riff_client::machines::Machine) -> (String, anstyle::Style)
 /// assert_eq!(warned, ["claude 1h30m left", "claude token not set", "image not here"]);
 /// // A wave with no merged pin, and a session that podman did not tell.
 /// let none = Facts {
-///     waves: vec![Wave { repo: "o/r".into(), word: "waits".into(), image: None, waits: Default::default() }],
+///     waves: vec![Wave { repo: "o/r".into(), word: "waits".into(), image: None, waits: Default::default(), stops: Default::default() }],
 ///     sessions: vec![Session { digest: String::new(), ..facts.sessions[0].clone() }],
 ///     ..facts.clone()
 /// };
@@ -9445,7 +9447,7 @@ const LIMIT_GUESS: &str = " riff cannot read the reset: this time is the end of 
 ///     cause: None,
 /// });
 /// status.waiting.push("the wave of o/r".into());
-/// status.waves.push(WaveShown { repo: "o/r".into(), word: "starts issue-12".into(), waits: Default::default(), unfollowed: vec![] });
+/// status.waves.push(WaveShown { repo: "o/r".into(), word: "starts issue-12".into(), waits: Default::default(), stops: Default::default(), unfollowed: vec![] });
 /// let text = riff::text::daemon_status(&status, 300_000);
 /// assert!(text.contains(
 ///     "  riff-issue-12-1a2b3c4d  issue-12  session 1a2b3c4d-0000  for 1m  works: > Bash: just check\n"
@@ -9480,6 +9482,12 @@ const LIMIT_GUESS: &str = " riff cannot read the reset: this time is the end of 
 /// let text = riff::text::daemon_status(&status, 300_000);
 /// assert!(text.contains("Waves:\n  o/r  starts issue-12\n    waits for #728: #724 #725\n"), "{text}");
 /// status.waves[0].waits.clear();
+/// // A rebase that does not start, with the cause (#2128).
+/// status.waves[0].stops = [(635, riff_client::waves::NoRebase::Tried)].into();
+/// let text = riff::text::daemon_status(&status, 300_000);
+/// let line = "    no rebase of #635: its rebase was tried: riff host join starts it again\n";
+/// assert!(text.contains(line), "{text}");
+/// status.waves[0].stops.clear();
 /// // A follower of the wave that does not run (01M7B2RWBQWA6X8BNZEB025SWX).
 /// status.waves[0].unfollowed.push(riff::followers::Unfollowed {
 ///     follower: riff::followers::Follower::Plan,
@@ -9655,6 +9663,9 @@ pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
             for line in daemon_wave_waits(&wave.waits) {
                 let _ = writeln!(out, "    {line}");
             }
+            for line in daemon_wave_stops(&wave.stops) {
+                let _ = writeln!(out, "    {line}");
+            }
             for unfollowed in &wave.unfollowed {
                 let _ = writeln!(out, "    {}", daemon_unfollowed(unfollowed, now_ms));
             }
@@ -9700,6 +9711,31 @@ pub fn daemon_wave_waits(waits: &std::collections::BTreeMap<u64, u64>) -> Vec<St
     by_pull
         .into_iter()
         .map(|(pull, issues)| format!("waits for #{pull}: {}", issues.join(" ")))
+        .collect()
+}
+
+/// The lines of the rebases of a wave that do not start, from `stops`
+/// ([`crate::daemon::WaveShown::stops`], #2128): one line for each item,
+/// with the cause, as the row of `riff wave list` names it.
+///
+/// ```
+/// use riff_client::waves::NoRebase;
+///
+/// let stops = [(635, NoRebase::Tried), (636, NoRebase::Record)].into();
+/// assert_eq!(
+///     riff::text::daemon_wave_stops(&stops),
+///     [
+///         "no rebase of #635: its rebase was tried: riff host join starts it again",
+///         "no rebase of #636: a session of the daemon still has its item: see riff daemon status",
+///     ]
+/// );
+/// ```
+pub fn daemon_wave_stops(
+    stops: &std::collections::BTreeMap<u64, riff_client::waves::NoRebase>,
+) -> Vec<String> {
+    stops
+        .iter()
+        .map(|(issue, stop)| format!("no rebase of #{issue}: {}", stop.word()))
         .collect()
 }
 
@@ -13194,19 +13230,19 @@ pub fn wave_rebase_start(
 /// does not read (01M5R56GN3DC09GAPAF69GENEZ).
 pub const WAVE_BASE_UNREAD: &str = "the default branch";
 
-/// The message to the lead when the rebase session of `item` ended and
-/// its pull request still has the head `commit` with the conflict: the
+/// The note to the lead when the rebase session of `item` ended and its
+/// pull request still has the head `commit` with the conflict: the
 /// session pushed nothing (01M57FJ3Z8AFDY9G0KTAYZJESY). `base` is the
-/// default branch of the conflict.
+/// default branch of the conflict. The message with the fix comes from
+/// the loop of the wave ([`wave_no_rebase`], #2128).
 ///
 /// ```
 /// assert_eq!(
 ///     riff::text::wave_not_rebased("issue-12", 40, "worktree-issue-12", "main", "1a2b3c4d5e", "9f8e7d6c"),
 ///     "issue-12: the rebase session of the wave ended with no push (session 9f8e7d6c). PR #40, \
 ///      branch worktree-issue-12, still has the head commit 1a2b3c4 with the conflict with \
-///      main. The riff daemon sends no verify request, and the wave starts no second session \
-///      for this commit. Give the item to a session to rebase, or run riff host join to start \
-///      the rebase again. The item is free."
+///      main. The riff daemon sends no verify request, and the wave starts no second rebase of \
+///      this commit: a message with the fix follows. The item is free."
 /// );
 /// // The default branch did not read.
 /// let unread = riff::text::wave_not_rebased(
@@ -13226,9 +13262,98 @@ pub fn wave_not_rebased(
     format!(
         "{item}: the rebase session of the wave ended with no push (session {session}). PR \
          #{number}, branch {branch}, still has the head commit {commit} with the conflict with \
-         {base}. The riff daemon sends no verify request, and the wave starts no second session \
-         for this commit. Give the item to a session to rebase, or run riff host join to start \
-         the rebase again. The item is free."
+         {base}. The riff daemon sends no verify request, and the wave starts no second rebase \
+         of this commit: a message with the fix follows. The item is free."
+    )
+}
+
+/// The message to the lead for the pull request #`pull` of the issue
+/// `issue`, whose head `head` has a conflict with `base`, and whose rebase
+/// the wave of `host` does not start for `stop` (#2128): the pull request,
+/// the head, the cause and the fix. A spent start names the end of its
+/// last session (`reason`).
+///
+/// ```
+/// use riff_client::waves::NoRebase;
+///
+/// let text = |stop| riff::text::wave_no_rebase(861, 635, "main", "1e50c307a9", "kadomony", stop, "exit code 0");
+/// assert_eq!(
+///     text(NoRebase::Tried),
+///     "PR #861 of issue-635 has a conflict with main at commit 1e50c30, and the riff daemon of \
+///      kadomony will not start its rebase again: the rebase of this commit started in this run \
+///      of the wave, and the conflict is still there. The last session ended: exit code 0. Start \
+///      the rebase again with riff host join on kadomony, or on another machine with riff host \
+///      join --host kadomony"
+/// );
+/// assert!(text(NoRebase::Held).ends_with(
+///     "the lead holds issue-635, so the wave starts no rebase of it. Free the item to start the \
+///      rebase: riff plan free issue-635"
+/// ));
+/// assert!(text(NoRebase::Question).ends_with(
+///     "issue #635 has the label question, so the wave starts no rebase of it until the answer. \
+///      After the answer, remove the label: gh issue edit 635 --remove-label question"
+/// ));
+/// assert!(text(NoRebase::Record).ends_with(
+///     "a session of the riff daemon of kadomony still has issue-635 with no claim on \
+///      riff-server, so the wave starts no rebase of it. The rebase starts after that session \
+///      ends. See the session: riff daemon status --host kadomony"
+/// ));
+/// ```
+pub fn wave_no_rebase(
+    pull: u64,
+    issue: u64,
+    base: &str,
+    head: &str,
+    host: &str,
+    stop: riff_client::waves::NoRebase,
+    reason: &str,
+) -> String {
+    use riff_client::waves::NoRebase;
+    let commit = head.get(..7).unwrap_or(head);
+    let item = format!("issue-{issue}");
+    let start = format!("PR #{pull} of {item} has a conflict with {base} at commit {commit}");
+    match stop {
+        NoRebase::Tried => format!(
+            "{start}, and the riff daemon of {host} will not start its rebase again: the rebase \
+             of this commit started in this run of the wave, and the conflict is still there. The \
+             last session ended: {reason}. Start the rebase again with riff host join on {host}, \
+             or on another machine with riff host join --host {host}"
+        ),
+        NoRebase::Held => format!(
+            "{start}, and the lead holds {item}, so the wave starts no rebase of it. Free the item \
+             to start the rebase: riff plan free {item}"
+        ),
+        NoRebase::Question => format!(
+            "{start}, and issue #{issue} has the label question, so the wave starts no rebase of it \
+             until the answer. After the answer, remove the label: gh issue edit {issue} \
+             --remove-label question"
+        ),
+        NoRebase::Record => format!(
+            "{start}, and a session of the riff daemon of {host} still has {item} with no claim on \
+             riff-server, so the wave starts no rebase of it. The rebase starts after that session \
+             ends. See the session: riff daemon status --host {host}"
+        ),
+    }
+}
+
+/// The message to the lead for the pull request #`pull` of the issue
+/// `issue`, whose head `head` has a conflict with `base`, and whose rebase
+/// waits for its turn after the pull request #`before` (#1801, #2128).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::wave_rebase_waits(861, 635, "main", "1e50c307a9", 883),
+///     "PR #861 of issue-635 has a conflict with main at commit 1e50c30. Its rebase waits for its \
+///      turn after PR #883 in the order of the verifies: it starts when #883 merges or its verify \
+///      fails. See the order: riff wave list"
+/// );
+/// ```
+pub fn wave_rebase_waits(pull: u64, issue: u64, base: &str, head: &str, before: u64) -> String {
+    let commit = head.get(..7).unwrap_or(head);
+    format!(
+        "PR #{pull} of issue-{issue} has a conflict with {base} at commit {commit}. Its rebase \
+         waits for its turn after PR #{before} in the order of the verifies: it starts when \
+         #{before} merges or its verify fails. See the order: riff wave list"
     )
 }
 
