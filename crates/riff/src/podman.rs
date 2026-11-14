@@ -19,8 +19,8 @@
 //! | `memory`, `cpus` | `--memory 8g`, `--cpus 4` |
 //! | (each spec) | `--cgroup-conf cpu.weight=1`: the lowest CPU weight of cgroup v2 ([`CPU_WEIGHT`]) |
 //! | (each spec) | `--cgroup-parent riff.slice`: the container and its conmon run in the slice of riff ([`SLICE`]) |
-//! | `home` | `--mount type=tmpfs,destination=HOME,tmpfs-mode=0700,U=true` |
-//! | Each folder of [`SessionSpec::home_folders`] | `--mount type=tmpfs,destination=FOLDER,tmpfs-mode=0755,U=true`: a folder of the session user, not of root (01M748WY71EFVZR6SG5CCEQYE0) |
+//! | `home` | `--mount type=tmpfs,destination=HOME,tmpfs-mode=0700,tmpfs-size=1g,U=true`: at most [`HOME_TMPFS_GIB`] GiB of memory (01M7DYR99QK609NF61GGCN75QQ) |
+//! | Each folder of [`SessionSpec::home_folders`] | `--mount type=tmpfs,destination=FOLDER,tmpfs-mode=0755,tmpfs-size=1g,U=true`: a folder of the session user, not of root (01M748WY71EFVZR6SG5CCEQYE0) |
 //! | A [`Bind`] | `-v SOURCE:TARGET`, with `:ro` when it has no write |
 //! | An [`Env::Value`] | `-e NAME=VALUE` |
 //! | An [`Env::Host`] | `-e NAME`: podman takes the value from its own environment |
@@ -128,7 +128,9 @@ use anyhow::{Context, Result, anyhow, bail};
 
 use crate::platform::systemd::set_cpu_weight;
 use crate::ps::Proc;
-use crate::runtime::{Bind, End, Env, Exit, REACH_HOST, Running, Runtime, SessionSpec, Source};
+use crate::runtime::{
+    Bind, End, Env, Exit, HOME_TMPFS_GIB, REACH_HOST, Running, Runtime, SessionSpec, Source,
+};
 use crate::text;
 
 /// The program of the container runtime.
@@ -186,11 +188,11 @@ pub struct Podman;
 ///     "run --rm -i --sig-proxy=false --name riff-issue-12-1a2b3c4d --userns=keep-id \
 ///      --init --memory 8g --cpus 4 --cgroup-conf cpu.weight=1 \
 ///      --cgroup-parent riff.slice \
-///      --mount type=tmpfs,destination=/home/mike,tmpfs-mode=0700,U=true \
-///      --mount type=tmpfs,destination=/home/mike/.cache,tmpfs-mode=0755,U=true \
-///      --mount type=tmpfs,destination=/home/mike/.local,tmpfs-mode=0755,U=true \
-///      --mount type=tmpfs,destination=/home/mike/.local/share,tmpfs-mode=0755,U=true \
-///      --mount type=tmpfs,destination=/home/mike/.local/state,tmpfs-mode=0755,U=true \
+///      --mount type=tmpfs,destination=/home/mike,tmpfs-mode=0700,tmpfs-size=1g,U=true \
+///      --mount type=tmpfs,destination=/home/mike/.cache,tmpfs-mode=0755,tmpfs-size=1g,U=true \
+///      --mount type=tmpfs,destination=/home/mike/.local,tmpfs-mode=0755,tmpfs-size=1g,U=true \
+///      --mount type=tmpfs,destination=/home/mike/.local/share,tmpfs-mode=0755,tmpfs-size=1g,U=true \
+///      --mount type=tmpfs,destination=/home/mike/.local/state,tmpfs-mode=0755,tmpfs-size=1g,U=true \
 ///      -v /data/clone:/data/clone -v riff-cargo:/home/mike/.cargo \
 ///      -v /home/mike/.gitconfig:/home/mike/.gitconfig:ro \
 ///      -e USER=mike -e GH_TOKEN -w /data/clone localhost/riff-session:latest claude -p"
@@ -232,11 +234,11 @@ pub fn run_args(spec: &SessionSpec) -> Result<Vec<OsString>> {
 ///     args.join(" "),
 ///     "run --rm -d -i -t --name riff-lead-o-r --userns=keep-id --init --memory 8g --cpus 4 \
 ///      --cgroup-conf cpu.weight=1 --cgroup-parent riff.slice \
-///      --mount type=tmpfs,destination=/home/mike,tmpfs-mode=0700,U=true \
-///      --mount type=tmpfs,destination=/home/mike/.cache,tmpfs-mode=0755,U=true \
-///      --mount type=tmpfs,destination=/home/mike/.local,tmpfs-mode=0755,U=true \
-///      --mount type=tmpfs,destination=/home/mike/.local/share,tmpfs-mode=0755,U=true \
-///      --mount type=tmpfs,destination=/home/mike/.local/state,tmpfs-mode=0755,U=true \
+///      --mount type=tmpfs,destination=/home/mike,tmpfs-mode=0700,tmpfs-size=1g,U=true \
+///      --mount type=tmpfs,destination=/home/mike/.cache,tmpfs-mode=0755,tmpfs-size=1g,U=true \
+///      --mount type=tmpfs,destination=/home/mike/.local,tmpfs-mode=0755,tmpfs-size=1g,U=true \
+///      --mount type=tmpfs,destination=/home/mike/.local/share,tmpfs-mode=0755,tmpfs-size=1g,U=true \
+///      --mount type=tmpfs,destination=/home/mike/.local/state,tmpfs-mode=0755,tmpfs-size=1g,U=true \
 ///      -w /data/clone img claude"
 /// );
 /// # Ok::<(), anyhow::Error>(())
@@ -327,22 +329,10 @@ fn args_of(spec: &SessionSpec, first: &[&str]) -> Result<Vec<OsString>> {
     args.push("--cgroup-parent".into());
     args.push(SLICE.into());
     args.push("--mount".into());
-    args.push(
-        format!(
-            "type=tmpfs,destination={},tmpfs-mode=0700,U=true",
-            plain(&spec.home)?
-        )
-        .into(),
-    );
+    args.push(tmpfs(&spec.home, "0700")?.into());
     for folder in spec.home_folders() {
         args.push("--mount".into());
-        args.push(
-            format!(
-                "type=tmpfs,destination={},tmpfs-mode=0755,U=true",
-                plain(&folder)?
-            )
-            .into(),
-        );
+        args.push(tmpfs(&folder, "0755")?.into());
     }
     for bind in &spec.binds {
         args.push("-v".into());
@@ -360,6 +350,17 @@ fn args_of(spec: &SessionSpec, first: &[&str]) -> Result<Vec<OsString>> {
     args.push(spec.image.clone().into());
     args.extend(spec.command.iter().map(OsString::from));
     Ok(args)
+}
+
+/// The value of `--mount` for a tmpfs of the session user at `path`,
+/// with the mode `mode` and the size [`HOME_TMPFS_GIB`]: a write over
+/// the size fails with "No space left on device", and does not fill the
+/// memory of the container (01M7DYR99QK609NF61GGCN75QQ).
+fn tmpfs(path: &Path, mode: &str) -> Result<String> {
+    Ok(format!(
+        "type=tmpfs,destination={},tmpfs-mode={mode},tmpfs-size={HOME_TMPFS_GIB}g,U=true",
+        plain(path)?
+    ))
 }
 
 /// The value of `-v` for `bind`.
@@ -1077,8 +1078,11 @@ mod tests {
             .filter(|w| w[0] == "--mount")
             .map(|w| w[1].as_str())
             .collect();
-        let mine = |f: &str| format!("type=tmpfs,destination={f},tmpfs-mode=0755,U=true");
-        let mut want = vec![format!("type=tmpfs,destination={h},tmpfs-mode=0700,U=true")];
+        let mine =
+            |f: &str| format!("type=tmpfs,destination={f},tmpfs-mode=0755,tmpfs-size=1g,U=true");
+        let mut want = vec![format!(
+            "type=tmpfs,destination={h},tmpfs-mode=0700,tmpfs-size=1g,U=true"
+        )];
         want.extend(
             [
                 ".cache",
@@ -1100,6 +1104,41 @@ mod tests {
         let last = args.iter().rposition(|a| a == "--mount").unwrap();
         let first = args.iter().position(|a| a == "-v").unwrap();
         assert!(last < first, "{args:?}");
+    }
+
+    /// #2113 (01M7DYR99QK609NF61GGCN75QQ): each tmpfs of the home has a
+    /// size of 1 GiB, with and without a terminal. A large build tree in
+    /// the folder of the session, above `clone/`, fails with no space
+    /// left, and does not fill the memory of the container.
+    #[test]
+    fn each_tmpfs_of_the_home_has_a_size_of_one_gib() {
+        let spec = SessionSpec {
+            binds: vec![Bind {
+                source: Source::Path("/s".into()),
+                target: "/home/mike/.local/share/riff/sessions/issue-12-1a2b3c4d/clone".into(),
+                write: true,
+            }],
+            ..spec()
+        };
+        for args in [run_args(&spec).unwrap(), terminal_args(&spec).unwrap()] {
+            let args: Vec<String> = args.into_iter().map(|a| a.into_string().unwrap()).collect();
+            let tmpfs: Vec<&str> = args
+                .windows(2)
+                .filter(|w| w[0] == "--mount")
+                .map(|w| w[1].as_str())
+                .collect();
+            assert_eq!(tmpfs.len(), 1 + spec.home_folders().len(), "{args:?}");
+            assert!(tmpfs.iter().any(|m| m.contains("issue-12-1a2b3c4d,")));
+            for mount in tmpfs {
+                assert!(mount.starts_with("type=tmpfs,"), "{mount}");
+                let sizes: Vec<&str> = mount
+                    .split(',')
+                    .filter(|o| o.starts_with("tmpfs-size="))
+                    .collect();
+                assert_eq!(sizes, ["tmpfs-size=1g"], "{mount}");
+            }
+        }
+        assert_eq!(HOME_TMPFS_GIB, 1);
     }
 
     /// The program and the arguments of `command`, as words.

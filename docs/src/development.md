@@ -1418,6 +1418,8 @@ the volume `riff-sccache = "$HOME/.cache/sccache"`, that folder is
 `~/.local/state` in each session. Each of these folders is a tmpfs of
 its own, in memory, as the home is. So a tool of the session makes its
 own folder in them, with no `XDG_CACHE_HOME` and no `XDG_STATE_HOME`.
+Each holds 1 GiB at most: see [The home of a session is in
+memory](how-it-works.md#the-home-of-a-session-is-in-memory).
 riff makes no folder in a volume: the folders in it belong to the
 volume.
 

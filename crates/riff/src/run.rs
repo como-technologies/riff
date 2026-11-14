@@ -199,6 +199,7 @@
 //! | The init | `--init`: PID 1 reaps each orphan process | 01M51117K3WXK35CE67KPRFMA8 |
 //! | The home | a tmpfs at the path of `HOME`, `HOME`, `USER`, `LOGNAME` | 01M4Z60B7SHAMXXFK15BE3KZSP, 01M4Z60B7S8V9KKZPNBCQ6M99N |
 //! | The folders of the home | a tmpfs of the session user at each folder above a bind, and at `~/.cache`, `~/.local`, `~/.local/share` and `~/.local/state` ([`SessionSpec::home_folders`]) | 01M748WY71EFVZR6SG5CCEQYE0 |
+//! | The size of each tmpfs of the home | `tmpfs-size=1g` ([`crate::runtime::HOME_TMPFS_GIB`]): a larger write fails with no space left, and does not fill the memory | 01M7DYR99QK609NF61GGCN75QQ |
 //! | The clone | with write, at the same path, the working folder | 01M4Z60B7PTJMB37578K8FV22Q |
 //! | The objects of the main clone | no write, at the same path | 01M4Z60B7PQ07HRJBXS1TA73PX |
 //! | `~/.gitconfig` | no write, when it exists. No `~/.config/gh` | 01M4Z60B7QDWEFQ96H448RE9N2, 01M6WPMP035A93SM6SAJGS6MTC |
