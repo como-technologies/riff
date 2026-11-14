@@ -6366,6 +6366,40 @@ A check that needs a removed record is `not checked`, with the reason:
 The error of a log that does not read never tells you to delete the
 state. Only a server that cannot load its state at a start says so.
 
+### Count the faults that a verify missed
+
+A verify can pass a pull request with a fault in it. When a person or a
+session finds such a fault later, the lead files an issue for the fault
+with the label `escaped`. The body of the issue has a line
+`Cause: #PR`: PR is the pull request whose verify passed with the
+fault. These issues are the measure of the verify: see
+[The levers of a verify](how-it-works.md#the-levers-of-a-verify).
+
+Make the label one time in the repository:
+
+```sh
+gh label create escaped --description "A fault that a passed verify missed"
+```
+
+Write the body of the issue to a file, for example `fault.md`, with
+the line `Cause: #2100` at its end. Put the pull request of the passed
+verify in place of 2100. Then file the issue:
+
+```sh
+gh issue create --label escaped --title "riff top shows no lead line" --body-file fault.md
+```
+
+To list the faults that a verify missed:
+
+```sh
+gh issue list --label escaped --state all
+```
+
+`riff audit` does not count them yet:
+[#2117](https://github.com/como-technologies/riff/issues/2117) adds the
+count to `riff audit --wave N`. It will count the issues whose line
+`Cause:` names a pull request of wave N.
+
 ## Sign in on this machine
 
 Sign-in uses the OAuth client of the Google Cloud project `como-riff`.
