@@ -189,7 +189,8 @@ fn first_sh_block(text: &str) -> String {
 }
 
 /// The text under the line `heading` of the book page `name`, up to the
-/// next heading.
+/// next heading. A line that starts with `#` in a code block is no
+/// heading.
 fn under(name: &str, heading: &str) -> String {
     let page = book::page(name);
     let start = page
@@ -197,7 +198,13 @@ fn under(name: &str, heading: &str) -> String {
         .position(|line| line == heading)
         .unwrap_or_else(|| panic!("{heading} is in {name}"));
     let rest: Vec<&str> = page.lines().skip(start + 1).collect();
-    let end = rest.iter().position(|line| line.starts_with('#'));
+    let mut fenced = false;
+    let end = rest.iter().position(|line| {
+        if line.starts_with("```") {
+            fenced = !fenced;
+        }
+        !fenced && line.starts_with('#')
+    });
     rest[..end.unwrap_or(rest.len())].join("\n")
 }
 
@@ -265,5 +272,246 @@ fn the_book_says_that_riff_builds_in_the_default_set() {
     assert!(
         words.contains("(development.md#list-the-members-of-the-council)"),
         "{words}"
+    );
+}
+
+/// A member that joins for each path.
+const ALL: &str = "+++
+files = [\"**\"]
++++
+
+# Performance
+
+You review the time and the memory of each change.
+
+## A read of the log reads each line one time
+
+A second pass over the log is a finding.
+";
+
+/// `git ARGS` in `dir`, as Ada, with no signature.
+fn git(dir: &Path, args: &[&str]) {
+    let out = Isolated::shared()
+        .command("git")
+        .args(["-c", "user.name=Ada", "-c", "user.email=ada@example.com"])
+        .args(["-c", "commit.gpgsign=false"])
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "git {args:?}: {out:?}");
+}
+
+/// A bare `origin.git` in `root`, and the clone `work` of it, with one
+/// commit on `main` that has no member file. Gives the path of `work`.
+fn clone_with_origin(root: &Path) -> std::path::PathBuf {
+    git(root, &["init", "-q", "--bare", "-b", "main", "origin.git"]);
+    git(root, &["init", "-q", "-b", "main", "work"]);
+    let work = root.join("work");
+    git(&work, &["commit", "-q", "--allow-empty", "-m", "start"]);
+    let origin = root.join("origin.git");
+    git(
+        &work,
+        &["remote", "add", "origin", origin.to_str().unwrap()],
+    );
+    git(&work, &["push", "-q", "origin", "main"]);
+    work
+}
+
+/// A pull request of the base branch `main` for the fake `gh`: its
+/// number, the paths of its files and its labels.
+type Pull<'a> = (u64, &'a [&'a str], &'a [&'a str]);
+
+/// A fake `gh` in a new folder. It answers the reads of
+/// `riff council show` for the pull requests `pulls`. The issue of each
+/// one is issue 12, with no label. Each other call fails.
+fn fake_gh(pulls: &[Pull]) -> tempfile::TempDir {
+    let bin = tempfile::tempdir().unwrap();
+    let mut cases = String::new();
+    for (number, paths, labels) in pulls {
+        let labels: Vec<String> = labels
+            .iter()
+            .map(|label| format!("{{\"name\":\"{label}\"}}"))
+            .collect();
+        cases.push_str(&format!(
+            "  'pr view {number} --json baseRefName,body,labels') printf '%s' '{{\"baseRefName\":\"main\",\"body\":\"Closes #12\\n\\nIssue: #12\\n\",\"labels\":[{}]}}' ;;\n",
+            labels.join(",")
+        ));
+        let paths: Vec<String> = paths.iter().map(|path| format!("'{path}'")).collect();
+        cases.push_str(&format!(
+            "  'api repos/{{owner}}/{{repo}}/pulls/{number}/files?per_page=100 --paginate --jq '*) printf '%s\\n' {} ;;\n",
+            paths.join(" ")
+        ));
+    }
+    cases.push_str("  'issue view 12 --json labels') printf '%s' '{\"labels\":[]}' ;;\n");
+    isolated::write_program(
+        bin.path().join("gh"),
+        format!(
+            "#!/bin/sh\ncase \"$*\" in\n{cases}  *) echo \"gh: no such call: $*\" >&2; exit 1 ;;\nesac\n"
+        ),
+    );
+    bin
+}
+
+/// `riff council show NUMBER` in the folder `dir`, with the fake `gh` of
+/// `bin` first in `PATH`.
+fn show(dir: &Path, bin: &Path, number: u64) -> Output {
+    let mut path = OsString::from(bin);
+    path.push(":");
+    path.push(std::env::var_os("PATH").unwrap_or_default());
+    Isolated::shared()
+        .riff()
+        .args(["council", "show", &number.to_string()])
+        .current_dir(dir)
+        .env("PATH", path)
+        .output()
+        .unwrap()
+}
+
+/// The stdout of `out`, after a check that the command worked.
+fn stdout_of(out: Output) -> String {
+    assert!(out.status.success(), "{out:?}");
+    String::from_utf8(out.stdout).unwrap()
+}
+
+/// The text after `== ` of each line of `out` that starts with it.
+fn headings(out: &str) -> Vec<&str> {
+    out.lines()
+        .filter_map(|line| line.strip_prefix("== "))
+        .collect()
+}
+
+/// 01M7CFBZ7839WHMFARR4T6W13W, 01M7CRX66K9Q750SB8M2MPG6V7: a pull
+/// request that adds `.riff/council/performance.md` with `files =
+/// ["**"]` does not get `performance`, because the base branch has no
+/// such file. The folder has it, and riff does not read it. Another clone
+/// merges the file into the base branch. Then a second pull request gets
+/// `performance`, from a folder with no such file: riff fetches the base
+/// branch and reads it. When the fetch fails, riff says so, and reads the
+/// base branch as the clone has it.
+#[test]
+fn riff_council_show_reads_the_member_files_of_the_base_branch() {
+    let root = tempfile::tempdir().unwrap();
+    let work = clone_with_origin(root.path());
+    git(&work, &["switch", "-q", "-c", "performance"]);
+    member(&work, "performance.md", ALL);
+    git(&work, &["add", "."]);
+    git(
+        &work,
+        &["commit", "-q", "-m", "The council gets performance"],
+    );
+    let bin = fake_gh(&[
+        (40, &[".riff/council/performance.md"], &[]),
+        (41, &["src/a.rs"], &[]),
+    ]);
+    let stdout = stdout_of(show(&work, bin.path(), 40));
+    assert!(
+        stdout.starts_with("The council of pull request #40 has 3 members. riff read the member files of origin/main.\n"),
+        "{stdout}"
+    );
+    assert_eq!(
+        headings(&stdout),
+        [
+            "design (riff): each council",
+            "testing (riff): each council",
+            "docs (riff): each council"
+        ],
+        "{stdout}"
+    );
+    assert!(!stdout.contains("performance"), "{stdout}");
+
+    git(
+        root.path(),
+        &[
+            "clone",
+            "-q",
+            root.path().join("origin.git").to_str().unwrap(),
+            "other",
+        ],
+    );
+    let other = root.path().join("other");
+    member(&other, "performance.md", ALL);
+    git(&other, &["add", "."]);
+    git(
+        &other,
+        &["commit", "-q", "-m", "The council gets performance"],
+    );
+    git(&other, &["push", "-q", "origin", "main"]);
+    git(&work, &["switch", "-q", "main"]);
+    assert!(!work.join(".riff/council/performance.md").exists());
+    let stdout = stdout_of(show(&work, bin.path(), 41));
+    let joined = [
+        "design (riff): each council",
+        "testing (riff): each council",
+        "docs (riff): each council",
+        "rust (riff): the path src/a.rs matches **/*.rs",
+        "performance (.riff/council/performance.md): the path src/a.rs matches **",
+    ];
+    assert_eq!(headings(&stdout), joined, "{stdout}");
+    // The text of the file after the table.
+    let text = &ALL[ALL.find("# Performance").unwrap()..];
+    assert!(stdout.ends_with(&format!("\n\n{text}")), "{stdout}");
+
+    git(
+        &work,
+        &["remote", "set-url", "origin", "/no/such/origin.git"],
+    );
+    let out = show(&work, bin.path(), 41);
+    let stderr = String::from_utf8(out.stderr.clone()).unwrap();
+    assert!(
+        stderr.contains("riff cannot fetch origin/main: ")
+            && stderr.contains("riff reads the member files of origin/main as the clone has it."),
+        "{stderr}"
+    );
+    assert_eq!(headings(&stdout_of(out)), joined);
+}
+
+/// `riff council show` exits with 1 when `gh` cannot read the pull
+/// request, and names the call.
+#[test]
+fn riff_council_show_exits_with_1_when_gh_cannot_read_the_pull_request() {
+    let root = tempfile::tempdir().unwrap();
+    let work = clone_with_origin(root.path());
+    let bin = fake_gh(&[]);
+    let out = show(&work, bin.path(), 42);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert!(out.stdout.is_empty(), "{out:?}");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.contains("gh pr view 42"), "{stderr}");
+}
+
+/// "See the council of a pull request" in the book has
+/// `riff council show 40` in a copyable `sh` block. Each line of its
+/// example comes, in that order, in the output for a pull request that
+/// changes a `.rs` file and a page of the book, with the label
+/// `security`.
+#[test]
+fn the_book_shows_the_council_of_a_pull_request() {
+    let how_to = under("how-it-works.md", "#### See the council of a pull request");
+    assert_eq!(book::commands_in(&how_to), ["riff council show 40"]);
+    let example = how_to
+        .split("```text\n")
+        .nth(1)
+        .and_then(|rest| rest.split("\n```").next())
+        .expect("an example of the output");
+
+    let root = tempfile::tempdir().unwrap();
+    let work = clone_with_origin(root.path());
+    let bin = fake_gh(&[(
+        40,
+        &["crates/riff/src/council.rs", "docs/src/how-it-works.md"],
+        &["security"],
+    )]);
+    let stdout = stdout_of(show(&work, bin.path(), 40));
+    let mut rest = stdout.lines();
+    for line in example.lines().filter(|line| *line != "...") {
+        assert!(
+            rest.any(|out| out == line),
+            "{line:?} is not in this order in:\n{stdout}"
+        );
+    }
+    assert!(
+        example.contains("== Left out by the limit of 6"),
+        "{example}"
     );
 }

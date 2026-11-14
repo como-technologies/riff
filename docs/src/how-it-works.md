@@ -3378,9 +3378,10 @@ just test NAME
 
 ### The council of a verify
 
-This part is the design of #581. Its first build item is done: riff
-reads the member files, and `riff council list` lists the members. The
-other build items are not done yet (see
+This part is the design of #581. Its first two build items are done:
+riff reads the member files, `riff council list` lists the members, and
+`riff council show` picks the council of a pull request. The other
+build items are not done yet (see
 [The build items of the council](#the-build-items-of-the-council)), so
 a verify has no council today. The requirements of the council are in
 [Product](requirements.md#product).
@@ -3432,12 +3433,18 @@ file with a new name adds a member (see
 | `newcomer` | a change of the book | the book as a person who knows nothing about riff reads it |
 | `operations` | a change of the daemon, the release or the cloud; the label `operations` | the fix of each fault, a stop that loses nothing, and the cost |
 
-A council will have at most 6 members. riff will take first the
-members that join each council, then the others. In each group, the
-members will come in the order of the table, and the other members of
-your repository after them, in the order of their names.
+A member by area joins when a glob of its `files` matches the path of
+a file that the pull request adds, changes, removes or renames, or when
+one of its `labels` is a label of the pull request or of its issue. In
+a glob, `*` matches each text in one part of a path, `?` matches one
+character, and the part `**` matches no part or more.
 
-The council of a pull request will read the member files of its base
+A council has at most 6 members. riff takes first the members that
+join each council, then the others. In each group, the members come in
+the order of the table, and the other members of your repository after
+them, in the order of their names.
+
+The council of a pull request reads the member files of its base
 branch, not of its head. So a pull request cannot change the council
 of its own verify.
 
@@ -3447,6 +3454,51 @@ idiomatic Rust and for the patterns of `.riff/council/rust.md`. Each
 state cannot be made" and "Each conversion names each field". To add a
 pattern, see
 [Add a rule to a member](development.md#add-a-rule-to-a-member).
+
+#### See the council of a pull request
+
+`riff council show` shows the council of a pull request: each member,
+why it joins, and the text of its file. Run it in your clone, with the
+number of the pull request:
+
+```sh
+riff council show 40
+```
+
+riff reads with `gh` the files and the labels of the pull request, and
+the labels of its issue. It fetches the base branch, for example
+`main`, and reads the member files of `origin/main` over the default
+set. It does not read the files of the head or of your folder. For a
+pull request that changes `crates/riff/src/council.rs` and
+`docs/src/how-it-works.md`, with the label `security`, the output
+starts and ends so:
+
+```text
+The council of pull request #40 has 6 members. riff read the member files of origin/main.
+
+== design (riff): each council
+
+# Design
+
+You review the fit of the change with the design of the repository:
+...
+== rust (riff): the path crates/riff/src/council.rs matches **/*.rs
+
+# The Rust expert
+...
+== security (riff): the label security
+...
+== Left out by the limit of 6
+
+requirements (riff): the path docs/src/how-it-works.md matches docs/**
+newcomer (riff): the path docs/src/how-it-works.md matches docs/**
+```
+
+Each member has a line `== NAME (SOURCE): WHY`, then the text of its
+file after the table. The source is `riff` or the path of the file.
+The last part names each member that the limit of 6 leaves out. When
+riff cannot fetch the base branch, it says so, and reads the base
+branch as your clone has it.
 
 #### The findings of the council
 

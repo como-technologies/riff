@@ -1,7 +1,8 @@
 //! The members of the council of a verify (#581): the form of a member
 //! file, the default set that riff builds in, and `riff council list`
 //! (01M7CFBZ7839WHMFARR4T6W13W, 01M7CFBZ9TJ83FNHN0APY41175,
-//! 01M7CFBZMCE36ZRXD0GBCM4MFX).
+//! 01M7CFBZMCE36ZRXD0GBCM4MFX). [`pick`] picks the council of a pull
+//! request, for `riff council show`.
 //!
 //! # Design
 //!
@@ -11,10 +12,12 @@
 //! set: the files of `.riff/council/` of the riff repository
 //! ([`default_set`]). The members of a folder are the files of
 //! `.riff/council/` at the top of its git work tree over the default set
-//! ([`of_folder`]). A file with the name of a default member takes its
-//! place, and a file with a new name adds a member. The default set comes
-//! first, in the order of 01M7CFBZHQZ8FDT3Q0NGYKBZWB, then each other
-//! member in the order of its name (01M7CN1H1XGQVBGFH30MRE1BP4).
+//! ([`of_folder`]). The members of a branch are the files of
+//! `.riff/council/` of its tree over the default set ([`of_branch`]). A
+//! file with the name of a default member takes its place, and a file
+//! with a new name adds a member. The default set comes first, in the
+//! order of 01M7CFBZHQZ8FDT3Q0NGYKBZWB, then each other member in the
+//! order of its name (01M7CN1H1XGQVBGFH30MRE1BP4).
 //!
 //! ```mermaid
 //! flowchart TD
@@ -99,6 +102,8 @@ use anyhow::{Context, Result, anyhow};
 
 use crate::session_image::top;
 use crate::{text, view};
+
+pub mod pick;
 
 /// The folder of the member files, from the top of the work tree.
 pub const FOLDER: &str = ".riff/council";
@@ -325,6 +330,9 @@ pub struct Member {
     pub area: String,
     /// Its rules, in the order of the file.
     pub rules: Vec<Rule>,
+    /// The text of its file after the table: the `#` heading, the area
+    /// and the rules.
+    pub text: String,
 }
 
 /// What is wrong with a member file (01M7CFBZ9TJ83FNHN0APY41175,
@@ -443,6 +451,7 @@ impl Member {
         let Some(title) = heading(first, "#") else {
             return Err(fault(at + 1, Wrong::NoHeading));
         };
+        let after_table = format!("{}\n", lines[at..].join("\n").trim_end());
         let mut area: Vec<&str> = Vec::new();
         let mut rules: Vec<(String, Vec<&str>)> = Vec::new();
         let mut fenced = false;
@@ -471,6 +480,7 @@ impl Member {
                     text: text.join("\n").trim().to_owned(),
                 })
                 .collect(),
+            text: after_table,
         })
     }
 }
@@ -586,11 +596,91 @@ pub fn of_folder(dir: &Path) -> Result<Vec<Member>> {
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn of_tree(top: &Path) -> Result<Vec<Member>> {
-    let mut members = default_set()?;
-    let mut added = Vec::new();
+    let mut read = Vec::new();
     for (name, path) in files(top)? {
         let text = fs::read_to_string(top.join(&path))
             .with_context(|| format!("cannot read the member file {}", path.display()))?;
+        read.push((name, path, text));
+    }
+    over_default_set(read)
+}
+
+/// The members of the branch `branch` of the clone `top`, for example
+/// `origin/main`: the files of [`FOLDER`] of its tree over the default
+/// set, as [`of_tree`] reads them in a work tree. It reads no file of the
+/// work tree (01M7CFBZ7839WHMFARR4T6W13W). A branch with no such folder
+/// has the default set.
+///
+/// ```
+/// use std::process::Command;
+/// use riff::council::{Source, of_branch};
+///
+/// let top = tempfile::tempdir()?;
+/// let git = |args: &[&str]| {
+///     let out = Command::new("git")
+///         .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
+///         .args(args)
+///         .current_dir(top.path())
+///         .output()
+///         .unwrap();
+///     assert!(out.status.success(), "{out:?}");
+/// };
+/// git(&["init", "-q", "-b", "main"]);
+/// git(&["commit", "-q", "--allow-empty", "-m", "start"]);
+/// assert_eq!(of_branch(top.path(), "main")?.len(), 9);
+///
+/// std::fs::create_dir_all(top.path().join(".riff/council"))?;
+/// std::fs::write(top.path().join(".riff/council/big-o.md"), "+++\n+++\n# Big O\n")?;
+/// git(&["add", "."]);
+/// git(&["commit", "-q", "-m", "big-o"]);
+/// // A file of the work tree is not a file of the branch.
+/// std::fs::write(top.path().join(".riff/council/perf.md"), "+++\n+++\n# Perf\n")?;
+/// let members = of_branch(top.path(), "main")?;
+/// assert_eq!(members.len(), 10);
+/// assert_eq!(members[9].name.as_str(), "big-o");
+/// assert_eq!(members[9].source, Source::File(".riff/council/big-o.md".into()));
+/// assert!(of_branch(top.path(), "no-such-branch").is_err());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn of_branch(top: &Path, branch: &str) -> Result<Vec<Member>> {
+    let folder = format!("{FOLDER}/");
+    let listed = crate::run::output("git", top, &["ls-tree", "-z", branch, "--", &folder])
+        .with_context(|| format!("riff cannot read {FOLDER} of {branch}"))?;
+    let mut files = Vec::new();
+    // Each entry is `MODE TYPE OBJECT<tab>PATH`. A link or a folder is no
+    // member file.
+    for entry in listed.split('\0').filter(|entry| !entry.is_empty()) {
+        let Some((meta, path)) = entry.split_once('\t') else {
+            continue;
+        };
+        let meta: Vec<&str> = meta.split(' ').collect();
+        let [mode, _, object] = meta[..] else {
+            continue;
+        };
+        if !matches!(mode, "100644" | "100755") {
+            continue;
+        }
+        let path = PathBuf::from(path);
+        let Some(name) = member_name(&path)? else {
+            continue;
+        };
+        let text = crate::run::output("git", top, &["cat-file", "blob", object])
+            .with_context(|| format!("riff cannot read {} of {branch}", path.display()))?;
+        files.push((name, path, text));
+    }
+    files.sort();
+    over_default_set(files)
+}
+
+/// The members of the member files `files` over the default set: the
+/// name, the path from the top of the work tree and the text of each
+/// file, in the order of the name. A file with the name of a default
+/// member takes its place. Each other member comes after the default
+/// set.
+fn over_default_set(files: Vec<(Name, PathBuf, String)>) -> Result<Vec<Member>> {
+    let mut members = default_set()?;
+    let mut added = Vec::new();
+    for (name, path, text) in files {
         let member = Member::parse(name, Source::File(path), &text)?;
         match members.iter_mut().find(|m| m.name == member.name) {
             Some(default) => *default = member,
@@ -614,17 +704,29 @@ fn files(top: &Path) -> Result<Vec<(Name, PathBuf)>> {
     for entry in entries {
         let entry = entry.with_context(|| format!("cannot read the folder {FOLDER}"))?;
         let path = Path::new(FOLDER).join(entry.file_name());
-        if path.extension().is_none_or(|ext| ext != "md") || !entry.path().is_file() {
+        if !entry.path().is_file() {
             continue;
         }
-        let stem = path.file_stem().unwrap_or_default().to_string_lossy();
-        let name = stem
-            .parse::<Name>()
-            .map_err(|e| anyhow!("{}: {e}", text::safe(&path.display().to_string())))?;
-        files.push((name, path));
+        if let Some(name) = member_name(&path)? {
+            files.push((name, path));
+        }
     }
     files.sort();
     Ok(files)
+}
+
+/// The name of the member of the file `path` of [`FOLDER`], or `None`
+/// for a file that is not `.md`. A file `.md` with a name that is not the
+/// name of a member is an error that names the file
+/// (01M7CN1GZADT442NSWGYZCNDTH).
+fn member_name(path: &Path) -> Result<Option<Name>> {
+    if path.extension().is_none_or(|ext| ext != "md") {
+        return Ok(None);
+    }
+    let stem = path.file_stem().unwrap_or_default().to_string_lossy();
+    stem.parse::<Name>()
+        .map(Some)
+        .map_err(|e| anyhow!("{}: {e}", text::safe(&path.display().to_string())))
 }
 
 /// The table of `riff council list`: one row for each member, with its
