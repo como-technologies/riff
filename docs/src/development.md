@@ -6107,12 +6107,12 @@ name when `rules` has another value, or when the file is not TOML.
 
 ## Add a member to the council
 
-The council of a verify will review each change in focused areas, with
+The council of a verify reviews each change in focused areas, with
 one member for each area (see
 [The council of a verify](how-it-works.md#the-council-of-a-verify)).
 Each member is one file in `.riff/council/` of your repository. To add
 a member, write its file, and merge it with a pull request. This member
-will review the time and the memory of riff-server. It will join for a
+reviews the time and the memory of riff-server. It joins for a
 change of the files of riff-server, or for the label `performance`:
 
 ```sh
@@ -6146,7 +6146,7 @@ The file starts with a TOML table between two lines `+++`. The key
 lists the labels of the area. A member with neither key joins each
 council. After the table come a `#` heading with the name of the
 member, the text of its area, and one `##` heading for each rule. A
-finding will name its rule by that heading. The name of the file is the
+finding names its rule by that heading. The name of the file is the
 name of the member: lowercase letters, digits and `-`, with a letter
 first, and `.md`.
 

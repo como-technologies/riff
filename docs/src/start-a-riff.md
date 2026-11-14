@@ -602,6 +602,10 @@ these rules of its own:
 | `Bash(/opt/riff/riff wave move *)`, `Bash(/opt/riff/riff wave end *)` | move items to another wave, end a wave |
 | `Bash(/opt/riff/riff release status)`, `Bash(/opt/riff/riff release cut *)`, `Bash(/opt/riff/riff release hold *)` | the steps of the release cycle of the lead: see [The release cycle](development.md#the-release-cycle). No rule names `riff release approve`: only you approve |
 
+A verifier calls its riff by the same path for one step only, so it
+gets the rule `Bash(/opt/riff/riff council show *)`: see
+[The council of a verify](how-it-works.md#the-council-of-a-verify).
+
 When the auto mode check still refuses a step of riff, the session
 writes the step on its issue and tells your lead. The fix is a new
 rule in the code of riff, not a step that you type.
