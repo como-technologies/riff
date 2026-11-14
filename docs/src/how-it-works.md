@@ -6582,6 +6582,9 @@ that host waits before its next start of the lead, longer each time:
 - A lead that runs for a minute on the host ends the row. The next
   fault waits 10 s again.
 - At the first fault of a row, riff chat gets one line of `riff-bot`.
+  The line comes also when riff-server could not take it at the first
+  try, for example on a locked keyring after a restart of the host: the
+  daemon tries again after its next look, until riff-server takes it.
   The row gets no other line:
 
 ```text
@@ -6592,6 +6595,7 @@ that host waits before its next start of the lead, longer each time:
 flowchart LR
     F["a fault: the start failed,<br/>or the lead ended at once"] --> W["no start on this host for<br/>10 s, 30 s, 2 min, then 10 min"]
     F -- "the first fault of a row" --> C["one line in riff chat"]
+    C -- "riff-server could not take it:<br/>again after the next look" --> C
     W --> S["the next start"]
     S -- "a fault" --> F
     S -- "the lead runs for a minute" --> E["the row ends"]
