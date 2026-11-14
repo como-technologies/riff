@@ -432,13 +432,27 @@ impl Pull {
 }
 
 /// The text of `riff council show PR` in the folder `dir`: the council
-/// of the pull request `number` (01M7CFBZMCE36ZRXD0GBCM4MFX,
-/// 01M7CRX66K9Q750SB8M2MPG6V7). It reads the
-/// pull request with `gh` ([`Pull::read`]), fetches its base branch
-/// `BASE` from `origin`, and picks the council from the member files of
-/// `origin/BASE` over the default set ([`pick`]). When the fetch fails,
-/// it says so to `say`, and reads `origin/BASE` as the clone has it.
-pub fn show(gh: &Gh, dir: &Path, number: u64, mut say: impl FnMut(&str)) -> Result<String> {
+/// of the pull request `number` ([`of_pull`], 01M7CFBZMCE36ZRXD0GBCM4MFX,
+/// 01M7CRX66K9Q750SB8M2MPG6V7).
+pub fn show(gh: &Gh, dir: &Path, number: u64, say: impl FnMut(&str)) -> Result<String> {
+    let (council, branch) = of_pull(gh, dir, number, say)?;
+    Ok(council.text(number, &branch))
+}
+
+/// The council of the pull request `number`, from the clone of the folder
+/// `dir`, and the branch `origin/BASE` whose member files it read. It
+/// reads the pull request with `gh` ([`Pull::read`]), fetches its base
+/// branch `BASE` from `origin`, and picks the council from the member
+/// files of `origin/BASE` over the default set ([`pick`]). When the fetch
+/// fails, it says so to `say`, and reads `origin/BASE` as the clone has
+/// it. `riff council show` and a pass of a verify read the council so
+/// (01M7D11KGEJ8ACFJK6Y10WENJZ).
+pub fn of_pull(
+    gh: &Gh,
+    dir: &Path,
+    number: u64,
+    mut say: impl FnMut(&str),
+) -> Result<(Council, String)> {
     let pull = Pull::read(gh, number)?;
     let top = top(dir)?;
     let branch = format!("origin/{}", pull.base);
@@ -451,7 +465,7 @@ pub fn show(gh: &Gh, dir: &Path, number: u64, mut say: impl FnMut(&str)) -> Resu
     }
     let members = of_branch(&top, &tracking)
         .with_context(|| format!("riff cannot read the council of {}", text::forge(&branch)))?;
-    Ok(pick(members, &pull.change).text(number, &branch))
+    Ok((pick(members, &pull.change), branch))
 }
 
 #[cfg(test)]

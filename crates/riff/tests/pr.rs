@@ -21,7 +21,8 @@ use crate::book;
 
 /// A fake `gh` in `bin` that logs `gh ARGS` to `bin/gh.log`, copies its
 /// stdin to the log for `--body-file -`, and runs `cases`: the arms of a
-/// `case "$*" in`.
+/// `case "$*" in`. After them come the reads of the council of pull
+/// request 40 ([`COUNCIL_READS`]).
 fn fake_gh(bin: &Path, cases: &str) {
     let path = bin.join("gh");
     isolated::write_program(
@@ -29,10 +30,22 @@ fn fake_gh(bin: &Path, cases: &str) {
         format!(
             "#!/bin/sh\ndir=$(dirname \"$0\")\necho \"gh $*\" >> \"$dir/gh.log\"\n\
              case \"$*\" in *'--body-file -'*) cat > \"$dir/body\"; cat \"$dir/body\" >> \"$dir/gh.log\" ;; esac\n\
-             case \"$*\" in\n{cases}\nesac\nexit 0\n"
+             case \"$*\" in\n{cases}\n{COUNCIL_READS}\nesac\nexit 0\n"
         ),
     );
 }
+
+/// The reads of `riff council show 40` (01M7D11KGEJ8ACFJK6Y10WENJZ): the
+/// base branch `main`, the path `src/lib.rs` and no label. With the base
+/// branch of [`repo`], the council is design, testing, docs and rust.
+const COUNCIL_READS: &str = r#"*'pr view 40 --json baseRefName,body,labels'*) printf '%s' '{"baseRefName":"main","body":"Closes #12\n\nIssue: #12\n","labels":[]}' ;;
+*'pulls/40/files?per_page=100 --paginate'*) echo src/lib.rs ;;
+*'issue view 12 --json labels'*) echo '{"labels":[]}' ;;"#;
+
+/// A result with a line for each member of the council of
+/// [`COUNCIL_READS`].
+const RESULT: &str = "1. The wave shows.\n\n## The council\n\n- design: no finding.\n\
+                      - testing: no finding.\n- docs: no finding.\n- rust: no finding.\n";
 
 fn log(bin: &Path) -> String {
     std::fs::read_to_string(bin.join("gh.log")).unwrap_or_default()
@@ -47,7 +60,9 @@ fn text(out: &[u8]) -> String {
 const RIFF_TOML: &str = "[hygiene]\nrules = \"riff\"\n";
 
 /// A git repository with a GitHub origin, so the place of each session
-/// is `como-technologies/riff`, with the riff config of riff.
+/// is `como-technologies/riff`, with the riff config of riff, and the
+/// base branch `origin/main` with no member file of the council
+/// ([`crate::common::base_branch`]).
 fn repo() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     for args in [
@@ -66,6 +81,7 @@ fn repo() -> tempfile::TempDir {
         assert!(status.unwrap().success());
     }
     std::fs::write(dir.path().join("riff.toml"), RIFF_TOML).unwrap();
+    crate::common::base_branch(dir.path());
     dir
 }
 
@@ -352,7 +368,7 @@ const VERIFY: &str = r#"*'pr view 40 --json headRefOid,body'*) printf '%s' '{"he
 async fn verify(verdict: &str, state: &str) {
     let machine = Machine::new(VERIFY).await;
     machine.claim("author", "issue-12").await;
-    let result = machine.write("result.md", "1. The wave shows.\n");
+    let result = machine.write("result.md", RESULT);
     let out = machine
         .ok(
             "verifier",
@@ -440,7 +456,7 @@ const VERIFY_BODY: &str = r#""Closes #12\n\nShow the wave.\n\nIssue: #12\nMilest
 async fn pass(fake: &str) -> (String, std::process::Output) {
     let machine = Machine::new(fake).await;
     machine.claim("author", "issue-12").await;
-    let result = machine.write("result.md", "1. The wave shows.\n");
+    let result = machine.write("result.md", RESULT);
     let args = [
         "verify", "pass", "40", "--file", &result, "--commit", "1a2b3c4d",
     ];
@@ -552,7 +568,7 @@ async fn verify_pass_reports_nothing_when_the_squash_message_does_not_go() {
     );
     let machine = Machine::new(&fake).await;
     machine.claim("author", "issue-12").await;
-    let result = machine.write("result.md", "1. The wave shows.\n");
+    let result = machine.write("result.md", RESULT);
     let args = [
         "verify", "pass", "40", "--file", &result, "--commit", "1a2b3c4d",
     ];
@@ -618,7 +634,7 @@ async fn a_verify_from_a_terminal_in_another_folder_wakes_the_lead_of_the_reposi
     machine.name_lead("lead").await;
     machine.ok("lead", &["resume", "--riff"]).await;
     let terminal = repo();
-    let result = machine.write("result.md", "1. The wave shows.\n");
+    let result = machine.write("result.md", RESULT);
     let verify = [
         "verify", "pass", "40", "--file", &result, "--commit", "1a2b3c4d",
     ];
@@ -750,7 +766,7 @@ async fn verify_refuses_when_the_head_is_not_the_tested_commit() {
     let machine = Machine::new(VERIFY).await;
     machine.claim("author", "issue-12").await;
     let tested = commit(&machine);
-    let result = machine.write("result.md", "1. The wave shows.\n");
+    let result = machine.write("result.md", RESULT);
     for args in [
         &["verify", "pass", "40", "--file", &result][..],
         &[
@@ -812,7 +828,7 @@ async fn verify_pass_refuses_while_the_gate_of_the_head_has_no_success() {
     for (fake, line) in cases {
         let machine = Machine::new(&fake).await;
         machine.claim("author", "issue-12").await;
-        let result = machine.write("result.md", "1. The wave shows.\n");
+        let result = machine.write("result.md", RESULT);
         let pass = [
             "verify", "pass", "40", "--file", &result, "--commit", "1a2b3c4d",
         ];
@@ -868,7 +884,7 @@ async fn verify_pass_refuses_a_body_that_closes_an_issue_with_a_live_line() {
     let issue = |body: &str| VERIFY.replace(PLAIN_ISSUE, body);
     let machine = Machine::new(&issue(LIVE_ISSUE)).await;
     machine.claim("author", "issue-12").await;
-    let result = machine.write("result.md", "1. The wave shows.\n");
+    let result = machine.write("result.md", RESULT);
     let pass = [
         "verify", "pass", "40", "--file", &result, "--commit", "1a2b3c4d",
     ];
@@ -898,24 +914,24 @@ async fn verify_pass_refuses_a_body_that_closes_an_issue_with_a_live_line() {
     machine.ok("verifier", &fail).await;
     assert!(log(machine.bin.path()).contains("-f state=failure"));
 
-    // The body with `Refs #12` passes, and reads no issue.
+    // The body with `Refs #12` passes, and reads no body of an issue.
     let refs = issue(LIVE_ISSUE).replace(r#""body":"Closes #12\n"#, r#""body":"Refs #12\n"#);
     assert!(refs.contains(r#""body":"Refs #12\n"#), "{refs}");
     let machine = Machine::new(&refs).await;
     machine.claim("author", "issue-12").await;
-    let result = machine.write("result.md", "1. The wave shows.\n");
+    let result = machine.write("result.md", RESULT);
     let pass = [
         "verify", "pass", "40", "--file", &result, "--commit", "1a2b3c4d",
     ];
     machine.ok("verifier", &pass).await;
     let calls = log(machine.bin.path());
     assert!(calls.contains("-f state=success"), "{calls}");
-    assert!(!calls.contains("gh issue view"), "{calls}");
+    assert!(!calls.contains("gh issue view 12 --json body"), "{calls}");
 
     // An issue with no `Live:` line takes `Closes #12`.
     let machine = Machine::new(&issue(PLAIN_ISSUE)).await;
     machine.claim("author", "issue-12").await;
-    let result = machine.write("result.md", "1. The wave shows.\n");
+    let result = machine.write("result.md", RESULT);
     let pass = [
         "verify", "pass", "40", "--file", &result, "--commit", "1a2b3c4d",
     ];
@@ -925,6 +941,70 @@ async fn verify_pass_refuses_a_body_that_closes_an_issue_with_a_live_line() {
     assert!(calls.contains("-f state=success"), "{calls}");
 }
 
+/// 01M7CFBZSQEEZNZBR9H1S54GS1, 01M7D11KGEJ8ACFJK6Y10WENJZ: `riff verify
+/// pass` reads the council of the pull request as `riff council show`
+/// does: design, testing, docs and rust for a change of `src/lib.rs`. A
+/// result with no part `## The council` gets no squash message, no
+/// comment, no status and no post, and the line names each member. A
+/// result with no line for docs names docs only. `riff verify fail`
+/// reports the result with no part.
+#[tokio::test]
+async fn verify_pass_refuses_a_result_with_no_line_for_a_member_of_the_council() {
+    let machine = Machine::new(VERIFY).await;
+    machine.claim("author", "issue-12").await;
+    let no_line = |first: &str, rest: &[&str]| riff::council::result::NoLine {
+        first: first.parse().unwrap(),
+        rest: rest.iter().map(|name| name.parse().unwrap()).collect(),
+    };
+    let no_part = machine.write("result.md", "1. The wave shows.\n");
+    let no_docs = machine.write("no-docs.md", &RESULT.replace("- docs: no finding.\n", ""));
+    for (result, members) in [
+        (&no_part, no_line("design", &["testing", "docs", "rust"])),
+        (&no_docs, no_line("docs", &[])),
+    ] {
+        let pass = [
+            "verify", "pass", "40", "--file", result, "--commit", "1a2b3c4d",
+        ];
+        let out = machine.run("verifier", &pass).await;
+        assert_eq!(out.status.code(), Some(1), "{result}");
+        let stderr = text(&out.stderr);
+        let line = riff::text::verify_no_council_line(&members);
+        let refusals: Vec<&str> = stderr
+            .lines()
+            .filter(|l| l.contains("riff verify pass:"))
+            .collect();
+        assert_eq!(refusals.len(), 1, "one line: {stderr}");
+        assert!(refusals[0].ends_with(&line), "{line}\n{stderr}");
+        let calls = log(machine.bin.path());
+        assert!(
+            calls.contains("gh pr view 40 --json baseRefName,body,labels"),
+            "{calls}"
+        );
+        assert!(!calls.contains("gh pr merge"), "{calls}");
+        assert!(!calls.contains("gh pr comment"), "{calls}");
+        assert!(!calls.contains("/statuses/"), "{calls}");
+        let inbox = machine.ok("author", &["read"]).await;
+        assert!(!inbox.contains("verify result:"), "{inbox}");
+    }
+    assert!(
+        riff::text::verify_no_council_line(&no_line("design", &["testing", "docs", "rust"]))
+            .contains("for design, testing, docs and rust.")
+    );
+
+    // A fail can stop early: it needs no part `## The council`.
+    let fail = [
+        "verify", "fail", "40", "--file", &no_part, "--commit", "1a2b3c4d",
+    ];
+    machine.ok("verifier", &fail).await;
+    let calls = log(machine.bin.path());
+    assert!(calls.contains("-f state=failure"), "{calls}");
+    let inbox = machine.ok("author", &["read"]).await;
+    assert!(
+        inbox.contains("verify result: FAIL for issue-12, PR #40, commit 1a2b3c4d."),
+        "{inbox}"
+    );
+}
+
 /// The fake forge of a pull request that changes `riff.toml` from the
 /// pin of `ghcr.io/o/i` to the pin `head`.
 fn pin_cases(head: &str) -> String {
@@ -932,7 +1012,7 @@ fn pin_cases(head: &str) -> String {
     format!(
         "{VERIFY}\n\
          *'/pulls/40/files'*) printf 'src/lib.rs\\nriff.toml\\n' ;;\n\
-         *'pr view 40 --json baseRefName'*) echo main ;;\n\
+         *'pr view 40 --json baseRefName --jq'*) echo main ;;\n\
          *'contents/riff.toml?ref=1a2b3c4d') {} ;;\n\
          *'contents/riff.toml?ref=main') {} ;;",
         file(head),
@@ -952,7 +1032,7 @@ async fn verify_pass_refuses_a_new_image_that_a_host_cannot_pull_with_no_login()
         let head = format!("{host}/o/i@sha256:{}", "1".repeat(64));
         let machine = Machine::new(&pin_cases(&head)).await;
         machine.claim("author", "issue-12").await;
-        let result = machine.write("result.md", "1. The wave shows.\n");
+        let result = machine.write("result.md", RESULT);
         let pass = [
             "verify", "pass", "40", "--file", &result, "--commit", "1a2b3c4d",
         ];
@@ -998,7 +1078,7 @@ async fn verify_pass_reports_a_new_image_that_a_host_can_pull_and_asks_no_old_pi
     let head = format!("{host}/o/i@sha256:{}", "1".repeat(64));
     let machine = Machine::new(&pin_cases(&head)).await;
     machine.claim("author", "issue-12").await;
-    let result = machine.write("result.md", "1. The wave shows.\n");
+    let result = machine.write("result.md", RESULT);
     let pass = [
         "verify", "pass", "40", "--file", &result, "--commit", "1a2b3c4d",
     ];
@@ -1017,7 +1097,7 @@ async fn verify_pass_reports_a_new_image_that_a_host_can_pull_and_asks_no_old_pi
     let same = format!("ghcr.io/o/i@sha256:{}", "0".repeat(64));
     let machine = Machine::new(&pin_cases(&same)).await;
     machine.claim("author", "issue-12").await;
-    let result = machine.write("result.md", "1. The wave shows.\n");
+    let result = machine.write("result.md", RESULT);
     let pass = [
         "verify", "pass", "40", "--file", &result, "--commit", "1a2b3c4d",
     ];
@@ -1086,7 +1166,7 @@ async fn verify_pass_needs_the_required_checks_of_a_repository_with_no_gate() {
     let fake = without_gate(|name| check_run(name, "completed", r#""success""#));
     let machine = Machine::new(&fake).await;
     machine.claim("author", "issue-12").await;
-    let result = machine.write("result.md", "1. The wave shows.\n");
+    let result = machine.write("result.md", RESULT);
     let pass = [
         "verify", "pass", "40", "--file", &result, "--commit", "1a2b3c4d",
     ];
@@ -1129,7 +1209,7 @@ async fn verify_pass_counts_a_skipped_or_neutral_required_check_as_a_pass() {
     });
     let machine = Machine::new(&fake).await;
     machine.claim("author", "issue-12").await;
-    let result = machine.write("result.md", "1. The wave shows.\n");
+    let result = machine.write("result.md", RESULT);
     let pass = [
         "verify", "pass", "40", "--file", &result, "--commit", "1a2b3c4d",
     ];
@@ -1169,7 +1249,7 @@ async fn verify_pass_reads_the_newest_run_of_each_check() {
     for fake in passes {
         let machine = Machine::new(&fake).await;
         machine.claim("author", "issue-12").await;
-        let result = machine.write("result.md", "1. The wave shows.\n");
+        let result = machine.write("result.md", RESULT);
         let pass = [
             "verify", "pass", "40", "--file", &result, "--commit", "1a2b3c4d",
         ];
@@ -1189,7 +1269,7 @@ async fn verify_pass_reads_the_newest_run_of_each_check() {
     for fake in refusals {
         let machine = Machine::new(&fake).await;
         machine.claim("author", "issue-12").await;
-        let result = machine.write("result.md", "1. The wave shows.\n");
+        let result = machine.write("result.md", RESULT);
         let pass = [
             "verify", "pass", "40", "--file", &result, "--commit", "1a2b3c4d",
         ];
@@ -1237,7 +1317,7 @@ async fn verify_pass_refuses_while_a_required_check_has_no_success() {
     for (run, state) in cases {
         let machine = Machine::new(&without_gate(run)).await;
         machine.claim("author", "issue-12").await;
-        let result = machine.write("result.md", "1. The wave shows.\n");
+        let result = machine.write("result.md", RESULT);
         let pass = [
             "verify", "pass", "40", "--file", &result, "--commit", "1a2b3c4d",
         ];
@@ -1271,7 +1351,7 @@ async fn verify_takes_head_as_the_tested_commit() {
     machine.claim("author", "issue-12").await;
     let tested = commit(&machine);
     fake_gh(machine.bin.path(), &VERIFY.replace("1a2b3c4d", &tested));
-    let result = machine.write("result.md", "1. The wave shows.\n");
+    let result = machine.write("result.md", RESULT);
     machine
         .ok("verifier", &["verify", "pass", "40", "--file", &result])
         .await;
@@ -2134,6 +2214,38 @@ fn the_book_shows_the_line_of_a_pass_refused_for_an_image_that_a_host_cannot_pul
         "{line}\n{part}"
     );
     assert!(part.contains("(start-a-riff.md#check-that-each-host-can-pull-the-image)"));
+}
+
+/// 01M7CFBZSQEEZNZBR9H1S54GS1, 01M7D11KGEJ8ACFJK6Y10WENJZ: "Report a
+/// verify" says where the part `## The council` starts and ends, and
+/// that `riff verify pass` refuses a result with no line for a member of
+/// the council. It shows the line that `riff verify pass` prints.
+#[test]
+fn the_book_shows_the_line_of_a_pass_with_no_line_for_a_member_of_the_council() {
+    let part = how_to("Report a verify");
+    let members = riff::council::result::NoLine {
+        first: "docs".parse().unwrap(),
+        rest: vec!["rust".parse().unwrap()],
+    };
+    let line = riff::text::verify_no_council_line(&members);
+    assert!(
+        part.contains(&format!("```text\n{line}\n```")),
+        "{line}\n{part}"
+    );
+    let flat = part.split_whitespace().collect::<Vec<_>>().join(" ");
+    for words in [
+        "The part starts at the heading `## The council`, with that case, and ends at the next \
+         `#` or `##` heading.",
+        "also after a list mark such as `-` or `1.`",
+        "When the part has no line for a member, or the result has no such part, `riff verify \
+         pass` reports nothing and prints one line that names each member with no line",
+        "A fail needs no part `## The council`",
+        "Its PASS with no line for a member is a result with no verdict: your lead gets a \
+         message that names each member with no line, and the pull request waits for a new \
+         verify.",
+    ] {
+        assert!(flat.contains(words), "no {words:?} in {flat}");
+    }
 }
 
 /// Each command has a how-to with a copyable `sh` block, and each

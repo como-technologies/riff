@@ -128,7 +128,7 @@ use serde::Deserialize;
 
 use crate::identity;
 use crate::pr::Gh;
-use crate::{text, usage, workflow};
+use crate::{markdown, text, usage, workflow};
 use riff_client::api::Api;
 
 /// The time between two looks of the rollout.
@@ -344,23 +344,12 @@ fn done_when_rest(line: &str) -> Option<&str> {
     if let Some(rest) = line.strip_prefix(DONE_WHEN) {
         return Some(rest);
     }
-    let rest = heading(line)?.strip_prefix("Done when")?;
-    if rest.trim_end().is_empty() {
+    let (_, text) = markdown::heading(line)?;
+    let rest = text.strip_prefix("Done when")?;
+    if rest.is_empty() {
         return Some("");
     }
     rest.strip_prefix(':')
-}
-
-/// The text of a Markdown heading: one to six `#` and a space, or `None`
-/// for another line.
-fn heading(line: &str) -> Option<&str> {
-    let line = line.trim_start();
-    let text = line.trim_start_matches('#');
-    let marks = line.len() - text.len();
-    match text.strip_prefix(' ') {
-        Some(text) if (1..=6).contains(&marks) => Some(text.trim_start()),
-        _ => None,
-    }
 }
 
 /// The start of a line of "Done when" that names a check after the
@@ -395,7 +384,7 @@ pub fn has_live_check(body: &str) -> bool {
             if live_line(rest) {
                 return true;
             }
-        } else if heading(line).is_some() {
+        } else if markdown::heading(line).is_some() {
             inside = false;
         } else if inside && live_line(line) {
             return true;
@@ -405,19 +394,9 @@ pub fn has_live_check(body: &str) -> bool {
 }
 
 /// True when `line` starts with [`LIVE`], after the spaces, a list mark
-/// (`-`, `*`, `+`, or a number with `.` or `)`) and a task box (`[ ]`,
-/// `[x]`).
+/// ([`markdown::item`]) and a task box (`[ ]`, `[x]`).
 fn live_line(line: &str) -> bool {
-    let line = line.trim_start();
-    let unnumbered = line.trim_start_matches(|c: char| c.is_ascii_digit());
-    let rest = match line.strip_prefix(['-', '*', '+']) {
-        Some(rest) => rest,
-        None if unnumbered.len() < line.len() => {
-            unnumbered.strip_prefix(['.', ')']).unwrap_or(line)
-        }
-        None => line,
-    };
-    let rest = rest.trim_start();
+    let rest = markdown::item(line);
     let rest = ["[ ]", "[x]", "[X]"]
         .iter()
         .find_map(|task| rest.strip_prefix(task))

@@ -719,6 +719,27 @@ pub fn clone_of(repo: &str) -> tempfile::TempDir {
     dir
 }
 
+/// Gives the clone `dir` the branch `origin/main` with no file: a base
+/// branch with no member file of the council, so `riff verify pass` reads
+/// the default set there (01M7D11KGEJ8ACFJK6Y10WENJZ). No remote gives
+/// it: the fetch of a test fails, and riff reads `origin/main` as the
+/// clone has it. The branch and `HEAD` of `dir` do not change.
+pub fn base_branch(dir: &std::path::Path) {
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(["-c", "user.name=Ada", "-c", "user.email=ada@example.com"])
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+        String::from_utf8(out.stdout).unwrap().trim().to_owned()
+    };
+    let tree = git(&["hash-object", "-w", "-t", "tree", "/dev/null"]);
+    let commit = git(&["commit-tree", &tree, "-m", "main"]);
+    git(&["update-ref", "refs/remotes/origin/main", &commit]);
+}
+
 /// A client of this process for the [`Signed`] server at `url`: it
 /// sends the token of `user`, or of the session `session` of `user`. It
 /// replaces the sign-in of this process at the server, so build the
