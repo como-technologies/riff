@@ -3249,7 +3249,7 @@ place:
 | A check of each criterion of the `Done when:` line, and the Gate | Each verify, as this section says. The verify reads the Gate, and does not run it again. |
 | A control: a test that finds the fault | The prompt of each verify. Today the prompt does not give it: [#1871](https://github.com/como-technologies/riff/issues/1871) puts it back. |
 | A test for each new requirement | The job `Hygiene` of each pull request: [#2116](https://github.com/como-technologies/riff/issues/2116) adds the check. |
-| An adversarial review: what can break, invalid states, round trips, the docs and security | The council of the verify, a design: [#581](https://github.com/como-technologies/riff/issues/581). |
+| An adversarial review: what can break, invalid states, round trips, the docs and security | The council of the verify, a design: see [The council of a verify](#the-council-of-a-verify). |
 | A person and a risk level | The gates before the code and the sign-off of a person, a design: [#585](https://github.com/como-technologies/riff/issues/585). |
 | Another model | None. Each session runs on the model of `riff.toml`: see [Set the model of the sessions](development.md#set-the-model-of-the-sessions). A verify has its own effort: see [Set the effort of the sessions](development.md#set-the-effort-of-the-sessions). |
 | A second verify | None. A head commit gets one verify that passes. The council gives the second view. |
@@ -3375,6 +3375,119 @@ Then the verifier says so in its result, and builds the test:
 ```sh
 just test NAME
 ```
+
+### The council of a verify
+
+This part is the design of #581. Its build items are not done yet (see
+[The build items of the council](#the-build-items-of-the-council)), so
+a verify has no council today. The requirements of the council are in
+[Product](requirements.md#product).
+
+A verify by one session sees the change from one view. The council
+will give it more views: each member will review the change in one
+area only. The verifier will run the council in its own session, with
+one subagent for each member, on the model of the session. No member
+will claim an item or have a container of its own.
+
+```mermaid
+flowchart TD
+    V["the verifier of PR #40"] --> S["riff council show 40"]
+    S --> M["the members: the files of the base branch,<br/>picked by the files and the labels of the change"]
+    M --> D["subagent: design"]
+    M --> T["subagent: testing"]
+    M --> O["subagent: docs"]
+    M --> R["subagent: rust"]
+    D --> F["the findings:<br/>the file, the line, the rule"]
+    T --> F
+    O --> F
+    R --> F
+    F --> K{"the verifier shows<br/>the finding in the code?"}
+    K -- "yes" --> X["the verify fails"]
+    K -- "no" --> L["the result lists it as not shown"]
+```
+
+#### The members of the council
+
+Each member has one file in the repository, `.riff/council/NAME.md`:
+its area, when it joins, and its rules. The default set is in
+[`.riff/council/`](https://github.com/como-technologies/riff/tree/main/.riff/council)
+of the riff repository, and riff will build it in. A file of your
+repository with the name of a default member will take its place, and
+a file with a new name will add a member (see
+[Add a member to the council](development.md#add-a-member-to-the-council)).
+
+| Member | Joins | Reviews |
+|---|---|---|
+| `design` | each council | the fit with the design: one place for each thing, no dead code |
+| `testing` | each council | a test for each criterion, and a test that can fail |
+| `docs` | each council | a how-to for each new command, flag or setting, and no stale text |
+| `rust` | a change of a `.rs` file | idiomatic Rust, and the patterns of its file |
+| `security` | a change of the tokens, the sign-in, riff-server, the deploy or CI; the label `security` | no secret in text, and the rights of each call |
+| `attacker` | the same as `security` | the change as an attacker reads it |
+| `requirements` | a change of a requirements page or of the book | a requirement for each new rule, and the fit with the book |
+| `newcomer` | a change of the book | the book as a person who knows nothing about riff reads it |
+| `operations` | a change of the daemon, the release or the cloud; the label `operations` | the fix of each fault, a stop that loses nothing, and the cost |
+
+A council will have at most 6 members. riff will take first the
+members that join each council, then the others. In each group, the
+members will come in the order of the table, and the other members of
+your repository after them, in the order of their names.
+
+The council of a pull request will read the member files of its base
+branch, not of its head. So a pull request cannot change the council
+of its own verify.
+
+The Rust expert, `rust`, will review each change of Rust code for
+idiomatic Rust and for the patterns of `.riff/council/rust.md`. Each
+`##` heading of that file is one pattern, for example "An invalid
+state cannot be made" and "Each conversion names each field". To add a
+pattern, see
+[Add a rule to a member](development.md#add-a-rule-to-a-member).
+
+#### The findings of the council
+
+Each member will give its findings. A finding names the file, the line
+and the rule: the member file and the heading of the rule. So the
+author can find the rule:
+
+```text
+crates/riff-core/src/record.rs:120: .riff/council/rust.md "Each conversion names each field": the match of Record has `..`.
+```
+
+The verifier will check each finding in the code. A finding that it
+shows, with a test, a run or a read of the code, will fail the verify.
+A finding that it cannot show will go in the result as not shown, and
+will not fail the verify. The result will name each member and its
+findings in the part `## The council`:
+
+```markdown
+## The council
+
+- design: no finding.
+- testing: no finding.
+- docs: not shown: docs/src/start-a-riff.md:40: .riff/council/docs.md "No stale text": the step names an old flag.
+- rust: shown: crates/riff-core/src/record.rs:120: .riff/council/rust.md "Each conversion names each field": the match of Record has `..`.
+```
+
+`riff verify pass` will refuse a result with no line for a member of
+the council. A finding of a live security fault will go to the lead,
+not into the result (see
+[Keep a live security fault out of public text](#keep-a-live-security-fault-out-of-public-text)).
+
+#### The build items of the council
+
+Each build item needs the one before it:
+
+1. #2119: the form of a member file, the default set in riff, and
+   `riff council list`.
+2. #2120: `riff council show PR` picks the council of a pull request.
+3. #2121: the start text of a verify runs the council, with one
+   subagent for each member.
+4. #2122: `riff verify pass` refuses a result that does not name
+   each member of the council.
+
+The council of a design issue, and the gates before the code, will
+come later (#585).
 
 ### The order of the verifies of a wave
 
