@@ -186,7 +186,9 @@ impl Followers {
 /// 01M7B2RQPTFVK02YAZGMN2SYAR). A start that fails, for example on a
 /// locked keyring, goes in `followers`, and the next try comes after
 /// `every`, until a start works. Each line for the log comes from
-/// `followers`. A task that ends while the starts fail forgets them.
+/// `followers`, and the line of a failure goes to stderr in one write
+/// ([`crate::daemon::log::line`]). A task that ends while the starts fail
+/// forgets them.
 ///
 /// ```
 /// use std::sync::atomic::{AtomicU32, Ordering};
@@ -234,7 +236,8 @@ pub async fn follow<'a, S>(
                 let cause = format!("{e:#}");
                 let now = crate::daemon::now_ms();
                 if let Some(line) = followers.failed(follower, now, &cause, every) {
-                    eprintln!("riff daemon: {repo}: {line}");
+                    let line = format!("riff daemon: {repo}: {line}");
+                    crate::daemon::log::line(&mut std::io::stderr(), &line);
                 }
             }
         }
