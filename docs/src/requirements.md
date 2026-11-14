@@ -7728,6 +7728,18 @@ of this part when they merge.
   locked keyring after a restart of the host, goes again after the next
   look of the lead loop, until riff-server takes it, so riff chat gets
   the line one time (#2100).
+- **01M7BN2EPE81NEN3YZ78VSSG3W** A start again of a lead
+  (01M77PTJN73R68Z2SRQP0F6V9T) that fails because the OS keyring of the
+  host is locked, or does not answer, keeps the session of the lead: for
+  example at the start of the riff daemon after a login with a security
+  key. The daemon tries the start again each 30 seconds, as it waits for
+  an open keyring (01M77AB7XZV8KG8RRZ8C6R5A8X). The first try after the
+  unlock starts the lead again with `claude --resume`, as the same
+  session, while its session holds the claim `lead` or nobody holds it.
+  Such a failed start is no fault (01M77Y24FEQM5246G3CBXYWW62), and is
+  not one of the 3 starts that end the session. The first such failure
+  logs one line, and the next ones log none. While the lead waits, the
+  lead loop of its host starts no new lead of the project (#2098).
 
 ### The first run
 

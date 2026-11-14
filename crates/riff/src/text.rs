@@ -14677,6 +14677,31 @@ pub fn lead_back_failed(name: &str, why: &str) -> String {
     )
 }
 
+/// The log line of the daemon at the first start again of the lead `name`
+/// that failed on a locked keyring (`why`): the lead keeps its session,
+/// and the daemon tries again each `every` (#2098,
+/// 01M7BN2EPE81NEN3YZ78VSSG3W).
+///
+/// ```
+/// use std::time::Duration;
+///
+/// let why = "riff did not run gh auth token: the OS keyring of thelio is locked";
+/// let text = riff::text::lead_back_locked("riff-lead-o-r", why, Duration::from_secs(30));
+/// assert_eq!(
+///     text,
+///     "riff cannot start the lead riff-lead-o-r again yet: riff did not run gh auth token: the \
+///      OS keyring of thelio is locked. It keeps its session, and riff tries again each 30s: \
+///      the first try after the unlock starts it with claude --resume."
+/// );
+/// ```
+pub fn lead_back_locked(name: &str, why: &str, every: std::time::Duration) -> String {
+    format!(
+        "riff cannot start the lead {name} again yet: {why}. It keeps its session, and riff \
+         tries again each {}: the first try after the unlock starts it with claude --resume.",
+        ago(every.as_secs())
+    )
+}
+
 /// The log line of the daemon: the lead `name` ended less than a minute
 /// after its start, so the daemon does not start it again: its session
 /// ends, and the next host claims the lead of the project (#1791).

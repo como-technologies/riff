@@ -71,7 +71,11 @@
 //! The end of the container of a lead, and a lead with no container at
 //! the start of the daemon, are the business of the daemon
 //! (`Daemon::lead_back`): the lead starts again with `claude --resume`
-//! while its session holds the claim, or nobody holds it.
+//! while its session holds the claim, or nobody holds it. While that
+//! start waits for an open keyring (01M7BN2EPE81NEN3YZ78VSSG3W), the old
+//! session is the lead of this host ([`Ground::mine`]): a look claims the
+//! lead for it, also after riff-server ended its claim, and starts no new
+//! lead.
 //!
 //! One start of the lead of a project runs at a time on a host
 //! ([`crate::lead::one_start`], 01M77Y2BG12SEVF4ZEZ673QBFZ): the start of
@@ -242,7 +246,8 @@ pub trait Ground: Send + Sync {
     fn plan<'a>(&'a self, wave: &'a Wave) -> BoxFuture<'a, Result<PlanReply>>;
 
     /// The session ID of the lead of the repository of `wave` on this
-    /// host, while its container runs.
+    /// host, while its container runs, and while it starts again: also
+    /// while that start waits for an open keyring.
     fn mine(&self, wave: &Wave) -> Option<String>;
 
     /// How long ago the container of the lead of the repository of `wave`
@@ -463,7 +468,7 @@ pub(crate) async fn follow<R: Runtime + 'static>(
     followers: Followers,
 ) {
     let changed = Arc::new(Notify::new());
-    let (world, every) = (daemon.world(), daemon.follow_every());
+    let (world, every) = (daemon.world(), daemon.retry_every());
     let start = || world.plan_changes(&wave, &changed);
     let plans = followers::follow(&wave.repo, Follower::Lead, &followers, every, start);
     let ground: Arc<dyn Ground> = Arc::new(Hosted(daemon));
