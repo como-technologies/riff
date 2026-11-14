@@ -7722,6 +7722,12 @@ of this part when they merge.
   setup-token`, then `riff claude-token`, on that host. This supersedes
   01M776RSYKJK9NETFAD8G0CCVQ and 01M5TC29A4Q94NJP7HFC75XCF3 in part, and
   01M5NJ87NXF6077Y9W32840BR8 in full (#1793).
+- **01M7BN8QHX64NZ8PDQY2K62S6Z** The riff daemon marks the first fault
+  of a row (01M77Y2BD66Z3VZD4A0B1Y60H1) as told only after riff-server
+  took the fact `lead_cannot_start`. A call that fails, for example on a
+  locked keyring after a restart of the host, goes again after the next
+  look of the lead loop, until riff-server takes it, so riff chat gets
+  the line one time (#2100).
 
 ### The first run
 

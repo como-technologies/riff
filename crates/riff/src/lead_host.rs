@@ -93,12 +93,16 @@
 //! ([`Faults::ran`]). At the first fault of a row, the person gets one
 //! line of riff-bot in riff chat ([`BotFact::LeadCannotStart`],
 //! 01M77Y2BD66Z3VZD4A0B1Y60H1): the fault, and that the log of the daemon
-//! has the cause.
+//! has the cause. The row is told only when riff-server took the line
+//! ([`Faults::told`], 01M7BN8QHX64NZ8PDQY2K62S6Z): a call that fails,
+//! for example on a locked keyring after a restart of the host, goes
+//! again after the next look.
 //!
 //! ```mermaid
 //! flowchart LR
 //!     F["a fault: the start failed,<br/>or the lead ended at once"] --> W["no start for 10 s,<br/>30 s, 2 min, then 10 min"]
 //!     F -- "the first of a row" --> C["one line in riff chat"]
+//!     C -- "riff-server could not take it:<br/>again after the next look" --> C
 //!     W --> S["the next start"]
 //!     S -- "a fault" --> F
 //!     S -- "the lead runs for a minute" --> E["the row ends"]
@@ -147,8 +151,11 @@ pub const TIE: Duration = Duration::from_secs(1);
 /// assert_eq!(faults.left("o/r", now + Duration::from_secs(10)), None);
 /// let next: Vec<u64> = (0..4).map(|_| faults.fault("o/r", LeadFault::Start, now).as_secs()).collect();
 /// assert_eq!(next, [30, 120, 600, 600]);
-/// // riff chat hears of a row one time, with its first fault.
+/// // riff chat hears of a row one time, with its first fault: the row
+/// // is untold until riff-server took the line.
 /// assert_eq!(faults.untold("o/r"), Some(LeadFault::Start));
+/// assert_eq!(faults.untold("o/r"), Some(LeadFault::Start));
+/// faults.told("o/r");
 /// assert_eq!(faults.untold("o/r"), None);
 /// // A lead that runs for a minute ends the row.
 /// faults.ran("o/r", Duration::from_secs(59));
@@ -211,13 +218,19 @@ impl Faults {
         }
     }
 
-    /// The first fault of the row of `repo`, one time for each row: riff
-    /// chat hears of it ([`BotFact::LeadCannotStart`]).
+    /// The first fault of the row of `repo`, until riff chat heard of the
+    /// row ([`BotFact::LeadCannotStart`], [`Faults::told`]).
     pub fn untold(&self, repo: &str) -> Option<LeadFault> {
-        let mut rows = self.rows();
-        let row = rows.get_mut(repo).filter(|row| !row.told)?;
-        row.told = true;
-        Some(row.first)
+        let rows = self.rows();
+        rows.get(repo).filter(|row| !row.told).map(|row| row.first)
+    }
+
+    /// riff-server took the line of the row of `repo` for riff chat: the
+    /// row gets no other line.
+    pub fn told(&self, repo: &str) {
+        if let Some(row) = self.rows().get_mut(repo) {
+            row.told = true;
+        }
     }
 }
 
@@ -390,11 +403,13 @@ pub async fn look(ground: &dyn Ground, wave: &Wave) -> Result<Did> {
 /// The lead loop of the host of `wave`: a look at each change of the plan
 /// that `changed` tells, each [`LOOK_EVERY`], and at the end of the wait
 /// after a fault ([`Faults::left`]). It prints what a look did, and a
-/// fault of a look one time until it changes. At the first fault of a row
-/// of starts, it tells riff chat one time ([`BotFact::LeadCannotStart`]).
-/// It never ends.
+/// fault of a look or of a call for riff chat one time until it changes.
+/// At the first fault of a row of starts, it tells riff chat one time
+/// ([`BotFact::LeadCannotStart`]): a call that fails goes again after the
+/// next look, until riff-server takes it ([`Faults::told`]). It never
+/// ends.
 pub async fn run(ground: Arc<dyn Ground>, wave: Wave, changed: Arc<Notify>) {
-    let mut fault = None;
+    let (mut fault, mut bot_fault) = (None, None);
     loop {
         match look(&*ground, &wave).await {
             Ok(did) => {
@@ -403,19 +418,17 @@ pub async fn run(ground: Arc<dyn Ground>, wave: Wave, changed: Arc<Notify>) {
                     println!("riff daemon: {line}");
                 }
             }
-            Err(e) => {
-                let e = format!("{e:#}");
-                if fault.as_ref() != Some(&e) {
-                    eprintln!("riff daemon: {}: the lead: {e}", wave.repo);
-                }
-                fault = Some(e);
-            }
+            Err(e) => say_once(&wave.repo, &mut fault, &e),
         }
         let faults = ground.faults();
         if let Some(fault) = faults.untold(&wave.repo) {
             let fact = BotFact::LeadCannotStart { fault };
-            if let Err(e) = ground.bot(&wave, fact).await {
-                eprintln!("riff daemon: {}: the lead: {e:#}", wave.repo);
+            match ground.bot(&wave, fact).await {
+                Ok(()) => {
+                    bot_fault = None;
+                    faults.told(&wave.repo);
+                }
+                Err(e) => say_once(&wave.repo, &mut bot_fault, &e),
             }
         }
         let next = faults
@@ -426,6 +439,16 @@ pub async fn run(ground: Arc<dyn Ground>, wave: Wave, changed: Arc<Notify>) {
             () = changed.notified() => {}
         }
     }
+}
+
+/// Prints the fault `e` of the lead loop of `repo` when it is not the
+/// fault `last` that came before, and keeps it in `last`.
+fn say_once(repo: &str, last: &mut Option<String>, e: &anyhow::Error) {
+    let e = format!("{e:#}");
+    if last.as_ref() != Some(&e) {
+        eprintln!("riff daemon: {repo}: the lead: {e}");
+    }
+    *last = Some(e);
 }
 
 /// The lead loop of the daemon for `wave` ([`run`] with [`Hosted`]), with
@@ -599,6 +622,11 @@ mod tests {
         faults: Faults,
         /// Each fact that riff chat got.
         chats: Mutex<Vec<BotFact>>,
+        /// The count of the next calls for riff chat that fail, for
+        /// example on a locked keyring.
+        bot_fails: AtomicUsize,
+        /// The count of the calls for riff chat.
+        bot_calls: AtomicUsize,
     }
 
     impl Host {
@@ -615,6 +643,8 @@ mod tests {
                 changed: Arc::new(Notify::new()),
                 faults: Faults::default(),
                 chats: Mutex::new(Vec::new()),
+                bot_fails: AtomicUsize::new(0),
+                bot_calls: AtomicUsize::new(0),
             }
         }
 
@@ -698,6 +728,13 @@ mod tests {
         }
 
         fn bot<'a>(&'a self, _: &'a Wave, fact: BotFact) -> BoxFuture<'a, Result<()>> {
+            self.bot_calls.fetch_add(1, Ordering::SeqCst);
+            let fails = self
+                .bot_fails
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1));
+            if fails.is_ok() {
+                return Box::pin(async { anyhow::bail!("the keyring is locked") });
+            }
             self.chats.lock().unwrap().push(fact);
             Box::pin(async { Ok(()) })
         }
@@ -856,6 +893,28 @@ mod tests {
         let fault = LeadFault::Start;
         assert_eq!(host.chats(), [BotFact::LeadCannotStart { fault }]);
         assert_eq!(server.lead(), None);
+    }
+
+    /// #2100: the first call for the line of riff chat fails, for example
+    /// on a locked keyring after a restart of the host. The row stays
+    /// untold, the call goes again after the next look, and riff chat gets
+    /// the line one time.
+    #[tokio::test(start_paused = true)]
+    async fn a_call_for_riff_chat_that_fails_goes_again_and_riff_chat_gets_one_line() {
+        let server = Server::new();
+        let host = Arc::new(Host::broken("pangolin", &server));
+        host.bot_fails.store(1, Ordering::SeqCst);
+        let ground: Arc<dyn Ground> = host.clone();
+        let task = tokio::spawn(run(ground, host.wave(), host.changed.clone()));
+        tokio::time::sleep(Duration::from_secs(25 * 60)).await;
+        task.abort();
+
+        let fault = LeadFault::Start;
+        assert_eq!(host.chats(), [BotFact::LeadCannotStart { fault }]);
+        assert_eq!(host.bot_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(host.faults.untold("acme/app"), None);
+        let secs: Vec<u64> = host.gaps().iter().map(Duration::as_secs).collect();
+        assert_eq!(secs, [10, 30, 120, 600, 600]);
     }
 
     /// #2032: a lead that ends less than a minute after its start is a
