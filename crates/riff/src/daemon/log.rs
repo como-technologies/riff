@@ -154,6 +154,45 @@ impl Capped {
     }
 }
 
+/// Writes `line` and its end to `out` in one write. `eprintln!` writes
+/// each part of its format in a write of its own, and the stderr of the
+/// daemon has no buffer. Its stdout and its stderr go to the same journal
+/// or file: a line on stdout from another task can come between two
+/// parts, and cut the line in two. A fault of `out` loses the line, and
+/// stops no writer.
+///
+/// ```
+/// use std::io::Write;
+///
+/// /// Keeps each write.
+/// #[derive(Default)]
+/// struct Writes(Vec<String>);
+///
+/// impl Write for Writes {
+///     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+///         self.0.push(String::from_utf8_lossy(buf).into_owned());
+///         Ok(buf.len())
+///     }
+///     fn flush(&mut self) -> std::io::Result<()> {
+///         Ok(())
+///     }
+/// }
+///
+/// let (repo, what) = ("o/r", "cannot follow the changes of the plan");
+/// let mut one = Writes::default();
+/// riff::daemon::log::line(&mut one, &format!("riff daemon: {repo}: {what}"));
+/// assert_eq!(one.0, ["riff daemon: o/r: cannot follow the changes of the plan\n"]);
+/// // `writeln!` writes each part on its own.
+/// let mut parts = Writes::default();
+/// writeln!(parts, "riff daemon: {repo}: {what}")?;
+/// assert_eq!(parts.0.concat(), one.0[0]);
+/// assert!(parts.0.len() > 1);
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn line(out: &mut impl Write, line: &str) {
+    let _ = out.write_all(format!("{line}\n").as_bytes());
+}
+
 /// The time of a line of the log: now, in UTC, to the second.
 fn now() -> String {
     chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
@@ -286,6 +325,22 @@ mod tests {
             "T3 four\n"
         );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "T3 five\n");
+    }
+
+    /// A line to an output that fails is lost, and does not stop the
+    /// writer.
+    #[test]
+    fn a_line_to_a_failed_output_is_lost() {
+        struct Fails;
+        impl Write for Fails {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::ErrorKind::BrokenPipe.into())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        line(&mut Fails, "riff daemon: o/r: a line");
     }
 
     /// A log in a folder that is gone loses its lines, and does not fail.
