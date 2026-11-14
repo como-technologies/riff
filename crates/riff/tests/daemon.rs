@@ -1012,12 +1012,17 @@ esac
     isolated::write_program(bin.join("gh"), body);
 }
 
-/// Makes the folder `name` of a session in `sessions`, with a clone whose
-/// origin is `o/r` on GitHub. The clone is as a session leaves it after
-/// its push: one commit, which `main` of `origin` has. It gives the
-/// folder.
+/// Makes the folder `name` of a session in `sessions`, with its file
+/// `repo` of `o/r` and a clone whose origin is `o/r` on GitHub. The
+/// clone is as a session leaves it after its push: one commit, which
+/// `main` of `origin` has. Its git config names a program for
+/// `core.fsmonitor`, `core.sshCommand` and `credential.helper`, which
+/// writes the mark `marks/NAME` beside `sessions` ([`marks`]). It gives
+/// the folder.
 fn session_folder(sessions: &Path, name: &str) -> PathBuf {
-    let clone = sessions.join(name).join("clone");
+    let folder = sessions.join(name);
+    riff::daemon::sweep::note_repo(&folder, "o/r").unwrap();
+    let clone = folder.join("clone");
     std::fs::create_dir_all(&clone).unwrap();
     git(&clone, &["init", "-q", "-b", "main"]);
     git(&clone, &["commit", "-q", "--allow-empty", "-m", "start"]);
@@ -1026,7 +1031,37 @@ fn session_folder(sessions: &Path, name: &str) -> PathBuf {
         &["remote", "add", "origin", "https://github.com/o/r.git"],
     );
     git(&clone, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
-    sessions.join(name)
+    let marks = sessions.with_file_name("marks");
+    std::fs::create_dir_all(&marks).unwrap();
+    let program = isolated::write_program(
+        marks.join(format!("{name}.sh")),
+        format!(
+            "#!/bin/sh\necho \"$*\" >> '{}'\n",
+            marks.join(name).display()
+        ),
+    );
+    let config = clone.join(".git/config");
+    let mut text = std::fs::read_to_string(&config).unwrap();
+    let program = program.display();
+    text.push_str(&format!(
+        "[core]\n\tfsmonitor = {program}\n\tsshCommand = {program}\n\
+         [credential]\n\thelper = !{program}\n"
+    ));
+    std::fs::write(&config, text).unwrap();
+    folder
+}
+
+/// Each mark of a program of the git config of a clone of
+/// [`session_folder`] in `sessions`: no step of the host makes one.
+fn marks(sessions: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(sessions.with_file_name("marks")) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_none_or(|e| e != "sh"))
+        .collect()
 }
 
 /// 01M53NJ5Y2CMY5MWF9328KW7DE: `riff daemon sweep` removes the folder of
@@ -1093,6 +1128,7 @@ async fn riff_daemon_sweep_removes_the_folders_whose_work_is_over_and_says_why()
         text(&out.stdout),
         "riff removed no folder: the session of each folder runs, or its work is not over.\n"
     );
+    assert_eq!(marks(&sessions), Vec::<PathBuf>::new());
     stop(daemon).await;
 }
 
@@ -1134,25 +1170,18 @@ async fn riff_daemon_sweep_remove_takes_one_folder_on_purpose() {
     stop(daemon).await;
 }
 
-/// 01M5NVKNGZPK0GG7B7ZWBS0DFE: `riff daemon sweep` pushes the leftover
-/// work of the folder of a closed pull request to `riff-kept/ITEM-ID8`
-/// of `origin`, never an untracked file, and removes the folder.
+/// 01M7DZ4E02PX5Y0WMHFCJ9KS14: `riff daemon sweep` removes the folder of
+/// a closed pull request with the work of its clone that is not on
+/// `origin`. It pushes nothing, and runs no git in the clone: the
+/// program of its git config does not run.
 #[tokio::test]
-async fn riff_daemon_sweep_pushes_the_leftover_work_and_removes_the_folder() {
+async fn riff_daemon_sweep_removes_a_folder_with_the_work_of_its_clone_and_runs_no_git_there() {
     let here = Here::new();
     fake_sweep_gh(here.bin.path());
     let sessions = here.env.riff_home().join("sessions");
     let ahead = session_folder(&sessions, "issue-6-00000006");
     let clone = ahead.join("clone");
-    let bare = here.bin.path().join("origin.git");
-    git(here.bin.path(), &["init", "-q", "--bare", "origin.git"]);
-    let key = format!("url.{}.pushInsteadOf", bare.display());
-    git(&clone, &["config", &key, "https://github.com/o/r.git"]);
-    git(&clone, &["switch", "-q", "-c", "worktree-issue-6"]);
     std::fs::write(clone.join("work.md"), "work").unwrap();
-    git(&clone, &["add", "work.md"]);
-    git(&clone, &["commit", "-q", "-m", "not pushed"]);
-    std::fs::write(clone.join("scratch.log"), "token").unwrap();
     let daemon = here
         .daemon_with("daemon.out", &[(riff::daemon::sweep::EVERY_VAR, "0")])
         .await;
@@ -1162,65 +1191,17 @@ async fn riff_daemon_sweep_pushes_the_leftover_work_and_removes_the_folder() {
     assert_eq!(
         text(&out.stdout),
         format!(
-            "riff removed the folder {}: the pull request #46 closed with no merge. Its work is \
-             on the branch riff-kept/issue-6-00000006 of origin. 1 file that git does not track \
-             went with the folder.\n",
+            "riff removed the folder {}: the pull request #46 closed with no merge.\n",
             ahead.display()
         )
     );
     assert!(!ahead.exists());
-    let files = git(
-        &bare,
-        &["ls-tree", "-r", "--name-only", "riff-kept/issue-6-00000006"],
+    let log = std::fs::read_to_string(here.bin.path().join("gh.log")).unwrap();
+    assert!(
+        !log.contains("push") && !log.contains("riff-kept/issue-6"),
+        "{log}"
     );
-    assert_eq!(files, "work.md");
-    stop(daemon).await;
-}
-
-/// 01M5QVCAXF5ANTTT46XHR6SF7H: `riff daemon sweep` also pushes the commits
-/// of a local branch that is not `HEAD` to `riff-kept/ITEM-ID8-BRANCH`,
-/// and removes the folder. It says each branch in one line.
-#[tokio::test]
-async fn riff_daemon_sweep_pushes_the_commits_of_another_local_branch_and_removes_the_folder() {
-    let here = Here::new();
-    fake_sweep_gh(here.bin.path());
-    let sessions = here.env.riff_home().join("sessions");
-    let folder = session_folder(&sessions, "issue-6-00000006");
-    let clone = folder.join("clone");
-    let bare = here.bin.path().join("origin.git");
-    git(here.bin.path(), &["init", "-q", "--bare", "origin.git"]);
-    let key = format!("url.{}.pushInsteadOf", bare.display());
-    git(&clone, &["config", &key, "https://github.com/o/r.git"]);
-    git(&clone, &["switch", "-q", "-c", "spare"]);
-    std::fs::write(clone.join("spare.md"), "spare").unwrap();
-    git(&clone, &["add", "spare.md"]);
-    git(&clone, &["commit", "-q", "-m", "on a spare branch"]);
-    git(&clone, &["switch", "-q", "main"]);
-    let daemon = here
-        .daemon_with("daemon.out", &[(riff::daemon::sweep::EVERY_VAR, "0")])
-        .await;
-
-    let out = here.run(false, &["daemon", "sweep"]).await;
-    assert!(out.status.success(), "{}", text(&out.stderr));
-    assert_eq!(
-        text(&out.stdout),
-        format!(
-            "riff removed the folder {}: the pull request #46 closed with no merge. Its work is \
-             on the branch riff-kept/issue-6-00000006-spare of origin.\n",
-            folder.display()
-        )
-    );
-    assert!(!folder.exists());
-    let files = git(
-        &bare,
-        &[
-            "ls-tree",
-            "-r",
-            "--name-only",
-            "riff-kept/issue-6-00000006-spare",
-        ],
-    );
-    assert_eq!(files, "spare.md");
+    assert_eq!(marks(&sessions), Vec::<PathBuf>::new());
     stop(daemon).await;
 }
 

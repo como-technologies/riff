@@ -1016,9 +1016,9 @@ pub enum Ask {
         at_end: bool,
     },
     /// `riff daemon sweep`: remove the folder of each session that does
-    /// not run, when the forge says that its work is over and its clone
-    /// holds no work of its own (01M53NJ5Y2CMY5MWF9328KW7DE,
-    /// 01M53S7WAXD46YPN0DR96XSTMG, [`Daemon::sweep`]).
+    /// not run, when the forge says that its work is over, or when it had
+    /// no change for 30 days (01M53NJ5Y2CMY5MWF9328KW7DE,
+    /// 01M7DZ4E02PX5Y0WMHFCJ9KS14, [`Daemon::sweep`]).
     Sweep,
     /// `riff daemon sweep --remove NAME`: remove the folder `name` of one
     /// ended session on purpose, when its work is on a merged branch, or
@@ -2836,11 +2836,13 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// A daemon with no session, on `runtime`, with its folder `dir`. It
     /// binds its own binary into each session ([`own_binary`]). Only one
     /// daemon may open a folder: call [`listen`] first. Its quiet limit
-    /// is [`QUIET_LIMIT`], or the value of [`QUIET_VAR`].
+    /// is [`QUIET_LIMIT`], or the value of [`QUIET_VAR`]. The host runs no
+    /// git in its folder of the sessions ([`crate::host_git::guard_also`],
+    /// 01M7DZ429QFWTSEA6JH1DVZJM0).
     pub fn new(runtime: R, dir: PathBuf) -> Result<Self> {
         private_dir(&dir)?;
         let room = Room::new(dir.clone(), Arc::new(crate::room::free_memory));
-        Ok(Daemon {
+        let daemon = Daemon {
             runtime,
             dir,
             since_ms: now_ms(),
@@ -2891,7 +2893,9 @@ impl<R: Runtime + 'static> Daemon<R> {
             renews: Mutex::default(),
             told: Mutex::default(),
             verdicts: Mutex::default(),
-        })
+        };
+        crate::host_git::guard_also(&daemon.sessions_dir());
+        Ok(daemon)
     }
 
     /// The daemon that takes `replaced` for the fact that `riff update`
@@ -12431,8 +12435,7 @@ mod tests {
             // The pull request of the folder of issue-1 merged: the sweep
             // adds the comment `Merged in` to the issue.
             let folder = here.daemon.sessions_dir().join("issue-1-00000001");
-            let url = "https://github.com/como-technologies/riff.git";
-            sweep::tests::origin(&folder.join("clone"), url);
+            sweep::note_repo(&folder, "como-technologies/riff").unwrap();
             here.daemon.sweep(None).await;
             assert_eq!(server.comments().len(), 1);
 

@@ -181,7 +181,8 @@
 //!
 //! | Path | Holds |
 //! |---|---|
-//! | `clone/` | The clone of the session: `git clone --reference MAIN`. It stays until the daemon removes the folder ([`crate::daemon::sweep`]). |
+//! | `repo` | The repository `OWNER/REPO` of the session. The host writes it before the clone, and the sweep reads it ([`crate::daemon::sweep::note_repo`], 01M7DZ42EVHAT8N5MZEV97G3DW). |
+//! | `clone/` | The clone of the session: `git clone --reference MAIN`. The host makes it in `new-clones/ITEM-ID8` beside the session folders, then moves it here ([`new_clone_of`], 01M7DZ42C8SY2GV5ZQJZHM2VTV): the host runs no git in the folder of a session ([`crate::host_git`]). It stays until the daemon removes the folder ([`crate::daemon::sweep`]). |
 //! | `claude/` | The own Claude folder of the session ([`claude_folder`]): the first-run answers of `claude` with the trust of the clone, no attribution line of `claude`, and the auto mode settings ([`settings`]). |
 //! | `events.jsonl` | Each event of `claude`, with no secret ([`Scrub`]). The daemon writes it. |
 //!
@@ -1232,32 +1233,15 @@ pub fn issue_of(item: &str) -> Result<u64> {
         .ok_or_else(|| anyhow!("{}", text::run_not_an_issue(item)))
 }
 
-/// Runs `program ARGS` in `dir`, and gives its stdout. An error names
-/// the program and its stderr.
-pub(crate) fn output(program: &str, dir: &Path, args: &[&str]) -> Result<String> {
-    let out = std::process::Command::new(program)
-        .args(args)
-        .current_dir(dir)
-        .stdin(Stdio::null())
-        .output()
-        .with_context(|| text::no_program(program))?;
-    if !out.status.success() {
-        bail!(
-            "{program} {}: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
-}
-
 /// How often [`output_within`] looks whether its program ended.
 const WITHIN_POLL: Duration = Duration::from_millis(20);
 
-/// [`output`] with the time limit `limit` (#1858). At the end of the
-/// limit, riff stops the program and each process that it started, and
-/// the error says so. A step of the host that hangs, for example a
-/// `podman` that waits for a lock, holds up no loop of the daemon.
+/// Runs `program ARGS` in `dir`, and gives its stdout, with the time
+/// limit `limit` (#1858). An error names the program and its stderr.
+/// At the end of the limit, riff stops the program and each process that
+/// it started, and the error says so. A step of the host that hangs, for
+/// example a `podman` that waits for a lock, holds up no loop of the
+/// daemon.
 pub(crate) fn output_within(
     program: &str,
     dir: &Path,
@@ -1843,8 +1827,7 @@ pub(crate) fn now_ms() -> i64 {
 
 /// The main clone of the working folder `dir`: its top, and its git dir.
 pub fn main_clone(dir: &Path) -> Result<(PathBuf, PathBuf)> {
-    let common = PathBuf::from(output(
-        "git",
+    let common = PathBuf::from(crate::host_git::output(
         dir,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
     )?);
@@ -1855,34 +1838,91 @@ pub fn main_clone(dir: &Path) -> Result<(PathBuf, PathBuf)> {
     Ok((top, common))
 }
 
+/// The folder of the new clones beside the folder of the sessions
+/// (01M7DZ42C8SY2GV5ZQJZHM2VTV).
+pub const NEW_CLONES: &str = "new-clones";
+
+/// The folder where the host makes the clone `clone` of a session
+/// before it moves the clone in: `new-clones/ITEM-ID8` beside the folder
+/// of the sessions (01M7DZ42C8SY2GV5ZQJZHM2VTV).
+///
+/// ```
+/// use std::path::Path;
+///
+/// let clone = Path::new("/d/riff/sessions/issue-12-1a2b3c4d/clone");
+/// let new = riff::run::new_clone_of(clone)?;
+/// assert_eq!(new, Path::new("/d/riff/new-clones/issue-12-1a2b3c4d"));
+/// assert!(riff::run::new_clone_of(Path::new("clone")).is_err());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn new_clone_of(clone: &Path) -> Result<PathBuf> {
+    let folder = clone.parent().filter(|f| !f.as_os_str().is_empty());
+    let name = folder.and_then(Path::file_name);
+    let sessions = folder.and_then(Path::parent);
+    match (sessions, name) {
+        (Some(sessions), Some(name)) => Ok(sessions.with_file_name(NEW_CLONES).join(name)),
+        _ => bail!("the clone {} is in no folder of a session", clone.display()),
+    }
+}
+
+/// Makes the clone `clone` of a session in a folder of its own
+/// ([`new_clone_of`]), then moves it to `clone`
+/// (01M7DZ42C8SY2GV5ZQJZHM2VTV). `steps` runs each git step of the clone
+/// in that folder, so no git of the host runs in the folder of the
+/// session ([`crate::host_git`]). After a fault, the new folder goes.
+pub(crate) fn clone_in_new(clone: &Path, steps: impl FnOnce(&Path) -> Result<()>) -> Result<()> {
+    let new = new_clone_of(clone)?;
+    // A new clone of an earlier fault.
+    if new.exists() {
+        std::fs::remove_dir_all(&new)
+            .with_context(|| format!("cannot remove {}", new.display()))?;
+    }
+    if let Some(parent) = new.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("cannot make {}", parent.display()))?;
+    }
+    let made = steps(&new).and_then(|()| {
+        if let Some(parent) = clone.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("cannot make {}", parent.display()))?;
+        }
+        std::fs::rename(&new, clone)
+            .with_context(|| format!("cannot move {} to {}", new.display(), clone.display()))
+    });
+    if made.is_err() {
+        let _ = std::fs::remove_dir_all(&new);
+    }
+    made
+}
+
 /// Makes the clone of the session on the branch of the item. It goes
 /// on from the branch on `origin` when there is one. True when it did.
+/// The look for that branch asks `origin` from the main clone `main`
+/// (`git ls-remote`), and each other git step runs in the new clone
+/// before it moves into the folder of the session ([`clone_in_new`],
+/// 01M7DZ42C8SY2GV5ZQJZHM2VTV).
 pub(crate) fn make_clone(main: &Path, clone: &Path, branch: &str) -> Result<bool> {
-    let remote = output("git", main, &["remote", "get-url", "origin"])?;
+    let remote = crate::host_git::output(main, &["remote", "get-url", "origin"])?;
+    let head = format!("refs/heads/{branch}");
+    let earlier = !git_credential::run(main, &remote, &["ls-remote", "--", &remote, &head])?
+        .trim()
+        .is_empty();
     let top = main.to_string_lossy();
-    let path = clone.to_string_lossy();
-    git_credential::run(
-        main,
-        &remote,
-        &["clone", "-q", "--reference", &top, "--", &remote, &path],
-    )?;
-    let earlier = output(
-        "git",
-        clone,
-        &[
-            "rev-parse",
-            "-q",
-            "--verify",
-            &format!("refs/remotes/origin/{branch}"),
-        ],
-    )
-    .is_ok();
-    let switch: &[&str] = if earlier {
-        &["switch", "-q", branch]
-    } else {
-        &["switch", "-q", "-c", branch]
-    };
-    output("git", clone, switch)?;
+    clone_in_new(clone, |new| {
+        let path = new.to_string_lossy();
+        git_credential::run(
+            main,
+            &remote,
+            &["clone", "-q", "--reference", &top, "--", &remote, &path],
+        )?;
+        let switch: &[&str] = if earlier {
+            &["switch", "-q", branch]
+        } else {
+            &["switch", "-q", "-c", branch]
+        };
+        crate::host_git::output(new, switch)?;
+        Ok(())
+    })?;
     Ok(earlier)
 }
 
@@ -2324,6 +2364,9 @@ async fn work(
     // (01M53NJ5V27BCHDNHK2THQQZZQ).
     let _held = daemon::sweep::hold(&folder)
         .with_context(|| format!("cannot lock {}", folder.display()))?;
+    // The sweep reads the repository here, not in the clone
+    // (01M7DZ42EVHAT8N5MZEV97G3DW).
+    daemon::sweep::note_repo(&folder, &me.place().repo_text())?;
     let clone = folder.join("clone");
     let claude = folder.join("claude");
     let sources = session_image::merged_sources(main)?;
@@ -2456,6 +2499,64 @@ async fn work(
 mod tests {
     use super::*;
 
+    /// Runs git in `dir` with no config of the person.
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_AUTHOR_NAME", "riff test")
+            .env("GIT_AUTHOR_EMAIL", "test@example.com")
+            .env("GIT_COMMITTER_NAME", "riff test")
+            .env("GIT_COMMITTER_EMAIL", "test@example.com")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    }
+
+    /// 01M7DZ42C8SY2GV5ZQJZHM2VTV: the host makes the clone of a session
+    /// in `new-clones/ITEM-ID8`, with the branch of the item, then moves
+    /// it into the folder of the session. It looks for the branch on
+    /// `origin` from the main clone. After a fault, the new folder goes,
+    /// and the folder of the session has no clone.
+    #[test]
+    fn the_clone_of_a_session_is_made_in_a_folder_of_its_own_then_moved_in() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path();
+        git(root, &["init", "-q", "--bare", "-b", "main", "origin.git"]);
+        git(root, &["clone", "-q", "origin.git", "main"]);
+        let main = root.join("main");
+        git(&main, &["commit", "-q", "--allow-empty", "-m", "start"]);
+        git(&main, &["push", "-q", "origin", "HEAD:main"]);
+        let sessions = root.join("sessions");
+        crate::host_git::guard_also(&sessions);
+
+        let clone = sessions.join("issue-12-1a2b3c4d/clone");
+        assert!(!make_clone(&main, &clone, "worktree-issue-12").unwrap());
+        assert_eq!(
+            git(&clone, &["rev-parse", "--abbrev-ref", "HEAD"]),
+            "worktree-issue-12"
+        );
+        assert!(clone.join(".git/objects/info/alternates").is_file());
+        let new = root.join("new-clones");
+        assert_eq!(new_clone_of(&clone).unwrap(), new.join("issue-12-1a2b3c4d"));
+        assert_eq!(std::fs::read_dir(&new).unwrap().count(), 0);
+
+        // The branch is on origin: the next clone goes on from it.
+        git(&clone, &["commit", "-q", "--allow-empty", "-m", "WIP: one"]);
+        git(&clone, &["push", "-q", "origin", "HEAD"]);
+        let again = sessions.join("issue-12-2b3c4d5e/clone");
+        assert!(make_clone(&main, &again, "worktree-issue-12").unwrap());
+        assert_eq!(git(&again, &["log", "-1", "--format=%s"]), "WIP: one");
+
+        // A branch that git refuses: the new clone goes.
+        let bad = sessions.join("issue-13-3c4d5e6f/clone");
+        assert!(make_clone(&main, &bad, "bad..name").is_err());
+        assert!(!bad.exists() && !new.join("issue-13-3c4d5e6f").exists());
+    }
     /// #1858, 01M749XKWD72JYB3QD8RYNHKTV: a step of the host with a time
     /// limit gives its output, its error, or, at the end of the limit, an
     /// error that names it. riff stops it, and each process that it
@@ -2494,7 +2595,8 @@ mod tests {
         let child = std::fs::read_to_string(&mark).unwrap().trim().to_owned();
         let gone = (0..100).any(|_| {
             std::thread::sleep(Duration::from_millis(20));
-            let state = output("ps", dir, &["-o", "stat=", "-p", &child]).unwrap_or_default();
+            let state =
+                output_within("ps", dir, &["-o", "stat=", "-p", &child], limit).unwrap_or_default();
             state.is_empty() || state.starts_with('Z')
         });
         assert!(gone, "the child {child} still runs");

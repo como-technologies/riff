@@ -33,7 +33,7 @@
 //! then the `git`.
 
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use anyhow::Result;
 use riff_client::secrets;
@@ -63,7 +63,7 @@ const GH: &str = "gh";
 /// ```
 pub fn run(dir: &Path, remote: &str, args: &[&str]) -> Result<String> {
     keyring_open(dir, remote, args)?;
-    crate::run::output("git", dir, args)
+    crate::host_git::output(dir, args)
 }
 
 /// Fails with the error of a locked keyring when `git ARGS` in `dir`, a
@@ -258,9 +258,8 @@ pub fn is_gh(helper: &str) -> bool {
 
 /// The stdout of `git ARGS` in `dir`, or `None` when `git` fails.
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
+    let out = crate::host_git::git(dir)
+        .ok()?
         .args(args)
         .stdin(Stdio::null())
         .stderr(Stdio::null())
@@ -339,6 +338,8 @@ impl Url {
 
 #[cfg(test)]
 mod tests {
+    use std::process::Command;
+
     use super::*;
 
     fn url(text: &str) -> Url {

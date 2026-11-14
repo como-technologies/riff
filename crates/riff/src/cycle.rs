@@ -3035,9 +3035,8 @@ impl GitHub {
     }
 
     fn git_in(&self, dir: &Path, args: &[&str]) -> Result<String> {
-        let out = Command::new("git")
+        let out = crate::host_git::git(dir)?
             .args(args)
-            .current_dir(dir)
             .output()
             .with_context(|| format!("cannot run git {}", args.join(" ")))?;
         if !out.status.success() {
