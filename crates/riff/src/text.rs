@@ -1534,6 +1534,8 @@ pub fn setup_check(path: &std::path::Path, left: &Rules) -> String {
 ///     question: vec![],
 ///     waits: vec![],
 ///     rebases: vec![],
+///     merged: vec![],
+///     live: vec![],
 /// };
 /// let items = Items {
 ///     boards: vec![
@@ -2222,6 +2224,76 @@ pub fn waves_ended(title: &str, closed: u64) -> String {
 /// ```
 pub fn waves_moved(items: &[u64], title: &str) -> String {
     format!("Moved {} to {title}.", numbers(items))
+}
+
+/// The comment of `riff wave next` on the issue: it starts with
+/// [`crate::rollout::MORE_WORK`] and the merged pull request `pull`
+/// (01M7DYWXWZKDB6VZ2KYYJQ4NF7).
+///
+/// ```
+/// let comment = riff::rollout::Comment { body: riff::text::wave_more_work(882) };
+/// assert!(comment.more_after(882));
+/// assert_eq!(
+///     comment.body,
+///     "More work after #882. A lead told the wave that this issue has more work. The wave will \
+///      start a session for its next pull request."
+/// );
+/// ```
+pub fn wave_more_work(pull: u64) -> String {
+    format!(
+        "{}{pull}. A lead told the wave that this issue has more work. The wave will start a \
+         session for its next pull request.",
+        crate::rollout::MORE_WORK
+    )
+}
+
+/// The answer to `riff wave next` (01M7DYWXWZKDB6VZ2KYYJQ4NF7).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::waves_next(872, 882),
+///     "Told the wave: #872 has more work after #882. The wave will start a session for its next \
+///      pull request. riff wave list shows it."
+/// );
+/// ```
+pub fn waves_next(issue: u64, pull: u64) -> String {
+    format!(
+        "Told the wave: #{issue} has more work after #{pull}. The wave will start a session for \
+         its next pull request. riff wave list shows it."
+    )
+}
+
+/// The refusal of `riff wave next` for an issue that is not open
+/// (01M7DYWXWZKDB6VZ2KYYJQ4NF7).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::waves_next_closed(872),
+///     "#872 is not an open issue. riff wave next takes only an open issue. riff added no comment."
+/// );
+/// ```
+pub fn waves_next_closed(issue: u64) -> String {
+    format!(
+        "#{issue} is not an open issue. riff wave next takes only an open issue. riff added no \
+         comment."
+    )
+}
+
+/// The refusal of `riff wave next` for an issue that no merged pull
+/// request keeps out of the free work (01M7DYWXWZKDB6VZ2KYYJQ4NF7).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::waves_next_free(872),
+///     "No merged pull request keeps #872 out of the free work, so the wave can take it now. \
+///      riff added no comment. riff wave list shows its group."
+/// );
+/// ```
+pub fn waves_next_free(issue: u64) -> String {
+    format!(
+        "No merged pull request keeps #{issue} out of the free work, so the wave can take it now. \
+         riff added no comment. riff wave list shows its group."
+    )
 }
 
 /// The answer to `riff wave end N --move-open-to-backlog`
@@ -14077,6 +14149,7 @@ pub const LEAD_RULES: [(&str, &str); 24] = [
 /// assert!(text.contains("`/opt/riff/riff wave list`"));
 /// assert!(text.contains("`/opt/riff/riff wave move ITEM --to WAVE`"));
 /// assert!(text.contains("`/opt/riff/riff wave end NUMBER --move-open-to-backlog`"));
+/// assert!(text.contains("`/opt/riff/riff wave next ISSUE`"));
 /// assert!(text.contains("file an issue for it"));
 /// assert!(!text.contains("--milestone"));
 /// assert!(!text.contains("gh issue edit"));
@@ -14094,7 +14167,9 @@ work. Your riff tools act on riff-server: `whoami`, `who`, `threads`, `read`, `p
 `/opt/riff/riff wave list`. To make, rename or end a wave, run `/opt/riff/riff wave make`, \
 `/opt/riff/riff wave rename` or `/opt/riff/riff wave end`. To move items to a wave or to the \
 Backlog, run `/opt/riff/riff wave move ITEM --to WAVE`; to end a wave with open items, run \
-`/opt/riff/riff wave end NUMBER --move-open-to-backlog`. When the auto mode checker blocks a release command, file an issue for it: the list of denials has the record. Sessions talk in threads. A post \
+`/opt/riff/riff wave end NUMBER --move-open-to-backlog`. When an item in the group `merged` of \
+the list has more work, run `/opt/riff/riff wave next ISSUE`: the wave will start a session for \
+its next pull request. When the auto mode checker blocks a release command, file an issue for it: the list of denials has the record. Sessions talk in threads. A post \
 wakes only the \
 sessions that its `to` selectors match; text in the body never wakes anyone. To reach only the person of a user, add `person: true` to the selector: it wakes the terminals of the person, and no agent session. Use `tell` for a \
 direct message. The notes are one text that riff keeps for your project: the running \

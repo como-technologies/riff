@@ -399,15 +399,28 @@
 //! at the next look. The sweep adds it too, when it is still missing (see
 //! "The clones").
 //!
+//! An issue can have more than one pull request: each one before the last
+//! has `Refs #N` (01M3JFEXMPNFEV4HBZJQ15JD25). `riff wave next N` adds the
+//! comment `More work after #PR` ([`crate::waves::next`],
+//! 01M7DYWXWZKDB6VZ2KYYJQ4NF7). The free work counts that pull request no
+//! more ([`rollout::Issue::merged_pull`]), so the wave takes the issue at
+//! its next look, and starts a session for its next pull request. An issue
+//! with a `Live:` line and no such comment stays no free work, and `riff
+//! wave list` shows it in `live check` (01M7DYX2Q2VJW5V4RNQEEHCVKS).
+//!
 //! ```mermaid
 //! sequenceDiagram
 //!     participant G as GitHub
 //!     participant W as the loop of the wave
+//!     participant L as the lead
 //!     G->>G: pull request #40 merges with Refs #12: the issue stays open
 //!     W->>G: look: open issues, open and merged pull requests
 //!     Note over W: #12 is merged: no free work
 //!     W->>G: gh issue comment 12: Merged in #40 (COMMIT)
 //!     W->>W: pick: the next free item
+//!     L->>G: riff wave next 12: More work after #40
+//!     W->>G: look: #12 is free work
+//!     W->>W: pick: a session for the next pull request of #12
 //! ```
 //!
 //! # A merge that closes the issue
@@ -5653,6 +5666,8 @@ mod tests {
         labels: BTreeMap<u64, Vec<String>>,
         /// The items whose body has no `Done when:` line.
         bare: BTreeSet<u64>,
+        /// The items whose "Done when" has a `Live:` line.
+        live: BTreeSet<u64>,
         /// Each post of the look: the item whose holder gets it, or `None`
         /// for the lead, the kind, and the body.
         posts: Vec<(Option<String>, Kind, String)>,
@@ -5742,9 +5757,10 @@ mod tests {
                     .get(n)
                     .cloned()
                     .unwrap_or_else(|| format!("item {n}")),
-                body: match self.bare.contains(n) {
-                    true => "No line.".into(),
-                    false => "Done when: it works.".into(),
+                body: match (self.bare.contains(n), self.live.contains(n)) {
+                    (true, _) => "No line.".into(),
+                    (false, true) => "Done when:\n- It works.\n- Live: it runs.".into(),
+                    (false, false) => "Done when: it works.".into(),
                 },
                 milestone: Some(wave()),
                 labels: self
@@ -8089,6 +8105,83 @@ esac
         assert_eq!(started, ["issue-2"], "no build of the merged item");
         assert_eq!(forge.merged_in_fails, 0);
         assert_eq!(forge.merged_ins, [(1, 41, "1a2b3c4d".to_owned())]);
+    }
+
+    /// What `riff wave list` shows of the forge of `here`: its open issues
+    /// as the free work reads them ([`crate::top::issues_of`]), its open
+    /// pull requests, and its claims.
+    fn listed_forge(here: &Here) -> String {
+        let (open, claims) = {
+            let forge = here.forge();
+            (forge.open(), forge.claims.clone())
+        };
+        let issues = crate::top::with_pulls(crate::top::issues_of(open.issues), &open.pulls);
+        let who = claims
+            .iter()
+            .map(|(item, session)| {
+                let uri = format!("riff://mike@thelio/o/r?session={session}&claim={item}");
+                serde_json::from_value(serde_json::json!({ "uri": uri, "live": true })).unwrap()
+            })
+            .collect();
+        let items = crate::waves::Items::of("o/r", &issues, who, &BTreeMap::new());
+        let milestone = riff_client::waves::Milestone {
+            number: 1,
+            title: "Wave 1".into(),
+            open_issues: 2,
+            closed_issues: 0,
+        };
+        text::waves_list(&[milestone], Some(&items))
+    }
+
+    /// 01M7DYWXWZKDB6VZ2KYYJQ4NF7, 01M7DYX2Q2VJW5V4RNQEEHCVKS (#2112): the
+    /// pull request #41 of item 1 merged with `Refs #1`, and so did #42 of
+    /// item 2, whose "Done when" has a `Live:` line. The wave starts no
+    /// session, and `riff wave list` names why: `merged` and `live check`.
+    /// Then the lead tells the wave that item 1 has more work (`riff wave
+    /// next 1`): the wave starts one session for its next pull request, and
+    /// none for the check after the release of item 2.
+    #[tokio::test]
+    async fn more_work_after_a_merge_starts_one_session_and_a_live_check_none() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1, 2], 2, free).await;
+        {
+            let mut forge = here.forge();
+            forge.live.insert(2);
+            for (issue, pull) in [(1, 41), (2, 42)] {
+                let merge = rollout::Merge {
+                    pull,
+                    commit: format!("m{pull}"),
+                    closes: false,
+                };
+                forge.merges.insert(issue, merge);
+            }
+        }
+        here.run();
+        here.until(2, |h| h.forge().merged_ins.len() == 2).await;
+        here.idle(2).await;
+        assert!(here.forge().starts.is_empty(), "{:?}", here.forge().starts);
+        let list = listed_forge(&here);
+        assert_eq!(
+            list,
+            "Wave 1  current  2 open, 0 closed\n  merged: #1 (in #41)\n  live check: #2 (in #42)"
+        );
+
+        // `riff wave next 1` adds the comment of the lead.
+        let more = text::wave_more_work(41);
+        here.forge().comments.entry(1).or_default().push(more);
+        here.until(2, |h| h.running("issue-1").is_some()).await;
+        here.idle(2).await;
+        let started: Vec<String> = here.forge().starts.iter().map(|(i, _)| i.clone()).collect();
+        assert_eq!(
+            started,
+            ["issue-1"],
+            "one session, and none for the live check"
+        );
+        let list = listed_forge(&here);
+        assert_eq!(
+            list,
+            "Wave 1  current  2 open, 0 closed\n  claimed: #1\n  live check: #2 (in #42)"
+        );
     }
 
     /// The wave of the open items 1 and 2: each pull request waits for a

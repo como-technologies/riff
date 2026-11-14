@@ -896,6 +896,23 @@
 - **01M7CJMWGNFF57BAEHDF6BC2DX** `riff project init` makes the label
   `escaped` (01M7CF3P6251E29KNSBG24YJH3) with the first wave, when the
   repository has none. It never changes a label that is there.
+- **01M7DYWXWZKDB6VZ2KYYJQ4NF7** `riff wave next N` tells the wave that
+  the open issue N has more work after the merged pull request that
+  keeps it out of the free work. It adds the comment `More work after
+  #PR` to the issue. A merged pull request that such a comment names
+  does not make the item merged, so the wave starts a session for the
+  next pull request of the issue. riff refuses a closed issue, and an
+  issue that no merged pull request keeps out of the free work, and adds
+  no comment.
+- **01M7DYX2Q2VJW5V4RNQEEHCVKS** `riff wave list` and the board of `riff
+  top` read the comments of the open issues and the last 100 merged pull
+  requests, as the free work does. An open item of a wave that a merged
+  pull request keeps out of the free work is in the group `merged`, with
+  that pull request, for example `merged: #872 (in #882)`. An item with
+  a `Live:` line in its "Done when" is in the group `live check` in its
+  place. Such an item is never in `free`. A claim, a verify, a stuck
+  pull request, a tracker, a question, a hold and an open need win over
+  the two groups. A pause hides no item of the groups.
 
 ## Issue hygiene on GitHub
 

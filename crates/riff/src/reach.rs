@@ -1104,6 +1104,7 @@ pub const COMMANDS: &[InContainer] = &[
     local(&["wave", "make", "Wave 4"]),
     local(&["wave", "rename", "3", "the new wave"]),
     local(&["wave", "end", "3"]),
+    local(&["wave", "next", "872"]),
     local(&["takeover", "riff-issue-12-1a2b3c4d"]),
     local(&["claude-token"]),
     local(&["daemon"]),

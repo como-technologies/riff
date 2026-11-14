@@ -3769,6 +3769,42 @@ An issue with a line `Live:` in "Done when" gets `Refs #12` with no
 [Leave the issue open for a check after the
 release](development.md#leave-the-issue-open-for-a-check-after-the-release).
 
+#### Start the next pull request of an issue
+
+After a pull request with `Refs #12` merges, issue 12 stays open. The
+wave starts no session for it: `riff wave list` shows it in the group
+`merged`, for example `merged: #12 (in #40)`. When the issue has more
+work, the lead tells the wave:
+
+```sh
+riff wave next 12
+```
+
+riff adds the comment `More work after #40` to the issue. At its next
+look, the wave counts the merge of #40 no more, and starts a session
+for the next pull request of the issue. That session reads the
+comments of the issue, and does the rest of "Done when". It gives its
+last pull request `Closes #12`. For a pull request before the last, it
+uses `--refs`, and the lead runs `riff wave next 12` again after its
+merge.
+
+```mermaid
+sequenceDiagram
+    participant G as GitHub
+    participant W as the wave
+    participant L as the lead
+    G->>G: pull request #40 merges with Refs #12
+    W->>G: look: #12 is merged, no session
+    L->>G: riff wave next 12: the comment More work after #40
+    W->>G: look: #12 is free
+    W->>W: a session for the next pull request of #12
+```
+
+riff refuses an issue that is not open, and an issue that no merged
+pull request keeps from the wave. Then it adds no comment. An issue
+with a `Live:` line and no more work stays in the group `live check`
+until its check after the release.
+
 ### Wait for the merge
 
 ```sh
@@ -7801,7 +7837,9 @@ flowchart TD
   merged, and each issue of its `Needs:` line is closed. An issue is
   merged when it has the comment `Merged in #`, or when its pull request
   merged with `Refs #N`, or with `Closes #N` in the last hour (see
-  [What the wave does](development.md#what-the-wave-does)).
+  [What the wave does](development.md#what-the-wave-does)). A comment
+  `More work after #PR` takes that pull request out (see
+  [Start the next pull request of an issue](#start-the-next-pull-request-of-an-issue)).
   A pull request counts for the issue that it names (see
   [See the item of a pull request](#see-the-item-of-a-pull-request)).
   An item counts one time: while its pull request waits for a verify

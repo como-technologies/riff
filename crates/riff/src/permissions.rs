@@ -2090,6 +2090,7 @@ mod tests {
                 for step in [
                     "/opt/riff/riff wave move ITEM --to WAVE",
                     "/opt/riff/riff wave end NUMBER --move-open-to-backlog",
+                    "/opt/riff/riff wave next ISSUE",
                 ] {
                     assert!(steps.contains(&step.to_owned()), "{steps:#?}");
                 }
