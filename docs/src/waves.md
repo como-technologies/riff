@@ -159,8 +159,8 @@ number order, then the backlog, with the number of the open and the
 closed items. The current wave has the mark `current` and the hosts
 of its loop. The open items of each wave follow in the groups `free`,
 `held`, `needs` (see [Needs](#needs)), `claimed`, `verify`,
-`verify waits for #N`, `rebase waits for #N`, `stuck`, `tracker` and
-`question` (see
+`verify waits for #N`, `rebase waits for #N`, `stuck`, `tracker`,
+`question`, `merged` and `live check` (see
 [See which wave runs, and where](development.md#see-which-wave-runs-and-where)):
 
 ```sh

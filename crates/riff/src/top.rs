@@ -167,11 +167,10 @@ use riff_client::machines::{Host, HostStatus};
 use riff_client::sessions::{
     Group, Level, NO_PROJECT, PersonRow, Sessions, Show, blocked, out_of_date,
 };
-use riff_client::waves::{Board, Issue, Issues, project_boards};
+use riff_client::waves::{Board, Issue, Issues, Merged, project_boards};
 use riff_core::build::Build;
 use riff_core::name::{Repo, ThreadName};
 use riff_core::wire::{HoldInfo, Person, PersonRole, RiffReply, SessionInfo, SessionState};
-use serde::Deserialize;
 
 use crate::state;
 use crate::style::{BOLD, ERROR, MUTED, WARNING, session as session_style, styled};
@@ -188,50 +187,20 @@ pub const ISSUES_TTL: Duration = Duration::from_secs(60);
 /// (01M514C142K5BM2746F1D9Y448).
 pub const OUT_OF_DATE: &str = "↑";
 
-#[derive(Deserialize)]
-struct GhIssue {
-    number: u64,
-    #[serde(deserialize_with = "crate::text::forge_de")]
-    title: String,
-    #[serde(default)]
-    labels: Vec<crate::rollout::Label>,
-    milestone: Option<GhMilestone>,
-    /// Only its `Needs:` line counts ([`crate::rollout::needs`]).
-    #[serde(default)]
-    body: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct GhMilestone {
-    #[serde(deserialize_with = "crate::text::forge_de")]
-    title: String,
-}
-
-/// The arguments of `gh` for the open issues of `repo`.
+/// The arguments of `gh` for the open issues of `repo`: the read of the
+/// free work of the wave ([`crate::rollout::issues`]), so that the board
+/// counts each comment `Merged in #PR` and `More work after #PR` as the
+/// wave does (01M7DYX2Q2VJW5V4RNQEEHCVKS).
+///
+/// ```
+/// assert!(riff::top::issue_args("o/r").contains(&riff::rollout::ISSUE_FIELDS.to_owned()));
+/// ```
 pub fn issue_args(repo: &str) -> Vec<String> {
-    [
-        "issue",
-        "list",
-        "--repo",
-        repo,
-        "--state",
-        "open",
-        "--limit",
-        "1000",
-        "--json",
-        "number,title,milestone,labels,body",
-    ]
-    .map(String::from)
-    .to_vec()
+    crate::rollout::issue_args(repo).map(String::from).to_vec()
 }
 
-/// The issues ([`Issues`]) in the JSON of `gh issue list --json
-/// number,title,milestone,labels,body`. A tracker issue
-/// ([`riff_client::waves::is_tracker`]) is in [`Issues::trackers`]. An issue
-/// with the label [`riff_client::waves::QUESTION`] is in
-/// [`Issues::questions`]. An issue with an open issue in its `Needs:` line
-/// is in [`Issues::needs`] (01M78TW2TPG6JM99RN73NV5GB9). `None` for other
-/// text.
+/// The issues ([`Issues`]) in the JSON of `gh issue list` with
+/// [`issue_args`] ([`issues_of`]). `None` for other text.
 ///
 /// ```
 /// use riff::top::parse_issues;
@@ -244,7 +213,9 @@ pub fn issue_args(repo: &str) -> Vec<String> {
 ///   {"number": 5, "title": "New", "milestone": null},
 ///   {"number": 6, "title": "The parts", "milestone": null, "labels": [{"name": "tracker"}]},
 ///   {"number": 7, "title": "Which design?", "milestone": null, "labels": [{"name": "question"}]},
-///   {"number": 8, "title": "After the old one", "milestone": {"title": "Wave 10"}, "body": "Needs: #9, #3"}
+///   {"number": 8, "title": "After the old one", "milestone": {"title": "Wave 10"}, "body": "Needs: #9, #3"},
+///   {"number": 10, "title": "Two parts", "milestone": {"title": "Wave 10"},
+///    "comments": [{"author": {"login": "m"}, "body": "Merged in #40 (abc)"}]}
 /// ]"#;
 /// let issues = parse_issues(json).unwrap();
 /// assert_eq!(issues.titles[&12], "Show the wave");
@@ -252,29 +223,59 @@ pub fn issue_args(repo: &str) -> Vec<String> {
 /// assert_eq!(issues.questions, [7].into());
 /// // #9 is open, and #3 is not.
 /// assert_eq!(issues.needs, [(8, vec![9])].into());
+/// assert_eq!(issues.merged[&10].pull, 40);
 /// assert_eq!(issues.wave(), Some(&("Wave 9: Cloud".into(), vec![9])));
 /// assert_eq!(parse_issues("not json"), None);
 /// ```
 pub fn parse_issues(json: &str) -> Option<Issues> {
-    let list: Vec<GhIssue> = serde_json::from_str(json).ok()?;
-    Some(Issues::of(
-        list.into_iter()
-            .map(|i| Issue {
-                tracker: riff_client::waves::is_tracker(
-                    &i.title,
-                    i.labels.iter().map(|l| l.name.as_str()),
-                ),
-                question: i
-                    .labels
-                    .iter()
-                    .any(|l| l.name == riff_client::waves::QUESTION),
-                needs: crate::rollout::needs(i.body.as_deref().unwrap_or_default()),
-                number: i.number,
-                title: i.title,
-                milestone: i.milestone.map(|m| m.title),
-            })
-            .collect(),
-    ))
+    serde_json::from_str(json).ok().map(issues_of)
+}
+
+/// The issues ([`Issues`]) of the open issues `list` of the free work. A
+/// tracker issue ([`riff_client::waves::is_tracker`]) is in
+/// [`Issues::trackers`]. An issue with the label
+/// [`riff_client::waves::QUESTION`] is in [`Issues::questions`]. An issue
+/// with an open issue in its `Needs:` line is in [`Issues::needs`]
+/// (01M78TW2TPG6JM99RN73NV5GB9). An issue that a merged pull request keeps
+/// out of the free work ([`crate::rollout::Issue::merged_pull`]) is in
+/// [`Issues::merged`], with its `Live:` line
+/// ([`crate::rollout::has_live_check`], 01M7DYX2Q2VJW5V4RNQEEHCVKS).
+///
+/// ```
+/// use riff::rollout::{Comment, Issue, Merge};
+/// use riff::top::issues_of;
+///
+/// let merge = |pull| Some(Merge { pull, commit: "abc".into(), closes: false });
+/// let issue = |number, body: &str, merge| Issue { number, body: body.into(), merge, ..Issue::default() };
+/// let more = Comment { body: "More work after #882.".into() };
+/// let issues = issues_of(vec![
+///     issue(872, "Done when:\n- A test.", merge(882)),
+///     issue(1854, "Done when:\n- Live: it runs.", merge(1866)),
+///     Issue { comments: vec![more], ..issue(873, "Done when:\n- A test.", merge(882)) },
+/// ]);
+/// let merged: Vec<(u64, u64, bool)> = issues.merged.iter().map(|(n, m)| (*n, m.pull, m.live)).collect();
+/// assert_eq!(merged, [(872, 882, false), (1854, 1866, true)]);
+/// ```
+pub fn issues_of(list: Vec<crate::rollout::Issue>) -> Issues {
+    let merged: Vec<(u64, Merged)> = list
+        .iter()
+        .filter_map(|i| {
+            let merged = Merged {
+                pull: i.merged_pull()?,
+                live: crate::rollout::has_live_check(&i.body),
+            };
+            Some((i.number, merged))
+        })
+        .collect();
+    let issues = list.into_iter().map(|i| Issue {
+        tracker: i.tracker(),
+        question: i.question(),
+        needs: crate::rollout::needs(&i.body),
+        number: i.number,
+        title: i.title,
+        milestone: i.milestone.map(|m| m.title),
+    });
+    Issues::of(issues.collect()).with_merged(merged)
 }
 
 /// `issues` with the open pull requests `pulls` ([`crate::rollout::pulls`]):
@@ -333,10 +334,16 @@ pub fn issues_from_gh(gh: &crate::pr::Gh, repo: &str) -> anyhow::Result<Issues> 
 /// reads these with the conditional read of the Waves tab
 /// ([`crate::tui::forge::titles`]).
 pub fn titles_from_gh(gh: &crate::pr::Gh, repo: &str) -> anyhow::Result<Issues> {
+    open_issues(gh, repo).map(issues_of)
+}
+
+/// The open issues of `repo` from `gh`, as the free work reads them. It
+/// fails as [`issues_from_gh`] does.
+fn open_issues(gh: &crate::pr::Gh, repo: &str) -> anyhow::Result<Vec<crate::rollout::Issue>> {
     let args = issue_args(repo);
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let json = gh.run_as("gh issue list", &args)?;
-    parse_issues(&json).ok_or_else(|| anyhow::anyhow!(crate::text::gh_issues_unreadable()))
+    serde_json::from_str(&json).map_err(|_| anyhow::anyhow!(crate::text::gh_issues_unreadable()))
 }
 
 /// One look of `riff top` and of the TUI: the calls `riff` and `who`,
@@ -357,9 +364,18 @@ pub async fn look(
 
 /// [`issues_from_gh`] and whether the read saw no open pull request. A
 /// read of the pull requests that fails counts as a sight of one: the
-/// answer is `false` ([`crate::wave_list`]).
+/// answer is `false` ([`crate::wave_list`]). Each issue gets the merge of
+/// its merged pull request, as for the free work ([`crate::rollout::merges`],
+/// 01M7DYX2Q2VJW5V4RNQEEHCVKS). When that read fails, only the comments of
+/// the issues count.
 pub fn issues_and_pulls(gh: &crate::pr::Gh, repo: &str) -> anyhow::Result<(Issues, bool)> {
-    let issues = titles_from_gh(gh, repo)?;
+    let mut list = open_issues(gh, repo)?;
+    if let Ok(mut merges) = crate::rollout::merges(gh, repo) {
+        for issue in &mut list {
+            issue.merge = merges.remove(&issue.number);
+        }
+    }
+    let issues = issues_of(list);
     Ok(match crate::rollout::pulls(gh, repo) {
         Ok(pulls) => {
             let none = pulls.is_empty();

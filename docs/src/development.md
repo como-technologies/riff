@@ -4042,7 +4042,10 @@ riff wave list
 The current wave has the mark `current`, and `runs on HOST` for each
 host whose daemon runs its loop. Under each wave come its open items
 in the groups of the board of `riff top`: `free`, `held`, `needs`,
-`claimed`, `verify`, `stuck`, `tracker` and `question`. A held item has
+`claimed`, `verify`, `stuck`, `tracker`, `question`, `merged` and
+`live check`. A merged item has a pull request that merged with
+`Refs #N`, and the wave does not start it (see
+[What the wave does](#what-the-wave-does)). A held item has
 the reason of the lead, and the wave does not start it. An item in
 `needs` has its open needs, and the wave does not start it either (see
 [Needs](waves.md#needs)). The wave never starts a tracker (see
@@ -4057,11 +4060,12 @@ A stuck item has a pull request that cannot merge by itself (see
 [See a pull request that cannot merge](#see-a-pull-request-that-cannot-merge)):
 
 ```text
-Wave 33: Hosts  current  runs on thelio  4 open, 21 closed
+Wave 33: Hosts  current  runs on thelio  5 open, 21 closed
   held: #1003 #1008 (VmLck reading at 19:40 UTC)
   claimed: #1103
   tracker: #1248
   question: #1596
+  merged: #1104 (in #1120)
 Wave 34  2 open, 0 closed
   free: #1106
   needs: #1107 (#1103)
@@ -4070,7 +4074,7 @@ Backlog  61 open, 4 closed
 
 When the wave says "no free work now" while items are open, look at
 the groups: the items are held, wait for their needs, claimed, in
-verify, stuck, trackers or waiting for an answer.
+verify, stuck, trackers, waiting for an answer, or merged.
 
 The lead runs the same command in its container. There, riff reads
 the sessions and the holds through the riff daemon of the host.
@@ -4822,7 +4826,12 @@ first free work:
    the merge. In that time the wave still sees the issue open, with no
    open pull request. So for one hour after the merge, the issue is
    merged, and gets no comment `Merged in`. After that hour, an issue
-   that you open again is free work.
+   that you open again is free work. `riff wave list` shows a merged
+   item in the group `merged`, with its pull request, for example
+   `merged: #872 (in #882)`. An item with a `Live:` line is in the
+   group `live check` in its place: it waits for its check after the
+   release. A merged item with more work waits for the lead: see
+   [Start the next pull request of an issue](how-it-works.md#start-the-next-pull-request-of-an-issue).
 4. It starts the verify of an item only when no session holds the
    item, and the full check of the head commit is done: each check that
    the ruleset of the default branch requires, but `riff/verify`, has a
@@ -6326,8 +6335,9 @@ gh pr edit 40 --body-file body.md
 The merge makes the item merged at once. riff reads the last 100
 merged pull requests at each look of the wave. An open issue whose pull
 request merged with `Refs #N` is no free work, so no session claims it
-again. At the first look after the merge, riff adds the comment `Merged
-in #PR (COMMIT)` to the issue, one time (see
+again: `riff wave list` shows it in the group `live check`. At the
+first look after the merge, riff adds the comment `Merged in #PR
+(COMMIT)` to the issue, one time (see
 [What the wave does](#what-the-wave-does)). To see the comment of issue
 12:
 

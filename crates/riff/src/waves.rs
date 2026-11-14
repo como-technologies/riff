@@ -1,5 +1,6 @@
 //! The steps of the lead on the waves of a repository: see the open
-//! waves, make a wave, rename a wave, and end a wave.
+//! waves, make a wave, rename a wave, end a wave, and start the next pull
+//! request of an issue.
 //!
 //! # Design
 //!
@@ -22,6 +23,7 @@
 //! | `riff wave end N` (01M509TJXE04CTG5D1K751WXJY) | the list, then `api -X PATCH repos/{owner}/{repo}/milestones/NUMBER -f state=closed` |
 //! | `riff wave move ITEM... --to WAVE` (01M5924014WN63RCHJWGZS4AFZ) | the list, `issue view N --json number,body` for each item (to a wave only), then `issue edit N --milestone TITLE` for each item |
 //! | `riff wave end N --move-open-to-backlog` (01M592403Q4TNZEDNR76C7NK9M) | the list, `api repos/{owner}/{repo}/issues?milestone=NUMBER&state=open&per_page=100`, `issue edit N --milestone Backlog` for each item, then the PATCH of `riff wave end` |
+//! | `riff wave next N` (01M7DYWXWZKDB6VZ2KYYJQ4NF7) | `issue view N`, `pr list --state merged` of the free work ([`rollout::merges`]), then `issue comment N --body-file -` ([`next`]) |
 //! | `--wave WAVE` of `riff usage` and `riff audit` (01M588K2M7G0CV3RNJ4N074FTG) | `api repos/OWNER/REPO/milestones?state=all&per_page=100` |
 //!
 //! - `riff wave list` marks the current wave, the first wave, with
@@ -54,6 +56,15 @@
 //!   The wave of the daemon takes only an issue with that line
 //!   (01M5R0HEP1MXWYY643F1N1DWEM). `--to Backlog`
 //!   reads no body and gives no warning.
+//! - `riff wave next N` is for an issue with more than one pull request
+//!   (01M3JFEXMPNFEV4HBZJQ15JD25). After the merge of a pull request with
+//!   `Refs #N`, the issue is merged, and the wave starts no build of it.
+//!   The comment `More work after #PR` tells the wave that the issue has
+//!   more work: the free work counts that pull request no more, so the
+//!   wave starts a session for the next one (01M7DYWXWZKDB6VZ2KYYJQ4NF7).
+//!   `riff wave list` shows such an issue in the group `merged`, or in
+//!   `live check` with a `Live:` line, until then
+//!   (01M7DYX2Q2VJW5V4RNQEEHCVKS).
 //! - `--wave` takes the number of the wave, `33` or `Wave 33`, as each
 //!   other step does ([`title`]). `gh issue list --milestone` matches
 //!   only the full title, for example `Wave 33: Hosts`, so riff finds
@@ -429,6 +440,50 @@ fn without_done_when(gh: &Gh, items: &[u64]) -> Result<Vec<u64>> {
         }
     }
     Ok(bare)
+}
+
+/// An issue, as `gh issue view --json` with
+/// [`rollout::ISSUE_VIEW_FIELDS`] gives it.
+#[derive(Deserialize)]
+struct Viewed {
+    #[serde(flatten)]
+    issue: rollout::Issue,
+    /// `OPEN` or `CLOSED`.
+    #[serde(default)]
+    state: String,
+}
+
+/// Tells the wave that the open issue `issue` of `repo` (`OWNER/REPO`)
+/// has more work after the merged pull request that keeps it out of the
+/// free work ([`rollout::Issue::merged_pull`],
+/// 01M7DYWXWZKDB6VZ2KYYJQ4NF7): it adds the comment `More work after #PR`
+/// ([`text::wave_more_work`]), and gives that pull request. It reads the
+/// merges as the free work does ([`rollout::merges`]). It refuses an
+/// issue that is not open, and an issue that no merged pull request keeps
+/// out of the free work, and then adds no comment.
+pub fn next(gh: &Gh, repo: &str, issue: u64) -> Result<u64> {
+    let number = issue.to_string();
+    let viewed: Viewed = gh.json(&[
+        "issue",
+        "view",
+        &number,
+        "--json",
+        rollout::ISSUE_VIEW_FIELDS,
+    ])?;
+    if viewed.state != "OPEN" {
+        bail!(text::waves_next_closed(issue));
+    }
+    let mut open = viewed.issue;
+    open.merge = rollout::merges(gh, repo)?.remove(&issue);
+    let Some(pull) = open.merged_pull() else {
+        bail!(text::waves_next_free(issue));
+    };
+    let body = text::wave_more_work(pull);
+    gh.run(
+        &["issue", "comment", &number, "--body-file", "-"],
+        Some(&body),
+    )?;
+    Ok(pull)
 }
 
 /// Moves the open items of the open wave `number` to the Backlog, then
@@ -902,6 +957,74 @@ mod tests {
         let error = end(&fake_gh(dir.path()), 26).unwrap_err();
         assert_eq!(error.to_string(), text::waves_not_open(26));
         assert_eq!(calls(dir.path()), [LIST]);
+    }
+
+    /// A fake `gh` in `dir` for `riff wave next`: the open issue 872 with
+    /// the comment `Merged in #882`, the closed issue 873, the open issue
+    /// 874 with no merge, and the open issue 875 whose pull request #890
+    /// merged with `Refs #875`, with no comment yet. It writes each call to
+    /// `dir/calls`, and the body of a comment to `dir/comment`.
+    fn next_gh(dir: &Path) -> Gh {
+        let issue = |n: u64, state: &str, comments: &str| {
+            format!(
+                "'issue view {n} '*) printf '%s' '{{\"number\":{n},\"state\":\"{state}\",\
+                 \"body\":\"Done when:\\n- x\",\"comments\":[{comments}]}}' ;;\n"
+            )
+        };
+        let said = r#"{"author":{"login":"m"},"body":"Merged in #882 (abc)"}"#;
+        let script = format!(
+            "#!/bin/sh\necho \"$*\" >> \"$(dirname \"$0\")/calls\"\ncase \"$*\" in\n{}{}{}{}\
+             'pr list '*) printf '%s' '[{{\"number\":890,\"state\":\"MERGED\",\
+             \"headRefName\":\"worktree-issue-875\",\"body\":\"Refs #875\\n\",\
+             \"mergeCommit\":{{\"oid\":\"def\"}}}}]' ;;\n\
+             'issue comment '*) cat > \"$(dirname \"$0\")/comment\" ;;\n\
+             *) exit 1 ;;\nesac\n",
+            issue(872, "OPEN", said),
+            issue(873, "CLOSED", ""),
+            issue(874, "OPEN", ""),
+            issue(875, "OPEN", ""),
+        );
+        Gh::at(isolated::write_program(dir.join("gh"), &script))
+    }
+
+    /// 01M7DYWXWZKDB6VZ2KYYJQ4NF7: `riff wave next` adds the comment `More
+    /// work after #PR` for the merged pull request that keeps the issue out
+    /// of the free work: one of a comment `Merged in`, or of the merges.
+    #[test]
+    fn next_adds_the_comment_more_work_after_the_merged_pull_request() {
+        for (issue, pull) in [(872, 882), (875, 890)] {
+            let dir = tempfile::tempdir().unwrap();
+            assert_eq!(next(&next_gh(dir.path()), "o/r", issue).unwrap(), pull);
+            let view = format!("issue view {issue} --json {}", rollout::ISSUE_VIEW_FIELDS);
+            let merged = rollout::merged_args("o/r").join(" ");
+            let comment = format!("issue comment {issue} --body-file -");
+            assert_eq!(calls(dir.path()), [view, merged, comment]);
+            let body = std::fs::read_to_string(dir.path().join("comment")).unwrap();
+            assert_eq!(body, text::wave_more_work(pull));
+        }
+    }
+
+    /// 01M7DYWXWZKDB6VZ2KYYJQ4NF7: `riff wave next` refuses an issue that
+    /// is not open, and an issue that no merged pull request keeps out of
+    /// the free work. Then it adds no comment.
+    #[test]
+    fn next_refuses_a_closed_issue_and_a_free_one_and_adds_no_comment() {
+        for (issue, refusal) in [
+            (873, text::waves_next_closed(873)),
+            (874, text::waves_next_free(874)),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let error = next(&next_gh(dir.path()), "o/r", issue).unwrap_err();
+            assert_eq!(error.to_string(), refusal);
+            assert!(
+                !calls(dir.path())
+                    .iter()
+                    .any(|c| c.starts_with("issue comment")),
+                "{:?}",
+                calls(dir.path())
+            );
+            assert!(!dir.path().join("comment").exists());
+        }
     }
 
     #[test]

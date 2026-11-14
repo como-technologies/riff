@@ -14,10 +14,10 @@
 //! - [`Board`]: the board of a wave of a repository, from its
 //!   [`Issues`], the claims of the sessions of riff-server and the holds
 //!   of the lead: `free`, `held`, `needs`, `claimed`, `verify`, `stuck`,
-//!   `tracker` and `question` (01M3Z9N6X92KT051P10CKKV7EK,
-//!   01M58ATZ1F42DWNNB24C2HJPEY, 01M5ND16V2SVN8A9K7W90VC6X9). `stuck` holds
-//!   the items whose pull request cannot merge by itself, with the reason
-//!   (#279).
+//!   `tracker`, `question`, `merged` and `live check`
+//!   (01M3Z9N6X92KT051P10CKKV7EK, 01M58ATZ1F42DWNNB24C2HJPEY,
+//!   01M5ND16V2SVN8A9K7W90VC6X9). `stuck` holds the items whose pull
+//!   request cannot merge by itself, with the reason (#279).
 //!   `riff top` shows the board of the current wave, `riff wave list`
 //!   the board of each wave (01M58ATZ408RBCX0PM0D0ZCY4B).
 //! - [`is_tracker`]: a tracker issue has no code of its own. No session
@@ -29,6 +29,11 @@
 //!   waits for that issue. The wave starts no build of it
 //!   (`riff::rollout::free_items`), so it is in the group `needs`, never
 //!   in `free` (01M78TW2TPG6JM99RN73NV5GB9).
+//! - [`Merged`]: an open issue whose merged pull request keeps it out of
+//!   the free work, as `riff::rollout::Issue::merged_pull` counts it. The
+//!   wave starts no build of it, so it is in the group `merged`, or in
+//!   `live check` with a `Live:` line, never in `free`
+//!   (01M7DYX2Q2VJW5V4RNQEEHCVKS).
 //! - [`Milestone`]: an open milestone, a line of `riff wave list`
 //!   (01M509TJRBE2J7HYKKHRJ1ZFR0).
 //!
@@ -129,6 +134,23 @@ pub struct Issues {
     /// ([`crate::daemons::Wave::waits`]).
     #[serde(default)]
     pub waits: BTreeMap<u64, u64>,
+    /// The issues that a merged pull request keeps out of the free work
+    /// ([`Merged`], 01M7DYX2Q2VJW5V4RNQEEHCVKS).
+    #[serde(default)]
+    pub merged: BTreeMap<u64, Merged>,
+}
+
+/// The merged pull request that keeps an open issue out of the free work,
+/// as the free work of the wave counts it
+/// (`riff::rollout::Issue::merged_pull`, 01M7DYX2Q2VJW5V4RNQEEHCVKS). The
+/// wave starts no build of the issue until a lead runs `riff wave next N`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Merged {
+    /// The number of the merged pull request.
+    pub pull: u64,
+    /// True when the "Done when" of the issue has a `Live:` line: the
+    /// issue waits for its check after the release.
+    pub live: bool,
 }
 
 impl Issues {
@@ -215,6 +237,7 @@ impl Issues {
             verify: BTreeSet::new(),
             stuck: BTreeMap::new(),
             waits: BTreeMap::new(),
+            merged: BTreeMap::new(),
         }
     }
 
@@ -246,6 +269,14 @@ impl Issues {
     #[must_use]
     pub fn with_waits(mut self, waits: impl IntoIterator<Item = (u64, u64)>) -> Issues {
         self.waits = waits.into_iter().collect();
+        self
+    }
+
+    /// These issues with `merged`, the issues that a merged pull request
+    /// keeps out of the free work ([`Merged`]).
+    #[must_use]
+    pub fn with_merged(mut self, merged: impl IntoIterator<Item = (u64, Merged)>) -> Issues {
+        self.merged = merged.into_iter().collect();
         self
     }
 
@@ -493,6 +524,17 @@ pub struct Board {
     /// `stuck`: nobody has to act.
     #[serde(default)]
     pub rebases: Vec<(u64, u64)>,
+    /// The items with no claim, no pull request in verify, no hold and no
+    /// open need that a merged pull request keeps out of the free work,
+    /// each with that pull request ([`Issues::merged`],
+    /// 01M7DYX2Q2VJW5V4RNQEEHCVKS). The wave starts no build of them until
+    /// a lead runs `riff wave next N`.
+    #[serde(default)]
+    pub merged: Vec<(u64, u64)>,
+    /// The items of `merged` with a `Live:` line in their "Done when": they
+    /// wait for their check after the release.
+    #[serde(default)]
+    pub live: Vec<(u64, u64)>,
 }
 
 impl Board {
@@ -578,6 +620,8 @@ impl Board {
             question: Vec::new(),
             waits: Vec::new(),
             rebases: Vec::new(),
+            merged: Vec::new(),
+            live: Vec::new(),
         };
         for &n in items {
             let claims: Vec<&String> = sessions
@@ -609,6 +653,11 @@ impl Board {
                 board.held.push((n, hold.reason.clone()));
             } else if let Some(needs) = issues.needs.get(&n) {
                 board.needs.push((n, needs.clone()));
+            } else if let Some(merged) = issues.merged.get(&n) {
+                match merged.live {
+                    true => board.live.push((n, merged.pull)),
+                    false => board.merged.push((n, merged.pull)),
+                }
             } else {
                 board.free.push(n);
             }
@@ -618,7 +667,8 @@ impl Board {
 
     /// One line for each group of the board that is not empty, in the
     /// order `free`, `held`, `needs`, `claimed`, `verify`, `verify waits
-    /// for #N`, `rebase waits for #N`, `stuck`, `tracker`, `question`.
+    /// for #N`, `rebase waits for #N`, `stuck`, `tracker`, `question`,
+    /// `merged`, `live check`.
     /// With `paused`, no group `free`: nobody can claim its items
     /// (01M588G5K0B58QXD35AA5MTZ6E). The reason of each hold follows its
     /// items (01M58ATZ1F42DWNNB24C2HJPEY), and so does the reason of each
@@ -628,7 +678,9 @@ impl Board {
     /// the merge of the pull request #N is in the group `verify waits for
     /// #N`, not in `verify` (01M6WCGNGNQXG443D5EMC8JRAC). An item whose
     /// rebase waits for its turn after the pull request #N is in the group
-    /// `rebase waits for #N` (01M6YPYTPG8RJY7PRERR2ZM10H).
+    /// `rebase waits for #N` (01M6YPYTPG8RJY7PRERR2ZM10H). The merged pull
+    /// request of each item in `merged` and `live check` follows it, for
+    /// example `merged: #872 (in #882)` (01M7DYX2Q2VJW5V4RNQEEHCVKS).
     ///
     /// ```
     /// use riff_client::waves::Board;
@@ -646,6 +698,8 @@ impl Board {
     ///     question: vec![22],
     ///     waits: vec![(23, 41), (24, 43), (25, 41)],
     ///     rebases: vec![(26, 41), (27, 41)],
+    ///     merged: vec![(31, 50), (32, 51)],
+    ///     live: vec![(33, 52)],
     /// };
     /// assert_eq!(board.groups(false), [
     ///     "free: #14 #15",
@@ -658,6 +712,8 @@ impl Board {
     ///     "stuck: #19 #21 (checks), #20 (auto-merge off)",
     ///     "tracker: #18",
     ///     "question: #22",
+    ///     "merged: #31 (in #50), #32 (in #51)",
+    ///     "live check: #33 (in #52)",
     /// ]);
     /// assert_eq!(
     ///     board.groups(true),
@@ -671,6 +727,8 @@ impl Board {
     ///         "stuck: #19 #21 (checks), #20 (auto-merge off)",
     ///         "tracker: #18",
     ///         "question: #22",
+    ///         "merged: #31 (in #50), #32 (in #51)",
+    ///         "live check: #33 (in #52)",
     ///     ]
     /// );
     /// ```
@@ -724,6 +782,14 @@ impl Board {
             .iter()
             .map(|(n, needs)| (*n, list(needs)))
             .collect();
+        // The merged pull request of an item is its reason.
+        let merged = |pairs: &[(u64, u64)]| {
+            let pairs: Vec<(u64, String)> = pairs
+                .iter()
+                .map(|(n, pull)| (*n, format!("in #{pull}")))
+                .collect();
+            by_reason(&pairs)
+        };
         [
             ("free".to_owned(), free),
             ("held".to_owned(), by_reason(&self.held)),
@@ -738,6 +804,8 @@ impl Board {
             ("stuck".to_owned(), by_reason(&self.stuck)),
             ("tracker".to_owned(), list(&self.tracker)),
             ("question".to_owned(), list(&self.question)),
+            ("merged".to_owned(), merged(&self.merged)),
+            ("live check".to_owned(), merged(&self.live)),
         ])
         .filter(|(_, items)| !items.is_empty())
         .map(|(name, items)| format!("{name}: {items}"))
@@ -979,6 +1047,75 @@ mod tests {
                 "verify: #1524"
             ],
             "a pause hides no item that needs another"
+        );
+    }
+
+    /// An open item whose merged pull request keeps it out of the free work
+    /// is in `merged` with that pull request, or in `live check` with a
+    /// `Live:` line, never in `free`. A claim, a verify, a hold and an open
+    /// need win (01M7DYX2Q2VJW5V4RNQEEHCVKS).
+    #[test]
+    fn a_merged_item_is_in_merged_or_live_check_and_never_free() {
+        let who: Vec<SessionInfo> = serde_json::from_str(
+            r#"[{"uri": "riff://mike@thelio/o/r?session=a1&claim=issue-875", "live": true}]"#,
+        )
+        .unwrap();
+        let sessions = Sessions::new(who, vec![]);
+        let issue = |number, needs: &[u64]| Issue {
+            number,
+            title: format!("item {number}"),
+            milestone: Some("Wave 59".into()),
+            tracker: false,
+            question: false,
+            needs: needs.to_vec(),
+        };
+        let merged = |pull, live| Merged { pull, live };
+        let issues = Issues::of(vec![
+            issue(872, &[]),
+            issue(873, &[]),
+            issue(874, &[]),
+            issue(875, &[]),
+            issue(876, &[]),
+            issue(877, &[]),
+            issue(878, &[872]),
+            issue(1854, &[]),
+        ])
+        .with_verify([876])
+        .with_merged([
+            (872, merged(882, false)),
+            (875, merged(883, false)),
+            (876, merged(884, false)),
+            (877, merged(885, false)),
+            (878, merged(886, false)),
+            (1854, merged(1866, true)),
+        ]);
+        let holds = BTreeMap::from([(
+            "issue-877".to_owned(),
+            HoldInfo {
+                reason: "later".into(),
+                by: None,
+                at_ms: 1,
+            },
+        )]);
+        let board = Board::of("o/r", &issues, &sessions, &holds).unwrap();
+        assert_eq!(board.free, [873, 874]);
+        assert_eq!(board.merged, [(872, 882)]);
+        assert_eq!(board.live, [(1854, 1866)]);
+        assert_eq!(board.claimed, [875]);
+        assert_eq!(board.verify, [876]);
+        assert_eq!(board.held, [(877, "later".to_owned())]);
+        assert_eq!(board.needs, [(878, vec![872])]);
+        assert_eq!(
+            board.groups(true),
+            [
+                "held: #877 (later)",
+                "needs: #878 (#872)",
+                "claimed: #875",
+                "verify: #876",
+                "merged: #872 (in #882)",
+                "live check: #1854 (in #1866)",
+            ],
+            "a pause hides no merged item"
         );
     }
 

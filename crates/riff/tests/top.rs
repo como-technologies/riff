@@ -988,6 +988,80 @@ async fn a_person_sees_the_groups_of_the_wave_in_riff_wave_list() {
     );
 }
 
+/// A fake `gh` for `riff wave next`, with only the builtins of `sh`: the
+/// PATH has git and gh. The open issue 872 has the comment `Merged in
+/// #882`. The pull request #1866 of 1854 merged with `Refs #1854`, and the
+/// "Done when" of 1854 has a `Live:` line. A comment on 872 goes to the
+/// file `more` of the folder, and the issue has it from then on.
+const NEXT_GH: &str = r##"here="${0%/*}"
+more() {
+  if [ -f "$here/more" ]; then
+    IFS= read -r body < "$here/more"
+    printf ',{"body":"%s"}' "$body"
+  fi
+}
+merged='{"body":"Merged in #882 (abc)"}'
+case "$*" in
+  'issue comment 872 --body-file -') IFS= read -r body; printf '%s' "$body" > "$here/more" ;;
+  'issue view 872 '*) printf '{"number":872,"state":"OPEN","body":"Done when:\\n- A test.","comments":[%s%s]}\n' "$merged" "$(more)" ;;
+  'issue list '*) printf '[{"number":872,"title":"t","milestone":{"title":"Wave 3"},"body":"Done when:\\n- A test.","comments":[%s%s]},{"number":1854,"title":"t","milestone":{"title":"Wave 3"},"body":"Done when:\\n- Live: it runs.","comments":[]}]\n' "$merged" "$(more)" ;;
+  'pr list --repo como-technologies/riff --state merged '*) printf '%s\n' '[{"number":1866,"state":"MERGED","headRefName":"worktree-issue-1854","body":"Refs #1854\n","mergeCommit":{"oid":"def"}}]' ;;
+  pr*) echo '[]' ;;
+  api*) echo '[{"number":3,"title":"Wave 3","open_issues":2,"closed_issues":1}]' ;;
+  *) exit 1 ;;
+esac"##;
+
+/// #2112, 01M7DYWXWZKDB6VZ2KYYJQ4NF7, 01M7DYX2Q2VJW5V4RNQEEHCVKS: the wave
+/// starts no build of 872 and 1854 of [`NEXT_GH`], and `riff wave list`
+/// names why: `merged` and `live check`. `riff wave next 872` adds the
+/// comment `More work after #882`, and then 872 is free. A second `riff
+/// wave next 872` refuses, and adds no comment.
+#[tokio::test(flavor = "multi_thread")]
+async fn riff_wave_next_makes_a_merged_item_free_and_riff_wave_list_names_why() {
+    let (server, _) = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    let bin = bin(false);
+    script(bin.path(), "gh", NEXT_GH);
+    let run = |args: &[&str]| {
+        let mut cmd = riff(&server, dir, None, bin.path(), args);
+        cmd.env_remove("RIFF_SESSION")
+            .env_remove("CLAUDE_CODE_SESSION_ID");
+        cmd
+    };
+
+    let list = output(run(&["wave", "list"])).await;
+    assert_eq!(
+        list,
+        "Wave 3  current  2 open, 1 closed\n  merged: #872 (in #882)\n  live check: #1854 (in \
+         #1866)\n"
+    );
+
+    let told = output(run(&["wave", "next", "872"])).await;
+    assert_eq!(told, format!("{}\n", riff::text::waves_next(872, 882)));
+    let more = std::fs::read_to_string(bin.path().join("more")).unwrap();
+    assert_eq!(more, riff::text::wave_more_work(882));
+    // `riff wave next` forgets the kept read: the list reads GitHub again.
+    let list = output(run(&["wave", "list"])).await;
+    assert_eq!(
+        list,
+        "Wave 3  current  2 open, 1 closed\n  free: #872\n  live check: #1854 (in #1866)\n"
+    );
+
+    let mut again = run(&["wave", "next", "872"]);
+    let again = tokio::task::spawn_blocking(move || again.output().unwrap())
+        .await
+        .unwrap();
+    assert!(!again.status.success());
+    let stderr = String::from_utf8_lossy(&again.stderr);
+    assert!(
+        stderr.contains(&riff::text::waves_next_free(872)),
+        "{stderr}"
+    );
+    let more = std::fs::read_to_string(bin.path().join("more")).unwrap();
+    assert_eq!(more, riff::text::wave_more_work(882), "no second comment");
+}
+
 /// #1609: a `watch riff wave list` reads GitHub once in 60 seconds. The
 /// runs in that time share the read of the host and make no call of
 /// `gh`. A read that is older than 10 seconds names its age, and
@@ -1396,9 +1470,12 @@ async fn the_gh_calls_of_top_share_the_token_of_one_read() {
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
     assert!(top.contains("Wave 3 (como-technologies/riff)"), "{top}");
     let calls = std::fs::read_to_string(&log).unwrap();
+    // The merged pull requests, then the open ones
+    // (01M7DYX2Q2VJW5V4RNQEEHCVKS).
     assert_eq!(
         calls,
-        "none auth token\ngho_one_read issue list\ngho_one_read pr list\ngho_one_read api graphql\n"
+        "none auth token\ngho_one_read issue list\ngho_one_read pr list\ngho_one_read pr list\n\
+         gho_one_read api graphql\n"
     );
 }
 
