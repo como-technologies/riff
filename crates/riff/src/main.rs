@@ -1373,6 +1373,22 @@ enum CouncilCommand {
     /// It exits with 1 on a member file that riff cannot read, and names
     /// the file.
     List,
+    /// Show the council of a pull request
+    ///
+    /// riff reads with gh the files of the pull request and the labels of
+    /// the pull request and of its issue. It fetches the base branch BASE,
+    /// and reads the member files of origin/BASE over the default set: not
+    /// the files of the head, and not the files of this folder. A member
+    /// joins each council when it has no files and no labels. Else it
+    /// joins when a glob of its files matches a path of the change, or
+    /// when one of its labels is a label of the change. A council has at
+    /// most 6 members: first the members that join each council, then the
+    /// others. riff prints each member, why it joins and the text of its
+    /// file, then each member that the limit leaves out.
+    Show {
+        /// The number of the pull request.
+        number: u64,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2058,6 +2074,12 @@ async fn cli() -> Result<()> {
         match command {
             CouncilCommand::List => {
                 anstream::print!("{}", riff::council::list(&riff::council::of_folder(&dir)?));
+            }
+            CouncilCommand::Show { number } => {
+                let gh = riff::pr::Gh::here("council");
+                let shown =
+                    riff::council::pick::show(&gh, &dir, number, |line| eprintln!("{line}"))?;
+                print!("{shown}");
             }
         }
         return Ok(());

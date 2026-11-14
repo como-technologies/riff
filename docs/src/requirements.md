@@ -276,6 +276,20 @@
   takes the place of one of them. Each other member comes after them, in
   the order of its name. On a member file that riff cannot read, the
   command exits with 1 and names the file.
+- **01M7CRX642WTS71F4D4YQVVFJY** A part of a glob of `files` is the text
+  between two `/`. The part `**` matches no part of a path or more. In
+  each other part, `*` matches each text, `?` matches one character, and
+  each other character matches itself (01M7CFBZF1BZ0E7H0D4Q7KKY1T).
+- **01M7CRX66K9Q750SB8M2MPG6V7** `riff council show PR` fetches the base
+  branch BASE of the pull request, and reads the member files of
+  `origin/BASE`. When the fetch fails, it says so, and reads
+  `origin/BASE` as the clone has it. It prints the count of the members.
+  Then, for each member, it prints the line `== NAME (SOURCE): WHY` and
+  the text of its file after the table. WHY is `each council`, the first
+  path of the change that a glob of the member matches and that glob, or
+  else the label. Last come the line `== Left out by the limit of 6` and
+  the line `NAME (SOURCE): WHY` of each member that the limit leaves
+  out.
 
 ## Waves
 

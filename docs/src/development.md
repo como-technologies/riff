@@ -2852,7 +2852,9 @@ the person and the revoke), or the command of `riff` that made the
 call: `top`, `pr open`, `pr wait`, `verify`, `release`, `waves` (`riff
 wave ...`), `audit`, `questions`, `run`, `project init`, `claim` (the
 pull request line of a claim), `github` (`riff github create` and
-`install` read the account), `tui` (the Waves tab of the TUI, see
+`install` read the account), `council` (`riff council show`, see
+[See the council of a pull request](how-it-works.md#see-the-council-of-a-pull-request)),
+`tui` (the Waves tab of the TUI, see
 [See the open items of a wave](waves.md#see-the-open-items-of-a-wave)),
 or `chat` (the list of `#` of `riff chat`, see
 [Pick an issue with #](how-it-works.md#pick-an-issue-with)).
@@ -6141,7 +6143,7 @@ Then push the branch, and open its pull request as for each change.
 
 The file starts with a TOML table between two lines `+++`. The key
 `files` lists the globs of the paths of the area, and the key `labels`
-lists the labels of the area. A member with neither key will join each
+lists the labels of the area. A member with neither key joins each
 council. After the table come a `#` heading with the name of the
 member, the text of its area, and one `##` heading for each rule. A
 finding will name its rule by that heading. The name of the file is the
@@ -6149,9 +6151,10 @@ name of the member: lowercase letters, digits and `-`, with a letter
 first, and `.md`.
 
 A file with the name of a member of the default set, for example
-`rust.md`, takes the place of that member. The new member will join the
+`rust.md`, takes the place of that member. The new member joins the
 councils of the pull requests after the merge, because the council of a
-pull request will read the files of its base branch.
+pull request reads the files of its base branch (see
+[See the council of a pull request](how-it-works.md#see-the-council-of-a-pull-request)).
 
 ### List the members of the council
 

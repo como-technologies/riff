@@ -7174,6 +7174,21 @@ pub fn image_no_fetch(head: &str, error: &str) -> String {
     format!("riff cannot fetch {head}: {error}. riff uses riff.toml of {head} as the clone has it.")
 }
 
+/// riff cannot fetch the base branch `branch` of a pull request for its
+/// council, so it reads the branch that the clone has
+/// (01M7CRX66K9Q750SB8M2MPG6V7).
+///
+/// ```
+/// let text = riff::text::council_no_fetch("origin/main", "no network");
+/// assert_eq!(text, "riff cannot fetch origin/main: no network. riff reads the member files of origin/main as the clone has it.");
+/// ```
+pub fn council_no_fetch(branch: &str, error: &str) -> String {
+    format!(
+        "riff cannot fetch {branch}: {}. riff reads the member files of {branch} as the clone has it.",
+        forge(error)
+    )
+}
+
 /// The working tree pins `local` in `path`, not the merged pin `merged`
 /// of `head` (01M51STPMEM62Z8B26YM2CH6QH).
 pub fn image_local_differs(path: &Path, local: &str, merged: &str, head: &str) -> String {
