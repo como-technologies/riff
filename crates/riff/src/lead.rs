@@ -34,6 +34,7 @@
 //! | The container | `riff-lead-OWNER-REPO` ([`name_of`]): one lead for each repository | 01M4Z60B81RTZT71PN5HV0GZHX, 01M501P9MXNAP5QXNVBVF5JJFN |
 //! | The folder | `leads/OWNER-REPO` in the data folder of riff ([`folder_of`]): `clone/` and `claude/` | 01M501P9Q51AYN9GBPWKVHA229 |
 //! | The start | one start of the lead at a time on the host: each start holds the lock `start.lock` in the folder of the lead ([`start_lock`]), and under the lock a start that finds the lead running starts nothing ([`one_start`]) | 01M77Y2BG12SEVF4ZEZ673QBFZ |
+//! | The cause | each start gives the daemon its cause ([`LeadCause`], #2099): the lead loop ([`claim_start`]), `riff lead move` and who ran it ([`take`]), and in the daemon the start of the daemon, a fault and an update (`Daemon::lead_back`, `Daemon::leads_again`). The daemon writes the cause in the line of the start in its log ([`text::lead_starts`]), and keeps it in the record of the lead for `riff daemon status` | 01M7BNP4ZYJCCEK7ZHCJ3EX3SJ |
 //! | The clone | `git clone --reference MAIN`, on the default branch, at the first start; a fetch and a fast-forward at each later start, when it has no local change and git can fast-forward it ([`fresh_clone`]) | 01M501P9Q51AYN9GBPWKVHA229, 01M50RRQ9DT0JPSB358EAZRP8Z, 01M51JYDHAQDJ3GH2J8DT3AZQS |
 //! | The Claude folder | the first-run answers of `claude`, as for each session ([`run::claude_folder`]), and `"tui": "default"`, so `claude` turns on no mouse reports ([`run::TUI`]) | 01M501P9SDGVWG3MTVCW5BDRQQ, 01M51JACH6TQP318ZFG6NQ9GRM, 01M6XVBRT2T838TX53SSXR6HRH |
 //! | The command | `claude --model MODEL --session-id ID --dangerously-skip-permissions START` ([`spec`]), with the model of the merged `riff.toml` ([`crate::session_setup::Setup::claude`]); the daemon runs it as `riff relay --terminal -- ...` | 01M501P9VN47QAKZ6B8P39ZSW4, 01M5GG2X5F1HXCQJ2JJWV6305K, 01M6VAQWECJ6N6VJF66KCMNYD1 |
@@ -69,6 +70,7 @@ use crate::run::{self, Facts};
 use crate::runtime::{Runtime, SessionSpec};
 use crate::{git_credential, identity, session_image, text};
 use riff_client::api::Api;
+use riff_client::sessions::LeadCause;
 
 /// The work item of the lead in the daemon.
 pub const ITEM: &str = "lead";
@@ -258,6 +260,7 @@ fn spec_with(facts: &Facts, repo: &str, session_flag: &str, start: &str) -> Sess
 ///     phase: Phase::Terminal,
 ///     last: String::new(),
 ///     lead: true,
+///     cause: None,
 /// };
 /// let status = Status {
 ///     pid: 1, build: "b".into(), since_ms: 0, dir: "/d".into(), sessions: vec![live],
@@ -430,6 +433,7 @@ pub async fn old(runtime: &impl Runtime, name: &str) -> bool {
 ///         phase: Phase::Terminal,
 ///         last: String::new(),
 ///         lead: true,
+///         cause: None,
 ///     },
 ///     folder: dir.path().to_owned(),
 ///     server: "http://127.0.0.1:1".into(),
@@ -752,17 +756,13 @@ pub async fn claim_start(dir: &Path, wave: &crate::wave::Wave) -> Result<bool> {
     .await??;
     let api = Api::new(&wave.server);
     let start = text::lead_start(&wave.repo);
-    match launch(
-        dir,
-        api,
-        &here,
-        &wave.server,
-        (&main, &common),
-        &start,
-        true,
-    )
-    .await
-    {
+    let new = New {
+        main: (&main, &common),
+        start: &start,
+        if_free: true,
+        cause: LeadCause::LeadLoop,
+    };
+    match launch(dir, api, &here, &wave.server, new).await {
         Ok(Launched::New(_)) => Ok(true),
         Ok(Launched::Runs(_)) => Ok(false),
         Err(e) if e.downcast_ref::<Held>().is_some() => Ok(false),
@@ -865,27 +865,38 @@ pub async fn one_start(
     Ok(Launched::New(start.await?))
 }
 
+/// A new lead for [`launch`].
+struct New<'a> {
+    /// The main clone and its git dir.
+    main: (&'a Path, &'a Path),
+    /// The first prompt.
+    start: &'a str,
+    /// True to claim the lead only when it is free.
+    if_free: bool,
+    /// What starts the lead (#2099).
+    cause: LeadCause,
+}
+
 /// Starts the lead of the repository of `here` on the daemon in the
-/// folder `dir`, from the main clone `main` with the git dir `common`,
-/// with the first prompt `start`, one start at a time ([`one_start`]). It
-/// waits until the container runs, and makes the new session the lead as
-/// the person, with no session ID (01M5NJAYC7MXS13TA3VJB4N6RP). The new
-/// lead gets the claim lead of the project (#1791): with `if_free`, only
-/// when no live session holds it, else the error is [`Held`]; with no
-/// `if_free`, it takes the claim from its holder. A failed start ends the
-/// new session.
+/// folder `dir`, from the main clone of `new` with its git dir, with the
+/// first prompt of `new`, one start at a time ([`one_start`]). It waits
+/// until the container runs, and makes the new session the lead as the
+/// person, with no session ID (01M5NJAYC7MXS13TA3VJB4N6RP). The new lead
+/// gets the claim lead of the project (#1791): with `if_free`, only when
+/// no live session holds it, else the error is [`Held`]; with no
+/// `if_free`, it takes the claim from its holder. The daemon writes the
+/// cause of `new` in its log, and keeps it for `riff daemon status`
+/// (#2099). A failed start ends the new session.
 async fn launch(
     dir: &Path,
     api: Api,
     here: &Place,
     server: &str,
-    main: (&Path, &Path),
-    start: &str,
-    if_free: bool,
+    new: New<'_>,
 ) -> Result<Launched> {
     let repo = here.repo_text();
     let folder = folder_of(&run::data_dir()?, &repo);
-    let new = launch_new(dir, api, here, server, main, start, if_free);
+    let new = launch_new(dir, api, here, server, new);
     one_start(dir, &folder, &repo, new).await
 }
 
@@ -896,10 +907,9 @@ async fn launch_new(
     api: Api,
     here: &Place,
     server: &str,
-    (main, common): (&Path, &Path),
-    start: &str,
-    if_free: bool,
+    new: New<'_>,
 ) -> Result<String> {
+    let (main, common) = new.main;
     let repo = here.repo_text();
     // A lead only for a project (#1863).
     let projects = crate::project::projects_of(here, server).await?;
@@ -937,7 +947,7 @@ async fn launch_new(
     let api = api.signed_in(Some(&session))?;
     api.start(&me, StartReason::Process, false).await?;
     let named = identity::person(&place, server)?;
-    let led = match if_free {
+    let led = match new.if_free {
         true => person
             .claim_lead(&named, &session)
             .await
@@ -956,8 +966,8 @@ async fn launch_new(
         session: &session,
         me: &me,
     };
-    let start = parts.start(spec, start);
-    println!("{}", text::lead_starts(&repo, &name_of(&repo), &session));
+    let mut start = parts.start(spec, new.start);
+    start.cause = Some(new.cause);
     or_end(&api, &me, ask_start(dir, start).await).await?;
     Ok(session)
 }
@@ -1025,6 +1035,7 @@ impl Parts<'_> {
             me: self.me.clone(),
             terminal: true,
             no_github: false,
+            cause: None,
         }
     }
 }
@@ -1145,9 +1156,10 @@ pub fn again(wave: Option<&crate::wave::Wave>, record: &daemon::Record) -> Resul
 /// (#1163): it starts the lead of the repository of `wave` when none
 /// runs, with the first prompt [`text::lead_moved`], and makes it the
 /// lead as the person, with no session ID (01M5NJAYC7MXS13TA3VJB4N6RP).
-/// It gives the reply for the caller, with the session ID
-/// ([`session_of`]).
-pub async fn take(dir: &Path, wave: &crate::wave::Wave) -> Result<String> {
+/// `by` asked for it: the person or the lead of the person. The cause of
+/// the start names the command and `by` (#2099). It gives the reply for
+/// the caller, with the session ID ([`session_of`]).
+pub async fn take(dir: &Path, wave: &crate::wave::Wave, by: &SessionUri) -> Result<String> {
     let here = wave.place(None)?;
     let repo = here.repo_text();
     let name = name_of(&repo);
@@ -1158,16 +1170,16 @@ pub async fn take(dir: &Path, wave: &crate::wave::Wave) -> Result<String> {
             let (main, common) = run::main_clone(&wave.main)?;
             let api = Api::new(&wave.server);
             let start = text::lead_moved(&repo);
-            let launched = launch(
-                dir,
-                api,
-                &here,
-                &wave.server,
-                (&main, &common),
-                &start,
-                false,
-            )
-            .await?;
+            let new = New {
+                main: (&main, &common),
+                start: &start,
+                if_free: false,
+                cause: LeadCause::Command {
+                    command: "riff lead move".into(),
+                    by: Box::new(by.clone()),
+                },
+            };
+            let launched = launch(dir, api, &here, &wave.server, new).await?;
             match launched {
                 Launched::New(session) | Launched::Runs(session) => session,
             }
@@ -1904,6 +1916,7 @@ mod tests {
                 phase: riff_client::sessions::Phase::Terminal,
                 last: String::new(),
                 lead: true,
+                cause: None,
             },
             folder: dir.to_owned(),
             server: "http://127.0.0.1:1".into(),

@@ -324,6 +324,20 @@
 //! riff-server alive, and at its end it ends that session
 //! ([`World::resume`], [`World::leave`]).
 //!
+//! Each start of a lead has its cause ([`Start::cause`], #2099,
+//! 01M7BNP4ZYJCCEK7ZHCJ3EX3SJ). The daemon writes it in the line of the
+//! start in its log ([`text::lead_starts`]), keeps it in the [`Record`]
+//! of the lead, and `riff daemon status` shows it on the line of the lead
+//! ([`text::daemon_status`]):
+//!
+//! | The cause | Who starts the lead |
+//! |---|---|
+//! | the start of the daemon | [`Daemon::recover`]: the record of a lead with no container (`Daemon::lead_back`) |
+//! | the lead loop | [`crate::lead::claim_start`]: no host held the claim lead |
+//! | a start again after a fault | the end of the container of the lead by itself (`Daemon::lead_back`) |
+//! | an update of riff | [`Daemon::leads_again`] |
+//! | a command of a person | [`crate::lead::take`] for `riff lead move`, with who ran it |
+//!
 //! # The lead on a new riff
 //!
 //! A bind of a file keeps the old file, so a lead keeps the riff that it
@@ -516,7 +530,7 @@ use crate::runtime::{Bind, End, Env, Runtime, SessionSpec, Source};
 use crate::session_relay::Up;
 use crate::wave::{Job, Wave, World};
 use crate::{ghcalls, text, usage};
-use riff_client::sessions::{Live, Phase};
+use riff_client::sessions::{LeadCause, Live, Phase};
 
 pub mod facts;
 pub mod gh_token;
@@ -1063,6 +1077,12 @@ pub struct Start {
     /// (01M6Z87JY83V3KR72E2AG8V8KG).
     #[serde(default)]
     pub no_github: bool,
+    /// What started the lead (#2099, 01M7BNP4ZYJCCEK7ZHCJ3EX3SJ): the line of
+    /// the start in the log names it, and so does the line of the lead in
+    /// `riff daemon status`.
+    /// `None` for a session that is not the lead.
+    #[serde(default)]
+    pub cause: Option<LeadCause>,
 }
 
 /// A line of `riff` after [`Ask::Start`], [`Ask::Follow`] or
@@ -3499,7 +3519,7 @@ impl<R: Runtime + 'static> Daemon<R> {
     async fn lead_again(self: &Arc<Self>, record: Record) -> Option<String> {
         let name = record.live.name.clone();
         let owned = self.lock().get(&name).cloned()?;
-        let start = match self.lead_start(&record).await {
+        let start = match self.lead_start(&record, LeadCause::Update).await {
             Ok(start) => start,
             Err(e) => return self.lead_waits(&record, &e).await,
         };
@@ -3567,10 +3587,12 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// is that of the wave of the repository. A host that runs no wave of
     /// it keeps the lead going all the same: the main clone is the one that
     /// the clone of the lead links to (01M6QB89JJEM9Z1V3RVZYHKYT0, [`crate::lead::linked_main`]).
-    async fn lead_start(&self, record: &Record) -> Result<Start> {
+    /// `cause` is what starts the lead again (#2099).
+    async fn lead_start(&self, record: &Record, cause: LeadCause) -> Result<Start> {
         let repo = record.me.place().repo_text();
         let wave = crate::wave::read_waves(&self.dir)?.remove(&repo);
-        let start = self.world.lead_again(wave.as_ref(), record).await?;
+        let mut start = self.world.lead_again(wave.as_ref(), record).await?;
+        start.cause = Some(cause);
         self.check(&start.spec)?;
         self.check_relay()?;
         self.have_image(&start.spec.image, |_| {}).await?;
@@ -3607,8 +3629,9 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// the lead loop of this host waits before its next start
     /// ([`crate::lead_host::Faults`]). The start again holds the lock of
     /// the starts of the lead ([`crate::lead::start_lock`]), and starts
-    /// nothing when another start on this host made a new lead first. It
-    /// gives the line of the log.
+    /// nothing when another start on this host made a new lead first. The
+    /// start again has the cause `cause` (#2099): the start of the daemon,
+    /// or a fault. It gives the line of the log.
     ///
     /// A start again that fails on a locked keyring, for example at the
     /// start of the daemon after a login with a security key, is no fault,
@@ -3642,20 +3665,26 @@ impl<R: Runtime + 'static> Daemon<R> {
         self: &Arc<Self>,
         record: Record,
         short: bool,
+        cause: LeadCause,
     ) -> crate::wave::BoxFuture<'static, String> {
         let daemon = self.clone();
         let repo = record.me.place().repo_text();
         self.backs_lock()
             .insert(repo.clone(), record.live.session.clone());
         Box::pin(async move {
-            let line = daemon.lead_back_now(record, short).await;
+            let line = daemon.lead_back_now(record, short, cause).await;
             daemon.backs_lock().remove(&repo);
             line
         })
     }
 
     /// [`Daemon::lead_back`] itself.
-    async fn lead_back_now(self: &Arc<Self>, record: Record, short: bool) -> String {
+    async fn lead_back_now(
+        self: &Arc<Self>,
+        record: Record,
+        short: bool,
+        cause: LeadCause,
+    ) -> String {
         let name = record.live.name.clone();
         let repo = record.me.place().repo_text();
         let mut locked = false;
@@ -3672,7 +3701,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             if short {
                 break (text::lead_ended_soon(&name), Some(LeadFault::EndedSoon));
             }
-            match self.lead_back_start(&record).await {
+            match self.lead_back_start(&record, cause.clone()).await {
                 Ok(None) => return text::lead_back(&name),
                 Ok(Some(why)) => break (why, None),
                 // The unlock ends the fault: the lead keeps its session (#2098).
@@ -3715,8 +3744,13 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// `None` when the lead runs again, and the line of the log when
     /// another start on this host made a new lead first: then it starts
     /// nothing. The error is why the start failed: a locked keyring keeps
-    /// its type ([`crate::run::keyring_locked`]).
-    async fn lead_back_start(self: &Arc<Self>, record: &Record) -> Result<Option<String>> {
+    /// its type ([`crate::run::keyring_locked`]). `cause` is what starts
+    /// the lead again (#2099).
+    async fn lead_back_start(
+        self: &Arc<Self>,
+        record: &Record,
+        cause: LeadCause,
+    ) -> Result<Option<String>> {
         let name = &record.live.name;
         let repo = record.me.place().repo_text();
         let waits = || println!("riff daemon: {}", text::lead_start_waits_lock(&repo));
@@ -3724,7 +3758,7 @@ impl<R: Runtime + 'static> Daemon<R> {
         if self.lock().contains_key(name) {
             return Ok(Some(text::lead_started_by_other(name)));
         }
-        let start = self.lead_start(record).await?;
+        let start = self.lead_start(record, cause).await?;
         let mut why = String::new();
         for attempt in 0..LEAD_STARTS {
             if attempt > 0 {
@@ -5354,6 +5388,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             me,
             terminal,
             no_github,
+            cause,
         } = start;
         let limit = self.room.limit();
         limit.caps(&mut spec);
@@ -5371,6 +5406,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                 phase: Phase::default(),
                 last: String::new(),
                 lead: terminal,
+                cause: cause.filter(|_| terminal),
             },
             folder,
             server,
@@ -5478,7 +5514,22 @@ impl<R: Runtime + 'static> Daemon<R> {
             self.start_failed(&owned, out, format!("{e:#}"));
             return record;
         }
-        println!("{}", text::daemon_session_starts(&name, &item, &session));
+        // The line of a lead names what started it (#2099). The lines of
+        // the session keep it for a later follower, as `riff daemon
+        // events`. The follower of the start gets no copy: in the daemon,
+        // it writes each line to the log too.
+        let line = match &record.live.cause {
+            Some(cause) => {
+                let repo = record.me.place().repo_text();
+                let line = text::lead_starts(&repo, &name, &session, cause);
+                let mut state = owned.lock();
+                let seq = state.seq;
+                state.lines.push((seq, line.clone()));
+                line
+            }
+            None => text::daemon_session_starts(&name, &item, &session),
+        };
+        println!("{line}");
         out.say(Say::Started {
             name: name.clone(),
             socket: owned.socket.clone(),
@@ -5699,7 +5750,7 @@ impl<R: Runtime + 'static> Daemon<R> {
         if back {
             let ran = now_ms().saturating_sub(record.live.since_ms);
             let short = u128::try_from(ran).unwrap_or(0) < LEAD_SHORT.as_millis();
-            let back = self.lead_back(record, short);
+            let back = self.lead_back(record, short, LeadCause::Fault);
             tokio::spawn(async move { println!("{}", back.await) });
             return;
         }
@@ -6381,7 +6432,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                 // starts again as the same session while it holds the claim
                 // lead of its project, or nobody holds it (#1791).
                 if record.terminal {
-                    let back = self.lead_back(record.clone(), false);
+                    let back = self.lead_back(record.clone(), false, LeadCause::DaemonStart);
                     tokio::spawn(async move { println!("{}", back.await) });
                 }
                 // The job of a wave does its steps after the end now:
@@ -7459,6 +7510,7 @@ mod tests {
             terminal: false,
             // No ask for a token: the tests of the token set it false.
             no_github: true,
+            cause: None,
         }
     }
 
@@ -8684,6 +8736,7 @@ mod tests {
                 phase: Phase::default(),
                 last: String::new(),
                 lead: false,
+                cause: None,
             },
             folder: root.path().to_owned(),
             server: "http://127.0.0.1:1".into(),
@@ -8735,6 +8788,7 @@ mod tests {
                 phase: Phase::default(),
                 last: String::new(),
                 lead: false,
+                cause: None,
             },
             folder,
             server: "http://127.0.0.1:1".into(),
@@ -8893,6 +8947,7 @@ mod tests {
                 phase: Phase::default(),
                 last: String::new(),
                 lead: false,
+                cause: None,
             },
             folder,
             server: "http://127.0.0.1:1".into(),
@@ -8979,6 +9034,7 @@ mod tests {
                 me: me(name),
                 terminal: false,
                 no_github: true,
+                cause: None,
             };
             let record = Record {
                 live: Live {
@@ -8991,6 +9047,7 @@ mod tests {
                     phase: Phase::default(),
                     last: String::new(),
                     lead: false,
+                    cause: None,
                 },
                 folder: folder.clone(),
                 server: start.server.clone(),
@@ -9114,6 +9171,7 @@ mod tests {
                 phase: Phase::default(),
                 last: String::new(),
                 lead: false,
+                cause: None,
             },
             folder: folder.clone(),
             server: "http://127.0.0.1:1".into(),
@@ -9482,6 +9540,7 @@ mod tests {
             me: me("n"),
             terminal: false,
             no_github: true,
+            cause: None,
         };
         let line = serde_json::to_string(&Hello {
             protocol: PROTOCOL,
@@ -10169,6 +10228,7 @@ mod tests {
                     me: record.me.clone(),
                     terminal: true,
                     no_github: true,
+                    cause: None,
                 })
             })
         }
@@ -10604,6 +10664,8 @@ mod tests {
         assert_eq!(said_of(&server, "resume").len(), 2);
         let status = status(&here.dir).await.unwrap();
         assert!(status.sessions.iter().any(|s| s.name == LEAD && s.lead));
+        // #2099: the start again for the update names its cause.
+        lead_cause_is(&here, &LeadCause::Update).await;
 
         // On the new riff: the next look does nothing.
         assert!(here.daemon.leads_again().await.is_empty());
@@ -10869,6 +10931,58 @@ mod tests {
         here.fake.calls().iter().filter(|c| **c == start).count()
     }
 
+    /// #2099, 01M7BNP4ZYJCCEK7ZHCJ3EX3SJ: the lead [`LEAD`] on `here` runs, and
+    /// `cause` started it. The line of its start names the cause in the
+    /// lines of its session, as in the log, and so does its line in `riff
+    /// daemon status`.
+    async fn lead_cause_is(here: &Here, cause: &LeadCause) {
+        let line = || {
+            let owned = here.daemon.lock().get(LEAD).cloned()?;
+            let state = owned.lock();
+            let session = &state.record.live.session;
+            let line = text::lead_starts("como-technologies/riff", LEAD, session, cause);
+            state.lines.iter().any(|(_, l)| *l == line).then_some(())
+        };
+        until(|| line().is_some()).await;
+        let status = status(&here.dir).await.unwrap();
+        let live = status.sessions.iter().find(|s| s.name == LEAD).unwrap();
+        assert_eq!(live.cause.as_ref(), Some(cause));
+        let shown = text::daemon_status(&status, now_ms());
+        let column = format!("  cause: {}\n", text::lead_cause(cause));
+        assert!(shown.contains(&column), "{shown}");
+    }
+
+    /// #2099, 01M7BNP4ZYJCCEK7ZHCJ3EX3SJ: a start of the lead with a cause, as
+    /// the lead loop and `riff lead move` ask for it, names the cause in
+    /// the line of its start and in `riff daemon status`. A worker has no
+    /// cause: its line names none.
+    #[tokio::test]
+    async fn a_lead_start_names_its_cause_in_its_line_and_in_the_status_and_a_worker_names_none() {
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let by: SessionUri = "riff://mike@pangolin/como-technologies/riff"
+            .parse()
+            .unwrap();
+        let cause = LeadCause::Command {
+            command: "riff lead move".into(),
+            by: Box::new(by),
+        };
+        let start = Start {
+            cause: Some(cause.clone()),
+            ..here.start(LEAD, "lead")
+        };
+        started_lead_with(&here, start).await;
+        lead_cause_is(&here, &cause).await;
+
+        let start = here.start("riff-issue-12-1a2b3c4d", "issue-12");
+        let (_client, name) = here.started(start).await;
+        let status = status(&here.dir).await.unwrap();
+        let worker = status.sessions.iter().find(|s| s.name == name).unwrap();
+        assert_eq!(worker.cause, None);
+        let shown = text::daemon_status(&status, now_ms());
+        let line = shown.lines().find(|l| l.contains(&name)).unwrap();
+        assert!(!line.contains("cause:"), "{line}");
+    }
+
     /// #1791: the container of the lead ends by itself (`/exit`, a crash)
     /// long after its start. The daemon starts the lead again with `claude
     /// --resume`, as the same session: it keeps the claim lead, and the
@@ -10892,6 +11006,8 @@ mod tests {
         let holder = server.lead_holder(&record).await.unwrap().unwrap();
         assert_eq!(holder.who(), record.me.who());
         assert!(!waits_for_lead(&api, &person).await);
+        // #2099: the start again after a fault names its cause.
+        lead_cause_is(&here, &LeadCause::Fault).await;
     }
 
     /// The wait from now before the next start of a lead of the repository
@@ -10957,6 +11073,8 @@ mod tests {
         assert_eq!(session.as_deref(), Some(record.live.session.as_str()));
         assert!(said_of(&server, "leave").is_empty());
         assert!(!waits_for_lead(&api, &person).await);
+        // #2099: the start again at the start of the daemon names its cause.
+        lead_cause_is(&here, &LeadCause::DaemonStart).await;
     }
 
     /// #1791: while the host of the lead was away, another session took the
@@ -15789,6 +15907,7 @@ mod tests {
                 phase: Phase::Works,
                 last: "> Bash: just check".into(),
                 lead: false,
+                cause: None,
             }],
             limit: Some(Limit::default()),
             waiting: vec!["riff-issue-725-2b3c4d5e".into()],

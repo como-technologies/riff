@@ -15,6 +15,7 @@ use riff_core::name::{SessionUri, ThreadName};
 
 use crate::style::{BOLD, DIM, ERROR, GOOD, MUTED, WARNING, styled};
 use riff_client::api::{Claimed, Inbox, Told};
+use riff_client::sessions::LeadCause;
 use riff_client::threads::{Line, Names, RIFF_BOT, Thread};
 use riff_core::wire::{
     AdminSet, DeviceInfo, DevicesReply, FreeReply, GitHubRole, HoldReply, Invited, Kind, PauseInfo,
@@ -9279,6 +9280,7 @@ const LIMIT_GUESS: &str = " riff cannot read the reset: this time is the end of 
 ///     phase: Phase::Works,
 ///     last: "> Bash: just check".into(),
 ///     lead: false,
+///     cause: None,
 /// });
 /// status.waiting.push("the wave of o/r".into());
 /// status.waves.push(WaveShown { repo: "o/r".into(), word: "starts issue-12".into(), waits: Default::default(), unfollowed: vec![] });
@@ -9291,6 +9293,25 @@ const LIMIT_GUESS: &str = " riff cannot read the reset: this time is the end of 
 /// assert!(text.contains("Wait for room:\n  the wave of o/r\n"));
 /// assert!(text.contains("Waves:\n  o/r  starts issue-12\n"));
 /// assert!(text.contains("claude token: set.\n"), "{text}");
+/// // The line of a lead names what started it (#2099).
+/// status.sessions.push(Live {
+///     name: "riff-lead-o-r".into(),
+///     session: "5e6f7a8b-0000".into(),
+///     item: "lead".into(),
+///     image: "img".into(),
+///     digest: String::new(),
+///     since_ms: 285_000,
+///     phase: Phase::Terminal,
+///     last: String::new(),
+///     lead: true,
+///     cause: Some(riff_client::sessions::LeadCause::LeadLoop),
+/// });
+/// let text = riff::text::daemon_status(&status, 300_000);
+/// assert!(text.contains(
+///     "  riff-lead-o-r  lead  session 5e6f7a8b-0000  for 15s  lead  \
+///      cause: the lead loop (no host held the claim lead)\n"
+/// ), "{text}");
+/// status.sessions.pop();
 /// // The verifies and the rebases that wait for another pull request
 /// // (#1855).
 /// status.waves[0].waits = [(724, 728), (725, 728)].into();
@@ -9438,9 +9459,13 @@ pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
             } else {
                 format!(": {}", safe(&live.last))
             };
+            // What started the lead (#2099).
+            let cause = live.cause.as_ref().map_or(String::new(), |cause| {
+                format!("  cause: {}", lead_cause(cause))
+            });
             let _ = writeln!(
                 out,
-                "  {}  {}  session {}  for {}  {}{last}",
+                "  {}  {}  session {}  for {}  {}{last}{cause}",
                 live.name,
                 live.item,
                 live.session,
@@ -14466,9 +14491,57 @@ pub fn lead_made(repo: &str, replaced: Option<&SessionUri>) -> String {
     out
 }
 
-/// The start of a new lead: the lead starts.
-pub fn lead_starts(repo: &str, name: &str, session: &str) -> String {
-    format!("The lead of {repo} starts in the container {name}: session {session}.")
+/// The log line of the riff daemon at each start of a lead (#2099,
+/// 01M7BNP4ZYJCCEK7ZHCJ3EX3SJ): the lead of `repo` starts in the container
+/// `name` as the session `session`, and `cause` started it
+/// ([`lead_cause`]).
+///
+/// ```
+/// use riff_client::sessions::LeadCause;
+///
+/// assert_eq!(
+///     riff::text::lead_starts("o/r", "riff-lead-o-r", "1a2b", &LeadCause::LeadLoop),
+///     "The lead of o/r starts in the container riff-lead-o-r: session 1a2b. \
+///      The cause: the lead loop (no host held the claim lead)."
+/// );
+/// ```
+pub fn lead_starts(repo: &str, name: &str, session: &str, cause: &LeadCause) -> String {
+    format!(
+        "The lead of {repo} starts in the container {name}: session {session}. The cause: {}.",
+        lead_cause(cause)
+    )
+}
+
+/// What started a lead, in a few words (#2099): the log line of its start
+/// ([`lead_starts`]) and its line in `riff daemon status`
+/// ([`daemon_status`]) name it.
+///
+/// ```
+/// use riff_client::sessions::LeadCause;
+/// use riff::text::lead_cause;
+///
+/// assert_eq!(lead_cause(&LeadCause::DaemonStart), "the start of the daemon (the lead had no container)");
+/// assert_eq!(lead_cause(&LeadCause::LeadLoop), "the lead loop (no host held the claim lead)");
+/// assert_eq!(lead_cause(&LeadCause::Fault), "a start again after a fault (the lead ended by itself)");
+/// assert_eq!(lead_cause(&LeadCause::Update), "an update of riff (the lead starts again on the new riff)");
+/// let by = "riff://mike@pangolin/o/r".parse()?;
+/// let command = LeadCause::Command { command: "riff lead move".into(), by: Box::new(by) };
+/// assert_eq!(lead_cause(&command), "a command of a person (riff lead move, by mike@pangolin:r)");
+/// let by = "riff://mike@thelio/o/r?session=1a2b3c4d-0000&lead=true".parse()?;
+/// let command = LeadCause::Command { command: "riff lead move".into(), by: Box::new(by) };
+/// assert_eq!(lead_cause(&command), "a command of a person (riff lead move, by mike@thelio:r (1a2b3c4d))");
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn lead_cause(cause: &LeadCause) -> String {
+    match cause {
+        LeadCause::DaemonStart => "the start of the daemon (the lead had no container)".into(),
+        LeadCause::LeadLoop => "the lead loop (no host held the claim lead)".into(),
+        LeadCause::Fault => "a start again after a fault (the lead ended by itself)".into(),
+        LeadCause::Update => "an update of riff (the lead starts again on the new riff)".into(),
+        LeadCause::Command { command, by } => {
+            format!("a command of a person ({command}, by {})", name(by))
+        }
+    }
 }
 
 /// The start of a lead on a host with no claude token: it starts no lead

@@ -43,6 +43,7 @@ fn live(name: &str, session: &str, phase: Phase, last: &str) -> Live {
         phase,
         last: last.into(),
         lead: phase == Phase::Terminal,
+        cause: None,
     }
 }
 

@@ -7740,6 +7740,13 @@ of this part when they merge.
   not one of the 3 starts that end the session. The first such failure
   logs one line, and the next ones log none. While the lead waits, the
   lead loop of its host starts no new lead of the project (#2098).
+- **01M7BNP4ZYJCCEK7ZHCJ3EX3SJ** Each start of a lead writes one line in
+  the log of the riff daemon. The line names the lead, its session and
+  the cause of the start: the start of the daemon, the lead loop, a
+  start again after a fault, an update of riff, or a command of a
+  person, with the command and who ran it. The daemon keeps the cause
+  with the lead, and `riff daemon status` shows it on the line of the
+  lead, also with `--host` (#2099).
 
 ### The first run
 
