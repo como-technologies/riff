@@ -7255,6 +7255,11 @@ of this part when they merge.
   Each change from the kept reply that no wake named waits for its wake,
   and with none it is a dropped event, as at the safety look
   (01M74N350YF6KSXGFNCZTDC8QY) (#2082).
+- **01M7CF4AV7X0Q30DNY1XVY6HTE** The start text of a verify gives the
+  control of 01M5174ASF376JDNBQ4423TTAR in a step of its own: at the
+  base commit of the pull request, the merge base of the head with the
+  default branch, never by an edit of the code, or one of the other ways
+  of that requirement. The result says which way the verifier used.
 
 ### The lead, the view and the takeover
 
