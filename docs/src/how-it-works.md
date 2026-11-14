@@ -3210,10 +3210,24 @@ worktree with `ExitWorktree` after the verify.
 
 The verifier changes no code, also not for a moment. A control shows
 that a test finds a fault: a test with no fix, or a guard test with a
-fault in the code. The verifier runs it at the base commit of the pull
-request, then checks out the commit again. When the base commit cannot
-show the fault, the verifier uses a test of the guard on a sample, the
-control of the author, or a read.
+fault in the code. The start text of each verify gives the control in
+a step of its own. The verifier runs the control at the base commit
+of the pull request, the merge base with `main`, then checks out the
+commit again. When the base commit cannot show the fault, for example
+for a new test, the verifier reads and runs a test of the guard on a
+sample, uses the control of the author on the issue, or checks by a
+read. Its result says which way it used.
+
+```mermaid
+flowchart TD
+    S["the start text of the verify: run a control"] --> B{"the base commit<br/>can show the fault?"}
+    B -- "yes" --> M["git merge-base origin/main COMMIT<br/>prints BASE"]
+    M --> C["git checkout --detach BASE,<br/>run the test"]
+    C --> H["git checkout --detach COMMIT"]
+    B -- "no, for example a new test" --> W["a test of the guard on a sample,<br/>the control of the author,<br/>or a read"]
+    H --> R["the result says which way"]
+    W --> R
+```
 
 A verify request wakes only the lead of the project, a session of any
 person. The lead gives it to a session with no claim, or starts a

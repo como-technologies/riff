@@ -7458,6 +7458,42 @@ pub const VERIFY_CI_TESTS: &str = "When the rules of the repository name a comma
      nothing. When CI kept no test build of the commit, say so in your result, and only then \
      build the test.";
 
+/// The step of the start text of a verifier that runs a control
+/// (01M5174ASF376JDNBQ4423TTAR, 01M7CF4AV7X0Q30DNY1XVY6HTE). A control
+/// shows that a test finds a fault. The verifier runs it at the base
+/// commit of the pull request: the merge base of `commit` and the
+/// default branch `base`. Then it checks out `commit` again. It never
+/// edits the code for a control. When the base commit cannot show the
+/// fault, it uses one of the other ways, and its result says which way
+/// it used.
+///
+/// ```
+/// let step = riff::text::verify_control("main", "1a2b3c4d5e6f");
+/// assert!(step.starts_with("Run a control: it shows that a test finds a fault."));
+/// assert!(step.contains("Never edit the code for a control, also not for a moment"));
+/// assert!(step.contains("no sed -i, no git revert, no git checkout BASE -- FILE."));
+/// assert!(step.contains("git merge-base origin/main 1a2b3c4d5e6f prints BASE."));
+/// assert!(step.contains("Run git checkout --detach BASE, run the test"));
+/// assert!(step.contains("then run git checkout --detach 1a2b3c4d5e6f before your result."));
+/// assert!(step.contains("a test of the guard on a sample"));
+/// assert!(step.contains("the control of the author on the issue"));
+/// assert!(step.contains("or check by a read."));
+/// assert!(step.ends_with("Say in your result which way you used."));
+/// ```
+pub fn verify_control(base: &str, commit: &str) -> String {
+    format!(
+        "Run a control: it shows that a test finds a fault. A control is a test of the work \
+         with no fix, or a guard test with a fault in the code. Never edit the code for a \
+         control, also not for a moment and also when you put it back: no sed -i, no git \
+         revert, no git checkout BASE -- FILE. Run the control at the base commit of the pull \
+         request: git merge-base origin/{base} {commit} prints BASE. Run git checkout --detach \
+         BASE, run the test, then run git checkout --detach {commit} before your result. When \
+         the base commit cannot show the fault, for example when the test is new, read and run \
+         a test of the guard on a sample, use the control of the author on the issue, or check \
+         by a read. Say in your result which way you used."
+    )
+}
+
 /// The line of the start text of a worker about the body of the pull
 /// request: a line `Key: value` at its end is a trailer line, and the
 /// merge wraps a trailer line over [`hygiene::MERGE_WIDTH`] characters
@@ -13394,10 +13430,13 @@ pub fn wave_checks_rerun(
 /// the full check of the commit: the wave started the verify when they
 /// were done. With CI, it tells the verifier to run each test from the
 /// test build of CI ([`VERIFY_CI_TESTS`], 01M75NDGTPJGFSZMTJV04ZFR1D).
-/// It sends the verifier to the rules of the repository for
-/// agents, when it has them (01M5R580VCRCHJM8FY7NT485R1,
-/// 01M5RN89WH3PHV3BHMJ25T3SX4). It has no part for a release pull request
-/// (01M76SBPDSGS0SATQV9RA1FRG1).
+/// It gives the control of a verify ([`verify_control`],
+/// 01M5174ASF376JDNBQ4423TTAR, 01M7CF4AV7X0Q30DNY1XVY6HTE): at the base
+/// commit of the pull request, never by an edit of the code, and the
+/// result says which way the verifier used. It sends the verifier to
+/// the rules of the repository for agents, when it has them
+/// (01M5R580VCRCHJM8FY7NT485R1, 01M5RN89WH3PHV3BHMJ25T3SX4). It has no
+/// part for a release pull request (01M76SBPDSGS0SATQV9RA1FRG1).
 ///
 /// ```
 /// let checks = ["CI".to_owned()];
@@ -13419,6 +13458,8 @@ pub fn wave_checks_rerun(
 /// assert!(!text.contains("gh issue comment"));
 /// // A test runs from the test build of CI (01M75NDGTPJGFSZMTJV04ZFR1D).
 /// assert!(text.contains(riff::text::VERIFY_CI_TESTS));
+/// // The control, never by an edit of the code (01M5174ASF376JDNBQ4423TTAR).
+/// assert!(text.contains(&format!("\n6. {}\n", riff::text::verify_control("master", "1a2b3c4d5e6f"))));
 /// let two = ["Lint".to_owned(), "Test".to_owned()];
 /// let text = riff::text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4d5e6f", &two);
 /// assert!(text.contains("was done: the checks Lint, Test."));
@@ -13459,6 +13500,7 @@ pub fn wave_verify_start(
     } else {
         format!("\n   {VERIFY_CI_TESTS}")
     };
+    let control = verify_control(base, commit);
     format!(
         "You are a verifier of riff. You run in a container, in your own clone of {repo}, at the \
          commit {commit} of pull request #{pull}, detached. Check the work of issue-{issue} \
@@ -13475,10 +13517,11 @@ pub fn wave_verify_start(
          {ran}\n\
          5. Check each criterion: review the code and its fit with the design, read the test \
          of each criterion, and run that test by its name when you must.{build}\n\
-         6. {VERIFY_READS_ONLY} Run each test in the foreground, and wait for its end. Never \
+         6. {control}\n\
+         7. {VERIFY_READS_ONLY} Run each test in the foreground, and wait for its end. Never \
          end a turn while a background task runs: a session does not continue after its \
          result.\n\
-         7. Your last reply is the result, in markdown, and nothing else. The first line is \
+         8. Your last reply is the result, in markdown, and nothing else. The first line is \
          PASS or FAIL. Then each criterion: for a pass, what you did to check it; for a fail, \
          the steps to see the failure. The result is public: it holds no secret and no security \
          fault. Tell the lead a security fault with the riff tool tell.\n\n\
@@ -15608,6 +15651,69 @@ mod tests {
             "{five}"
         );
         assert!(!none.contains("test build"), "{none}");
+    }
+
+    /// #1871 (01M5174ASF376JDNBQ4423TTAR, 01M7CF4AV7X0Q30DNY1XVY6HTE): the
+    /// start text of a verify gives the control, with CI and with no CI. Step 6 runs it at the
+    /// base commit of the pull request, the merge base with the default
+    /// branch, and checks out the commit again before the result. It
+    /// never edits the code. When the base commit cannot show the fault,
+    /// it names the other ways, and the result says which way the
+    /// verifier used. The control comes after the check of each
+    /// criterion and before the result.
+    #[test]
+    fn the_start_text_of_a_verify_gives_the_control() {
+        let checks = ["CI".to_owned()];
+        for checks in [&checks[..], &[][..]] {
+            let text = wave_verify_start("o/r", "trunk", 12, 40, "1a2b3c4d5e", checks);
+            let six = text
+                .split("\n6. ")
+                .nth(1)
+                .and_then(|rest| rest.split("\n7. ").next())
+                .unwrap_or_else(|| panic!("no step 6 in\n{text}"));
+            assert_eq!(six, verify_control("trunk", "1a2b3c4d5e"), "{text}");
+            let at = |words: &str| {
+                six.find(words)
+                    .unwrap_or_else(|| panic!("no {words:?} in {six}"))
+            };
+            let control = at("Run a control: it shows that a test finds a fault.");
+            let guard = at("a test of the work with no fix, or a guard test with a fault");
+            let no_edit = at("Never edit the code for a control, also not for a moment");
+            let base = at("git merge-base origin/trunk 1a2b3c4d5e prints BASE.");
+            let to_base = at("Run git checkout --detach BASE, run the test");
+            let back = at("then run git checkout --detach 1a2b3c4d5e before your result.");
+            let cannot = at("When the base commit cannot show the fault");
+            let sample = at("read and run a test of the guard on a sample");
+            let author = at("use the control of the author on the issue");
+            let read = at("or check by a read.");
+            let which = at("Say in your result which way you used.");
+            assert!(
+                control < guard && guard < no_edit && no_edit < base,
+                "{six}"
+            );
+            assert!(base < to_base && to_base < back && back < cannot, "{six}");
+            assert!(cannot < sample && sample < author && author < read, "{six}");
+            assert!(
+                read < which && six.ends_with("which way you used."),
+                "{six}"
+            );
+            for edit in ["no sed -i", "no git revert", "no git checkout BASE -- FILE"] {
+                at(edit);
+            }
+            assert!(!six.contains("origin/main"), "{six}");
+            let order = [
+                "\n5. Check each criterion",
+                "\n6. Run a control",
+                "\n7. Do not commit",
+                "\n8. Your last reply is the result",
+            ]
+            .map(|step| {
+                text.find(step)
+                    .unwrap_or_else(|| panic!("no {step:?} in\n{text}"))
+            });
+            assert!(order.is_sorted(), "{text}");
+            assert_eq!(text.matches("Run a control").count(), 1, "{text}");
+        }
     }
 
     /// #1633 (01M6QFZ9JHR19Y8F1PWH2HVQ07): the start routine in the MCP

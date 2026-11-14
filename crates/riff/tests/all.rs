@@ -110,6 +110,7 @@ mod top_fault;
 mod trusted_riff;
 mod tui;
 mod usage;
+mod verify_control;
 mod wakes;
 mod wave_branch;
 mod wave_checks;
