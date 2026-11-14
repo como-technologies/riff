@@ -153,7 +153,7 @@ pub struct SessionSpec {
     /// The image.
     pub image: String,
     /// The home of the person: a tmpfs in the session, with the folders
-    /// of [`SessionSpec::home_folders`].
+    /// of [`SessionSpec::home_folders`], each of [`HOME_TMPFS_GIB`].
     pub home: PathBuf,
     /// The working folder in the session.
     pub workdir: PathBuf,
@@ -173,6 +173,14 @@ pub struct SessionSpec {
 /// addition to the folders above its binds ([`SessionSpec::home_folders`],
 /// 01M748WY71EFVZR6SG5CCEQYE0).
 pub const HOME_FOLDERS: [&str; 4] = [".cache", ".local", ".local/share", ".local/state"];
+
+/// The size in GiB of each tmpfs of the home: the home, and each folder
+/// of [`SessionSpec::home_folders`] (01M7DYR99QK609NF61GGCN75QQ). Its
+/// pages count against the memory of the container. So a write over
+/// the size fails with "No space left on device", and the kernel kills
+/// no build for lack of memory. A large build tree goes to `/tmp`, on
+/// the disk ([`crate::text::build_trees`]).
+pub const HOME_TMPFS_GIB: u32 = 1;
 
 impl SessionSpec {
     /// The folders of the home that the session user owns from the start

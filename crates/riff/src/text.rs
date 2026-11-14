@@ -7531,6 +7531,29 @@ pub fn body_in_sentences() -> String {
     )
 }
 
+/// The line of each start text of a build, a rebase, a fix of checks and
+/// a verify about a large build tree (#2113, 01M7DYRDPST1Z3CB37GR3ZPQ5B):
+/// it goes in `/tmp`, on the disk. The home of the session is in memory,
+/// in tmpfs folders of [`crate::runtime::HOME_TMPFS_GIB`] each
+/// (01M7DYR99QK609NF61GGCN75QQ).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::build_trees(),
+///     "Make a second worktree or another large build tree in /tmp, on the disk. Your home is \
+///      in memory, in folders of 1 GiB each, apart from your clone and the volumes of the \
+///      repository: a larger write there fails with \"No space left on device\"."
+/// );
+/// ```
+pub fn build_trees() -> String {
+    format!(
+        "Make a second worktree or another large build tree in /tmp, on the disk. Your home is \
+         in memory, in folders of {} GiB each, apart from your clone and the volumes of the \
+         repository: a larger write there fails with \"No space left on device\".",
+        crate::runtime::HOME_TMPFS_GIB
+    )
+}
+
 /// The start text of a session of `riff run`: the work item, the
 /// branch, and the frame of the body of the pull request
 /// (01M4Z81APKC14AVNJWCGRQKNVW). It tells the session to leave no
@@ -7556,6 +7579,7 @@ pub fn body_in_sentences() -> String {
 /// assert!(text.contains("Leave no background task at the end of your work"));
 /// assert!(text.contains("Never end a turn while a background task runs"));
 /// assert!(text.contains(riff::text::ISSUE_BY_COMMENT));
+/// assert!(text.contains(&riff::text::build_trees()));
 /// assert!(text.contains("Run each check in the foreground"));
 /// assert!(text.contains("Commit and push the branch before the end of your work"));
 /// // The text names no file as required and no command (01M5RN89WH3PHV3BHMJ25T3SX4).
@@ -7585,6 +7609,7 @@ pub fn run_start(
         ""
     };
     let sentences = body_in_sentences();
+    let trees = build_trees();
     format!(
         "You are a worker of riff. You run in a container, in your own clone of {repo}, on the \
          branch {branch}. Do the work item issue-{issue}, then stop. riff does the claim, the \
@@ -7612,6 +7637,7 @@ pub fn run_start(
          continue after its result. Leave no background task at the end of your work.\n\
          9. Reply with the URL of the pull request in one line.\n\n\
          {ISSUE_BY_COMMENT}\n\
+         {trees}\n\
          Do not print the environment or a token."
     )
 }
@@ -7630,6 +7656,7 @@ pub fn run_start(
 /// assert!(text.ends_with(&format!("The issue #12, as riff read it on the host:\n\n{body}")));
 /// assert!(!text.contains("gh issue view") && !text.contains("git push -u") && !text.contains("gh pr create"));
 /// assert!(text.contains("Leave no background task at the end of your work"));
+/// assert!(text.contains(&riff::text::build_trees()));
 /// let again = riff::text::run_start_no_github("o/r", 12, "worktree-issue-12", "1a2b", body, true);
 /// assert!(again.contains("earlier session"));
 /// ```
@@ -7646,6 +7673,7 @@ pub fn run_start_no_github(
     } else {
         ""
     };
+    let trees = build_trees();
     format!(
         "You are a worker of riff. You run in a container, in your own clone of {repo}, on the \
          branch {branch}. You have no GitHub: gh, git fetch and git push do not work, and the \
@@ -7667,6 +7695,7 @@ pub fn run_start_no_github(
          in the background. Never end a turn while a background task runs: a session does not \
          continue after its result. Leave no background task at the end of your work.\n\
          7. Reply with the last commit of the branch in one line.\n\n\
+         {trees}\n\
          Do not print the environment or a token.\n\n\
          The issue #{issue}, as riff read it on the host:\n\n{body}"
     )
@@ -13041,6 +13070,7 @@ pub fn wave_failed_verify(number: u64, commit: &str, url: &str) -> String {
 /// assert!(text.contains("turn on auto-merge when it is off: gh pr merge --auto --squash 40"));
 /// assert!(text.contains("New checks and a new verify of the new commit follow"));
 /// assert!(text.contains(riff::text::ISSUE_BY_COMMENT));
+/// assert!(text.contains(&riff::text::build_trees()));
 /// assert!(text.contains("--trailer \"Riff-Session: 9f8e\""));
 /// assert!(!text.contains("gh pr create"));
 /// ```
@@ -13054,6 +13084,7 @@ pub fn wave_rebase_start(
     session: &str,
 ) -> String {
     let commit = commit.get(..7).unwrap_or(commit);
+    let trees = build_trees();
     format!(
         "You are a worker of riff. You run in a container, in your own clone of {repo}, on the \
          branch {branch} of pull request #{pull}. The pull request has a conflict with {base} at \
@@ -13082,6 +13113,7 @@ pub fn wave_rebase_start(
          continue after its result. Leave no background task at the end of your work.\n\
          9. Reply with the URL of the pull request in one line.\n\n\
          {ISSUE_BY_COMMENT}\n\
+         {trees}\n\
          Do not print the environment or a token."
     )
 }
@@ -13165,6 +13197,7 @@ fn check_names(checks: &[String]) -> String {
 /// assert!(text.contains("Change no code. Run the failed jobs again one time"));
 /// assert!(text.contains("A known flake"));
 /// assert!(text.contains(riff::text::ISSUE_BY_COMMENT));
+/// assert!(text.contains(&riff::text::build_trees()));
 /// assert!(text.contains("gh run rerun RUN_ID --failed"));
 /// assert!(text.contains("--trailer \"Riff-Session: 9f8e\""));
 /// assert!(!text.contains("gh pr create"));
@@ -13185,6 +13218,7 @@ pub fn wave_checks_start(
 ) -> String {
     let commit = commit.get(..7).unwrap_or(commit);
     let names = check_names(checks);
+    let trees = build_trees();
     format!(
         "You are a worker of riff. You run in a container, in your own clone of {repo}, on the \
          branch {branch} of pull request #{pull}. The pull request cannot merge: {names} \
@@ -13223,6 +13257,7 @@ pub fn wave_checks_start(
          continue after its result. Leave no background task at the end of your work.\n\
          8. Reply with the URL of the pull request in one line.\n\n\
          {ISSUE_BY_COMMENT}\n\
+         {trees}\n\
          Do not print the environment or a token."
     )
 }
@@ -13546,6 +13581,7 @@ pub fn wave_checks_rerun(
 /// // A verifier reads only: each finding goes in its result
 /// // (01M6WWG3S60XYGTNBQH7S3F6D1).
 /// assert!(text.contains(riff::text::VERIFY_READS_ONLY));
+/// assert!(text.contains(&riff::text::build_trees()));
 /// assert!(!text.contains("gh issue comment"));
 /// // A test runs from the test build of CI (01M75NDGTPJGFSZMTJV04ZFR1D).
 /// assert!(text.contains(riff::text::VERIFY_CI_TESTS));
@@ -13596,6 +13632,7 @@ pub fn wave_verify_start(
         format!("\n   {VERIFY_CI_TESTS}")
     };
     let control = verify_control(base, commit);
+    let trees = build_trees();
     format!(
         "You are a verifier of riff. You run in a container, in your own clone of {repo}, at the \
          commit {commit} of pull request #{pull}, detached. Check the work of issue-{issue} \
@@ -13638,6 +13675,7 @@ pub fn wave_verify_start(
          The result is public: it holds no secret and no security fault. Tell the lead a \
          security fault with the riff tool tell. A live security fault that a member finds goes \
          to the lead too, not into the result.\n\n\
+         {trees}\n\
          Do not print the environment or a token."
     )
 }
@@ -15686,6 +15724,51 @@ mod tests {
             wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &checks),
         ] {
             assert!(!text.contains("plain sentences"), "{text}");
+        }
+    }
+
+    /// #2113 (01M7DYRDPST1Z3CB37GR3ZPQ5B): the start text of a build, a
+    /// rebase, a fix of checks and a verify says one time where a second
+    /// worktree or another large build tree goes, and why: the home is in
+    /// memory, in folders of 1 GiB. The line comes before the last line
+    /// about the environment.
+    #[test]
+    fn each_start_text_of_a_session_says_where_a_large_build_tree_goes() {
+        let line = build_trees();
+        for words in [
+            "second worktree or another large build tree in /tmp, on the disk",
+            "Your home is in memory, in folders of 1 GiB each",
+            "apart from your clone and the volumes of the repository",
+            "fails with \"No space left on device\"",
+        ] {
+            assert!(line.contains(words), "{line}");
+        }
+        let frame = "Closes #12\n\nSUMMARY\n\nIssue: #12\nMilestone: Wave 3\n";
+        let checks = ["CI".to_owned()];
+        let mut texts = Vec::new();
+        for earlier in [false, true] {
+            texts.push(run_start(
+                "o/r", "main", 12, "b", "1a", frame, "Wave 3", earlier,
+            ));
+            texts.push(run_start_no_github(
+                "o/r",
+                12,
+                "b",
+                "1a",
+                "Done when: x",
+                earlier,
+            ));
+        }
+        texts.extend([
+            wave_rebase_start("o/r", "main", 12, 40, "1a2b3c4", "b", "1a"),
+            wave_checks_start("o/r", "main", 12, 40, "1a2b3c4", &checks, "b", "1a"),
+            wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &checks),
+            wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &[]),
+        ]);
+        for text in texts {
+            assert_eq!(text.matches(&line).count(), 1, "{text}");
+            let next = format!("{line}\nDo not print the environment or a token.");
+            assert!(text.contains(&next), "{text}");
         }
     }
 

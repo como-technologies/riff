@@ -5991,10 +5991,9 @@ of this part when they merge.
   go when the session ends. Each other write goes to the copy-on-write
   layer of the container, and goes when the session ends.
 - **01M4Z60B7SHAMXXFK15BE3KZSP** The home of the person is a tmpfs in
-  the container, at the same path, with `HOME` set:
-  `--mount type=tmpfs,destination=$HOME,tmpfs-mode=0700,U=true`. The
-  binds of `~/.gitconfig` and of the Claude folder go on top of it. Each
-  other write in the home goes when the session ends.
+  the container, at the same path, with `HOME` set. The binds of
+  `~/.gitconfig` and of the Claude folder go on top of it. Each other
+  write in the home goes when the session ends.
 - **01M4Z60B7S8V9KKZPNBCQ6M99N** The `SessionSpec` sets `USER` and
   `LOGNAME` from the host, as a login shell does.
 - **01M4Z60B7TQV799Z4J5KAW2XMZ** Each container has its own `/tmp`, its
@@ -8464,6 +8463,12 @@ of this part when they merge.
   the command to push the branch, and exits with 0 when `claude` ended
   with 0. `riff whoami` in the session shows `none`. In the container of
   the lead, `riff run` takes no `--no-github`.
+- **01M7DYRDPST1Z3CB37GR3ZPQ5B** The start texts of a build, a rebase, a
+  fix of checks and a verify tell the session to make a second worktree
+  or another large build tree in `/tmp`, on the disk, and not in its
+  home. They say that the home is in memory, in folders of 1 GiB each
+  (01M7DYR99QK609NF61GGCN75QQ), and that a larger write there fails with
+  "No space left on device".
 
 ### How the relay drives claude
 
@@ -8622,10 +8627,9 @@ of this part when they merge.
 - **01M748WY71EFVZR6SG5CCEQYE0** Before the start of each container,
   riff makes each folder between `$HOME` and the target of each bind or
   volume under it, and `~/.cache`, `~/.local`, `~/.local/share` and
-  `~/.local/state`, owned by the session user. Each of them is a tmpfs:
-  `--mount type=tmpfs,destination=FOLDER,tmpfs-mode=0755,U=true`. A
-  folder at the target of a bind, or in it, belongs to the bind and gets
-  no tmpfs.
+  `~/.local/state`, owned by the session user. Each of them is a tmpfs.
+  A folder at the target of a bind, or in it, belongs to the bind and
+  gets no tmpfs.
 - **01M74MB99RT6B9MKSBMSVD4JRG** The daemon follows GET /v1/github/renew
   of each riff-server of its sessions and of its waves, as the person,
   one stream for each riff-server. For the renew of an install, it asks
@@ -8633,6 +8637,15 @@ of this part when they merge.
   the lead too, and writes it in the same file. Its next write on a
   repository with a token of that install asks for a new token. A
   session with a token of another install keeps its token.
+- **01M7DYR99QK609NF61GGCN75QQ** Each tmpfs of the home of a session has
+  a size of 1 GiB: the home, and each folder of
+  01M748WY71EFVZR6SG5CCEQYE0. Its mount is `--mount
+  type=tmpfs,destination=PATH,tmpfs-mode=MODE,tmpfs-size=1g,U=true`,
+  with the mode 0700 for the home and 0755 for a folder. A write over
+  the size fails with "No space left on device", and the memory of the
+  container stays for its processes. This supersedes
+  01M4Z60B7SHAMXXFK15BE3KZSP and 01M748WY71EFVZR6SG5CCEQYE0 in part: the
+  argument of the mount.
 
 ### The security of riff's own code
 
