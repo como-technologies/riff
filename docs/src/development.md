@@ -2257,16 +2257,29 @@ GB. The daemon removes the folder of each session that does not run
 when the work of its branch is over. It does this at its start, then
 each 10 minutes, also when no wave runs. You do not have to do a step.
 
+The daemon runs no git in the clone of a session: a session can write
+the git config of its clone, and a git config can name a program that
+git runs. So the sweep decides from facts that no session can write:
+
+- The file `repo` of the folder: the repository of the session. riff
+  writes it before the clone. The container does not see it.
+- GitHub: the pull requests of the branch `worktree-ITEM`, and the
+  state of the issue.
+- The age of the folder: the time since the last change of the folder
+  and of its `events.jsonl`.
+
 ```mermaid
 flowchart TD
-    F["the folder of a session that does not run"] --> P{"the branch worktree-ITEM"}
+    F["the folder of a session that does not run"] --> A{"a change in the last 30 days?"}
+    A -- "no" --> D["the daemon removes the folder"]
+    A -- "yes" --> R{"the file repo"}
+    R -- "none" --> W["the folder stays, and riff says why"]
+    R -- "OWNER/REPO" --> P{"the branch worktree-ITEM"}
     P -- "an open pull request" --> K["the folder stays"]
-    P -- "a merged or a closed pull request" --> C{"the clone"}
+    P -- "a merged or a closed pull request" --> D
     P -- "no pull request" --> I{"the issue"}
     I -- "open" --> K
-    I -- "closed" --> C
-    C -- "a file not committed, or a commit not pushed" --> W["the folder stays, and riff says why"]
-    C -- "each file committed and pushed" --> D["the daemon removes the folder"]
+    I -- "closed" --> D
 ```
 
 While `riff run` runs, its folder stays, also while its start waits
@@ -2292,85 +2305,55 @@ riff removed the folder /home/mike/.local/share/riff/sessions/issue-735-7788e301
 
 ### Where the work of a removed folder goes
 
-A folder can hold work that `origin` has not: a commit that no branch
-of `origin` has, or a change of a tracked file. For example, the
-session ended before it pushed. Before the daemon removes the folder,
-it pushes that work to the branch `riff-kept/ITEM-ID8` of `origin`, for
-example `riff-kept/issue-735-7788e301`. You do nothing.
+The work of the clone that is not on `origin` goes with the folder: a
+commit that the session did not push, or a file that it did not
+commit. riff pushes nothing from the clone of a session. Each session
+pushes its own work, as WIP commits when it must stop.
 
-- The branch has the commits and the changes of tracked files.
-- A commit on another local branch than the one that the clone has
-  checked out goes to a branch of its own,
-  `riff-kept/ITEM-ID8-BRANCH`, for example
-  `riff-kept/issue-735-7788e301-spare`. The daemon pushes each such
-  branch, and then it removes the folder.
-- It never has a file that git does not track: a scratch file or a log
-  can hold a secret. These files go with the folder.
-- The daemon never touches the folder of a session that runs, or of an
-  item with an open pull request.
-- The daemon deletes each branch `riff-kept/*` after 30 days.
+The daemon deletes each old branch `riff-kept/*` of `origin` after 30
+days: an older riff pushed the work of removed folders there. It posts
+one note to the lead with each branch that it deleted.
 
-The daemon posts one note to the lead with what it pushed and removed,
-each branch by name. It posts the note one time, not at each sweep.
-`riff daemon sweep` prints it too:
+### Get back the work of a clone
 
-```text
-riff removed the folder /home/mike/.local/share/riff/sessions/issue-735-7788e301: the pull request #738 closed with no merge. Its work is on the branch riff-kept/issue-735-7788e301 of origin.
-```
-
-With a commit on another local branch, the line names each branch:
-
-```text
-riff removed the folder /home/mike/.local/share/riff/sessions/issue-735-7788e301: the pull request #738 closed with no merge. Its work is on the branches riff-kept/issue-735-7788e301 and riff-kept/issue-735-7788e301-spare of origin.
-```
-
-### Get back the work of a removed folder
-
-Fetch the branch within 30 days, and look at it:
+While the folder is there, fetch its work into a clone of your own. Do
+not run git in the clone of the session on your machine: its git
+config can name a program. A fetch from it runs no program of its
+config. A riff command that runs git refuses in that folder, and says
+why.
 
 ```sh
-git fetch origin riff-kept/issue-735-7788e301
-git log FETCH_HEAD --not origin/main
-git switch -c rescue FETCH_HEAD
+git -C ~/src/riff fetch ~/.local/share/riff/sessions/issue-735-7788e301/clone worktree-issue-735
+git -C ~/src/riff log FETCH_HEAD --not origin/main
+git -C ~/src/riff switch -c rescue FETCH_HEAD
 ```
 
-Do the same for each other branch of the note, for example
-`riff-kept/issue-735-7788e301-spare`.
+A file that the session did not commit is a plain file in the clone:
+copy it with `cp`.
 
 ### When a folder stays
 
-The daemon keeps a folder when the push fails (for example, no network
-or no right to push), or when git cannot read the clone.
+The daemon keeps a folder when `gh` gives no answer, and when the
+folder has no file `repo`, for example a folder of an older riff.
 `riff daemon sweep` prints each such folder with the reason, and the
 next sweep tries again:
 
 ```text
-riff kept the folder /home/mike/.local/share/riff/sessions/issue-735-7788e301: the pull request #738 closed with no merge, but riff could not push its work: git push: denied. The next sweep tries again.
-```
-
-riff signs no commit that it makes for itself. So a host whose git signs
-each commit (`commit.gpgsign`) keeps no folder for that reason.
-
-Look at the work in the clone, and push it by hand:
-
-```sh
-git -C ~/.local/share/riff/sessions/issue-735-7788e301/clone status
-git -C ~/.local/share/riff/sessions/issue-735-7788e301/clone push -u origin HEAD
+riff kept the folder /home/mike/.local/share/riff/sessions/issue-735-7788e301: it has no file repo, so riff does not know its repository. It goes after 30 days with no change, or remove it with riff daemon sweep --remove issue-735-7788e301 --force.
 ```
 
 ### Remove one folder on purpose
 
-The sweep keeps a folder when it cannot push the work. To remove one
-folder of an ended session yourself, give its name:
+To remove one folder of an ended session now, give its name:
 
 ```sh
 riff daemon sweep --remove issue-1136-5fcf04cb
 ```
 
 riff removes the folder when the pull request of its work merged. The
-leftover work of the clone goes with it. When the work is not on a
-merged branch, riff keeps the folder and says so. To lose that work on
-purpose:
+work of the clone that is not on `origin` goes with it. When the work
+is not on a merged branch, riff keeps the folder and says so. To lose
+that work on purpose:
 
 ```sh
 riff daemon sweep --remove issue-1136-5fcf04cb --force
@@ -3697,7 +3680,7 @@ The wave of como-technologies/riff: the head 1a2b3c4 of verify-issue-12 has a ri
 ### When a session of the wave ends with no push
 
 A session of the wave must commit and push before its end, and must
-leave no background task. The daemon helps in two cases:
+leave no background task. The daemon helps with the time:
 
 ```mermaid
 flowchart LR
@@ -3708,8 +3691,8 @@ flowchart LR
     G -- "yes" --> T
     Q -- "no" --> S
     G -- "no" --> S["the daemon stops the container, the item is free"]
-    S --> P{"the branch is on origin?"}
-    P -- "no, the clone has work" --> W["a WIP commit, pushed, one message to your lead"]
+    S --> P{"an open pull request?"}
+    P -- "no" --> W["one note to your lead: the work is in the clone"]
     P -- "yes" --> N["the usual steps"]
 ```
 
@@ -3721,14 +3704,15 @@ flowchart LR
   container has 30 minutes, as for each other session. The end of the
   task starts a new turn, and that turn can push. When the last task
   ends, the 60 seconds start. A task that never ends costs the 30
-  minutes, and the session then has no push: the next case saves the
-  work.
-- When the branch of the item is not on `origin` and the clone has work,
-  the daemon commits each change as a WIP commit, pushes the branch,
-  and tells your lead the branch and the commit:
+  minutes, and the session then has no push.
+- When the branch of the item has no open pull request, the daemon
+  commits nothing and pushes nothing: it runs no git in the clone of a
+  session. It tells your lead the branch and the clone. To keep the
+  work, see
+  [Get back the work of a clone](#get-back-the-work-of-a-clone).
 
 ```text
-issue-12: the session of the wave ended and pushed nothing. riff saved the work of the clone /home/mike/.local/share/riff/sessions/issue-12-1a2b3c4d/clone on the branch worktree-issue-12, in a WIP commit 1a2b3c4. The item is free.
+issue-12: the session of the wave ended, and no open pull request has the branch worktree-issue-12. Its work that is not on origin is only in the clone /home/mike/.local/share/riff/sessions/issue-12-1a2b3c4d/clone: riff commits and pushes nothing there. The item is free.
 ```
 
 ### When the sign-in of claude ends soon

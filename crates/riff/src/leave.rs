@@ -46,7 +46,6 @@
 //! end (01M3XQVK05FAT3PR43W8RNEYHY).
 
 use std::path::Path;
-use std::process::Command;
 
 use anyhow::{Result, bail};
 
@@ -71,8 +70,8 @@ pub const WIP_MESSAGE: &str = "WIP: the session left the riff";
 /// # Ok::<(), std::io::Error>(())
 /// ```
 ///
-/// The WIP commit has no signature (01M5TKETGZP9NTHBXFBP1RM1HP): the git
-/// of the host can sign each commit and have no key for riff.
+/// The WIP commit has no signature: the git of the host can sign each
+/// commit and have no key for riff.
 ///
 /// ```
 /// // A container of riff sets `commit.gpgsign=false` in `GIT_CONFIG_*`: wip takes none.
@@ -140,32 +139,6 @@ pub fn wip(dir: &Path) -> Result<String> {
     Ok(branch)
 }
 
-/// Saves the work of an ended build in `dir` on `branch` when `origin`
-/// has no such branch (01M5P26VSA7AA99K1RYG83R8J9): [`wip`], then the
-/// commit that it pushed. It gives `None` when `origin` has the branch,
-/// or when the clone has no change and no commit after `origin/main`.
-///
-/// ```
-/// let dir = isolated::outside_git();
-/// assert!(riff::leave::save(dir.path(), "worktree-issue-1").is_err());
-/// ```
-pub fn save(dir: &Path, branch: &str) -> Result<Option<(String, String)>> {
-    if !remote_git(dir, &["ls-remote", "--heads", "origin", branch])?.is_empty() {
-        return Ok(None);
-    }
-    let base = git(
-        dir,
-        &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
-    )
-    .unwrap_or_else(|_| "origin/main".into());
-    let ahead = git(dir, &["rev-list", "--count", &format!("{base}..HEAD")])?;
-    if ahead == "0" && git(dir, &["status", "--porcelain"])?.is_empty() {
-        return Ok(None);
-    }
-    let pushed = wip(dir)?;
-    Ok(Some((pushed, git(dir, &["rev-parse", "--short", "HEAD"])?)))
-}
-
 /// [`git`] of a `git` that talks to `origin`. In the daemon, a `git`
 /// that would ask a locked `gh` for a credential does not run
 /// (01M78TSH2VNHA75RR1HXC5Z27G).
@@ -176,9 +149,7 @@ fn remote_git(dir: &Path, args: &[&str]) -> Result<String> {
 
 /// Runs git in `dir`, and gives its output with no space at the ends.
 fn git(dir: &Path, args: &[&str]) -> Result<String> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
+    let out = crate::host_git::git(dir)?
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
         .output()?;

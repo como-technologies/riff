@@ -36,6 +36,9 @@
 //! A granted claim and a new start show the earlier work on an item:
 //! its pushed branch and its worktree (see [`dropped`]).
 //!
+//! Each git call of riff goes through one guard: the host runs no git in
+//! a folder of a session (see [`host_git`]).
+//!
 //! ## The client of riff-server
 //!
 //! Each call to riff-server goes through the crate [`riff_client`]: the
@@ -93,6 +96,7 @@ pub mod highlight;
 pub mod hold;
 pub mod home;
 pub mod hooks;
+pub mod host_git;
 pub mod hygiene_rules;
 
 pub mod identity;

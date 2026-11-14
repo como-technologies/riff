@@ -644,7 +644,7 @@ pub fn of_tree(top: &Path) -> Result<Vec<Member>> {
 /// ```
 pub fn of_branch(top: &Path, branch: &str) -> Result<Vec<Member>> {
     let folder = format!("{FOLDER}/");
-    let listed = crate::run::output("git", top, &["ls-tree", "-z", branch, "--", &folder])
+    let listed = crate::host_git::output(top, &["ls-tree", "-z", branch, "--", &folder])
         .with_context(|| format!("riff cannot read {FOLDER} of {branch}"))?;
     let mut files = Vec::new();
     // Each entry is `MODE TYPE OBJECT<tab>PATH`. A link or a folder is no
@@ -664,7 +664,7 @@ pub fn of_branch(top: &Path, branch: &str) -> Result<Vec<Member>> {
         let Some(name) = member_name(&path)? else {
             continue;
         };
-        let text = crate::run::output("git", top, &["cat-file", "blob", object])
+        let text = crate::host_git::output(top, &["cat-file", "blob", object])
             .with_context(|| format!("riff cannot read {} of {branch}", path.display()))?;
         files.push((name, path, text));
     }

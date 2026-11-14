@@ -295,6 +295,10 @@
   NAME: ` and its findings, each after `shown:` or `not shown:`. The
   start text of a verify of the wave gives this form, with an example
   (01M7CFBZSQEEZNZBR9H1S54GS1).
+- **01M7DZ4E5BZAD38E3K9A3N277E** The riff daemon reads the council of a
+  pull request in its main clone: it fetches the base branch there and
+  reads the member files of `origin/BASE` (01M7CFBZ7839WHMFARR4T6W13W).
+  It reads no file and runs no git in the clone of a verify session.
 
 ## Waves
 
@@ -6248,11 +6252,6 @@ of this part when they merge.
   to the lead with the step for the person. It posts no new note at
   each look. When the sign-in has 2 hours or more again, it posts one
   note.
-- **01M57D3FEJPHD962GW0H82N8E6** When a sweep of the daemon keeps a
-  folder whose work is over, because its clone holds work that is not on
-  `origin` and that the sweep cannot push, the daemon posts one note to
-  the lead of its repository. It posts a new note only when the reason
-  changes.
 - **01M57D3FGV57W96A7SWTEFRCGW** The facts give the minutes left of the
   sign-in of `claude`. The sign-ins of riff and `gh` refresh or have no
   end: the facts say `on` or `off` for each, or `?` when riff cannot
@@ -6274,16 +6273,6 @@ of this part when they merge.
   and the new daemon waits for room for it again, also with the limit 0.
   A start of `riff run` that waits for room keeps the daemon on the old
   riff, as a session and a job of a wave do.
-- **01M5NVKNGZPK0GG7B7ZWBS0DFE** When the sweep of
-  01M53NJ5V27BCHDNHK2THQQZZQ finds a folder whose work is over, and its
-  clone holds work that is not on origin, it pushes that work to the
-  branch riff-kept/ITEM-ID8 of origin and then removes the folder. It
-  removes a folder with files of the container with podman unshare. The
-  push has the commits of HEAD that origin has not, and the changes of
-  the tracked files (git add -u). It never has a file that git does not
-  track. A clone with only such files pushes nothing. When the push
-  fails, or git cannot read the clone, the folder stays and riff daemon
-  sweep says why. This supersedes 01M53S7WAXD46YPN0DR96XSTMG in part.
 - **01M5NVKNKN3PTCWB45BV03M1TW** The sweep never pushes or removes the
   folder of a session that runs, of a job of the daemon, or of an item
   whose pull request is open or whose issue is open with no pull
@@ -6291,12 +6280,9 @@ of this part when they merge.
 - **01M5NVKNPD938ASWY4TD5BGK67** The sweep deletes each branch
   riff-kept/* of origin whose tip commit is older than 30 days, for each
   repository of the folders that it looked at.
-- **01M5NVKNS35SC8P514GYDJSRQM** After a sweep that pushed work, removed
-  a folder with files that git does not track, or deleted a riff-kept
+- **01M5NVKNS35SC8P514GYDJSRQM** After a sweep that deleted a riff-kept
   branch, the daemon posts one digest note to the lead of the
-  repository. It posts no note at each start for a folder that it
-  already pushed and removed. This supersedes 01M57D3FEJPHD962GW0H82N8E6
-  for folders whose work the sweep can push.
+  repository.
 - **01M5NVKNVTVR722EA148V5127M** The book says where the kept work goes,
   riff-kept/ITEM-ID8 of origin, and how to get it back with git fetch
   origin riff-kept/ITEM-ID8.
@@ -6316,17 +6302,6 @@ of this part when they merge.
   for work items, --effort-lead and --effort-verify, also with --host.
   riff refuses a level that Claude Code does not know: low, medium,
   high, xhigh and max. A session that runs keeps its effort.
-- **01M5QVCAXF5ANTTT46XHR6SF7H** When the sweep of
-  01M5NVKNGZPK0GG7B7ZWBS0DFE finds a folder whose clone has commits on a
-  local branch that is not HEAD, and no branch of origin has them, it
-  pushes each such branch to the branch riff-kept/ITEM-ID8-BRANCH of
-  origin, with the same rule as for HEAD: the commits and the tracked
-  files, never a file that git does not track. Then it removes the
-  folder. A commit on a local branch that is not HEAD no longer keeps
-  the folder. The daemon tells the lead one time, in the digest note of
-  01M5NVKNS35SC8P514GYDJSRQM, with each branch that it pushed. It posts
-  no note at the next sweep. This supersedes 01M5NVKNGZPK0GG7B7ZWBS0DFE
-  in part.
 - **01M5RG2AS2CYJPWGKTV7N2HNYP** A stop or a restart of the daemon
   leaves the network of each container that runs
   (01M4ZDTW00B7N6T9P3MK066KA7). When the daemon has an `INVOCATION_ID`,
@@ -6373,12 +6348,6 @@ of this part when they merge.
   is idle, and that the lead keeps its state in its notes. The daemon
   posts it for `riff daemon restart`, for the look at the end of each
   session, and for `riff update`.
-- **01M5TKETGZP9NTHBXFBP1RM1HP** A commit that riff makes for itself has
-  no signature: the commit of the sweep (01M5NVKNGZPK0GG7B7ZWBS0DFE) and
-  the WIP commit of a session that ended with no push
-  (01M5P26VSA7AA99K1RYG83R8J9) run with `-c commit.gpgsign=false`. A
-  host whose git signs each commit keeps no folder for that reason, and
-  riff saves the work.
 - **01M5TKPG5WZ1T58FNAMZNP6CJ5** The facts of a daemon show the session
   image for each wave, not for the host. Each wave has the short digest
   (12 hex digits) of the merged pin of its repository, as the main clone
@@ -6603,6 +6572,38 @@ of this part when they merge.
   riff-server of a repository fail, `riff daemon status` names the
   repository, the count of the failed starts, their time and the last
   cause.
+- **01M7DZ429QFWTSEA6JH1DVZJM0** Each git call of riff on the host goes
+  through one guard. The guard refuses a call whose folder is under the
+  folder of the sessions: `sessions` in the data folder of riff, and the
+  folder of the sessions of the daemon. A link counts as the folder that
+  it names. The error names the folder. In a container session, where
+  `RIFF_SOCKET` is set, git runs in the container: there the guard
+  refuses only the folders that a daemon in that process gave it.
+- **01M7DZ42C8SY2GV5ZQJZHM2VTV** The host makes the clone of a session
+  in a folder of its own, `new-clones/ITEM-ID8` in the data folder of
+  riff, with each git step of the clone: the clone, the branch of the
+  item, and for a verify the fetch of the head of the pull request and
+  its checkout. Then it moves the clone into the folder of the session.
+  The host runs no git in the folder of a session. A build looks for its
+  branch on `origin` from the main clone, with `git ls-remote`.
+- **01M7DZ42EVHAT8N5MZEV97G3DW** The host writes the repository
+  `OWNER/REPO` of a session in the file `repo` of the folder of the
+  session, before the clone. The container does not see that file.
+- **01M7DZ4E02PX5Y0WMHFCJ9KS14** The sweep of 01M53NJ5V27BCHDNHK2THQQZZQ
+  looks into no clone. It reads the repository of a folder from its file
+  `repo` (01M7DZ42EVHAT8N5MZEV97G3DW), and asks the forge for the pull
+  requests of the branch of its item and for the state of its issue. A
+  folder whose session does not run goes when its work is over on the
+  forge, or when it is 30 days old: 30 days with no change of the folder
+  itself and of its `events.jsonl`. A folder with no file `repo` stays
+  until it is 30 days old. The work of the clone that is not on `origin`
+  goes with the folder. `riff daemon sweep` prints each folder that
+  stays because it has no file `repo` or because the forge gave no
+  answer, with the reason. The log of the daemon gets that line one
+  time, and again when the reason changes. This supersedes
+  01M53S7WAXD46YPN0DR96XSTMG, 01M5NVKNGZPK0GG7B7ZWBS0DFE,
+  01M5QVCAXF5ANTTT46XHR6SF7H and 01M57D3FEJPHD962GW0H82N8E6, and
+  01M53NJ5V27BCHDNHK2THQQZZQ and 01M5NVKNS35SC8P514GYDJSRQM in part.
 
 ### riff relay
 
@@ -6801,10 +6802,6 @@ of this part when they merge.
   comes in that time, the daemon stops the container, and the item is
   free. It does not wait for the quiet limit, unless a background task
   runs (01M5R0QFM265CCKTADK4T5XREQ).
-- **01M5P26VSA7AA99K1RYG83R8J9** When a build of a wave ends and its
-  branch has no pushed commit, the daemon commits each change of the
-  clone as a WIP commit on that branch and pushes it. The lead gets one
-  message with the branch and the commit.
 - **01M5P26VW5GBJDQZGEYW9A77Y0** The daemon removes the folder of one
   ended session on purpose with riff daemon sweep --remove NAME. It
   first checks that the work of the folder is on a merged branch, or
@@ -7408,6 +7405,11 @@ of this part when they merge.
   times in a run of the wave (01M4ZV3B6PSRH40EYQEVYH2MBA) names the end
   of the last start that counted in that run, not the end of a session
   before the start of the daemon.
+- **01M7DZ4E2P5RJMQE0W9K1AAA4P** When a build of a wave ends and its
+  branch has no pushed commit, the daemon commits nothing and pushes
+  nothing: it runs no git in the clone. The lead gets one note with the
+  branch and the clone. This supersedes 01M5P26VSA7AA99K1RYG83R8J9 and
+  01M5TKETGZP9NTHBXFBP1RM1HP.
 
 ### The lead, the view and the takeover
 
@@ -8320,10 +8322,9 @@ of this part when they merge.
 - **01M53NJ5V27BCHDNHK2THQQZZQ** The riff daemon removes the folder of
   each session of `riff run` and of a wave that does not run, also when
   no wave runs: at its start, then each 10 minutes, and before each look
-  of a wave. It removes the folder, when the sweep of
-  01M53S7WAXD46YPN0DR96XSTMG allows it, when the branch of its item has
-  no open pull request and a merged or a closed one, or when the branch
-  has no pull request and the issue is closed. A session runs while the
+  of a wave. It removes the folder when the branch of its item has no
+  open pull request and a merged or a closed one, or when the branch has
+  no pull request and the issue is closed. A session runs while the
   daemon has its record, while a job of the daemon starts it
   (01M53S7WDPQ2GWHJWJ6SZXZ5PN), or while the `riff run` that made the
   folder runs: it holds the lock `ITEM-ID8.lock` beside the folder from
@@ -8333,14 +8334,6 @@ of this part when they merge.
   each folder that the daemon removed and each folder that stays, with
   the reason (01M53S7WAXD46YPN0DR96XSTMG), or one line that it removed
   none.
-- **01M53S7WAXD46YPN0DR96XSTMG** The sweep of 01M53NJ5V27BCHDNHK2THQQZZQ
-  removes a folder when its clone has no file that is not committed
-  (`git status --porcelain`) and no commit of `HEAD` or of a local
-  branch that no branch of `origin` has. For a clone with such work, the
-  sweep does as 01M5NVKNGZPK0GG7B7ZWBS0DFE says. When git cannot read
-  the clone, the folder stays. `riff daemon sweep` prints each folder
-  that stays because of its clone, with the reason. The log of the
-  daemon gets that line one time, and again when the reason changes.
 - **01M53S7WDPQ2GWHJWJ6SZXZ5PN** A job of the daemon keeps each folder
   of its item from before the clone of its session to the end of its
   last step after the end. The steps after the end read the folder, for

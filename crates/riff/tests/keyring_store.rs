@@ -566,15 +566,17 @@ fn no_prompt_git(keyring: &Keyring) {
             .unwrap();
         String::from_utf8_lossy(&out.stdout).into_owned()
     };
+    // The branch of a session: `leave` pushes it.
+    git(&main, &["switch", "-q", "-c", "worktree-issue-12"]);
     let before = head();
-    let error = riff::daemon::sweep::push_kept(&main, "riff-kept/issue-12-1a2b3c4d").unwrap_err();
+    let error = riff::leave::wip(&main).unwrap_err();
     assert!(secrets::is_locked(&error), "{error:#}");
     assert!(
         format!("{error:#}")
-            .starts_with("riff did not run git push --no-verify origin: the OS keyring of "),
+            .starts_with("riff did not run git push --quiet -u origin HEAD: the OS keyring of "),
         "{error:#}"
     );
-    // The push did not run, so the sweep made no commit.
+    // The push did not run.
     assert_eq!(head(), before);
     // A local remote needs no credential: its git runs.
     let fresh = riff::lead::fresh_clone(&local, &dir.path().join("local-lead")).unwrap();
@@ -596,7 +598,7 @@ fn no_prompt_git(keyring: &Keyring) {
     assert!(private.requests() > 0, "git did not run: {error:#}");
     let asked = std::fs::read_to_string(&log).unwrap();
     assert!(asked.starts_with("auth git-credential get\n"), "{asked}");
-    let error = riff::daemon::sweep::push_kept(&main, "riff-kept/issue-12-1a2b3c4d").unwrap_err();
+    let error = riff::leave::wip(&main).unwrap_err();
     assert!(!secrets::is_locked(&error), "{error:#}");
     let asked_again = std::fs::read_to_string(&log).unwrap();
     assert!(asked_again.len() > asked.len(), "{asked_again}");

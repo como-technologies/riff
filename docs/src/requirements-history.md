@@ -2097,6 +2097,39 @@ page [Requirements](requirements.md) holds the rules of today.
   and is no end. The daemon starts no lead by itself.
   Superseded by 01M77PT9TNP97MA89SYZPBJ6QY and
   01M77PTJN73R68Z2SRQP0F6V9T.
+- **01M57D3FEJPHD962GW0H82N8E6** When a sweep of the daemon keeps a
+  folder whose work is over, because its clone holds work that is not on
+  `origin` and that the sweep cannot push, the daemon posts one note to
+  the lead of its repository. It posts a new note only when the reason
+  changes. Superseded by 01M7DZ4E02PX5Y0WMHFCJ9KS14.
+- **01M5NVKNGZPK0GG7B7ZWBS0DFE** When the sweep of
+  01M53NJ5V27BCHDNHK2THQQZZQ finds a folder whose work is over, and its
+  clone holds work that is not on origin, it pushes that work to the
+  branch riff-kept/ITEM-ID8 of origin and then removes the folder. It
+  removes a folder with files of the container with podman unshare. The
+  push has the commits of HEAD that origin has not, and the changes of
+  the tracked files (git add -u). It never has a file that git does not
+  track. A clone with only such files pushes nothing. When the push
+  fails, or git cannot read the clone, the folder stays and riff daemon
+  sweep says why. This supersedes 01M53S7WAXD46YPN0DR96XSTMG in part.
+  Superseded by 01M7DZ4E02PX5Y0WMHFCJ9KS14.
+- **01M5QVCAXF5ANTTT46XHR6SF7H** When the sweep of
+  01M5NVKNGZPK0GG7B7ZWBS0DFE finds a folder whose clone has commits on a
+  local branch that is not HEAD, and no branch of origin has them, it
+  pushes each such branch to the branch riff-kept/ITEM-ID8-BRANCH of
+  origin, with the same rule as for HEAD: the commits and the tracked
+  files, never a file that git does not track. Then it removes the
+  folder. A commit on a local branch that is not HEAD no longer keeps
+  the folder. The daemon tells the lead one time, in the digest note of
+  01M5NVKNS35SC8P514GYDJSRQM, with each branch that it pushed. It posts
+  no note at the next sweep. This supersedes 01M5NVKNGZPK0GG7B7ZWBS0DFE
+  in part. Superseded by 01M7DZ4E02PX5Y0WMHFCJ9KS14.
+- **01M5TKETGZP9NTHBXFBP1RM1HP** A commit that riff makes for itself has
+  no signature: the commit of the sweep (01M5NVKNGZPK0GG7B7ZWBS0DFE) and
+  the WIP commit of a session that ended with no push
+  (01M5P26VSA7AA99K1RYG83R8J9) run with `-c commit.gpgsign=false`. A
+  host whose git signs each commit keeps no folder for that reason, and
+  riff saves the work. Superseded by 01M7DZ4E2P5RJMQE0W9K1AAA4P.
 
 ### riff relay
 
@@ -2120,6 +2153,11 @@ page [Requirements](requirements.md) holds the rules of today.
   wave of the repository, it prints the reason and the step
   `riff join`, and it starts the lead. Superseded by
   01M6QVSJC4V3Z3NB6MJW4XGJSR.
+- **01M5P26VSA7AA99K1RYG83R8J9** When a build of a wave ends and its
+  branch has no pushed commit, the daemon commits each change of the
+  clone as a WIP commit on that branch and pushes it. The lead gets one
+  message with the branch and the commit. Superseded by
+  01M7DZ4E2P5RJMQE0W9K1AAA4P.
 
 ### The lead, the view and the takeover
 
@@ -2248,6 +2286,15 @@ page [Requirements](requirements.md) holds the rules of today.
   the work. No riff runs in the container. riff shows each event of
   `claude` on the terminal, with no secret (01M4Z60B8KDXD190RWC7D184Q3).
   Superseded by 01M4ZDTVXY84ETYJWMWDMQ34CN.
+- **01M53S7WAXD46YPN0DR96XSTMG** The sweep of 01M53NJ5V27BCHDNHK2THQQZZQ
+  removes a folder when its clone has no file that is not committed
+  (`git status --porcelain`) and no commit of `HEAD` or of a local
+  branch that no branch of `origin` has. For a clone with such work, the
+  sweep does as 01M5NVKNGZPK0GG7B7ZWBS0DFE says. When git cannot read
+  the clone, the folder stays. `riff daemon sweep` prints each folder
+  that stays because of its clone, with the reason. The log of the
+  daemon gets that line one time, and again when the reason changes.
+  Superseded by 01M7DZ4E02PX5Y0WMHFCJ9KS14.
 
 ### Data and peers
 

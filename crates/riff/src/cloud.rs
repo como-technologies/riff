@@ -707,9 +707,9 @@ pub fn dir(here: &Path) -> Result<PathBuf> {
 
 /// The top of the git work tree of `here`, or `None` outside one.
 pub fn top(here: &Path) -> Option<PathBuf> {
-    let out = Command::new("git")
+    let out = crate::host_git::git(here)
+        .ok()?
         .args(["rev-parse", "--show-toplevel"])
-        .current_dir(here)
         .stderr(Stdio::null())
         .output()
         .ok()
@@ -819,9 +819,10 @@ pub fn behind(dir: &Path) -> Option<Behind> {
 /// at most [`FETCH_WAIT`]. A fetch that fails changes nothing.
 fn fetch(dir: &Path) {
     use std::os::unix::process::CommandExt;
-    let child = Command::new("git")
-        .arg("-C")
-        .arg(dir)
+    let Ok(mut git) = crate::host_git::git(dir) else {
+        return;
+    };
+    let child = git
         .args(["fetch", "--quiet"])
         .env("GIT_TERMINAL_PROMPT", "0")
         .stdin(Stdio::null())
@@ -1754,10 +1755,9 @@ pub fn commit_tag(tag: &str) -> bool {
 /// git commands of `deploy/build-id.sh`.
 pub fn build_id(top: &Path) -> Result<String> {
     let git = |args: &[&str], input: Option<&str>| -> Result<String> {
-        let mut child = Command::new("git")
+        let mut child = crate::host_git::git(top)?
             .args(args)
             .env("TZ", "UTC")
-            .current_dir(top)
             .stdin(if input.is_some() {
                 Stdio::piped()
             } else {
