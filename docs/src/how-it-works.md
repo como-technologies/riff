@@ -3378,7 +3378,9 @@ just test NAME
 
 ### The council of a verify
 
-This part is the design of #581. Its build items are not done yet (see
+This part is the design of #581. Its first build item is done: riff
+reads the member files, and `riff council list` lists the members. The
+other build items are not done yet (see
 [The build items of the council](#the-build-items-of-the-council)), so
 a verify has no council today. The requirements of the council are in
 [Product](requirements.md#product).
@@ -3411,10 +3413,12 @@ flowchart TD
 Each member has one file in the repository, `.riff/council/NAME.md`:
 its area, when it joins, and its rules. The default set is in
 [`.riff/council/`](https://github.com/como-technologies/riff/tree/main/.riff/council)
-of the riff repository, and riff will build it in. A file of your
-repository with the name of a default member will take its place, and
-a file with a new name will add a member (see
+of the riff repository, and riff builds it in. A file of your
+repository with the name of a default member takes its place, and a
+file with a new name adds a member (see
 [Add a member to the council](development.md#add-a-member-to-the-council)).
+`riff council list` shows the members of your repository (see
+[List the members of the council](development.md#list-the-members-of-the-council)).
 
 | Member | Joins | Reviews |
 |---|---|---|

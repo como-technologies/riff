@@ -15,6 +15,7 @@
 //! | `riff device add --key NAME`, `riff device list`, `riff device remove NAME` | Add, list and remove the FIDO2 / WebAuthn authenticators of the person. See [`device`]. |
 //! | `riff release test`, `cut`, `verify`, `status`, `approve`, `hold` | The release cycle: the real-session test, the tag, the GitHub release, the pull request of the next version, the approval of the deploy, and the hold of a lead. See [`cycle`], [`hold`], and [`alerts`] for the alert gate of the cut. |
 //! | `riff pr open`, `riff pr wait`, `riff verify` | The steps of a pull request on GitHub, with `gh`. See [`pr`]. |
+//! | `riff council list` | Lists the members of the council of a verify: the files of `.riff/council/` over the default set that riff builds in. See [`council`]. |
 //! | `riff session why` | Shows why a session of a wave ended with no pull request. See [`ends`]. |
 //! | `riff denials` | Counts the refusals of auto mode that the hook `PermissionDenied` posts to the riff. See [`denied`]. |
 //! | `riff usage` | Shows the tokens and the models of an issue, of a wave, or of the sessions of this machine. See [`usage`]. |
@@ -70,6 +71,7 @@ pub mod claude_settings;
 pub mod claude_token;
 pub mod cloud;
 pub mod compile_cache;
+pub mod council;
 pub mod cycle;
 pub mod daemon;
 pub mod denied;
