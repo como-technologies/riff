@@ -519,6 +519,17 @@ enum Command {
         #[arg(long, value_name = "SHA")]
         commit: Option<String>,
     },
+    /// Show the members of the council of a verify
+    ///
+    /// The council of a verify reviews each change in focused areas, with
+    /// one member for each area. Each member is one file,
+    /// .riff/council/NAME.md. riff builds in a default set. A file of the
+    /// repository with the name of a default member takes its place, and a
+    /// file with a new name adds a member.
+    Council {
+        #[command(subcommand)]
+        command: CouncilCommand,
+    },
     /// Build riff of the default branch in the check clone
     ///
     /// A check after a merge can need a new build of riff. riff builds it
@@ -1349,6 +1360,19 @@ enum Pr {
 }
 
 #[derive(Subcommand)]
+enum CouncilCommand {
+    /// List each member of the council of this folder
+    ///
+    /// The members are the files .riff/council/NAME.md at the top of the
+    /// git work tree over the default set. Each row shows the name of a
+    /// member, its source (riff, or the path of its file), the count of its
+    /// rules, and when it joins: each council, or its globs and its labels.
+    /// It exits with 1 on a member file that riff cannot read, and names
+    /// the file.
+    List,
+}
+
+#[derive(Subcommand)]
 enum Admin {
     /// Make a person an admin. The person is also a member.
     Add {
@@ -2022,6 +2046,15 @@ async fn cli() -> Result<()> {
             Err(e) => {
                 eprintln!("{}", text::image_unasked(&image, &format!("{e:#}")));
                 std::process::exit(1);
+            }
+        }
+        return Ok(());
+    }
+    if let Command::Council { command } = command {
+        let dir = std::env::current_dir().context("cannot read the current folder")?;
+        match command {
+            CouncilCommand::List => {
+                anstream::print!("{}", riff::council::list(&riff::council::of_folder(&dir)?));
             }
         }
         return Ok(());
@@ -2787,6 +2820,7 @@ async fn cli() -> Result<()> {
         | Command::ClaudeToken
         | Command::Release { .. }
         | Command::Image { .. }
+        | Command::Council { .. }
         | Command::Daemon { .. }
         | Command::Init { .. }
         | Command::Relay { .. }

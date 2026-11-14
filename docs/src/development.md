@@ -6032,8 +6032,12 @@ A second pass over the log is a finding.
 EOF
 git add .riff/council/performance.md
 git commit -m "The council gets a member for performance"
+riff council list
 ```
 
+The last command shows `performance` after the default set, with its
+file as its source (see
+[List the members of the council](#list-the-members-of-the-council)).
 Then push the branch, and open its pull request as for each change.
 
 The file starts with a TOML table between two lines `+++`. The key
@@ -6041,12 +6045,44 @@ The file starts with a TOML table between two lines `+++`. The key
 lists the labels of the area. A member with neither key will join each
 council. After the table come a `#` heading with the name of the
 member, the text of its area, and one `##` heading for each rule. A
-finding will name its rule by that heading.
+finding will name its rule by that heading. The name of the file is the
+name of the member: lowercase letters, digits and `-`, with a letter
+first, and `.md`.
 
 A file with the name of a member of the default set, for example
-`rust.md`, will take the place of that member. The new member will
-join the councils of the pull requests after the merge, because the
-council of a pull request will read the files of its base branch.
+`rust.md`, takes the place of that member. The new member will join the
+councils of the pull requests after the merge, because the council of a
+pull request will read the files of its base branch.
+
+### List the members of the council
+
+`riff council list` shows each member of the council of your
+repository: the files of `.riff/council/` at the top of the work tree
+over the default set. Run it in your clone:
+
+```sh
+riff council list
+```
+
+Each row has the name of a member, its source (`riff`, or the path of
+its file), the count of its rules, and when it joins: `each council`, or
+its globs and its labels. The default set comes first, then each other
+member in the order of its name. In a repository with the member
+`performance` of the step before, the output starts and ends so:
+
+```text
+MEMBER        SOURCE                        RULES  JOINS
+design        riff                          4      each council
+...
+performance   .riff/council/performance.md  1      files crates/riff-server/**; labels performance
+```
+
+When riff cannot read a member file, the command exits with 1, and the
+error names the file and the line:
+
+```text
+Error: .riff/council/performance.md:1: the file has no table. A member file starts with a TOML table between two lines +++.
+```
 
 ### Add a rule to a member
 

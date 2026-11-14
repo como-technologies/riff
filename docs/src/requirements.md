@@ -259,6 +259,23 @@
   member. `riff verify fail` takes such a result. The daemon reads such
   a PASS of a verify of the wave as a result with no verdict. Supersedes
   01M3W62QG36F9RD4SZ1X508T3A in part.
+- **01M7CN1GWPHVBMGAGRVE9ZGVCK** riff also refuses a member file with a
+  table that is not TOML, a key other than `files` and `labels`, a value
+  that is not a list of strings, an empty list, or an empty string in a
+  list. The error names the file and the line
+  (01M7CFBZ9TJ83FNHN0APY41175).
+- **01M7CN1GZADT442NSWGYZCNDTH** The name of a member is the name of its
+  file with no `.md`: lowercase letters, digits and `-`, with a letter
+  first. riff refuses a file `.md` of `.riff/council/` with another
+  name, and names the file. riff reads no other file of the folder.
+- **01M7CN1H1XGQVBGFH30MRE1BP4** `riff council list` prints a table with
+  one row for each member: its name, its source (`riff`, or the path of
+  its file), the count of its rules, and when it joins (`each council`,
+  or its globs and its labels). The members of the default set come
+  first, in the order of 01M7CFBZHQZ8FDT3Q0NGYKBZWB, also when a file
+  takes the place of one of them. Each other member comes after them, in
+  the order of its name. On a member file that riff cannot read, the
+  command exits with 1 and names the file.
 
 ## Waves
 

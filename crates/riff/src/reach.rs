@@ -1098,6 +1098,7 @@ pub const COMMANDS: &[InContainer] = &[
     local(&["init", "--check"]),
     local(&["setup", "--check"]),
     local(&["image"]),
+    local(&["council", "list"]),
     local(&["build"]),
     local(&["wave", "make", "Wave 4"]),
     local(&["wave", "rename", "3", "the new wave"]),

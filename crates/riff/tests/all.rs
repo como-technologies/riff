@@ -29,6 +29,7 @@ mod cloud;
 mod compile_cache;
 mod conduct;
 mod container_commands;
+mod council;
 #[cfg(target_os = "linux")]
 mod daemon;
 #[cfg(target_os = "linux")]
