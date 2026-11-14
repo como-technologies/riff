@@ -1,5 +1,6 @@
-//! `hygiene pr N` checks pull request N, and the cut of each requirement
-//! that it supersedes in part, with `gh`. `hygiene commit [REV]`
+//! `hygiene pr N` checks pull request N, the cut of each requirement
+//! that it supersedes in part, and the name of each requirement that it
+//! adds in a file under `crates/`, with `gh`. `hygiene commit [REV]`
 //! checks the message of a commit with `git`. `hygiene book [DIR]` builds
 //! the book in DIR with `mdbook` and checks it. `hygiene wrap [DIR]`
 //! checks the wrap of each Markdown file in DIR. `hygiene blank PATH...`
@@ -18,7 +19,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
-use hygiene::{Issue, PullRequest};
+use hygiene::{Issue, PullRequest, Rules};
 use serde::de::DeserializeOwned;
 
 const USAGE: &str = "usage: hygiene pr NUMBER | hygiene commit [REV] | hygiene book [DIR] \
@@ -80,7 +81,13 @@ fn pr(number: &str) -> ExitCode {
     let issue: Option<Issue> = match hygiene::issue_number(&pr) {
         Some(n) => {
             let n = n.to_string();
-            match gh(&["issue", "view", &n, "--json", "number,state,milestone"]) {
+            match gh(&[
+                "issue",
+                "view",
+                &n,
+                "--json",
+                "number,state,milestone,labels",
+            ]) {
                 Ok(issue) => Some(issue),
                 Err(e) => return tool_error(&e),
             }
@@ -88,9 +95,22 @@ fn pr(number: &str) -> ExitCode {
         None => None,
     };
     let mut errors = hygiene::check_pr(&pr, issue.as_ref());
-    match requirements(&refs) {
-        Ok((old, new)) => errors.extend(hygiene::check_requirements(&old, &new)),
+    let pages = match requirements(&refs) {
+        Ok(pages) => pages,
         Err(e) => return tool_error(&e),
+    };
+    errors.extend(hygiene::check_requirements(&pages.old, &pages.new));
+    let ids = hygiene::unnamed_ids(Rules::All, issue.as_ref(), &pages);
+    if !ids.is_empty() {
+        let files = match crates_at(&refs.head_ref_oid) {
+            Ok(files) => files,
+            Err(e) => return tool_error(&e),
+        };
+        let files: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(path, text)| (path.as_str(), text.as_str()))
+            .collect();
+        errors.extend(hygiene::check_unnamed(&ids, &files));
     }
     report(&format!("pull request #{number}"), &errors, HYGIENE)
 }
@@ -106,21 +126,20 @@ struct Refs {
     head_ref_oid: String,
 }
 
-/// The texts of the requirements of pull request `refs`: at the merge
-/// base of its base and its head, and at its head. It reads them with
-/// `gh api`, so it needs no clone of the pull request.
-fn requirements(refs: &Refs) -> Result<(String, String), String> {
+/// The pages of the requirements of pull request `refs`: the two pages at
+/// the merge base of its base and its head, and the requirements at its
+/// head. It reads them with `gh api`, so it needs no clone of the pull
+/// request.
+fn requirements(refs: &Refs) -> Result<hygiene::Pages, String> {
     let Refs {
         base_ref_oid: base,
         head_ref_oid: head,
     } = refs;
     let compare = format!("repos/{{owner}}/{{repo}}/compare/{base}...{head}");
     let fork = gh_text(&["api", &compare, "--jq", ".merge_base_commit.sha"])?;
-    let file = |sha: &str| {
-        let path = format!(
-            "repos/{{owner}}/{{repo}}/contents/{}?ref={sha}",
-            reqs::REQUIREMENTS
-        );
+    let fork = fork.trim();
+    let file = |page: &str, sha: &str| {
+        let path = format!("repos/{{owner}}/{{repo}}/contents/{page}?ref={sha}");
         gh_text(&[
             "api",
             "-H",
@@ -128,7 +147,68 @@ fn requirements(refs: &Refs) -> Result<(String, String), String> {
             &path,
         ])
     };
-    Ok((file(fork.trim())?, file(head)?))
+    Ok(hygiene::Pages {
+        old: file(reqs::REQUIREMENTS, fork)?,
+        history: file(reqs::HISTORY, fork)?,
+        new: file(reqs::REQUIREMENTS, head)?,
+    })
+}
+
+/// Each file under [`hygiene::CRATES`] at the commit `head`: its path
+/// from the top of the repository, and its text. It reads the tarball of
+/// the commit with `gh api`, and unpacks it with `tar` in a temporary
+/// folder, so it needs no clone of the pull request.
+fn crates_at(head: &str) -> Result<Vec<(String, String)>, String> {
+    let api = format!("repos/{{owner}}/{{repo}}/tarball/{head}");
+    let tarball = gh_bytes(&["api", &api])?;
+    let dir = tempfile::tempdir().map_err(|e| format!("a temporary folder: {e}"))?;
+    let file = dir.path().join("head.tar.gz");
+    std::fs::write(&file, tarball).map_err(|e| format!("{}: {e}", file.display()))?;
+    let top = dir.path().join("head");
+    std::fs::create_dir(&top).map_err(|e| format!("{}: {e}", top.display()))?;
+    let out = Command::new("tar")
+        .arg("-xzf")
+        .arg(&file)
+        .arg("-C")
+        .arg(&top)
+        .output()
+        .map_err(|e| format!("tar: {e}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(format!("tar -xzf the tarball of {api}: {}", stderr.trim()));
+    }
+    // The tarball holds one folder, OWNER-REPO-SHA: the top of the commit.
+    let mut files = Vec::new();
+    let folders = std::fs::read_dir(&top).map_err(|e| format!("{}: {e}", top.display()))?;
+    for folder in folders {
+        let root = folder
+            .map_err(|e| format!("{}: {e}", top.display()))?
+            .path();
+        let crates = root.join(hygiene::CRATES);
+        if crates.is_dir() {
+            tree(&root, &crates, &mut files).map_err(|e| format!("{}: {e}", crates.display()))?;
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+/// Adds each file in `dir` and its subfolders to `files`: its path from
+/// `root`, and its text. It follows no link.
+fn tree(root: &Path, dir: &Path, files: &mut Vec<(String, String)>) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
+            tree(root, &path, files)?;
+        } else if kind.is_file() {
+            let text = String::from_utf8_lossy(&std::fs::read(&path)?).into_owned();
+            let shown = path.strip_prefix(root).unwrap_or(&path);
+            files.push((shown.to_string_lossy().into_owned(), text));
+        }
+    }
+    Ok(())
 }
 
 /// Checks the message of commit `rev`.
@@ -759,8 +839,13 @@ fn gh<T: DeserializeOwned>(args: &[&str]) -> Result<T, String> {
     serde_json::from_str(&out).map_err(|e| format!("gh {}: {e}", args.join(" ")))
 }
 
-/// Runs `gh` and reads its output.
+/// Runs `gh` and reads its output as text.
 fn gh_text(args: &[&str]) -> Result<String, String> {
+    String::from_utf8(gh_bytes(args)?).map_err(|e| format!("gh {}: {e}", args.join(" ")))
+}
+
+/// Runs `gh` and reads its output.
+fn gh_bytes(args: &[&str]) -> Result<Vec<u8>, String> {
     let shown = format!("gh {}", args.join(" "));
     let out = Command::new("gh")
         .args(args)
@@ -770,7 +855,7 @@ fn gh_text(args: &[&str]) -> Result<String, String> {
         let stderr = String::from_utf8_lossy(&out.stderr);
         return Err(format!("{shown}: {}", stderr.trim()));
     }
-    String::from_utf8(out.stdout).map_err(|e| format!("{shown}: {e}"))
+    Ok(out.stdout)
 }
 
 /// A tool failed: exit status 2.

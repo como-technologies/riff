@@ -29,8 +29,10 @@ fn fake_gh(pr: &serde_json::Value, issues: &[serde_json::Value]) -> tempfile::Te
 /// A directory with a fake `gh`. It prints `pr.json` for `gh pr view`,
 /// and `issue-N.json` for `gh issue view N`. For `gh api`, the merge
 /// base of the compare is `fork`, and the file `requirements.md` at the
-/// ref `fork` is `old`, at `head` it is `new`. A missing file fails. It
-/// appends each call to `calls.txt`.
+/// ref `fork` is `old`, at `head` it is `new`. The file
+/// `requirements-history.md` at `fork` is empty. The tarball of a commit
+/// is `head.tar.gz` ([`tarball`]). A missing file fails. It appends each
+/// call to `calls.txt`.
 fn fake_gh_with(
     pr: &serde_json::Value,
     issues: &[serde_json::Value],
@@ -47,18 +49,41 @@ fn fake_gh_with(
     }
     std::fs::write(dir.path().join("requirements-fork.md"), old).unwrap();
     std::fs::write(dir.path().join("requirements-head.md"), new).unwrap();
+    std::fs::write(dir.path().join("requirements-history-fork.md"), "").unwrap();
     let script = format!(
         "#!/bin/sh\nd='{}'\necho \"$*\" >> \"$d/calls.txt\"\ncase \"$1 $2\" in\n\
          'pr view') cat \"$d/pr.json\" ;;\n\
          'issue view') cat \"$d/issue-$3.json\" 2>/dev/null || {{ echo \"no issue $3\" >&2; exit 1; }} ;;\n\
          'api repos/{{owner}}/{{repo}}/compare/'*) echo fork ;;\n\
-         'api -H') for a; do ref=$a; done; cat \"$d/requirements-${{ref##*ref=}}.md\" ;;\n\
+         'api repos/{{owner}}/{{repo}}/tarball/'*) cat \"$d/head.tar.gz\" ;;\n\
+         'api -H') for a; do ref=$a; done; page=${{ref%%\\?*}}; page=${{page##*/}}; \
+         cat \"$d/${{page%.md}}-${{ref##*ref=}}.md\" ;;\n\
          *) echo \"unknown: $*\" >&2; exit 1 ;;\nesac\n",
         dir.path().display()
     );
     let gh = dir.path().join("gh");
     isolated::write_program(&gh, script);
     dir
+}
+
+/// Writes `head.tar.gz` in the folder `gh` of a fake `gh`: a tarball as
+/// GitHub gives it, with one top folder and each of `files` in it.
+fn tarball(gh: &Path, files: &[(&str, &str)]) {
+    let src = tempfile::tempdir().unwrap();
+    let top = src.path().join("como-technologies-riff-0123abc");
+    for (path, text) in files {
+        let file = top.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, text).unwrap();
+    }
+    std::fs::create_dir_all(&top).unwrap();
+    let out = run(Command::new("tar")
+        .arg("-czf")
+        .arg(gh.join("head.tar.gz"))
+        .arg("-C")
+        .arg(src.path())
+        .arg("como-technologies-riff-0123abc"));
+    assert!(out.status.success(), "tar: {}", text(&out.stderr));
 }
 
 fn hygiene(args: &[&str], path_first: Option<&Path>, cwd: Option<&Path>) -> Output {
@@ -111,14 +136,17 @@ fn a_good_pull_request_passes() {
 
 /// 01M6WBVMJY79HJRQJZ3ZVD5CCC: a pull request that supersedes R1 in part
 /// and leaves the text of R1 as it was fails, and the error names R1 and
-/// the new ID. The same pull request with a cut of R1 passes.
+/// the new ID. The same pull request with a cut of R1 passes. A test
+/// names the new ID, so the rule `unnamed` holds.
 #[test]
 fn a_pull_request_that_supersedes_in_part_cuts_the_old_text() {
     let id = reqs::new_id();
     let new = format!("{REQUIREMENTS}- **{id}** Three. Supersedes R1 in part.\n");
     let pr = pr_json(GOOD, Some("Wave 3"));
     let issues = [issue_json(77, "OPEN", Some("Wave 3"))];
+    let test = format!("// {id}\n");
     let gh = fake_gh_with(&pr, &issues, REQUIREMENTS, &new);
+    tarball(gh.path(), &[("crates/x/src/lib.rs", &test)]);
     let out = hygiene(&["pr", "90"], Some(gh.path()), None);
     assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
     let stderr = text(&out.stderr);
@@ -144,9 +172,107 @@ fn a_pull_request_that_supersedes_in_part_cuts_the_old_text() {
 
     let cut = new.replace("One. Two.", "One.");
     let gh = fake_gh_with(&pr, &issues, REQUIREMENTS, &cut);
+    tarball(gh.path(), &[("crates/x/src/lib.rs", &test)]);
     let out = hygiene(&["pr", "90"], Some(gh.path()), None);
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(text(&out.stdout), "ok: pull request #90\n");
+}
+
+/// 01M7CF3P17SDFBB5MY5TP3QXVM: a pull request that adds a requirement
+/// that no file under `crates/` names at its head fails, and the error
+/// names the ID. With a test under `crates/` that names it, it passes.
+#[test]
+fn a_pull_request_that_adds_a_requirement_needs_a_file_under_crates_that_names_it() {
+    let id = reqs::new_id();
+    let new = format!("{REQUIREMENTS}- **{id}** Three.\n");
+    let pr = pr_json(GOOD, Some("Wave 3"));
+    let issues = [issue_json(77, "OPEN", Some("Wave 3"))];
+    let gh = fake_gh_with(&pr, &issues, REQUIREMENTS, &new);
+    let named = format!("See {id}.\n");
+    tarball(
+        gh.path(),
+        &[
+            ("docs/src/how-it-works.md", &named),
+            ("crates/x/src/lib.rs", "//! No ID.\n"),
+        ],
+    );
+    let out = hygiene(&["pr", "90"], Some(gh.path()), None);
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
+    let stderr = text(&out.stderr);
+    for line in [
+        format!(
+            "error: unnamed: {id} is a new requirement in docs/src/requirements.md, and no \
+             file under crates/ names it at the head of the pull request; name {id} in the \
+             test that holds it\n"
+        ),
+        "pull request #90 breaks 1 rule(s) of issue hygiene.".to_owned(),
+    ] {
+        assert!(stderr.contains(&line), "no {line:?} in:\n{stderr}");
+    }
+    let calls = std::fs::read_to_string(gh.path().join("calls.txt")).unwrap();
+    for call in [
+        "issue view 77 --json number,state,milestone,labels\n",
+        "api -H Accept: application/vnd.github.raw+json repos/{owner}/{repo}/contents/docs/src/requirements-history.md?ref=fork\n",
+        "api repos/{owner}/{repo}/tarball/head\n",
+    ] {
+        assert!(calls.contains(call), "no {call:?} in:\n{calls}");
+    }
+
+    let test = format!("/// {id}: three.\n#[test]\nfn three() {{}}\n");
+    tarball(gh.path(), &[("crates/x/tests/all.rs", &test)]);
+    let out = hygiene(&["pr", "90"], Some(gh.path()), None);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(text(&out.stdout), "ok: pull request #90\n");
+}
+
+/// The pull request of a design adds requirements with no test, and an
+/// ID of the history page at the merge base is no new ID. Neither one
+/// reads the tarball.
+#[test]
+fn a_design_and_a_move_back_from_the_history_page_need_no_name() {
+    let id = reqs::new_id();
+    let new = format!("{REQUIREMENTS}- **{id}** Three.\n");
+    let pr = pr_json(GOOD, Some("Wave 3"));
+    let mut design = issue_json(77, "OPEN", Some("Wave 3"));
+    design["labels"] =
+        serde_json::json!([{"id": "x", "name": "design", "description": "", "color": "fff"}]);
+    let gh = fake_gh_with(&pr, &[design], REQUIREMENTS, &new);
+    let out = hygiene(&["pr", "90"], Some(gh.path()), None);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+
+    let issues = [issue_json(77, "OPEN", Some("Wave 3"))];
+    let back = fake_gh_with(&pr, &issues, REQUIREMENTS, &new);
+    std::fs::write(
+        back.path().join("requirements-history-fork.md"),
+        format!("- **{id}** Three.\n"),
+    )
+    .unwrap();
+    let out = hygiene(&["pr", "90"], Some(back.path()), None);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+
+    for gh in [gh, back] {
+        let calls = std::fs::read_to_string(gh.path().join("calls.txt")).unwrap();
+        assert!(!calls.contains("/tarball/"), "{calls}");
+    }
+}
+
+#[test]
+fn a_pull_request_whose_tarball_gh_cannot_read_is_a_tool_error() {
+    let id = reqs::new_id();
+    let new = format!("{REQUIREMENTS}- **{id}** Three.\n");
+    let gh = fake_gh_with(
+        &pr_json(GOOD, Some("Wave 3")),
+        &[issue_json(77, "OPEN", Some("Wave 3"))],
+        REQUIREMENTS,
+        &new,
+    );
+    let out = hygiene(&["pr", "90"], Some(gh.path()), None);
+    assert_eq!(out.status.code(), Some(2), "{}", text(&out.stderr));
+    assert!(
+        text(&out.stderr).contains("error: gh api repos/{owner}/{repo}/tarball/head"),
+        "{}",
+        text(&out.stderr)
+    );
 }
 
 #[test]

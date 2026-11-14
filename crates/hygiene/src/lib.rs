@@ -52,12 +52,22 @@
 //!   reads `docs/src/requirements.md` at the merge base and at the head
 //!   of the pull request, and runs [`check_requirements`] on the two
 //!   texts (`in-part`).
+//! - A pull request that adds a requirement also adds its test: a file
+//!   under `crates/` names the new ID (01M7CF3P17SDFBB5MY5TP3QXVM). So
+//!   `hygiene pr` also reads `docs/src/requirements-history.md` at the
+//!   merge base, and finds each new ID ([`unnamed_ids`]). For each one,
+//!   it reads the files of the head, and runs [`check_unnamed`]
+//!   (`unnamed`). The pull request of a design does not get the rule
+//!   ([`DESIGN`]).
 //!
 //! `hygiene pr N` reads pull request N and its issue with `gh`, and runs
-//! [`check_pr`]. It reads the two texts of the requirements with
-//! `gh api`, and runs [`check_requirements`]. `hygiene commit [REV]`
-//! reads the message of a commit with `git`, and runs [`check_commit`].
-//! Each error names its rule:
+//! [`check_pr`]. It reads the three texts of the requirements ([`Pages`])
+//! with `gh api`, and runs [`check_requirements`] and [`unnamed_ids`].
+//! When a new ID is there, it reads the tarball of the head with `gh
+//! api`, unpacks it with `tar`, and runs [`check_unnamed`]. So it needs
+//! no clone of the pull request. `hygiene commit [REV]` reads the message
+//! of a commit with `git`, and runs [`check_commit`]. Each error names
+//! its rule:
 //!
 //! | Rule | Finds |
 //! |---|---|
@@ -71,6 +81,7 @@
 //! | `issue-open` | An issue that is closed. |
 //! | `commit-title` | A commit title that does not end with `(#PR)`, or that names the issue in place of the pull request. |
 //! | `in-part` | A pull request that supersedes a requirement in part, and leaves its text as it was. The error names the two IDs. |
+//! | `unnamed` | A pull request that adds a requirement ID that no file under `crates/` names at its head. The error names the ID. The pull request of an issue with the label `design` does not get the rule. |
 //!
 //! ```
 //! use hygiene::{Issue, PullRequest};
@@ -269,7 +280,8 @@ impl PullRequest {
     }
 }
 
-/// An issue, as `gh issue view --json number,state,milestone` gives it.
+/// An issue, as `gh issue view --json number,state,milestone,labels`
+/// gives it.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Issue {
     /// The number.
@@ -278,18 +290,53 @@ pub struct Issue {
     pub state: String,
     /// The milestone, or `None`.
     pub milestone: Option<Milestone>,
+    /// The labels, for example [`DESIGN`].
+    #[serde(default)]
+    pub labels: Vec<Label>,
+}
+
+/// A label, as `gh --json labels` gives it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Label {
+    /// The name, for example `design`.
+    pub name: String,
 }
 
 impl Issue {
-    /// An issue with a number, a state and a milestone.
+    /// An issue with a number, a state and a milestone, and no label.
     pub fn new(number: u64, state: &str, milestone: Option<&str>) -> Self {
         Self {
             number,
             state: state.to_owned(),
             milestone: milestone.map(milestone_of),
+            labels: Vec::new(),
         }
     }
+
+    /// The same issue with one more label `name`.
+    pub fn with_label(mut self, name: &str) -> Self {
+        self.labels.push(Label {
+            name: name.to_owned(),
+        });
+        self
+    }
+
+    /// True when the issue has the label `name`.
+    ///
+    /// ```
+    /// let issue = hygiene::Issue::new(579, "OPEN", None).with_label(hygiene::DESIGN);
+    /// assert!(issue.has_label("design"));
+    /// assert!(!issue.has_label("bug"));
+    /// ```
+    pub fn has_label(&self, name: &str) -> bool {
+        self.labels.iter().any(|label| label.name == name)
+    }
 }
+
+/// The label of a design issue. Its pull request adds requirements before
+/// its build items add their tests, so it does not get the rule
+/// `unnamed` ([`unnamed_ids`]).
+pub const DESIGN: &str = "design";
 
 fn milestone_of(title: &str) -> Milestone {
     Milestone {
@@ -768,6 +815,7 @@ pub fn check_pr(pr: &PullRequest, issue: Option<&Issue>) -> Vec<Error> {
 /// assert!(Rules::All.applies("milestone"));
 /// assert!(Rules::Read.applies("link") && Rules::Read.applies("issue-trailer"));
 /// assert!(!Rules::Read.applies("title"));
+/// assert!(Rules::All.applies("unnamed") && !Rules::Read.applies("unnamed"));
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Rules {
@@ -942,6 +990,94 @@ pub fn check_requirements(old: &str, new: &str) -> Vec<Error> {
                 format!(
                     "{by} supersedes {id} in part, and the text of {id} in {} stays as it was; \
                      cut {id} to the part that holds, in the same change",
+                    reqs::REQUIREMENTS
+                ),
+            )
+        })
+        .collect()
+}
+
+/// The pages of the requirements that `hygiene pr` reads of a pull
+/// request, with `gh api`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Pages {
+    /// The text of [`reqs::REQUIREMENTS`] at the merge base.
+    pub old: String,
+    /// The text of [`reqs::HISTORY`] at the merge base.
+    pub history: String,
+    /// The text of [`reqs::REQUIREMENTS`] at the head.
+    pub new: String,
+}
+
+/// The folder of the code and the tests: a file in it names each new
+/// requirement (`unnamed`).
+pub const CRATES: &str = "crates/";
+
+/// The new requirement IDs of a pull request that the rule `unnamed`
+/// checks (01M7CF3P17SDFBB5MY5TP3QXVM): each ID of `pages.new` that
+/// neither page has at the merge base ([`reqs::added`]). A move of a
+/// requirement to the history page, a cut and a new wrap add no ID.
+/// None with `rules` that do not have the rule: a repository that is not
+/// riff does not get it ([`Rules::Read`]). None when `issue` has the label
+/// [`DESIGN`]: a design adds its requirements before its build items.
+///
+/// `hygiene pr` reads the files of the head only when this list is not
+/// empty, and then runs [`check_unnamed`].
+///
+/// ```
+/// use hygiene::{Issue, Pages, Rules};
+///
+/// let id = reqs::new_id();
+/// let pages = Pages {
+///     old: "- **R1** One.\n".into(),
+///     history: String::new(),
+///     new: format!("- **R1** One.\n- **{id}** Two.\n"),
+/// };
+/// let issue = Issue::new(77, "OPEN", Some("Wave 3"));
+/// assert_eq!(hygiene::unnamed_ids(Rules::All, Some(&issue), &pages), [id.as_str()]);
+/// assert!(hygiene::unnamed_ids(Rules::Read, Some(&issue), &pages).is_empty());
+/// let design = issue.with_label(hygiene::DESIGN);
+/// assert!(hygiene::unnamed_ids(Rules::All, Some(&design), &pages).is_empty());
+/// ```
+pub fn unnamed_ids<'a>(rules: Rules, issue: Option<&Issue>, pages: &'a Pages) -> Vec<&'a str> {
+    if !rules.applies("unnamed") || issue.is_some_and(|issue| issue.has_label(DESIGN)) {
+        return Vec::new();
+    }
+    reqs::added(&pages.old, &pages.history, &pages.new)
+}
+
+/// Checks that a file under [`CRATES`] names each of the new requirement
+/// IDs `ids` ([`unnamed_ids`]), so a test holds each new requirement
+/// (01M7CF3P17SDFBB5MY5TP3QXVM). `files` holds the files of the head of
+/// the pull request: each one a path from the top of the repository, and
+/// its text. A file names an ID when it has it as a word
+/// ([`reqs::names`]). A file outside [`CRATES`], for example a page of
+/// the book, does not count. Returns an error of the rule `unnamed` for
+/// each ID that no file names, and the error names the ID.
+///
+/// ```
+/// let id = reqs::new_id();
+/// let errors = hygiene::check_unnamed(&[&id], &[("docs/src/x.md", &id)]);
+/// assert_eq!(errors.len(), 1);
+/// assert_eq!(errors[0].rule, "unnamed");
+/// assert!(errors[0].text.starts_with(&format!("{id} is a new requirement")));
+///
+/// let test = format!("/// {id}: the test.\n#[test]\nfn it_holds() {{}}\n");
+/// assert!(hygiene::check_unnamed(&[&id], &[("crates/x/src/lib.rs", &test)]).is_empty());
+/// ```
+pub fn check_unnamed(ids: &[&str], files: &[(&str, &str)]) -> Vec<Error> {
+    ids.iter()
+        .filter(|id| {
+            !files
+                .iter()
+                .any(|(path, text)| path.starts_with(CRATES) && reqs::names(text, id))
+        })
+        .map(|id| {
+            Error::new(
+                "unnamed",
+                format!(
+                    "{id} is a new requirement in {}, and no file under {CRATES} names it at the \
+                     head of the pull request; name {id} in the test that holds it",
                     reqs::REQUIREMENTS
                 ),
             )
@@ -1582,6 +1718,144 @@ mod tests {
             ["Co-authored-by: GLM-5.3-Flash <noreply@z.ai>"]
         );
         assert_eq!(check_pr(&pr, Some(&open(Some("Wave 3")))), []);
+    }
+
+    /// The requirements at the merge base: R1 of two sentences, and R2.
+    const OLD: &str = "## A\n\n- **R1** The old rule. It has\n  two parts.\n- **R2** Other.\n";
+
+    /// The errors of the rule `unnamed` of a pull request of `issue`, with
+    /// the pages `pages` and the files `files` at its head.
+    fn unnamed(rules: Rules, issue: &Issue, pages: &Pages, files: &[(&str, &str)]) -> Vec<Error> {
+        check_unnamed(&unnamed_ids(rules, Some(issue), pages), files)
+    }
+
+    /// The pages of a pull request that adds the requirement `id` to `OLD`.
+    fn adds(id: &str) -> Pages {
+        Pages {
+            old: OLD.to_owned(),
+            history: String::new(),
+            new: format!("{OLD}- **{id}** The new rule.\n"),
+        }
+    }
+
+    /// 01M7CF3P17SDFBB5MY5TP3QXVM: a new requirement that no file under
+    /// `crates/` names fails, and the error names the ID. A file under
+    /// `crates/` that names it passes; a page of the book does not count.
+    #[test]
+    fn a_new_requirement_that_no_file_under_crates_names_fails() {
+        let id = reqs::new_id();
+        let pages = adds(&id);
+        let issue = open(Some("Wave 3"));
+        let book = format!("See {id}.\n");
+        let errors = unnamed(Rules::All, &issue, &pages, &[("docs/src/x.md", &book)]);
+        assert_eq!(
+            errors,
+            [Error::new(
+                "unnamed",
+                format!(
+                    "{id} is a new requirement in docs/src/requirements.md, and no file under \
+                     crates/ names it at the head of the pull request; name {id} in the test \
+                     that holds it"
+                )
+            )]
+        );
+
+        let test = format!("/// {id}: the new rule.\n#[test]\nfn the_new_rule_holds() {{}}\n");
+        let files = [
+            ("docs/src/x.md", book.as_str()),
+            ("crates/x/src/lib.rs", test.as_str()),
+        ];
+        assert_eq!(unnamed(Rules::All, &issue, &pages, &files), []);
+    }
+
+    #[test]
+    fn each_new_requirement_needs_its_own_name() {
+        let (one, two) = (reqs::new_id(), reqs::new_id());
+        let pages = Pages {
+            new: format!("{OLD}- **{one}** One.\n- **{two}** Two, like {one}.\n"),
+            ..adds(&one)
+        };
+        let test = format!("// {one}\n");
+        let errors = unnamed(
+            Rules::All,
+            &open(Some("Wave 3")),
+            &pages,
+            &[("crates/x/tests/all.rs", &test)],
+        );
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].text.starts_with(&two), "{errors:?}");
+    }
+
+    /// A move to the history page, a move back, a cut and a new wrap add no
+    /// requirement, so no file needs to name it.
+    #[test]
+    fn a_move_a_cut_and_a_new_wrap_give_no_error() {
+        let issue = open(Some("Wave 3"));
+        let moved = Pages {
+            old: OLD.to_owned(),
+            history: String::new(),
+            new: "## A\n\n- **R1** The old rule. It has\n  two parts.\n".to_owned(),
+        };
+        let cut = Pages {
+            new: "## A\n\n- **R1** The old rule.\n- **R2** Other.\n".to_owned(),
+            ..moved.clone()
+        };
+        let wrapped = Pages {
+            new: "## A\n\n- **R1** The old\n  rule. It has two parts.\n- **R2**\n  Other.\n"
+                .to_owned(),
+            ..moved.clone()
+        };
+        let back = Pages {
+            old: "## A\n\n- **R1** The old rule. It has\n  two parts.\n".to_owned(),
+            history: "## A\n\n- **R2** Other.\n".to_owned(),
+            new: OLD.to_owned(),
+        };
+        for (what, pages) in [
+            ("a move", moved),
+            ("a cut", cut),
+            ("a new wrap", wrapped),
+            ("a move back", back),
+        ] {
+            assert_eq!(
+                unnamed_ids(Rules::All, Some(&issue), &pages),
+                Vec::<&str>::new(),
+                "{what}"
+            );
+            assert_eq!(unnamed(Rules::All, &issue, &pages, &[]), [], "{what}");
+        }
+    }
+
+    /// A design adds its requirements before its build items add the
+    /// tests.
+    #[test]
+    fn the_pull_request_of_a_design_gets_no_error_of_unnamed() {
+        let id = reqs::new_id();
+        let design = open(Some("Wave 3")).with_label("bug").with_label(DESIGN);
+        assert_eq!(unnamed(Rules::All, &design, &adds(&id), &[]), []);
+        let build = open(Some("Wave 3")).with_label("bug");
+        assert_eq!(unnamed(Rules::All, &build, &adds(&id), &[]).len(), 1);
+    }
+
+    #[test]
+    fn a_repository_that_is_not_riff_does_not_get_the_rule_unnamed() {
+        let id = reqs::new_id();
+        let issue = open(Some("Wave 3"));
+        assert!(!Rules::Read.applies("unnamed"));
+        assert_eq!(unnamed(Rules::Read, &issue, &adds(&id), &[]), []);
+        assert_eq!(unnamed(Rules::All, &issue, &adds(&id), &[]).len(), 1);
+    }
+
+    #[test]
+    fn gh_json_of_an_issue_has_its_labels() {
+        let json = r#"{
+            "number": 579, "state": "CLOSED", "milestone": {"title": "Wave 59"},
+            "labels": [{"id": "x", "name": "design", "description": "", "color": "fff"}]
+        }"#;
+        let issue: Issue = serde_json::from_str(json).unwrap();
+        assert!(issue.has_label(DESIGN));
+        let json = r#"{"number": 1, "state": "OPEN", "milestone": null}"#;
+        let issue: Issue = serde_json::from_str(json).unwrap();
+        assert!(issue.labels.is_empty());
     }
 
     #[test]

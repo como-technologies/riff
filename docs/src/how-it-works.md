@@ -3248,7 +3248,7 @@ place:
 |---|---|
 | A check of each criterion of the `Done when:` line, and the Gate | Each verify, as this section says. The verify reads the Gate, and does not run it again. |
 | A control: a test that finds the fault | The prompt of each verify. Today the prompt does not give it: [#1871](https://github.com/como-technologies/riff/issues/1871) puts it back. |
-| A test for each new requirement | The job `Hygiene` of each pull request: [#2116](https://github.com/como-technologies/riff/issues/2116) adds the check. |
+| A test for each new requirement | The job `Hygiene` of each pull request, with the rule `unnamed`: see [Name a new requirement in a test](development.md#name-a-new-requirement-in-a-test). |
 | An adversarial review: what can break, invalid states, round trips, the docs and security | The council of the verify, a design: see [The council of a verify](#the-council-of-a-verify). |
 | A person and a risk level | The gates before the code and the sign-off of a person, a design: [#585](https://github.com/como-technologies/riff/issues/585). |
 | Another model | None. Each session runs on the model of `riff.toml`: see [Set the model of the sessions](development.md#set-the-model-of-the-sessions). A verify has its own effort: see [Set the effort of the sessions](development.md#set-the-effort-of-the-sessions). |

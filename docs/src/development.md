@@ -5673,6 +5673,52 @@ the same ID, also one on each page, or when a file cites an ID that no
 requirement has on either page. It warns when a new ID does not have
 that form, for example the next `R` number.
 
+### Name a new requirement in a test
+
+Each new requirement gets a test. Write the ID of the requirement in
+its test, or in the rustdoc of the code that holds it, in a file under
+`crates/`:
+
+```rust,ignore
+/// 01M7CF3P17SDFBB5MY5TP3QXVM: a new requirement that no file under
+/// `crates/` names fails.
+#[test]
+fn a_new_requirement_that_no_file_under_crates_names_fails() {
+```
+
+The job `Hygiene` fails a new requirement that no file under `crates/`
+names, with the rule `unnamed`. A new requirement has an ID of
+`docs/src/requirements.md` at the head of the pull request that neither
+page of the requirements has at the merge base. So a move to the
+history page, a cut and a new wrap add no new requirement. The error
+names each new ID that no file under `crates/` names at the head. A
+page of the book does not count.
+
+The pull request of an issue with the label `design` does not get the
+rule: a design adds its requirements before its build items add the
+tests.
+
+```mermaid
+flowchart LR
+    B["both pages at the merge base"] --> N{"an ID of requirements.md<br/>at the head that is new?"}
+    H["requirements.md at the head"] --> N
+    N -- no --> K[ok]
+    N -- yes --> D{"the issue has the label design?"}
+    D -- yes --> K
+    D -- no --> C{"a file under crates/<br/>at the head names it?"}
+    C -- yes --> K
+    C -- no --> E["unnamed: names the ID"]
+```
+
+To check your pull request before the job runs, give its number:
+
+```sh
+just hygiene pr 90
+```
+
+The check reads the files of the head with `gh api`, so you need no
+clone of the pull request.
+
 ### Supersede a requirement in part
 
 A new requirement can replace only a part of an old one. Say so in the
@@ -5953,6 +5999,9 @@ Each error names its rule. The
 [API docs of hygiene](api/hygiene/index.html) list the rules. The rule
 `in-part` checks the requirements of the pull request (see
 [Supersede a requirement in part](#supersede-a-requirement-in-part)).
+The rule `unnamed` checks that a file under `crates/` names each new
+requirement (see
+[Name a new requirement in a test](#name-a-new-requirement-in-a-test)).
 
 GitHub runs no check on a pull request that has a conflict with
 `main`. When `Hygiene` does not run, rebase your branch on `main` and
@@ -6027,6 +6076,7 @@ it.
 | `trailer-wrap` | A trailer line over 72 characters | no | holds |
 | `milestone` | A pull request or an issue with no milestone | no | holds |
 | `issue-open` | An issue that is closed | no | holds |
+| `unnamed` | A new requirement that no file under `crates/` names | no | holds |
 
 With `rules = "riff"`, the body that `riff pr open` writes has the
 trailer `Milestone:`, and a title that ends with `(#12)` breaks a rule.
@@ -6035,7 +6085,9 @@ In a repository with no table, `riff pr open` writes no trailer
 milestone of the issue when the issue has one, and it opens a pull
 request for an issue with no milestone. `riff pr open --help` says the
 same. The job `Hygiene` of the CI of riff runs each rule on each pull
-request of riff, whatever `riff.toml` says.
+request of riff, whatever `riff.toml` says. Only the job `Hygiene` and
+`just hygiene pr` check `unnamed`: `riff pr open` reads no file of the
+pull request.
 
 To ask for each rule in your repository, add the table to `riff.toml`
 and merge it with a pull request:
