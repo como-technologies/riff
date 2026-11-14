@@ -370,13 +370,62 @@ hold each decision of the design.
 | `/tmp` | Each container has its own `/tmp`. It goes when the session ends. | Nothing. |
 | The ports | Each container has its own loopback. A test port of one session does not hit another. | It can reach a port that listens on the network of your machine, as each program on it can. |
 | The caches | riff sets no cache. A repository names its cache volumes in `riff.toml`. The `riff.toml` of riff names one volume for `CARGO_HOME` and one for the folder of sccache. Both are bound with write. The tools lock them themselves. The toolchain is in the image, with no write. A new clone has no `target/`: a warm sccache makes its build short. | It can write a bad file in a cache, and a later build of another session uses it. |
-| Your home | The home of the container is an empty tmpfs at the path of your home. riff binds your `~/.gitconfig` and the Claude folder of the session on top of it. Each folder above a bind belongs to the session user: see [The folders of the home above a volume](development.md#the-folders-of-the-home-above-a-volume). Each other write in that home goes when the session ends. riff writes nothing in your home outside its own folders. It does not write `~/.claude`, `~/.claude.json`, a git config or a shell file. | It reads `~/.gitconfig`. It does not see `~/.config/gh`. |
+| Your home | The home of the container is an empty tmpfs at the path of your home, in memory: see [The home of a session is in memory](#the-home-of-a-session-is-in-memory). riff binds your `~/.gitconfig` and the Claude folder of the session on top of it. Each folder above a bind belongs to the session user: see [The folders of the home above a volume](development.md#the-folders-of-the-home-above-a-volume). Each other write in that home goes when the session ends. riff writes nothing in your home outside its own folders. It does not write `~/.claude`, `~/.claude.json`, a git config or a shell file. | It reads `~/.gitconfig`. It does not see `~/.config/gh`. |
 | The CPU | Each container gets `--cpus`, 8 by default. riff sets no build jobs: a tool reads the CPUs of its container. `riff daemon limit --cpus N` sets it for the host. The daemon keeps one limit for the host: the number of live sessions, at most 3 by default. Each process of a container runs at the lowest CPU priority: see [The priority of a session](development.md#the-priority-of-a-session). | A build of one session makes the builds of the others slower, up to its limit. |
 | The memory | Each container gets `--memory`, 8 GB by default. `riff daemon limit --memory GB` sets it for the host. A session past its limit loses its own processes, not those of another session. The daemon starts no new session while the free memory is below a floor, 8 GB by default. | It takes memory, up to its limit, that a new session needs. |
 | The network | Each session reaches the internet, as a plain `claude` does. No proxy and no filter. | It uses the same connection and reaches each service that your machine reaches. |
 | The sign-in of `gh` | The session acts on GitHub as a bot of a GitHub App of the riff, with a token for its one repository and the rights of its role: see [Who acts on GitHub for each role](#who-acts-on-github-for-each-role). The container never gets your token. Where the Apps are not on the repository, no worker and no verify starts, and the lead starts with no token on GitHub: see [Repair riff with claude on the host](#repair-riff-with-claude-on-the-host). The image has `gh` at `/usr/bin/gh`. The daemon binds the binary of riff at `/usr/local/bin/gh`: it counts each call for `riff daemon status` (see [See how the daemon uses the GitHub limit](development.md#see-how-the-daemon-uses-the-github-limit)), and runs the real `gh`. An image with its own `gh` at `/usr/local/bin/gh` gets no bind: its `gh` runs as it is, with no count. No secret goes into a log line, a message or a file of a clone. | A worker can change an issue or a comment of another session: the right `issues: write` has no smaller part. The guard puts the change back: see [Add to an issue](#add-to-an-issue). |
 | The sign-in of `claude` | Each session has its own Claude folder in a folder of riff. riff trusts the clone of the session there, as you trust the main clone. The daemon gives the session the long-lived token of `riff claude-token`, kept in the OS keyring, in `CLAUDE_CODE_OAUTH_TOKEN`. With no token, riff binds your `~/.claude/.credentials.json` with no write, and starts no session while its access token has less than 60 minutes left. riff never changes your own Claude config. | It uses the limits of your plan that another session needs. |
 | The daemon and the riff tools | Each relay talks to the daemon through its own Unix socket, in a folder that only that session sees. The socket tells the daemon which session asks. The daemon serves the riff tools of the session on riff-server, as its worker session. A session gets only the riff tools that talk: `whoami`, `who`, `threads`, `read`, `post`, `tell`, `status` and `blocked`. No riff tool of a session acts on a folder of your machine or on a claim. The admin steps need a person at the CLI. No riff tool does them. | It can send messages to other sessions through the riff tools. |
+
+### The home of a session is in memory
+
+The home of a session is a tmpfs: its files are in the memory of the
+container, and count against its `--memory`. Each folder above a bind
+is a tmpfs of its own: for example `~/.cache`, `~/.local/share`, and
+the folder of the session above `clone/`. Each of these tmpfs holds
+1 GiB at most. A write over that size fails at once with "No space left
+on device", and the error names the file. So a large tree in the home
+does not fill the memory, and the kernel kills no build with signal 9.
+
+A session writes little in its home: the logs of `claude` in
+`~/.cache/claude-cli-nodejs`, the state of `gh` in `~/.local/state/gh`,
+and the files of a tool that has no volume. A large tree goes on the
+disk:
+
+| Where | What goes there | When it goes |
+|---|---|---|
+| The clone, `clone/` | The work of the item, and its build, for example `target/`. | When the item ends, after its push. |
+| `/tmp` | A second worktree, or another large build tree. | When the session ends. |
+| A volume of `riff.toml` | A large cache of a tool, for example `CARGO_HOME`: see [Set the env and the volumes of a session](development.md#set-the-env-and-the-volumes-of-a-session). | Never: the next sessions use it. |
+
+```mermaid
+flowchart TD
+    S["a session"] --> H["its home: a tmpfs for each folder,<br/>in memory, 1 GiB each"]
+    S --> C["clone/: on the disk"]
+    S --> T["/tmp: on the disk"]
+    S --> V["the volumes of riff.toml: on the disk"]
+    H -- "a write over 1 GiB" --> E["No space left on device"]
+```
+
+### Make a second worktree in a session
+
+The start text of each work session and of each verify says where a
+second worktree or another large build tree goes: in `/tmp`. To make
+one, run this in the clone of a session:
+
+```sh
+git worktree add /tmp/second origin/main
+```
+
+To see where each folder is, run this in the clone of a session:
+
+```sh
+df -h ~ .. . /tmp
+```
+
+The home `~` and the folder of the session `..` show `tmpfs` with a
+size of 1.0G. The clone `.` and `/tmp` show the disk.
 
 ## Where the env of a session comes from
 
