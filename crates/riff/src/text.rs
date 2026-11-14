@@ -13504,6 +13504,31 @@ pub fn wave_checks_rerun(
 /// (01M5R580VCRCHJM8FY7NT485R1, 01M5RN89WH3PHV3BHMJ25T3SX4). It has no
 /// part for a release pull request (01M76SBPDSGS0SATQV9RA1FRG1).
 ///
+/// After the control, it gives each step of the council of the pull
+/// request (01M7CFBNAKQ0CKCCY9S7WM62FE, 01M7CFBZQ0QNE65WBQ31FSDWGR). The
+/// verifier picks the council with `riff council show`, by the path of
+/// its riff in the container ([`crate::daemon::RELAY_BIN`]). It starts
+/// one subagent for each member, on the model of its session. Each
+/// subagent reads only, and gives its findings with the file, the line
+/// and the rule. The verifier checks each finding in the code: a finding
+/// that it shows fails the verify, and one that it cannot show goes in
+/// the result as not shown. The result has the part `## The council`,
+/// with one line for each member in the form of
+/// 01M7CX5BTPFX77KS5J87C7GBY2, and a live security fault goes to the
+/// lead, not into the result (01M7CFBZSQEEZNZBR9H1S54GS1).
+///
+/// ```mermaid
+/// flowchart TD
+///     C["5. each criterion, 6. a control"] --> S["7. riff council show PR"]
+///     S --> A["8. one subagent for each member:<br/>its text, the diff, the rules"]
+///     A --> F["the findings: the file, the line, the rule"]
+///     F --> K{"9. the verifier shows it<br/>in the code?"}
+///     K -- "yes" --> X["shown: the verify fails"]
+///     K -- "no" --> N["not shown"]
+///     X --> R["11. the result, with the part ## The council"]
+///     N --> R
+/// ```
+///
 /// ```
 /// let checks = ["CI".to_owned()];
 /// let text = riff::text::wave_verify_start("o/r", "master", 12, 40, "1a2b3c4d5e6f", &checks);
@@ -13526,6 +13551,10 @@ pub fn wave_checks_rerun(
 /// assert!(text.contains(riff::text::VERIFY_CI_TESTS));
 /// // The control, never by an edit of the code (01M5174ASF376JDNBQ4423TTAR).
 /// assert!(text.contains(&format!("\n6. {}\n", riff::text::verify_control("master", "1a2b3c4d5e6f"))));
+/// // The council, after the control (01M7CFBNAKQ0CKCCY9S7WM62FE).
+/// assert!(text.contains("\n7. Pick the council of the pull request: /opt/riff/riff council show 40\n"));
+/// assert!(text.contains("start one subagent for each member with the Agent tool"));
+/// assert!(text.contains("Then the part `## The council`, with one line for each member of the council"));
 /// let two = ["Lint".to_owned(), "Test".to_owned()];
 /// let text = riff::text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4d5e6f", &two);
 /// assert!(text.contains("was done: the checks Lint, Test."));
@@ -13584,13 +13613,31 @@ pub fn wave_verify_start(
          5. Check each criterion: review the code and its fit with the design, read the test \
          of each criterion, and run that test by its name when you must.{build}\n\
          6. {control}\n\
-         7. {VERIFY_READS_ONLY} Run each test in the foreground, and wait for its end. Never \
+         7. Pick the council of the pull request: /opt/riff/riff council show {pull}\n   \
+         It prints each member of the council, why it joins, and the text of its file.\n\
+         8. Run the council: start one subagent for each member with the Agent tool, all at the \
+         same time. Give each subagent the model of this session, the text of its member, the \
+         diff of the pull request (git diff origin/{base}...HEAD) and the rules of the \
+         repository for agents. Each subagent reads only, and changes nothing. Each member \
+         gives its findings, each with the file, the line and the rule: the member file and \
+         the heading of the rule. Wait for the findings of each member.\n\
+         9. Check each finding in the code. A finding that you show, with a test, a run or a \
+         read of the code, fails the verify. A finding that you cannot show goes in the result \
+         as not shown, and does not fail the verify.\n\
+         10. {VERIFY_READS_ONLY} Run each test in the foreground, and wait for its end. Never \
          end a turn while a background task runs: a session does not continue after its \
          result.\n\
-         8. Your last reply is the result, in markdown, and nothing else. The first line is \
+         11. Your last reply is the result, in markdown, and nothing else. The first line is \
          PASS or FAIL. Then each criterion: for a pass, what you did to check it; for a fail, \
-         the steps to see the failure. The result is public: it holds no secret and no security \
-         fault. Tell the lead a security fault with the riff tool tell.\n\n\
+         the steps to see the failure. Then the part `## The council`, with one line for each \
+         member of the council: its findings, each after shown or not shown, or no finding. \
+         For example:\n   \
+         - design: no finding.\n   \
+         - rust: shown: src/main.rs:40: .riff/council/rust.md \"Each conversion names each \
+         field\": the match skips a field.\n   \
+         The result is public: it holds no secret and no security fault. Tell the lead a \
+         security fault with the riff tool tell. A live security fault that a member finds goes \
+         to the lead too, not into the result.\n\n\
          Do not print the environment or a token."
     )
 }
@@ -15793,8 +15840,9 @@ mod tests {
             let order = [
                 "\n5. Check each criterion",
                 "\n6. Run a control",
-                "\n7. Do not commit",
-                "\n8. Your last reply is the result",
+                "\n7. Pick the council",
+                "\n10. Do not commit",
+                "\n11. Your last reply is the result",
             ]
             .map(|step| {
                 text.find(step)
@@ -15803,6 +15851,94 @@ mod tests {
             assert!(order.is_sorted(), "{text}");
             assert_eq!(text.matches("Run a control").count(), 1, "{text}");
         }
+    }
+
+    /// #2121 (01M7CFBNAKQ0CKCCY9S7WM62FE, 01M7CFBZQ0QNE65WBQ31FSDWGR,
+    /// 01M7CFBZSQEEZNZBR9H1S54GS1): the start text of a verify of the
+    /// wave gives each step of the council, with CI and with no CI, after
+    /// the control. Step 7 picks the council with `riff council show`, by
+    /// the path of the riff of the container. Step 8 starts one subagent
+    /// for each member, on the model of the session: each reads only, and
+    /// gives its findings with the file, the line and the rule. Step 9
+    /// checks each finding: a finding that the verifier shows fails the
+    /// verify, and one that it cannot show goes in the result as not
+    /// shown. The result has the part `## The council`, with an example
+    /// of the line of a member (01M7CX5BTPFX77KS5J87C7GBY2), and a live
+    /// security fault that a member finds goes to the lead.
+    #[test]
+    fn the_start_text_of_a_verify_runs_the_council() {
+        let step = |text: &str, n: u8| -> String {
+            text.split(&format!("\n{n}. "))
+                .nth(1)
+                .and_then(|rest| rest.split(&format!("\n{}. ", n + 1)).next())
+                .unwrap_or_else(|| panic!("no step {n} in\n{text}"))
+                .to_owned()
+        };
+        let checks = ["CI".to_owned()];
+        for checks in [&checks[..], &[][..]] {
+            let text = wave_verify_start("o/r", "trunk", 12, 40, "1a2b3c4d5e", checks);
+            assert_eq!(
+                step(&text, 7),
+                "Pick the council of the pull request: /opt/riff/riff council show 40\n   It \
+                 prints each member of the council, why it joins, and the text of its file."
+            );
+            let eight = step(&text, 8);
+            for words in [
+                "Run the council: start one subagent for each member with the Agent tool, all \
+                 at the same time.",
+                "Give each subagent the model of this session, the text of its member, the diff \
+                 of the pull request (git diff origin/trunk...HEAD) and the rules of the \
+                 repository for agents.",
+                "Each subagent reads only, and changes nothing.",
+                "Each member gives its findings, each with the file, the line and the rule: the \
+                 member file and the heading of the rule.",
+                "Wait for the findings of each member.",
+            ] {
+                assert!(eight.contains(words), "no {words:?} in {eight}");
+            }
+            assert_eq!(
+                step(&text, 9),
+                "Check each finding in the code. A finding that you show, with a test, a run or \
+                 a read of the code, fails the verify. A finding that you cannot show goes in the \
+                 result as not shown, and does not fail the verify."
+            );
+            let result = text
+                .split("\n11. ")
+                .nth(1)
+                .unwrap_or_else(|| panic!("no step 11 in\n{text}"));
+            let at = |words: &str| {
+                result
+                    .find(words)
+                    .unwrap_or_else(|| panic!("no {words:?} in {result}"))
+            };
+            let criteria = at("Then each criterion");
+            let part = at(
+                "Then the part `## The council`, with one line for each member of \
+                 the council: its findings, each after shown or not shown, or no finding.",
+            );
+            let none = at("\n   - design: no finding.\n");
+            let shown = at(
+                "\n   - rust: shown: src/main.rs:40: .riff/council/rust.md \"Each \
+                 conversion names each field\": the match skips a field.\n",
+            );
+            let live = at(
+                "A live security fault that a member finds goes to the lead too, not \
+                 into the result.",
+            );
+            assert!(criteria < part && part < none && none < shown && shown < live);
+            assert_eq!(text.matches("## The council").count(), 1, "{text}");
+        }
+        // The rule of the example is a rule of the default set.
+        let rust = crate::council::default_set()
+            .unwrap()
+            .into_iter()
+            .find(|m| m.name.as_str() == "rust")
+            .unwrap();
+        assert!(
+            rust.rules
+                .iter()
+                .any(|r| r.heading == "Each conversion names each field")
+        );
     }
 
     /// #1633 (01M6QFZ9JHR19Y8F1PWH2HVQ07): the start routine in the MCP

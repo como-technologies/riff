@@ -3185,7 +3185,7 @@ sequenceDiagram
     E->>V: wake
     V->>E: claim verify-issue-6
     E-->>V: granted
-    V->>V: check out the commit, test each criterion
+    V->>V: check out the commit, test each criterion, run the council
     V->>G: riff verify: the squash message of a pass, comment the result, set riff/verify
     V->>E: riff verify: post to [claim=issue-6] the result
     V->>E: release verify-issue-6
@@ -3249,7 +3249,7 @@ place:
 | A check of each criterion of the `Done when:` line, and the Gate | Each verify, as this section says. The verify reads the Gate, and does not run it again. |
 | A control: a test that finds the fault | The prompt of each verify. Today the prompt does not give it: [#1871](https://github.com/como-technologies/riff/issues/1871) puts it back. |
 | A test for each new requirement | The job `Hygiene` of each pull request, with the rule `unnamed`: see [Name a new requirement in a test](development.md#name-a-new-requirement-in-a-test). |
-| An adversarial review: what can break, invalid states, round trips, the docs and security | The council of the verify, a design: see [The council of a verify](#the-council-of-a-verify). |
+| An adversarial review: what can break, invalid states, round trips, the docs and security | The council of each verify: see [The council of a verify](#the-council-of-a-verify). |
 | A person and a risk level | The gates before the code and the sign-off of a person, a design: [#585](https://github.com/como-technologies/riff/issues/585). |
 | Another model | None. Each session runs on the model of `riff.toml`: see [Set the model of the sessions](development.md#set-the-model-of-the-sessions). A verify has its own effort: see [Set the effort of the sessions](development.md#set-the-effort-of-the-sessions). |
 | A second verify | None. A head commit gets one verify that passes. The council gives the second view. |
@@ -3378,35 +3378,56 @@ just test NAME
 
 ### The council of a verify
 
-This part is the design of #581. Its first two build items are done:
-riff reads the member files, `riff council list` lists the members, and
-`riff council show` picks the council of a pull request. The other
-build items are not done yet (see
-[The build items of the council](#the-build-items-of-the-council)), so
-a verify has no council today. The requirements of the council are in
-[Product](requirements.md#product).
-
 A verify by one session sees the change from one view. The council
-will give it more views: each member will review the change in one
-area only. The verifier will run the council in its own session, with
-one subagent for each member, on the model of the session. No member
-will claim an item or have a container of its own.
+gives it more views: each member reviews the change in one area only.
+The verifier runs the council in its own session, with one subagent
+for each member, on the model of the session. No member claims an item
+or has a container of its own. The requirements of the council are in
+[Product](requirements.md#product), and its design is #581.
+
+The start text of a verify of the wave gives each step of the council,
+after the check of each criterion and the control:
+
+1. The verifier runs `riff council show 40`. It gets each member, why
+   it joins, and the text of its file (see
+   [See the council of a pull request](#see-the-council-of-a-pull-request)).
+2. It starts one subagent for each member with the Agent tool, on the
+   model of the session. Each subagent gets the text of its member,
+   the diff of the pull request and the rules of the repository for
+   agents. Each subagent reads only, and changes nothing.
+3. Each member gives its findings, each with the file, the line and
+   the rule (see
+   [The findings of the council](#the-findings-of-the-council)).
+4. The verifier checks each finding in the code. A finding that it
+   shows, with a test, a run or a read of the code, fails the verify.
+   A finding that it cannot show goes in the result as not shown, and
+   does not fail the verify.
+5. The result has the part `## The council`, with one line for each
+   member: its findings, or `no finding` (see
+   [Report a verify](#report-a-verify)). A live security fault goes to
+   the lead with `tell`, not into the result (see
+   [Keep a live security fault out of public text](#keep-a-live-security-fault-out-of-public-text)).
+
+A verify by hand follows the same steps.
 
 ```mermaid
 flowchart TD
-    V["the verifier of PR #40"] --> S["riff council show 40"]
+    V["the verifier of PR #40:<br/>each criterion, a control"] --> S["1. riff council show 40"]
     S --> M["the members: the files of the base branch,<br/>picked by the files and the labels of the change"]
-    M --> D["subagent: design"]
-    M --> T["subagent: testing"]
-    M --> O["subagent: docs"]
-    M --> R["subagent: rust"]
-    D --> F["the findings:<br/>the file, the line, the rule"]
+    M --> D["2. subagent: design"]
+    M --> T["2. subagent: testing"]
+    M --> O["2. subagent: docs"]
+    M --> R["2. subagent: rust"]
+    D --> F["3. the findings:<br/>the file, the line, the rule"]
     T --> F
     O --> F
     R --> F
-    F --> K{"the verifier shows<br/>the finding in the code?"}
-    K -- "yes" --> X["the verify fails"]
-    K -- "no" --> L["the result lists it as not shown"]
+    F --> K{"4. the verifier shows<br/>the finding in the code?"}
+    K -- "yes" --> X["shown: the verify fails"]
+    K -- "no" --> L["not shown"]
+    X --> P["5. the result, with the part<br/>## The council"]
+    L --> P
+    F -- "a live security fault" --> E["tell: to the lead,<br/>not into the result"]
 ```
 
 #### The members of the council
@@ -3448,7 +3469,7 @@ The council of a pull request reads the member files of its base
 branch, not of its head. So a pull request cannot change the council
 of its own verify.
 
-The Rust expert, `rust`, will review each change of Rust code for
+The Rust expert, `rust`, reviews each change of Rust code for
 idiomatic Rust and for the patterns of `.riff/council/rust.md`. Each
 `##` heading of that file is one pattern, for example "An invalid
 state cannot be made" and "Each conversion names each field". To add a
@@ -3502,37 +3523,23 @@ branch as your clone has it.
 
 #### The findings of the council
 
-Each member will give its findings. A finding names the file, the line
-and the rule: the member file and the heading of the rule. So the
-author can find the rule:
+Each member gives its findings. A finding names the file, the line and
+the rule: the member file and the heading of the rule. So the author
+can find the rule:
 
 ```text
 crates/riff-core/src/record.rs:120: .riff/council/rust.md "Each conversion names each field": the match of Record has `..`.
 ```
 
-The verifier will check each finding in the code. A finding that it
-shows, with a test, a run or a read of the code, will fail the verify.
-A finding that it cannot show will go in the result as not shown, and
-will not fail the verify. The result will name each member and its
-findings in the part `## The council`:
-
-```markdown
-## The council
-
-- design: no finding.
-- testing: no finding.
-- docs: not shown: docs/src/start-a-riff.md:40: .riff/council/docs.md "No stale text": the step names an old flag.
-- rust: shown: crates/riff-core/src/record.rs:120: .riff/council/rust.md "Each conversion names each field": the match of Record has `..`.
-```
-
-`riff verify pass` will refuse a result with no line for a member of
-the council. A finding of a live security fault will go to the lead,
-not into the result (see
-[Keep a live security fault out of public text](#keep-a-live-security-fault-out-of-public-text)).
+In the part `## The council` of the result, each member has one line:
+`- NAME: no finding.`, or its findings, each after `shown:` or
+`not shown:`. `riff verify pass` does not check the part yet. It will
+refuse a result with no line for a member of the council (see
+[The build items of the council](#the-build-items-of-the-council)).
 
 #### The build items of the council
 
-Each build item needs the one before it:
+Each build item needs the one before it. The first three are done:
 
 1. #2119: the form of a member file, the default set in riff, and
    `riff council list`.
@@ -3540,7 +3547,7 @@ Each build item needs the one before it:
 3. #2121: the start text of a verify runs the council, with one
    subagent for each member.
 4. #2122: `riff verify pass` refuses a result that does not name
-   each member of the council.
+   each member of the council. This item is not done yet.
 
 The council of a design issue, and the gates before the code, will
 come later (#585).
@@ -3947,11 +3954,30 @@ gh pr checks 40
 
 Then review what a test run cannot check: the code and its fit with
 the design, each `Done when:` criterion by its test, the book, the
-rustdoc and the requirements.
+rustdoc and the requirements. Then run the council of the pull
+request, with the steps of
+[The council of a verify](#the-council-of-a-verify).
 
 Write the result to a file: each criterion, and what you did to check
-it. For a fail, give the steps to see each failure. Then report a
-pass:
+it, then the part `## The council` with one line for each member. For
+a fail, give the steps to see each failure. A result of a pass:
+
+```markdown
+PASS
+
+- The start text of a verify gives each step of the council: the test
+  the_start_text_of_a_verify_runs_the_council passed with just ci-test.
+- The book says each step: I read "The council of a verify".
+
+## The council
+
+- design: no finding.
+- testing: no finding.
+- docs: not shown: docs/src/start-a-riff.md:40: .riff/council/docs.md "No stale text": the step names an old flag.
+- rust: no finding.
+```
+
+Then report a pass:
 
 ```sh
 riff verify pass 40 --file result.md
@@ -4086,9 +4112,11 @@ in a server that runs. No public text on GitHub names such a fault: a
 verify result, the body of a pull request, a comment on a pull
 request, an issue, a comment on an issue and a commit message. A post
 to a thread does not name it too. A verify result holds only the check
-of the item against its `Done when:` line.
+of the item against its `Done when:` line, and the findings of its
+council.
 
-Tell the fault to your lead. The lead decides on a private advisory:
+Tell the fault to your lead, also a fault that a member of the council
+finds. The lead decides on a private advisory:
 
 ```sh
 riff tell lead "a live security fault: WHAT AND WHERE"

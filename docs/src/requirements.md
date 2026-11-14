@@ -290,6 +290,11 @@
   else the label. Last come the line `== Left out by the limit of 6` and
   the line `NAME (SOURCE): WHY` of each member that the limit leaves
   out.
+- **01M7CX5BTPFX77KS5J87C7GBY2** In the part `## The council` of a
+  verify result, the line of a member is `- NAME: no finding.`, or `-
+  NAME: ` and its findings, each after `shown:` or `not shown:`. The
+  start text of a verify of the wave gives this form, with an example
+  (01M7CFBZSQEEZNZBR9H1S54GS1).
 
 ## Waves
 

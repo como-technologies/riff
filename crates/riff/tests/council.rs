@@ -1,7 +1,9 @@
 //! `riff council list` lists the members of the council of a folder: the
 //! files of `.riff/council/` over the default set that riff builds in
 //! (01M7CFBZ7839WHMFARR4T6W13W, 01M7CFBZMCE36ZRXD0GBCM4MFX,
-//! 01M7CN1H1XGQVBGFH30MRE1BP4). The book has the how-to.
+//! 01M7CN1H1XGQVBGFH30MRE1BP4). The book has the how-to. `riff council
+//! show` picks the council of a pull request, and the start text of a
+//! verify of the wave runs it (01M7CFBNAKQ0CKCCY9S7WM62FE).
 
 use std::ffi::OsString;
 use std::fs;
@@ -513,5 +515,148 @@ fn the_book_shows_the_council_of_a_pull_request() {
     assert!(
         example.contains("== Left out by the limit of 6"),
         "{example}"
+    );
+}
+
+/// 01M7CFBNAKQ0CKCCY9S7WM62FE, 01M7CFBZQ0QNE65WBQ31FSDWGR: "The council
+/// of a verify" says each step of the council in the present tense, with
+/// its mermaid diagram, in the order of the start text of a verify of the
+/// wave. "Report a verify" sends a verify by hand to the same steps, and
+/// shows a result with the part `## The council`
+/// (01M7CFBZSQEEZNZBR9H1S54GS1): one line for each member of a council of
+/// a `.rs` file, in the order of the council and in the form of
+/// 01M7CX5BTPFX77KS5J87C7GBY2.
+#[test]
+fn the_book_says_each_step_of_the_council_of_a_verify() {
+    let part = under("how-it-works.md", "### The council of a verify");
+    let words = part.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(!words.contains(" will "), "{words}");
+    assert!(words.contains("```mermaid"), "{part}");
+    let steps = [
+        "1. The verifier runs `riff council show 40`.",
+        "2. It starts one subagent for each member with the Agent tool, on the model of the \
+         session.",
+        "Each subagent reads only, and changes nothing.",
+        "3. Each member gives its findings, each with the file, the line and the rule",
+        "4. The verifier checks each finding in the code. A finding that it shows, with a \
+         test, a run or a read of the code, fails the verify. A finding that it cannot show \
+         goes in the result as not shown, and does not fail the verify.",
+        "5. The result has the part `## The council`, with one line for each member: its \
+         findings, or `no finding`",
+        "A live security fault goes to the lead with `tell`, not into the result (see",
+    ]
+    .map(|step| {
+        words
+            .find(step)
+            .unwrap_or_else(|| panic!("no {step:?} in {words}"))
+    });
+    assert!(steps.is_sorted(), "{words}");
+    // The steps of the start text, in the same order.
+    let text = riff::text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &[]);
+    let order = [
+        "/opt/riff/riff council show 40",
+        "start one subagent for each member",
+        "Each subagent reads only, and changes nothing.",
+        "Check each finding in the code.",
+        "Then the part `## The council`",
+    ]
+    .map(|words| {
+        text.find(words)
+            .unwrap_or_else(|| panic!("no {words:?} in {text}"))
+    });
+    assert!(order.is_sorted(), "{text}");
+
+    let report = under("how-it-works.md", "### Report a verify");
+    let flat = report.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        flat.contains(
+            "Then run the council of the pull request, with the steps of [The council of a \
+             verify](#the-council-of-a-verify)."
+        ),
+        "{flat}"
+    );
+    let result = report
+        .split("```markdown\n")
+        .nth(1)
+        .and_then(|rest| rest.split("\n```").next())
+        .expect("an example of a result");
+    assert!(result.starts_with("PASS\n"), "{result}");
+    let council = result
+        .split("\n## The council\n\n")
+        .nth(1)
+        .unwrap_or_else(|| panic!("no part ## The council in {result}"));
+    let names: Vec<&str> = council
+        .lines()
+        .map(|line| {
+            let (name, findings) = line
+                .strip_prefix("- ")
+                .and_then(|line| line.split_once(": "))
+                .unwrap_or_else(|| panic!("{line:?} is no line of a member"));
+            // A finding that the verifier shows fails the verify.
+            assert!(
+                findings == "no finding." || findings.starts_with("not shown: "),
+                "{line}"
+            );
+            name
+        })
+        .collect();
+    assert_eq!(names, ["design", "testing", "docs", "rust"]);
+}
+
+/// 01M7CFBNAKQ0CKCCY9S7WM62FE: the step of the start text of a verify of
+/// the wave that picks the council runs as it is written, in the clone
+/// of a verify: at the head of the pull request, detached. It calls the
+/// riff of the container by its path, and prints the council of a change
+/// of a `.rs` file.
+#[test]
+fn the_start_text_of_a_verify_picks_the_council_in_the_clone_of_the_verify() {
+    let root = tempfile::tempdir().unwrap();
+    let work = clone_with_origin(root.path());
+    git(&work, &["switch", "-q", "-c", "fix"]);
+    fs::create_dir_all(work.join("src")).unwrap();
+    fs::write(work.join("src/a.rs"), "fn main() {}\n").unwrap();
+    git(&work, &["add", "."]);
+    git(&work, &["commit", "-q", "-m", "A fix"]);
+    git(&work, &["push", "-q", "origin", "HEAD:refs/pull/40/head"]);
+    let origin = root.path().join("origin.git");
+    git(
+        root.path(),
+        &["clone", "-q", origin.to_str().unwrap(), "verify"],
+    );
+    let clone = root.path().join("verify");
+    git(&clone, &["fetch", "-q", "origin", "refs/pull/40/head"]);
+    git(&clone, &["checkout", "-q", "--detach", "FETCH_HEAD"]);
+
+    let text = riff::text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &[]);
+    let step = text
+        .split("\n7. Pick the council of the pull request: ")
+        .nth(1)
+        .and_then(|rest| rest.lines().next())
+        .unwrap_or_else(|| panic!("no step 7 in\n{text}"));
+    let words: Vec<&str> = step.split_whitespace().collect();
+    assert_eq!(words[0], riff::daemon::RELAY_BIN, "{step}");
+    assert_eq!(words[1..], ["council", "show", "40"], "{step}");
+
+    let bin = fake_gh(&[(40, &["src/a.rs"], &[])]);
+    let mut path = OsString::from(bin.path());
+    path.push(":");
+    path.push(std::env::var_os("PATH").unwrap_or_default());
+    let out = Isolated::shared()
+        .riff()
+        .args(&words[1..])
+        .current_dir(&clone)
+        .env("PATH", path)
+        .output()
+        .unwrap();
+    let stdout = stdout_of(out);
+    assert_eq!(
+        headings(&stdout),
+        [
+            "design (riff): each council",
+            "testing (riff): each council",
+            "docs (riff): each council",
+            "rust (riff): the path src/a.rs matches **/*.rs",
+        ],
+        "{stdout}"
     );
 }

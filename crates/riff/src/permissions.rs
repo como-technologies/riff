@@ -59,7 +59,9 @@
 //! ([`crate::waves`]), so `Bash(riff *)` covers them, and no rule names a
 //! path of the API of the forge. The lead in a container calls its riff
 //! by the path `/opt/riff/riff`, so a session rule of the lead covers its
-//! `wave` commands (01M51K1VJ67KYHRD7DQ86DSX1X). The tests check each
+//! `wave` commands (01M51K1VJ67KYHRD7DQ86DSX1X). A verifier calls `riff
+//! council show` by the same path, and has no other rule for it
+//! (01M7CFBNAKQ0CKCCY9S7WM62FE). The tests check each
 //! allow rule, and a list of commands that no allow rule may match.
 //!
 //! Claude Code matches a rule to each part of a Bash call. A `cd` out of
@@ -81,6 +83,7 @@
 //! | `Bash(/opt/riff/riff release status)` | allow | lead | session | the state of the release cycle, in a container |
 //! | `Bash(/opt/riff/riff release cut *)` | allow | lead | session | the tag, the release and the pull request of the next version, in a container |
 //! | `Bash(/opt/riff/riff release hold *)` | allow | lead | session | the hold of a release by a lead in a critical place, in a container (01M5SNV7KZRDBRC3NM2E5W92KS) |
+//! | `Bash(/opt/riff/riff council show *)` | allow | verifier | session | the pick of the council of a verify, in a container (01M7CFBNAKQ0CKCCY9S7WM62FE) |
 //! | `Bash(gh pr create *)` | allow | worker | project, session | open the pull request |
 //! | `Bash(gh pr merge --auto --squash *)` | allow | worker | project, session | turn on auto-merge |
 //! | `Bash(gh pr comment *)` | allow | worker, verifier | project | write a comment on a pull request |
@@ -371,6 +374,11 @@ pub const TABLE: &[Row] = {
         allow("Bash(/opt/riff/riff release status)", &[Lead], &[Session]),
         allow("Bash(/opt/riff/riff release cut *)", &[Lead], &[Session]),
         allow("Bash(/opt/riff/riff release hold *)", &[Lead], &[Session]),
+        allow(
+            "Bash(/opt/riff/riff council show *)",
+            &[Verifier],
+            &[Session],
+        ),
         allow("Bash(gh pr create *)", &[Worker], &[Project, Session]),
         allow(
             "Bash(gh pr merge --auto --squash *)",
@@ -1963,8 +1971,28 @@ mod tests {
             lead.allow
                 .contains(&"Bash(/opt/riff/riff wave *)".to_owned())
         );
-        for rules in [&worker, &verifier] {
-            assert!(!rules.allow.iter().any(|r| r.contains("/opt/riff/riff")));
+        // A worker calls no riff by the path. A verifier calls it only to
+        // pick the council (01M7CFBNAKQ0CKCCY9S7WM62FE).
+        let by_path = |rules: &Rules| -> Vec<String> {
+            rules
+                .allow
+                .iter()
+                .filter(|r| r.contains("/opt/riff/riff"))
+                .cloned()
+                .collect()
+        };
+        assert!(by_path(&worker).is_empty(), "{worker:?}");
+        assert_eq!(by_path(&verifier), ["Bash(/opt/riff/riff council show *)"]);
+        for step in [
+            "/opt/riff/riff council show 40",
+            "/opt/riff/riff council list",
+        ] {
+            assert_eq!(
+                verifier.allow.iter().any(|r| matches(r, step)),
+                step.ends_with("show 40"),
+                "{step}"
+            );
+            assert!(!worker.allow.iter().any(|r| matches(r, step)), "{step}");
         }
         assert!(worker.allow.contains(&"Bash(gh pr create *)".to_owned()));
         assert!(!verifier.allow.contains(&"Bash(gh pr create *)".to_owned()));
@@ -2048,6 +2076,11 @@ mod tests {
             let rules = session.allow;
             let steps = text_steps(&text);
             assert!(!steps.is_empty(), "{text}");
+            // The verifier picks the council (01M7CFBNAKQ0CKCCY9S7WM62FE).
+            if role == Role::Verifier {
+                let step = "/opt/riff/riff council show 40".to_owned();
+                assert!(steps.contains(&step), "{steps:#?}");
+            }
             // The lead in a container plans the waves (01M51K1VJ67KYHRD7DQ86DSX1X).
             if role == Role::Lead {
                 for wave in ["list", "make", "rename", "end"] {
