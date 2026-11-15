@@ -12038,7 +12038,9 @@ esac
             Some((&crate::runtime::Source::Empty, true))
         );
         let plan = Plan::of_spec(&start.spec).unwrap();
-        assert_eq!(plan.main, main.join(".git"));
+        // git gives the real path: on macOS, `/var` is a link to
+        // `/private/var`.
+        assert_eq!(plan.main, main.join(".git").canonicalize().unwrap());
         assert_eq!(plan.refs, run::refs_in(&folder));
         assert_eq!(
             plan.checkout,
