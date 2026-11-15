@@ -453,10 +453,10 @@ impl Checkout {
 ///     base: "main".parse()?,
 ///     checkout: Checkout::Branch { name: "worktree-issue-12".parse()?, earlier: false, no_github: false },
 /// };
-/// assert_eq!(Plan::of_var(&plan.to_var())?, plan);
+/// assert_eq!(Plan::of_var(&plan.to_var()?)?, plan);
 /// assert!(Plan::of_var("{").is_err());
 /// // A name that does not parse is no plan.
-/// assert!(Plan::of_var(&plan.to_var().replace("worktree-issue-12", "-x")).is_err());
+/// assert!(Plan::of_var(&plan.to_var()?.replace("worktree-issue-12", "-x")).is_err());
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -494,11 +494,28 @@ pub enum Made {
 }
 
 impl Plan {
-    /// The plan as the value of [`VAR`]. A plan of paths and of names
-    /// that parsed always serializes, so the error of `serde_json` cannot
-    /// come.
-    pub fn to_var(&self) -> String {
-        serde_json::to_string(self).unwrap_or_default()
+    /// The plan as the value of [`VAR`]. A path that is not UTF-8 has no
+    /// form in JSON: that is the error, and no session starts with it.
+    ///
+    /// ```
+    /// use std::os::unix::ffi::OsStrExt;
+    /// use riff::session_clone::{Checkout, Origin, Plan};
+    ///
+    /// let plan = Plan {
+    ///     path: std::ffi::OsStr::from_bytes(b"/d/caf\xe9/clone").into(),
+    ///     origin: Origin::github("o/r")?,
+    ///     main: "/src/r/.git".into(),
+    ///     refs: "/d/origin-refs".into(),
+    ///     base: "main".parse()?,
+    ///     checkout: Checkout::Default,
+    /// };
+    /// let error = plan.to_var().unwrap_err();
+    /// assert!(format!("{error:#}").starts_with("cannot write the plan of the clone in RIFF_CLONE: "), "{error:#}");
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn to_var(&self) -> Result<String> {
+        serde_json::to_string(self)
+            .with_context(|| format!("cannot write the plan of the clone in {VAR}"))
     }
 
     /// The plan in the value `value` of [`VAR`].

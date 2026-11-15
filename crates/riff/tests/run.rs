@@ -1183,7 +1183,8 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
             no_github: false,
         },
     }
-    .to_var();
+    .to_var()
+    .unwrap();
     // The folder of the token of the session: no token of the person
     // (01M6Z87A04EXTT1FFJSJ1EM6TB).
     let gh = folder.join("gh").display().to_string();
@@ -1861,7 +1862,7 @@ async fn a_session_with_no_github_clones_in_its_container_and_riff_run_takes_its
         .riff()
         .args(["relay", "--terminal", "--", "true"])
         .env_remove("RIFF_SOCKET")
-        .env(riff::session_clone::VAR, plan.to_var())
+        .env(riff::session_clone::VAR, plan.to_var().unwrap())
         .output()
         .unwrap();
     assert!(!refused.status.success(), "{refused:?}");
@@ -1931,8 +1932,13 @@ async fn a_session_with_no_github_goes_on_from_the_branch_of_origin_and_gives_it
     );
 }
 
-/// #2139: a clone that fails in the container of a work session starts
-/// no `claude`, and `riff run` ends with 1.
+/// #2139, 01M7G824SYKB3BN2MN9A9JKAG0, 01M7GE3KYR7JZHDV5S7PKAZX57: a
+/// clone that fails in the container of a work session starts no
+/// `claude`, and `riff run` ends with 1. The relay gives its key, then
+/// its note to the daemon on the socket of the session: `riff run` shows
+/// the note once, as a line of the daemon, and the daemon writes it to
+/// its log. The relay has no terminal, so it does not print the note on
+/// its stderr, and the note is no event.
 #[tokio::test]
 async fn a_work_session_whose_clone_fails_starts_no_claude() {
     let machine = Machine::new().await;
@@ -1946,12 +1952,24 @@ async fn a_work_session_whose_clone_fails_starts_no_claude() {
     let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
     assert!(!out.status.success(), "{stdout}\n{stderr}");
     assert_eq!(machine.read("claude.args"), "", "claude started");
+    let fault = "has files and no clone";
+    let note = stdout
+        .lines()
+        .find(|line| line.contains(fault))
+        .unwrap_or_else(|| panic!("no note in\n{stdout}\n{stderr}"));
+    let failed = riff::text::relay_clone_failed("");
+    assert!(note.starts_with(failed.trim_end()), "{note}");
+    assert_eq!(stdout.matches(fault).count(), 1, "{stdout}");
+    assert!(!stderr.contains(fault), "{stderr}");
     let events = std::fs::read_to_string(machine.folder("issue-12").join("events.jsonl"))
         .unwrap_or_default();
-    assert!(
-        format!("{stdout}{stderr}{events}").contains("has files and no clone"),
-        "{stdout}\n{stderr}\n{events}"
-    );
+    assert!(!events.contains(fault), "{events}");
+    let args = machine.read("run.args");
+    let args: Vec<&str> = args.lines().collect();
+    let name = args[args.iter().position(|a| *a == "--name").unwrap() + 1];
+    let log = machine.read("daemon.out");
+    let line = riff::text::daemon_relay_note(name, note);
+    assert_eq!(log.matches(&line).count(), 1, "{log}");
 }
 
 /// 01M7FDN9C91TDYPQSFBRHVHRAC, 01M7FMJJDJN9Q5ZPA7ECTGK1MD: the relay of a
@@ -1984,21 +2002,25 @@ async fn riff_run_refuses_a_bundle_that_does_not_unbundle_and_ends_with_1() {
     assert!(!stdout.contains(&none), "{stdout}");
 }
 
-/// 01M7FDN99KZE54CX17DDEP787V: the fetch of the main clone before a
-/// session of `riff run --no-github` fails: `origin` has a newer commit of
-/// `main`, and the main clone has the lock file of `origin/main`, as when
-/// another git writes the ref, so git cannot write `origin/main`. `riff
-/// run` starts no container, the error names the fetch, and the item is
-/// free again.
+/// 01M7FDN99KZE54CX17DDEP787V: the fetch of the branch of the item into
+/// the main clone before a session of `riff run --no-github` fails:
+/// `origin` has the branch, and the main clone has the lock file of
+/// `origin/worktree-issue-12`, as when another git writes the ref, so git
+/// cannot write it. `riff run` starts no container, the error names the
+/// fetch, and the item is free again. The default branch came once, in
+/// the step of the image (01M7G81XGBPP23H9T7V0WX87QZ).
 #[tokio::test]
 async fn a_fetch_for_no_github_that_fails_starts_no_container() {
     let machine = Machine::new().await;
     machine.lead().await;
     let main = &machine.main;
     let url = git(main, &["remote", "get-url", "origin"]);
-    git(main, &["commit", "-q", "--allow-empty", "-m", "newer"]);
-    git(main, &["push", "-q", &url, "HEAD:main"]);
-    let lock = main.join(".git/refs/remotes/origin/main.lock");
+    git(
+        main,
+        &["commit", "-q", "--allow-empty", "-m", "WIP: earlier"],
+    );
+    git(main, &["push", "-q", &url, "HEAD:worktree-issue-12"]);
+    let lock = main.join(".git/refs/remotes/origin/worktree-issue-12.lock");
     std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
     std::fs::write(&lock, "").unwrap();
 
@@ -2008,7 +2030,8 @@ async fn a_fetch_for_no_github_that_fails_starts_no_container() {
     let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
     assert!(!out.status.success(), "{stdout}\n{stderr}");
     assert!(stderr.contains("fetch"), "{stderr}");
-    assert!(stderr.contains("main.lock"), "{stderr}");
+    assert!(stderr.contains("worktree-issue-12.lock"), "{stderr}");
+    assert!(!stdout.contains("riff cannot fetch"), "{stdout}");
     assert!(!machine.bin.path().join("run.args").exists());
     machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
 }
@@ -4574,6 +4597,39 @@ async fn riff_run_with_a_head_of_origin_that_names_no_branch_says_so_and_reads_t
     );
 }
 
+/// 01M7G81XGBPP23H9T7V0WX87QZ: with `--image`, the lines about the pin
+/// say nothing, and the line of an `origin` that riff cannot ask still
+/// comes, once.
+#[tokio::test]
+async fn riff_run_with_an_image_says_the_line_of_an_origin_that_it_cannot_ask() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    let url = git(&machine.main, &["remote", "get-url", "origin"]);
+    git(
+        Path::new(&url),
+        &["symbolic-ref", "HEAD", "refs/heads/gone"],
+    );
+    // A pin of the working tree that is not the merged one: with no
+    // --image, riff would say so.
+    let local = format!("ghcr.io/o/i@sha256:{}", "1".repeat(64));
+    std::fs::write(
+        machine.main.join("riff.toml"),
+        format!("[session]\nimage = \"{local}\"\n"),
+    )
+    .unwrap();
+
+    let out = machine
+        .run(None, &["run", "issue-12", "--image", IMAGE])
+        .await;
+    let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
+    assert!(out.status.success(), "{stdout}\n{stderr}");
+    let line = riff::text::image_no_fetch("origin/main", riff::text::ORIGIN_NO_DEFAULT);
+    assert_eq!(stdout.matches(&line).count(), 1, "{stdout}");
+    assert!(!stdout.contains("merged pin"), "{stdout}");
+    let args = machine.read("run.args");
+    assert!(args.contains(r#""base":"main""#), "{args}");
+}
+
 /// 01M5QYBWPAJ219BE8QKVKG1TWW (#1352): the start text of a build of a
 /// wave names the default branch of the repository, `master`, in the
 /// rule not to push to it.
@@ -4937,7 +4993,9 @@ async fn riff_who_long_shows_the_pin_of_the_wave_and_the_image_of_each_session_c
 /// the host has the part lead and no part workers: it left after its daemon
 /// started the lead. The new daemon starts the idle lead again on the new
 /// riff all the same: `claude --resume` of the same session, with no wave
-/// run and no session for an item.
+/// run and no session for an item. 01M7G81XGBPP23H9T7V0WX87QZ: the `HEAD`
+/// of `origin` names no branch now, and the log of the daemon says so in
+/// one line.
 #[tokio::test]
 async fn a_new_daemon_starts_the_lead_again_on_a_host_with_the_part_lead_and_no_part_workers() {
     let mut machine = Machine::new().await;
@@ -4959,6 +5017,11 @@ async fn a_new_daemon_starts_the_lead_again_on_a_host_with_the_part_lead_and_no_
     let stopped = machine.stop_daemon().await;
     assert!(stopped.success(), "{stopped}");
     std::fs::write(machine.bin.path().join("links"), "0\n").unwrap();
+    let url = git(&machine.main, &["remote", "get-url", "origin"]);
+    git(
+        Path::new(&url),
+        &["symbolic-ref", "HEAD", "refs/heads/gone"],
+    );
     machine.lead_idle = Some(Duration::from_millis(1));
     machine.start_daemon().await;
 
@@ -4969,6 +5032,8 @@ async fn a_new_daemon_starts_the_lead_again_on_a_host_with_the_part_lead_and_no_
         !out.contains("cannot start the lead"),
         "the lead waits for a wave:\n{out}"
     );
+    let no_fetch = riff::text::image_no_fetch("origin/main", riff::text::ORIGIN_NO_DEFAULT);
+    assert!(out.contains(&format!("{repo}: {no_fetch}\n")), "{out}");
     let log = machine.read("podman.log");
     assert!(log.contains(&format!("podman stop {name}")), "{log}");
     let args = machine.read("run.args");

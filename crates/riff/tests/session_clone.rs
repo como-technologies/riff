@@ -6,11 +6,16 @@
 //! pushed, and the next session of the item goes on from the branch on
 //! `origin`.
 
+use std::io::{BufRead, BufReader, Write};
+use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::{Arc, Mutex};
 
+use riff::daemon::{Say, SessionAsk};
 use riff::run::{ClaudeSignIn, Facts};
 use riff::session_clone::{Checkout, Origin, Plan, VAR};
+use riff::session_relay::Up;
 use riff::wave::Work;
 
 /// Runs `git ARGS` in `dir` with an identity and no signing, and gives
@@ -97,7 +102,7 @@ fn the_podman_arguments_of_a_work_session_and_a_verify_have_no_writable_bind_of_
     ];
     for work in works {
         let facts = facts(root.path(), &main, &work);
-        let spec = riff::run::spec(&facts);
+        let spec = riff::run::spec(&facts).unwrap();
         let args: Vec<String> = riff::podman::run_args(&spec)
             .unwrap()
             .into_iter()
@@ -171,10 +176,25 @@ impl Session {
     /// folder is there and empty, as a new volume is, and the plan is in
     /// [`VAR`].
     fn relay(&self, env: &isolated::Isolated, plan: &Plan, script: &str) -> Output {
+        self.relay_with(env, plan, true, script)
+    }
+
+    /// [`Session::relay`], with no terminal when `terminal` is false:
+    /// `riff relay -- sh -c SCRIPT`.
+    fn relay_with(
+        &self,
+        env: &isolated::Isolated,
+        plan: &Plan,
+        terminal: bool,
+        script: &str,
+    ) -> Output {
         std::fs::create_dir_all(&plan.path).unwrap();
+        let mut args = vec!["relay"];
+        args.extend(terminal.then_some("--terminal"));
+        args.extend(["--", "sh", "-c", script]);
         env.riff()
-            .args(["relay", "--terminal", "--", "sh", "-c", script])
-            .env(VAR, plan.to_var())
+            .args(args)
+            .env(VAR, plan.to_var().unwrap())
             .env("RIFF_SOCKET", env.path().join("riff.sock"))
             .env(riff::daemon::gh_token::CONFIG_VAR, &self.gh)
             .env("GIT_CONFIG_GLOBAL", &self.gitconfig)
@@ -410,4 +430,151 @@ fn a_session_starts_on_the_default_branch_of_origin_after_a_rename() {
     );
     let gone = git(&plan.path, &["branch", "-r", "--list", "origin/main"]);
     assert_eq!(gone, "");
+}
+
+/// A fake riff daemon on the socket `socket` of a session. It answers
+/// each key of the notes with done, and each note with `answer`, and
+/// keeps them in order. It relays a session: the close of the input, and
+/// an ack for each event and for the exit.
+struct FakeDaemon {
+    asks: Arc<Mutex<Vec<SessionAsk>>>,
+    answer: Arc<Mutex<Say>>,
+}
+
+impl FakeDaemon {
+    fn start(socket: &Path) -> FakeDaemon {
+        let listener = UnixListener::bind(socket).unwrap();
+        let asks = Arc::new(Mutex::new(Vec::new()));
+        let answer = Arc::new(Mutex::new(Say::Done));
+        let (kept, said) = (asks.clone(), answer.clone());
+        std::thread::spawn(move || {
+            for conn in listener.incoming() {
+                let mut conn = conn.unwrap();
+                let mut lines = BufReader::new(conn.try_clone().unwrap()).lines();
+                let Some(Ok(first)) = lines.next() else {
+                    continue;
+                };
+                let mut say = |say: &Say| {
+                    let line = serde_json::to_string(say).unwrap();
+                    let _ = writeln!(conn, "{line}");
+                };
+                match serde_json::from_str::<SessionAsk>(&first).unwrap() {
+                    SessionAsk::Relay { .. } => {
+                        say(&Say::Resume { events: 0 });
+                        say(&Say::Close);
+                        for line in lines.map_while(Result::ok) {
+                            match serde_json::from_str::<Up>(&line).unwrap() {
+                                Up::Event { seq, .. } => say(&Say::Ack { seq }),
+                                Up::Exit { seq, .. } => {
+                                    say(&Say::Ack { seq });
+                                    break;
+                                }
+                                Up::Held => {}
+                            }
+                        }
+                    }
+                    ask @ SessionAsk::Note { .. } => {
+                        kept.lock().unwrap().push(ask);
+                        say(&said.lock().unwrap().clone());
+                    }
+                    ask => {
+                        kept.lock().unwrap().push(ask);
+                        say(&Say::Done);
+                    }
+                }
+            }
+        });
+        FakeDaemon { asks, answer }
+    }
+
+    /// Each key and each note that the relay gave, in order, from now on.
+    fn take(&self) -> Vec<SessionAsk> {
+        std::mem::take(&mut self.asks.lock().unwrap())
+    }
+}
+
+/// #2139, 01M7G824SYKB3BN2MN9A9JKAG0, 01M7GE3KYR7JZHDV5S7PKAZX57: the
+/// relay gives a new key to the daemon on the socket of the session
+/// first, then says the note of the clone with it. With no terminal, it
+/// does not print a note that the daemon took: the daemon reads that
+/// stderr. With a terminal, it prints it too. When the daemon keeps no
+/// note, the relay prints it. The command does not get the key, and
+/// cannot read the memory of the relay: the relay is not dumpable, so
+/// its files in `/proc` are not of the person.
+#[test]
+fn the_relay_gives_the_daemon_its_key_then_its_notes_and_prints_a_note_only_when_it_must() {
+    let env = isolated::Isolated::new();
+    let root = env.path().join("work");
+    std::fs::create_dir_all(&root).unwrap();
+    let (url, main) = origin_and_main(&root);
+    let session = Session::new(&root, true);
+    let sessions = env.riff_home().join("sessions");
+    let plan = |name: &str| {
+        plan_at(
+            sessions.join(name).join("clone"),
+            &url,
+            &main,
+            branch(false),
+        )
+    };
+    let text = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
+    let daemon = FakeDaemon::start(&env.path().join("riff.sock"));
+    // The key and the note of one relay.
+    let key_and_note = |asks: &[SessionAsk]| -> (String, String) {
+        let [
+            SessionAsk::NoteKey { key, .. },
+            SessionAsk::Note {
+                line, key: with, ..
+            },
+        ] = asks
+        else {
+            panic!("{asks:?}");
+        };
+        assert_eq!(with, key);
+        let key = serde_json::to_value(key).unwrap();
+        (key.as_str().unwrap().to_owned(), line.clone())
+    };
+
+    let first = plan("issue-12-1a2b3c4d");
+    let script = "env > ../env; stat -c %u /proc/$PPID/environ > ../owner; \
+                  cat /proc/$PPID/environ > /dev/null 2>&1 && touch ../read; true";
+    let out = session.relay_with(&env, &first, false, script);
+    assert!(out.status.success(), "{out:?}");
+    let (key, line) = key_and_note(&daemon.take());
+    let cloned = riff::text::relay_cloned(&first, true);
+    assert_eq!(line, cloned);
+    assert!(!text(&out.stderr).contains(&cloned), "{out:?}");
+    let folder = first.path.parent().unwrap();
+    let seen = std::fs::read_to_string(folder.join("env")).unwrap();
+    assert_eq!(key.len(), 64);
+    assert!(!seen.contains(&key), "{seen}");
+    let me = nix::unistd::getuid();
+    if !me.is_root() {
+        let owner = std::fs::read_to_string(folder.join("owner")).unwrap();
+        assert_ne!(owner.trim(), me.to_string());
+        assert!(!folder.join("read").exists());
+    }
+
+    // With a terminal: the note goes to the daemon and to stderr. Each
+    // relay has a new key.
+    let second = plan("issue-12-2b3c4d5e");
+    let out = session.relay(&env, &second, "true");
+    assert!(out.status.success(), "{out:?}");
+    let (other, line) = key_and_note(&daemon.take());
+    assert_ne!(other, key);
+    let cloned = riff::text::relay_cloned(&second, true);
+    assert_eq!(line, cloned);
+    assert_eq!(text(&out.stderr).matches(&cloned).count(), 1, "{out:?}");
+
+    // The daemon keeps no note: the relay prints it.
+    *daemon.answer.lock().unwrap() = Say::Failed {
+        error: riff::text::DAEMON_NOTES_FULL.into(),
+    };
+    let third = plan("issue-12-3c4d5e6f");
+    let out = session.relay_with(&env, &third, false, "true");
+    assert!(out.status.success(), "{out:?}");
+    let (_, line) = key_and_note(&daemon.take());
+    let cloned = riff::text::relay_cloned(&third, true);
+    assert_eq!(line, cloned);
+    assert_eq!(text(&out.stderr).matches(&cloned).count(), 1, "{out:?}");
 }

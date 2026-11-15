@@ -75,7 +75,8 @@
 //! nothing. Its clone fetches nothing from GitHub: it starts from the
 //! main clone ([`crate::session_clone`]). So before the start, `riff
 //! run` fetches the default branch, and the branch of the item when
-//! `origin` has it, into the main clone ([`fetch_for_no_github`],
+//! `origin` has it, into the main clone
+//! ([`session_image::follow_origin`], [`fetch_for_no_github`],
 //! 01M7FDN99KZE54CX17DDEP787V). Its clone goes with its container, so
 //! when `claude` ends the relay writes the commits of the branch in a
 //! bundle in the folder [`OUT`] of the folder of the session, the one
@@ -320,7 +321,8 @@ pub enum ClaudeSignIn {
 }
 
 /// The [`SessionSpec`] of a session: decision 10 of #699, with the
-/// facts of #707.
+/// facts of #707. A plan of the clone with a path that is not UTF-8 is
+/// the error ([`crate::session_clone::Plan::to_var`]).
 ///
 /// ```
 /// use riff::run::{ClaudeSignIn, Facts, spec};
@@ -347,7 +349,7 @@ pub enum ClaudeSignIn {
 ///     gitconfig: Some("/home/mike/.gitconfig".into()),
 ///     setup: Default::default(),
 /// };
-/// let spec = spec(&facts);
+/// let spec = spec(&facts)?;
 /// let plan = &facts.plan;
 /// assert_eq!(spec.name, "riff-issue-12-1a2b3c4d");
 /// assert_eq!(spec.workdir, plan.path);
@@ -367,7 +369,7 @@ pub enum ClaudeSignIn {
 /// assert_eq!(of_main, 1);
 /// // With no GitHub, the folder of the bundle has write.
 /// let offline = Plan { checkout: branch(true), ..plan.clone() };
-/// let offline = riff::run::spec(&Facts { plan: offline, ..facts.clone() });
+/// let offline = riff::run::spec(&Facts { plan: offline, ..facts.clone() })?;
 /// let out = offline.binds.iter().find(|b| b.target.ends_with("out")).unwrap();
 /// assert_eq!(out.target, std::path::Path::new("/data/riff/sessions/issue-12-1a2b3c4d/out"));
 /// assert_eq!((out.source == Source::Path(out.target.clone()), out.write), (true, true));
@@ -381,7 +383,7 @@ pub enum ClaudeSignIn {
 /// assert!(spec.env.contains(&helper));
 /// assert!(spec.command.windows(2).any(|w| w == ["--session-id", facts.session.as_str()]));
 /// // With a token, the name of the variable and no sign-in file.
-/// let token = riff::run::spec(&Facts { sign_in: ClaudeSignIn::Token, ..facts.clone() });
+/// let token = riff::run::spec(&Facts { sign_in: ClaudeSignIn::Token, ..facts.clone() })?;
 /// assert!(token.env.contains(&Env::Host("CLAUDE_CODE_OAUTH_TOKEN".into())));
 /// assert!(!token.binds.iter().any(|b| b.target.ends_with(".credentials.json")));
 /// assert!(!spec.env.contains(&Env::Host("CLAUDE_CODE_OAUTH_TOKEN".into())));
@@ -399,14 +401,14 @@ pub enum ClaudeSignIn {
 ///     "[session.env]\nCARGO_HOME = \"$HOME/.cargo\"\n[session.volumes]\nriff-cargo = \"$HOME/.cargo\"\n",
 ///     "riff.toml",
 /// )?;
-/// let with = riff::run::spec(&Facts { setup, ..facts.clone() });
+/// let with = riff::run::spec(&Facts { setup, ..facts.clone() })?;
 /// assert!(with.env.contains(&Env::Value("CARGO_HOME".into(), "/home/mike/.cargo".into())));
 /// assert!(with.binds.iter().any(|b| {
 ///     b.source == Source::Volume("riff-cargo".into()) && b.target == std::path::Path::new("/home/mike/.cargo")
 /// }));
 /// # Ok::<(), anyhow::Error>(())
 /// ```
-pub fn spec(facts: &Facts) -> SessionSpec {
+pub fn spec(facts: &Facts) -> Result<SessionSpec> {
     let home = &facts.home;
     let path = |p: &Path, write: bool| Bind {
         source: Source::Path(p.to_owned()),
@@ -464,7 +466,7 @@ pub fn spec(facts: &Facts) -> SessionSpec {
     git_config(&mut env, GIT_HELPER, "");
     git_config(&mut env, GIT_HELPER, "!gh auth git-credential");
     env.push(value("CLAUDE_CONFIG_DIR", &shown(&claude_dir)));
-    env.push(value(crate::session_clone::VAR, &plan.to_var()));
+    env.push(value(crate::session_clone::VAR, &plan.to_var()?));
     if facts.sign_in == ClaudeSignIn::Token {
         env.push(Env::Host(crate::claude_token::VAR.into()));
     }
@@ -497,7 +499,7 @@ pub fn spec(facts: &Facts) -> SessionSpec {
         command,
     };
     crate::room::Limit::default().caps(&mut spec);
-    spec
+    Ok(spec)
 }
 
 /// The folder of the bundle of a session with no GitHub, in the folder
@@ -2078,44 +2080,53 @@ pub fn main_clone(dir: &Path) -> Result<(PathBuf, PathBuf)> {
 /// the session clones in its container ([`crate::session_clone`],
 /// 01M7DZ42C8SY2GV5ZQJZHM2VTV). It is the one look for the branch of an
 /// item, for `riff run` and for a wave. The default branch comes from the
-/// step of the image ([`session_image::follow_origin`]).
+/// step of the image ([`session_image::follow_origin`]). Only the ref
+/// `refs/heads/BRANCH` itself counts ([`lists_ref`]).
 pub fn earlier(main: &Path, branch: &Branch) -> Result<bool> {
     let remote = crate::host_git::output(main, &["remote", "get-url", "origin"])?;
     let head = format!("refs/heads/{branch}");
-    Ok(
-        !git_credential::run(main, &remote, &["ls-remote", "--", &remote, &head])?
-            .trim()
-            .is_empty(),
-    )
+    let listed = git_credential::run(main, &remote, &["ls-remote", "--", &remote, &head])?;
+    Ok(lists_ref(&listed, &head))
+}
+
+/// True when `listed`, the output of `git ls-remote URL REF`, has the
+/// ref `name` itself (01M7GDKF8RED15C1ZXCS8F4VMG). `git ls-remote` also
+/// lists each ref whose name only ends with `REF`, so another person
+/// with a push could make such a ref to stop each session of an item.
+///
+/// ```
+/// use riff::run::lists_ref;
+///
+/// let head = "refs/heads/worktree-issue-12";
+/// assert!(lists_ref("1a2b\trefs/heads/worktree-issue-12\n", head));
+/// assert!(!lists_ref("", head));
+/// // A decoy ref whose name only ends with the name of the branch.
+/// assert!(!lists_ref("1a2b\trefs/heads/evil/refs/heads/worktree-issue-12\n", head));
+/// assert!(!lists_ref("1a2b\trefs/tags/refs/heads/worktree-issue-12\n", head));
+/// assert!(lists_ref("1a2b\trefs/heads/x/refs/heads/worktree-issue-12\n1a2b\trefs/heads/worktree-issue-12\n", head));
+/// ```
+pub fn lists_ref(listed: &str, name: &str) -> bool {
+    listed.lines().any(|line| {
+        line.split_once('\t')
+            .is_some_and(|(_, listed)| listed == name)
+    })
 }
 
 /// Before the start of a session of `riff run --no-github`: fetches the
-/// default branch `base`, and the branch `branch` of the item when the
-/// look on `origin` found it (`earlier`, [`earlier`]), from `origin` into
-/// `refs/remotes/origin` of the main clone `main`, with the git of the
-/// person (01M7FDN99KZE54CX17DDEP787V). The clone of such a session
+/// branch `branch` of the item when the look on `origin` found it
+/// (`earlier`, [`earlier`]), from `origin` into `refs/remotes/origin` of
+/// the main clone `main`, with the git of the person
+/// (01M7FDN99KZE54CX17DDEP787V, [`session_image::fetch_origin`]). The
+/// step of the image fetched the default branch before
+/// ([`session_image::follow_origin`]). The clone of such a session
 /// fetches nothing from GitHub, and starts from the view of the main
 /// clone ([`crate::session_clone`]): so it goes on from the branch on
 /// `origin` too.
-pub fn fetch_for_no_github(
-    main: &Path,
-    base: &Branch,
-    branch: &Branch,
-    earlier: bool,
-) -> Result<()> {
-    let remote = crate::host_git::output(main, &["remote", "get-url", "origin"])?;
-    let spec = |name: &Branch| format!("+refs/heads/{name}:refs/remotes/origin/{name}");
-    let mut args = vec![
-        "fetch".to_owned(),
-        "-q".into(),
-        "--no-tags".into(),
-        "--".into(),
-        remote.clone(),
-        spec(base),
-    ];
-    args.extend(earlier.then(|| spec(branch)));
-    let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    git_credential::run(main, &remote, &args).map(drop)
+pub fn fetch_for_no_github(main: &Path, branch: &Branch, earlier: bool) -> Result<()> {
+    match earlier {
+        true => session_image::fetch_origin(main, &[branch]),
+        false => Ok(()),
+    }
 }
 
 /// What the terminal shows of the events of one session: the lines of
@@ -2465,12 +2476,14 @@ pub async fn run_with(
     let dir = identity::working_dir()?;
     let (main, common) = main_clone(&dir)?;
     // With --image, the image is the one that the person gives, and the
-    // lines about the pin say nothing. The model, the env and the volumes
-    // still come from the merged riff.toml (01M6VAQWECJ6N6VJF66KCMNYD1,
-    // 01M5SMVVC4GQS310CVK3H9CMQ7).
+    // lines about the pin say nothing. The line of `origin` still says
+    // when riff cannot ask it (01M7G81XGBPP23H9T7V0WX87QZ). The model, the
+    // env and the volumes still come from the merged riff.toml
+    // (01M6VAQWECJ6N6VJF66KCMNYD1, 01M5SMVVC4GQS310CVK3H9CMQ7).
+    let base = session_image::follow_origin(&main, |line| println!("{line}"))?;
     let merged = match image {
-        Some(_) => session_image::merged_config(&main, |_| {})?,
-        None => session_image::merged_config(&main, |line| println!("{line}"))?,
+        Some(_) => session_image::merged_config_on(&main, base, |_| {})?,
+        None => session_image::merged_config_on(&main, base, |line| println!("{line}"))?,
     };
     let image = image.map_or_else(|| merged.image.to_string(), str::to_owned);
     let image = image.as_str();
@@ -2597,7 +2610,7 @@ async fn work(
         .bundle_file()
         .map(|out| (out, bundle_copy(&folder, &branch)));
     if let Some((out, _)) = &bundle {
-        fetch_for_no_github(main, &plan.base, &branch, earlier)?;
+        fetch_for_no_github(main, &branch, earlier)?;
         if let Some(out) = out.parent() {
             std::fs::create_dir_all(out)
                 .with_context(|| format!("cannot make {}", out.display()))?;
@@ -2619,7 +2632,7 @@ async fn work(
         gitconfig: existing(home.join(".gitconfig")),
         setup: merged.setup.clone(),
     };
-    let spec = spec(&facts);
+    let spec = spec(&facts)?;
     let base = &facts.plan.base;
     println!(
         "{}",
@@ -3237,8 +3250,8 @@ mod tests {
     }
 
     /// 01M7FDN99KZE54CX17DDEP787V: when the fetch of `riff run
-    /// --no-github` fails, the error names the fetch: here `origin` has
-    /// no branch `gone`.
+    /// --no-github` fails, the error names the fetch: here the branch of
+    /// the item went from `origin` after the look.
     #[test]
     fn a_fetch_for_no_github_that_fails_names_the_fetch() {
         let root = tempfile::tempdir().unwrap();
@@ -3248,16 +3261,18 @@ mod tests {
         let main = root.join("main");
         git(&main, &["commit", "-q", "--allow-empty", "-m", "start"]);
         git(&main, &["push", "-q", "origin", "HEAD:main"]);
-        let error = fetch_for_no_github(&main, &name("gone"), &name("worktree-issue-12"), false)
-            .unwrap_err();
+        let error = fetch_for_no_github(&main, &name("gone"), true).unwrap_err();
         assert!(format!("{error:#}").contains("fetch"), "{error:#}");
         assert!(format!("{error:#}").contains("gone"), "{error:#}");
+        // With no branch on origin, it fetches nothing.
+        fetch_for_no_github(&main, &name("gone"), false).unwrap();
     }
 
     /// 01M7FDN99KZE54CX17DDEP787V: before a session of `riff run
-    /// --no-github`, the main clone gets the default branch and the branch
-    /// of the item from `origin`, which another clone pushed. With no
-    /// branch on `origin`, it gets the default branch only.
+    /// --no-github`, the main clone gets the default branch from the step
+    /// of the image, and the branch of the item from `origin`, which
+    /// another clone pushed. The default branch comes once: the fetch of
+    /// the branch of the item does not fetch it again.
     #[test]
     fn with_no_github_the_main_clone_gets_the_branches_of_origin_first() {
         let root = tempfile::tempdir().unwrap();
@@ -3281,18 +3296,53 @@ mod tests {
                 ],
             )
         };
-        fetch_for_no_github(&main, &name("main"), &name("worktree-issue-12"), false).unwrap();
+        let base = session_image::follow_origin(&main, |line| panic!("{line}")).unwrap();
+        assert_eq!(base, name("main"));
         assert_eq!(seen("main"), "newer");
+        assert!(!earlier(&main, &name("worktree-issue-12")).unwrap());
+        fetch_for_no_github(&main, &name("worktree-issue-12"), false).unwrap();
         assert_eq!(seen("worktree-issue-12"), "");
         git(
             &other,
             &["commit", "-q", "--allow-empty", "-m", "WIP: earlier"],
         );
         git(&other, &["push", "-q", "origin", "HEAD:worktree-issue-12"]);
+        git(&other, &["commit", "-q", "--allow-empty", "-m", "newest"]);
+        git(&other, &["push", "-q", "origin", "HEAD:main"]);
         let earlier = earlier(&main, &name("worktree-issue-12")).unwrap();
         assert!(earlier);
-        fetch_for_no_github(&main, &name("main"), &name("worktree-issue-12"), earlier).unwrap();
+        fetch_for_no_github(&main, &name("worktree-issue-12"), earlier).unwrap();
         assert_eq!(seen("worktree-issue-12"), "WIP: earlier");
+        assert_eq!(seen("main"), "newer");
+    }
+
+    /// 01M7GDKF8RED15C1ZXCS8F4VMG: a decoy ref on `origin` whose name
+    /// only ends with the name of the branch of the item is no branch of
+    /// the item. So the session starts a new branch, and does not fail at
+    /// its checkout.
+    #[test]
+    fn a_decoy_ref_on_origin_is_no_branch_of_the_item() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path();
+        git(root, &["init", "-q", "--bare", "-b", "main", "origin.git"]);
+        git(root, &["clone", "-q", "origin.git", "main"]);
+        let main = root.join("main");
+        git(&main, &["commit", "-q", "--allow-empty", "-m", "start"]);
+        git(&main, &["push", "-q", "origin", "HEAD:main"]);
+        for decoy in [
+            "refs/heads/evil/refs/heads/worktree-issue-12",
+            "refs/tags/refs/heads/worktree-issue-12",
+        ] {
+            git(&main, &["push", "-q", "origin", &format!("HEAD:{decoy}")]);
+        }
+        let listed = git(
+            &main,
+            &["ls-remote", "origin", "refs/heads/worktree-issue-12"],
+        );
+        assert_eq!(listed.lines().count(), 2, "{listed}");
+        assert!(!earlier(&main, &name("worktree-issue-12")).unwrap());
+        git(&main, &["push", "-q", "origin", "HEAD:worktree-issue-12"]);
+        assert!(earlier(&main, &name("worktree-issue-12")).unwrap());
     }
 
     /// 01M7DZ42C8SY2GV5ZQJZHM2VTV: the host looks for the branch of the
@@ -3410,7 +3460,7 @@ mod tests {
             sign_in: ClaudeSignIn::Token,
             ..facts()
         };
-        let spec = spec(&facts);
+        let spec = spec(&facts).unwrap();
         let host = Host {
             home: facts.home.clone(),
             user: facts.user.clone(),
@@ -3438,7 +3488,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn with_no_token_podman_binds_the_sign_in_file_and_gets_no_token_variable() {
-        let args: Vec<String> = crate::podman::run_args(&spec(&facts()))
+        let args: Vec<String> = crate::podman::run_args(&spec(&facts()).unwrap())
             .unwrap()
             .into_iter()
             .map(|a| a.into_string().unwrap())
@@ -3586,7 +3636,7 @@ mod tests {
 
     #[test]
     fn the_spec_has_each_bind_of_a_session_and_writes_only_its_own_folders() {
-        let spec = spec(&facts());
+        let spec = spec(&facts()).unwrap();
         let binds: Vec<String> = spec.binds.iter().map(shown).collect();
         assert_eq!(
             binds,
@@ -3642,7 +3692,7 @@ mod tests {
         .unwrap();
 
         // claude in the container reads this folder as its config folder.
-        let spec = spec(&facts);
+        let spec = spec(&facts).unwrap();
         let bind = spec
             .binds
             .iter()
@@ -3683,7 +3733,7 @@ mod tests {
 
     #[test]
     fn the_spec_has_the_home_the_limits_and_the_values_of_a_session() {
-        let spec = spec(&facts());
+        let spec = spec(&facts()).unwrap();
         assert_eq!(spec.name, "riff-issue-12-1a2b3c4d");
         assert_eq!(spec.image, "localhost/riff-session:latest");
         assert_eq!(spec.home, Path::new("/home/mike"));
@@ -3730,7 +3780,7 @@ mod tests {
     #[test]
     fn a_spec_of_a_riff_toml_with_no_env_has_no_variable_and_no_volume_of_a_tool() {
         let setup = Setup::of_config("[session]\nimage = \"x\"\n", "riff.toml").unwrap();
-        let spec = spec(&Facts { setup, ..facts() });
+        let spec = spec(&Facts { setup, ..facts() }).unwrap();
         let names: Vec<String> = variables(&spec)
             .iter()
             .map(|v| v.split('=').next().unwrap().to_owned())
@@ -3766,7 +3816,7 @@ mod tests {
             "riff.toml",
         )
         .unwrap();
-        let spec = spec(&Facts { setup, ..facts() });
+        let spec = spec(&Facts { setup, ..facts() }).unwrap();
         let binds: Vec<String> = spec.binds.iter().map(shown).collect();
         assert_eq!(
             binds[binds.len() - 2..],
@@ -3792,7 +3842,8 @@ mod tests {
         let spec = spec(&Facts {
             setup: riff_setup(),
             ..facts()
-        });
+        })
+        .unwrap();
         let binds: Vec<String> = spec.binds.iter().map(shown).collect();
         assert_eq!(
             binds[binds.len() - 2..],
@@ -3827,7 +3878,8 @@ mod tests {
         let spec = spec(&Facts {
             setup: riff_setup(),
             ..facts()
-        });
+        })
+        .unwrap();
         assert_eq!(spec.command[..3], ["claude", "--model", "opus"]);
         let vars = variables(&spec);
         assert!(
@@ -3842,9 +3894,9 @@ mod tests {
     #[test]
     fn the_command_of_a_worker_has_the_model_of_the_riff_toml() {
         let setup = Setup::of_config("[session]\nmodel = \"sonnet\"\n", "riff.toml").unwrap();
-        let with = spec(&Facts { setup, ..facts() });
+        let with = spec(&Facts { setup, ..facts() }).unwrap();
         assert_eq!(with.command[..4], ["claude", "--model", "sonnet", "-p"]);
-        let none = spec(&facts());
+        let none = spec(&facts()).unwrap();
         assert_eq!(none.command[..4], ["claude", "--model", "opus", "-p"]);
         assert_eq!(
             none.command.iter().filter(|a| *a == "--model").count(),
@@ -3859,7 +3911,8 @@ mod tests {
         let spec = spec(&Facts {
             gitconfig: None,
             ..facts()
-        });
+        })
+        .unwrap();
         let all: Vec<String> = spec.binds.iter().map(shown).collect();
         let all = all.join("\n");
         assert!(!all.contains(".gitconfig"), "{all}");

@@ -2167,7 +2167,10 @@ not work there. For the clone of such a session, see
 Before the start, `riff run` fetches the default branch from `origin`
 into your clone, with your git. When an earlier session pushed the
 branch of the item, it fetches that branch too, and the session goes
-on from it. The start text holds the body of the
+on from it. When the fetch of the default branch fails, riff says so
+in one line, and the session starts from the default branch of your
+clone. When the fetch of the branch of the item fails, no session
+starts. The start text holds the body of the
 issue. The session commits on its branch, and pushes nothing. `riff
 whoami` in the session shows `github   none`. Its clone goes with its
 container, so when `claude` ends, `riff relay` writes the commits of

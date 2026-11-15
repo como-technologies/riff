@@ -8779,6 +8779,11 @@ of this part when they merge.
   no branch, riff says so in one line, and reads origin/HEAD as the
   clone has it. This supersedes 01M7G29PSP7X56X8E60A3KRV4V in full, and
   01M51STPPWYFKQ1ESCNA6V3WV2 in part: a main clone with no origin/HEAD.
+- **01M7GDKF8RED15C1ZXCS8F4VMG** The branch of an item is on origin only
+  when git ls-remote lists the ref refs/heads/BRANCH itself. A ref whose
+  name only ends with that name does not count, so no other person can
+  stop the sessions of an item with such a ref. The same look holds for
+  a wave.
 - **01M7GCESN7RY3GW6ZPP9PBM87D** A job of the daemon keeps only the
   folder of its own session: each folder of its item that was not there
   at the start of the job, and the folder of the session that a new
@@ -8837,6 +8842,17 @@ of this part when they merge.
   says one note that names the step, prints no other text of it, and
   claude does not start. This supersedes 01M7G39RG8TC27717MMT20FTSW in
   full.
+- **01M7GE3KYR7JZHDV5S7PKAZX57** At its start, before the clone and
+  before claude, the relay makes a random key, and gives it to the
+  daemon on the socket of the session. The daemon takes one key for each
+  container: the first one, before the first hello of the relay. It
+  keeps only the SHA-256 of the key, in the record of the session. Each
+  note of the relay has the key, and the daemon keeps no note with
+  another key or with none. Only the relay has the key, in its memory:
+  claude does not get it, and the relay makes itself not dumpable, so no
+  other process of the container can read its memory. When the daemon
+  keeps no note, for a bad key or past 8 notes, it says so, and the
+  relay prints the note on its stderr.
 
 ### The home of the person
 

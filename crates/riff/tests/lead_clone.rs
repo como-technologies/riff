@@ -61,8 +61,8 @@ fn the_lead_clones_in_its_container_on_the_default_branch() {
     let dir = tempfile::tempdir().unwrap();
     let facts = facts(dir.path());
     for spec in [
-        riff::lead::spec(&facts, "o/r", "Start."),
-        riff::lead::spec_again(&facts, "o/r", "Again."),
+        riff::lead::spec(&facts, "o/r", "Start.").unwrap(),
+        riff::lead::spec_again(&facts, "o/r", "Again.").unwrap(),
     ] {
         let clone = spec
             .binds

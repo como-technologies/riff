@@ -524,7 +524,18 @@ branch is the default branch on GitHub. Before each start, riff asks
 fetches that branch into your clone, and sets `origin/HEAD` of your
 clone to it. So when you rename the default branch on GitHub, your
 clone needs no step. When riff cannot ask `origin`, it says so in one
-line, and uses `origin/HEAD` as your clone has it.
+line, and uses `origin/HEAD` as your clone has it. `riff run` says the
+line also with `--image`. When the daemon starts the lead again, the
+line is in the log of the daemon:
+
+```sh
+journalctl --user -u riff | grep 'riff cannot fetch origin'
+```
+
+A branch of an item is on `origin` only when `git ls-remote` lists
+`refs/heads/BRANCH` itself. A ref whose name only ends with that name,
+for example `refs/heads/x/refs/heads/worktree-issue-12`, is not the
+branch.
 
 The volume is on the disk, and goes with the container.
 
@@ -577,6 +588,27 @@ The daemon keeps at most 8 such lines of a container, each with no
 control character and no secret, and at most 500 characters long. A
 line that `claude` writes on its stderr is never one of them, also
 when it starts with `riff relay:`.
+
+`claude` and its tools can talk to the daemon on the socket too. So
+each line of the relay has the key of the relay. At its start, before
+the clone and before `claude`, the relay makes a new key, and gives it
+to the daemon. The daemon takes only the first key of a container, and
+keeps no line with another key. Only the relay has the key, in its
+memory, and no other process of the container can read that memory.
+When the daemon keeps no line, the relay prints it on its stderr.
+
+```mermaid
+sequenceDiagram
+    participant R as riff relay
+    participant D as riff daemon
+    participant C as claude
+    R->>D: the key of the relay
+    R->>D: the line of the clone, with the key
+    Note over D: a line of the session, and of its log
+    R->>C: start claude, with no key
+    C->>D: a line with no key
+    Note over D: no line
+```
 
 ### The home of a session is in memory
 

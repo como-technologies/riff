@@ -333,6 +333,14 @@ pub struct Merged {
 /// ```
 pub fn merged_config(main: &Path, mut say: impl FnMut(&str)) -> Result<Merged> {
     let base = follow_origin(main, &mut say)?;
+    merged_config_on(main, base, say)
+}
+
+/// [`merged_config`] on the default branch `base` that
+/// [`follow_origin`] gave: so a caller can say the line of `origin` and
+/// not the lines about the pin, as `riff run --image` does. `say` gets
+/// each line about the pin.
+pub fn merged_config_on(main: &Path, base: Branch, mut say: impl FnMut(&str)) -> Result<Merged> {
     let head = format!("origin/{base}");
     let rev = format!("refs/remotes/origin/{base}");
     let config = match git(main, &["show", &format!("{rev}:{FILE}")]) {
@@ -419,10 +427,7 @@ pub fn follow_origin(main: &Path, mut say: impl FnMut(&str)) -> Result<Branch> {
         let look = ["ls-remote", "--symref", "origin", "HEAD"];
         crate::git_credential::keyring_open(main, "origin", &look)?;
         let base = origin_head(&git(main, &look)?)?;
-        let spec = format!("+refs/heads/{base}:refs/remotes/origin/{base}");
-        let fetch = ["fetch", "--quiet", "origin", spec.as_str()];
-        crate::git_credential::keyring_open(main, "origin", &fetch)?;
-        git(main, &fetch)?;
+        fetch_origin(main, &[&base])?;
         git(main, &["remote", "set-head", "origin", base.as_str()])?;
         anyhow::Ok(base)
     })();
@@ -434,6 +439,56 @@ pub fn follow_origin(main: &Path, mut say: impl FnMut(&str)) -> Result<Branch> {
         ));
         Ok(base)
     })
+}
+
+/// Fetches each branch of `branches` from `origin` into
+/// `refs/remotes/origin` of the main clone `main`, with no tag: the one
+/// refspec of riff for a branch of `origin`. Before the `git`, it checks
+/// the keyring ([`crate::git_credential::keyring_open`]). The default
+/// branch comes this way ([`follow_origin`]), and the branch of the item
+/// of `riff run --no-github` ([`crate::run::fetch_for_no_github`]).
+///
+/// ```
+/// use riff::session_image::fetch_origin;
+///
+/// let dir = tempfile::tempdir()?;
+/// let git = |dir: &std::path::Path, args: &[&str]| {
+///     let out = std::process::Command::new("git")
+///         .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
+///         .arg("-C")
+///         .arg(dir)
+///         .args(args)
+///         .env("GIT_CONFIG_GLOBAL", "/dev/null")
+///         .output()
+///         .unwrap();
+///     assert!(out.status.success(), "git {args:?}");
+///     String::from_utf8_lossy(&out.stdout).trim().to_owned()
+/// };
+/// let (origin, main) = (dir.path().join("origin.git"), dir.path().join("main"));
+/// git(dir.path(), &["init", "-q", "--bare", "-b", "main", origin.to_str().unwrap()]);
+/// git(dir.path(), &["clone", "-q", origin.to_str().unwrap(), main.to_str().unwrap()]);
+/// git(&main, &["commit", "-q", "--allow-empty", "-m", "one"]);
+/// git(&main, &["tag", "v1"]);
+/// git(&main, &["push", "-q", "origin", "HEAD:main", "HEAD:work", "v1"]);
+/// git(&main, &["tag", "-d", "v1"]);
+///
+/// fetch_origin(&main, &[&"work".parse()?])?;
+/// assert_eq!(git(&main, &["rev-parse", "origin/work"]), git(&origin, &["rev-parse", "work"]));
+/// assert_eq!(git(&main, &["tag"]), "");
+/// // A branch that origin does not have: the error names the fetch.
+/// let error = fetch_origin(&main, &[&"gone".parse()?]).unwrap_err();
+/// assert!(format!("{error:#}").starts_with("git fetch "), "{error:#}");
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn fetch_origin(main: &Path, branches: &[&Branch]) -> Result<()> {
+    let specs: Vec<String> = branches
+        .iter()
+        .map(|name| format!("+refs/heads/{name}:refs/remotes/origin/{name}"))
+        .collect();
+    let mut fetch = vec!["fetch", "--quiet", "--no-tags", "origin"];
+    fetch.extend(specs.iter().map(String::as_str));
+    crate::git_credential::keyring_open(main, "origin", &fetch)?;
+    git(main, &fetch).map(drop)
 }
 
 /// The branch of the `HEAD` of `origin` in `listed`, the output of `git

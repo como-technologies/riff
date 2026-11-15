@@ -149,7 +149,7 @@ pub fn folder_of_name(data: &Path, name: &str) -> PathBuf {
 ///     gitconfig: None,
 ///     setup: Default::default(),
 /// };
-/// let spec = riff::lead::spec(&facts, "o/r", &riff::text::lead_start("o/r"));
+/// let spec = riff::lead::spec(&facts, "o/r", &riff::text::lead_start("o/r"))?;
 /// assert_eq!(spec.name, "riff-lead-o-r");
 /// assert_eq!(spec.workdir, facts.plan.path);
 /// assert_eq!(
@@ -163,8 +163,9 @@ pub fn folder_of_name(data: &Path, name: &str) -> PathBuf {
 /// // as it is. The relay puts `/opt/riff` first on it, so `! riff` in the
 /// // lead runs the riff of the container.
 /// assert!(!spec.env.iter().any(|e| matches!(e, riff::runtime::Env::Value(n, _) if n == "PATH")));
+/// # Ok::<(), anyhow::Error>(())
 /// ```
-pub fn spec(facts: &Facts, repo: &str, start: &str) -> SessionSpec {
+pub fn spec(facts: &Facts, repo: &str, start: &str) -> Result<SessionSpec> {
     spec_with(facts, repo, "--session-id", start)
 }
 
@@ -196,7 +197,7 @@ pub fn spec(facts: &Facts, repo: &str, start: &str) -> SessionSpec {
 ///     gitconfig: None,
 ///     setup: Default::default(),
 /// };
-/// let spec = riff::lead::spec_again(&facts, "o/r", &riff::text::lead_again("o/r"));
+/// let spec = riff::lead::spec_again(&facts, "o/r", &riff::text::lead_again("o/r"))?;
 /// assert_eq!(spec.name, "riff-lead-o-r");
 /// assert_eq!(
 ///     spec.command[..6],
@@ -206,8 +207,9 @@ pub fn spec(facts: &Facts, repo: &str, start: &str) -> SessionSpec {
 /// // The same path of the clone, a new clone there, and the same Claude
 /// // folder: `claude` finds the conversation.
 /// assert_eq!(spec.workdir, facts.plan.path);
+/// # Ok::<(), anyhow::Error>(())
 /// ```
-pub fn spec_again(facts: &Facts, repo: &str, start: &str) -> SessionSpec {
+pub fn spec_again(facts: &Facts, repo: &str, start: &str) -> Result<SessionSpec> {
     spec_with(facts, repo, "--resume", start)
 }
 
@@ -242,8 +244,8 @@ pub fn tell_no_github(spec: &mut SessionSpec, why: &str) {
 }
 
 /// [`spec`], with the flag `session_flag` for the session ID of `claude`.
-fn spec_with(facts: &Facts, repo: &str, session_flag: &str, start: &str) -> SessionSpec {
-    let mut spec = run::spec(facts);
+fn spec_with(facts: &Facts, repo: &str, session_flag: &str, start: &str) -> Result<SessionSpec> {
+    let mut spec = run::spec(facts)?;
     spec.name = name_of(repo);
     // The folder `~/.cache` of the container can belong to root, when a
     // volume of `riff.toml` binds under it: `riff build` needs another
@@ -259,7 +261,7 @@ fn spec_with(facts: &Facts, repo: &str, session_flag: &str, start: &str) -> Sess
         "--dangerously-skip-permissions".into(),
         start.to_owned(),
     ]);
-    spec
+    Ok(spec)
 }
 
 /// True when the daemon of `status` runs the session `name`.
@@ -596,6 +598,7 @@ pub async fn old(runtime: &impl Runtime, name: &str) -> bool {
 ///     interrupt: false,
 ///     model: Some("opus".into()),
 ///     github: None,
+///     notes_key: None,
 /// };
 /// let idle = Duration::from_secs(300);
 /// // A write now: a turn runs.
@@ -1155,7 +1158,7 @@ impl Parts<'_> {
     /// the facts of [`facts`].
     fn start(
         &self,
-        spec: fn(&Facts, &str, &str) -> SessionSpec,
+        spec: fn(&Facts, &str, &str) -> Result<SessionSpec>,
         prompt: &str,
     ) -> Result<daemon::Start> {
         let host = self.host;
@@ -1171,7 +1174,7 @@ impl Parts<'_> {
             session: self.session.to_owned(),
             item: ITEM.into(),
             folder: self.folder.to_owned(),
-            spec: spec(&facts, self.repo, prompt),
+            spec: spec(&facts, self.repo, prompt)?,
             start: prompt.to_owned(),
             values: host.values(),
             secrets: host.secrets(),
@@ -1310,7 +1313,9 @@ pub fn again(main: Option<&Path>, record: &daemon::Record) -> Result<daemon::Sta
         fault => fault.into(),
     })?;
     needs_token(&host.claude.sign_in())?;
-    let merged = session_image::merged_config(&main, |_| {})?;
+    // The lines go to the log of the daemon, as those of a wave: also the
+    // line of an `origin` that riff cannot ask (01M7G81XGBPP23H9T7V0WX87QZ).
+    let merged = session_image::merged_config(&main, |line| println!("{repo}: {line}"))?;
     let sources = session_image::merged_sources(&main)?;
     run::claude_folder(
         &run::claude_in(&folder),
@@ -1913,7 +1918,7 @@ mod tests {
             gitconfig: None,
             setup: Default::default(),
         };
-        let spec = spec(&facts, "como-technologies/riff", "start");
+        let spec = spec(&facts, "como-technologies/riff", "start").unwrap();
         (fake.start_terminal(&spec, &[]).await.unwrap(), file)
     }
 
@@ -2070,8 +2075,8 @@ mod tests {
             )
             .unwrap(),
         };
-        let first = spec(&facts, "o/r", "start");
-        let again = spec_again(&facts, "o/r", "go on");
+        let first = spec(&facts, "o/r", "start").unwrap();
+        let again = spec_again(&facts, "o/r", "go on").unwrap();
         // Only the session flag and the prompt differ.
         assert_eq!(again.binds, first.binds);
         assert_eq!(again.env, first.env);
@@ -2124,6 +2129,7 @@ mod tests {
             interrupt: false,
             model: None,
             github: None,
+            notes_key: None,
         }
     }
 
@@ -2525,7 +2531,8 @@ mod tests {
         let session = "1a2b3c4d-0000-4000-8000-000000000000";
         let common = main.join(".git");
         let facts = facts("o/r", &host, &merged, &folder, &common, session).unwrap();
-        let plan = crate::session_clone::Plan::of_spec(&spec(&facts, "o/r", "Start.")).unwrap();
+        let plan =
+            crate::session_clone::Plan::of_spec(&spec(&facts, "o/r", "Start.").unwrap()).unwrap();
         assert_eq!(plan.base.as_str(), "trunk");
         assert_eq!(plan.checkout, crate::session_clone::Checkout::Default);
         assert_eq!(plan.refs, run::refs_in(&folder));

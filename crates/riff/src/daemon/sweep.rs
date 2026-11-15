@@ -1553,6 +1553,7 @@ esac
             interrupt: false,
             model: None,
             github: None,
+            notes_key: None,
         };
         let path = crate::daemon::record_path(&here.dir, name);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();

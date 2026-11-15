@@ -8799,6 +8799,19 @@ pub fn daemon_relay_note(name: &str, note: &str) -> String {
     format!("riff daemon: {name}: {note}")
 }
 
+/// The daemon took a key of the notes of this container already
+/// ([`crate::daemon::NoteKey`], 01M7GE3KYR7JZHDV5S7PKAZX57).
+pub const DAEMON_NOTE_KEY_TAKEN: &str =
+    "The riff daemon has the key of the notes of this container already.";
+
+/// A note with no key of the relay of the container
+/// ([`crate::daemon::NoteKey`], 01M7GE3KYR7JZHDV5S7PKAZX57).
+pub const DAEMON_NOTE_REFUSED: &str =
+    "The riff daemon keeps no note without the key of the relay of this container.";
+
+/// The daemon has [`crate::daemon::NOTES`] notes of the container.
+pub const DAEMON_NOTES_FULL: &str = "The riff daemon keeps no more notes of this container.";
+
 /// The note of `riff relay` after it wrote the commits of a session with
 /// no GitHub in the bundle `bundle` ([`crate::session_clone::Plan::bundle`]).
 ///

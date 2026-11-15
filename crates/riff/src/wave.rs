@@ -4323,7 +4323,7 @@ impl Live {
             session: session.to_owned(),
             item,
             folder,
-            spec: run::spec(&facts),
+            spec: run::spec(&facts)?,
             start,
             values: host.values(),
             secrets,
@@ -9465,6 +9465,7 @@ esac
             interrupt: false,
             model: None,
             github: None,
+            notes_key: None,
         };
         let path = crate::daemon::record_path(here.daemon.dir(), &name);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -9996,6 +9997,7 @@ esac
             interrupt: false,
             model: None,
             github: None,
+            notes_key: None,
         }
     }
 
@@ -11921,7 +11923,7 @@ esac
                 &wave, work, &pinned, &host, base, checkout, session, folder, common,
             )
             .unwrap();
-            let spec = run::spec(&facts);
+            let spec = run::spec(&facts).unwrap();
             for bind in &spec.binds {
                 match &bind.source {
                     crate::runtime::Source::Empty => assert_eq!(bind.target, facts.plan.path),
@@ -12168,6 +12170,7 @@ esac
                 interrupt: false,
                 model: None,
                 github: None,
+                notes_key: None,
             };
             Self {
                 api,
