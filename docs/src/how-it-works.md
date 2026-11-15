@@ -5271,7 +5271,7 @@ riff
 
 > @riff what is next?
 
- Enter send  Esc log  PgUp older  Alt-1..7 tab  Ctrl-C quit
+ Enter send  Esc log  Ctrl-U/K/L clear  PgUp older  Alt-1..7 tab  Ctrl-C quit
 ```
 
 The row under the header names the people who are online and away,
@@ -5300,6 +5300,7 @@ until you send the next line.
 | `↑`, `↓` | Move the cursor one row in a long line. On the first row, `↑` goes to the start of the line, and on the last row, `↓` goes to the end. `↑` brings back a line that you sent only on an empty line: see "Send a line again". Out of the prompt: scroll one row. |
 | `←`, `→` | Move the cursor one character, also over the end of a row. |
 | `Home`, `End` | Go to the start or the end of the line. At the end of the line, `End` shows the newest line. Out of the prompt: show the oldest or the newest line. |
+| `Ctrl-U`, `Ctrl-K`, `Ctrl-L` | Delete the text before the cursor, after it, or the whole line: see "Clear the line in the Chat tab". |
 | `PgUp`, `PgDn` | Show older or newer lines. |
 | `g`, `G` | Out of the prompt: show the oldest or the newest line. |
 | `Alt-1` to `Alt-7`, `Tab` | Open another tab, also from the prompt. While a list of names or issues shows, `Tab` picks the first one. |
@@ -5354,6 +5355,35 @@ of the rows of the tab. A longer line scrolls by rows, so that the row
 of the cursor shows. Move through the rows with `↑`, `↓`, `←`, `→`,
 `Home` and `End`: see the table of keys above.
 
+#### Clear the line in the Chat tab
+
+Three keys delete text in the line of the Chat tab. Start the TUI,
+press `2`, and type a line:
+
+```sh
+riff
+```
+
+| Key | Deletes |
+|---|---|
+| `Ctrl-U` | The text before the cursor. |
+| `Ctrl-K` | The text from the cursor to the end of the line. |
+| `Ctrl-L` | The whole line. The cursor goes to the start. |
+
+Each key works on the whole line, also on a long line of more rows and
+on the new lines of a paste. For example, put the cursor before
+`wave 52`:
+
+```text
+> @riff please look at the plan of wave 52
+```
+
+`Ctrl-U` leaves `wave 52`, `Ctrl-K` leaves `@riff please look at the
+plan of`, and `Ctrl-L` leaves an empty line. In a terminal of 80
+columns or more, the key line under the prompt says `Ctrl-U/K/L clear`
+while no list of names or issues shows. A click on it deletes the whole
+line, as `Ctrl-L` does.
+
 #### See the new lines under the log
 
 While you read older lines, a new line does not move the log. The line
@@ -5370,7 +5400,7 @@ riff
  12:46 <riff> #994 still has no answer; I wait for mike
  2 new lines below: End
 >
- Enter send  Esc log  PgUp older  Alt-1..7 tab  Ctrl-C quit
+ Enter send  Esc log  Ctrl-U/K/L clear  PgUp older  Alt-1..7 tab  Ctrl-C quit
 ```
 
 The row shows while the log is not at the bottom and a new line is

@@ -726,7 +726,7 @@ fn key_line(
 /// assert_eq!(help_keys(Tab::Machines)[0], ("↑ ↓ j k", "select a host"));
 /// assert!(help_keys(Tab::Waves).contains(&("q, Ctrl-C", "end the TUI")));
 /// assert!(help_keys(Tab::Machines).contains(&("q, Ctrl-C", "end the TUI")));
-/// assert_eq!(help_keys(Tab::Chat)[8], ("/me TEXT", "send an action"));
+/// assert_eq!(help_keys(Tab::Chat)[9], ("/me TEXT", "send an action"));
 /// assert!(help_keys(Tab::Chat).contains(&("q, Ctrl-C", "end the TUI")));
 /// ```
 pub fn help_keys(tab: Tab) -> Vec<(&'static str, &'static str)> {
@@ -1362,6 +1362,36 @@ mod tests {
         state.on_key(Key::Help);
         state.on_key(Key::Help);
         assert!(!state.help_shown());
+    }
+
+    /// At 80 x 24, the help popup of each tab shows each of its lines, up
+    /// to the last one (01M6VAZKDEQ6951KGPGAMF1SNJ).
+    #[test]
+    fn the_help_popup_of_each_tab_fits_in_80_by_24() {
+        for tab in Tab::ALL {
+            let mut state = mock_up();
+            state.on_key(Key::Open(tab));
+            if tab == Tab::Chat {
+                state.on_key(Key::Chat(chat::Key::Log));
+            }
+            state.on_key(Key::Help);
+            let rows = drawn(&state, 80, 24);
+            let text = rows.join("\n");
+            assert!(
+                text.contains(&format!("Keys of the {} tab", tab.name())),
+                "{text}"
+            );
+            for (key, does) in help_keys(tab) {
+                assert!(
+                    rows.iter().any(|r| r.contains(key) && r.contains(does)),
+                    "{key}: {text}"
+                );
+            }
+            assert!(
+                text.contains(" The sessions go on after the TUI."),
+                "{text}"
+            );
+        }
     }
 
     /// 01M6VAZKG8FS4HEA9VSA4Z4YF1: a click acts as the key of the place

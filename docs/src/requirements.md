@@ -10220,6 +10220,14 @@ that builds it merges.
   the note line, as in the Waves tab. `a` marks the questions of the
   issue as answered after `y`, with the code of `riff questions
   --answered`.
+- **01M7FZAW2DT0KE72HB2VQ3SQBG** In the prompt of the Chat tab of the
+  TUI, `Ctrl-U` deletes the text before the cursor, `Ctrl-K` deletes the
+  text from the cursor to the end of the line, and `Ctrl-L` deletes the
+  whole line and puts the cursor at its start. Each of the three keys
+  works on the whole text of the line, also on a line of more rows. In a
+  wide tab with no list of names or issues, the key line of the prompt
+  says `Ctrl-U/K/L clear`, and a click on it presses `Ctrl-L`. The help
+  of the Chat tab says what each of the three keys deletes.
 
 ## The notes of the lead
 

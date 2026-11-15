@@ -1220,7 +1220,7 @@ async fn the_chat_tab_shows_the_chat_and_sends_a_line_that_wakes_a_lead() {
     assert_eq!(rows[21], ">");
     assert_eq!(
         rows[23],
-        " Enter send  Esc log  PgUp older  Alt-1..7 tab  Ctrl-C quit"
+        " Enter send  Esc log  Ctrl-U/K/L clear  PgUp older  Alt-1..7 tab  Ctrl-C quit"
     );
 
     // The note line says nothing of whom the line wakes. Enter sends the
@@ -1556,6 +1556,61 @@ async fn a_long_line_in_the_chat_tab_wraps_over_more_rows() {
     tty.shows(|_| tty.cursor() == (20, 2, true)).await;
     tty.press("\x1b[B").await;
     tty.shows(|_| tty.cursor() == (21, 2, true)).await;
+    tty.press("\x03").await;
+    assert_eq!(tty.exits().await, Some(0));
+}
+
+/// 01M7FZAW2DT0KE72HB2VQ3SQBG: in the prompt of the Chat tab, `Ctrl-L`
+/// deletes the whole line, `Ctrl-K` the text after the cursor and
+/// `Ctrl-U` the text before it, on all the rows of a line of two rows.
+/// The key line names the three keys.
+#[tokio::test]
+async fn ctrl_l_k_and_u_in_the_chat_tab_clear_a_line_of_two_rows() {
+    let server = crate::common::start_signed().await;
+    let mut tty = Tty::start(&server, "brett", "thelio", true);
+    tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
+    tty.press("2").await;
+    let rows = tty.shows(|rows| rows[21] == ">").await;
+    assert_eq!(
+        rows[23],
+        " Enter send  Esc log  Ctrl-U/K/L clear  PgUp older  Alt-1..7 tab  Ctrl-C quit"
+    );
+    let line = "typing in the TUI chat does not wrap lines, they just scroll off the screen \
+                to the left. Now the line wraps.";
+    let first = "> typing in the TUI chat does not wrap lines, they just scroll off the screen";
+    // Types the line on two rows, and puts the cursor at the start of the
+    // second row: Home, then ↓.
+    let two_rows = async |tty: &mut Tty| {
+        tty.press(line).await;
+        tty.shows(|rows| rows[20] == first && rows[21] == "  to the left. Now the line wraps.")
+            .await;
+        tty.press("\x1b[H\x1b[B").await;
+        tty.shows(|_| tty.cursor() == (21, 2, true)).await;
+    };
+
+    // Ctrl-L: the whole line goes, and the cursor is at the start.
+    two_rows(&mut tty).await;
+    tty.press("\x0c").await;
+    tty.shows(|rows| {
+        rows[21] == ">" && !rows[20].starts_with('>') && tty.cursor() == (21, 2, true)
+    })
+    .await;
+    // Ctrl-K at the end of the first row: the second row goes.
+    two_rows(&mut tty).await;
+    tty.press("\x1b[D\x0b").await;
+    tty.shows(|rows| rows[21] == first && !rows[20].starts_with('>'))
+        .await;
+    // Ctrl-U at the start of the second row: the first row goes.
+    tty.press("\x0c").await;
+    tty.shows(|rows| rows[21] == ">").await;
+    two_rows(&mut tty).await;
+    tty.press("\x15").await;
+    tty.shows(|rows| {
+        rows[21] == "> to the left. Now the line wraps."
+            && !rows[20].starts_with('>')
+            && tty.cursor() == (21, 2, true)
+    })
+    .await;
     tty.press("\x03").await;
     assert_eq!(tty.exits().await, Some(0));
 }
