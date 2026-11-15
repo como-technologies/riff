@@ -10200,8 +10200,9 @@ that builds it merges.
   text from the cursor to the end of the line, and `Ctrl-L` deletes the
   whole line and puts the cursor at its start. Each of the three keys
   works on the whole text of the line, also on a line of more rows. In a
-  wide tab, the key line of the prompt says `Ctrl-U/K/L clear`, and the
-  help of the Chat tab says what each of the three keys deletes.
+  wide tab with no list of names or issues, the key line of the prompt
+  says `Ctrl-U/K/L clear`, and a click on it presses `Ctrl-L`. The help
+  of the Chat tab says what each of the three keys deletes.
 
 ## The notes of the lead
 

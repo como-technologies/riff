@@ -5379,10 +5379,10 @@ on the new lines of a paste. For example, put the cursor before
 ```
 
 `Ctrl-U` leaves `wave 52`, `Ctrl-K` leaves `@riff please look at the
-plan of`, and `Ctrl-L` leaves an empty line. On an empty line, `↑`
-brings back the last line that you sent: see "Send a line again". In a
-terminal of 80 columns or more, the key line under the prompt says
-`Ctrl-U/K/L clear`.
+plan of`, and `Ctrl-L` leaves an empty line. In a terminal of 80
+columns or more, the key line under the prompt says `Ctrl-U/K/L clear`
+while no list of names or issues shows. A click on it deletes the whole
+line, as `Ctrl-L` does.
 
 #### See the new lines under the log
 
