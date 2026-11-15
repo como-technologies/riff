@@ -7322,16 +7322,22 @@ pub fn host_file_not_plain(path: &Path) -> String {
 /// assert!(riff::text::host_file_too_large(Path::new("/a"), 1024).contains(" 1024 bytes "));
 /// ```
 pub fn host_file_too_large(path: &Path, most: u64) -> String {
-    let most = if most < 1 << 20 {
+    format!(
+        "riff reads at most {} of a file in a folder that a session can write: {} is larger. \
+         Remove it, and start again.",
+        limit_words(most),
+        path.display()
+    )
+}
+
+/// The words of a limit of `most` bytes: bytes below 1 MB, else
+/// [`size_words`].
+fn limit_words(most: u64) -> String {
+    if most < 1 << 20 {
         format!("{most} bytes")
     } else {
         size_words(most)
-    };
-    format!(
-        "riff reads at most {most} of a file in a folder that a session can write: {} is larger. \
-         Remove it, and start again.",
-        path.display()
-    )
+    }
 }
 
 /// The error of the guard of the files of the host when the folder
@@ -7355,9 +7361,33 @@ pub fn host_file_too_many(path: &Path, most: usize) -> String {
     )
 }
 
+/// A text with a name that a container chose, for one line of the log
+/// (01M7FX6SZ88S06N1AT6WJHKNMX): each control character is its escape,
+/// for example `\n` for a line break. So the name makes no second line.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::escaped("/s/x\nriff daemon: forged\x1b[2K\t.jsonl"),
+///     r"/s/x\nriff daemon: forged\u{1b}[2K\t.jsonl"
+/// );
+/// assert_eq!(riff::text::escaped("/s/größe.jsonl"), "/s/größe.jsonl");
+/// ```
+pub fn escaped(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        if c.is_control() {
+            out.extend(c.escape_default());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// The line of the log for a transcript, or a folder of transcripts,
 /// whose tokens riff does not count ([`crate::usage::Replies::read`],
-/// [`crate::usage::transcripts_in`]): `cause` names it.
+/// [`crate::usage::transcripts_in`]): `cause` names it, through
+/// [`escaped`].
 ///
 /// ```
 /// assert_eq!(
@@ -7366,14 +7396,43 @@ pub fn host_file_too_many(path: &Path, most: usize) -> String {
 ///     "riff counts no tokens of a transcript, and goes on. riff reads at most 256MB of a file \
 ///      in a folder that a session can write: /s/a.jsonl is larger. Remove it, and start again."
 /// );
+/// assert!(riff::text::transcript_skipped("/s/x\nforged").ends_with(r"/s/x\nforged"));
 /// ```
 pub fn transcript_skipped(cause: &str) -> String {
-    format!("riff counts no tokens of a transcript, and goes on. {cause}")
+    format!(
+        "riff counts no tokens of a transcript, and goes on. {}",
+        escaped(cause)
+    )
+}
+
+/// The line of the log when one count of the tokens of a session stops
+/// at the file or the folder `path`: the count read `bytes` bytes and
+/// `entries` entries of its transcripts ([`crate::usage::Replies::read`],
+/// 01M7FX6SWN3DGZMH5HS9BWEBY7). `path` goes through [`escaped`].
+///
+/// ```
+/// use std::path::Path;
+///
+/// assert_eq!(
+///     riff::text::transcripts_stopped(Path::new("/s/s1/subagents/agent-a.jsonl"), 1 << 30, 100_000),
+///     "riff reads at most 1.0GB and 100000 entries of the transcripts of a session in one \
+///      count: the count stops at /s/s1/subagents/agent-a.jsonl, and riff counts no tokens of \
+///      it or of the files after it."
+/// );
+/// ```
+pub fn transcripts_stopped(path: &Path, bytes: u64, entries: usize) -> String {
+    format!(
+        "riff reads at most {} and {entries} entries of the transcripts of a session in one \
+         count: the count stops at {}, and riff counts no tokens of it or of the files after it.",
+        limit_words(bytes),
+        escaped(&path.display().to_string())
+    )
 }
 
 /// The line of the log of the daemon when it cannot list the transcripts
 /// of a lead to see its turns ([`crate::lead::idle`],
-/// 01M7FNTSHXPQXXKZF761V0NN9Z): `cause` names the folder.
+/// 01M7FX6YQKTN9EVPTZJ9XB8PM4): `cause` names the folder, through
+/// [`escaped`].
 ///
 /// ```
 /// assert_eq!(
@@ -7383,9 +7442,13 @@ pub fn transcript_skipped(cause: &str) -> String {
 ///      entries of a folder that a session can write: /l/o-r/claude/projects has more. Remove \
 ///      some, and start again."
 /// );
+/// assert!(riff::text::lead_turns_unseen("/l/x\nforged").ends_with(r"/l/x\nforged"));
 /// ```
 pub fn lead_turns_unseen(cause: &str) -> String {
-    format!("riff sees no turn of the lead in its transcripts, and goes on. {cause}")
+    format!(
+        "riff sees no turn of the lead in its transcripts, and goes on. {}",
+        escaped(cause)
+    )
 }
 
 /// `riff run` on a host that is not Linux (01M4ZBGK7SFEXE1AGH6Z0YQHJP).

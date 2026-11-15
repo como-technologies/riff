@@ -133,6 +133,65 @@ impl Kind {
     }
 }
 
+/// The error of [`read()`] for the file `path` with more than `most`
+/// bytes: its text is [`text::host_file_too_large`]. A caller with a
+/// limit of its own tells it from the other errors
+/// ([`crate::usage::Replies::read`]).
+///
+/// ```
+/// use std::path::Path;
+///
+/// let root = tempfile::tempdir()?;
+/// std::fs::write(root.path().join("a"), "four")?;
+/// let error = riff::host_file::read(root.path(), Path::new("a"), 3).unwrap_err();
+/// assert!(error.is::<riff::host_file::TooLarge>());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+#[derive(Debug)]
+pub struct TooLarge {
+    /// The file.
+    pub path: PathBuf,
+    /// The most bytes that the read took.
+    pub most: u64,
+}
+
+impl std::fmt::Display for TooLarge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&text::host_file_too_large(&self.path, self.most))
+    }
+}
+
+impl std::error::Error for TooLarge {}
+
+/// The error of [`list`] for the folder `path` with more than `most`
+/// entries: its text is [`text::host_file_too_many`].
+///
+/// ```
+/// use std::path::Path;
+///
+/// let root = tempfile::tempdir()?;
+/// std::fs::create_dir(root.path().join("p"))?;
+/// std::fs::write(root.path().join("p/a"), "")?;
+/// let error = riff::host_file::list(root.path(), Path::new("p"), 0).unwrap_err();
+/// assert!(error.is::<riff::host_file::TooMany>());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+#[derive(Debug)]
+pub struct TooMany {
+    /// The folder.
+    pub path: PathBuf,
+    /// The most entries that the list took.
+    pub most: usize,
+}
+
+impl std::fmt::Display for TooMany {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&text::host_file_too_many(&self.path, self.most))
+    }
+}
+
+impl std::error::Error for TooMany {}
+
 /// The parts of `name`: an error when it is empty, absolute, or has `.`
 /// or `..`, so that each part is a name in the folder above it.
 fn parts(root: &Path, name: &Path) -> Result<Vec<OsString>> {
@@ -257,7 +316,7 @@ pub fn read(root: &Path, name: &Path, most: u64) -> Result<Option<Vec<u8>>> {
     }
     match read_most(file, meta.len(), most).with_context(|| format!("read {}", path.display()))? {
         Some(bytes) => Ok(Some(bytes)),
-        None => bail!("{}", text::host_file_too_large(&path, most)),
+        None => Err(TooLarge { path, most }.into()),
     }
 }
 
@@ -437,7 +496,7 @@ pub fn list(root: &Path, name: &Path, most: usize) -> Result<Option<Vec<(OsStrin
         }
         seen += 1;
         if seen > most {
-            bail!("{}", text::host_file_too_many(&at, most));
+            return Err(TooMany { path: at, most }.into());
         }
         if let Some(kind) = kind_at(&dir, name) {
             entries.push((name.to_owned(), kind));
@@ -768,10 +827,7 @@ mod scan {
         ("daemon.rs", "source: Source::Path(owned.socket.clone()),"),
         // The transcripts of a session and of a lead
         // ([`crate::usage::transcripts_in`], [`crate::usage::written_in`]).
-        (
-            "daemon.rs",
-            "let transcripts = usage::transcripts_in(&record.folder.join(\"claude\"), &live.session);",
-        ),
+        ("daemon.rs", "let claude = record.folder.join(\"claude\");"),
         (
             "lead.rs",
             "let written = crate::usage::written_in(&record.folder.join(\"claude\"), &record.live.session);",
@@ -807,7 +863,8 @@ mod scan {
     const STEPS: &[(&str, &str)] = &[
         ("run.rs", "pub fn claude_folder("),
         ("usage.rs", "fn transcripts_with_times("),
-        ("usage.rs", "pub fn read(paths: &[PathBuf]) -> Replies {"),
+        ("usage.rs", "fn read_transcript("),
+        ("usage.rs", "fn read_replies("),
         ("lead.rs", "pub fn linked_main("),
         ("daemon.rs", "fn bind_in("),
     ];
@@ -816,11 +873,14 @@ mod scan {
     /// function of riff that calls it. A function with one of them gets
     /// the path from a line of [`NAMED`] or from its caller, so it follows
     /// no link, as a function with a line of [`NAMED`].
-    const GUARDED: [&str; 6] = [
+    const GUARDED: [&str; 9] = [
         "host_file::",
         "claude_folder(",
         "transcripts_with_times(",
         "Replies::read(",
+        "Replies::read_within(",
+        "read_transcript(",
+        "read_replies(",
         "linked_main(",
         "bind_in(",
     ];

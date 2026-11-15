@@ -678,7 +678,7 @@ fn started(record: &daemon::Record) -> std::time::SystemTime {
 /// one. A folder `projects` that riff does not list, for example with
 /// more than [`crate::usage::MAX_ENTRIES`] entries, gives none: the line
 /// of [`text::lead_turns_unseen`] goes to the log of the daemon
-/// (01M7FNTSHXPQXXKZF761V0NN9Z).
+/// (01M7FX6YQKTN9EVPTZJ9XB8PM4).
 fn written(record: &daemon::Record) -> Option<std::time::SystemTime> {
     let written = crate::usage::written_in(&record.folder.join("claude"), &record.live.session);
     written.unwrap_or_else(|e| {
@@ -2390,9 +2390,10 @@ mod tests {
         assert!(idle(&record, quiet));
     }
 
-    /// 01M7FNTSHXPQXXKZF761V0NN9Z: the lead makes more entries than the
+    /// 01M7FX6YQKTN9EVPTZJ9XB8PM4: the lead makes more entries than the
     /// limit in its folder `projects`. riff sees no write of the lead
-    /// there: after the end of a turn, the lead is between two turns.
+    /// there: after the end of a turn, the lead is between two turns, and
+    /// 5 minutes after the start of its container, it is quiet.
     #[test]
     fn a_folder_of_projects_over_the_limit_shows_no_turn_of_the_lead() {
         use std::time::Duration;
@@ -2400,13 +2401,17 @@ mod tests {
         let record = record_in(dir.path());
         ended_ago(&record, Duration::from_secs(60));
         written_ago(&record, Duration::from_secs(1));
+        let quiet_for = Duration::from_secs(300);
         assert!(!between_turns(&record));
+        assert!(!quiet(&record, quiet_for));
         let projects = dir.path().join("claude/projects");
         for n in 0..crate::usage::MAX_ENTRIES {
             std::fs::write(projects.join(format!("{n}.jsonl")), "").unwrap();
         }
         assert_eq!(written(&record), None);
         assert!(between_turns(&record));
+        // The container started long ago: `since_ms` is 0.
+        assert!(quiet(&record, quiet_for));
     }
 
     /// 01M7E7A8QM8SRPQN3G1BXVJW1R: the new clone takes the place of the

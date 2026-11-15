@@ -496,12 +496,16 @@ reads at most a limit of each one:
 | A transcript, and the transcript of each helper agent | 256 MB | riff counts no tokens of it, and goes on. The log of the daemon names the file. |
 | `.claude.json` and `settings.json` of a Claude folder | 16 MB | The start stops, and riff writes neither file. The error names the file. |
 | `.git/objects/info/alternates` of a clone | 1 MB | riff counts no main clone for the clone. |
-| The entries of the folder `projects` of a Claude folder, and of the folder of the helper agents of a transcript | 10,000 entries | riff counts no tokens of the transcripts there, and sees no turn of the lead there. riff goes on, and the log of the daemon names the folder. |
+| The entries of the folder `projects` of a Claude folder, and of the folder of the helper agents of a transcript | 10,000 entries | riff counts no tokens of the transcripts there, and sees no write of the lead there: after an update, riff can start the lead again in the middle of a turn. riff goes on, and the log of the daemon names the folder. |
+| All the transcripts of a session, at each count of its tokens | 1 GB and 100,000 entries in all | riff counts the tokens of the files before the limit, and no tokens of the rest. The log of the daemon names the file or the folder where riff stopped. |
 
 When the size of a file is over its limit, riff reads none of it. When
-the file grows in the read, riff stops one byte past the limit. So the
-riff daemon takes no more memory for the file, and each other session
-goes on.
+the file grows in the read, riff stops one byte past the limit. The
+daemon reads the transcripts of an ended session on a thread of its
+own. So the riff daemon takes no more memory and time for the files,
+and each other session goes on. In the log, riff shows each control
+character of a name as its escape, for example `\n` for a line break:
+a name that a session chose makes no second line.
 
 ```mermaid
 flowchart LR

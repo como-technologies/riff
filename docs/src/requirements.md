@@ -7818,11 +7818,12 @@ of this part when they merge.
   `claude`. It tells the riff daemon on the socket of the session,
   prints nothing, and always exits with status 0. For the lead, the
   daemon writes the time of the end in the file `turn-ended` of the
-  folder of the lead. A lead is idle when its transcript got no write
-  later than 5 s after that end, or got no write for 5 minutes. At the
-  end of a turn of an old lead, the daemon looks again after 2 s, so the
-  lead starts again on the new riff at the first end of its turn. This
-  supersedes 01M5TC24PB3YC2CC8BA275WSEN in part: when a lead is idle.
+  folder of the lead. A lead is idle when riff sees no write to its
+  transcript later than 5 s after that end, or no write for 5 minutes.
+  At the end of a turn of an old lead, the daemon looks again after 2 s,
+  so the lead starts again on the new riff at the first end of its turn.
+  This supersedes 01M5TC24PB3YC2CC8BA275WSEN in part: when a lead is
+  idle.
 - **01M6WBX2FT7Y9FV9VGGPDBKAHM** The daemon starts no lead again while
   the daemon itself runs a riff that `riff update` replaced on disk. The
   daemon starts again on the new riff first, and the new daemon starts
@@ -8103,6 +8104,13 @@ of this part when they merge.
   (#1606). When the daemon starts to serve the repository of a lead, the
   main clone is the main clone of the wave. This supersedes
   01M6QB89JJEM9Z1V3RVZYHKYT0 and 01M6QVSWQZE41BMQ6YN2963C4V in part.
+- **01M7FX6YQKTN9EVPTZJ9XB8PM4** riff sees the writes to the transcript
+  of a lead in the folder `projects` of its Claude folder. When riff
+  cannot list that folder, for example with a link at it or with more
+  than 10,000 entries in it, riff sees no write, and the log of the
+  daemon names the folder. So the lead is idle at the end of a turn, and
+  5 minutes after the start of its container. This supersedes
+  01M6WBX2FQEHW92Y1A5HM4H8BM in part: the writes that riff sees.
 
 ### The first run
 
@@ -8905,6 +8913,20 @@ of this part when they merge.
   names the folder. riff counts no tokens of a transcript over its
   limit, and the log names it. A start with a `.claude.json` or a
   `settings.json` over its limit writes neither file.
+- **01M7FX6SWN3DGZMH5HS9BWEBY7** One count of the tokens of a session
+  reads at most 1 GB of transcripts in all, with the transcripts of its
+  helper agents, and at most 100,000 entries in all: each transcript
+  counts one, and each entry of the folder of its helpers counts one.
+  The count stops at the file or the folder where a limit runs out. It
+  counts the tokens of the files before it, and no tokens of it or of
+  the files after it, and the log names it. The daemon reads the
+  transcripts of an ended session on a thread for blocking work, so no
+  task of the daemon waits for the reads.
+- **01M7FX6SZ88S06N1AT6WJHKNMX** Each line of the log of riff that names
+  a file or a folder in a folder that a container writes shows each
+  control character of the name as its escape, for example `\n` for a
+  line break. So a name that a container chose makes no second line in
+  the log.
 
 ### Process
 

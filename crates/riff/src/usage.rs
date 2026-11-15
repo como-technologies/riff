@@ -62,7 +62,9 @@
 //!   [`MAX_TRANSCRIPT`] of each one, and at most [`MAX_ENTRIES`] entries
 //!   of each folder of them (01M7FNTSHXPQXXKZF761V0NN9Z). A transcript
 //!   or a folder over its limit counts no tokens, and the log names it
-//!   ([`crate::text::transcript_skipped`]).
+//!   ([`crate::text::transcript_skipped`]). One count reads at most
+//!   [`MAX_COUNT_BYTES`] and [`MAX_COUNT_ENTRIES`] in all, and stops
+//!   there (01M7FX6SWN3DGZMH5HS9BWEBY7).
 //! - A reply counts for a claim when its time is from the start of the
 //!   claim to before its end.
 //! - Tokens in a time with two claims of one session count for the
@@ -404,47 +406,106 @@ impl Replies {
     /// [`MAX_ENTRIES`] (01M7FNTSHXPQXXKZF761V0NN9Z). A link there, a
     /// transcript over its limit and a folder of helpers over its limit
     /// are skipped too, and the log names each one ([`Replies::skipped`]).
+    /// The count reads at most [`MAX_COUNT_BYTES`] and
+    /// [`MAX_COUNT_ENTRIES`] in all (01M7FX6SWN3DGZMH5HS9BWEBY7): it stops
+    /// at the file or the folder where one runs out, and the log names it
+    /// ([`text::transcripts_stopped`]).
     pub fn read(paths: &[PathBuf]) -> Replies {
-        let mut replies = Replies::default();
+        Replies::read_within(paths, Budget::COUNT)
+    }
+
+    /// [`Replies::read`] with the budget `budget`.
+    fn read_within(paths: &[PathBuf], budget: Budget) -> Replies {
+        let (mut replies, mut left) = (Replies::default(), budget);
         for path in paths {
             let Some((claude, name)) = in_claude(path) else {
                 continue;
             };
-            let subagents = name.with_extension("").join(SUBAGENTS);
-            let helpers = match crate::host_file::list(claude, &subagents, MAX_ENTRIES) {
-                Ok(listed) => listed.unwrap_or_default(),
-                Err(e) => {
-                    replies.skip(&e);
-                    Vec::new()
-                }
-            }
-            .into_iter()
-            .filter(|(file, kind)| {
-                *kind == crate::host_file::Kind::File
-                    && Path::new(file).extension().is_some_and(|e| e == "jsonl")
-            })
-            .map(|(file, _)| subagents.join(file));
-            for file in std::iter::once(name.to_owned()).chain(helpers) {
-                match crate::host_file::read_to_string(claude, &file, MAX_TRANSCRIPT) {
-                    Ok(Some(text)) => replies.add(&text),
-                    Ok(None) => {}
-                    Err(e) => replies.skip(&e),
-                }
+            if let Err(at) = replies.read_transcript(claude, name, &mut left) {
+                replies.log(text::transcripts_stopped(&at, budget.bytes, budget.entries));
+                break;
             }
         }
         replies
     }
 
+    /// Adds the replies of the transcript `CLAUDE/NAME`, then of the
+    /// transcript of each of its helper agents, and takes what it reads
+    /// from `left`. The error is the file or the folder where `left` ran
+    /// out.
+    fn read_transcript(
+        &mut self,
+        claude: &Path,
+        name: &Path,
+        left: &mut Budget,
+    ) -> std::result::Result<(), PathBuf> {
+        left.entries = left
+            .entries
+            .checked_sub(1)
+            .ok_or_else(|| claude.join(name))?;
+        self.read_replies(claude, name, left)?;
+        let subagents = name.with_extension("").join(SUBAGENTS);
+        let most = MAX_ENTRIES.min(left.entries);
+        let listed = match crate::host_file::list(claude, &subagents, most) {
+            Ok(listed) => listed.unwrap_or_default(),
+            Err(e) if most < MAX_ENTRIES && e.is::<crate::host_file::TooMany>() => {
+                return Err(claude.join(&subagents));
+            }
+            Err(e) => {
+                self.skip(&e);
+                Vec::new()
+            }
+        };
+        left.entries -= listed.len();
+        let helpers = listed.into_iter().filter(|(file, kind)| {
+            *kind == crate::host_file::Kind::File
+                && Path::new(file).extension().is_some_and(|e| e == "jsonl")
+        });
+        for (file, _) in helpers {
+            self.read_replies(claude, &subagents.join(file), left)?;
+        }
+        Ok(())
+    }
+
+    /// Adds the replies of the transcript `CLAUDE/FILE`, and takes its
+    /// bytes from `left`. The error is `CLAUDE/FILE` when it has more
+    /// bytes than `left`.
+    fn read_replies(
+        &mut self,
+        claude: &Path,
+        file: &Path,
+        left: &mut Budget,
+    ) -> std::result::Result<(), PathBuf> {
+        let most = MAX_TRANSCRIPT.min(left.bytes);
+        match crate::host_file::read_to_string(claude, file, most) {
+            Ok(Some(text)) => {
+                let read = u64::try_from(text.len()).unwrap_or(u64::MAX);
+                left.bytes = left.bytes.saturating_sub(read);
+                self.add(&text);
+            }
+            Ok(None) => {}
+            Err(e) if most < MAX_TRANSCRIPT && e.is::<crate::host_file::TooLarge>() => {
+                return Err(claude.join(file));
+            }
+            Err(e) => self.skip(&e),
+        }
+        Ok(())
+    }
+
     /// Skips a file whose read failed with `cause`: a line of the log
     /// names it.
     fn skip(&mut self, cause: &anyhow::Error) {
-        let line = text::transcript_skipped(&format!("{cause:#}"));
+        self.log(text::transcript_skipped(&format!("{cause:#}")));
+    }
+
+    /// Puts `line` in the log, and keeps it ([`Replies::skipped`]).
+    fn log(&mut self, line: String) {
         eprintln!("{line}");
         self.skipped.push(line);
     }
 
     /// The line of the log of each file that [`Replies::read`] skipped,
-    /// in the order of the reads.
+    /// and of the file where it stopped, in the order of the reads.
     pub fn skipped(&self) -> &[String] {
         &self.skipped
     }
@@ -621,6 +682,20 @@ pub fn saw(dir: &Path, session: &str, transcript: &Path) -> io::Result<()> {
     change(dir, session, |ledger| {
         if !ledger.transcripts.iter().any(|known| known == transcript) {
             ledger.transcripts.push(transcript.to_owned());
+        }
+    })
+}
+
+/// Records each of `transcripts` as a transcript of `session`, in one
+/// write of the marks: a session can have one transcript in each of
+/// [`MAX_ENTRIES`] folders of projects.
+fn saw_each(dir: &Path, session: &str, transcripts: &[PathBuf]) -> io::Result<()> {
+    change(dir, session, |ledger| {
+        let mut known: BTreeSet<PathBuf> = ledger.transcripts.iter().cloned().collect();
+        for transcript in transcripts {
+            if known.insert(transcript.clone()) {
+                ledger.transcripts.push(transcript.clone());
+            }
         }
     })
 }
@@ -1534,9 +1609,7 @@ impl Meter {
         if transcripts.is_empty() {
             return None;
         }
-        transcripts
-            .iter()
-            .try_for_each(|t| saw(&self.dir, session, t))
+        saw_each(&self.dir, session, transcripts)
             .and_then(|()| started(&self.dir, session, thread, item, from_ms))
             .and_then(|()| ended(&self.dir, session, thread, item, now))
             .transpose()
@@ -1659,6 +1732,31 @@ pub const MAX_TRANSCRIPT: u64 = 256 << 20;
 /// The most entries that riff reads of the folder of the projects or of
 /// the helpers of a transcript (01M7FNTSHXPQXXKZF761V0NN9Z).
 pub const MAX_ENTRIES: usize = 10_000;
+
+/// The most bytes of transcripts that one count of the tokens of a
+/// session reads in all ([`Replies::read`], 01M7FX6SWN3DGZMH5HS9BWEBY7).
+pub const MAX_COUNT_BYTES: u64 = 1 << 30;
+
+/// The most entries that one count of the tokens of a session reads in
+/// all: each transcript counts one, and each entry of the folder of its
+/// helpers ([`Replies::read`], 01M7FX6SWN3DGZMH5HS9BWEBY7).
+pub const MAX_COUNT_ENTRIES: usize = 100_000;
+
+/// What one count of the tokens of a session can still read: bytes of
+/// transcripts, and entries ([`MAX_COUNT_BYTES`], [`MAX_COUNT_ENTRIES`]).
+#[derive(Clone, Copy, Debug)]
+struct Budget {
+    bytes: u64,
+    entries: usize,
+}
+
+impl Budget {
+    /// The budget of one count.
+    const COUNT: Budget = Budget {
+        bytes: MAX_COUNT_BYTES,
+        entries: MAX_COUNT_ENTRIES,
+    };
+}
 
 /// The Claude folder of the transcript `path`, `CLAUDE/projects/P/S.jsonl`,
 /// and the name of `path` in it: [`crate::host_file`] opens each part of
@@ -2136,6 +2234,183 @@ mod tests {
         let replies = Replies::read(&[main]);
         assert!(replies.sum(&[(0, u64::MAX)]).is_empty());
         assert!(replies.skipped().is_empty(), "{:?}", replies.skipped());
+    }
+
+    /// The transcript `s1` of the project `-data-clone` in `claude`, its
+    /// helpers `agent-a` and `agent-b`, and the transcript `s1` of the
+    /// project `-other`, in the order of the reads.
+    fn transcripts_with_helpers(claude: &Path) -> [PathBuf; 4] {
+        let project = claude.join(PROJECTS).join("-data-clone");
+        let helpers = project.join("s1").join(SUBAGENTS);
+        let paths = [
+            project.join("s1.jsonl"),
+            helpers.join("agent-a.jsonl"),
+            helpers.join("agent-b.jsonl"),
+            claude.join(PROJECTS).join("-other/s1.jsonl"),
+        ];
+        let replies = [
+            ("m1", "opus", 1),
+            ("h1", "haiku", 2),
+            ("h2", "haiku", 4),
+            ("m2", "opus", 8),
+        ];
+        for (path, (id, model, output)) in paths.iter().zip(replies) {
+            write(path, &[reply(NINE, id, model, output)]);
+        }
+        paths
+    }
+
+    /// 01M7FX6SWN3DGZMH5HS9BWEBY7: a count with room for the bytes of a
+    /// transcript and of its first helper. It counts both, and stops at
+    /// the second helper: the log names it, and the files after it count
+    /// no tokens.
+    #[test]
+    fn a_count_stops_where_its_bytes_run_out_and_the_log_names_it() {
+        let claude = tempfile::tempdir().unwrap();
+        let [main, a, b, other] = transcripts_with_helpers(claude.path());
+        let size = |path: &PathBuf| std::fs::metadata(path).unwrap().len();
+        let all = [main.clone(), other.clone()];
+        let budget = Budget {
+            bytes: size(&main) + size(&a),
+            entries: 100,
+        };
+        let replies = Replies::read_within(&all, budget);
+        let models = replies.sum(&[(0, u64::MAX)]);
+        assert_eq!((models["opus"].output, models["haiku"].output), (1, 2));
+        assert_eq!(
+            replies.skipped(),
+            [text::transcripts_stopped(&b, budget.bytes, 100)]
+        );
+
+        // With room for each byte, each file counts.
+        let budget = Budget {
+            bytes: [&main, &a, &b, &other].into_iter().map(size).sum(),
+            entries: 100,
+        };
+        let replies = Replies::read_within(&all, budget);
+        let models = replies.sum(&[(0, u64::MAX)]);
+        assert_eq!((models["opus"].output, models["haiku"].output), (9, 6));
+        assert!(replies.skipped().is_empty(), "{:?}", replies.skipped());
+    }
+
+    /// 01M7FX6SWN3DGZMH5HS9BWEBY7: a count with room for 2 entries: a
+    /// transcript, and 1 entry of the folder of its 2 helpers. It counts
+    /// the transcript, and stops at the folder: the log names it. With
+    /// room for 3, it counts the helpers too, and stops at the next
+    /// transcript.
+    #[test]
+    fn a_count_stops_where_its_entries_run_out_and_the_log_names_it() {
+        let claude = tempfile::tempdir().unwrap();
+        let [main, a, _, other] = transcripts_with_helpers(claude.path());
+        let all = [main.clone(), other.clone()];
+        let budget = |entries| Budget {
+            bytes: MAX_COUNT_BYTES,
+            entries,
+        };
+        let replies = Replies::read_within(&all, budget(2));
+        let models = replies.sum(&[(0, u64::MAX)]);
+        assert_eq!(models["opus"].output, 1);
+        assert!(!models.contains_key("haiku"), "{models:?}");
+        let folder = a.parent().unwrap();
+        assert_eq!(
+            replies.skipped(),
+            [text::transcripts_stopped(folder, MAX_COUNT_BYTES, 2)]
+        );
+
+        let replies = Replies::read_within(&all, budget(3));
+        let models = replies.sum(&[(0, u64::MAX)]);
+        assert_eq!((models["opus"].output, models["haiku"].output), (1, 6));
+        assert_eq!(
+            replies.skipped(),
+            [text::transcripts_stopped(&other, MAX_COUNT_BYTES, 3)]
+        );
+    }
+
+    /// 01M7FX6SWN3DGZMH5HS9BWEBY7: a container session makes 5 sparse
+    /// helpers of [`MAX_TRANSCRIPT`] bytes each: no file is over its own
+    /// limit, and they cost no disk. One count reads 4 of them,
+    /// [`MAX_COUNT_BYTES`] in all, and stops at the fifth: the log names
+    /// it, and the next transcript counts no tokens.
+    #[test]
+    fn a_count_reads_at_most_its_bytes_in_all() {
+        assert_eq!(MAX_COUNT_BYTES, 4 * MAX_TRANSCRIPT);
+        let claude = tempfile::tempdir().unwrap();
+        let [main, a, b, other] = transcripts_with_helpers(claude.path());
+        std::fs::remove_file(&a).unwrap();
+        std::fs::remove_file(&b).unwrap();
+        let helpers = a.parent().unwrap();
+        for n in 0..5 {
+            let helper = std::fs::File::create(helpers.join(format!("agent-{n}.jsonl"))).unwrap();
+            helper.set_len(MAX_TRANSCRIPT).unwrap();
+        }
+        std::fs::write(&main, "").unwrap();
+        let replies = Replies::read(&[main, other]);
+        assert!(replies.sum(&[(0, u64::MAX)]).is_empty());
+        assert_eq!(
+            replies.skipped(),
+            [text::transcripts_stopped(
+                &helpers.join("agent-4.jsonl"),
+                MAX_COUNT_BYTES,
+                MAX_COUNT_ENTRIES
+            )]
+        );
+    }
+
+    /// 01M7FX6SZ88S06N1AT6WJHKNMX: a container session names a folder of
+    /// a project with a line break and a forged line of the daemon. The
+    /// log names its transcript over the limit on one line.
+    #[test]
+    fn a_name_with_a_line_break_makes_one_line_of_the_log() {
+        let claude = tempfile::tempdir().unwrap();
+        let forged = "x\nriff daemon: lead-acme-app: forged line";
+        let main = claude.path().join(PROJECTS).join(forged).join("s1.jsonl");
+        write(&main, &[]);
+        std::fs::File::options()
+            .write(true)
+            .open(&main)
+            .unwrap()
+            .set_len(MAX_TRANSCRIPT + 1)
+            .unwrap();
+        let replies = Replies::read(std::slice::from_ref(&main));
+        let [line] = replies.skipped() else {
+            panic!("{:?}", replies.skipped())
+        };
+        assert_eq!(line.lines().count(), 1, "{line}");
+        assert!(
+            line.contains(r"/x\nriff daemon: lead-acme-app: forged line/s1.jsonl is larger"),
+            "{line}"
+        );
+    }
+
+    /// The end of a container session records each of its transcripts
+    /// one time, in one write of the marks.
+    #[test]
+    fn the_end_of_a_session_records_each_transcript_one_time() {
+        let marks = tempfile::tempdir().unwrap();
+        let (one, two) = (
+            marks.path().join("one.jsonl"),
+            marks.path().join("two.jsonl"),
+        );
+        write(&one, &[reply(NINE + 1, "m1", "opus", 1)]);
+        write(&two, &[reply(NINE + 2, "m2", "opus", 2)]);
+        saw(marks.path(), "a6cf", &one).unwrap();
+        let meter = Meter {
+            dir: marks.path().to_owned(),
+            gh: Gh::at(marks.path().join("no-gh")),
+        };
+        let transcripts = [two.clone(), one.clone(), two.clone()];
+        let claim = meter
+            .session_ended(
+                "a6cf",
+                ("acme/app", "issue-7"),
+                NINE,
+                &transcripts,
+                NINE + HOUR,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(total(&claim.models).output, 3);
+        assert_eq!(load(marks.path(), "a6cf").transcripts, [one, two]);
     }
 
     #[test]

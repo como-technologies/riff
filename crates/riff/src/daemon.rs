@@ -5978,8 +5978,10 @@ impl<R: Runtime + 'static> Daemon<R> {
         if lead_ends && !back {
             let (world, record) = (self.world.clone(), record.clone());
             tokio::spawn(async move { world.leave(&record).await });
-        } else if !record.terminal {
-            self.count_tokens(&record);
+        } else if !record.terminal
+            && let Some(line) = self.count_tokens(&record).await
+        {
+            println!("{line}");
         }
         let followers = self.close(&owned, ended);
         for out in followers {
@@ -6009,33 +6011,37 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// waits for `gh`, and never fails by the report
     /// (01M3Y1YP39VFX6GH33H7B8A8KR). The comment goes as the daemon
     /// ([`gh_token::writer`], 01M6XZJFE2ZTR5RE3AWM30R704). The line of the
-    /// report goes to the log of the daemon. A folder `projects` that riff
-    /// does not list counts no tokens: the line of
-    /// [`text::transcript_skipped`] goes to the log
-    /// (01M7FNTSHXPQXXKZF761V0NN9Z).
-    fn count_tokens(&self, record: &Record) {
-        let Some(thread) = record.me.default_thread().map(|t| t.to_string()) else {
-            return;
-        };
-        let Some(meter) = self.world.meter(&thread) else {
-            return;
-        };
+    /// report goes to the log of the daemon. The reads of the transcripts
+    /// run on a thread for blocking work, so no task of the daemon waits
+    /// for them (01M7FX6SWN3DGZMH5HS9BWEBY7). A folder `projects` that
+    /// riff does not list counts no tokens (01M7FNTSHXPQXXKZF761V0NN9Z):
+    /// it gives the line of the log, with [`text::transcript_skipped`].
+    async fn count_tokens(&self, record: &Record) -> Option<String> {
+        let thread = record.me.default_thread().map(|t| t.to_string())?;
+        let meter = self.world.meter(&thread)?;
         let live = record.live.clone();
-        let transcripts = usage::transcripts_in(&record.folder.join("claude"), &live.session);
-        let transcripts = match transcripts {
-            Ok(transcripts) => transcripts,
-            Err(e) => {
+        let claude = record.folder.join("claude");
+        let (session, item) = (live.session.clone(), live.item.clone());
+        let (of, from_ms) = (thread.clone(), u64::try_from(live.since_ms).unwrap_or(0));
+        let counted = tokio::task::spawn_blocking(move || {
+            let transcripts = usage::transcripts_in(&claude, &session)?;
+            let claim = (of.as_str(), item.as_str());
+            let now = usage::now_ms();
+            let ended = meter.session_ended(&session, claim, from_ms, &transcripts, now);
+            anyhow::Ok((meter, ended))
+        })
+        .await;
+        let (meter, ended) = match counted {
+            Ok(Ok((meter, Some(ended)))) => (meter, ended),
+            Ok(Ok((_, None))) => return None,
+            Ok(Err(e)) => {
                 let line = text::transcript_skipped(&format!("{e:#}"));
-                println!("riff daemon: {}: {line}", live.name);
-                return;
+                return Some(format!("riff daemon: {}: {line}", live.name));
             }
-        };
-        let claim = (thread.as_str(), live.item.as_str());
-        let from_ms = u64::try_from(live.since_ms).unwrap_or(0);
-        let Some(ended) =
-            meter.session_ended(&live.session, claim, from_ms, &transcripts, usage::now_ms())
-        else {
-            return;
+            Err(e) => {
+                let line = format!("riff cannot count the tokens of {}: {e}.", live.item);
+                return Some(format!("riff daemon: {}: {line}", live.name));
+            }
         };
         let (world, server) = (self.world.clone(), record.server.clone());
         tokio::spawn(async move {
@@ -6054,6 +6060,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             };
             println!("riff daemon: {}: {line}", live.name);
         });
+        None
     }
 
     /// Ends the ownership of the session `owned`, which ended as `ended`:
@@ -12839,6 +12846,53 @@ mod tests {
         // The daemon tried gh, and wrote no comment.
         until(|| bin.path().join("tried").exists()).await;
         assert!(!bin.path().join("posted").exists());
+    }
+
+    /// 01M7FNTSHXPQXXKZF761V0NN9Z: a container session makes more entries
+    /// than the limit in its folder `projects`. At the end of the session,
+    /// the daemon counts no tokens of it, puts no claim in the marks, and
+    /// gives the line of the log that names the folder. At the limit, it
+    /// counts the session.
+    #[tokio::test]
+    async fn the_end_of_a_session_with_too_many_projects_counts_no_tokens_and_logs_it() {
+        let (bin, marks) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let gh = usage_gh(bin.path(), false);
+        let server = Arc::new(Server::default().with_meter(marks.path(), gh));
+        let world: Arc<dyn World> = server.clone();
+        let here =
+            Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
+        let start = here.start("riff-issue-12-1a2b3c4d", "issue-12");
+        let projects = start.folder.join("claude").join(crate::usage::PROJECTS);
+        let (_client, name) = here.started(start).await;
+        let record = here.daemon.records().pop().unwrap();
+        let session = record.live.session.clone();
+        let project = projects.join("-data-clone");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join(format!("{session}.jsonl")), "").unwrap();
+        for n in 0..crate::usage::MAX_ENTRIES {
+            std::fs::write(projects.join(format!("{n}.jsonl")), "").unwrap();
+        }
+        let cause = text::host_file_too_many(&projects, crate::usage::MAX_ENTRIES);
+        assert_eq!(
+            here.daemon.count_tokens(&record).await,
+            Some(format!(
+                "riff daemon: {name}: {}",
+                text::transcript_skipped(&cause)
+            ))
+        );
+        assert_eq!(
+            crate::usage::load(marks.path(), &session),
+            crate::usage::Ledger::default()
+        );
+
+        std::fs::remove_file(projects.join("0.jsonl")).unwrap();
+        assert_eq!(here.daemon.count_tokens(&record).await, None);
+        let ledger = crate::usage::load(marks.path(), &session);
+        assert_eq!(
+            ledger.transcripts,
+            [project.join(format!("{session}.jsonl"))]
+        );
+        assert_eq!(ledger.claims.len(), 1);
     }
 
     /// A fake `gh` in `dir` with the token of the person: it logs each

@@ -187,9 +187,11 @@ fn a_sparse_config_over_the_limit_gives_an_error_that_names_it() {
 }
 
 /// The how-to "When a session makes a large file in its folder" in the
-/// book (01M7FNTSHXPQXXKZF761V0NN9Z): the row of the files of the
-/// machine points to it, it names each limit of riff, its error is the
-/// error of riff, and its commands find the error and the file.
+/// book (01M7FNTSHXPQXXKZF761V0NN9Z, 01M7FX6SWN3DGZMH5HS9BWEBY7,
+/// 01M7FX6SZ88S06N1AT6WJHKNMX): the row of the files of the machine
+/// points to it, it names each limit of riff and the escape of a name in
+/// the log, its error is the error of riff, and its commands find the
+/// error, the line of a count that stopped, and the file.
 #[test]
 fn the_book_says_what_to_do_with_a_large_file_in_the_folder_of_the_lead() {
     let page = crate::book::page("how-it-works.md");
@@ -213,8 +215,26 @@ fn the_book_says_what_to_do_with_a_large_file_in_the_folder_of_the_lead() {
     }
     assert_eq!(riff::usage::MAX_ENTRIES, 10_000);
     assert!(how_to.contains("| 10,000 entries |"), "{how_to}");
+    assert_eq!(
+        (riff::usage::MAX_COUNT_BYTES, riff::usage::MAX_COUNT_ENTRIES),
+        (1 << 30, 100_000)
+    );
+    assert!(
+        how_to.contains("| 1 GB and 100,000 entries in all |"),
+        "{how_to}"
+    );
+    assert!(
+        how_to.contains("for example `\\n` for a line break"),
+        "{how_to}"
+    );
     let too_many = riff::text::host_file_too_many(Path::new("/p"), riff::usage::MAX_ENTRIES);
     assert!(too_many.starts_with("riff lists at most"), "{too_many}");
+    let stopped = riff::text::transcripts_stopped(
+        Path::new("/p/a.jsonl"),
+        riff::usage::MAX_COUNT_BYTES,
+        riff::usage::MAX_COUNT_ENTRIES,
+    );
+    assert!(stopped.starts_with("riff reads at most"), "{stopped}");
     assert!(error.starts_with("riff reads at most"), "{error}");
     assert_eq!(
         crate::book::commands_in(how_to),
