@@ -35,7 +35,7 @@
 //!
 //! ```mermaid
 //! flowchart TD
-//!     A["wait for room (crate::room)"] --> S["sweep: the clone of each item whose work is over goes"]
+//!     A["wait for room (crate::room)"] --> S["sweep: the clone of each item whose work is over or on origin goes"]
 //!     S --> L["look: the pause, the claims, the holds,<br/>the free work of gh, the full check of each waiting pull request"]
 //!     L --> P{"pick"}
 //!     P -- "an item, and a fact of the host fails" --> W
@@ -2179,6 +2179,19 @@ pub trait World: Send + Sync {
     /// The fate of the folder of a session of the issue `issue` of the
     /// repository `repo`, from the forge ([`Fate::of`]).
     fn fate<'a>(&'a self, repo: &'a str, issue: u64) -> BoxFuture<'a, Result<Fate>>;
+
+    /// True when the branch `branch` of `repo` on the forge holds the
+    /// commit `head` ([`crate::daemon::sweep::holds_on`],
+    /// 01M7GA9BC2DR4C87YSZZGKNY22). The default holds no commit: the
+    /// folder stays.
+    fn branch_holds<'a>(
+        &'a self,
+        _repo: &'a str,
+        _branch: &'a str,
+        _head: &'a str,
+    ) -> BoxFuture<'a, Result<bool>> {
+        Box::pin(async { Ok(false) })
+    }
 
     /// Deletes each branch `riff-kept/*` of `repo` that is older than 30
     /// days with `gh`, and gives their names
@@ -5435,6 +5448,19 @@ impl World for Live {
         Box::pin(blocking(move || sweep::fate_on(&gh, &repo, issue)))
     }
 
+    fn branch_holds<'a>(
+        &'a self,
+        repo: &'a str,
+        branch: &'a str,
+        head: &'a str,
+    ) -> BoxFuture<'a, Result<bool>> {
+        let gh = sweep::gh(repo);
+        let (repo, branch, head) = (repo.to_owned(), branch.to_owned(), head.to_owned());
+        Box::pin(blocking(move || {
+            sweep::holds_on(&gh, &repo, &branch, &head)
+        }))
+    }
+
     fn delete_old_kept<'a>(
         &'a self,
         gh: pr::Gh,
@@ -6785,6 +6811,18 @@ mod tests {
         }
     }
 
+    /// The free disk of each folder: `free_gb` GB of 500, so no test
+    /// depends on the disk of the host that runs it.
+    fn disk_of(free_gb: &Arc<AtomicU64>) -> crate::room::DiskOf {
+        let free_gb = free_gb.clone();
+        Arc::new(move |_: &std::path::Path| {
+            Some(riff_client::machines::Disk {
+                free_gb: free_gb.load(Ordering::SeqCst),
+                total_gb: 500,
+            })
+        })
+    }
+
     /// A daemon on the fake runtime with the fake world, in a temp
     /// folder.
     struct Here {
@@ -6792,6 +6830,8 @@ mod tests {
         fake: Fake,
         world: Arc<Fakes>,
         daemon: Arc<Daemon<Fake>>,
+        /// The free disk of each folder, in GB: 400 of 500 at the start.
+        disk: Arc<AtomicU64>,
     }
 
     impl Here {
@@ -6852,11 +6892,15 @@ mod tests {
             });
             let memory: crate::room::Memory =
                 Arc::new(move || Some(free.load(Ordering::SeqCst) * GB));
+            let disk = Arc::new(AtomicU64::new(400));
+            let disk_of = disk_of(&disk);
             let relay = root.path().join("static-riff");
             riff_client::secrets::mock_store();
             let daemon = Daemon::new(fake.clone(), dir.clone())
                 .unwrap()
                 .with_memory(memory)
+                .with_disk(disk_of)
+                .with_cache(Arc::new(|| text::daemon_cache(Some(Ok(40 << 30)))))
                 .with_world(world.clone())
                 .with_look_every(every)
                 .with_claim_wait(claim_wait)
@@ -6874,6 +6918,7 @@ mod tests {
                 fake,
                 world,
                 daemon: Arc::new(daemon),
+                disk,
             }
         }
 
@@ -6928,6 +6973,79 @@ mod tests {
                 assert!(self.daemon.live_count() <= limit, "more than {limit} live");
             }
         }
+    }
+
+    /// 01M7G43090V1F263GYK3GQEXCZ, 01M7G430CFEK4B0FDG1552G8VE,
+    /// 01M7G430FB68R1322AT8H94KYR: while the free disk is below its floor,
+    /// the wave starts no session, and its word and `riff daemon status`
+    /// say why. The lead gets one note, with the compile cache and the
+    /// folders that `riff daemon sweep` can remove. Over the floor again,
+    /// the starts go on, and the next fall gives a new note.
+    #[tokio::test]
+    async fn a_wave_starts_no_session_while_the_disk_is_almost_full() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 2, free).await;
+        let wave = Wave {
+            repo: "o/r".into(),
+            main: "/src/r".into(),
+            server: "http://127.0.0.1:1".into(),
+            host: "thelio".into(),
+        };
+        crate::daemon::remote::serve_in_file(here.daemon.dir(), &wave).unwrap();
+        let idle = here.daemon.sessions_dir().join("issue-9-1a2b3c4d");
+        std::fs::create_dir_all(&idle).unwrap();
+        here.disk.store(5, Ordering::SeqCst);
+        here.daemon.look_disk().await;
+        here.run();
+
+        let word = text::wave_full(crate::room::Full::Disk {
+            free_gb: 5,
+            floor_gb: 20,
+        });
+        here.until(2, |h| h.daemon.waves_shown()[0].word == word)
+            .await;
+        here.idle(2).await;
+        assert!(here.forge().starts.is_empty(), "no start");
+        let status = text::daemon_status(&here.daemon.status().await, crate::run::now_ms());
+        let line = "It is below the floor of 20 GB: the daemon starts no session.";
+        assert!(
+            status.contains("Disk: 5 GB free of 500 GB, at "),
+            "{status}"
+        );
+        assert!(status.contains(line), "{status}");
+        here.daemon.look_disk().await;
+        let notes = here.daemon.news().take("o/r");
+        assert_eq!(notes.len(), 1, "one note: {notes:?}");
+        let note = &notes[0];
+        assert!(
+            note.starts_with("The disk of thelio is almost full: 5 GB free of 500 GB"),
+            "{note}"
+        );
+        assert!(
+            note.contains("compile cache of the container sessions: 40.0GB"),
+            "{note}"
+        );
+        assert!(
+            note.contains(": issue-9-1a2b3c4d. riff daemon sweep"),
+            "{note}"
+        );
+
+        // Over the floor again: the wave starts its item.
+        here.disk.store(20, Ordering::SeqCst);
+        here.daemon.look_disk().await;
+        here.until(2, |h| h.forge().starts.len() == 1).await;
+        let status = text::daemon_status(&here.daemon.status().await, crate::run::now_ms());
+        assert!(
+            status.contains("Disk: 20 GB free of 500 GB, at "),
+            "{status}"
+        );
+        assert!(status.contains("The floor is 20 GB."), "{status}");
+        assert!(here.daemon.news().take("o/r").is_empty());
+
+        // A new fall: a new note.
+        here.disk.store(19, Ordering::SeqCst);
+        here.daemon.look_disk().await;
+        assert_eq!(here.daemon.news().take("o/r").len(), 1);
     }
 
     #[tokio::test]
@@ -7358,6 +7476,7 @@ mod tests {
             let daemon = Daemon::new(self.fake.clone(), dir_in(self._root.path()))
                 .unwrap()
                 .with_memory(memory)
+                .with_disk(disk_of(&self.disk))
                 .with_world(self.world.clone());
             Arc::new(daemon)
         }

@@ -44,6 +44,7 @@
 //! | Find the image digest of a live session | [`Runtime::digest`] | `podman container inspect --format {{.ImageDigest}} NAME` |
 //! | List the processes of a live session | [`Runtime::processes`] | `podman top NAME pid ppid etime args` ([`crate::podman::top_args`]) |
 //! | Find the folders of the volumes | [`Runtime::volume_folders`] | `podman info --format {{.Store.VolumePath}}` and `podman volume inspect --all` ([`crate::podman::STORE_ARGS`], [`crate::podman::VOLUMES_ARGS`]) |
+//! | Find the folder of the images and of the layers of the containers | [`Runtime::storage`] | `podman info --format {{.Store.GraphRoot}}` ([`crate::podman::GRAPH_ARGS`]) |
 //!
 //! A session with a terminal is the lead (01M4Z60B81RTZT71PN5HV0GZHX).
 //! The runtime holds its terminal: conmon on podman. A person attaches to
@@ -519,6 +520,12 @@ pub trait Runtime: Send + Sync {
     /// said come with the fault of each look-up that failed
     /// ([`VolumeFolders`]).
     fn volume_folders(&self) -> impl Future<Output = VolumeFolders> + Send;
+
+    /// The folder where the runtime keeps its images and the layers of
+    /// its containers. Its disk counts for the floor of free disk of the
+    /// host ([`crate::room::Room::watch`], 01M7G43090V1F263GYK3GQEXCZ).
+    /// Fails when the runtime cannot say.
+    fn storage(&self) -> impl Future<Output = Result<PathBuf>> + Send;
 }
 
 /// The folders of the volumes that the runtime said
@@ -684,6 +691,10 @@ impl Runtime for NoSessions {
     async fn volume_folders(&self) -> VolumeFolders {
         VolumeFolders::default()
     }
+
+    async fn storage(&self) -> Result<PathBuf> {
+        no_session()
+    }
 }
 
 /// The reset of the modes that a command in a session can leave on in
@@ -821,6 +832,8 @@ struct Book {
     volume_faults: Vec<String>,
     /// The looks of [`Runtime::volume_folders`] ([`Fake::volume_looks`]).
     volume_looks: usize,
+    /// The folder of [`Runtime::storage`] ([`Fake::with_storage`]).
+    storage: Option<PathBuf>,
 }
 
 /// The terminal of this process for a [`Fake`] ([`Fake::terminal`]): it
@@ -1078,6 +1091,24 @@ impl Fake {
     /// ```
     pub fn with_volume_fault(self, fault: &str) -> Self {
         self.lock().volume_faults.push(fault.to_owned());
+        self
+    }
+
+    /// A fake whose [`Runtime::storage`] is `folder`. With none, it fails.
+    ///
+    /// ```
+    /// use riff::runtime::{Fake, Runtime};
+    ///
+    /// tokio::runtime::Builder::new_current_thread().build()?.block_on(async {
+    ///     assert!(Fake::default().storage().await.is_err());
+    ///     let fake = Fake::default().with_storage("/h/.local/share/containers/storage");
+    ///     assert_eq!(fake.storage().await?.to_str(), Some("/h/.local/share/containers/storage"));
+    ///     Ok::<(), anyhow::Error>(())
+    /// })?;
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn with_storage(self, folder: impl Into<PathBuf>) -> Self {
+        self.lock().storage = Some(folder.into());
         self
     }
 
@@ -1421,6 +1452,13 @@ impl Runtime for Fake {
             said.failed(fault);
         }
         said
+    }
+
+    async fn storage(&self) -> Result<PathBuf> {
+        self.lock()
+            .storage
+            .clone()
+            .ok_or_else(|| anyhow!("the fake has no storage"))
     }
 }
 

@@ -1,14 +1,15 @@
 //! The folders of the sessions of `riff run` and of the waves (#938,
 //! #973, 01M4Z81ARSTAK8HR96S084SDFD, 01M53NJ5V27BCHDNHK2THQQZZQ,
-//! 01M53NJ5Y2CMY5MWF9328KW7DE, 01M7DZ4E02PX5Y0WMHFCJ9KS14).
+//! 01M53NJ5Y2CMY5MWF9328KW7DE, 01M7DZ4E02PX5Y0WMHFCJ9KS14,
+//! 01M7GA9BC2DR4C87YSZZGKNY22).
 //!
 //! # Design
 //!
 //! Each session of `riff run` and of a wave has a folder of its own,
 //! `ITEM-ID8` in [`crate::run::sessions_dir`]: the clone with its
 //! `target`, often some GB. The daemon removes the folder of each session
-//! that does not run when the work of its branch is over
-//! ([`Daemon::sweep`]):
+//! that does not run when the work of its branch is over, or is on
+//! `origin` ([`Daemon::sweep`]):
 //!
 //! - at its start, after it took up its sessions, and then each
 //!   [`EVERY`], also when no wave runs ([`Daemon::sweep_every`]);
@@ -26,9 +27,14 @@
 //! - the repository of the folder: its file [`REPO`], which the host
 //!   writes before the clone ([`note_repo`], 01M7DZ42EVHAT8N5MZEV97G3DW).
 //!   The container sees only `clone/` and `claude/` of the folder;
+//! - the last commit of the clone: its file [`HEAD`], which the daemon
+//!   writes from the exit of the relay ([`note_head`],
+//!   01M7GA96FQS4PR0X6RNPMCT2V5). git read it in the container, at the end
+//!   of `claude` ([`crate::session_relay::clean_head`]);
 //! - the fate on the forge: the pull requests of the branch of its item
 //!   on `origin`, and the state of its issue ([`World::fate`],
-//!   [`Fate::of`]);
+//!   [`Fate::of`]), and whether that branch holds the last commit
+//!   ([`World::branch_holds`], [`holds_on`]);
 //! - the age of the folder: the time since the last change of the folder
 //!   itself and of its `events.jsonl` ([`age`]).
 //!
@@ -39,6 +45,16 @@
 //! | No open pull request, a closed one | goes |
 //! | No pull request, and the issue is closed | goes |
 //! | No pull request, and the issue is open | stays |
+//!
+//! A folder of a work session `issue-N` that stays by the table also goes
+//! when the branch `worktree-issue-N` holds the commit of its file
+//! [`HEAD`]: the session pushed its work (01M7GA9BC2DR4C87YSZZGKNY22). So
+//! the folder of each round of fixes of an open pull request goes soon
+//! after its end. One compare of the forge, from the commit to the branch,
+//! asks it. The folder stays with no file [`HEAD`], for example after a
+//! change of a tracked file that the session did not commit, and when the
+//! branch does not hold the commit. The folder of a verify pushes no work:
+//! the table alone counts for it.
 //!
 //! A folder also goes when it is [`OLD_DAYS`] old, with each fate, and
 //! with no call to the forge. A folder with no file [`REPO`] stays until
@@ -76,7 +92,9 @@
 //!     A -- no --> O{"its file repo"}
 //!     O -- "none" --> S["it stays, and riff says why"]
 //!     O -- "OWNER/REPO" --> T{"the fate on the forge"}
-//!     T -- "an open pull request, or an open issue" --> K
+//!     T -- "an open pull request, or an open issue" --> H{"a work session,<br/>and the branch holds the commit of its file head?"}
+//!     H -- yes --> D
+//!     H -- no --> K
 //!     T -- "no answer of gh in GH_LIMIT" --> S
 //!     T -- "merged, closed, or the issue closed" --> D
 //! ```
@@ -100,6 +118,7 @@
 //! keeps the folder and goes on to the next folder. A fault at one folder
 //! stops no other folder: the daemon logs it and goes on.
 //!
+//! [`World::branch_holds`]: crate::wave::World::branch_holds
 //! [`World::fate`]: crate::wave::World::fate
 //! [`World::merged_in`]: crate::wave::World::merged_in
 
@@ -113,6 +132,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 
 use super::{Daemon, gh_token};
+use crate::room::Role;
 use crate::runtime::Runtime;
 use crate::{pr, rollout, run, text};
 
@@ -463,6 +483,113 @@ pub fn repo_of(folder: &Path) -> Option<String> {
     (part(owner) && part(name)).then(|| repo.to_owned())
 }
 
+/// The file in the folder of a session that names the head commit of its
+/// clone at the end of `claude` (01M7GA96FQS4PR0X6RNPMCT2V5). The daemon
+/// writes it from the exit of the relay
+/// ([`crate::session_relay::Up::Exit`]). The container does not see it.
+pub const HEAD: &str = "head";
+
+/// True when `text` is the full hash of a commit: 40 or 64 hex digits in
+/// lower case.
+///
+/// ```
+/// use riff::daemon::sweep::is_commit;
+///
+/// assert!(is_commit(&"a".repeat(40)));
+/// assert!(is_commit(&"0".repeat(64)));
+/// assert!(!is_commit("1a2b3c4"), "a short hash");
+/// assert!(!is_commit(&"A".repeat(40)));
+/// assert!(!is_commit(&format!("{}/", "a".repeat(39))));
+/// ```
+pub fn is_commit(text: &str) -> bool {
+    matches!(text.len(), 40 | 64) && text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// Writes the head commit `head` of the clone of the session of the
+/// folder `folder` in its file [`HEAD`]. A text that is no commit
+/// ([`is_commit`]) is an error.
+///
+/// ```
+/// use riff::daemon::sweep::{head_of, note_head};
+///
+/// let root = tempfile::tempdir()?;
+/// let folder = root.path().join("issue-12-1a2b3c4d");
+/// std::fs::create_dir_all(&folder)?;
+/// assert_eq!(head_of(&folder), None);
+/// let head = "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b";
+/// note_head(&folder, head)?;
+/// assert_eq!(head_of(&folder).as_deref(), Some(head));
+/// assert!(note_head(&folder, "main").is_err());
+/// assert_eq!(head_of(&folder).as_deref(), Some(head));
+/// std::fs::write(folder.join("head"), "main\n")?;
+/// assert_eq!(head_of(&folder), None);
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn note_head(folder: &Path, head: &str) -> Result<()> {
+    if !is_commit(head) {
+        bail!("{}", text::head_no_commit(head));
+    }
+    let path = folder.join(HEAD);
+    std::fs::write(&path, format!("{head}\n"))
+        .with_context(|| format!("cannot write {}", path.display()))
+}
+
+/// The head commit of the clone of the folder `folder` at the end of its
+/// session, from its file [`HEAD`]. `None` with no such file, or with a
+/// text that is no commit. It looks into no clone.
+pub fn head_of(folder: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(folder.join(HEAD)).ok()?;
+    let head = text.trim();
+    is_commit(head).then(|| head.to_owned())
+}
+
+/// True when a branch holds a commit, from the `status` of a compare of
+/// GitHub from the commit to the branch: the branch is at the commit, or
+/// after it.
+///
+/// ```
+/// use riff::daemon::sweep::holds;
+///
+/// assert!(holds("identical"));
+/// assert!(holds("ahead"), "the branch has more commits");
+/// assert!(!holds("behind"));
+/// assert!(!holds("diverged"), "a push with --force");
+/// ```
+pub fn holds(status: &str) -> bool {
+    matches!(status, "identical" | "ahead")
+}
+
+/// True when the branch `branch` of `repo` holds the commit `head`, with
+/// one compare of `gh` ([`holds`], 01M7GA9BC2DR4C87YSZZGKNY22). A commit
+/// or a branch that the forge does not have (HTTP 404) is no hold.
+///
+/// ```
+/// use riff::daemon::sweep::holds_on;
+///
+/// let dir = tempfile::tempdir()?;
+/// let script = "#!/bin/sh\n\
+///     case \"$*\" in\n\
+///       *compare/aaa...worktree-issue-12*) echo ahead ;;\n\
+///       *compare/bbb*) echo diverged ;;\n\
+///       *compare/ccc*) echo 'gh: Not Found (HTTP 404)' >&2; exit 1 ;;\n\
+///       *) echo 'gh: HTTP 502' >&2; exit 1 ;;\n\
+///     esac\n";
+/// let gh = riff::pr::Gh::at(isolated::write_program(dir.path().join("gh"), script));
+/// assert!(holds_on(&gh, "o/r", "worktree-issue-12", "aaa")?);
+/// assert!(!holds_on(&gh, "o/r", "worktree-issue-12", "bbb")?);
+/// assert!(!holds_on(&gh, "o/r", "worktree-issue-12", "ccc")?, "no such commit");
+/// assert!(holds_on(&gh, "o/r", "worktree-issue-12", "ddd").is_err(), "a fault");
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn holds_on(gh: &pr::Gh, repo: &str, branch: &str, head: &str) -> Result<bool> {
+    let api = format!("repos/{repo}/compare/{head}...{branch}?per_page=1");
+    match gh.run(&["api", &api, "--jq", ".status"], None) {
+        Ok(status) => Ok(holds(status.trim())),
+        Err(e) if format!("{e:#}").contains("HTTP 404") => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
 /// The days with no change after which a folder of a session goes
 /// (01M7DZ4E02PX5Y0WMHFCJ9KS14).
 pub const OLD_DAYS: u64 = 30;
@@ -784,20 +911,11 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// the reason.
     pub async fn sweep(&self, repo: Option<&str>) -> Vec<Swept> {
         let _one = self.folders.sweep.lock().await;
-        let dir = self.sessions_dir();
-        // With no folder of the sessions, the old clones of the leads still
-        // go.
-        let mut folders: Vec<PathBuf> = std::fs::read_dir(&dir)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|path| path.is_dir())
-            .collect();
-        folders.sort();
         let mut swept = Vec::new();
         let mut repos = BTreeSet::new();
-        for folder in folders {
+        // With no folder of the sessions, the old clones of the leads still
+        // go.
+        for folder in self.session_folders() {
             match self.sweep_folder(&folder, repo, &mut repos).await {
                 Ok(Some(line)) => swept.push(line),
                 Ok(None) => {}
@@ -993,13 +1111,40 @@ impl<R: Runtime + 'static> Daemon<R> {
                 return Ok(swept(line, true));
             }
         };
-        self.folders.stays(folder, fate == Fate::Stays);
-        let Some(over) = text::swept_why(issue, &fate) else {
+        let over = match text::swept_why(issue, &fate) {
+            Some(over) => Some(over),
+            None => match self.pushed(folder, item, &repo).await {
+                Ok(over) => over,
+                Err(e) => {
+                    let line = text::swept_forge_failed(folder, &format!("{e:#}"));
+                    return Ok(swept(line, true));
+                }
+            },
+        };
+        self.folders.stays(folder, over.is_none());
+        let Some(over) = over else {
             return Ok(None);
         };
         let gone = folder.to_owned();
         blocking(move || remove_folder(&gone)).await?;
         Ok(swept(text::swept(folder, &over), false))
+    }
+
+    /// Why the folder `folder` of `item`, whose session does not run, goes
+    /// while its work is open: `item` is a work item, and its branch on
+    /// the forge holds the commit of the file [`HEAD`] of the folder
+    /// (01M7GA9BC2DR4C87YSZZGKNY22). `None` for the folder of a verify,
+    /// with no file [`HEAD`], or when the branch does not hold the commit.
+    async fn pushed(&self, folder: &Path, item: &str, repo: &str) -> Result<Option<String>> {
+        if Role::of(item) != Role::Work {
+            return Ok(None);
+        }
+        let Some(head) = head_of(folder) else {
+            return Ok(None);
+        };
+        let branch = run::branch(item);
+        let holds = self.world.branch_holds(repo, &branch, &head).await?;
+        Ok(holds.then(|| text::swept_pushed(&head, &branch)))
     }
 
     /// Removes the folder `name` of one ended session on purpose
@@ -1039,6 +1184,34 @@ impl<R: Runtime + 'static> Daemon<R> {
         let gone = folder.clone();
         blocking(move || remove_folder(&gone)).await?;
         Ok(text::folder_removed(&folder, &why))
+    }
+
+    /// The names of the folders of the sessions that do not run, in order
+    /// (01M7G430FB68R1322AT8H94KYR), for the note of a low disk. A folder
+    /// whose name has no item does not count.
+    pub(crate) fn idle_folders(&self) -> Vec<String> {
+        self.session_folders()
+            .into_iter()
+            .filter_map(|path| {
+                let name = path.file_name()?.to_str()?.to_owned();
+                let item = item_of_folder(&name)?;
+                (!self.runs(&path, item)).then_some(name)
+            })
+            .collect()
+    }
+
+    /// Each folder in the folder of the sessions, in order: the folders
+    /// that [`Daemon::sweep`] looks at. None when that folder is not there.
+    fn session_folders(&self) -> Vec<PathBuf> {
+        let mut folders: Vec<PathBuf> = std::fs::read_dir(self.sessions_dir())
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.is_dir())
+            .collect();
+        folders.sort();
+        folders
     }
 
     /// True when the session of the folder `folder` of `item` runs: see
@@ -1246,6 +1419,89 @@ pub(crate) mod tests {
             "no note to the lead"
         );
         assert_eq!(marks(&here), Vec::<PathBuf>::new());
+    }
+
+    /// 01M7GA9BC2DR4C87YSZZGKNY22: the folder of an ended work session goes
+    /// when its branch on `origin` holds the commit of its file `head`, also
+    /// while its pull request is open. A folder whose commit is not on
+    /// `origin` stays, and goes after the push. A folder with no file
+    /// `head` stays, and so does the folder of a verify. A fault of the
+    /// forge keeps the folder, and says why.
+    #[tokio::test]
+    async fn an_ended_work_session_whose_head_is_on_origin_goes_while_its_pull_request_is_open() {
+        let (pushed, later, fault) = ("1".repeat(40), "2".repeat(40), "5".repeat(40));
+        let open: Vec<(u64, Fate)> = (1..=5).map(|n| (n, Fate::Stays)).collect();
+        let server = Server::with_fates(&open)
+            .with_held("worktree-issue-1", &pushed)
+            .with_held("worktree-issue-3", &pushed)
+            .with_compare_fault(&fault);
+        let (here, server) = with(server).await;
+        let gone = folder(&here, "issue-1-00000001");
+        note_head(&gone, &pushed).unwrap();
+        let not_pushed = folder(&here, "issue-2-00000002");
+        note_head(&not_pushed, &later).unwrap();
+        let verify = folder(&here, "verify-issue-3-00000003");
+        note_head(&verify, &pushed).unwrap();
+        let no_head = folder(&here, "issue-4-00000004");
+        let failed = folder(&here, "issue-5-00000005");
+        note_head(&failed, &fault).unwrap();
+
+        let swept = here.daemon.sweep(None).await;
+
+        assert_eq!(
+            lines(swept),
+            [
+                text::swept(&gone, &text::swept_pushed(&pushed, "worktree-issue-1")),
+                text::swept_forge_failed(&failed, "gh api compare: HTTP 502"),
+            ]
+        );
+        assert!(!gone.exists());
+        for kept in [&not_pushed, &verify, &no_head, &failed] {
+            assert!(kept.exists(), "{}", kept.display());
+        }
+
+        // The session of issue 2 pushed its commit: the next sweep removes
+        // its folder.
+        server.push("worktree-issue-2", &later);
+        let swept = here.daemon.sweep(None).await;
+        let why = text::swept_pushed(&later, "worktree-issue-2");
+        assert_eq!(swept[0].line, text::swept(&not_pushed, &why));
+        assert!(!not_pushed.exists() && verify.exists() && no_head.exists());
+        assert_eq!(marks(&here), Vec::<PathBuf>::new());
+    }
+
+    /// 01M7G430FB68R1322AT8H94KYR: the note of a low disk names the folders
+    /// of the sessions that do not run, in order. A session with a record,
+    /// a held lock or a job runs. A folder whose name has no item, and a
+    /// file, do not count.
+    #[tokio::test]
+    async fn the_idle_folders_are_the_folders_of_the_sessions_that_do_not_run() {
+        let (here, _) = here(&[]).await;
+        for name in [
+            "issue-2-00000002",
+            "verify-issue-3-00000003",
+            "issue-1-00000001",
+            "issue-6-00000006",
+        ] {
+            folder(&here, name);
+        }
+        let (_client, _) = here
+            .started(here.start("issue-4-00000004", "issue-4"))
+            .await;
+        let _lock = hold(&folder(&here, "issue-5-00000005")).unwrap();
+        let _job = here.daemon.in_job("issue-6");
+        let sessions = here.daemon.sessions_dir();
+        std::fs::create_dir_all(sessions.join("other")).unwrap();
+        std::fs::write(sessions.join("issue-7-00000007"), "a file").unwrap();
+
+        assert_eq!(
+            here.daemon.idle_folders(),
+            [
+                "issue-1-00000001",
+                "issue-2-00000002",
+                "verify-issue-3-00000003"
+            ]
+        );
     }
 
     /// 01M7DZ4E02PX5Y0WMHFCJ9KS14: a folder goes when it had no change for

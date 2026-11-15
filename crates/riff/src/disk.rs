@@ -20,6 +20,9 @@
 //! A workers host tells its disk in its status, and `riff workers` shows
 //! it for each machine (01M41A11GHP78E2VYN14JSE27P).
 //!
+//! The floor of free disk of the daemon measures each of its folders with
+//! [`here`] too ([`crate::room::Room::space`], 01M7G43090V1F263GYK3GQEXCZ).
+//!
 //! ```
 //! use riff_client::machines::Disk;
 //!
@@ -47,6 +50,12 @@ pub fn here(dir: &Path) -> Option<Disk> {
     if let Ok(text) = std::env::var(DISK) {
         return Disk::parse(&text);
     }
+    measure(dir)
+}
+
+/// The disk of the file system of `dir`, as the OS says it: [`here`]
+/// with no [`DISK`]. `None` when riff cannot measure it.
+pub fn measure(dir: &Path) -> Option<Disk> {
     let stat = nix::sys::statvfs::statvfs(dir).ok()?;
     let block = stat.fragment_size();
     Some(Disk {
@@ -71,12 +80,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn here_measures_a_real_file_system() {
-        if std::env::var(DISK).is_ok() {
-            return;
-        }
-        let disk = here(Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
+    fn measure_measures_a_real_file_system() {
+        let disk = measure(Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
         assert!(disk.total_gb > 0);
         assert!(disk.free_gb <= disk.total_gb);
+        assert!(measure(Path::new("/no/such/folder")).is_none());
     }
 }

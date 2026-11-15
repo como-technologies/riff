@@ -57,7 +57,7 @@
 //! | From | Line | Means |
 //! |---|---|---|
 //! | relay | [`Up::Event`] | One line of the stdout of `claude`, with its sequence number, with no secret. |
-//! | relay | [`Up::Exit`] | `claude` ended, with its exit code. It has the next sequence number. |
+//! | relay | [`Up::Exit`] | `claude` ended, with its exit code and the head of the clone ([`clean_head`]). It has the next sequence number. |
 //! | relay | [`Up::Held`] | `claude` ended for a takeover. The relay waits for [`Say::GoOn`]. |
 //! | daemon | [`Say::Input`] | One line for the stdin of `claude`: a wake. |
 //! | daemon | [`Say::Close`] | Close the stdin of `claude`: it ends after its turn. |
@@ -76,6 +76,13 @@
 //! After `claude` ends, the relay waits up to [`WAIT`] for the ack of
 //! its exit, and then ends with the exit code of `claude`. So the
 //! container goes.
+//!
+//! The exit also has the head commit of the clone, when the clone has no
+//! change of a tracked file ([`clean_head`], 01M7GA96FQS4PR0X6RNPMCT2V5).
+//! git runs in the container, in the folder of the relay: the clone. The
+//! daemon writes the head in the folder of the session, and the sweep
+//! removes the folder when `origin` holds that commit
+//! ([`crate::daemon::sweep`], 01M7GA9BC2DR4C87YSZZGKNY22).
 //!
 //! # A takeover
 //!
@@ -245,6 +252,9 @@ pub enum Up {
         seq: u64,
         /// The exit code of `claude`, or none after a signal.
         code: Option<i32>,
+        /// The head commit of the clone then, when the clone has no change
+        /// of a tracked file ([`clean_head`]). An older relay gives none.
+        head: Option<String>,
     },
     /// `claude` ended for a takeover: the relay waits for [`Say::GoOn`].
     /// The relay keeps no copy of it: the hello of the next connection
@@ -259,7 +269,7 @@ impl Up {
     /// use riff::session_relay::Up;
     ///
     /// assert_eq!(Up::Event { seq: 3, line: "{}".into() }.seq(), 3);
-    /// assert_eq!(Up::Exit { seq: 4, code: Some(0) }.seq(), 4);
+    /// assert_eq!(Up::Exit { seq: 4, code: Some(0), head: None }.seq(), 4);
     /// assert_eq!(Up::Held.seq(), 0);
     /// ```
     pub fn seq(&self) -> u64 {
@@ -438,6 +448,11 @@ pub fn resumed(command: &[String]) -> Vec<String> {
 /// Starts `claude` again after a takeover, for [`relay`].
 pub type Again = Box<dyn FnMut() -> Result<Child> + Send>;
 
+/// Reads the head of the clone after the end of `claude`, for
+/// [`Up::Exit`]: [`clean_head`] of the folder of the relay, or a fake in a
+/// test.
+pub type Head = Box<dyn FnOnce() -> Option<String> + Send>;
+
 /// The process of `claude`, for [`relay`].
 pub struct Child {
     /// Its stdin: the relay writes each input as one line.
@@ -448,6 +463,8 @@ pub struct Child {
     pub stderr: Box<dyn AsyncRead + Send + Unpin>,
     /// Its end: the exit code, or none after a signal.
     pub end: Pin<Box<dyn Future<Output = Option<i32>> + Send>>,
+    /// The head of the clone after its end.
+    pub head: Head,
 }
 
 /// Writes `value` as one line on `write`.
@@ -497,10 +514,12 @@ struct Link {
 
 /// Sends each line of the stdout of one `claude` to `ups` as an event,
 /// with no secret of `scrub`, from the sequence number `first` on. Then
-/// it sends the exit, with the next number.
+/// it sends the exit, with the next number and the head of the clone of
+/// `head`.
 fn read_claude(
     stdout: Box<dyn AsyncRead + Send + Unpin>,
     end: Pin<Box<dyn Future<Output = Option<i32>> + Send>>,
+    head: Head,
     first: u64,
     scrub: Scrub,
     ups: mpsc::UnboundedSender<Up>,
@@ -516,7 +535,9 @@ fn read_claude(
             seq += 1;
         }
         let code = end.await;
-        let _ = ups.send(Up::Exit { seq, code });
+        // git can block: it runs on a thread for blocking work.
+        let head = tokio::task::spawn_blocking(head).await.ok().flatten();
+        let _ = ups.send(Up::Exit { seq, code, head });
     });
 }
 
@@ -544,8 +565,16 @@ impl Link {
             stdout,
             stderr,
             end,
+            head,
         } = child;
-        read_claude(stdout, end, first, self.scrub.clone(), self.ups.clone());
+        read_claude(
+            stdout,
+            end,
+            head,
+            first,
+            self.scrub.clone(),
+            self.ups.clone(),
+        );
         read_notes(stderr, self.scrub.clone(), self.notes.clone());
         stdin
     }
@@ -583,6 +612,7 @@ impl Link {
                     Some(Up::Exit {
                         seq: next,
                         code: None,
+                        head: None,
                     }),
                     wait,
                 )
@@ -695,7 +725,7 @@ fn take(link: &mut Link, up: Option<Up>, wait: Duration) -> Option<Up> {
         link.done = true;
         return None;
     };
-    if let Up::Exit { seq, code } = up {
+    if let Up::Exit { seq, code, .. } = up {
         link.done = true;
         if link.hold {
             link.hold = false;
@@ -808,7 +838,52 @@ fn spawn_claude(command: &[String], pid: &Arc<AtomicU32>) -> Result<Child> {
         stdout: Box::new(stdout),
         stderr: Box::new(stderr),
         end: Box::pin(async move { child.wait().await.ok().and_then(|s| s.code()) }),
+        head: Box::new(|| clean_head(&std::env::current_dir().ok()?)),
     })
+}
+
+/// The time limit of each git call of [`clean_head`].
+pub const HEAD_LIMIT: Duration = Duration::from_secs(20);
+
+/// The head commit of the clone `dir`, when it has no change of a tracked
+/// file: the last work of the session, for [`Up::Exit`]. A new file that
+/// git does not track counts as no change. `None` when git fails, or does
+/// not end in [`HEAD_LIMIT`]. git runs in the container: the relay runs
+/// there.
+///
+/// ```
+/// use std::process::Command;
+/// use riff::session_relay::clean_head;
+///
+/// let dir = tempfile::tempdir()?;
+/// let git = |args: &[&str]| {
+///     let out = Command::new("git").arg("-C").arg(dir.path()).args(args).output().unwrap();
+///     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+///     String::from_utf8_lossy(&out.stdout).trim().to_owned()
+/// };
+/// assert_eq!(clean_head(dir.path()), None, "no repository");
+/// git(&["init", "-q"]);
+/// std::fs::write(dir.path().join("a"), "1\n")?;
+/// git(&["add", "a"]);
+/// git(&["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-qm", "a"]);
+/// let head = git(&["rev-parse", "HEAD"]);
+/// assert_eq!(clean_head(dir.path()), Some(head.clone()));
+/// std::fs::write(dir.path().join("new"), "untracked\n")?;
+/// assert_eq!(clean_head(dir.path()), Some(head), "an untracked file");
+/// std::fs::write(dir.path().join("a"), "2\n")?;
+/// assert_eq!(clean_head(dir.path()), None, "a change of a tracked file");
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn clean_head(dir: &Path) -> Option<String> {
+    let changes = ["status", "--porcelain", "--untracked-files=no"];
+    if !crate::host_git::within(dir, &changes, HEAD_LIMIT)
+        .ok()?
+        .is_empty()
+    {
+        return None;
+    }
+    let head = crate::host_git::within(dir, &["rev-parse", "--verify", "HEAD"], HEAD_LIMIT).ok()?;
+    crate::daemon::sweep::is_commit(&head).then_some(head)
 }
 
 /// `riff relay -- COMMAND`: starts `COMMAND` with the riff tools, and
@@ -1349,6 +1424,12 @@ mod tests {
     }
 
     fn claude() -> (Claude, Child) {
+        claude_at(None)
+    }
+
+    /// A fake claude whose clone has the head `head` after its end.
+    fn claude_at(head: Option<&str>) -> (Claude, Child) {
+        let head = head.map(str::to_owned);
         let (out_claude, out_relay) = tokio::io::duplex(1 << 16);
         let (in_relay, in_claude) = tokio::io::duplex(1 << 16);
         let (err_claude, err_relay) = tokio::io::duplex(1 << 16);
@@ -1365,6 +1446,7 @@ mod tests {
                 stdout: Box::new(out_relay),
                 stderr: Box::new(err_relay),
                 end: Box::pin(async move { ended.await.ok().flatten() }),
+                head: Box::new(move || head),
             },
         )
     }
@@ -1523,7 +1605,8 @@ mod tests {
             up(&mut lines).await,
             Up::Exit {
                 seq: 4,
-                code: Some(0)
+                code: Some(0),
+                head: None
             }
         );
         say(&mut write, &Say::Ack { seq: 4 }).await;
@@ -1620,7 +1703,8 @@ mod tests {
             up(&mut lines).await,
             Up::Exit {
                 seq: 4,
-                code: Some(0)
+                code: Some(0),
+                head: None
             }
         );
         say(&mut write, &Say::Ack { seq: 4 }).await;
@@ -1662,7 +1746,8 @@ mod tests {
             up(&mut lines).await,
             Up::Exit {
                 seq: 2,
-                code: Some(3)
+                code: Some(3),
+                head: None
             }
         );
         say(&mut write, &Say::Ack { seq: 2 }).await;
@@ -1686,6 +1771,39 @@ mod tests {
         assert_eq!(noted.recv().await.unwrap(), text::RELAY_GAVE_UP);
     }
 
+    /// 01M7GA96FQS4PR0X6RNPMCT2V5: the exit has the head of the clone after
+    /// the end of `claude`, also when it goes again on a new connection.
+    #[tokio::test]
+    async fn the_exit_has_the_head_of_the_clone() {
+        let mut daemon = Daemon::new();
+        let head = "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b";
+        let (claude, child) = claude_at(Some(head));
+        let (notes, _noted) = mpsc::unbounded_channel();
+        let socket = daemon.socket.clone();
+        let relay = tokio::spawn(async move {
+            relay(child, no_again(), &socket, Scrub::default(), WAIT, notes).await
+        });
+        let exit = Up::Exit {
+            seq: 1,
+            code: Some(0),
+            head: Some(head.into()),
+        };
+        let (_, mut lines, mut write) = daemon.accept().await;
+        say(&mut write, &Say::Resume { events: 0 }).await;
+        claude.end(0).await;
+        assert_eq!(up(&mut lines).await, exit);
+        // The daemon goes away before its ack: the next one gets the exit
+        // again, with its head.
+        drop((lines, write));
+        daemon.stop();
+        daemon.start();
+        let (_, mut lines, mut write) = daemon.accept().await;
+        say(&mut write, &Say::Resume { events: 0 }).await;
+        assert_eq!(up(&mut lines).await, exit);
+        say(&mut write, &Say::Ack { seq: 1 }).await;
+        assert_eq!(relay.await.unwrap(), Some(0));
+    }
+
     #[tokio::test]
     async fn the_relay_skips_a_line_of_a_newer_daemon() {
         let daemon = Daemon::new();
@@ -1706,7 +1824,8 @@ mod tests {
             up(&mut lines).await,
             Up::Exit {
                 seq: 1,
-                code: Some(0)
+                code: Some(0),
+                head: None
             }
         );
         say(&mut write, &Say::Ack { seq: 1 }).await;

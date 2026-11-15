@@ -6695,6 +6695,14 @@ of this part when they merge.
   that failed, and the cause of the last look. Each cause is one line.
   The log of the daemon gets one line when a look reads each folder
   again after a fault.
+- **01M7GA9BC2DR4C87YSZZGKNY22** The sweep of 01M7DZ4E02PX5Y0WMHFCJ9KS14
+  also removes the folder of a work session `issue-N` that does not run
+  when the branch `worktree-issue-N` on `origin` holds the commit of the
+  file `head` of the folder (01M7GA96FQS4PR0X6RNPMCT2V5): the branch is
+  at that commit or after it. It asks the forge for one compare of the
+  two, also while the pull request or the issue is open. A folder with
+  no file `head`, or whose commit the branch does not hold, stays as
+  before. The folder of a verify does not go by this rule.
 
 ### riff relay
 
@@ -6761,15 +6769,23 @@ of this part when they merge.
   stdin, and cannot read its arguments, it prints one line on stderr and
   exits with 0. The Claude folder of an earlier start gets the new
   command in the place of the hook of the older riff.
+- **01M7GA96FQS4PR0X6RNPMCT2V5** At the end of `claude`, the relay gives
+  the daemon the head commit of the clone with the exit, when the clone
+  has no change of a tracked file. git runs in the container, and each
+  git call has a limit of 20 seconds. With a change of a tracked file,
+  or when git fails, the exit has no head. The daemon writes the head in
+  the file `head` of the folder of the session. The container does not
+  see that file.
 
 ### The waves of the daemon
 
 - **01M4ZV3B6G5VB89SRSWCSBZ630** Each start of a session waits for room
-  in the limit of the host (01M4Z60B7Y4XD6TJCYEYJT2R4S), in the order of
-  the asks: a start of `riff run` and a start of a wave wait in the same
-  line. A start that has room counts as a live session until the daemon
-  owns its session. The free memory is `MemAvailable` of
-  `/proc/meminfo`. When the host does not say, only the sessions count.
+  in the limit of the host (01M4Z60B7Y4XD6TJCYEYJT2R4S), in the order
+  of the asks: a start of `riff run` and a start of a wave wait in
+  the same line. A start that has room counts as a live session until
+  the daemon owns its session. The free memory is `MemAvailable` of
+  `/proc/meminfo`. When the host does not say it, the free memory does
+  not count.
 - **01M4ZV3B6VS0RAR0P7MRHKE8CQ** While a start of `riff run` waits for
   room, the daemon says why to `riff run`. When `riff run` stops it, or
   leaves, the daemon starts nothing.
@@ -7511,6 +7527,38 @@ of this part when they merge.
   the podman volumes (01M7EZCTKYFPS4QDQ1N3K3BT23), the line of the wave
   in `riff daemon status` says that it waits for them, and names `riff
   daemon status`. The lead gets no message.
+- **01M7G43090V1F263GYK3GQEXCZ** The limit of the host
+  (01M4Z60B7Y4XD6TJCYEYJT2R4S) also has a floor of free disk: 20 GB by
+  default. The free disk is the free space of the disk of the folders
+  of the daemon and of its sessions, and of the disk of the storage
+  of podman (`podman info`, `Store.GraphRoot`). When they are on more
+  than one disk, the disk with the least free space counts. A folder
+  whose disk riff cannot measure does not count. When riff can measure
+  no folder, the free disk does not count. When podman does not say
+  its storage, only the folders of the daemon count: the log of the
+  daemon says why one time, and each look at the disk asks podman
+  again. The daemon starts no session while the free disk is below
+  the floor. The lead waits for no room, so it starts. `riff daemon
+  limit --disk GB` sets the floor in `limit.json`. This supersedes
+  01M4ZV3B6G5VB89SRSWCSBZ630 in part.
+- **01M7G430CFEK4B0FDG1552G8VE** `riff daemon status` shows the free
+  space and the size of the disk of the floor of free disk, and a
+  folder on it. While the free disk is below the floor, the line says
+  that the daemon starts no session, and names `riff daemon cache
+  --clear` and `riff daemon sweep`. A start that waits for room names
+  the free disk and the floor: the word of the wave, and the line of
+  `riff run`. When the kind of the reason of a wait changes, for
+  example from the sessions to the disk, the start says the new reason.
+- **01M7G430FB68R1322AT8H94KYR** The daemon looks at the free disk at
+  its start and then each 30 seconds. When the free disk falls below
+  the floor, the daemon posts one note to the lead of each repository
+  that it serves: the free disk, the floor, the size of the compile
+  cache, the folders of the sessions that do not run, at most 20 of
+  them, and the commands that remove them. It posts a new note only
+  after a look that saw the free disk at or above the floor. The first
+  look after a start of the daemon that sees the free disk below the
+  floor posts a note. When a look sees the free disk at or above the
+  floor again, the starts that wait for room look at once.
 
 ### The lead, the view and the takeover
 

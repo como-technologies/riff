@@ -10,10 +10,12 @@
 //! ([`riff_client::daemons`]). The facts are:
 //!
 //! - from the status of the daemon: the riff build, the limit and the
-//!   floor, the caps of each new container, the live sessions with their
-//!   item, phase, last step and the digest of the image of their
-//!   container, the starts that wait, the state of each wave, the parts
-//!   of the host, each repository where the host takes no new claim
+//!   floor, the free disk of the floor of free disk
+//!   (01M7G430CFEK4B0FDG1552G8VE), the caps of each new container, the
+//!   live sessions with their item, phase, last step and the digest of
+//!   the image of their container, the starts that wait, the state of
+//!   each wave, the parts of the host, each repository where the host
+//!   takes no new claim
 //!   and still runs sessions ([`of_status`], [`left`],
 //!   01M6WJYQJ58MHQF1XPXXZW2ET6), and the release of each watch of a
 //!   deploy or of a check, at its step ([`crate::watches::Watch::release`],
@@ -22,10 +24,9 @@
 //!   ([`crate::watches::Seen::complete`], 01M75N6YNHQQHGS0VGKTKSNJTR), and
 //!   the release of each watch of a wave from the cut to the check, at its
 //!   step ([`crate::watches::Seen::release`], 01M75R6FPVZA3JA5C48PQ26A85);
-//! - from the host: the load, the free memory, the disk of the session
-//!   folders, the version of podman, the merged pin of each wave
-//!   with whether podman has it ([`look`], [`pins`],
-//!   01M5TKPG5WZ1T58FNAMZNP6CJ5), and `update.auto`: the watch of a
+//! - from the host: the load, the free memory, the version of podman,
+//!   the merged pin of each wave with whether podman has it ([`look`],
+//!   [`pins`], 01M5TKPG5WZ1T58FNAMZNP6CJ5), and `update.auto`: the watch of a
 //!   deploy on another host waits for this host when it is on
 //!   ([`crate::watches::Riffs`], 01M6WFNDS76NESPXHMQPGHHQSS);
 //! - the sign-ins of riff, `gh` and `claude` (01M57D3FGV57W96A7SWTEFRCGW),
@@ -158,6 +159,7 @@ pub fn every() -> Duration {
 ///     ],
 ///     "complete": [{"repo": "o/q", "wave": 41, "waits": "main_failed"}],
 ///     "releases": [{"repo": "o/s", "tag": "v2.0.0", "step": "test_runs"}],
+///     "disk": {"folder": "/h/storage", "disk": {"free_gb": 5, "total_gb": 915}},
 /// }))?;
 /// let facts = of_status(&status);
 /// assert_eq!((facts.build.as_str(), facts.limit, facts.floor_gb), ("3.1.0", 4, 8));
@@ -184,6 +186,8 @@ pub fn every() -> Duration {
 /// // The complete wave of each watch of a wave (01M75N6YNHQQHGS0VGKTKSNJTR).
 /// assert_eq!(facts.complete[0].wave, 41);
 /// assert_eq!(facts.complete[0].waits, Some(riff_client::daemons::CutWaits::MainFailed));
+/// // The disk of the floor of free disk (01M7G430CFEK4B0FDG1552G8VE).
+/// assert_eq!(facts.disk.map(|d| d.free_gb), Some(5));
 /// # Ok::<(), serde_json::Error>(())
 /// ```
 pub fn of_status(status: &Status) -> Facts {
@@ -209,6 +213,8 @@ pub fn of_status(status: &Status) -> Facts {
             })
             .collect(),
         waiting: status.waiting.clone(),
+        // The disk of the floor of free disk (01M7G430CFEK4B0FDG1552G8VE).
+        disk: status.disk.as_ref().map(|space| space.disk),
         waves: status
             .waves
             .iter()
@@ -253,7 +259,6 @@ pub async fn look(dir: &Path, wave: &Wave, api: &Api) -> anyhow::Result<Facts> {
         let served = super::remote::read_served(&dir).map_or(true, |all| all.contains_key(&repo));
         (
             crate::machine::here(),
-            crate::disk::here(&dir),
             podman(),
             waves,
             gh_sign(&host_gh()),
@@ -266,13 +271,12 @@ pub async fn look(dir: &Path, wave: &Wave, api: &Api) -> anyhow::Result<Facts> {
         )
     })
     .await?;
-    let (machine, disk, podman, waves, gh, claude, stored, auto, served) = host;
+    let (machine, podman, waves, gh, claude, stored, auto, served) = host;
     if !served {
         left(&mut facts, &wave.repo);
     }
     facts.auto = auto;
     facts.machine = Some(machine);
-    facts.disk = disk;
     facts.podman = podman;
     facts.waves = waves;
     facts.gh = gh;

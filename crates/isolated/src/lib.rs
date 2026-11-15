@@ -17,6 +17,7 @@
 //! | `RIFF_SERVER` | [`DEAD_SERVER`]: nothing listens there |
 //! | `RIFF_RELEASES` | an empty dir of its own: no release is Latest and no release has static binaries, so `riff update` reaches no GitHub, and runs the fake `cargo` of a test (01M4ZPJ0DJ9FTYNPTBBVJCTB37, 01M510MPR1S0EQNRK2195XTXG5) |
 //! | `RIFF_MACHINE` | [`MACHINE`]: the numbers of a machine with free memory and no load, so no test depends on the machine that runs it (01M3WFZ08D8VT9KD6HXY09NHSE) |
+//! | `RIFF_DISK` | [`DISK`]: a disk with room, so no test depends on the disk of the machine that runs it (01M7G43090V1F263GYK3GQEXCZ) |
 //! | `RIFF_ON` | `1`: riff is on in each directory, so a test of a hook needs no repository with `riff enable`. A test of the state removes it (01M3XY2SWEK0N8MC3MY4TMYTD3) |
 //! | `RIFF_DYNAMIC` | `1`: `riff init` and the daemon take the riff under test, which is not static, because a fake `podman` runs `riff relay` on the host. A test of the check removes it (01M510NWEFSN0NWQH8KQ6FA7DC) |
 //! | `RIFF_HOME` | a dir of its own: riff keeps its settings, local files and secrets there, and never opens the OS keyring |
@@ -125,6 +126,13 @@ pub const DEAD_SERVER: &str = "http://127.0.0.1:9";
 /// The numbers of the machine of each test that gives no numbers of its
 /// own: 8 cores, 32 GB of memory, all of it available, and no load.
 pub const MACHINE: &str = "cpu 8x3000MHz, mem 32GB, 32GB available, load 0.00";
+
+/// The disk of each folder of each test that gives no disk of its own:
+/// 400 GB free of 500 GB, above the floor of free disk of the daemon
+/// (01M7G43090V1F263GYK3GQEXCZ). It is for each riff process of a test: a
+/// daemon that a test runs in its own process gets a fake disk of its
+/// test (`Daemon::with_disk`).
+pub const DISK: &str = "disk 400GB free of 500GB";
 
 /// The other variables that the helper removes: the tokens of `gh`. With `HOME` in a temp dir, `gh` then has no
 /// sign-in, so a test never reaches the forge.
@@ -272,6 +280,7 @@ impl Isolated {
             ("RIFF_SERVER".into(), Some(DEAD_SERVER.into())),
             ("RIFF_RELEASES".into(), path(self.releases())),
             ("RIFF_MACHINE".into(), Some(MACHINE.into())),
+            ("RIFF_DISK".into(), Some(DISK.into())),
             ("RIFF_ON".into(), Some("1".into())),
             ("RIFF_DYNAMIC".into(), Some("1".into())),
             ("RIFF_HOME".into(), path(self.riff_home())),

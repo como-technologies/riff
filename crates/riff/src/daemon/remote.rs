@@ -438,6 +438,7 @@ pub fn remove_clone(dir: &Path, data: &Path, wave: &Wave) -> Vec<String> {
 ///     "daemon status",
 ///     "daemon limit",
 ///     "daemon limit --sessions 4 --floor 8 --cpus 6 --memory 12",
+///     "daemon limit --disk 40",
 ///     "daemon limit --effort high --effort-lead max --effort-verify low",
 ///     "daemon cache",
 ///     "daemon cache --clear",
@@ -675,6 +676,7 @@ fn limit_of(flags: &[&str]) -> Result<Change, ()> {
         match *flag {
             "--sessions" => change.sessions = Some(value.parse().map_err(|_| ())?),
             "--floor" => change.floor_gb = Some(value.parse().map_err(|_| ())?),
+            "--disk" => change.disk_gb = Some(value.parse().map_err(|_| ())?),
             "--cpus" => change.cpus = Some(value.parse().map_err(|_| ())?),
             "--memory" => change.memory_gb = Some(value.parse().map_err(|_| ())?),
             "--effort" => change.effort = Some(value.parse().map_err(|_| ())?),
@@ -691,12 +693,23 @@ impl fmt::Display for Request {
         match self {
             Request::Status => write!(f, "daemon status"),
             Request::Limit(change) => {
+                let Change {
+                    sessions,
+                    floor_gb,
+                    disk_gb,
+                    cpus,
+                    memory_gb,
+                    effort,
+                    effort_lead,
+                    effort_verify,
+                } = change;
                 write!(f, "daemon limit")?;
                 let flags = [
-                    ("--sessions", change.sessions.map(u64::from)),
-                    ("--floor", change.floor_gb),
-                    ("--cpus", change.cpus.map(u64::from)),
-                    ("--memory", change.memory_gb),
+                    ("--sessions", sessions.map(u64::from)),
+                    ("--floor", *floor_gb),
+                    ("--disk", *disk_gb),
+                    ("--cpus", cpus.map(u64::from)),
+                    ("--memory", *memory_gb),
                 ];
                 for (flag, value) in flags {
                     if let Some(value) = value {
@@ -704,9 +717,9 @@ impl fmt::Display for Request {
                     }
                 }
                 let efforts = [
-                    ("--effort", change.effort),
-                    ("--effort-lead", change.effort_lead),
-                    ("--effort-verify", change.effort_verify),
+                    ("--effort", effort),
+                    ("--effort-lead", effort_lead),
+                    ("--effort-verify", effort_verify),
                 ];
                 for (flag, level) in efforts {
                     if let Some(level) = level {
