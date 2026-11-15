@@ -3907,9 +3907,33 @@ The wave starts one item at most 3 times in a run of the wave. Then
 your lead gets a message, and the wave starts no more session for the
 item. A verify counts for each head commit of its pull request: see
 [See why a verify stopped for a head](#see-why-a-verify-stopped-for-a-head).
-Read the cause first: [See why a session ended with no pull
+
+The fix of a pull request after a FAIL of its verify counts for each
+head commit too. A fix that pushes a new head counts as no failed
+start. The FAIL of the new head starts a new count, and the wave goes
+on with no `riff host join`. Three fixes that leave the same head stop
+the fix of that head only.
+
+```mermaid
+flowchart LR
+    F["the verify of head A fails"] --> X["the wave starts a fix of A"]
+    X --> Q{"the fix pushed<br/>a new head B?"}
+    Q -- yes --> V["the verify of B,<br/>and a new count for B"]
+    Q -- no --> C["one start of the fix of A:<br/>3 stop the fix of A"]
+```
+
+For a spent fix, the message names the pull request and the head, and
+the end of the last session. Read the FAIL on the pull request, for
+example on pull request 41:
+
+```sh
+gh pr view 41 --comments
+```
+
+For each other spent item, read the cause first: [See why a session
+ended with no pull
 request](#see-why-a-session-ended-with-no-pull-request). When you fixed
-it, run this in your clone of the repository:
+the cause, run this in your clone of the repository:
 
 ```sh
 riff host join
@@ -4904,6 +4928,8 @@ first free work:
    counts for each head commit of its pull request, and a verify with a
    PASS or FAIL does not count (see
    [See why a verify stopped for a head](#see-why-a-verify-stopped-for-a-head)).
+   The fix of a pull request after a FAIL counts for each head commit
+   too.
    Then your lead gets a message, and the item waits for you (see
    [Start a spent item again](#start-a-spent-item-again)).
 7. It starts nothing while a fact of the machine fails: the sign-in of

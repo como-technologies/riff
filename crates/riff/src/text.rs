@@ -12956,6 +12956,31 @@ pub fn wave_spent(item: &str, head: Option<&str>, starts: u32, reason: &str) -> 
     }
 }
 
+/// The fix of `item` after the FAIL of the verify of the head `head` of
+/// its pull request #`pull` started `starts` times, and the last session
+/// ended for `reason` (#2170). The starts of a fix are for one head: the
+/// text names the pull request and the head, and says that a new head
+/// starts a new count.
+///
+/// ```
+/// let text = riff::text::wave_spent_fix("issue-1", 41, "988cb7b1a2", 3, "exit code 0");
+/// assert!(text.starts_with("The riff daemon started issue-1 3 times to fix the head 988cb7b of its pull request #41"));
+/// assert!(text.contains("The last session ended: exit code 0."));
+/// assert!(text.contains("It starts no more fix of this head until riff host join again."));
+/// assert!(text.contains("A new head starts a new count."));
+/// assert!(text.ends_with("Read the FAIL: gh pr view 41 --comments"));
+/// assert!(!text.contains("no pull request"), "{text}");
+/// ```
+pub fn wave_spent_fix(item: &str, pull: u64, head: &str, starts: u32, reason: &str) -> String {
+    format!(
+        "The riff daemon started {item} {starts} times to fix the head {} of its pull request \
+         #{pull} after the FAIL of its verify, and the pull request still has that head. The \
+         last session ended: {reason}. It starts no more fix of this head until riff host join \
+         again. A new head starts a new count. Read the FAIL: gh pr view {pull} --comments",
+        head.get(..7).unwrap_or(head)
+    )
+}
+
 /// The message to the lead for an issue whose body has no `Done when:`
 /// line: the wave starts no build of it (01M5R0HEP1MXWYY643F1N1DWEM).
 ///

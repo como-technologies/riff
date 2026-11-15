@@ -6841,10 +6841,10 @@ of this part when they merge.
   only when no session holds the item, and the full check of the head
   commit of its pull request is done (01M5QYDHN27RC5SRHAB56PFKK0). The
   verify is a new session, so an author never verifies its own item.
-- **01M4ZV3B6PSRH40EYQEVYH2MBA** A wave starts the build of an item at
-  most 3 times in a run of the wave. Then the lead gets one message,
-  and the wave leaves the item. A verify has its own count
-  for each head commit (01M6QQ7H2B88AT3KS8NGM3DKCZ).
+- **01M4ZV3B6PSRH40EYQEVYH2MBA** A wave starts the build of an item with
+  no failed verify at most 3 times in a run of the wave. Then the lead
+  gets one message, and the wave leaves the item. A verify has its own
+  count for each head commit (01M6QQ7H2B88AT3KS8NGM3DKCZ).
 - **01M4ZV3B6Q0Y6AX0KSKC55S31R** For each item, the daemon does the
   host steps of `riff run` itself: the checks, a new worker session,
   the claim, the keep-alive, the clone and the start. After the end of
@@ -7511,6 +7511,19 @@ of this part when they merge.
   the podman volumes (01M7EZCTKYFPS4QDQ1N3K3BT23), the line of the wave
   in `riff daemon status` says that it waits for them, and names `riff
   daemon status`. The lead gets no message.
+- **01M7FJWPJKBK2V4X73Z45PHE7V** The wave of the daemon counts the
+  starts of the build of an item whose pull request has a failed verify
+  for the head commit with the FAIL (`issue-N@COMMIT:fix`), as it does
+  for a verify (01M6QQ7H2B88AT3KS8NGM3DKCZ). A fix that pushes a new
+  head is no failed start: the FAIL of the new head starts a new count,
+  with no `riff host join`. Three starts of one head stop the fix of
+  that head only. Supersedes 01M4ZV3B6PSRH40EYQEVYH2MBA in part.
+- **01M7FJWPN3V3HS8DAM9B25JW9P** The message "started N times" for the
+  fix of a pull request after a FAIL names the pull request and the
+  head, says that a new head starts a new count, and sends the lead to
+  the FAIL with `gh pr view N --comments`. The reason of a clean end of
+  a session on an open pull request names the pull request, not "no pull
+  request". Supersedes 01M5A5HXRH4PFQDFA7XPFFRHWS in part.
 
 ### The lead, the view and the takeover
 
@@ -10246,8 +10259,9 @@ that builds it merges.
   the cause there, with no look at the host. An item with no record says
   so.
 - **01M5A5HXRH4PFQDFA7XPFFRHWS** The message "started N times" to the
-  lead names the reason of the last end of the item, and sends the lead
-  to `riff session why ITEM`.
+  lead names the reason of the last end of the item. For a build with
+  no failed verify and for a verify, it sends the lead to `riff session
+  why ITEM`.
 - **01M5SMP2D4MGME90EHVKAQHQ26** A verify session of a wave that ends
   with no PASS or FAIL leaves one record in the thread `ends` too
   (`wave::after_verify`, #1441). It has the same first line and the same

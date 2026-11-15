@@ -30,9 +30,9 @@
 //! # The record
 //!
 //! The first line has the tags, then a colon and the reason. The tag `head`
-//! is the head commit (7 characters) that a verify, a rebase or a fix of
-//! the checks is for, and `-` for a build (#1651). The last lines of the
-//! output follow:
+//! is the head commit (7 characters) that a verify, a rebase, a fix of the
+//! checks or a fix after a FAIL is for, and `-` for a build (#1651). The
+//! last lines of the output follow:
 //!
 //! ```text
 //! ended item=issue-1202 session=1a2b3c4d head=- code=1 failed=yes denied=2: exit code 1, 2 denied tool calls (Bash, Write)
@@ -46,6 +46,7 @@
 //!     item: "issue-1202".into(),
 //!     session: "1a2b3c4d".into(),
 //!     head: None,
+//!     pull: None,
 //!     code: Some(1),
 //!     failed: true,
 //!     denied: vec!["Bash".into(), "Write".into(), "Bash".into()],
@@ -110,9 +111,14 @@ pub struct End {
     pub item: String,
     /// The start of the session ID.
     pub session: String,
-    /// The head commit (7 characters) of the work of a verify, a rebase or a
-    /// fix of the checks: none for a build (#1651).
+    /// The head commit (7 characters) of the work of a verify, a rebase, a
+    /// fix of the checks or a fix after a FAIL: none for a build (#1651).
     pub head: Option<String>,
+    /// The open pull request that the session worked on: of a rebase, a
+    /// fix of the checks or a fix after a FAIL
+    /// ([`crate::wave::Work::fixes_pull`], #2170). None for a build, for a
+    /// verify, and when the pull request is not open at the end.
+    pub pull: Option<u64>,
     /// The exit code of `claude`, or none after a signal.
     pub code: Option<i32>,
     /// True when a turn ended with an error, or a stop ended it.
@@ -128,13 +134,13 @@ impl End {
     /// events of the session, and replaces each secret of `scrub`.
     pub fn of(record: &crate::daemon::Record, ended: Ended, scrub: &Scrub) -> End {
         let events = std::fs::read_to_string(record.folder.join(EVENTS)).unwrap_or_default();
-        let head = record
-            .job
-            .as_ref()
-            .and_then(|job| job.work.commit())
+        let work = record.job.as_ref().map(|job| &job.work);
+        let head = work
+            .and_then(crate::wave::Work::commit)
             .map(|commit| commit.get(..7).unwrap_or(commit).to_owned());
         End {
             head,
+            pull: work.and_then(crate::wave::Work::fixes_pull),
             ..End::from_events(
                 &record.live.item,
                 &record.live.session,
@@ -181,6 +187,7 @@ impl End {
             item: item.to_owned(),
             session: crate::run::short(session).to_owned(),
             head: None,
+            pull: None,
             code: ended.code,
             failed: ended.failed,
             denied,
@@ -189,10 +196,26 @@ impl End {
     }
 
     /// The reason in words: the exit code, or the signal, and the denied
-    /// tool calls.
+    /// tool calls. A clean exit says what the session lacks ([`lacks`]),
+    /// but for a session on an open pull request ([`End::pull`], #2170).
+    ///
+    /// ```
+    /// use riff::daemon::Ended;
+    /// use riff::ends::End;
+    /// use riff::run::Scrub;
+    ///
+    /// let clean = Ended { code: Some(0), failed: false };
+    /// let end = End::from_events("issue-7", "1a2b3c4d", clean, "", &Scrub::new([]));
+    /// assert_eq!(end.reason(), "exit code 0, and no pull request");
+    /// let fix = End { pull: Some(41), head: Some("988cb7b".into()), ..end };
+    /// assert_eq!(fix.reason(), "exit code 0, and pull request #41 is open");
+    /// ```
     pub fn reason(&self) -> String {
         let mut reason = match (self.code, self.failed) {
-            (Some(0), false) => format!("exit code 0, and no {}", lacks(&self.item)),
+            (Some(0), false) => match self.pull {
+                Some(pull) => format!("exit code 0, and pull request #{pull} is open"),
+                None => format!("exit code 0, and no {}", lacks(&self.item)),
+            },
             (Some(0), true) => {
                 "exit code 0, but a turn ended with an error or a stop ended it".to_owned()
             }
@@ -371,6 +394,39 @@ mod tests {
                 .contains("a turn ended with an error")
         );
         assert!(of(Some(137), true).reason().starts_with("exit code 137"));
+    }
+
+    /// #2170, 01M7FJWPN3V3HS8DAM9B25JW9P: a clean end of a session on an
+    /// open pull request names the pull request, and does not say that it
+    /// has none. Each other end says the same as for a build.
+    #[test]
+    fn a_clean_end_on_an_open_pull_request_names_it() {
+        let of = |code, failed| {
+            let end = End::from_events("issue-7", "s", ended(code, failed), "", &Scrub::new([]));
+            End {
+                pull: Some(41),
+                head: Some("988cb7b".into()),
+                ..end
+            }
+        };
+        let fix = of(Some(0), false);
+        assert_eq!(fix.reason(), "exit code 0, and pull request #41 is open");
+        let denied = End {
+            denied: vec!["Bash".into()],
+            ..fix.clone()
+        };
+        assert_eq!(
+            denied.reason(),
+            "exit code 0, and pull request #41 is open, 1 denied tool calls (Bash)"
+        );
+        assert!(of(None, true).reason().starts_with("no exit code"));
+        assert_eq!(of(Some(1), true).reason(), "exit code 1");
+        let record = Record::parse(&fix.body(), 9).unwrap();
+        assert_eq!(record.tag("head"), "988cb7b");
+        assert_eq!(record.reason, fix.reason());
+        // The pull request is not open: a build with no pull request.
+        let closed = End { pull: None, ..fix };
+        assert_eq!(closed.reason(), "exit code 0, and no pull request");
     }
 
     #[test]
