@@ -7541,6 +7541,13 @@ of this part when they merge.
   fault of a step after the read keeps what the read found for the
   reason of the end (`wave::then`). Supersedes
   01M5A5HXKZTDP5M5HY2FHCEBZA in part.
+- **01M7G3DR4R4KF5RSD94F6ZN80H** The reason of the end of a verify that
+  the daemon keeps for the message "started N times" says "no PASS or
+  FAIL" when the result has none, or when riff refuses its PASS for a
+  member of the council with no line (01M7CFBZSQEEZNZBR9H1S54GS1). After
+  another fault of the report, it says nothing of a result. It names the
+  denied tool calls of the session, also when a step after the end
+  removes the folder of the session.
 
 ### The lead, the view and the takeover
 

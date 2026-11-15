@@ -116,7 +116,9 @@ pub enum Found {
     /// or a fault stopped them, or no step ran.
     #[default]
     Unread,
-    /// The result of a verify has no PASS or FAIL.
+    /// The result of a verify has no PASS or FAIL, or riff refused its
+    /// PASS for a member of the council with no line
+    /// (01M7CFBZSQEEZNZBR9H1S54GS1).
     NoVerdict,
     /// riff put this PASS or FAIL of a verify on its pull request.
     Reported(Verdict),
@@ -152,12 +154,11 @@ impl Found {
 /// ([`End::reason`], #2170, 01M7FQECZY6RY5JE5QPY8NFRZR). It names no role:
 /// the words for a session with no result come from its item
 /// ([`lacks`]), so they cannot disagree with the item.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Said {
     /// Nothing: no step read the work, a limit of GitHub or a fault
     /// stopped the read, or riff put the PASS or FAIL of a verify on its
     /// pull request.
-    #[default]
     Nothing,
     /// That the session made no result: what its item lacks ([`lacks`]).
     Lacks,

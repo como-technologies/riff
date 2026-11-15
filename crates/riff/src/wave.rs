@@ -3568,7 +3568,9 @@ impl From<Vec<String>> for Finish {
 /// keeps it to then (01M53S7WDPQ2GWHJWJ6SZXZ5PN). The verdict of a verify
 /// that riff reported goes into [`Daemon::verified`] before the job ends
 /// (#1960, #2019). The steps wait while the OS keyring is locked
-/// ([`unlocked`], #2114). The daemon keeps the reason of the end after the
+/// ([`unlocked`], #2114). The daemon reads the events of the session
+/// before the steps, as a step can remove its folder
+/// (01M7G3DR4R4KF5RSD94F6ZN80H). It keeps the reason of the end after the
 /// steps, with what they found ([`Finish::found`], #2170): the item is
 /// still taken then, so the wave sends no "started N times" before it.
 pub(crate) async fn finish<R: Runtime + 'static>(
@@ -3577,14 +3579,18 @@ pub(crate) async fn finish<R: Runtime + 'static>(
     ended: Ended,
     held: InJob,
 ) -> Finish {
+    // The reason of the end, for the lead that reads "started N times".
+    let end = crate::ends::End::of(&record, ended, Found::Unread, &crate::run::Scrub::new([]));
     unlocked(&daemon, &record).await;
     let done = daemon
         .world()
         .finish(&record, ended)
         .await
         .unwrap_or_else(|e| vec![fault(&record, &e)].into());
-    // The reason of the end, for the lead that reads "started N times".
-    let end = crate::ends::End::of(&record, ended, done.found, &crate::run::Scrub::new([]));
+    let end = crate::ends::End {
+        said: done.found.said(),
+        ..end
+    };
     daemon.note_end(&record.live.item, end.reason());
     if let (Found::Reported(verdict), Some(job)) = (done.found, &record.job) {
         daemon.verified(&job.wave.repo, &job.work, verdict);
@@ -4037,9 +4043,10 @@ async fn no_verify(
 /// With no PASS or FAIL, or a report that fails for another reason, the
 /// lead gets a message that the pull request waits for a new verify. A
 /// PASS with no line for a member of the council in the part `## The
-/// council` is a result with no verdict too: the report refuses it, and
-/// the message names each member with no line ([`no_report`],
-/// 01M7CFBZSQEEZNZBR9H1S54GS1). The report reads the council in the main
+/// council` is a result with no verdict too: the report refuses it, the
+/// message names each member with no line ([`no_report`],
+/// 01M7CFBZSQEEZNZBR9H1S54GS1), and the steps find [`Found::NoVerdict`]
+/// (01M7G3DR4R4KF5RSD94F6ZN80H). The report reads the council in the main
 /// clone of the wave, never in the clone of the verify
 /// (01M7DZ4E5BZAD38E3K9A3N277E). A pull request that merged or closed
 /// waits for none: the lead gets a note that says so ([`open_now`],
@@ -4108,8 +4115,15 @@ async fn after_verify(
                     (no_report(item, pull, &e, open), waits_kind(open))
                 }
             };
-            api.post(me, Some(&thread), &lead, &body, kind).await?;
-            return Ok(vec![body].into());
+            let found = match e.is::<crate::council::result::NoLine>() {
+                true => Found::NoVerdict,
+                false => Found::Unread,
+            };
+            let steps = async {
+                api.post(me, Some(&thread), &lead, &body, kind).await?;
+                Ok(vec![body])
+            };
+            return Ok(then(record, found, steps).await);
         }
     };
     let line = text::verify_reported(verdict, pull, &reported);
@@ -6783,6 +6797,11 @@ mod tests {
                 };
                 forge.claims.remove(&record.live.item);
                 forge.finished.push(record.live.item.clone());
+                // A verify with no result removes its folder, as
+                // `after_verify` does.
+                if matches!(job.work, Work::Verify { .. }) && forge.no_result {
+                    std::fs::remove_dir_all(&record.folder)?;
+                }
                 // A verify with a result reports it. A build reads the pull
                 // request of its branch, as `after_build` does.
                 let found = match job.work {
@@ -7119,6 +7138,12 @@ mod tests {
         /// Ends the live session of `item` with the exit `code` of
         /// `claude`, as its relay sends it on the socket of the session.
         async fn exit(&self, item: &str, code: i32) {
+            self.exit_after(item, &[], code).await;
+        }
+
+        /// [`Here::exit`] after the relay sent the lines `events` of the
+        /// output of `claude`.
+        async fn exit_after(&self, item: &str, events: &[&str], code: i32) {
             use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
             let name = self.running(item).expect("it runs");
             let socket = crate::daemon::session_dir(self.daemon.dir(), &name);
@@ -7138,24 +7163,31 @@ mod tests {
                 .write_all(format!("{hello}\n").as_bytes())
                 .await
                 .unwrap();
-            let events = loop {
+            let had = loop {
                 let line = lines.next_line().await.unwrap().expect("a resume");
                 if let Ok(Say::Resume { events }) = serde_json::from_str(&line) {
                     break events;
                 }
             };
-            let exit = crate::session_relay::Up::Exit {
-                seq: events + 1,
+            let mut ups: Vec<crate::session_relay::Up> = (had + 1..)
+                .zip(events)
+                .map(|(seq, line)| crate::session_relay::Up::Event {
+                    seq,
+                    line: (*line).to_owned(),
+                })
+                .collect();
+            let last = had + ups.len() as u64;
+            ups.push(crate::session_relay::Up::Exit {
+                seq: last + 1,
                 code: Some(code),
-            };
-            let exit = serde_json::to_string(&exit).unwrap();
-            write
-                .write_all(format!("{exit}\n").as_bytes())
-                .await
-                .unwrap();
+            });
+            for up in ups {
+                let up = serde_json::to_string(&up).unwrap();
+                write.write_all(format!("{up}\n").as_bytes()).await.unwrap();
+            }
             while let Ok(Some(line)) = lines.next_line().await {
                 if let Ok(Say::Ack { seq }) = serde_json::from_str(&line)
-                    && seq > events
+                    && seq > last
                 {
                     return;
                 }
@@ -9553,6 +9585,44 @@ esac
         let commits: Vec<&str> = forge.works.iter().filter_map(Work::commit).collect();
         assert_eq!(commits, ["c1", "c1", "c1", "c1b", "c1b", "c1b", "c1c"]);
         assert_eq!(forge.told, [spent], "one notice");
+    }
+
+    /// #2170, 01M5A5HXRH4PFQDFA7XPFFRHWS, 01M7G3DR4R4KF5RSD94F6ZN80H: three
+    /// verifies of one head end with exit code 0, no PASS or FAIL and a
+    /// denied tool call, and the steps after each end remove the folder of
+    /// the verify. The message "started 3 times" names the denied tool
+    /// call of the last session.
+    #[tokio::test]
+    async fn a_spent_verify_names_the_denied_tool_calls_of_its_last_session() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 3, free).await;
+        {
+            let mut forge = here.forge();
+            forge.pulls.insert(1, Pr::Asked);
+            forge.no_result = true;
+        }
+        here.run();
+        let result = serde_json::json!({
+            "type": "result",
+            "is_error": false,
+            "result": "I stopped.",
+            "permission_denials": [{ "tool_name": "Bash" }],
+        })
+        .to_string();
+        for n in 1..=STARTS as usize {
+            here.until(3, |h| h.running("verify-issue-1").is_some())
+                .await;
+            let name = here.running("verify-issue-1").unwrap();
+            here.exit_after("verify-issue-1", &[&result], 0).await;
+            here.until(3, |h| h.forge().finished.len() == n).await;
+            let folder = here.world.root.join("sessions").join(name);
+            assert!(!folder.exists(), "the folder of the verify goes");
+        }
+        let end = "exit code 0, and no PASS or FAIL, 1 denied tool calls (Bash)";
+        let spent = text::wave_spent("verify-issue-1", Some((41, "c1")), STARTS, end);
+        here.until(3, |h| h.forge().told == [spent.clone()]).await;
+        here.idle(3).await;
+        assert_eq!(here.forge().told, [spent], "one notice");
     }
 
     /// #2170, 01M7FJWPJKBK2V4X73Z45PHE7V: the build of the item opens its
@@ -14421,7 +14491,8 @@ esac
 
     /// 01M4ZV3B6R4WSEJXYT7QPRWT6X: a report that fails for another reason
     /// than a limit keeps nothing: the folder goes, and the lead gets the
-    /// message, as before.
+    /// message, as before. The reason of the end says nothing of a result
+    /// (01M7G3DR4R4KF5RSD94F6ZN80H).
     #[tokio::test]
     async fn a_verify_report_that_fails_for_another_reason_is_not_kept() {
         let built = Built::new().await;
@@ -14440,17 +14511,19 @@ esac
             code: Some(0),
             failed: false,
         };
-        let lines = after_verify(gh, &built.api, &record, &built.wave, (40, "1a2b3c4"), ended)
+        let done = after_verify(gh, &built.api, &record, &built.wave, (40, "1a2b3c4"), ended)
             .await
-            .unwrap()
-            .lines;
-        let [line] = &lines[..] else {
-            panic!("one line: {lines:?}");
+            .unwrap();
+        let [line] = &done.lines[..] else {
+            panic!("one line: {done:?}");
         };
         assert!(
             line.ends_with("The pull request waits for a new verify."),
             "{line}"
         );
+        assert_eq!(done.found, Found::Unread);
+        let end = crate::ends::End::of(&record, ended, done.found, &run::Scrub::new([]));
+        assert_eq!(end.reason(), "exit code 0");
         assert!(!record.folder.exists());
         let thread = built.wave.thread().unwrap();
         let got = built.api.read(&built.lead, &thread, true).await.unwrap();
@@ -14593,6 +14666,11 @@ esac
         let message = text::wave_no_council_line("verify-issue-12", 7, &docs_and_big_o(), true);
         assert_eq!(done.lines, std::slice::from_ref(&message));
         assert!(!done.reported(), "no verdict: the start counts");
+        // The reason of the end, as the daemon keeps it for the message
+        // "started N times" (01M7G3DR4R4KF5RSD94F6ZN80H).
+        assert_eq!(done.found, Found::NoVerdict);
+        let end = crate::ends::End::of(&record, ended, done.found, &run::Scrub::new([]));
+        assert_eq!(end.reason(), "exit code 0, and no PASS or FAIL");
         assert!(!record.folder.exists(), "the folder of the verify goes");
         // The fetch of `main` ran in the main clone.
         git_in(

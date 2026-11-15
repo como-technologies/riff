@@ -3863,7 +3863,9 @@ request. A pull request that gets a new head, for example after a
 rebase, starts a new count. A verify with a PASS or a FAIL that riff put
 on the pull request does not count. The wave starts a verify of one head
 3 times at most in a run of the wave, and only the sessions that ended
-with no PASS or FAIL use these starts.
+with no PASS or FAIL use these starts. A PASS that riff refuses for a
+member of the council with no line counts as no PASS or FAIL (see
+[The council](how-it-works.md#the-council)).
 
 ```mermaid
 flowchart TD
