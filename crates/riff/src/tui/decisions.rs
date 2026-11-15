@@ -391,6 +391,8 @@ impl Decision {
 /// assert_eq!(names("**Questions for @nate and ann**"), ["nate", "ann"]);
 /// assert_eq!(names("## Questions for mike, nate, and ann"), ["mike", "nate", "ann"]);
 /// assert_eq!(names("## Questions for mike,nate"), ["mike", "nate"]);
+/// assert_eq!(names("## Questions for mike , nate"), ["mike", "nate"]);
+/// assert_eq!(names("## Questions for mike,,nate"), ["mike", "nate"]);
 /// assert_eq!(names("## Questions for mike And nate"), ["mike", "nate"]);
 /// assert_eq!(names("## Questions for and mike"), ["and"]);
 /// assert_eq!(names("## Questions for ,mike"), none);
@@ -401,6 +403,7 @@ impl Decision {
 /// assert_eq!(names("## Questions for the lead and mike"), ["the"]);
 /// assert_eq!(names("## Answers from ann, nate"), none);
 /// assert_eq!(names("## questions for mike\n  ## Questions for nate"), none);
+/// assert_eq!(names("* Questions for mike: see below"), none);
 /// assert_eq!(names("Questions for mike come later."), none);
 /// assert_eq!(names("We have questions for mike."), none);
 /// assert_eq!(names(""), none);
@@ -775,10 +778,13 @@ pub fn rows(decisions: &Decisions, repos: &[ThreadName], user: &str, people: &[&
     rows
 }
 
-/// `text` cut to `columns - 2` and padded to `columns`: a column with at
-/// least two spaces after it.
+/// The least spaces after a column.
+const GAP: usize = 2;
+
+/// `text` cut to `columns - GAP` and padded to `columns`: a column with
+/// at least [`GAP`] spaces after it.
 fn column(text: &str, columns: usize) -> String {
-    padded(text, columns, 2)
+    padded(text, columns, GAP)
 }
 
 /// The item `item` in a column of `columns`, as [`column`], but an item
@@ -786,12 +792,15 @@ fn column(text: &str, columns: usize) -> String {
 /// (01M7GFGRJMAYZVG68EP3B916T8): `…ies/riff#2173`.
 fn item_column(item: &str, columns: usize) -> String {
     let reversed: String = item.chars().rev().collect();
-    let end: String = cut(&reversed, columns.saturating_sub(2))
+    let end: String = cut(&reversed, columns.saturating_sub(GAP))
         .chars()
         .rev()
         .collect();
     column(&end, columns)
 }
+
+/// The least columns of the item, before its [`GAP`]: `#2173`.
+const ITEM: usize = 5;
 
 /// The columns of the wave.
 const WAVE: usize = 10;
@@ -829,12 +838,13 @@ pub fn body(
     let items = all
         .iter()
         .filter_map(|row| match row {
-            Row::Item(item) => Some(usize::from(width(item.item())) + 2),
+            Row::Item(item) => Some(usize::from(width(item.item()))),
             _ => None,
         })
         .max()
         .unwrap_or(0)
-        .max(7);
+        .max(ITEM)
+        + GAP;
     let shape = Shape::new(wide, items, usize::from(columns));
     let lines: Vec<(Line<'static>, usize)> = all
         .iter()

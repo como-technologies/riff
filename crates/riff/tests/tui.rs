@@ -2162,6 +2162,62 @@ async fn a_wake_of_github_reads_the_decisions_again_soon() {
     assert_eq!(tty.exits().await, Some(0));
 }
 
+/// 01M6VGHCDTDJ69B7C02B5K61PW, 01M74N357CC7DN6B8QX8GDR0ZM: in a clone of
+/// acme/app, the TUI of a person follows the thread of the repository of
+/// the folder, so that a message in it starts a look, and the wakes of
+/// its GitHub App. The URI of the person names only the host, so both
+/// take the repository from the clone.
+#[tokio::test]
+async fn the_tui_of_a_person_in_a_clone_follows_the_thread_and_the_wakes_of_the_folder() {
+    // The path and the query of each stream that the TUI follows.
+    let follows: Arc<Mutex<Vec<String>>> = Arc::default();
+    let server = crate::common::start_signed_with({
+        let follows = follows.clone();
+        move |router| {
+            router.layer(axum::middleware::from_fn(
+                move |request: axum::extract::Request, next: axum::middleware::Next| {
+                    let uri = request.uri();
+                    if ["/v1/tail", "/v1/github/watch"].contains(&uri.path()) {
+                        let query = uri.query().unwrap_or_default();
+                        follows
+                            .lock()
+                            .unwrap()
+                            .push(format!("{} {query}", uri.path()));
+                    }
+                    next.run(request)
+                },
+            ))
+        }
+    })
+    .await;
+    let bin = tempfile::tempdir().unwrap();
+    isolated::write_program(bin.path().join("gh"), DECISIONS_GH);
+    let mut tty = Tty::start_in(
+        crate::common::clone_of("acme/app"),
+        &server,
+        "brett",
+        "thelio",
+        true,
+        &[("PATH", crate::common::path_with(bin.path()))],
+    );
+    tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
+    let folder = |path: &str| {
+        follows
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|follow| follow.starts_with(path) && follow.contains("thread=acme%2Fapp"))
+    };
+    let span = Span::start();
+    while !(folder("/v1/tail ") && folder("/v1/github/watch ")) {
+        assert!(span.within(WAIT), "{:?}", follows.lock().unwrap());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    tty.press("q").await;
+    assert_eq!(tty.exits().await, Some(0));
+}
+
 /// A fake `gh` whose read of the open issues is slow: it starts, writes
 /// the file `reading` in its folder, and answers only when the file `go`
 /// is there, or after 2 minutes. It logs each call to the file `calls`.

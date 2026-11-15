@@ -2260,10 +2260,12 @@ async fn frames(
     } else {
         chat::Link::start(person)
     };
-    // A message of the thread of the repository of the folder starts a
-    // look, as in `riff top`.
+    // The repository of the folder, as in `riff top`. The URI of the
+    // person names only the host, so it comes from the clone.
+    let folder: Option<ThreadName> = state.waves().here().and_then(|repo| repo.parse().ok());
+    // A message of the thread of the folder starts a look.
     let (told, mut messages) = tokio::sync::mpsc::channel::<()>(1);
-    let follower = me.default_thread().filter(|_| !container).map(|thread| {
+    let follower = folder.clone().filter(|_| !container).map(|thread| {
         let (api, me) = (api.clone(), me.clone());
         tokio::spawn(async move {
             let stream = riff_client::api::follow(
@@ -2278,11 +2280,9 @@ async fn frames(
             }
         })
     });
-    // A wake of the GitHub App of the repository of the folder reads the
-    // forge again soon (#1656). The URI of the person names only the
-    // host, so the repository comes from the clone.
+    // A wake of the GitHub App of the folder reads the forge again soon
+    // (#1656).
     let (woke, mut wakes) = tokio::sync::mpsc::channel::<riff_core::wire::GitHubWake>(16);
-    let folder: Option<ThreadName> = state.waves().here().and_then(|repo| repo.parse().ok());
     let github = folder.map(|thread| {
         let (api, me) = (api.clone(), me.clone());
         tokio::spawn(async move {
@@ -2450,11 +2450,12 @@ async fn frames(
             .read_at
             .is_none_or(|at| at.elapsed() >= crate::top::ISSUES_TTL);
         if sessions && tasks.reading.is_none() && due {
-            let repo = me.default_thread().map(|t| t.to_string());
+            // Each repository with a live session
+            // (01M6VGHCDTDJ69B7C02B5K61PW).
             let repos = riff_client::waves::board_repos(
                 state.model(),
                 &riff_client::sessions::Show::default(),
-                repo.as_deref(),
+                None,
             );
             let (gh, kept) = (gh.clone(), tasks.kept.clone());
             tasks.read_at = Some(Instant::now());

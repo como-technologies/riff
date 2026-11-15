@@ -10215,10 +10215,11 @@ that builds it merges.
   more than one project, an item names its repository, as `riff#2173`,
   and its owner too when two projects have the same name. While the tab
   shows, the TUI reads the open issues with the conditional REST read of
-  the Waves tab, and no other call: when the tab opens, each 60 seconds,
-  at once on `r` and at the end of an action, and soon after a wake of
-  the GitHub App of the repository of the folder. An issue whose labels
-  `question` and `design` go leaves the tab at the next read.
+  the Waves tab, and makes no other call. It reads when the tab opens,
+  each 60 seconds, and at once on `r` and at the end of an action. A
+  wake of the GitHub App of the repository of the folder makes it read
+  soon. An issue whose labels `question` and `design` go leaves the tab
+  at the next read.
 - **01M7FYVHDJJ288RRV8EBRKSY49** In the Decisions tab of the TUI, `↑`
   and `↓`, `j` and `k`, `PgUp` and `PgDn`, and `g` and `G` select a row,
   as in the Waves tab. A click on a row selects it. `Enter`, a click on

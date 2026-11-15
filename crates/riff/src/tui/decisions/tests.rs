@@ -374,6 +374,72 @@ fn a_comma_with_no_space_names_the_next_person() {
     assert!(rows[8].ends_with("design question…  -"), "{rows:#?}");
 }
 
+/// 01M7G7SCW5AR1P73R1CMA2QWF7: a comma alone, or two commas, between
+/// two names name the next person too. A line that starts with one `*`
+/// is no heading, so it names nobody.
+#[test]
+fn a_comma_alone_names_the_next_person_and_one_star_is_no_heading() {
+    let mut state = mock_up();
+    state.read_decisions(
+        vec![(
+            thread(RIFF),
+            Ok(vec![
+                asked(12, "## Questions for nate , mike"),
+                asked(13, "## Questions for nate,,mike"),
+                asked(14, "* Questions for mike: see below"),
+            ]),
+        )],
+        NOW,
+    );
+    let rows = drawn(&state, 80, 24);
+    assert_eq!(rows[2], " QUESTIONS FOR MIKE · 2", "{rows:#?}");
+    assert!(rows[4].starts_with(" > ?   #12 "), "{rows:#?}");
+    assert!(
+        rows[4].ends_with("question          nate mike"),
+        "{rows:#?}"
+    );
+    assert!(rows[5].starts_with("   ?   #13 "), "{rows:#?}");
+    assert!(
+        rows[5].ends_with("question          nate mike"),
+        "{rows:#?}"
+    );
+    assert_eq!(rows[7], " OTHER DECISIONS · 1", "{rows:#?}");
+    assert!(rows[9].starts_with("   ?   #14 "), "{rows:#?}");
+    assert!(rows[9].ends_with("question          -"), "{rows:#?}");
+}
+
+/// 01M7FYVHDJJ288RRV8EBRKSY49: the help popup of the Decisions tab names
+/// each key of the tab: the keys that select a row, `Enter`, and the keys
+/// of an issue, as in the Waves tab.
+#[test]
+fn the_help_popup_names_each_key_of_the_tab() {
+    let mut state = mock_up();
+    state.on_key(Key::Help);
+    let rows = drawn(&state, 80, 24);
+    assert!(
+        rows[3].contains("┌ Keys of the Decisions tab ─"),
+        "{rows:#?}"
+    );
+    let keys: Vec<&str> = rows[4..11]
+        .iter()
+        .map(|row| row.split('│').nth(1).unwrap_or_default().trim())
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            "↑ ↓, j k   select a row",
+            "PgUp PgDn  move a page",
+            "g G        the first or last row",
+            "Enter      open the issue in the browser",
+            "o          show the URL",
+            "a          mark as answered",
+            "y n        answer the question",
+        ],
+        "{rows:#?}"
+    );
+    assert!(rows[11].contains("│ 1 to 7     open a tab "), "{rows:#?}");
+}
+
 /// 01M7GBGD8EH2B1DXZ8NADZ1A85, 01M7GFH1D93M7F7S82E788EFHG: while the
 /// first read runs, the body has no line, and the note line says that
 /// the first read runs. After a first read that fails, the body names
