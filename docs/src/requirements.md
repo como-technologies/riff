@@ -7770,9 +7770,8 @@ of this part when they merge.
   the file that its container binds at `/opt/riff/riff` is not the file
   on disk: `riff update` replaced it. The daemon looks when it takes up
   the sessions that run, and each minute. It starts only a lead that is
-  idle (01M6WBX2FQEHW92Y1A5HM4H8BM). A lead in a turn waits for the end
-  of the turn. Supersedes in part 01M4Z60B800BH5BHX0H9JVDG6A and
-  01M5SNV7H3739PXW73H14XM4B8.
+  idle (01M6WBX2FQEHW92Y1A5HM4H8BM). Supersedes in part
+  01M4Z60B800BH5BHX0H9JVDG6A and 01M5SNV7H3739PXW73H14XM4B8.
 - **01M5TC2919TB9XPF42YFNJBP79** The daemon stops the container of an
   old lead and starts it again with the same session, the same clone and
   the same Claude folder. The new container binds the riff on disk. Its
@@ -8109,8 +8108,11 @@ of this part when they merge.
   cannot list that folder, for example with a link at it or with more
   than 10,000 entries in it, riff sees no write, and the log of the
   daemon names the folder. So the lead is idle at the end of a turn, and
-  5 minutes after the start of its container. This supersedes
-  01M6WBX2FQEHW92Y1A5HM4H8BM in part: the writes that riff sees.
+  5 minutes after the start of its container: after an update, the lead
+  does not wait for the end of a turn that riff does not see. This
+  supersedes 01M6WBX2FQEHW92Y1A5HM4H8BM in part: the writes that riff
+  sees, and 01M5TC24PB3YC2CC8BA275WSEN in part: the wait for the end of
+  a turn.
 
 ### The first run
 
@@ -8912,16 +8914,20 @@ of this part when they merge.
   that names it, and a folder with more entries gives an error that
   names the folder. riff counts no tokens of a transcript over its
   limit, and the log names it. A start with a `.claude.json` or a
-  `settings.json` over its limit writes neither file.
+  `settings.json` over its limit writes neither file, and its error
+  tells the person to remove the file. A line of the log where riff
+  goes on past a limit gives the person no step.
 - **01M7FX6SWN3DGZMH5HS9BWEBY7** One count of the tokens of a session
   reads at most 1 GB of transcripts in all, with the transcripts of its
   helper agents, and at most 100,000 entries in all: each transcript
   counts one, and each entry of the folder of its helpers counts one.
-  The count stops at the file or the folder where a limit runs out. It
-  counts the tokens of the files before it, and no tokens of it or of
-  the files after it, and the log names it. The daemon reads the
-  transcripts of an ended session on a thread for blocking work, so no
-  task of the daemon waits for the reads.
+  Each byte and each entry that the count reads counts, also of a file
+  or a folder that it skips. The count stops at the file or the folder
+  where a limit runs out. It counts the tokens of the files before it,
+  and no tokens of it or of the files after it, and the log names it.
+  The daemon reads the transcripts of an ended session on a thread for
+  blocking work, so the other tasks of the daemon go on. The end of that
+  session waits for the count before its folder goes.
 - **01M7FX6SZ88S06N1AT6WJHKNMX** Each line of the log of riff that names
   a file or a folder in a folder that a container writes shows each
   control character of the name as its escape, for example `\n` for a

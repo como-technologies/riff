@@ -841,7 +841,9 @@ impl<R: Runtime + 'static> Daemon<R> {
             match self.sweep_folder(&folder, repo, &mut repos).await {
                 Ok(Some(line)) => swept.push(line),
                 Ok(None) => {}
-                Err(e) => eprintln!("riff daemon: {e:#}"),
+                // The error can name a file of the session
+                // (01M7FX6SZ88S06N1AT6WJHKNMX).
+                Err(e) => eprintln!("riff daemon: {}", text::escaped(&format!("{e:#}"))),
             }
         }
         // An old clone of a lead that a start of the lead could not remove

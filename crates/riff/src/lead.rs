@@ -680,11 +680,19 @@ fn started(record: &daemon::Record) -> std::time::SystemTime {
 /// of [`text::lead_turns_unseen`] goes to the log of the daemon
 /// (01M7FX6YQKTN9EVPTZJ9XB8PM4).
 fn written(record: &daemon::Record) -> Option<std::time::SystemTime> {
-    let written = crate::usage::written_in(&record.folder.join("claude"), &record.live.session);
-    written.unwrap_or_else(|e| {
-        let line = text::lead_turns_unseen(&format!("{e:#}"));
-        eprintln!("riff daemon: {}: {line}", record.live.name);
+    last_write(record).unwrap_or_else(|line| {
+        eprintln!("{line}");
         None
+    })
+}
+
+/// The last write of [`written`], or the line of the log of the daemon
+/// when riff cannot list the folder `projects` of the lead of `record`.
+fn last_write(record: &daemon::Record) -> Result<Option<std::time::SystemTime>, String> {
+    let claude = record.folder.join("claude");
+    crate::usage::written_in(&claude, &record.live.session).map_err(|e| {
+        let line = text::lead_turns_unseen(&format!("{e:#}"));
+        format!("riff daemon: {}: {line}", record.live.name)
     })
 }
 
@@ -2325,22 +2333,31 @@ mod tests {
     /// The transcript of the lead of `record`, with its last write `ago`
     /// before now.
     fn written_ago(record: &daemon::Record, ago: std::time::Duration) {
+        written_at(record, std::time::SystemTime::now() - ago);
+    }
+
+    /// The transcript of the lead of `record`, with its last write at
+    /// `time`.
+    fn written_at(record: &daemon::Record, time: std::time::SystemTime) {
         let project = record.folder.join("claude/projects/-d-clone");
         std::fs::create_dir_all(&project).unwrap();
         let file = std::fs::File::create(project.join("s1.jsonl")).unwrap();
-        file.set_modified(std::time::SystemTime::now() - ago)
-            .unwrap();
+        file.set_modified(time).unwrap();
     }
 
     /// The end of the last turn of the lead of `record`, `ago` before now.
     fn ended_ago(record: &daemon::Record, ago: std::time::Duration) {
+        ended_at(record, std::time::SystemTime::now() - ago);
+    }
+
+    /// The end of the last turn of the lead of `record`, at `time`.
+    fn ended_at(record: &daemon::Record, time: std::time::SystemTime) {
         end_turn(&record.folder).unwrap();
         let file = std::fs::File::options()
             .write(true)
             .open(record.folder.join(TURN_ENDED))
             .unwrap();
-        file.set_modified(std::time::SystemTime::now() - ago)
-            .unwrap();
+        file.set_modified(time).unwrap();
     }
 
     /// 01M6WBX2FQEHW92Y1A5HM4H8BM: a lead is idle at the end of its turn,
@@ -2392,15 +2409,18 @@ mod tests {
 
     /// 01M7FX6YQKTN9EVPTZJ9XB8PM4: the lead makes more entries than the
     /// limit in its folder `projects`. riff sees no write of the lead
-    /// there: after the end of a turn, the lead is between two turns, and
-    /// 5 minutes after the start of its container, it is quiet.
+    /// there, and the line of the log names the folder: after the end of
+    /// a turn, the lead is between two turns, and 5 minutes after the
+    /// start of its container, it is quiet. The turn ends at a fixed time
+    /// after now, so no step depends on the time of the test.
     #[test]
     fn a_folder_of_projects_over_the_limit_shows_no_turn_of_the_lead() {
-        use std::time::Duration;
+        use std::time::{Duration, UNIX_EPOCH};
         let dir = tempfile::tempdir().unwrap();
         let record = record_in(dir.path());
-        ended_ago(&record, Duration::from_secs(60));
-        written_ago(&record, Duration::from_secs(1));
+        let ended = UNIX_EPOCH + Duration::from_secs(4_000_000_000);
+        ended_at(&record, ended);
+        written_at(&record, ended + Duration::from_secs(59));
         let quiet_for = Duration::from_secs(300);
         assert!(!between_turns(&record));
         assert!(!quiet(&record, quiet_for));
@@ -2408,6 +2428,14 @@ mod tests {
         for n in 0..crate::usage::MAX_ENTRIES {
             std::fs::write(projects.join(format!("{n}.jsonl")), "").unwrap();
         }
+        let cause = text::host_file_too_many(&projects, crate::usage::MAX_ENTRIES);
+        assert_eq!(
+            last_write(&record),
+            Err(format!(
+                "riff daemon: {NAME}: {}",
+                text::lead_turns_unseen(&cause)
+            ))
+        );
         assert_eq!(written(&record), None);
         assert!(between_turns(&record));
         // The container started long ago: `since_ms` is 0.

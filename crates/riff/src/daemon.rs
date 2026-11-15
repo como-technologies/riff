@@ -3514,11 +3514,13 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// container binds at [`RELAY_BIN`] ([`crate::lead::old`]). It is idle
     /// at the end of its turn, or when its transcript got no write in
     /// [`LEAD_IDLE`] ([`crate::lead::idle`], 01M6WBX2FQEHW92Y1A5HM4H8BM): a
-    /// lead in a turn waits for the next look. While `riff update` replaced
-    /// the binary of the daemon itself, it starts no lead: the new daemon
-    /// does (01M6WBX2FT7Y9FV9VGGPDBKAHM). It gives one line for each lead
-    /// that it started again, or that it first told the person of: the line
-    /// is in riff chat too.
+    /// lead in a turn that riff sees waits for the next look. When riff
+    /// cannot list the folder of its transcripts, riff sees no turn, and
+    /// the lead does not wait (01M7FX6YQKTN9EVPTZJ9XB8PM4). While `riff
+    /// update` replaced the binary of the daemon itself, it starts no
+    /// lead: the new daemon does (01M6WBX2FT7Y9FV9VGGPDBKAHM). It gives
+    /// one line for each lead that it started again, or that it first told
+    /// the person of: the line is in riff chat too.
     pub async fn leads_again(self: &Arc<Self>) -> Vec<String> {
         if (self.own_replaced)() {
             return Vec::new();
@@ -6012,10 +6014,12 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// (01M3Y1YP39VFX6GH33H7B8A8KR). The comment goes as the daemon
     /// ([`gh_token::writer`], 01M6XZJFE2ZTR5RE3AWM30R704). The line of the
     /// report goes to the log of the daemon. The reads of the transcripts
-    /// run on a thread for blocking work, so no task of the daemon waits
-    /// for them (01M7FX6SWN3DGZMH5HS9BWEBY7). A folder `projects` that
-    /// riff does not list counts no tokens (01M7FNTSHXPQXXKZF761V0NN9Z):
-    /// it gives the line of the log, with [`text::transcript_skipped`].
+    /// run on a thread for blocking work, so the other tasks of the daemon
+    /// go on. The end of this session waits for them before its folder
+    /// goes, and they have limits in all (01M7FX6SWN3DGZMH5HS9BWEBY7). A
+    /// folder `projects` that riff does not list counts no tokens
+    /// (01M7FNTSHXPQXXKZF761V0NN9Z): it gives the line of the log
+    /// ([`counted`]).
     async fn count_tokens(&self, record: &Record) -> Option<String> {
         let thread = record.me.default_thread().map(|t| t.to_string())?;
         let meter = self.world.meter(&thread)?;
@@ -6023,25 +6027,18 @@ impl<R: Runtime + 'static> Daemon<R> {
         let claude = record.folder.join("claude");
         let (session, item) = (live.session.clone(), live.item.clone());
         let (of, from_ms) = (thread.clone(), u64::try_from(live.since_ms).unwrap_or(0));
-        let counted = tokio::task::spawn_blocking(move || {
+        let count = tokio::task::spawn_blocking(move || {
             let transcripts = usage::transcripts_in(&claude, &session)?;
             let claim = (of.as_str(), item.as_str());
             let now = usage::now_ms();
             let ended = meter.session_ended(&session, claim, from_ms, &transcripts, now);
-            anyhow::Ok((meter, ended))
+            anyhow::Ok(ended.map(|ended| (meter, ended)))
         })
         .await;
-        let (meter, ended) = match counted {
-            Ok(Ok((meter, Some(ended)))) => (meter, ended),
-            Ok(Ok((_, None))) => return None,
-            Ok(Err(e)) => {
-                let line = text::transcript_skipped(&format!("{e:#}"));
-                return Some(format!("riff daemon: {}: {line}", live.name));
-            }
-            Err(e) => {
-                let line = format!("riff cannot count the tokens of {}: {e}.", live.item);
-                return Some(format!("riff daemon: {}: {line}", live.name));
-            }
+        let (meter, ended) = match counted(&live.name, &live.item, count) {
+            Ok(Some(found)) => found,
+            Ok(None) => return None,
+            Err(line) => return Some(line),
         };
         let (world, server) = (self.world.clone(), record.server.clone());
         tokio::spawn(async move {
@@ -6056,7 +6053,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                         .await
                         .unwrap_or_else(|e| format!("riff cannot report the tokens: {e}."))
                 }
-                Err(e) => format!("riff cannot count the tokens of {}: {e}.", live.item),
+                Err(e) => text::tokens_uncounted(&live.item, &e.to_string()),
             };
             println!("riff daemon: {}: {line}", live.name);
         });
@@ -6827,6 +6824,25 @@ async fn give_wakes(world: Arc<dyn World>, owned: Arc<Owned>) {
             world.refuse(&record, &wake).await;
         }
     }
+}
+
+/// What the thread of the count of the tokens of the ended session
+/// `name`, of the item `item`, gave ([`Daemon::count_tokens`]): `None`
+/// for a session with no transcript. A folder `projects` that riff does
+/// not list gives the line of the log of the daemon, with
+/// [`text::transcript_skipped`], and so does a thread that failed, with
+/// [`text::tokens_uncounted`].
+fn counted<T>(
+    name: &str,
+    item: &str,
+    count: std::result::Result<Result<Option<T>>, tokio::task::JoinError>,
+) -> std::result::Result<Option<T>, String> {
+    let line = match count {
+        Ok(Ok(found)) => return Ok(found),
+        Ok(Err(e)) => text::transcript_skipped(&format!("{e:#}")),
+        Err(e) => text::tokens_uncounted(item, &e.to_string()),
+    };
+    Err(format!("riff daemon: {name}: {line}"))
 }
 
 /// Reads each line of `from` until its end: a [`Then::Stop`] asks to
@@ -12893,6 +12909,29 @@ mod tests {
             [project.join(format!("{session}.jsonl"))]
         );
         assert_eq!(ledger.claims.len(), 1);
+    }
+
+    /// The thread of a count of the tokens of an ended session fails: the
+    /// line of the log names the session, the item and the panic. A count
+    /// with no transcript gives no line.
+    #[tokio::test]
+    async fn a_count_whose_thread_fails_gives_a_line_of_the_log() {
+        let failed =
+            tokio::task::spawn_blocking(|| -> Result<Option<()>> { panic!("the count failed") })
+                .await;
+        let why = failed.as_ref().unwrap_err().to_string();
+        assert_eq!(
+            counted("riff-issue-12-1a2b3c4d", "issue-12", failed),
+            Err(format!(
+                "riff daemon: riff-issue-12-1a2b3c4d: {}",
+                text::tokens_uncounted("issue-12", &why)
+            ))
+        );
+        assert!(why.contains("panicked"), "{why}");
+        assert_eq!(
+            counted::<()>("riff-issue-12-1a2b3c4d", "issue-12", Ok(Ok(None))),
+            Ok(None)
+        );
     }
 
     /// A fake `gh` in `dir` with the token of the person: it logs each

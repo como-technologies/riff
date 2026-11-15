@@ -172,9 +172,10 @@ fn a_sparse_config_over_the_limit_gives_an_error_that_names_it() {
         let error = claude_folder(claude).unwrap_err();
         assert_eq!(
             format!("{error:#}"),
-            riff::text::host_file_too_large(&big, riff::run::MAX_CONFIG),
+            riff::text::config_too_large(&big, riff::run::MAX_CONFIG),
             "{name}"
         );
+        assert!(format!("{error:#}").ends_with("Remove it, and start again."));
         assert_eq!(std::fs::metadata(&big).unwrap().len(), 64 << 30, "{name}");
         assert_eq!(inode(&other), before, "riff wrote {}", other.display());
         std::fs::remove_file(&big).unwrap();
@@ -188,10 +189,12 @@ fn a_sparse_config_over_the_limit_gives_an_error_that_names_it() {
 
 /// The how-to "When a session makes a large file in its folder" in the
 /// book (01M7FNTSHXPQXXKZF761V0NN9Z, 01M7FX6SWN3DGZMH5HS9BWEBY7,
-/// 01M7FX6SZ88S06N1AT6WJHKNMX): the row of the files of the machine
-/// points to it, it names each limit of riff and the escape of a name in
-/// the log, its error is the error of riff, and its commands find the
-/// error, the line of a count that stopped, and the file.
+/// 01M7FX6SZ88S06N1AT6WJHKNMX, 01M7FX6YQKTN9EVPTZJ9XB8PM4): the row of
+/// the files of the machine points to it, it names each limit of riff
+/// and the escape of a name in the log, and its command finds each line
+/// of a limit. Its two parts show the error and the line of riff, and
+/// their commands find the file or the folder. Only the error of a start
+/// gives a step.
 #[test]
 fn the_book_says_what_to_do_with_a_large_file_in_the_folder_of_the_lead() {
     let page = crate::book::page("how-it-works.md");
@@ -199,11 +202,27 @@ fn the_book_says_what_to_do_with_a_large_file_in_the_folder_of_the_lead() {
         "how-it-works.md",
         "#### When a session makes a large file in its folder",
     );
-    let error = riff::text::host_file_too_large(
-        Path::new("/home/mike/.local/share/riff/leads/acme-app/claude/.claude.json"),
-        riff::run::MAX_CONFIG,
+    let start = &crate::book::how_to(
+        "how-it-works.md",
+        "##### When the start of the lead stops at a large file",
     );
-    assert!(how_to.contains(&error), "{how_to}");
+    let unseen = &crate::book::how_to(
+        "how-it-works.md",
+        "##### When riff sees no turn of the lead",
+    );
+    let lead = Path::new("/home/mike/.local/share/riff/leads/acme-app");
+    let error =
+        riff::text::config_too_large(&lead.join("claude/.claude.json"), riff::run::MAX_CONFIG);
+    assert!(start.contains(&error), "{start}");
+    let projects = lead.join("claude").join(riff::usage::PROJECTS);
+    let cause = riff::text::host_file_too_many(&projects, riff::usage::MAX_ENTRIES);
+    let line = format!(
+        "riff daemon: {}: {}",
+        riff::lead::name_of("acme/app"),
+        riff::text::lead_turns_unseen(&cause)
+    );
+    assert!(unseen.contains(&line), "{unseen}");
+    assert!(!line.contains("Remove"), "{line}");
     for (limit, words) in [
         (riff::usage::MAX_TRANSCRIPT, "| 256 MB |"),
         (riff::run::MAX_CONFIG, "| 16 MB |"),
@@ -238,15 +257,69 @@ fn the_book_says_what_to_do_with_a_large_file_in_the_folder_of_the_lead() {
     assert!(error.starts_with("riff reads at most"), "{error}");
     assert_eq!(
         crate::book::commands_in(how_to),
+        ["journalctl --user -u riff | grep -E 'reads at most|lists at most'"]
+    );
+    assert_eq!(
+        crate::book::commands_in(start),
         [
-            "journalctl --user -u riff | grep -E 'reads at most|lists at most'",
             "find ~/.local/share/riff/leads/OWNER-REPO/claude -size +16M",
             "rm ~/.local/share/riff/leads/OWNER-REPO/claude/.claude.json",
         ]
     );
-    assert!(
-        page.contains("(#when-a-session-makes-a-large-file-in-its-folder)"),
-        "the row of the files of the machine points to the how-to"
+    let left = "find ~/.local/share/riff/leads/OWNER-REPO/claude/projects -mindepth 1 -maxdepth 1 \
+                ! -name '*-clone' -exec mv -t ~/riff-projects-left {} +";
+    assert_eq!(
+        crate::book::commands_in(unseen),
+        [
+            "ls ~/.local/share/riff/leads/OWNER-REPO/claude/projects | grep -cv -- '-clone$'",
+            "mkdir -p ~/riff-projects-left",
+            left,
+        ]
+    );
+    for anchor in [
+        "(#when-a-session-makes-a-large-file-in-its-folder)",
+        "(#when-the-start-of-the-lead-stops-at-a-large-file)",
+        "(#when-riff-sees-no-turn-of-the-lead)",
+    ] {
+        assert!(page.contains(anchor), "the book points to {anchor}");
+    }
+}
+
+/// The move of the how-to "When riff sees no turn of the lead": it moves
+/// each entry of `projects` that the session made, and keeps the folder
+/// of the clone of the lead, which holds its conversation. Then riff
+/// sees the turns of the lead again (01M7FX6YQKTN9EVPTZJ9XB8PM4).
+#[test]
+fn the_move_of_the_book_keeps_the_conversation_of_the_lead() {
+    let unseen = &crate::book::how_to(
+        "how-it-works.md",
+        "##### When riff sees no turn of the lead",
+    );
+    let home = tempfile::tempdir().unwrap();
+    let lead = home.path().join(".local/share/riff/leads/OWNER-REPO");
+    let projects = lead.join("claude").join(riff::usage::PROJECTS);
+    let own = projects.join("-home-mike--local-share-riff-leads-OWNER-REPO-clone");
+    std::fs::create_dir_all(&own).unwrap();
+    std::fs::write(own.join("s1.jsonl"), "").unwrap();
+    for n in 0..riff::usage::MAX_ENTRIES {
+        std::fs::write(projects.join(format!("{n}.jsonl")), "").unwrap();
+    }
+    let claude = lead.join("claude");
+    assert!(riff::usage::written_in(&claude, "s1").is_err());
+    for command in crate::book::commands_in(unseen) {
+        let out = std::process::Command::new("sh")
+            .args(["-c", &command])
+            .env("HOME", home.path())
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{command}: {out:?}");
+    }
+    assert!(riff::usage::written_in(&claude, "s1").unwrap().is_some());
+    assert_eq!(std::fs::read_dir(&projects).unwrap().count(), 1);
+    let left = home.path().join("riff-projects-left");
+    assert_eq!(
+        std::fs::read_dir(left).unwrap().count(),
+        riff::usage::MAX_ENTRIES
     );
 }
 

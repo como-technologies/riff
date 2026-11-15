@@ -135,16 +135,18 @@ impl Kind {
 
 /// The error of [`read()`] for the file `path` with more than `most`
 /// bytes: its text is [`text::host_file_too_large`]. A caller with a
-/// limit of its own tells it from the other errors
-/// ([`crate::usage::Replies::read`]).
+/// limit of its own tells it from the other errors, and counts the bytes
+/// that the read took ([`crate::usage::Replies::read`]).
 ///
 /// ```
 /// use std::path::Path;
+/// use riff::host_file::TooLarge;
 ///
 /// let root = tempfile::tempdir()?;
 /// std::fs::write(root.path().join("a"), "four")?;
 /// let error = riff::host_file::read(root.path(), Path::new("a"), 3).unwrap_err();
-/// assert!(error.is::<riff::host_file::TooLarge>());
+/// // The size of the file is over the limit: the read took none of it.
+/// assert_eq!(error.downcast_ref::<TooLarge>().map(|e| e.read), Some(0));
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 #[derive(Debug)]
@@ -153,6 +155,10 @@ pub struct TooLarge {
     pub path: PathBuf,
     /// The most bytes that the read took.
     pub most: u64,
+    /// The bytes that the read took: none when the size of the file was
+    /// over `most`, else `most` and one, from a file that grew in the
+    /// read.
+    pub read: u64,
 }
 
 impl std::fmt::Display for TooLarge {
@@ -315,25 +321,26 @@ pub fn read(root: &Path, name: &Path, most: u64) -> Result<Option<Vec<u8>>> {
         bail!("{}", text::host_file_not_plain(&path));
     }
     match read_most(file, meta.len(), most).with_context(|| format!("read {}", path.display()))? {
-        Some(bytes) => Ok(Some(bytes)),
-        None => Err(TooLarge { path, most }.into()),
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(read) => Err(TooLarge { path, most, read }.into()),
     }
 }
 
-/// The bytes of `from`, a file of `len` bytes, or `None` when it has more
-/// than `most`. When `len` is over `most`, it reads none of it. Else it
-/// reads at most `most` and one byte, also from a file that grows in the
-/// read.
-fn read_most(from: impl Read, len: u64, most: u64) -> std::io::Result<Option<Vec<u8>>> {
+/// The bytes of `from`, a file of `len` bytes, or the count of the bytes
+/// that it read when it has more than `most`. When `len` is over `most`,
+/// it reads none of it. Else it reads at most `most` and one byte, also
+/// from a file that grows in the read.
+fn read_most(from: impl Read, len: u64, most: u64) -> std::io::Result<Result<Vec<u8>, u64>> {
     if len > most {
-        return Ok(None);
+        return Ok(Err(0));
     }
     let mut bytes = Vec::new();
     from.take(most.saturating_add(1)).read_to_end(&mut bytes)?;
-    Ok((u64::try_from(bytes.len()).unwrap_or(u64::MAX) <= most).then_some(bytes))
+    let read = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+    Ok(if read <= most { Ok(bytes) } else { Err(read) })
 }
 
-/// The text of [`read()`]: an error when it is no UTF-8.
+/// The text of [`read()`]: an error when it is no UTF-8 ([`text_of`]).
 ///
 /// ```
 /// use std::path::Path;
@@ -345,11 +352,24 @@ fn read_most(from: impl Read, len: u64, most: u64) -> std::io::Result<Option<Vec
 /// ```
 pub fn read_to_string(root: &Path, name: &Path, most: u64) -> Result<Option<String>> {
     read(root, name, most)?
-        .map(|bytes| {
-            String::from_utf8(bytes)
-                .with_context(|| format!("{} is no text", root.join(name).display()))
-        })
+        .map(|bytes| text_of(root, name, bytes))
         .transpose()
+}
+
+/// The text of `bytes`, which [`read()`] read from the file `ROOT/NAME`:
+/// an error that names the file when it is no UTF-8.
+///
+/// ```
+/// use std::path::Path;
+///
+/// let root = Path::new("/l/o-r/claude");
+/// assert_eq!(riff::host_file::text_of(root, Path::new("a"), b"text".to_vec())?, "text");
+/// let error = riff::host_file::text_of(root, Path::new("a"), vec![0xff]).unwrap_err();
+/// assert_eq!(error.to_string(), "/l/o-r/claude/a is no text");
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn text_of(root: &Path, name: &Path, bytes: Vec<u8>) -> Result<String> {
+    String::from_utf8(bytes).with_context(|| format!("{} is no text", root.join(name).display()))
 }
 
 /// The kind of the entry `part` of the folder `dir`, with no follow of a
@@ -700,13 +720,10 @@ mod tests {
     #[test]
     fn a_read_stops_one_byte_past_the_limit() {
         let mut endless = Endless(0);
-        assert_eq!(read_most(&mut endless, 0, 1000).unwrap(), None);
+        assert_eq!(read_most(&mut endless, 0, 1000).unwrap(), Err(1001));
         assert_eq!(endless.0, 1001);
-        assert_eq!(
-            read_most(&b"1234"[..], 4, 4).unwrap(),
-            Some(b"1234".to_vec())
-        );
-        assert_eq!(read_most(&b"12345"[..], 4, 4).unwrap(), None);
+        assert_eq!(read_most(&b"1234"[..], 4, 4).unwrap(), Ok(b"1234".to_vec()));
+        assert_eq!(read_most(&b"12345"[..], 4, 4).unwrap(), Err(5));
     }
 
     /// 01M7FNTSHXPQXXKZF761V0NN9Z: a file whose size is over the limit
@@ -714,7 +731,7 @@ mod tests {
     #[test]
     fn a_file_whose_size_is_over_the_limit_is_not_read() {
         let mut endless = Endless(0);
-        assert_eq!(read_most(&mut endless, 1001, 1000).unwrap(), None);
+        assert_eq!(read_most(&mut endless, 1001, 1000).unwrap(), Err(0));
         assert_eq!(endless.0, 0);
     }
 
@@ -828,10 +845,7 @@ mod scan {
         // The transcripts of a session and of a lead
         // ([`crate::usage::transcripts_in`], [`crate::usage::written_in`]).
         ("daemon.rs", "let claude = record.folder.join(\"claude\");"),
-        (
-            "lead.rs",
-            "let written = crate::usage::written_in(&record.folder.join(\"claude\"), &record.live.session);",
-        ),
+        ("lead.rs", "let claude = record.folder.join(\"claude\");"),
         // The clones that link to a main clone
         // ([`crate::lead::linked_main`]).
         (
@@ -862,6 +876,7 @@ mod scan {
     /// function.
     const STEPS: &[(&str, &str)] = &[
         ("run.rs", "pub fn claude_folder("),
+        ("run.rs", "fn read_config("),
         ("usage.rs", "fn transcripts_with_times("),
         ("usage.rs", "fn read_transcript("),
         ("usage.rs", "fn read_replies("),
@@ -873,9 +888,10 @@ mod scan {
     /// function of riff that calls it. A function with one of them gets
     /// the path from a line of [`NAMED`] or from its caller, so it follows
     /// no link, as a function with a line of [`NAMED`].
-    const GUARDED: [&str; 9] = [
+    const GUARDED: [&str; 10] = [
         "host_file::",
         "claude_folder(",
+        "read_config(",
         "transcripts_with_times(",
         "Replies::read(",
         "Replies::read_within(",

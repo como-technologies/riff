@@ -916,7 +916,7 @@ pub const MAX_CONFIG: u64 = 16 << 20;
 /// std::fs::File::create(&config)?.set_len(64 << 30)?;
 /// let error = riff::run::claude_folder(&claude, "/data/clone".as_ref(), &person, &auto, Role::Worker)
 ///     .unwrap_err();
-/// assert_eq!(format!("{error:#}"), riff::text::host_file_too_large(&config, riff::run::MAX_CONFIG));
+/// assert_eq!(format!("{error:#}"), riff::text::config_too_large(&config, riff::run::MAX_CONFIG));
 /// assert_eq!(std::fs::metadata(&config)?.len(), 64 << 30);
 ///
 /// // A sparse `settings.json` of 64 GiB: riff writes no `.claude.json`
@@ -927,7 +927,7 @@ pub const MAX_CONFIG: u64 = 16 << 20;
 /// std::fs::File::create(&settings)?.set_len(64 << 30)?;
 /// let error = riff::run::claude_folder(&claude, "/data/clone".as_ref(), &person, &auto, Role::Worker)
 ///     .unwrap_err();
-/// assert_eq!(format!("{error:#}"), riff::text::host_file_too_large(&settings, riff::run::MAX_CONFIG));
+/// assert_eq!(format!("{error:#}"), riff::text::config_too_large(&settings, riff::run::MAX_CONFIG));
 /// assert!(!config.exists());
 /// # Ok::<(), anyhow::Error>(())
 /// ```
@@ -941,8 +941,10 @@ pub fn claude_folder(
     std::fs::create_dir_all(dir).with_context(|| format!("cannot make {}", dir.display()))?;
     let (config, name) = (Path::new(CLAUDE_JSON), Path::new(SETTINGS_JSON));
     // Both reads come before each write: an error writes no file.
-    let old_config = crate::host_file::read(dir, config, MAX_CONFIG)?;
-    let old_settings = crate::host_file::read_to_string(dir, name, MAX_CONFIG)?;
+    let old_config = read_config(dir, config)?;
+    let old_settings = read_config(dir, name)?
+        .map(|bytes| crate::host_file::text_of(dir, name, bytes))
+        .transpose()?;
     let mut root = match old_config.and_then(|bytes| serde_json::from_slice(&bytes).ok()) {
         Some(Value::Object(map)) => map,
         _ => serde_json::Map::new(),
@@ -982,6 +984,19 @@ pub fn claude_folder(
         crate::host_file::write(dir, name, new.as_bytes())?;
     }
     Ok(())
+}
+
+/// The bytes of the file `NAME` of the Claude folder `dir`
+/// ([`crate::host_file::read`]), at most [`MAX_CONFIG`]. A larger file
+/// gives the error of [`text::config_too_large`]: the start stops, and
+/// the person removes it.
+fn read_config(dir: &Path, name: &Path) -> Result<Option<Vec<u8>>> {
+    crate::host_file::read(dir, name, MAX_CONFIG).map_err(|e| {
+        match e.downcast::<crate::host_file::TooLarge>() {
+            Ok(large) => anyhow::anyhow!("{}", text::config_too_large(&large.path, large.most)),
+            Err(e) => e,
+        }
+    })
 }
 
 /// The settings text `text` of an earlier start with what

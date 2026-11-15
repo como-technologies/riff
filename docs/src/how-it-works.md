@@ -494,18 +494,22 @@ reads at most a limit of each one:
 | What riff reads | Its limit | Over the limit |
 |---|---|---|
 | A transcript, and the transcript of each helper agent | 256 MB | riff counts no tokens of it, and goes on. The log of the daemon names the file. |
-| `.claude.json` and `settings.json` of a Claude folder | 16 MB | The start stops, and riff writes neither file. The error names the file. |
+| `.claude.json` and `settings.json` of a Claude folder | 16 MB | The start stops, and riff writes neither file. The error names the file. See [When the start of the lead stops at a large file](#when-the-start-of-the-lead-stops-at-a-large-file). |
 | `.git/objects/info/alternates` of a clone | 1 MB | riff counts no main clone for the clone. |
-| The entries of the folder `projects` of a Claude folder, and of the folder of the helper agents of a transcript | 10,000 entries | riff counts no tokens of the transcripts there, and sees no write of the lead there: after an update, riff can start the lead again in the middle of a turn. riff goes on, and the log of the daemon names the folder. |
+| The entries of the folder `projects` of a Claude folder, and of the folder of the helper agents of a transcript | 10,000 entries | riff counts no tokens of the transcripts there, and sees no write of the lead there: after an update, riff can start the lead again in the middle of a turn. riff goes on, and the log of the daemon names the folder. See [When riff sees no turn of the lead](#when-riff-sees-no-turn-of-the-lead). |
 | All the transcripts of a session, at each count of its tokens | 1 GB and 100,000 entries in all | riff counts the tokens of the files before the limit, and no tokens of the rest. The log of the daemon names the file or the folder where riff stopped. |
 
 When the size of a file is over its limit, riff reads none of it. When
-the file grows in the read, riff stops one byte past the limit. The
-daemon reads the transcripts of an ended session on a thread of its
-own. So the riff daemon takes no more memory and time for the files,
-and each other session goes on. In the log, riff shows each control
-character of a name as its escape, for example `\n` for a line break:
-a name that a session chose makes no second line.
+the file grows in the read, riff stops one byte past the limit. Each
+byte and each entry that a count of tokens reads counts, also of a file
+that riff skips. The daemon reads the transcripts of an ended session
+on a thread of its own, so each other session goes on. The end of that
+session waits for the count, which has the limits in all. So a large
+file of a session does not fill the memory of the riff daemon.
+
+In the log, riff shows each control character of a name as its escape,
+for example `\n` for a line break: a name that a session chose makes no
+second line.
 
 ```mermaid
 flowchart LR
@@ -514,21 +518,54 @@ flowchart LR
     L -- yes --> E["riff reads no more of it<br/>the error names the file<br/>the daemon goes on"]
 ```
 
+To find each limit that riff met, read the log of the daemon:
+
+```sh
+journalctl --user -u riff | grep -E 'reads at most|lists at most'
+```
+
+A line that says "riff counts no tokens" needs no step: riff goes on,
+and the folder of a worker session goes at its end. Do not remove a
+transcript of a session that runs: it holds the conversation that
+`claude --resume` reads.
+
+##### When the start of the lead stops at a large file
+
 The error names the file:
 
 ```text
 riff reads at most 16MB of a file in a folder that a session can write: /home/mike/.local/share/riff/leads/acme-app/claude/.claude.json is larger. Remove it, and start again.
 ```
 
-Find the error in the log of the daemon, and each large file in the
-Claude folder of the lead. Then remove the file that the error names.
-At the next start, riff will write a new `.claude.json`:
+Find each large file in the Claude folder of the lead. Then remove the
+file that the error names. At the next start, riff will write a new
+`.claude.json`:
 
 ```sh
-journalctl --user -u riff | grep -E 'reads at most|lists at most'
 find ~/.local/share/riff/leads/OWNER-REPO/claude -size +16M
 rm ~/.local/share/riff/leads/OWNER-REPO/claude/.claude.json
 ```
+
+##### When riff sees no turn of the lead
+
+The log of the daemon names the folder `projects` of the lead:
+
+```text
+riff daemon: riff-lead-acme-app: riff sees no turn of the lead in its transcripts, and goes on. riff lists at most 10000 entries of a folder that a session can write: /home/mike/.local/share/riff/leads/acme-app/claude/projects has more.
+```
+
+riff goes on, but after an update it can start the lead again in the
+middle of a turn. The conversation of the lead is in the folder of its
+clone in `projects`: its name ends with `-clone`. The session made the
+other entries. Count them, then move them out of `projects`:
+
+```sh
+ls ~/.local/share/riff/leads/OWNER-REPO/claude/projects | grep -cv -- '-clone$'
+mkdir -p ~/riff-projects-left
+find ~/.local/share/riff/leads/OWNER-REPO/claude/projects -mindepth 1 -maxdepth 1 ! -name '*-clone' -exec mv -t ~/riff-projects-left {} +
+```
+
+At the next look, riff will see the turns of the lead again.
 
 ### The home of a session is in memory
 
@@ -2786,8 +2823,12 @@ grep '"command"' ~/.local/share/riff/leads/OWNER-REPO/claude/settings.json
 
 A turn writes the transcript of the conversation at each message and
 each tool call. A write more than 5 seconds after the end of the turn is
-a new turn: the lead waits for its end. To see the time of the last end
-of a turn of the lead, in milliseconds since 1970:
+a new turn: the lead waits for its end. When riff cannot list the
+folder `projects` of the lead, riff sees no write, and the lead does
+not wait: see
+[When riff sees no turn of the lead](#when-riff-sees-no-turn-of-the-lead).
+To see the time of the last end of a turn of the lead, in milliseconds
+since 1970:
 
 ```sh
 cat ~/.local/share/riff/leads/OWNER-REPO/turn-ended

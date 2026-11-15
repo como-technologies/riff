@@ -672,7 +672,8 @@ fn the_end_of_a_container_session_skips_a_transcript_over_the_limit() {
 
 /// 01M7FNTSHXPQXXKZF761V0NN9Z: a transcript of this machine grows one
 /// byte over the limit. `riff usage` counts no tokens of it, and the line
-/// on stderr names it.
+/// on stderr names it. The line gives no step: a person who removes the
+/// transcript loses the conversation and gets no tokens back.
 #[tokio::test]
 async fn usage_counts_no_tokens_of_a_transcript_over_the_limit_and_names_it() {
     let machine = Machine::new().await;
@@ -691,6 +692,7 @@ async fn usage_counts_no_tokens_of_a_transcript_over_the_limit_and_names_it() {
         &transcript,
         riff::usage::MAX_TRANSCRIPT,
     ));
+    assert!(!line.contains("Remove"), "{line}");
     assert_eq!(text(&out.stderr).lines().collect::<Vec<_>>(), [line]);
 }
 
