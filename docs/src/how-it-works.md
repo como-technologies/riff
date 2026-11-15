@@ -424,10 +424,10 @@ Repair podman. The next start of a session with a volume reads the
 folders again. The log of the daemon then says `riff reads the folders
 of the podman volumes again`. On Linux, find the lines of the fault and
 of the new read in the log (see also
-[See the daemon](development.md#see-the-daemon)):
+[Read the log of the daemon](development.md#read-the-log-of-the-daemon)):
 
 ```sh
-journalctl --user -u riff | grep 'folders of the podman volumes'
+riff daemon log --grep 'folders of the podman volumes'
 ```
 
 ### The home of a session is in memory
