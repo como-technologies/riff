@@ -1001,6 +1001,14 @@ mod tests {
         state.on_key(Key::Open(Tab::Chat));
         state.on_key(Key::Open(Tab::Decisions));
         assert!(drawn(&state, 80, 24)[0].starts_with(" 1 Sessions•  2 Chat  "));
+        // With two spaces, the strip and the space before it would be 81
+        // columns: one space.
+        state.news(Tab::Chat, News::Lines(2));
+        state.news(Tab::Waves, News::Dot);
+        assert_eq!(
+            drawn(&state, 80, 24)[0],
+            " 1 Sessions• 2 Chat•2 3 Waves• 4 Machines 5 Devices 6 Reports [7 Decisions]"
+        );
     }
 
     /// 01M6VAZKAH6B53YKR8W4YKNSH6: a look that fails keeps the last

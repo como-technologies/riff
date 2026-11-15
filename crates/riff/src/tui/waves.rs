@@ -115,6 +115,7 @@ use riff_client::waves::{Board, Issues, wave_number};
 use riff_core::name::ThreadName;
 use riff_core::wire::{HoldInfo, RiffState, SessionInfo};
 
+use super::decisions::IssueRef;
 use super::forge::{Closed, Forge, Main, Reads};
 use super::view::Layout;
 use super::{Action, Effect, Key, Look, Mark, NOTHING_CHANGED, OnRows, Question, State};
@@ -329,6 +330,18 @@ impl Row {
         match self {
             Row::Repo(row) => Some(&row.repo),
             Row::Item { repo, .. } | Row::Closed { repo, .. } | Row::NextTitle(repo) => Some(repo),
+            _ => None,
+        }
+    }
+
+    /// The issue of this row, for an item. Each repository of a board
+    /// parses: riff-server names each one as a thread.
+    fn issue(&self) -> Option<IssueRef> {
+        match self {
+            Row::Item { repo, item } => Some(IssueRef {
+                repo: repo.parse().ok()?,
+                number: item.number,
+            }),
             _ => None,
         }
     }
@@ -637,7 +650,7 @@ impl Waves {
                     .forge
                     .get(repo)
                     .is_some_and(|forge| forge.issues.questions.contains(&item.number));
-                Some(match Effect::answered(repo, item.number, asked) {
+                Some(match Effect::answered(&row.issue()?, asked) {
                     Ok(question) => Answer::Ask(question),
                     Err(note) => Answer::Note(note),
                 })
@@ -716,31 +729,21 @@ fn paused(look: &Look, repo: &str) -> bool {
 /// ```
 pub fn url(row: &Row) -> Option<String> {
     match row {
-        Row::Item { repo, item } => Some(match item.pull {
-            Some(pull) => format!("{}/pull/{pull}", repo_url(repo)),
-            None => issue_url(repo, item.number),
-        }),
+        Row::Item { repo, item } => match item.pull {
+            Some(pull) => Some(format!("{}/pull/{pull}", repo_url(repo))),
+            None => row.issue().map(|issue| issue.url()),
+        },
         Row::Repo(row) => Some(repo_url(&row.repo)),
         Row::Closed { repo, .. } => Some(format!("{}/issues?q=is%3Aclosed", repo_url(repo))),
         _ => None,
     }
 }
 
-/// The URL of the repository `repo` on GitHub.
-fn repo_url(repo: &str) -> String {
+/// The URL of the repository `repo` on GitHub: of a row of the Waves
+/// tab, and the start of the URL of an issue
+/// ([`super::decisions::IssueRef::url`]).
+pub(super) fn repo_url(repo: &str) -> String {
     format!("https://github.com/{}", text::safe(repo))
-}
-
-/// The URL of the issue `number` of `repo`: the URL of an item of the
-/// Waves tab, and of a row of the Decisions tab.
-///
-/// ```
-/// use riff::tui::waves::issue_url;
-///
-/// assert_eq!(issue_url("o/r", 12), "https://github.com/o/r/issues/12");
-/// ```
-pub fn issue_url(repo: &str, number: u64) -> String {
-    format!("{}/issues/{number}", repo_url(repo))
 }
 
 /// The whole row of `item` at `now_ms`, for the note line.
@@ -1077,7 +1080,17 @@ fn next_waves(forge: &Forge) -> Option<Vec<(String, usize)>> {
 /// assert_eq!(wave_name("Backlog"), "Backlog");
 /// ```
 pub fn wave_name(title: &str) -> String {
-    wave_number(title).map_or_else(|| title.to_owned(), |n| format!("Wave {n}"))
+    wave_number(title).map_or_else(|| title.to_owned(), short_wave)
+}
+
+/// The short name of the wave `n`: the name of a wave in the Waves tab
+/// ([`wave_name`]) and in the Decisions tab.
+///
+/// ```
+/// assert_eq!(riff::tui::waves::short_wave(56), "Wave 56");
+/// ```
+pub fn short_wave(n: u64) -> String {
+    format!("Wave {n}")
 }
 
 /// The questions of the later waves of `issues`, as `riff questions`

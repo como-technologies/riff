@@ -10261,6 +10261,21 @@ that builds it merges.
   with a line that names it: `No read of the decisions of o/r worked
   yet.` A row whose questions name no person of the riff shows `-` under
   `FOR`.
+- **01M7GFGRJMAYZVG68EP3B916T8** In the Decisions tab of the TUI, a row
+  fits the width of the terminal. The title gets the columns that the
+  other columns leave, and at least 10. In the wide layout, when fewer
+  are left, the column `LABELS` gives its columns first. An item wider
+  than its column loses its start, as `…ies/riff#2173`, so that its
+  number shows.
+- **01M7GFH1D93M7F7S82E788EFHG** In the Decisions tab of the TUI, with
+  no project of the person, the body says `None of your repositories is
+  a project of the riff.` as the Waves tab does. While the first read
+  runs, the note line says `The decisions come from gh: the first read
+  runs.` in place of the age of the read.
+- **01M7GFH204647G2B9NTX72JKFR** In the Decisions tab of the TUI, `a` on
+  a row with no label `question` asks nothing. The note line says that
+  nothing changed, as `#1739 of o/r has no label question. Nothing
+  changed.` for the issue 1739 of o/r.
 
 ## The notes of the lead
 

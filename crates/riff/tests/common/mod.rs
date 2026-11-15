@@ -518,9 +518,18 @@ pub fn project(repo: &str) -> riff_core::record::Change {
 /// first at position 1: for example the [`project`] of each project of
 /// the riff, or the notes of a lead with no session.
 pub async fn start_signed_log(changes: Vec<riff_core::record::Change>) -> Signed {
+    start_signed_log_config(changes, |_| {}).await
+}
+
+/// As [`start_signed_log`], with the settings of the server changed by
+/// `edit`: for example the GitHub of a test.
+pub async fn start_signed_log_config(
+    changes: Vec<riff_core::record::Change>,
+    edit: impl FnOnce(&mut riff_server::auth::Config),
+) -> Signed {
     let loaded = log_of(changes).await;
     let (listener, url) = listen().await;
-    start_signed_at(listener, &url, Some(loaded), |router| router).await
+    start_signed_config(listener, &url, Some(loaded), |router| router, edit).await
 }
 
 /// The router of a riff-server with no sign-in at `url` that loads a log

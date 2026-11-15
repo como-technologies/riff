@@ -5,7 +5,7 @@
 //! # Design
 //!
 //! The tab lists each open issue with the label `question`
-//! ([`riff_client::waves::QUESTION`]) or the label [`DESIGN`] of each
+//! ([`riff_client::waves::QUESTION`]) or the label [`hygiene::DESIGN`] of each
 //! project of the person, the projects of the boards of the Waves tab
 //! ([`super::waves::Waves::repos`], 01M77F7R7RERVQH7XS39GWJJKF). A row
 //! shows the number, the wave or `Backlog`, the title, the labels, and
@@ -57,10 +57,15 @@
 //!   ([`IssueRef::item`]).
 //! - **The narrow layout** shows the mark, the item, the wave and the
 //!   title.
-//! - **The empty body** ([`rows`], 01M7GBGD8EH2B1DXZ8NADZ1A85): no line
-//!   while the first read runs, [`NONE_OPEN`] when each project read
-//!   well and has no decision, and the line [`text::decisions_unread`]
-//!   for the projects that no read gave yet.
+//! - **The width** (01M7GFGRJMAYZVG68EP3B916T8): a row fits the line.
+//!   The title gets the rest of the line, and at least 10 columns. In
+//!   the wide layout, the labels give their columns first. An item wider
+//!   than its column loses its start, as `…ies/riff#2173`.
+//! - **The empty body** ([`rows`], 01M7GBGD8EH2B1DXZ8NADZ1A85,
+//!   01M7GFH1D93M7F7S82E788EFHG): [`super::waves::NO_BOARD`] with no
+//!   project, no line while the first read runs, [`NONE_OPEN`] when each
+//!   project read well and has no decision, and the line
+//!   [`text::decisions_unread`] for the projects that no read gave yet.
 //!
 //! # The reads
 //!
@@ -74,8 +79,8 @@
 //! and `design` go leaves the tab at the next read. A read that fails
 //! keeps the last decisions of its repository, and the note line names
 //! its fault once ([`super::forge::Reads`]). With no other note, the note
-//! line shows the age of the last read ([`note`],
-//! 01M7G7SHRDEA6BCNSYQA8RGZ23).
+//! line shows the age of the last read, or that the first read runs
+//! ([`note`], 01M7G7SHRDEA6BCNSYQA8RGZ23, 01M7GFH1D93M7F7S82E788EFHG).
 //!
 //! # The keys
 //!
@@ -84,7 +89,7 @@
 //! | `↑` `↓`, `j` `k`, `PgUp` `PgDn`, `g` `G` | Select a decision ([`Key::moves`]). |
 //! | `Enter`, a click on the selected row, a double click | Opens the issue in the browser, and puts its URL in the note line. |
 //! | `o` | Puts the URL of the issue in the note line, as in the Waves tab. |
-//! | `a` | Marks the questions of the issue as answered, after `y`: `riff questions --answered` ([`super::Effect::Answered`]). |
+//! | `a` | Marks the questions of the issue as answered, after `y`: `riff questions --answered` ([`super::Effect::Answered`]). With no label `question`, it asks nothing (01M7GFH204647G2B9NTX72JKFR). |
 //! | `r` | Reads the decisions again now. |
 //!
 //! ```mermaid
@@ -96,6 +101,7 @@
 //!     O -- "Enter" --> B
 //! ```
 
+use hygiene::DESIGN;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use riff_client::waves::{QUESTION, wave_number};
@@ -103,13 +109,9 @@ use riff_core::name::{ThreadName, allowed};
 
 use super::forge::{BACKLOG, Entry, Reads};
 use super::view::{DIM, Layout, WARNING, width, window};
-use super::waves::{BOLD, MOVE_KEYS, SELECTED, age, cut, issue_url, padded, short_repo};
+use super::waves::{BOLD, MOVE_KEYS, SELECTED, age, cut, padded, repo_url, short_repo, short_wave};
 use super::{Action, Effect, Key, OnRows, State, Tab};
 use crate::text;
-
-/// The label of a design issue: a decision of a person that is not
-/// asked yet, or a design in work.
-pub const DESIGN: &str = "design";
 
 /// The line of the body when the person has no open decision.
 pub const NONE_OPEN: &str = "No question and no design issue is open.";
@@ -140,9 +142,14 @@ pub struct IssueRef {
 }
 
 impl IssueRef {
-    /// The URL of the issue ([`issue_url`]).
+    /// The URL of the issue: the URL of a row of the Decisions tab, and
+    /// of an item of the Waves tab with no pull request.
     pub fn url(&self) -> String {
-        issue_url(&self.repo.to_string(), self.number)
+        format!(
+            "{}/issues/{}",
+            repo_url(&self.repo.to_string()),
+            self.number
+        )
     }
 
     /// The text of the item of a row among the projects `repos`
@@ -196,32 +203,69 @@ impl Place {
         }
     }
 
-    /// The text of the column `WAVE`: `Wave N`, `Backlog`, or `-` in
-    /// neither.
+    /// The text of the column `WAVE`: `Wave N` ([`short_wave`]),
+    /// `Backlog`, or `-` in neither.
     pub fn name(&self) -> String {
         match self {
-            Place::Wave(n) => format!("Wave {n}"),
+            Place::Wave(n) => short_wave(*n),
             Place::Backlog => BACKLOG.to_owned(),
             Place::Neither => "-".to_owned(),
         }
     }
 }
 
-/// An open issue with the label `question` or [`DESIGN`].
+/// An open issue with the label `question` or [`DESIGN`]. Only
+/// [`Decision::new`] makes one, so it has one of the two labels, and its
+/// names come from its body.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Decision {
-    pub issue: IssueRef,
-    pub title: String,
+    issue: IssueRef,
+    title: String,
     /// Its wave, the Backlog, or neither.
-    pub place: Place,
+    place: Place,
     /// Its labels, in the order of GitHub.
-    pub labels: Vec<String>,
+    labels: Vec<String>,
     /// The names of the headings `Questions for PERSON` of its body
     /// ([`names`]).
-    pub named: Vec<String>,
+    named: Vec<String>,
 }
 
 impl Decision {
+    /// The decision of the issue `issue` with the title `title`, in the
+    /// milestone `milestone`, with the labels `labels` and the body
+    /// `body`: `None` with neither the label `question` nor [`DESIGN`].
+    ///
+    /// ```
+    /// use riff::tui::decisions::{Decision, IssueRef, Place};
+    ///
+    /// let issue = IssueRef { repo: "o/r".parse()?, number: 12 };
+    /// let labels = |names: &[&str]| names.iter().map(|n| (*n).to_owned()).collect();
+    /// let body = "## Questions for mike\n\nQ1. Which?";
+    /// let backlog = Some("Backlog");
+    /// let decision = Decision::new(issue.clone(), "Which?".into(), backlog, labels(&["question"]), body);
+    /// let decision = decision.unwrap();
+    /// assert_eq!((decision.issue(), decision.place()), (&issue, Place::Backlog));
+    /// assert_eq!(decision.named(), ["mike"]);
+    /// assert!(Decision::new(issue, "Fix it".into(), None, labels(&["bug"]), "").is_none());
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn new(
+        issue: IssueRef,
+        title: String,
+        milestone: Option<&str>,
+        labels: Vec<String>,
+        body: &str,
+    ) -> Option<Decision> {
+        let decides = labels.iter().any(|l| l == QUESTION || l == DESIGN);
+        decides.then(|| Decision {
+            issue,
+            title,
+            place: Place::of(milestone),
+            labels,
+            named: names(body),
+        })
+    }
+
     /// The decision of the open entry `entry` of `repo`: `None` for a
     /// pull request, and for an issue with neither label.
     ///
@@ -240,10 +284,10 @@ impl Decision {
     /// let repo = "o/r".parse()?;
     /// let found: Vec<Decision> = entries.into_iter().filter_map(|e| Decision::of(&repo, e)).collect();
     /// assert_eq!(found.len(), 2);
-    /// assert_eq!((found[0].issue.number, &found[0].place), (12, &Place::Backlog));
-    /// assert_eq!(found[0].named, ["mike"]);
+    /// assert_eq!((found[0].issue().number, found[0].place()), (12, Place::Backlog));
+    /// assert_eq!(found[0].named(), ["mike"]);
     /// assert!(found[0].asked());
-    /// assert_eq!((found[1].issue.number, &found[1].place), (13, &Place::Wave(3)));
+    /// assert_eq!((found[1].issue().number, found[1].place()), (13, Place::Wave(3)));
     /// assert!(!found[1].asked());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
@@ -262,21 +306,36 @@ impl Decision {
             said: _,
             merge: _,
         } = entry;
-        let labels: Vec<String> = labels.into_iter().map(|label| label.name).collect();
-        let decides = labels.iter().any(|l| l == QUESTION || l == DESIGN);
-        if pull_request.is_some() || !decides {
+        if pull_request.is_some() {
             return None;
         }
-        Some(Decision {
-            issue: IssueRef {
-                repo: repo.clone(),
-                number,
-            },
+        let issue = IssueRef {
+            repo: repo.clone(),
+            number,
+        };
+        Decision::new(
+            issue,
             title,
-            place: Place::of(milestone.as_ref().map(|m| m.title.as_str())),
-            labels,
-            named: names(body.as_deref().unwrap_or_default()),
-        })
+            milestone.as_ref().map(|m| m.title.as_str()),
+            labels.into_iter().map(|label| label.name).collect(),
+            body.as_deref().unwrap_or_default(),
+        )
+    }
+
+    /// Its issue.
+    pub fn issue(&self) -> &IssueRef {
+        &self.issue
+    }
+
+    /// Its wave, the Backlog, or neither.
+    pub fn place(&self) -> Place {
+        self.place
+    }
+
+    /// The names of the headings `Questions for PERSON` of its body
+    /// ([`names`]).
+    pub fn named(&self) -> &[String] {
+        &self.named
     }
 
     /// True when it has the label `question`: a person must answer.
@@ -289,14 +348,11 @@ impl Decision {
     /// writes it, in the order of the names (01M7G7SCW5AR1P73R1CMA2QWF7).
     ///
     /// ```
-    /// use riff::tui::decisions::{Decision, IssueRef, Place, names};
+    /// use riff::tui::decisions::{Decision, IssueRef};
     ///
-    /// let named = |body: &str| Decision {
-    ///     issue: IssueRef { repo: "o/r".parse().unwrap(), number: 1 },
-    ///     title: "t".into(),
-    ///     place: Place::Backlog,
-    ///     labels: vec!["question".into()],
-    ///     named: names(body),
+    /// let named = |body: &str| {
+    ///     let issue = IssueRef { repo: "o/r".parse().unwrap(), number: 1 };
+    ///     Decision::new(issue, "t".into(), None, vec!["question".into()], body).unwrap()
     /// };
     /// let people = ["mike", "nate", "ada", "ada.lovelace"];
     /// assert_eq!(named("## Questions for Nate and Mike").persons(&people), ["nate", "mike"]);
@@ -317,42 +373,42 @@ impl Decision {
 /// The names of the headings `Questions for PERSON` of the body `body`,
 /// in their order, each one once (01M6QBJA0J7PQ0J29HWM1KDVHJ,
 /// 01M7G7SCW5AR1P73R1CMA2QWF7). A heading is a line that starts with `#`
-/// or `**`. A name has the characters of a USER of riff
-/// ([`riff_core::name::allowed`]), after an `@` or not. More names come
-/// after `and` or a comma: `Questions for mike and nate`. The first other
-/// word, a `.` at the end of a word, or a mark other than a comma, ends
-/// the names. [`Decision::persons`] keeps only the names of the persons
-/// of the riff.
+/// or `**`, and then `Questions for`, with a capital `Q`. A name has the
+/// characters of a USER of riff ([`riff_core::name::allowed`]), after an
+/// `@` or not. More names come after `and` or a comma: `Questions for
+/// mike and nate`. After a name, each other word, a `.` at the end of a
+/// word, or a mark other than a comma, ends the names.
+/// [`Decision::persons`] keeps only the names of the persons of the riff.
 ///
 /// ```
 /// use riff::tui::decisions::names;
 ///
+/// let none = Vec::<String>::new();
 /// assert_eq!(names("## Facts\n\n## Questions for mike\n\nQ1. Which?"), ["mike"]);
 /// assert_eq!(names("### Questions for Mike:\n## Questions for mike (answered)"), ["Mike"]);
 /// assert_eq!(names("**Questions for @nate and ann**"), ["nate", "ann"]);
 /// assert_eq!(names("## Questions for mike, nate, and ann"), ["mike", "nate", "ann"]);
 /// assert_eq!(names("## Questions for mike,nate"), ["mike", "nate"]);
 /// assert_eq!(names("## Questions for ada.lovelace and ann."), ["ada.lovelace", "ann"]);
+/// assert_eq!(names("## Questions for mike. And nate, later"), ["mike"]);
 /// assert_eq!(names("## Questions for mike about the board"), ["mike"]);
 /// assert_eq!(names("## Questions for the discussion"), ["the"]);
-/// assert_eq!(names("Questions for mike come later."), Vec::<String>::new());
-/// assert_eq!(names("We have questions for mike."), Vec::<String>::new());
-/// assert_eq!(names(""), Vec::<String>::new());
+/// assert_eq!(names("## Questions for the lead and mike"), ["the"]);
+/// assert_eq!(names("## Answers from ann, nate"), none);
+/// assert_eq!(names("## questions for mike\n  ## Questions for nate"), none);
+/// assert_eq!(names("Questions for mike come later."), none);
+/// assert_eq!(names("We have questions for mike."), none);
+/// assert_eq!(names(""), none);
 /// ```
 pub fn names(body: &str) -> Vec<String> {
-    const HEAD: &str = "questions for ";
+    const HEAD: &str = "Questions for ";
     let mut found: Vec<String> = Vec::new();
     for line in body.lines() {
-        let line = line.trim_start();
         if !(line.starts_with('#') || line.starts_with("**")) {
             continue;
         }
-        let line = line.trim_start_matches(|c: char| c == '#' || c == '*' || c.is_whitespace());
-        let Some(rest) = line
-            .get(..HEAD.len())
-            .filter(|head| head.eq_ignore_ascii_case(HEAD))
-            .and_then(|_| line.get(HEAD.len()..))
-        else {
+        let heading = line.trim_start_matches(|c: char| c == '#' || c == '*' || c.is_whitespace());
+        let Some(rest) = heading.strip_prefix(HEAD) else {
             continue;
         };
         for name in list(rest) {
@@ -447,19 +503,15 @@ impl Item {
     /// `people` of the riff.
     ///
     /// ```
-    /// use riff::tui::decisions::{Decision, IssueRef, Item, Place};
+    /// use riff::tui::decisions::{Decision, IssueRef, Item};
     ///
     /// let repo: riff_core::name::ThreadName = "o/r".parse()?;
-    /// let decision = Decision {
-    ///     issue: IssueRef { repo: repo.clone(), number: 12 },
-    ///     title: "Which name?".into(),
-    ///     place: Place::Backlog,
-    ///     labels: vec!["question".into()],
-    ///     named: vec!["Mike".into(), "the".into()],
-    /// };
-    /// let item = Item::new(decision, &[repo], &["mike", "nate"]);
+    /// let issue = IssueRef { repo: repo.clone(), number: 12 };
+    /// let body = "## Questions for Mike and the lead";
+    /// let decision = Decision::new(issue, "Which?".into(), None, vec!["question".into()], body);
+    /// let item = Item::new(decision.unwrap(), &[repo], &["mike", "nate"]);
     /// assert_eq!((item.item(), item.persons()), ("#12", &["mike".to_owned()][..]));
-    /// assert_eq!(item.decision().issue.number, 12);
+    /// assert_eq!(item.decision().issue().number, 12);
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     pub fn new(decision: Decision, repos: &[ThreadName], people: &[&str]) -> Item {
@@ -563,18 +615,12 @@ impl Decisions {
     ///
     /// ```
     /// use riff::tui::Key;
-    /// use riff::tui::decisions::{Answer, Decision, Decisions, IssueRef, Item, Place, Row};
+    /// use riff::tui::decisions::{Answer, Decision, Decisions, IssueRef, Item, Row};
     ///
     /// let issue = |number| IssueRef { repo: "o/r".parse().unwrap(), number };
     /// let row = |number| {
-    ///     let decision = Decision {
-    ///         issue: issue(number),
-    ///         title: "Which name?".into(),
-    ///         place: Place::Neither,
-    ///         labels: vec!["design".into()],
-    ///         named: vec![],
-    ///     };
-    ///     Row::Item(Item::new(decision, &[issue(number).repo], &[]))
+    ///     let decision = Decision::new(issue(number), "Which?".into(), None, vec!["design".into()], "");
+    ///     Row::Item(Item::new(decision.unwrap(), &[issue(number).repo], &[]))
     /// };
     /// let rows = [row(12), row(13)];
     /// let mut decisions = Decisions::default();
@@ -613,19 +659,15 @@ fn act(key: Key, row: &Row) -> Option<Answer> {
         return None;
     };
     let decision = item.decision();
-    let issue = &decision.issue;
+    let issue = decision.issue();
     match key {
         Key::Enter => Some(Answer::Browse(issue.clone())),
         Key::Char('o') => Some(Answer::Note(issue.url())),
-        Key::Char('a') => {
-            let IssueRef { repo, number } = issue;
-            Some(
-                match Effect::answered(&repo.to_string(), *number, decision.asked()) {
-                    Ok(question) => Answer::Ask(question),
-                    Err(note) => Answer::Note(note),
-                },
-            )
-        }
+        // 01M7GFH204647G2B9NTX72JKFR: with no label `question`, a note.
+        Key::Char('a') => Some(match Effect::answered(issue, decision.asked()) {
+            Ok(question) => Answer::Ask(question),
+            Err(note) => Answer::Note(note),
+        }),
         _ => None,
     }
 }
@@ -635,20 +677,19 @@ fn act(key: Key, row: &Row) -> Option<Answer> {
 /// riff (01M7FYVHB1APFXPXA71PMD18EH): the part of the decisions whose
 /// questions name `user`, then the part of the others. In each part, the
 /// rows go in the order of [`Place`], then of [`IssueRef`]. With more
-/// than one project, an item names its repository. No row before the
-/// first read, and a last line for the projects that no read gave yet
+/// than one project, an item names its repository. The lines of
+/// [`super::waves::NO_BOARD`] with no project
+/// (01M7GFH1D93M7F7S82E788EFHG), no row before the first read, and a
+/// last line for the projects that no read gave yet
 /// (01M7GBGD8EH2B1DXZ8NADZ1A85).
 ///
 /// ```
-/// use riff::tui::decisions::{Decision, Decisions, IssueRef, Place, Row, rows};
+/// use riff::tui::decisions::{Decision, Decisions, IssueRef, Row, rows};
 ///
 /// let repo: riff_core::name::ThreadName = "o/r".parse()?;
-/// let decision = |number, milestone: Option<&str>, label: &str, person: &str| Decision {
-///     issue: IssueRef { repo: repo.clone(), number },
-///     title: "t".into(),
-///     place: Place::of(milestone),
-///     labels: vec![label.into()],
-///     named: vec![person.into()],
+/// let decision = |number, milestone: Option<&str>, label: &str, person: &str| {
+///     let (issue, body) = (IssueRef { repo: repo.clone(), number }, format!("# Questions for {person}"));
+///     Decision::new(issue, "t".into(), milestone, vec![label.into()], &body).unwrap()
 /// };
 /// let repos = [repo.clone()];
 /// let people = ["mike", "nate"];
@@ -736,25 +777,37 @@ fn column(text: &str, columns: usize) -> String {
     padded(text, columns, 2)
 }
 
+/// The item `item` in a column of `columns`, as [`column`], but an item
+/// that is too wide loses its start, so that its number shows
+/// (01M7GFGRJMAYZVG68EP3B916T8): `…ies/riff#2173`.
+fn item_column(item: &str, columns: usize) -> String {
+    let reversed: String = item.chars().rev().collect();
+    let end: String = cut(&reversed, columns.saturating_sub(2))
+        .chars()
+        .rev()
+        .collect();
+    column(&end, columns)
+}
+
 /// The columns of the wave.
 const WAVE: usize = 10;
 
-/// The columns of the labels.
+/// The columns of the labels, when the line has room for them.
 const LABELS: usize = 18;
 
 /// The columns of the persons, the last column.
 const FOR: usize = 10;
 
-/// The columns of the mark and the selection before the item.
+/// The columns of the selection and the mark before the item: `> ?   `
+/// in the wide layout.
 const LEAD: usize = 6;
 
-/// The columns of the title in a wide line of `columns`, with an item
-/// column of `items`: the rest of the line after the other columns.
-fn title_columns(columns: usize, items: usize) -> usize {
-    columns
-        .saturating_sub(LEAD + items + WAVE + LABELS + FOR)
-        .max(10)
-}
+/// The columns of the selection and the mark before the item in the
+/// narrow layout: `> ? `.
+const NARROW_LEAD: usize = 4;
+
+/// The least columns of the title (01M7GFGRJMAYZVG68EP3B916T8).
+const TITLE: usize = 10;
 
 /// The lines of the body of the Decisions tab of `decisions` with the
 /// rows `all` of [`rows`], in `columns` and `rows` of the layout
@@ -778,11 +831,7 @@ pub fn body(
         .max()
         .unwrap_or(0)
         .max(7);
-    let shape = Shape {
-        wide,
-        items,
-        columns: usize::from(columns),
-    };
+    let shape = Shape::new(wide, items, usize::from(columns));
     let lines: Vec<(Line<'static>, usize)> = all
         .iter()
         .enumerate()
@@ -792,12 +841,42 @@ pub fn body(
     window(lines, selected, rows)
 }
 
-/// The shape of the lines of a body: the layout, the columns of the
-/// item, and the columns of a line.
+/// The shape of the lines of a body: the layout, the columns of a line,
+/// and the columns of the item, the title and the labels in it.
 struct Shape {
     wide: bool,
-    items: usize,
     columns: usize,
+    item: usize,
+    title: usize,
+    labels: usize,
+}
+
+impl Shape {
+    /// The shape of a line of `columns` in the wide layout (`wide`) or
+    /// the narrow one, for items of `items` columns: the line fits
+    /// (01M7GFGRJMAYZVG68EP3B916T8). The title gets the rest of the line,
+    /// and at least [`TITLE`] columns. In the wide layout, the labels give
+    /// their columns first. The item gets no more columns than the others
+    /// leave.
+    fn new(wide: bool, items: usize, columns: usize) -> Shape {
+        let others = match wide {
+            true => LEAD + WAVE + FOR,
+            false => NARROW_LEAD + WAVE,
+        };
+        let item = items.min(columns.saturating_sub(others + TITLE));
+        let rest = columns.saturating_sub(others + item);
+        let labels = match wide {
+            true => LABELS.min(rest.saturating_sub(TITLE)),
+            false => 0,
+        };
+        Shape {
+            wide,
+            columns,
+            item,
+            title: rest - labels,
+            labels,
+        }
+    }
 }
 
 /// The line of `row`, `selected` or not, in the shape `shape`.
@@ -815,10 +894,10 @@ fn line(row: &Row, selected: bool, shape: &Shape) -> Line<'static> {
             cut(
                 &format!(
                     "      {}{}{}{}FOR",
-                    column("ITEM", shape.items),
+                    column("ITEM", shape.item),
                     column("WAVE", WAVE),
-                    column("TITLE", title_columns(columns, shape.items)),
-                    column("LABELS", LABELS),
+                    column("TITLE", shape.title),
+                    column("LABELS", shape.labels),
                 ),
                 columns,
             ),
@@ -851,16 +930,15 @@ fn item_line(item: &Item, selected: bool, shape: &Shape) -> Line<'static> {
     let wave = text::safe(&decision.place.name());
     if !shape.wide {
         // `> ? #2173  Wave 60  The verify of a pull…`
-        let used = 4 + shape.items + WAVE;
         return Line::from(vec![
             Span::raw(format!("{sel} ")),
             Span::styled(mark, style),
             Span::raw(format!(
                 " {}{}",
-                column(item, shape.items),
+                item_column(item, shape.item),
                 column(&wave, WAVE)
             )),
-            Span::raw(cut(&title, shape.columns.saturating_sub(used))),
+            Span::raw(cut(&title, shape.title)),
         ]);
     }
     let labels = text::safe(&decision.labels.join(" "));
@@ -872,10 +950,10 @@ fn item_line(item: &Item, selected: bool, shape: &Shape) -> Line<'static> {
         Span::raw(format!("{sel} ")),
         Span::styled(mark, style),
         Span::raw("   "),
-        Span::raw(column(item, shape.items)),
+        Span::raw(item_column(item, shape.item)),
         Span::raw(column(&wave, WAVE)),
-        Span::raw(column(&title, title_columns(shape.columns, shape.items))),
-        Span::raw(column(&labels, LABELS)),
+        Span::raw(column(&title, shape.title)),
+        Span::raw(column(&labels, shape.labels)),
         Span::raw(cut(&persons, FOR)),
     ])
 }
@@ -1005,8 +1083,10 @@ impl State {
         match self.decisions.on_key(key, &rows, self.page)? {
             Answer::Note(note) => self.note(note),
             Answer::Ask(question) => self.ask(question),
+            // Only the URL, so that a narrow note line shows all of it
+            // that fits.
             Answer::Browse(issue) => {
-                self.note(text::questions_web(&issue.url()));
+                self.note(issue.url());
                 return Some(Action::Browse(issue));
             }
         }

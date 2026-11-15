@@ -816,27 +816,32 @@ impl Effect {
         Question::new(text, Action::Do(self))
     }
 
-    /// What `a` gives on the issue `item` of `repo`, in the Waves tab and
-    /// in the Decisions tab: when the issue has the label `question`
-    /// (`asked`), the question of [`Effect::Answered`]. Else the note that
-    /// nothing changed.
+    /// What `a` gives on the issue `issue`, in the Waves tab and in the
+    /// Decisions tab: when the issue has the label `question` (`asked`),
+    /// the question of [`Effect::Answered`]. Else the note that nothing
+    /// changed (01M7GFH204647G2B9NTX72JKFR).
     ///
     /// ```
     /// use riff::tui::Effect;
+    /// use riff::tui::decisions::IssueRef;
     ///
-    /// let asked = Effect::answered("o/r", 12, true).unwrap();
+    /// let issue = IssueRef { repo: "o/r".parse()?, number: 12 };
+    /// let asked = Effect::answered(&issue, true).unwrap();
     /// assert_eq!(asked.text, "Mark the questions of #12 of o/r as answered?");
-    /// let not_asked = Effect::answered("o/r", 12, false).unwrap_err();
+    /// let not_asked = Effect::answered(&issue, false).unwrap_err();
     /// assert_eq!(not_asked, riff::text::questions_not_asked("o/r", 12));
+    /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
-    pub fn answered(repo: &str, item: u64, asked: bool) -> Result<Question, String> {
+    pub fn answered(issue: &decisions::IssueRef, asked: bool) -> Result<Question, String> {
+        let decisions::IssueRef { repo, number } = issue;
+        let repo = repo.to_string();
         match asked {
             true => Ok(Effect::Answered {
-                repo: repo.to_owned(),
-                item,
+                repo,
+                item: *number,
             }
             .question()),
-            false => Err(text::questions_not_asked(repo, item)),
+            false => Err(text::questions_not_asked(&repo, *number)),
         }
     }
 
@@ -2274,9 +2279,11 @@ async fn frames(
         })
     });
     // A wake of the GitHub App of the repository of the folder reads the
-    // forge again soon (#1656).
+    // forge again soon (#1656). The URI of the person names only the
+    // host, so the repository comes from the clone.
     let (woke, mut wakes) = tokio::sync::mpsc::channel::<riff_core::wire::GitHubWake>(16);
-    let github = me.default_thread().map(|thread| {
+    let folder: Option<ThreadName> = state.waves().here().and_then(|repo| repo.parse().ok());
+    let github = folder.map(|thread| {
         let (api, me) = (api.clone(), me.clone());
         tokio::spawn(async move {
             let stream = riff_client::api::follow(

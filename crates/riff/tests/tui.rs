@@ -1966,10 +1966,10 @@ esac
 /// the Decisions tab. It lists the question of the Backlog for brett
 /// first, then the design issue of Wave 3, from the conditional read of
 /// the open issues and no other call of `gh`, and `r` reads them again at
-/// once. On Linux, `Enter` opens the
-/// issue in the browser, here a fake `xdg-open`. On macOS, riff opens the
-/// browser with `/usr/bin/open`, which no fake on `PATH` replaces: there,
-/// the test does not press `Enter`. `o` shows the URL of the issue. `a`
+/// once. On Linux, `Enter` opens the issue in the browser, here a fake
+/// `xdg-open`, and shows its URL. On macOS, riff opens the browser with
+/// `/usr/bin/open`, which no fake on `PATH` replaces: there, the test
+/// does not press `Enter`. `o` shows the URL of the selected issue. `a`
 /// and `y` mark the questions of #20 as answered with the code of `riff
 /// questions --answered`: its label goes, and #20 leaves the tab.
 #[tokio::test]
@@ -2041,14 +2041,19 @@ async fn the_decisions_tab_lists_the_questions_and_the_designs_and_opens_one() {
             format!("#!/bin/sh\nprintf '%s' \"$1\" > {}\n", opened.display()),
         );
         tty.press("\r").await;
-        tty.shows(|rows| rows[22] == format!(" {}", riff::text::questions_web(url)))
-            .await;
+        tty.shows(|rows| rows[22] == format!(" {url}")).await;
         let span = Span::start();
         while std::fs::read_to_string(&opened).ok().as_deref() != Some(url) {
             assert!(span.within(WAIT), "the browser opens {url}");
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
     }
+    // `o` on #21, then back to #20.
+    tty.press("j").await;
+    tty.press("o").await;
+    tty.shows(|rows| rows[22] == " https://github.com/acme/app/issues/21")
+        .await;
+    tty.press("k").await;
     tty.press("o").await;
     tty.shows(|rows| rows[22] == format!(" {url}")).await;
 
@@ -2068,6 +2073,90 @@ async fn the_decisions_tab_lists_the_questions_and_the_designs_and_opens_one() {
         calls.contains("issue edit 20 --repo acme/app --remove-label question"),
         "{calls}"
     );
+
+    tty.press("q").await;
+    assert_eq!(tty.exits().await, Some(0));
+}
+
+/// Sends riff-server `server` the delivery `delivery` of the webhook of
+/// the GitHub App: the label of the issue #20 of acme/app changed.
+async fn issue_labeled(server: &crate::common::Signed, delivery: &str) {
+    use crate::common::fake_github::{REPO, webhook_secret};
+
+    let body = serde_json::to_vec(&serde_json::json!({
+        "action": "labeled",
+        "repository": { "full_name": REPO },
+        "issue": { "number": 20 },
+    }))
+    .unwrap();
+    let reply = reqwest::Client::new()
+        .post(format!("{}/hooks/github", &**server))
+        .header("x-github-event", "issues")
+        .header("x-github-delivery", delivery)
+        .header(
+            "x-hub-signature-256",
+            riff_server::hooks::signature(webhook_secret(), &body),
+        )
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(reply.status().as_u16(), 202);
+}
+
+/// 01M7FYVHB1APFXPXA71PMD18EH (#2188): while the Decisions tab shows, a
+/// wake of the GitHub App of the repository of the folder reads the
+/// decisions again soon, long before the next read of each 60 seconds.
+/// The TUI may follow the wakes a little after the tab shows, so the test
+/// sends a new delivery each second until the read comes.
+#[tokio::test]
+async fn a_wake_of_github_reads_the_decisions_again_soon() {
+    let fake = crate::common::fake_github::FakeGitHub::start().await;
+    let keys = crate::github_apps::keys_dir();
+    let github = riff_server::github::Settings {
+        api: fake.url.clone(),
+        web: fake.url.clone(),
+        keys: riff_server::keys::At::Dir(keys.path().to_owned()),
+        debounce: Duration::from_millis(50),
+        ..riff_server::github::Settings::default()
+    };
+    let server = crate::common::start_signed_log_config(
+        vec![crate::common::project("acme/app")],
+        |config| config.github = github,
+    )
+    .await;
+    let bin = tempfile::tempdir().unwrap();
+    isolated::write_program(bin.path().join("gh"), DECISIONS_GH);
+    let mut tty = Tty::start_in(
+        crate::common::clone_of("acme/app"),
+        &server,
+        "brett",
+        "thelio",
+        true,
+        &[("PATH", crate::common::path_with(bin.path()))],
+    );
+    tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
+    tty.press("7").await;
+    tty.shows(|rows| rows.iter().any(|r| r.contains("#21")))
+        .await;
+    let reads = || {
+        std::fs::read_to_string(bin.path().join("calls"))
+            .unwrap()
+            .lines()
+            .filter(|call| call.contains("api -i repos/acme/app/issues?state=open"))
+            .count()
+    };
+    let before = reads();
+    let span = Span::start();
+    let mut sent = 0;
+    while reads() == before {
+        assert!(span.within(WAIT), "a wake reads the decisions again");
+        if span.wall() >= Duration::from_secs(sent) {
+            sent += 1;
+            issue_labeled(&server, &format!("d-{sent}")).await;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 
     tty.press("q").await;
     assert_eq!(tty.exits().await, Some(0));

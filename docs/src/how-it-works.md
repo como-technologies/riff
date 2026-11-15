@@ -6042,8 +6042,9 @@ flowchart LR
 The Decisions tab shows each decision that waits for a person in one
 place: each open issue with the label `question` or `design`, in a
 wave, in the Backlog, or in neither. It shows the issues of your
-projects, the same projects as the Waves tab. Run riff with no command,
-and press `7` for the Decisions tab:
+projects, the same projects as the Waves tab (see
+[What reads the projects](#what-reads-the-projects)). Run riff with no
+command, and press `7` for the Decisions tab:
 
 ```sh
 riff
@@ -6069,11 +6070,12 @@ other decisions come after them:
   PERSON` in the body of the issue names, as `## Questions for mike`
   (see
   [Ask the person a question](development.md#ask-the-person-a-question)).
-  PERSON is the riff name of the person, for example `mike` or
-  `ada.lovelace`, in any case: `Mike` and `mike` are the same name.
-  More names come after `and` or a comma: `Questions for mike and
-  nate`. Other words name nobody: `Questions for the discussion` shows
-  `-`.
+  The heading starts its line with `#` or `**`. PERSON is the riff
+  name of the person, for example `mike` or `ada.lovelace`, in any
+  case: `Mike` and `mike` are the same name. More names come after
+  `and` or a comma: `Questions for mike and nate`. After a name, each
+  other word ends the names. So `Questions for the discussion` and
+  `Questions for the lead and mike` show `-`.
 - `?` marks an issue with the label `question`. `·` marks a design
   issue with no open question.
 - `WAVE` is `Wave N`, `Backlog`, or `-` for an issue in neither. In
@@ -6084,6 +6086,9 @@ other decisions come after them:
   names the owner too, as `como-technologies/riff#2173`.
 - Under 80 columns, a row shows the mark, the item, the wave and the
   title.
+- Each row fits the terminal. With a long item, the title and the
+  labels get fewer columns. An item that does not fit its column loses
+  its start, as `…ies/riff#2173`.
 
 To answer the questions of the selected issue, open it, and write the
 answers in the body or in a comment. Then mark the questions as
@@ -6094,19 +6099,22 @@ answered:
 | `↑` `↓`, `j` `k` | Select an issue. |
 | `PgUp` `PgDn`, `g` `G` | Move a page, or go to the first or the last issue. |
 | a click | Select an issue. A click on the selected issue, or a double click, opens it. |
-| `Enter` | Open the issue in your browser. The note line shows its URL too: in a terminal over SSH, click the URL. |
+| `Enter` | Open the issue in your browser, and show its URL in the note line: in a terminal over SSH, click the URL. A terminal narrower than the URL cuts it. |
 | `o` | Show the URL of the issue in the note line. |
-| `a` | Mark the questions of the issue as answered, after `y`: the label `question` goes, and the lead wakes. See [Mark the questions of an issue as answered](development.md#mark-the-questions-of-an-issue-as-answered). |
+| `a` | Mark the questions of the issue as answered, after `y`: the label `question` goes, and the lead wakes. See [Mark the questions of an issue as answered](development.md#mark-the-questions-of-an-issue-as-answered). An issue with no label `question` has nothing to mark: `a` asks nothing. |
 | `r` | Read GitHub again now. |
 
-The tab reads the open issues from GitHub when you open it, each 60
-seconds while it shows, at once on `r` and after `a`, and soon after a
-change on GitHub in the repository of your folder. An issue leaves the
-tab at the next read after its labels `question` and `design` go. The
+The tab reads the open issues from GitHub when you open it. While it
+shows, it reads them each 60 seconds, and at once on `r` and after
+`a`. It also reads them soon after a change on GitHub in the
+repository of your folder. An issue leaves the tab at the next read
+after its labels `question` and `design` go. With no other note, the
 note line shows the age of the last read. When a read fails, the tab
 keeps the last issues of the project, and the note line shows the
 error once. When no read of a project worked yet, the last line of the
 tab names the project: `No read of the decisions of o/r worked yet.`
+With no project, the tab says
+`None of your repositories is a project of the riff.`
 
 ```mermaid
 flowchart LR
@@ -7001,6 +7009,7 @@ each person and each session. These views read the projects there:
 |---|---|
 | `riff questions` | The questions of your projects only: each project where you have a session, live or gone, a lead or the notes of a lead, and the project of your folder. See [See all your open questions](development.md#see-all-your-open-questions). |
 | The Waves tab of the TUI | A board for each of your projects: the projects of `riff questions`. See [See the open items of a wave](waves.md#see-the-open-items-of-a-wave). |
+| The Decisions tab of the TUI | The open questions and design issues of your projects: the projects of the Waves tab. See [Work through the decisions in the TUI](#work-through-the-decisions-in-the-tui). |
 | `riff top` | A board for each project with a live session. The tree groups the sessions by project. See [See each session in a live table](#see-each-session-in-a-live-table). |
 | `riff who` | The table groups the rows by project. See [See who is in the riff](#see-who-is-in-the-riff). |
 
@@ -7017,6 +7026,7 @@ riff who
 flowchart LR
     S["riff-server: who"] -- "the projects" --> Q["riff questions:<br/>your projects"]
     S --> W["the Waves tab:<br/>your projects"]
+    S --> D["the Decisions tab:<br/>your projects"]
     S --> T["riff top:<br/>project › person › host › session"]
     S --> R["riff who:<br/>a group for each project"]
 ```

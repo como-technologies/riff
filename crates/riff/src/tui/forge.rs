@@ -894,9 +894,9 @@ pub fn open_issues(gh: &Gh, repo: &str, kept: &Kept) -> Result<Vec<OpenIssue>> {
 /// let kept = Kept::default();
 /// let repo = "o/r".parse()?;
 /// let found = decisions(&gh, &repo, &kept)?;
-/// let numbers: Vec<u64> = found.iter().map(|d| d.issue.number).collect();
+/// let numbers: Vec<u64> = found.iter().map(|d| d.issue().number).collect();
 /// assert_eq!(numbers, [12, 13]);
-/// assert_eq!(found[0].named, ["mike"]);
+/// assert_eq!(found[0].named(), ["mike"]);
 /// // The second read is a `304`: the same decisions, for no point.
 /// assert_eq!(decisions(&gh, &repo, &kept)?, found);
 /// let calls = std::fs::read_to_string(dir.path().join("calls"))?;

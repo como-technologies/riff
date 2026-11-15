@@ -26,7 +26,7 @@ fn thread(name: &str) -> ThreadName {
 }
 
 /// A decision of `repo` with the labels `labels`, in `milestone`, whose
-/// questions name `named`.
+/// body has the heading `## Questions for` the names `named`.
 fn decision(
     repo: &str,
     number: u64,
@@ -35,16 +35,16 @@ fn decision(
     labels: &[&str],
     named: &[&str],
 ) -> Decision {
-    Decision {
-        issue: IssueRef {
-            repo: thread(repo),
-            number,
-        },
-        title: title.into(),
-        place: Place::of(milestone),
-        labels: labels.iter().map(|l| (*l).to_owned()).collect(),
-        named: named.iter().map(|p| (*p).to_owned()).collect(),
-    }
+    let issue = IssueRef {
+        repo: thread(repo),
+        number,
+    };
+    let labels = labels.iter().map(|l| (*l).to_owned()).collect();
+    let body = match named {
+        [] => String::new(),
+        named => format!("## Questions for {}", named.join(" and ")),
+    };
+    Decision::new(issue, title.into(), milestone, labels, &body).unwrap()
 }
 
 /// The decisions of riff in the mock-up of the module: two for mike, one
@@ -301,18 +301,7 @@ fn a_heading_names_only_the_persons_of_the_riff() {
     let mut state = mock_up();
     let question = r#"[{"name": "question"}]"#;
     let mut read = found(entries(question, "## Questions for the discussion"));
-    read.extend(
-        found(entries(question, "## Questions for nate about the board"))
-            .into_iter()
-            .filter(|d| d.issue.number == 12)
-            .map(|d| Decision {
-                issue: IssueRef {
-                    number: 15,
-                    ..d.issue
-                },
-                ..d
-            }),
-    );
+    read.push(asked(15, "## Questions for nate about the board"));
     state.read_decisions(vec![(thread(RIFF), Ok(read))], NOW);
     let rows = drawn(&state, 80, 24);
     assert_eq!(rows[2], " OTHER DECISIONS · 3", "{rows:#?}");
@@ -385,16 +374,23 @@ fn a_comma_with_no_space_names_the_next_person() {
     assert!(rows[8].ends_with("design question…  -"), "{rows:#?}");
 }
 
-/// 01M7GBGD8EH2B1DXZ8NADZ1A85: while the first read runs, the body has
-/// no line. After a first read that fails, the body names the project
-/// that no read gave, and the note line names the fault. With two
-/// projects, the decisions of the project that read well show, and the
-/// last line names the other one. When each project read well and has no
-/// decision, the body says so.
+/// 01M7GBGD8EH2B1DXZ8NADZ1A85, 01M7GFH1D93M7F7S82E788EFHG: while the
+/// first read runs, the body has no line, and the note line says that
+/// the first read runs. After a first read that fails, the body names
+/// the project that no read gave, and the note line names the fault.
+/// With two projects, the decisions of the project that read well show,
+/// and the last line names the other one. When each project read well
+/// and has no decision, the body says so.
 #[test]
 fn a_first_read_that_fails_names_the_project_with_no_read() {
     let mut state = opened("riff://mike@thelio");
     assert_eq!(state.decision_rows(), []);
+    let rows = drawn(&state, 80, 24);
+    assert_eq!(rows[2..22], [""; 20]);
+    assert_eq!(
+        rows[22],
+        " The decisions come from gh: the first read runs."
+    );
     let failed = || Err("gh: HTTP 502".to_owned());
     state.read_decisions(vec![(thread(RIFF), failed())], NOW);
     let unread = |repo: &str| Row::Text(text::decisions_unread(&[repo.to_owned()]));
@@ -441,10 +437,13 @@ fn the_rows_of_one_place_go_by_the_repository_and_the_number() {
     assert_eq!(numbers(&state), [10, 30, 5]);
 }
 
-/// 01M7FYVHB1APFXPXA71PMD18EH: when two projects have the same name, an
-/// item names the owner too.
+/// 01M7FYVHB1APFXPXA71PMD18EH, 01M7GFGRJMAYZVG68EP3B916T8: when two
+/// projects have the same name, an item names the owner too. Each row
+/// still fits the line: at 80 columns the labels and the title get fewer
+/// columns, and `FOR` shows whole. At 40 columns, an item loses its
+/// start, and the title keeps 10 columns.
 #[test]
-fn two_projects_with_the_same_name_name_the_owner() {
+fn two_projects_with_the_same_name_name_the_owner_and_each_row_fits() {
     let fork = "n8behavior/riff";
     let mut state = with_project(mock_up(), fork);
     let seven = decision(
@@ -464,16 +463,24 @@ fn two_projects_with_the_same_name_name_the_owner() {
     );
     let rows = drawn(&state, 80, 24);
     assert!(
-        rows[4].starts_with(" > ?   n8behavior/riff#7 "),
+        rows[3].ends_with("  WAVE      TITLE     LABELS        FOR"),
         "{rows:#?}"
     );
-    assert!(
-        rows[5].starts_with("   ?   como-technologies/riff#2173  Wave 60"),
-        "{rows:#?}"
+    assert_eq!(
+        rows[4],
+        " > ?   n8behavior/riff#7            Wave 2    Which s…  question      mike"
     );
+    assert_eq!(
+        rows[5],
+        "   ?   como-technologies/riff#2173  Wave 60   The ver…  design ques…  mike"
+    );
+    assert!(rows.iter().all(|row| width(row) <= 80), "{rows:#?}");
+    let narrow = drawn(&state, 40, 24);
+    assert_eq!(narrow[3], "> ? …havior/riff#7  Wave 2    Which sto…");
+    assert_eq!(narrow[4], "  ? …ies/riff#2173  Wave 60   The verif…");
 }
 
-/// 01M77F7R7RERVQH7XS39GWJJKF: with no project of the person, the tab
+/// 01M7GFH1D93M7F7S82E788EFHG: with no project of the person, the tab
 /// says so, as the Waves tab.
 #[test]
 fn with_no_project_the_tab_says_so() {
@@ -486,10 +493,12 @@ fn with_no_project_the_tab_says_so() {
     );
 }
 
-/// 01M7FYVHDJJ288RRV8EBRKSY49: Enter opens the issue of the selected row
-/// in the browser, and puts its URL in the note line. `o` puts only the
-/// URL there. `a` asks `y` or `n`, and `y` marks the questions as
-/// answered with the code of `riff questions --answered`.
+/// 01M7FYVHDJJ288RRV8EBRKSY49, 01M7GFH204647G2B9NTX72JKFR: Enter opens
+/// the issue of the selected row in the browser, and puts its URL in the
+/// note line, also in the narrow layout. `o` puts the URL there too. `a`
+/// asks `y` or `n`, and `y` marks the questions as answered with the code
+/// of `riff questions --answered`. On a design with no label `question`,
+/// `a` asks nothing.
 #[test]
 fn enter_opens_the_issue_o_shows_its_url_and_a_marks_it_as_answered() {
     let mut state = mock_up();
@@ -499,7 +508,8 @@ fn enter_opens_the_issue_o_shows_its_url_and_a_marks_it_as_answered() {
     };
     assert_eq!(state.on_key(Key::Enter), Some(Action::Browse(issue(2173))));
     let url = "https://github.com/como-technologies/riff/issues/2173";
-    assert_eq!(state.shown_note(), Some(text::questions_web(url).as_str()));
+    assert_eq!(state.shown_note(), Some(url));
+    assert_eq!(drawn(&state, 54, 24)[22], url);
     state.on_key(Key::Char('j'));
     assert_eq!(state.on_key(Key::Char('o')), None);
     assert_eq!(
@@ -524,6 +534,7 @@ fn enter_opens_the_issue_o_shows_its_url_and_a_marks_it_as_answered() {
         state.shown_note(),
         Some(text::questions_not_asked(RIFF, 1739).as_str())
     );
+    assert_eq!(state.asked(), None);
 }
 
 /// 01M7FYVHDJJ288RRV8EBRKSY49: a click on a row selects it, and a click
