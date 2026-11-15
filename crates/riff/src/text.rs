@@ -4454,24 +4454,28 @@ pub fn git_not_run(args: &str) -> String {
     format!("riff did not run git {args}")
 }
 
-/// The error of a remote `origin` of the clone `dir` with user info in a
-/// URL or a push URL ([`crate::identity::origin`],
+/// The error of a remote `origin` of the clone `dir` with user info or a
+/// control character in a URL ([`crate::identity::origin_urls`],
 /// 01M7GMV5ZYYF94ZKQ5ECQYTJXH). It names `origin`, never the URL, and
 /// says how to fix it.
 ///
 /// ```
 /// let text = riff::text::origin_with_user(std::path::Path::new("/src/r"));
-/// assert!(text.starts_with("riff refuses the remote origin of /src/r: its URL holds a user or a token"));
+/// assert!(text.starts_with("riff refuses the remote origin of /src/r: a URL of it holds a user, a token"));
 /// assert!(text.contains("git remote set-url origin https://github.com/OWNER/REPO.git"));
 /// assert!(text.contains("then `gh auth setup-git`"));
+/// assert!(text.contains("git remote set-url --push origin https://github.com/OWNER/REPO.git"));
+/// assert!(text.contains("git config --get-regexp '^url\\.'"));
 /// ```
 pub fn origin_with_user(dir: &Path) -> String {
     format!(
-        "riff refuses the remote origin of {}: its URL holds a user or a token, and riff runs no \
-         git with that URL. Give origin a URL with no user, and let gh give git the token: run \
-         `git remote set-url origin https://github.com/OWNER/REPO.git` in that clone, then `gh \
-         auth setup-git`. For a push URL, also run `git remote set-url --push origin \
-         https://github.com/OWNER/REPO.git`.",
+        "riff refuses the remote origin of {}: a URL of it holds a user, a token or a control \
+         character, and riff runs no git with that URL. Give origin a URL with no user, and let \
+         gh give git the token: run `git remote set-url origin \
+         https://github.com/OWNER/REPO.git` in that clone, then `gh auth setup-git`. For a push \
+         URL, also run `git remote set-url --push origin https://github.com/OWNER/REPO.git`. A \
+         rule insteadOf of git can also make such a URL: `git config --get-regexp '^url\\.'` \
+         shows each rule.",
         dir.display()
     )
 }

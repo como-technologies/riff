@@ -173,13 +173,58 @@ fn riff_build_refuses_an_origin_with_a_token() {
         assert!(err.starts_with(&format!("Error: {head}")), "{err}");
         assert!(err.trim_end().ends_with(tail), "{err}");
         assert!(!err.contains("T0KEN"), "{err}");
+        assert!(!String::from_utf8_lossy(&out.stdout).contains("T0KEN"));
     }
     assert!(
         std::fs::read_to_string(&log)
             .unwrap()
-            .contains("remote get-url")
+            .contains("config -z --list")
     );
     assert!(!std::fs::read_to_string(&log).unwrap().contains("T0KEN"));
+    assert_eq!(remote_calls(&log), Vec::<String>::new());
+    assert!(!env.home().join(".cache/riff/check").exists());
+    assert!(!fake.path().join("just.log").exists());
+}
+
+/// 01M7GMV5ZYYF94ZKQ5ECQYTJXH: `riff build` refuses an origin with a token
+/// in a URL past its first URL, in each setup of
+/// [`isolated::ORIGIN_SETUPS_WITH_TOKEN`]: a line break in the URL, an
+/// empty URL with a push URL that holds a token, a second URL, and a rule
+/// `insteadOf` of git. It exits with 1, and starts no git that talks to
+/// the origin. No output and no word of a git holds the token.
+#[test]
+fn riff_build_refuses_a_token_in_each_url_of_origin() {
+    let env = Isolated::new();
+    let fake = isolated::outside_git();
+    let just = isolated::write_program(fake.path().join("just"), FAKE_JUST);
+    let log = isolated::logged_git(fake.path());
+    let refused = riff::text::origin_with_user(Path::new("DIR"));
+    let (head, tail) = refused.split_once("DIR").unwrap();
+
+    for setup in isolated::ORIGIN_SETUPS_WITH_TOKEN {
+        let root = isolated::outside_git();
+        let (_origin, here) = repo(root.path());
+        git(
+            &here,
+            &["remote", "set-url", "origin", isolated::CLEAN_ORIGIN],
+        );
+        for args in setup {
+            git(&here, args);
+        }
+        let out = build_with(&env, &here, &just, fake.path());
+        assert_eq!(out.status.code(), Some(1), "{setup:?}: {out:?}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            err.starts_with(&format!("Error: {head}")),
+            "{setup:?}: {err}"
+        );
+        assert!(err.trim_end().ends_with(tail), "{setup:?}: {err}");
+        assert!(!err.contains("T0KEN"), "{err}");
+        assert!(!String::from_utf8_lossy(&out.stdout).contains("T0KEN"));
+    }
+    let calls = std::fs::read_to_string(&log).unwrap();
+    assert!(calls.contains("config -z --list"), "{calls}");
+    assert!(!calls.contains("T0KEN"), "{calls}");
     assert_eq!(remote_calls(&log), Vec::<String>::new());
     assert!(!env.home().join(".cache/riff/check").exists());
     assert!(!fake.path().join("just.log").exists());

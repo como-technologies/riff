@@ -74,8 +74,9 @@ pub fn run(dir: &Path, remote: &str, args: &[&str]) -> Result<String> {
 /// ([`pr::token_given`]). A process that can ask for a prompt reads no
 /// config of git here. The error names the call with no user info of a
 /// URL ([`crate::host_git::no_user_info`]). In each process, a call that
-/// names the remote `origin` first reads its URL, and fails when riff
-/// refuses it ([`crate::identity::origin`], 01M7GMV5ZYYF94ZKQ5ECQYTJXH).
+/// names the remote `origin` first reads its URLs, and fails when riff
+/// refuses them ([`crate::identity::origin_urls`],
+/// 01M7GMV5ZYYF94ZKQ5ECQYTJXH).
 ///
 /// ```standalone_crate
 /// # keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
@@ -120,14 +121,20 @@ pub fn run(dir: &Path, remote: &str, args: &[&str]) -> Result<String> {
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn keyring_open(dir: &Path, remote: &str, args: &[&str]) -> Result<()> {
-    if remote == "origin" {
-        crate::identity::origin(dir)?;
-    }
+    let origin = (remote == "origin")
+        .then(|| crate::identity::origin_urls(dir))
+        .transpose()?;
     if secrets::prompts() || pr::token_given() {
         return Ok(());
     }
     let push = subcommand(args) == Some("push");
-    let asks_gh = urls(dir, remote, push)
+    let urls = match origin {
+        Some(origin) => origin
+            .map(|urls| urls.of(push).to_vec())
+            .unwrap_or_default(),
+        None => urls(dir, remote, push),
+    };
+    let asks_gh = urls
         .iter()
         .any(|url| helpers(dir, url).iter().any(|helper| is_gh(helper)));
     if !asks_gh || !secrets::holds_locked(pr::GH_KEYRING, "") {
@@ -164,18 +171,19 @@ pub fn subcommand<'a>(args: &[&'a str]) -> Option<&'a str> {
 /// The URLs that git talks to for the remote `remote` of the clone `dir`:
 /// its push URLs when `push`, else its URLs. The config `insteadOf` of
 /// git applies. A remote that is a URL, and not a name, is that URL. A
-/// `git` that does not run gives none.
+/// `git` that does not run gives none. For the remote `origin`,
+/// [`keyring_open`] takes the URLs of [`crate::identity::origin_urls`].
 ///
 /// ```
 /// let dir = tempfile::tempdir()?;
 /// let git = |args: &[&str]| std::process::Command::new("git").args(args).current_dir(dir.path()).output();
 /// git(&["init", "-q"])?;
-/// git(&["remote", "add", "origin", "https://github.example/o/r.git"])?;
-/// git(&["config", "remote.origin.pushurl", "git@github.example:o/r.git"])?;
+/// git(&["remote", "add", "up", "https://github.example/o/r.git"])?;
+/// git(&["config", "remote.up.pushurl", "git@github.example:o/r.git"])?;
 /// git(&["config", "url.https://github.example/.insteadOf", "gh:"])?;
 /// let urls = |remote: &str, push: bool| riff::git_credential::urls(dir.path(), remote, push);
-/// assert_eq!(urls("origin", false), ["https://github.example/o/r.git"]);
-/// assert_eq!(urls("origin", true), ["git@github.example:o/r.git"]);
+/// assert_eq!(urls("up", false), ["https://github.example/o/r.git"]);
+/// assert_eq!(urls("up", true), ["git@github.example:o/r.git"]);
 /// assert_eq!(urls("gh:o/x.git", false), ["https://github.example/o/x.git"]);
 /// # Ok::<(), anyhow::Error>(())
 /// ```

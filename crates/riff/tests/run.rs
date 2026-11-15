@@ -3971,7 +3971,7 @@ async fn riff_run_and_riff_host_join_refuse_an_origin_with_a_token() {
     let who = machine.ok(None, &["who", "--long"]).await;
     assert!(!who.contains("claim=issue-12"), "{who}");
     let calls = std::fs::read_to_string(&calls).unwrap();
-    assert!(calls.contains("remote get-url"), "{calls}");
+    assert!(calls.contains("config -z --list"), "{calls}");
     assert!(!calls.contains("T0KEN"), "{calls}");
     let log = machine.read("daemon.out");
     assert!(!log.contains("T0KEN"), "{log}");

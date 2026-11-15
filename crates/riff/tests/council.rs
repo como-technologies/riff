@@ -499,7 +499,7 @@ fn riff_council_show_refuses_an_origin_with_a_token() {
     }
     assert!(!gh.exists(), "gh ran");
     let calls = fs::read_to_string(&calls).unwrap();
-    assert!(calls.contains("remote get-url"), "{calls}");
+    assert!(calls.contains("config -z --list"), "{calls}");
     assert!(!calls.contains("T0KEN"), "{calls}");
     assert!(!calls.contains(" fetch "), "{calls}");
 }

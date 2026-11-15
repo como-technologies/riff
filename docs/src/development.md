@@ -1946,10 +1946,13 @@ flowchart LR
    the URL of `origin` from your clone. The container has no SSH
    agent, so it cannot push to an SSH URL.
 
-   riff refuses an `origin` with a token or another user in its URL,
-   for example `https://USER:TOKEN@github.com/OWNER/REPO.git`. The
-   command stops with exit code 1, and runs no git with that URL. Its
-   error names `origin`, never the URL, so the token goes to no
+   riff refuses an `origin` with a token or another user in one of its
+   URLs, for example `https://USER:TOKEN@github.com/OWNER/REPO.git`.
+   It reads each URL and each push URL of `origin`, and each URL that a
+   rule `insteadOf` or `pushInsteadOf` of git makes. Each `@` counts. It
+   also refuses a URL with a control character, for example a line
+   break. The command stops with exit code 1, and runs no git with that
+   URL. Its error names `origin`, never the URL, so the token goes to no
    terminal and no log. riff takes two users only, because each one is
    a fixed name with no secret:
 
@@ -1965,6 +1968,17 @@ flowchart LR
    git remote get-url origin
    git remote set-url origin https://github.com/OWNER/REPO.git
    gh auth setup-git
+   ```
+
+   When riff still refuses `origin`, a push URL or a rule of git can
+   hold the token. To see each URL and each push URL, to change the
+   push URL to HTTPS, and to see the rules of git:
+
+   ```sh
+   git remote get-url --all origin
+   git remote get-url --push --all origin
+   git remote set-url --push origin https://github.com/OWNER/REPO.git
+   git config --get-regexp '^url\.'
    ```
 
 ### Give the container sessions a long-lived sign-in of claude

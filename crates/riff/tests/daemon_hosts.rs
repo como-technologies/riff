@@ -1550,7 +1550,7 @@ async fn the_daemon_refuses_a_build_of_an_origin_with_a_token() {
         assert!(!err.contains("T0KEN"), "{err}");
     }
     let calls = std::fs::read_to_string(&calls).unwrap();
-    assert!(calls.contains("remote get-url"), "{calls}");
+    assert!(calls.contains("config -z --list"), "{calls}");
     assert!(!calls.contains("T0KEN"), "{calls}");
     assert!(!tmp.path().join("check").exists(), "the build ran");
 }

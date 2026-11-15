@@ -4693,22 +4693,25 @@
   01M54510SFK1Z9VPFYBYYSV10F in part.
 - **01M7G1J1F1QWT4S45CDMMXP6J5** When a git call of riff on the host
   with a URL in its words fails, its error text shows each URL with no
-  user info: riff takes `USER:TOKEN@` out of each URL of the command and
-  of the output of git. This holds for the terminal and for the log of
-  the daemon.
+  user info: riff takes the user info out of each URL of the command and
+  of the output of git where it follows a `:` and one or more `/`, or a
+  `::`. This holds for the terminal and for the log of the daemon.
 - **01M7GMV5ZYYF94ZKQ5ECQYTJXH** riff refuses the remote `origin` when
-  one of its URLs or push URLs has an `@`, other than in three forms
-  whose user is a fixed name with no secret: `git@HOST:PATH`,
+  one of its URLs has a control character, or an `@` other than in three
+  forms whose user is a fixed name with no secret: `git@HOST:PATH`,
   `ssh://git@HOST/PATH`, and `http://local_proxy@127.0.0.1:PORT/PATH`,
   the origin of a Claude Code cloud session (R100). It checks each form
-  by its exact start. Each read of riff of the URL of `origin` goes
-  through one function, and each git of riff that names `origin` and
-  talks to it reads that URL first. So the refusal comes before each git
-  with that URL. Its error names `origin` and never its URL, and says
-  how to fix it: `git remote set-url origin
-  https://github.com/OWNER/REPO.git`, then `gh auth setup-git`. The
-  command exits with 1. The cleanup of 01M7G1J1F1QWT4S45CDMMXP6J5 stays
-  as a second guard, and its time is linear in the size of the text.
+  by its exact start. It checks each value of `remote.origin.url` and of
+  `remote.origin.pushurl` as git keeps it, and each URL that git uses
+  for a fetch and for a push of `origin`. It checks all of them before
+  it takes an empty URL as no URL. Each read of riff of the URL of
+  `origin` goes through one function, and each git of riff that names
+  `origin` and talks to it reads that URL first. Its error names
+  `origin` and never its URL, and says how to fix it: `git remote
+  set-url origin https://github.com/OWNER/REPO.git`, then `gh auth
+  setup-git`. The command exits with 1. The cleanup of
+  01M7G1J1F1QWT4S45CDMMXP6J5 stays as a second guard, and its time is
+  linear in the size of the text.
 
 ## Terminal
 

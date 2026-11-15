@@ -600,20 +600,10 @@ pub fn github_origin(dir: &Path) -> Result<Option<String>> {
 }
 
 /// The URL of the remote `origin` of the clone `dir`, as `git remote
-/// get-url origin` gives it, after the config `insteadOf` of git. `None`
-/// with no remote `origin`, and outside git. Each read of riff of the URL
-/// of `origin` goes through it (01M7GMV5ZYYF94ZKQ5ECQYTJXH).
-///
-/// It refuses the remote when one of its URLs or push URLs has user info
-/// ([`with_user`]). The error names `origin` and the clone, never the URL
-/// ([`crate::text::origin_with_user`]). So a token in the URL of `origin`
-/// reaches no git of riff, no error text and no log. Each git of riff
-/// that names `origin` and talks to it calls it first: the check before
-/// a fetch, a clone or a push ([`crate::git_credential::keyring_open`]),
-/// the council of a pull request ([`crate::council::pick::of_pull`]),
-/// the fetch of the earlier work of an item ([`crate::dropped::fetch`])
-/// and the pull of `riff project init` ([`crate::project::pull`]). A
-/// fault of git is tried [`GIT_TRIES`] times, as for the place.
+/// get-url origin` gives it, after the config `insteadOf` of git: the
+/// first fetch URL of [`origin_urls`]. `None` with no remote `origin`,
+/// outside git, and with an empty URL. An error when riff refuses the
+/// remote, or when git fails.
 ///
 /// ```
 /// use riff::identity::origin;
@@ -638,31 +628,118 @@ pub fn github_origin(dir: &Path) -> Result<Option<String>> {
 /// let error = origin(dir.path()).unwrap_err().to_string();
 /// assert_eq!(error, riff::text::origin_with_user(dir.path()));
 /// assert!(!error.contains("T0KEN"), "{error}");
-/// // A push URL with user info counts too.
-/// git(&["remote", "set-url", "origin", "https://github.com/o/r.git"])?;
-/// git(&["remote", "set-url", "--push", "origin", "https://T0KEN@github.com/o/r.git"])?;
-/// let error = origin(dir.path()).unwrap_err().to_string();
-/// assert_eq!(error, riff::text::origin_with_user(dir.path()));
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn origin(dir: &Path) -> Result<Option<String>> {
-    let fetch = ["remote", "get-url", "--all", "origin"];
-    let Some(urls) = asked(dir, &fetch, &NO_REMOTE)? else {
-        return Ok(None);
-    };
+    Ok(origin_urls(dir)?.and_then(|urls| urls.fetch.into_iter().next()))
+}
+
+/// The URLs of the remote `origin` of a clone that [`origin_urls`] read
+/// and took: none of them has user info ([`with_user`]) or a control
+/// character. Only [`origin_urls`] makes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OriginUrls {
+    fetch: Vec<String>,
+    push: Vec<String>,
+}
+
+impl OriginUrls {
+    /// The URLs that git uses for a push to `origin` when `push`, else for
+    /// a fetch, in their order, after the config `insteadOf` and
+    /// `pushInsteadOf` of git.
+    pub fn of(&self, push: bool) -> &[String] {
+        if push { &self.push } else { &self.fetch }
+    }
+}
+
+/// The URLs of the remote `origin` of the clone `dir`, for a fetch and
+/// for a push. `None` with no remote `origin`, and outside git. Each read
+/// of riff of the URL of `origin` goes through it
+/// (01M7GMV5ZYYF94ZKQ5ECQYTJXH).
+///
+/// It refuses the remote when one URL of `origin` has user info
+/// ([`with_user`]) or a control character, a line break too. It checks
+/// each URL, before it gives `None` or an empty list:
+///
+/// - each value of `remote.origin.url` and of `remote.origin.pushurl`, as
+///   git keeps it (`git config -z --list`);
+/// - each URL that git uses: `git remote get-url --all origin` and `git
+///   remote get-url --push --all origin`.
+///
+/// The error names `origin` and the clone, never the URL
+/// ([`crate::text::origin_with_user`]). So a token in the URL of `origin`
+/// reaches no git of riff, no error text and no log. Each git of riff
+/// that names `origin` and talks to it calls it first: the check before
+/// a fetch, a clone or a push ([`crate::git_credential::keyring_open`]),
+/// the council of a pull request ([`crate::council::pick::of_pull`]),
+/// the fetch of the earlier work of an item ([`crate::dropped::fetch`])
+/// and the pull of `riff project init` ([`crate::project::pull`]). A
+/// fault of git is tried [`GIT_TRIES`] times, as for the place.
+///
+/// ```
+/// use riff::identity::origin_urls;
+/// use std::process::Command;
+///
+/// let clone = |setup: &[&[&str]]| -> std::io::Result<tempfile::TempDir> {
+///     let dir = isolated::outside_git();
+///     let start: [&[&str]; 2] = [&["init", "-q"], &["remote", "add", "origin", isolated::CLEAN_ORIGIN]];
+///     for args in start.iter().chain(setup) {
+///         let out = Command::new("git").args(*args).current_dir(dir.path()).output()?;
+///         assert!(out.status.success(), "{args:?}: {out:?}");
+///     }
+///     Ok(dir)
+/// };
+/// let dir = clone(&[&["remote", "set-url", "--add", "--push", "origin", "git@github.com:o/r.git"]])?;
+/// let urls = origin_urls(dir.path())?.unwrap();
+/// assert_eq!(urls.of(false), [isolated::CLEAN_ORIGIN]);
+/// assert_eq!(urls.of(true), ["git@github.com:o/r.git"]);
+/// // Each URL that git keeps or uses for `origin` counts.
+/// for setup in isolated::ORIGIN_SETUPS_WITH_TOKEN {
+///     let dir = clone(setup)?;
+///     let error = origin_urls(dir.path()).unwrap_err().to_string();
+///     assert_eq!(error, riff::text::origin_with_user(dir.path()), "{setup:?}");
+/// }
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn origin_urls(dir: &Path) -> Result<Option<OriginUrls>> {
+    let refused = |url: &str| with_user(url) || url.contains(char::is_control);
+    let config = asked(dir, &["config", "-z", "--list"], &NOT_GIT)?.unwrap_or_default();
+    let mut kept = config
+        .split('\0')
+        .filter_map(|entry| entry.split_once('\n'))
+        .filter(|(key, _)| ["remote.origin.url", "remote.origin.pushurl"].contains(key));
+    if kept.any(|(_, url)| refused(url)) {
+        bail!("{}", crate::text::origin_with_user(dir));
+    }
+    let fetch = asked(dir, &["remote", "get-url", "--all", "origin"], &NO_REMOTE)?;
     let push = asked(
         dir,
-        &["remote", "get-url", "--all", "--push", "origin"],
-        &[],
+        &["remote", "get-url", "--push", "--all", "origin"],
+        &NO_REMOTE,
     )?;
-    if urls
-        .lines()
-        .chain(push.iter().flat_map(|p| p.lines()))
-        .any(with_user)
+    if fetch
+        .iter()
+        .chain(&push)
+        .flat_map(|urls| urls.lines())
+        .any(refused)
     {
         bail!("{}", crate::text::origin_with_user(dir));
     }
-    Ok(urls.lines().next().map(|url| url.trim().to_owned()))
+    if fetch.is_none() && push.is_none() {
+        return Ok(None);
+    }
+    let list = |urls: &Option<String>| {
+        urls.iter()
+            .flat_map(|urls| urls.lines())
+            .map(str::trim)
+            .filter(|url| !url.is_empty())
+            .map(str::to_owned)
+            .collect()
+    };
+    Ok(Some(OriginUrls {
+        fetch: list(&fetch),
+        push: list(&push),
+    }))
 }
 
 /// The starts of the URLs of a remote whose user is a fixed name with no
@@ -778,10 +855,10 @@ pub fn new_session_id() -> String {
 mod tests {
     use super::*;
 
-    /// 01M7GMV5ZYYF94ZKQ5ECQYTJXH: no code of riff but [`origin`] reads
-    /// the URL of `origin`. [`crate::git_credential::urls`] reads the URLs
-    /// of a remote for its helpers, after the check of `origin` in
-    /// [`crate::git_credential::keyring_open`].
+    /// 01M7GMV5ZYYF94ZKQ5ECQYTJXH: no code of riff but [`origin_urls`]
+    /// reads the URL of `origin`. [`crate::git_credential::urls`] reads the
+    /// URLs of each other remote for its helpers: for `origin`,
+    /// [`crate::git_credential::keyring_open`] takes those of [`origin_urls`].
     #[test]
     fn each_read_of_the_url_of_origin_goes_through_one_function() {
         use crate::host_git::tests::{production, sources};
@@ -806,12 +883,13 @@ mod tests {
                 "git_credential.rs",
                 "git_credential.rs",
                 "identity.rs",
-                "identity.rs"
+                "identity.rs",
+                "identity.rs",
             ],
             "{found:?}"
         );
         let body = std::fs::read_to_string(src.join("identity.rs")).unwrap();
-        let start = body.find("pub fn origin(").unwrap();
+        let start = body.find("pub fn origin_urls(").unwrap();
         let end = start + body[start..].find("\n}\n").unwrap();
         let lines = body[..start].lines().count() + 1..=body[..end].lines().count();
         for (name, n) in &found {

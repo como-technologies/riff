@@ -140,6 +140,89 @@ pub const ORIGINS_WITH_TOKEN: [&str; 7] = [
     "http://T0KEN@127.0.0.1:8080/git/o/r",
 ];
 
+/// The clean URL of `origin` that each setup of [`ORIGIN_SETUPS_WITH_TOKEN`]
+/// starts from.
+pub const CLEAN_ORIGIN: &str = "https://github.com/o/r.git";
+
+/// The setups that put the token `T0KEN` in a URL of `origin` that git
+/// keeps or uses, past the first URL: each one is the words of the `git`
+/// calls that a test runs in a clone whose `origin` is [`CLEAN_ORIGIN`].
+/// riff refuses each of them (01M7GMV5ZYYF94ZKQ5ECQYTJXH).
+pub const ORIGIN_SETUPS_WITH_TOKEN: [&[&[&str]]; 9] = [
+    // A line break in the URL, and the line after it looks like SSH.
+    &[&[
+        "config",
+        "remote.origin.url",
+        "https://U:T0KEN\ngit@127.0.0.1:1/o/r.git",
+    ]],
+    // An empty URL, and a push URL with a token.
+    &[
+        &["config", "remote.origin.url", ""],
+        &[
+            "config",
+            "remote.origin.pushurl",
+            "https://U:T0KEN@h/o/r.git",
+        ],
+    ],
+    // A push URL with a token, and no URL.
+    &[
+        &["config", "--unset", "remote.origin.url"],
+        &[
+            "config",
+            "remote.origin.pushurl",
+            "https://U:T0KEN@h/o/r.git",
+        ],
+    ],
+    // A URL with a token, and a push URL with none.
+    &[
+        &["remote", "set-url", "origin", "https://U:T0KEN@h/o/r.git"],
+        &["remote", "set-url", "--push", "origin", CLEAN_ORIGIN],
+    ],
+    // A second URL, and a second push URL.
+    &[&[
+        "remote",
+        "set-url",
+        "--add",
+        "origin",
+        "https://U:T0KEN@h/o/r.git",
+    ]],
+    &[
+        &[
+            "remote",
+            "set-url",
+            "--add",
+            "--push",
+            "origin",
+            CLEAN_ORIGIN,
+        ],
+        &[
+            "remote",
+            "set-url",
+            "--add",
+            "--push",
+            "origin",
+            "https://U:T0KEN@h/o/r.git",
+        ],
+    ],
+    // A rule of git that puts the token in the URL.
+    &[&[
+        "config",
+        "url.https://T0KEN@github.com/.insteadOf",
+        "https://github.com/",
+    ]],
+    &[&[
+        "config",
+        "url.https://T0KEN@github.com/.pushInsteadOf",
+        "https://github.com/",
+    ]],
+    // A control character, with no `@`.
+    &[&[
+        "config",
+        "remote.origin.url",
+        "https://github.com/o\t/r.git",
+    ]],
+];
+
 /// Writes a `git` in the folder `bin` that adds its words to
 /// `bin/git.log`, one line for each call, then runs the first other `git`
 /// of `PATH`. Gives the path of the log. A test puts `bin` first in

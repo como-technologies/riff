@@ -103,8 +103,9 @@ pub mod time;
 pub use in_src::{test_code, test_modules, unit_tests};
 pub use processes::{MARK, Marked, RUN, end_marked, left_after, marked};
 pub use program::{
-    ORIGINS_WITH_TOKEN, copy_program, file_name, git_of_path, logged_git, names_a_program,
-    program_writers, program_writes, write_program, write_whole, writes_a_program,
+    CLEAN_ORIGIN, ORIGIN_SETUPS_WITH_TOKEN, ORIGINS_WITH_TOKEN, copy_program, file_name,
+    git_of_path, logged_git, names_a_program, program_writers, program_writes, write_program,
+    write_whole, writes_a_program,
 };
 pub use secret::{
     Example, GITHUB_EXAMPLE, TAKERS, fake_secret, hard_coded_keys, hard_coded_lines, is_secret_name,
