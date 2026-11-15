@@ -3540,8 +3540,14 @@ async fn no_verify(
 ///
 /// With no PASS or FAIL, or a report that fails for another reason, the
 /// lead gets a message that the pull request waits for a new verify. A
-/// pull request that merged or closed waits for none: the lead gets a
-/// note that says so ([`open_now`], 01M75R71BCDCP882W75GSE52VT).
+/// PASS with no line for a member of the council in the part `## The
+/// council` is a result with no verdict too: the report refuses it, and
+/// the message names each member with no line ([`no_report`],
+/// 01M7CFBZSQEEZNZBR9H1S54GS1). The report reads the council in the main
+/// clone of the wave, never in the clone of the verify
+/// (01M7DZ4E5BZAD38E3K9A3N277E). A pull request that merged or closed
+/// waits for none: the lead gets a note that says so ([`open_now`],
+/// 01M75R71BCDCP882W75GSE52VT).
 async fn after_verify(
     gh: pr::Gh,
     api: &Api,
@@ -3570,9 +3576,9 @@ async fn after_verify(
         return Ok(vec![body].into());
     };
     let (repo, tested, shown) = (wave.repo.clone(), commit.to_owned(), result.clone());
-    let reporter = gh.clone();
+    let (reporter, main) = (gh.clone(), wave.main.clone());
     let reported =
-        blocking(move || pr::report(&reporter, &repo, pull, &tested, verdict, &shown)).await;
+        blocking(move || pr::report(&reporter, &repo, &main, pull, &tested, verdict, &shown)).await;
     let reported = match reported {
         Ok(reported) => reported,
         Err(e) => {
@@ -3600,8 +3606,7 @@ async fn after_verify(
                 false => {
                     let _ = std::fs::remove_dir_all(&record.folder);
                     let open = open_now(&gh, pull).await;
-                    let body = text::wave_no_report(item, pull, &error, open);
-                    (body, waits_kind(open))
+                    (no_report(item, pull, &e, open), waits_kind(open))
                 }
             };
             api.post(me, Some(&thread), &lead, &body, kind).await?;
@@ -3618,6 +3623,19 @@ async fn after_verify(
         lines: vec![line],
         verdict: Some(verdict),
     })
+}
+
+/// The post to the lead after the report of the verify `item` of the pull
+/// request `pull` failed with `error`, not on a limit of GitHub: the pull
+/// request waits for a new verify when it is `open`. A PASS with no line
+/// for a member of the council is a result with no verdict, and the post
+/// names each member with no line ([`crate::council::result::NoLine`],
+/// 01M7CFBZSQEEZNZBR9H1S54GS1, 01M7D11KGEJ8ACFJK6Y10WENJZ).
+pub(crate) fn no_report(item: &str, pull: u64, error: &anyhow::Error, open: bool) -> String {
+    match error.downcast_ref::<crate::council::result::NoLine>() {
+        Some(no_line) => text::wave_no_council_line(item, pull, no_line, open),
+        None => text::wave_no_report(item, pull, &format!("{error:#}"), open),
+    }
 }
 
 /// True when the pull request `pull` is open now, with `gh pr view`: a
@@ -13018,5 +13036,263 @@ esac
             panic!("one message: {got:?}");
         };
         assert_eq!(message.message.kind, Kind::Message);
+    }
+
+    /// The fake `gh` of the report of a PASS of pull request 7 at `head`,
+    /// in `bin`: an open pull request, a repository with no CI, a body with
+    /// `Refs #12`, the path `a` and no label. It logs each call to
+    /// `bin/gh.log`, and fails each other call.
+    fn pass_gh(bin: &Path, head: &str) -> pr::Gh {
+        let script = format!(
+            r#"#!/bin/sh
+dir=$(dirname "$0")
+printf '%s\n' "$*" >> "$dir/gh.log"
+case "$*" in
+  'pr view 7 --json headRefOid,body,title,autoMergeRequest') printf '%s' '{{"headRefOid":"{head}","title":"Two","autoMergeRequest":null,"body":"Refs #12\n\nIssue: #12\nMilestone: Wave 1\n"}}' ;;
+  'pr view 7 --json number,url,headRefOid,state') printf '%s' '{{"number":7,"url":"https://github.com/o/r/pull/7","headRefOid":"{head}","state":"OPEN"}}' ;;
+  'api repos/o/r') echo '{{"default_branch":"main"}}' ;;
+  'api repos/o/r/rules/branches/main?per_page=100') echo '[]' ;;
+  'api repos/o/r/pulls/7/files --paginate --jq .[].filename') echo a ;;
+  'pr view 7 --json baseRefName,body,labels') printf '%s' '{{"baseRefName":"main","body":"Refs #12\n\nIssue: #12\n","labels":[]}}' ;;
+  'api repos/{{owner}}/{{repo}}/pulls/7/files?per_page=100 --paginate --jq '*) echo a ;;
+  'issue view 12 --json labels') echo '{{"labels":[]}}' ;;
+  'pr view 7 --json state --jq .state') echo OPEN ;;
+  'pr merge 7 '*) cat > /dev/null ;;
+  'pr comment 7 --body-file -') cat > /dev/null; echo https://github.com/o/r/pull/7#issuecomment-1 ;;
+  'api repos/o/r/statuses/'*) echo '{{}}' ;;
+  *) echo "gh: no such call: $*" >&2; exit 1 ;;
+esac
+"#
+        );
+        pr::Gh::at(isolated::write_program(bin.join("gh"), script))
+    }
+
+    /// The calls of [`pass_gh`] in `bin` so far.
+    fn calls(bin: &Path) -> String {
+        std::fs::read_to_string(bin.join("gh.log")).unwrap_or_default()
+    }
+
+    /// The git of a test of the council of a verify of the wave: a
+    /// [`Fork`] whose `origin` got the member file `big-o` on `main` after
+    /// the main clone was made. `big-o` joins each council, so the council
+    /// of pull request 7 is design, testing, docs and big-o, and only a
+    /// fetch in the main clone reads `big-o`. It also gives the folder of
+    /// the sessions of the test, where the host runs no git, as in the
+    /// folder of the sessions of a daemon ([`crate::host_git::guard_also`]).
+    fn council_fork() -> (Fork, PathBuf) {
+        let fork = Fork::new();
+        let work = &fork.fork;
+        git_in(work, &["switch", "-q", "main"]);
+        std::fs::create_dir_all(work.join(".riff/council")).unwrap();
+        std::fs::write(work.join(".riff/council/big-o.md"), "+++\n+++\n# Big O\n").unwrap();
+        git_in(work, &["add", ".riff"]);
+        git_in(work, &["commit", "-q", "-m", "big-o"]);
+        git_in(work, &["push", "-q", "origin", "main"]);
+        let sessions = fork.dir.path().join("sessions");
+        crate::host_git::guard_also(&sessions);
+        (fork, sessions)
+    }
+
+    /// Makes the clone of the verify of pull request 7 in the folder
+    /// `folder` of a session, as the daemon makes it. The work tree of the
+    /// clone gets the member file `evil` of its own. The host runs no git in
+    /// that clone.
+    fn verify_folder(fork: &Fork, folder: &Path) {
+        let clone = folder.join("clone");
+        clone_at(&fork.main, &clone, 7, &fork.head).unwrap();
+        std::fs::create_dir_all(clone.join(".riff/council")).unwrap();
+        std::fs::write(clone.join(".riff/council/evil.md"), "+++\n+++\n# Evil\n").unwrap();
+        let refused = crate::host_git::output(&clone, &["status"]).unwrap_err();
+        assert!(
+            format!("{refused:#}").contains(&clone.display().to_string()),
+            "{refused:#}"
+        );
+    }
+
+    /// The members of the council of pull request 7 of [`council_fork`]
+    /// with no line in a result that has the lines of design and testing.
+    fn docs_and_big_o() -> crate::council::result::NoLine {
+        crate::council::result::NoLine {
+            first: "docs".parse().unwrap(),
+            rest: vec!["big-o".parse().unwrap()],
+        }
+    }
+
+    /// 01M7CFBZSQEEZNZBR9H1S54GS1, 01M7D11KGEJ8ACFJK6Y10WENJZ,
+    /// 01M7DZ4E5BZAD38E3K9A3N277E: the report of a verify of the wave reads
+    /// the council of the pull request in the main clone of the wave, as
+    /// `riff council show` does: it fetches `main` there, and the council is
+    /// design, testing, docs and big-o. It runs no git in the clone of the
+    /// verify, and the member file `evil` of that clone counts for nothing.
+    /// A PASS with no line for docs and big-o is a result with no verdict:
+    /// no squash message, no comment and no status. The lead gets a message
+    /// that names docs and big-o, the folder goes, and the start counts.
+    /// The same PASS with a line for each member is on the pull request.
+    #[tokio::test]
+    async fn a_pass_of_the_wave_with_no_line_for_a_member_is_a_result_with_no_verdict() {
+        let built = Built::new().await;
+        let (fork, sessions) = council_fork();
+        let wave = Wave {
+            main: fork.main.clone(),
+            ..built.wave.clone()
+        };
+        let bin = tempfile::tempdir().unwrap();
+        let gh = pass_gh(bin.path(), &fork.head);
+        let ended = Ended {
+            code: Some(0),
+            failed: false,
+        };
+        let verify = async |n: usize, council: &str| {
+            let mut record = built.record.clone();
+            record.live.item = "verify-issue-12".into();
+            record.folder = sessions.join(format!("verify-issue-12-{n}"));
+            verify_folder(&fork, &record.folder);
+            let result = format!("PASS\n\n- It works.\n\n## The council\n\n{council}");
+            let event = serde_json::json!({ "type": "result", "result": result });
+            std::fs::write(
+                record.folder.join(crate::daemon::EVENTS),
+                format!("{event}\n"),
+            )
+            .unwrap();
+            let done = after_verify(
+                gh.clone(),
+                &built.api,
+                &record,
+                &wave,
+                (7, &fork.head),
+                ended,
+            )
+            .await
+            .unwrap();
+            (record, done)
+        };
+
+        let (record, done) = verify(1, "- design: no finding.\n- testing: no finding.\n").await;
+        let message = text::wave_no_council_line("verify-issue-12", 7, &docs_and_big_o(), true);
+        assert_eq!(done.lines, std::slice::from_ref(&message));
+        assert!(!done.reported(), "no verdict: the start counts");
+        assert!(!record.folder.exists(), "the folder of the verify goes");
+        // The fetch of `main` ran in the main clone.
+        git_in(
+            &fork.main,
+            &["cat-file", "-e", "origin/main:.riff/council/big-o.md"],
+        );
+        let log = calls(bin.path());
+        assert!(
+            log.contains("pr view 7 --json baseRefName,body,labels"),
+            "{log}"
+        );
+        assert!(!log.contains("pr merge"), "{log}");
+        assert!(!log.contains("pr comment"), "{log}");
+        assert!(!log.contains("/statuses/"), "{log}");
+        let thread = built.wave.thread().unwrap();
+        let got = built.api.read(&built.lead, &thread, true).await.unwrap();
+        let [one] = &got[..] else {
+            panic!("one message: {got:?}");
+        };
+        assert_eq!(
+            (one.message.kind, &one.message.body),
+            (Kind::Message, &message)
+        );
+        assert!(
+            one.message
+                .body
+                .contains("`## The council` for docs and big-o."),
+            "{one:?}"
+        );
+
+        let all = "- design: no finding.\n- testing: no finding.\n- docs: no finding.\n\
+                   - big-o: no finding.\n";
+        let (_, done) = verify(2, all).await;
+        assert!(done.reported(), "{done:?}");
+        assert!(
+            done.lines[0].starts_with("Put PASS for issue-12 on pull request #7"),
+            "{done:?}"
+        );
+        let log = calls(bin.path());
+        let status = format!("api repos/o/r/statuses/{} -f state=success", fork.head);
+        assert!(log.contains(&status), "{log}");
+    }
+
+    /// 01M7CFBZSQEEZNZBR9H1S54GS1, 01M6H1N332TZ17CQQ8A5CQKG7B,
+    /// 01M7DZ4E5BZAD38E3K9A3N277E: the report of a kept PASS reads the
+    /// council of the pull request in the main clone of the wave, and runs
+    /// no git in the clone of its folder. A kept PASS with no line for docs
+    /// and big-o is a result with no verdict: no squash message, no comment
+    /// and no status. The folder goes, and the lead gets the message that
+    /// names docs and big-o. A kept PASS with a line for each member is on
+    /// the pull request.
+    #[tokio::test]
+    async fn a_kept_pass_reads_the_council_in_the_main_clone_of_the_wave() {
+        let built = Built::new().await;
+        let (fork, sessions) = council_fork();
+        let wave = Wave {
+            main: fork.main.clone(),
+            ..built.wave.clone()
+        };
+        let bin = tempfile::tempdir().unwrap();
+        let gh = pass_gh(bin.path(), &fork.head);
+        let keep = |n: usize, council: &str| {
+            let folder = sessions.join(format!("verify-issue-12-{n}"));
+            verify_folder(&fork, &folder);
+            kept::Kept {
+                repo: "o/r".into(),
+                item: "verify-issue-12".into(),
+                pull: 7,
+                commit: fork.head.clone(),
+                verdict: Verdict::Pass,
+                result: format!("- It works.\n\n## The council\n\n{council}"),
+            }
+            .keep(&folder)
+            .unwrap();
+            folder
+        };
+        let report = || kept::report_all(&gh, &built.api, &built.lead, &wave, &sessions);
+
+        let folder = keep(1, "- design: no finding.\n- testing: no finding.\n");
+        let message = text::wave_no_council_line("verify-issue-12", 7, &docs_and_big_o(), true);
+        assert_eq!(report().await, std::slice::from_ref(&message));
+        assert!(!folder.exists(), "the folder of the kept result goes");
+        // The fetch of `main` ran in the main clone.
+        git_in(
+            &fork.main,
+            &["cat-file", "-e", "origin/main:.riff/council/big-o.md"],
+        );
+        let log = calls(bin.path());
+        assert!(
+            log.contains("pr view 7 --json baseRefName,body,labels"),
+            "{log}"
+        );
+        assert!(!log.contains("pr merge"), "{log}");
+        assert!(!log.contains("pr comment"), "{log}");
+        assert!(!log.contains("/statuses/"), "{log}");
+        let thread = built.wave.thread().unwrap();
+        let got = built.api.read(&built.lead, &thread, true).await.unwrap();
+        let [one] = &got[..] else {
+            panic!("one message: {got:?}");
+        };
+        assert_eq!(
+            (one.message.kind, &one.message.body),
+            (Kind::Message, &message)
+        );
+
+        let all = "- design: no finding.\n- testing: no finding.\n- docs: no finding.\n\
+                   - big-o: no finding.\n";
+        let folder = keep(2, all);
+        let lines = report().await;
+        let [line] = &lines[..] else {
+            panic!("one line: {lines:?}");
+        };
+        assert!(
+            line.starts_with("Put PASS for issue-12 on pull request #7"),
+            "{line}"
+        );
+        let status = format!("api repos/o/r/statuses/{} -f state=success", fork.head);
+        assert!(calls(bin.path()).contains(&status));
+        assert!(kept::Kept::read(&folder).is_none(), "reported one time");
+        assert!(
+            folder.join("clone").exists(),
+            "the sweep removes the folder"
+        );
     }
 }

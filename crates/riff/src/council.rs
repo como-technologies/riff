@@ -2,7 +2,8 @@
 //! file, the default set that riff builds in, and `riff council list`
 //! (01M7CFBZ7839WHMFARR4T6W13W, 01M7CFBZ9TJ83FNHN0APY41175,
 //! 01M7CFBZMCE36ZRXD0GBCM4MFX). [`pick`] picks the council of a pull
-//! request, for `riff council show`.
+//! request, for `riff council show`. [`result`] checks that the result of
+//! a pass has a line for each member of that council.
 //!
 //! # Design
 //!
@@ -101,9 +102,10 @@ use std::str::FromStr;
 use anyhow::{Context, Result, anyhow};
 
 use crate::session_image::top;
-use crate::{text, view};
+use crate::{markdown, text, view};
 
 pub mod pick;
+pub mod result;
 
 /// The folder of the member files, from the top of the work tree.
 pub const FOLDER: &str = ".riff/council";
@@ -448,18 +450,14 @@ impl Member {
         // With no line after the table, the fault is on the line `+++`
         // that closes it.
         let (at, first) = body.next().unwrap_or((end, &lines[end]));
-        let Some(title) = heading(first, "#") else {
+        let Some(title) = titled(markdown::heading(first), 1) else {
             return Err(fault(at + 1, Wrong::NoHeading));
         };
         let after_table = format!("{}\n", lines[at..].join("\n").trim_end());
         let mut area: Vec<&str> = Vec::new();
         let mut rules: Vec<(String, Vec<&str>)> = Vec::new();
-        let mut fenced = false;
-        for (_, line) in body {
-            if line.trim_start().starts_with("```") {
-                fenced = !fenced;
-            }
-            match heading(line, "##").filter(|_| !fenced) {
+        for (line, heading) in markdown::headings(body.map(|(_, line)| *line)) {
+            match titled(heading, 2) {
                 Some(heading) => rules.push((heading, Vec::new())),
                 None => match rules.last_mut() {
                     Some((_, text)) => text.push(line),
@@ -549,11 +547,12 @@ fn line_at(text: &str, at: usize) -> usize {
     text.get(..at).unwrap_or(text).matches('\n').count() + 1
 }
 
-/// The text of `line` when it is a heading with the marks `marks`, `#`
-/// or `##`, and a text.
-fn heading(line: &str, marks: &str) -> Option<String> {
-    let text = line.strip_prefix(marks)?.strip_prefix(' ')?.trim();
-    (!text.is_empty()).then(|| text.to_owned())
+/// The text of the heading `heading` ([`markdown::heading`]) when it has
+/// the level `level`, 1 or 2, and a text.
+fn titled(heading: Option<(usize, &str)>, level: usize) -> Option<String> {
+    heading
+        .filter(|&(at, text)| at == level && !text.is_empty())
+        .map(|(_, text)| text.to_owned())
 }
 
 /// The members of the default set that riff builds in, in the order of

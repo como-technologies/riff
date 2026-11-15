@@ -299,6 +299,17 @@
   pull request in its main clone: it fetches the base branch there and
   reads the member files of `origin/BASE` (01M7CFBZ7839WHMFARR4T6W13W).
   It reads no file and runs no git in the clone of a verify session.
+- **01M7D11KGEJ8ACFJK6Y10WENJZ** `riff verify pass` reads the council of
+  the pull request as `riff council show` does, after the checks of the
+  head commit and before the squash message. A line of a member is a
+  line of a part `## The council` whose first word, in any case, is the
+  name of the member, also after a list mark (`-`, `*`, `+`, or a
+  number with `.` or `)`) and with `:`, `*`, `_` or `` ` `` around it.
+  A part starts at a heading `## The council`, of that level and case,
+  and ends at the next heading of one or two `#`, out of a code block.
+  Each such part counts. For a PASS of the wave with no line for a
+  member, the message to the lead names each member with no line
+  (01M7CFBZSQEEZNZBR9H1S54GS1).
 
 ## Waves
 
