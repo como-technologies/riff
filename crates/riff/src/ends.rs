@@ -73,6 +73,7 @@ use serde::{Deserialize, Serialize};
 use crate::daemon::{EVENTS, Ended};
 use crate::room::Role;
 use crate::run::Scrub;
+use crate::text::OneLine;
 
 /// The thread of the records.
 pub const THREAD: &str = "ends";
@@ -147,7 +148,9 @@ impl End {
 
     /// [`End::of`] for the text `events` of the events file. Each denied
     /// tool and each line of the tail has no secret and no control
-    /// character ([`Scrub::safe`], 01M7FYCX6HRGHM2NR4RT8GS46P).
+    /// character ([`Scrub::safe`], 01M7FYCX6HRGHM2NR4RT8GS46P). Each
+    /// denied tool is in one line ([`OneLine`]): the reason is on the first
+    /// line of the record.
     pub fn from_events(
         item: &str,
         session: &str,
@@ -163,12 +166,10 @@ impl End {
             .find(|event| event["type"] == "result")
             .and_then(|event| {
                 event["permission_denials"].as_array().map(|all| {
-                    // Each tool in one line: the reason is on the first
-                    // line of the record.
                     all.iter()
                         .map(|d| {
-                            let tool = d["tool_name"].as_str().unwrap_or("?");
-                            scrub.safe(tool).replace('\n', " ")
+                            let tool = scrub.safe(d["tool_name"].as_str().unwrap_or("?"));
+                            OneLine::new(tool.as_str()).into()
                         })
                         .collect()
                 })
@@ -177,7 +178,7 @@ impl End {
         let tail = lines[lines.len().saturating_sub(TAIL)..]
             .iter()
             .map(|line| {
-                let line = scrub.safe(line);
+                let line = String::from(scrub.safe(line));
                 match line.char_indices().nth(LINE_MAX) {
                     Some((at, _)) => format!("{}...", &line[..at]),
                     None => line,
@@ -338,14 +339,18 @@ mod tests {
 
     /// 01M7FTC1DFAYKQAB6EPDCJ18ZA, 01M7FYCX6HRGHM2NR4RT8GS46P: `riff
     /// session why` prints the last lines and the denied tools with no
-    /// control character. An escape sequence just before a secret, or in a
-    /// secret of the list, hides no part of it.
+    /// control character and no secret. An escape sequence before a
+    /// secret, or inside it, hides no part of it. Each denied tool is on
+    /// one line.
     #[test]
     fn the_record_has_no_control_character_of_the_session() {
         let events = "a\x1b]0;owned\x07b\x1b[2J\x1b[1;1Hc\u{9b}d\re secret-\x1b[0mtoken-1\n\
-                      \x1bsecret-token-1 \x1b[gho_abcdef123\n\
+                      \x1bsecret-token-1 \x1b[gh\x1b[0mo_abcdef123\n\
                       {\"type\":\"assistant\",\"text\":\"\u{9b}2Kdone\"}\n\
-                      {\"type\":\"result\",\"permission_denials\":[{\"tool_name\":\"Ba\\u001b[2Jsh\\nnext\\u009b\"}]}\n";
+                      {\"type\":\"result\",\"permission_denials\":[\
+                      {\"tool_name\":\"Ba\\u001b[2Jsh\\n\\tnext\\u009b\"},\
+                      {\"tool_name\":\"\\u001bsecret-token-1\"},\
+                      {\"tool_name\":\"mcp__secret-token-1\"}]}\n";
         let scrub = Scrub::new(["secret-token-1".to_owned()]);
         let end = End::from_events(
             "issue-9",
@@ -358,7 +363,7 @@ mod tests {
             end.tail[..3],
             [
                 "abcde [secret]",
-                "ecret] secret]",
+                "[secret] [secret]",
                 r#"{"type":"assistant","text":"2Kdone"}"#
             ]
         );
@@ -367,15 +372,15 @@ mod tests {
                 .iter()
                 .any(|line| line.contains("token-1") || line.contains("abcdef"))
         );
-        assert_eq!(end.denied, ["Bash next"]);
+        assert_eq!(end.denied, ["Bash next", "[secret]", "mcp__[secret]"]);
         let record = Record::parse(&end.body(), 0).unwrap();
         assert_eq!(
             record.reason,
-            "exit code 1, 1 denied tool calls (Bash next)"
+            "exit code 1, 3 denied tool calls (Bash next, [secret], mcp__[secret])"
         );
         let why = why("issue-9", &[record]);
         assert!(why.contains(
-            "\nabcde [secret]\necret] secret]\n{\"type\":\"assistant\",\"text\":\"2Kdone\"}\n"
+            "\nabcde [secret]\n[secret] [secret]\n{\"type\":\"assistant\",\"text\":\"2Kdone\"}\n"
         ));
         assert!(!has_control(&why), "{why:?}");
     }

@@ -1935,12 +1935,13 @@ pub enum Say {
         /// The line.
         line: String,
     },
-    /// One line of the output of the container, with no secret and no
-    /// control character ([`Scrub::safe`]): the notes of the relay and the
-    /// stderr of `claude`.
+    /// One line of the output of the container: the notes of the relay and
+    /// the stderr of `claude`. The daemon takes out each secret
+    /// ([`Scrub::safe`]), and the type takes out each control character,
+    /// also after a read from the wire.
     Stderr {
         /// The line.
-        line: String,
+        line: text::Safe,
     },
     /// The session ended.
     Ended(Ended),
@@ -7263,7 +7264,7 @@ pub async fn follow_events(
                     out(&shown);
                 }
             }
-            Some(Say::Stderr { line }) => err(&line),
+            Some(Say::Stderr { line }) => err(line.as_str()),
             Some(Say::Line { text }) => out(&text),
             Some(Say::Ended(ended)) => {
                 out(&text::daemon_session_ends(name, ended.code));
@@ -8136,12 +8137,18 @@ mod tests {
 
     /// 01M7FTC1DFAYKQAB6EPDCJ18ZA, 01M7FYCX6HRGHM2NR4RT8GS46P: each line
     /// of the output of the container goes to riff with no control
-    /// character. An escape sequence just before a secret, or in a secret
-    /// of the list, hides no part of it.
+    /// character. An escape sequence before a secret, or inside it, hides
+    /// no part of it. A line that riff reads from the wire has no control
+    /// character either.
     #[tokio::test]
     async fn the_output_of_the_container_has_no_control_character_and_no_secret() {
         let hostile = "a\x1b]0;owned\x07b\x1b[2J\x1b[1;1Hc\u{9b}d\re gh\x1b[0mo_secret1";
-        let lines = [hostile, "\x1bgho_secret1", "\x1b[gho_abcdef123"];
+        let lines = [
+            hostile,
+            "\x1bgho_secret1",
+            "\x1b[gho_abcdef123",
+            "\x1b[gh\x1b[0mo_abcdef123",
+        ];
         let here = Here::new(Fake::default().with_image(IMAGE).with_events(lines)).await;
         let (mut client, name) = here
             .started(here.start("riff-issue-12-1a2b3c4d", "issue-12"))
@@ -8159,10 +8166,13 @@ mod tests {
                 _ => None,
             })
             .collect();
-        // The filter removes ESC with the byte after it, and ESC [ with its
-        // final byte: here only a part of the mark goes.
         let first = format!("abcde {HIDDEN}");
-        assert_eq!(stderr, [first.as_str(), "ecret]", "secret]"], "{said:?}");
+        assert_eq!(stderr, [first.as_str(), HIDDEN, HIDDEN, HIDDEN], "{said:?}");
+
+        let read: Say =
+            serde_json::from_str(r#"{"say":"stderr","line":"a\u001b]0;owned\u0007b\u009bc"}"#)
+                .unwrap();
+        assert_eq!(read, Say::Stderr { line: "abc".into() });
     }
 
     #[tokio::test]

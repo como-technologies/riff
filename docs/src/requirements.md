@@ -8603,11 +8603,13 @@ of this part when they merge.
   change the terminal of the person.
 - **01M7FYCX6HRGHM2NR4RT8GS46P** riff takes the secrets out of each line
   of the stderr of the container, and out of each denied tool and each
-  last line of a record of the thread `ends`, in three steps
-  (`Scrub::safe`): it takes the secrets out of the raw text, filters the
-  text (01M7FTC1DFAYKQAB6EPDCJ18ZA), then takes the secrets out again.
-  So no part of a secret shows when an escape sequence comes just before
-  it.
+  last line of a record of the thread `ends`, as it filters the text
+  (`Scrub::safe`, 01M7FTC1DFAYKQAB6EPDCJ18ZA). It finds each secret,
+  each token of GitHub and each mark `[secret]` in the raw text. Each
+  character that the filter takes out can come between two characters
+  of a match, or be one of them. riff shows `[secret]` in place of the
+  characters of each match that show. So no part of a secret shows when
+  an escape sequence comes before it or inside it.
 
 ### How the relay drives claude
 

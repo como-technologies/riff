@@ -1494,8 +1494,9 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
 /// 01M7FTC1DFAYKQAB6EPDCJ18ZA: a session sends an escape sequence, a CSI
 /// sequence and the C1 control U+009B, as a plain line, in a text of
 /// claude and on its stderr. `riff run` and `riff daemon events` print
-/// each line with no control character. A token just after an escape
-/// sequence on stderr shows no part (01M7FYCX6HRGHM2NR4RT8GS46P).
+/// each line with no control character. A token on stderr shows no part,
+/// also with an escape sequence before it or inside it
+/// (01M7FYCX6HRGHM2NR4RT8GS46P).
 #[tokio::test]
 async fn riff_run_and_daemon_events_print_no_control_character_of_a_session() {
     let machine = Machine::new().await;
@@ -1512,7 +1513,11 @@ async fn riff_run_and_daemon_events_print_no_control_character_of_a_session() {
     .unwrap();
     std::fs::write(
         machine.bin.path().join("stderr"),
-        format!("stderr {hostile}\ntoken \x1b{GH_TOKEN} \x1b[{GH_TOKEN}\n"),
+        format!(
+            "stderr {hostile}\ntoken \x1b{GH_TOKEN} \x1b[{GH_TOKEN} \x1b[{}\x1b[0m{}\n",
+            &GH_TOKEN[..2],
+            &GH_TOKEN[2..]
+        ),
     )
     .unwrap();
     let out = machine.run(None, &["run", "issue-12"]).await;
@@ -1527,9 +1532,12 @@ async fn riff_run_and_daemon_events_print_no_control_character_of_a_session() {
     assert!(view.status.success(), "{viewed}\n{}", text(&view.stderr));
     for (shown, parts) in [
         (&stdout, &["plain abcde", "text abcde"][..]),
-        // The relay and the daemon hide the token: the filter takes ESC
-        // and the byte after it, so only a part of the mark goes.
-        (&stderr, &["stderr abcde", "token ecret] secret]"][..]),
+        // The relay and the daemon hide each token, and the mark shows
+        // whole.
+        (
+            &stderr,
+            &["stderr abcde", "token [secret] [secret] [secret]"][..],
+        ),
         (&viewed, &["plain abcde", "text abcde"][..]),
     ] {
         for part in parts {

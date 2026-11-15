@@ -499,6 +499,11 @@ It removes each escape sequence and each control character, also the C1
 control U+009B. It keeps the tab and the line break. So a session
 cannot change your terminal.
 
+In the stderr of the container and in a record of `ends`, riff also
+puts `[secret]` in place of each secret. An escape sequence before a
+secret or inside it does not stop this: riff finds the secret in the
+text before it removes the sequence.
+
 ```mermaid
 flowchart LR
     S["the session: a line with<br/>ESC [2J, ESC ]0;title or U+009B"] --> D["riff run, riff daemon events<br/>or riff session why"]

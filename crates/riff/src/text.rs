@@ -4360,11 +4360,87 @@ const INDENT: &str = "       ";
 /// assert_eq!(riff::text::safe("\x1b[31mred\x1b[0m\x08\r\n\tok\u{9b}"), "red\n\tok");
 /// ```
 pub fn safe(text: &str) -> String {
-    anstream::adapter::strip_str(text)
-        .to_string()
-        .chars()
-        .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
+    kept(text)
+        .into_iter()
+        .filter_map(|(c, kept)| kept.then_some(c))
         .collect()
+}
+
+/// Each character of `text`, and true when [`safe`] keeps it: the map
+/// from the text that shows back to the raw text.
+///
+/// ```
+/// let kept = riff::text::kept("a\x1b[2Jb\u{9b}\n");
+/// let shown: Vec<bool> = kept.iter().map(|(_, kept)| *kept).collect();
+/// assert_eq!(shown, [true, false, false, false, false, true, false, true]);
+/// ```
+pub fn kept(text: &str) -> Vec<(char, bool)> {
+    let mut printable = vec![false; text.len()];
+    for part in anstream::adapter::strip_str(text) {
+        let at = part.as_ptr() as usize - text.as_ptr() as usize;
+        printable[at..at + part.len()].fill(true);
+    }
+    text.char_indices()
+        .map(|(at, c)| {
+            let kept = printable[at] && (!c.is_control() || c == '\n' || c == '\t');
+            (c, kept)
+        })
+        .collect()
+}
+
+/// A text with no escape sequence and no control character but the tab
+/// and the line break ([`safe`]): safe to print on a terminal, also after
+/// a read from the wire. A line of the output of a container is one
+/// (01M7FTC1DFAYKQAB6EPDCJ18ZA).
+///
+/// ```
+/// use riff::text::Safe;
+///
+/// let line = Safe::new("a\x1b]0;owned\x07b\x1b[2J\tc\u{9b}");
+/// assert_eq!(line.as_str(), "ab\tc");
+/// let read: Safe = serde_json::from_str(r#""a\u001b[2Jb\u009b""#)?;
+/// assert_eq!(read.to_string(), "ab");
+/// assert_eq!(serde_json::to_string(&read)?, r#""ab""#);
+/// # Ok::<(), serde_json::Error>(())
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(from = "String", into = "String")]
+pub struct Safe(String);
+
+impl Safe {
+    /// `text` with no escape sequence and no control character.
+    pub fn new(text: &str) -> Self {
+        Self(safe(text))
+    }
+
+    /// The text.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for Safe {
+    fn from(text: String) -> Self {
+        Self::new(&text)
+    }
+}
+
+impl From<&str> for Safe {
+    fn from(text: &str) -> Self {
+        Self::new(text)
+    }
+}
+
+impl From<Safe> for String {
+    fn from(text: Safe) -> Self {
+        text.0
+    }
+}
+
+impl std::fmt::Display for Safe {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
 }
 
 /// The most characters of a text of the forge that riff keeps
