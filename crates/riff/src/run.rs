@@ -1106,32 +1106,43 @@ impl Scrub {
             .collect()
     }
 
-    /// `text` with no end that is the start of a secret: the kept part
-    /// of a line that riff cut ([`crate::output_lines`]). [`Scrub::clean`]
-    /// takes out each whole secret.
+    /// The kept part `text` of a cut line ([`crate::output_lines`]), with
+    /// no secret: [`Scrub::clean`] takes out each whole secret first.
+    /// Then each end of the text that is the start of a secret goes,
+    /// until no such end is left.
     ///
     /// ```
     /// use riff::run::Scrub;
     ///
     /// let scrub = Scrub::new(["sk-ant-oat01-secret1".to_owned()]);
-    /// assert_eq!(scrub.cut_end("a note sk-ant-oat01-sec"), "a note ");
-    /// assert_eq!(scrub.cut_end("a note sk-ant-oat01-secret1"), "a note sk-ant-oat01-secret1");
-    /// assert_eq!(scrub.cut_end("a note"), "a note");
+    /// assert_eq!(scrub.clean_cut("a note sk-ant-oat01-sec"), "a note ");
+    /// assert_eq!(scrub.clean_cut("a note sk-ant-oat01-secret1"), "a note [secret]");
+    /// assert_eq!(scrub.clean_cut("a note"), "a note");
+    /// // The secret ends with its first byte: it goes whole.
+    /// let scrub = Scrub::new(["sk-ant-oat01-secrets".to_owned()]);
+    /// assert_eq!(scrub.clean_cut("x sk-ant-oat01-secrets"), "x [secret]");
+    /// // The end of one secret goes, and then the start of the other.
+    /// let scrub = Scrub::new(["sk-ant-oat01-ABCDEF".into(), "zzq_TOKEN".into()]);
+    /// assert_eq!(scrub.clean_cut("x sk-ant-oat01-ABCzz"), "x ");
     /// ```
-    pub fn cut_end<'a>(&self, text: &'a str) -> &'a str {
-        let mut end = text.len();
-        for secret in &self.secrets {
-            let (kept, secret) = (&text.as_bytes()[..end], secret.as_bytes());
-            // The first byte of a secret starts a character, so `end`
-            // stays at the start of one.
-            if let Some(n) = (1..secret.len())
-                .rev()
-                .find(|&n| kept.ends_with(&secret[..n]))
-            {
-                end -= n;
-            }
+    pub fn clean_cut(&self, text: &str) -> String {
+        let mut text = self.clean(text).into_owned();
+        while let Some(n) = self
+            .secrets
+            .iter()
+            .filter_map(|secret| {
+                let secret = secret.as_bytes();
+                (1..=secret.len())
+                    .rev()
+                    .find(|&n| text.as_bytes().ends_with(&secret[..n]))
+            })
+            .max()
+        {
+            // The first byte of a secret starts a character, so the cut
+            // falls at the start of one.
+            text.truncate(text.len() - n);
         }
-        &text[..end]
+        text
     }
 }
 

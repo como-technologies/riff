@@ -121,6 +121,7 @@ pub mod order;
 pub mod output_lines;
 pub mod permissions;
 pub mod platform;
+pub mod socket_lines;
 pub mod tools;
 
 #[cfg(target_os = "linux")]

@@ -6784,7 +6784,13 @@ of this part when they merge.
   stderr of each container in lines of at most 64 KiB. Of a longer line,
   it keeps the first 64 KiB, with no start of a secret at its end, and
   adds the mark `[riff cut the rest of this line]`. The rest of the line
-  goes. Each byte that is not UTF-8 becomes U+FFFD.
+  goes. Each sequence of bytes that is not UTF-8 becomes the
+  replacement character `�`, and the line stays at most 64 KiB.
+- **01M7GEMCQQQT6TN8ABFGWRQBWR** The daemon reads each line on the
+  socket of a session with a limit of 1 MiB. A longer line ends the
+  connection with an error that names the session. The daemon writes the
+  error into its log, and sends it on the connection, apart from a
+  connection of the riff tools.
 
 ### riff relay
 
@@ -6851,6 +6857,12 @@ of this part when they merge.
   stdin, and cannot read its arguments, it prints one line on stderr and
   exits with 0. The Claude folder of an earlier start gets the new
   command in the place of the hook of the older riff.
+- **01M7GEMCTB9Y426AW3TDA1E9HX** The relay sends each event of `claude`
+  in a line of at most 1 MiB on the socket of the session. In a longer
+  event, each string of more than 4 KiB keeps its first 4 KiB, with no
+  start of a secret at its end, and the mark `[riff cut the rest of this
+  text]`. An event that is still too long, or that is no JSON, keeps
+  only its type.
 
 ### The waves of the daemon
 

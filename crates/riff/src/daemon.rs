@@ -2074,6 +2074,32 @@ impl Out {
     }
 }
 
+/// The lines of one connection on the socket of a session: each of
+/// at most [`crate::socket_lines::LINE_MAX`] bytes
+/// (01M7GEMCQQQT6TN8ABFGWRQBWR).
+type SessionLines = Lines<BufReader<crate::socket_lines::Limited<OwnedReadHalf>>>;
+
+/// The value of the read `read` of the socket of a session. A fault of
+/// the read, as a line of more than [`crate::socket_lines::LINE_MAX`]
+/// bytes, ends the connection: it says the fault on `out`, and gives
+/// `None`.
+fn ends_at_fault<T>(out: &Out, read: std::io::Result<T>) -> Option<T> {
+    read.map_err(|e| {
+        out.say(Say::Failed {
+            error: e.to_string(),
+        });
+    })
+    .ok()
+}
+
+/// Reads each line of `lines` to their end: the relay left. It gives the
+/// fault of the read, as a line of more than
+/// [`crate::socket_lines::LINE_MAX`] bytes.
+async fn left(lines: &mut SessionLines) -> std::io::Result<()> {
+    while lines.next_line().await?.is_some() {}
+    Ok(())
+}
+
 /// The [`Out`] of the write half `write`, and its task. The task ends
 /// when each [`Out`] is gone and each line is written.
 fn writer(mut write: OwnedWriteHalf) -> (Out, JoinHandle<()>) {
@@ -2472,7 +2498,7 @@ impl Owned {
         &self,
         protocol: u32,
         (inputs, closed, held): (u64, bool, bool),
-        mut lines: Lines<BufReader<OwnedReadHalf>>,
+        mut lines: SessionLines,
         write: OwnedWriteHalf,
     ) {
         let (out, written) = writer(write);
@@ -2524,7 +2550,7 @@ impl Owned {
                 eprintln!("riff daemon: {e:#}");
             }
         }
-        while let Ok(Some(line)) = lines.next_line().await {
+        while let Some(Some(line)) = ends_at_fault(&out, lines.next_line().await) {
             // A line of a newer relay that this daemon does not know:
             // skip it.
             match serde_json::from_str::<Up>(&line) {
@@ -5801,8 +5827,8 @@ impl<R: Runtime + 'static> Daemon<R> {
             }
         };
         // The output of the container: the notes of the relay and the
-        // stderr of claude, in lines of at most 64 KiB
-        // (01M7G7HJH5MHGRNYP2J9QG8SCQ).
+        // stderr of claude, in lines of at most output_lines::LINE_MAX
+        // bytes (01M7G7HJH5MHGRNYP2J9QG8SCQ).
         for output in [running.events, running.errors] {
             let (scrub, owned) = (scrub.clone(), owned.clone());
             tokio::spawn(async move {
@@ -6130,14 +6156,20 @@ impl<R: Runtime + 'static> Daemon<R> {
         }))
     }
 
-    /// Answers one connection on the socket of the session `owned`.
+    /// Answers one connection on the socket of the session `owned`. It
+    /// reads lines of at most [`crate::socket_lines::LINE_MAX`] bytes
+    /// (1 MiB): a longer line ends the connection with an error that
+    /// names the session (01M7GEMCQQQT6TN8ABFGWRQBWR).
     async fn answer_session(self: Arc<Self>, conn: UnixStream, owned: Arc<Owned>) {
         let (read, write) = conn.into_split();
-        let mut lines = BufReader::new(read).lines();
-        let Ok(Some(first)) = lines.next_line().await else {
-            return;
+        let mut lines =
+            BufReader::new(crate::socket_lines::Limited::new(read, &owned.name)).lines();
+        let ask = match lines.next_line().await {
+            Ok(Some(first)) => session_hello(&first),
+            Ok(None) => return,
+            Err(e) => Err(e.to_string()),
         };
-        match session_hello(&first) {
+        match ask {
             Ok(SessionAsk::Relay {
                 protocol,
                 inputs,
@@ -6237,13 +6269,14 @@ impl<R: Runtime + 'static> Daemon<R> {
                 let record = owned.lock().record.clone();
                 let wake = self.world.wake(&record);
                 // The wait ends when the relay leaves.
-                let gone = async { while let Ok(Some(_)) = lines.next_line().await {} };
                 tokio::select! {
                     woke = wake => out.say(match woke {
                         Ok(text) => Say::Line { text },
                         Err(e) => Say::Failed { error: format!("{e:#}") },
                     }),
-                    () = gone => {}
+                    read = left(&mut lines) => {
+                        ends_at_fault(&out, read);
+                    }
                 }
                 drop(out);
                 let _ = written.await;
@@ -6255,13 +6288,16 @@ impl<R: Runtime + 'static> Daemon<R> {
                 let watch = self.world.wakes(&record, to);
                 tokio::pin!(watch);
                 // The wait ends when the relay leaves.
-                let gone = async { while let Ok(Some(_)) = lines.next_line().await {} };
+                let gone = left(&mut lines);
                 tokio::pin!(gone);
                 let mut seen = BTreeSet::new();
                 loop {
                     tokio::select! {
                         () = &mut watch => break,
-                        () = &mut gone => break,
+                        read = &mut gone => {
+                            ends_at_fault(&out, read);
+                            break;
+                        }
                         wake = wakes.recv() => match wake {
                             Some(wake) if seen.insert((wake.thread.to_string(), wake.seq)) => {
                                 out.say(Say::Line { text: text::wake_line(&wake) });
@@ -6283,7 +6319,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                     name: record.name,
                 };
                 out.say(who.clone());
-                while let Ok(Some(line)) = lines.next_line().await {
+                while let Some(Some(line)) = ends_at_fault(&out, lines.next_line().await) {
                     out.say(match session_hello(&line) {
                         Ok(SessionAsk::Hello { .. }) => who.clone(),
                         Ok(_) => Say::Failed {
@@ -6583,7 +6619,7 @@ impl<R: Runtime + 'static> Daemon<R> {
         &self,
         owned: &Owned,
         client: Option<Value>,
-        lines: Lines<BufReader<OwnedReadHalf>>,
+        lines: SessionLines,
         write: OwnedWriteHalf,
     ) {
         use rmcp::ServiceExt;
@@ -8180,6 +8216,76 @@ mod tests {
         }
         assert_eq!(lines, [format!("{a} {}", text::LINE_CUT), "next".into()]);
         relay.exit(1, 0).await;
+        let (_, end) = to_the_end(&mut client).await;
+        assert!(matches!(end, Some(Say::Ended(_))), "{end:?}");
+    }
+
+    /// Sends a line of 100 MiB with no line break on the connection of
+    /// `relay`: the daemon says `failed`, and ends the connection before
+    /// the end of the line. It gives each line that the daemon said
+    /// before.
+    async fn too_long(relay: Relay, failed: &Say) -> Vec<Say> {
+        let Relay {
+            mut lines,
+            mut write,
+        } = relay;
+        let sent = tokio::spawn(async move {
+            let part = vec![b'a'; 1024 * 1024];
+            for _ in 0..100 {
+                if write.write_all(&part).await.is_err() {
+                    return false;
+                }
+            }
+            true
+        });
+        let mut said = Vec::new();
+        loop {
+            let line = lines.next_line().await.unwrap().unwrap();
+            match serde_json::from_str(&line).unwrap() {
+                say if &say == failed => break,
+                say => said.push(say),
+            }
+        }
+        assert!(!matches!(lines.next_line().await, Ok(Some(_))));
+        assert!(!sent.await.unwrap(), "the daemon took the whole line");
+        said
+    }
+
+    #[tokio::test]
+    async fn a_socket_line_of_100_mib_ends_the_connection_with_an_error_that_names_the_session() {
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let (mut client, name) = here
+            .started(here.start("riff-issue-12-1a2b3c4d", "issue-12"))
+            .await;
+        let dir = session_dir(&here.dir, &name);
+        let failed = Say::Failed {
+            error: text::socket_line_too_long(&name, crate::socket_lines::LINE_MAX),
+        };
+        // As the first line, and after a hello.
+        let conn = connect_in(&dir, SOCKET).await.unwrap();
+        let (read, write) = conn.into_split();
+        let first = Relay {
+            lines: BufReader::new(read).lines(),
+            write,
+        };
+        assert_eq!(too_long(first, &failed).await, []);
+        let conn = connect_in(&dir, SOCKET).await.unwrap();
+        let (read, write) = conn.into_split();
+        let mut hello = Relay {
+            lines: BufReader::new(read).lines(),
+            write,
+        };
+        hello.send(&SessionAsk::Hello { protocol: PROTOCOL }).await;
+        let said = too_long(hello, &failed).await;
+        assert!(matches!(said[..], [Say::Session { .. }]), "{said:?}");
+        // The relay: the session goes on, and the relay connects again.
+        let (relay, _) = Relay::connect(&dir, 0, false).await;
+        let said = too_long(relay, &failed).await;
+        assert!(matches!(said[..], [Say::Input { .. }]), "{said:?}");
+        let (mut relay, events) = Relay::connect(&dir, 1, false).await;
+        assert_eq!(events, 0);
+        relay.event(1, r#"{"type":"system"}"#).await;
+        relay.exit(2, 0).await;
         let (_, end) = to_the_end(&mut client).await;
         assert!(matches!(end, Some(Say::Ended(_))), "{end:?}");
     }

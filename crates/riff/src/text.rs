@@ -34,6 +34,29 @@ it, ask about it, or say no.";
 /// [`crate::output_lines::LINE_MAX`] bytes (01M7G7HJH5MHGRNYP2J9QG8SCQ).
 pub const LINE_CUT: &str = " [riff cut the rest of this line]";
 
+/// The end of a string of an event of `claude` that the relay cut, so
+/// that the event goes on the socket of the session
+/// (01M7GEMCTB9Y426AW3TDA1E9HX).
+pub const TEXT_CUT: &str = " [riff cut the rest of this text]";
+
+/// The error of a line of more than `max` bytes on the socket of the
+/// session `name` (01M7GEMCQQQT6TN8ABFGWRQBWR).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::socket_line_too_long("riff-issue-12-1a2b3c4d", 1024 * 1024),
+///     "The session riff-issue-12-1a2b3c4d sent a line of more than 1 MiB on its socket. \
+///      The riff daemon ends the connection."
+/// );
+/// ```
+pub fn socket_line_too_long(name: &str, max: usize) -> String {
+    format!(
+        "The session {name} sent a line of more than {} MiB on its socket. \
+         The riff daemon ends the connection.",
+        max / (1024 * 1024)
+    )
+}
+
 /// The head of the part of a read before the pages: each unread message
 /// after a page that woke the reader (01M588J4XNV1TXEPMGTKRVY9VK).
 pub const WOKEN_HEAD: &str = "Messages to you after this page (the watch does not wake for them \

@@ -48,11 +48,15 @@
 //! # The protocol
 //!
 //! JSON, one message on each line, on the socket of the session
-//! (01M4ZDTVVV56X964S28GS6K2Z2). The relay opens each connection with
-//! [`SessionAsk::Relay`]: its version of the protocol, the number of
-//! inputs that it gave `claude`, and whether it closed the stdin of
-//! `claude`. The daemon answers [`Say::Resume`] with the number of
-//! events that it has. Then:
+//! (01M4ZDTVVV56X964S28GS6K2Z2). A line has at most
+//! [`socket_lines::LINE_MAX`] bytes (1 MiB): the daemon ends a connection
+//! with a longer line ([`crate::socket_lines`]). So the relay cuts the
+//! long strings of an event that is too long ([`Up::event`]).
+//!
+//! The relay opens each connection with [`SessionAsk::Relay`]: its
+//! version of the protocol, the number of inputs that it gave `claude`,
+//! and whether it closed the stdin of `claude`. The daemon answers
+//! [`Say::Resume`] with the number of events that it has. Then:
 //!
 //! | From | Line | Means |
 //! |---|---|---|
@@ -197,6 +201,7 @@ use tokio::time::Instant;
 
 use crate::daemon::{self, PROTOCOL, Say, SessionAsk};
 use crate::run::Scrub;
+use crate::socket_lines;
 use crate::text;
 
 /// The time between two tries to reach the daemon.
@@ -267,6 +272,89 @@ impl Up {
             Up::Event { seq, .. } | Up::Exit { seq, .. } => *seq,
             Up::Held => 0,
         }
+    }
+
+    /// The event `line` of `claude` with the sequence number `seq`, in a
+    /// line of at most [`socket_lines::LINE_MAX`] bytes on the socket
+    /// (01M7GEMCTB9Y426AW3TDA1E9HX). In a longer event, each string of
+    /// more than [`STRING_KEEP`] bytes keeps its first bytes, with no
+    /// secret of `scrub` and no start of one at its end, and ends with
+    /// [`text::TEXT_CUT`]. An event that is still too long, or that is no
+    /// JSON, keeps only its type.
+    ///
+    /// ```
+    /// use riff::run::Scrub;
+    /// use riff::session_relay::{STRING_KEEP, Up};
+    /// use riff::socket_lines::LINE_MAX;
+    /// use riff::text::TEXT_CUT;
+    /// use serde_json::{Value, json};
+    ///
+    /// let scrub = Scrub::default();
+    /// let event = |line: String| match Up::event(7, line, &scrub) {
+    ///     Up::Event { seq: 7, line } => line,
+    ///     other => panic!("{other:?}"),
+    /// };
+    /// let short = r#"{"type":"assistant","text":"hi"}"#;
+    /// assert_eq!(event(short.into()), short);
+    /// // An image: its data keeps its start.
+    /// let data = "a".repeat(LINE_MAX);
+    /// let long = json!({"type": "user", "data": data, "id": "t1"});
+    /// let shown: Value = serde_json::from_str(&event(long.to_string())).unwrap();
+    /// let cut = format!("{}{TEXT_CUT}", &data[..STRING_KEEP]);
+    /// assert_eq!(shown, json!({"type": "user", "data": cut, "id": "t1"}));
+    /// // Many short strings, and no JSON: only the type stays.
+    /// let many = json!({"type": "user", "parts": vec!["a".repeat(100); LINE_MAX / 100]});
+    /// assert_eq!(event(many.to_string()), r#"{"type":"user"}"#);
+    /// assert_eq!(event("x".repeat(LINE_MAX + 1)), r#"{"type":null}"#);
+    /// ```
+    pub fn event(seq: u64, line: String, scrub: &Scrub) -> Self {
+        if fits(seq, &line) {
+            return Up::Event { seq, line };
+        }
+        let mut event = serde_json::from_str(&line).unwrap_or(json!({ "type": null }));
+        cut_strings(&mut event, scrub);
+        // The read of the JSON takes out its escapes, so the scrub runs
+        // again.
+        let clean = |event: &Value| scrub.clean(&event.to_string()).into_owned();
+        let mut line = clean(&event);
+        if !fits(seq, &line) {
+            line = clean(&json!({ "type": event["type"] }));
+        }
+        Up::Event { seq, line }
+    }
+}
+
+/// The most bytes that the relay keeps of one string of an event that is
+/// too long for the socket ([`Up::event`]): 4 KiB.
+pub const STRING_KEEP: usize = 4 * 1024;
+
+/// True when the event `line` with the number `seq` goes in a line of at
+/// most [`socket_lines::LINE_MAX`] bytes on the socket.
+fn fits(seq: u64, line: &str) -> bool {
+    // JSON writes a byte in 6 bytes at most (`\u001f`), and the rest of
+    // the line is short.
+    if line.len() * 6 < socket_lines::LINE_MAX / 2 {
+        return true;
+    }
+    let up = Up::Event {
+        seq,
+        line: line.to_owned(),
+    };
+    serde_json::to_string(&up).is_ok_and(|sent| sent.len() <= socket_lines::LINE_MAX)
+}
+
+/// `value` with each string of more than [`STRING_KEEP`] bytes cut: its
+/// first bytes with no secret of `scrub` ([`Scrub::clean_cut`]), and
+/// [`text::TEXT_CUT`].
+fn cut_strings(value: &mut Value, scrub: &Scrub) {
+    match value {
+        Value::String(text) if text.len() > STRING_KEEP => {
+            let kept = &text[..text.floor_char_boundary(STRING_KEEP)];
+            *text = scrub.clean_cut(kept) + text::TEXT_CUT;
+        }
+        Value::Array(values) => values.iter_mut().for_each(|v| cut_strings(v, scrub)),
+        Value::Object(map) => map.values_mut().for_each(|v| cut_strings(v, scrub)),
+        _ => {}
     }
 }
 
@@ -496,8 +584,9 @@ struct Link {
 }
 
 /// Sends each line of the stdout of one `claude` to `ups` as an event,
-/// with no secret of `scrub`, from the sequence number `first` on. Then
-/// it sends the exit, with the next number.
+/// with no secret of `scrub`, from the sequence number `first` on. Each
+/// event goes in a line of at most [`socket_lines::LINE_MAX`] bytes
+/// ([`Up::event`]). Then it sends the exit, with the next number.
 fn read_claude(
     stdout: Box<dyn AsyncRead + Send + Unpin>,
     end: Pin<Box<dyn Future<Output = Option<i32>> + Send>>,
@@ -510,7 +599,7 @@ fn read_claude(
         let mut seq = first;
         while let Ok(Some(line)) = lines.next_line().await {
             let line = scrub.clean(&line).into_owned();
-            if ups.send(Up::Event { seq, line }).is_err() {
+            if ups.send(Up::event(seq, line, &scrub)).is_err() {
                 return;
             }
             seq += 1;
@@ -1667,6 +1756,59 @@ mod tests {
         );
         say(&mut write, &Say::Ack { seq: 2 }).await;
         assert_eq!(relay.await.unwrap(), Some(3));
+    }
+
+    #[tokio::test]
+    async fn the_relay_sends_a_long_event_in_a_line_of_the_limit_with_no_start_of_a_secret() {
+        let daemon = Daemon::new();
+        let (mut claude, child) = claude();
+        let (notes, _noted) = mpsc::unbounded_channel();
+        let socket = daemon.socket.clone();
+        let token = "sk-ant-oat01-secret1";
+        let scrub = Scrub::new([token.to_owned()]);
+        let relay =
+            tokio::spawn(
+                async move { relay(child, no_again(), &socket, scrub, WAIT, notes).await },
+            );
+        let (_, mut lines, mut write) = daemon.accept().await;
+        say(&mut write, &Say::Resume { events: 0 }).await;
+        // An image of 2 MiB, a token at the cut of one string, and the
+        // start of a token at the cut of the other.
+        let start = "a".repeat(STRING_KEEP - 4);
+        let rest = "a".repeat(2 * 1024 * 1024);
+        let event = json!({
+            "type": "user",
+            "data": format!("{start}{token}{rest}"),
+            "more": format!("{start}{}{rest}", &token[..10]),
+            "id": "t1",
+        });
+        claude.print(&event.to_string()).await;
+        let line = lines.next_line().await.unwrap().unwrap();
+        assert!(line.len() <= socket_lines::LINE_MAX, "{}", line.len());
+        let Ok(Up::Event { seq: 1, line }) = serde_json::from_str(&line) else {
+            panic!("{line}")
+        };
+        assert!(!line.contains("sk-a"), "{line}");
+        let event: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(
+            event,
+            json!({
+                "type": "user",
+                "data": format!("{start}[sec{}", text::TEXT_CUT),
+                "more": format!("{start}{}", text::TEXT_CUT),
+                "id": "t1",
+            })
+        );
+        claude.end(0).await;
+        assert_eq!(
+            up(&mut lines).await,
+            Up::Exit {
+                seq: 2,
+                code: Some(0)
+            }
+        );
+        say(&mut write, &Say::Ack { seq: 2 }).await;
+        assert_eq!(relay.await.unwrap(), Some(0));
     }
 
     #[tokio::test(start_paused = true)]

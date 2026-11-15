@@ -103,6 +103,7 @@ mod setup;
 mod signed;
 mod signed_server;
 mod smoke;
+mod socket_lines;
 mod start_a_riff;
 mod states;
 mod streams;
