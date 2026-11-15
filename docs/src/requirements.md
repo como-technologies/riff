@@ -6871,16 +6871,24 @@ of this part when they merge.
   01M5QVARWYFHTQV5THNRB09SZA, 01M4ZKX0NXN7E33VC3PSFGSPDT,
   01M4ZV3B6Q0Y6AX0KSKC55S31R, 01M501P9Q51AYN9GBPWKVHA229 and
   01M4Z81ARSTAK8HR96S084SDFD: the clone of the host.
-- **01M7FDN1Y2EQC56748V6P366NT** The container of a session sees three
-  parts of the git dir of the main clone, at the same path with no
-  write: objects/, refs/, and packed-refs when the main clone has it. It
-  sees no config, no hook, no log and no worktree of the main clone. The
-  same rule holds for riff run, a wave and the lead. Before its fetch
-  from the main clone, the relay makes the git dir riff-main in the .git
-  of the new clone, with its own HEAD and a link to each of those parts,
-  and fetches the branches of origin from it. Then that git dir goes.
-  This supersedes 01M7EY3P0Q8TQF5QRTRDWCYCTQ in part: the bind of the
-  whole git dir of the main clone.
+- **01M7FMJJB0TZM8875T7GQZAJEA** Of the git dir of the main clone, the
+  container of a session sees only objects/, at the same path with no
+  write: no config, no ref, no hook, no log and no worktree. The same
+  rule holds for riff run, a wave and the lead. Before each start of a
+  container, the host writes the branches of origin of the main clone,
+  with one git for-each-ref, in the new file origin-refs of the folder
+  of the session or of the lead, in the form of packed-refs and with no
+  symbolic ref. No container can write that folder. The host writes the
+  file through the guard of 01M7FE5FYFAR92PM3EJJ211VM2: a new file with
+  create_new, then a rename, with no follow of a link. A link or a
+  folder at its path is an error, and the host writes nothing through
+  it. A plain file of an earlier start goes. The container sees the file
+  at the same path with no write. Before its fetch from the main clone,
+  the relay makes the git dir riff-main in the .git of the new clone,
+  with its own HEAD, an empty refs/, a link to objects/ and a link to
+  that file as its packed-refs, and fetches the branches of origin from
+  it. Then that git dir goes. This supersedes 01M7FDN1Y2EQC56748V6P366NT
+  in full.
 
 ### The waves of the daemon
 
@@ -8718,15 +8726,14 @@ of this part when they merge.
   binds that folder out/ with write for such a session only. With
   no such commit, or with no branch, it writes no bundle. When the
   bundle fails, the exit is 1. riff run takes the bundle: it opens
-  the file with no link, copies it to BRANCH.bundle in the folder of
-  the session, which no session sees, and runs git bundle verify on
-  the copy in the main clone. It runs no git on the file in out/. Then
-  it names the copy and the commands that push the branch from a clone
-  of the person, or says that the session made no commit. When the
-  file is no git bundle, riff run says why, and ends with 1. This
-  supersedes 01M6Z87JY83V3KR72E2AG8V8KG and 01M4Z60B7QDWEFQ96H448RE9N2
-  in part: the clone and the command to push the branch, and the binds
-  with write.
+  the file with no link, and copies it to BRANCH.bundle in the folder
+  of the session, which no session sees. It runs no git on the file in
+  out/. Then it names the copy and the commands that push the branch
+  from a clone of the person, or says that the session made no commit.
+  When the file is no git bundle, riff run says why, and ends with 1.
+  This supersedes 01M6Z87JY83V3KR72E2AG8V8KG and
+  01M4Z60B7QDWEFQ96H448RE9N2 in part: the clone and the command to push
+  the branch, and the binds with write.
 - **01M7EY3WM6XYQR3CXNMM6MFA5C** riff run names the default branch in
   the start text from origin/HEAD of the main clone. This supersedes
   01M5QYBWPAJ219BE8QKVKG1TWW in part: the clone.
@@ -8752,6 +8759,14 @@ of this part when they merge.
   It refuses a larger file, also one that grows during the copy, and the
   copy goes. This supersedes 01M7EY3WHQQP9330CZ736HK0FJ in part: the
   check of the first line of the copy.
+- **01M7FMJJDJN9Q5ZPA7ECTGK1MD** riff run checks the copy of the bundle
+  of a session with no GitHub with git bundle unbundle in the main
+  clone, into a new folder of objects beside the copy, with the objects
+  of the main clone as its alternates. git checks the refs and the
+  prerequisites of the bundle, and each object of its pack: a pack that
+  is cut or zeroed is refused. The main clone gets no object, and the
+  folder of objects goes. This supersedes 01M7EY3WHQQP9330CZ736HK0FJ in
+  part: git bundle verify.
 - **01M7GCESN7RY3GW6ZPP9PBM87D** A job of the daemon keeps only the
   folder of its own session: each folder of its item that was not there
   at the start of the job, and the folder of the session that a new

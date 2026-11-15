@@ -2019,7 +2019,7 @@ flowchart LR
     subgraph M["your machine"]
         R["riff run issue-12"] -- "run the session" --> D["riff daemon"]
         D -- "podman run" --> C
-        L[("the main clone: .git, no write")] --- C
+        L[("the objects of the main clone, origin-refs: no write")] --- C
         subgraph C["container riff-issue-12-ID8"]
             Y["riff relay: the clone, a volume"] --> K["claude -p"]
         end
@@ -2175,10 +2175,12 @@ The session can write the folder `out/`, so `riff run` trusts no file
 there. It opens the bundle with no link, and reads its first line: that
 of a git bundle. It copies at most 1 GiB to `worktree-issue-12.bundle`
 in the folder of the session, where no session writes. Then it runs
-`git bundle verify` on the copy in your clone. It takes the bundle also
-when the branch has an open pull request, and then it sends the verify
-request too, as for each session. Then it names the copy and the
-commands that push the branch. Run them in your clone:
+`git bundle unbundle` on the copy in your clone, into a folder of
+objects that goes after: git checks the commits that the bundle needs,
+and each object in it. Your clone gets no object. `riff run` takes the
+bundle also when the branch has an open pull request, and then it
+sends the verify request too, as for each session. Then it names the
+copy and the commands that push the branch. Run them in your clone:
 
 ```sh
 git fetch origin
@@ -2190,7 +2192,9 @@ With no bundle, the session made no commit that `origin` does not
 have, and `riff run` says so. When the relay cannot write the bundle,
 the session ends with 1. When the file in `out/` is no git bundle, for
 example a link or a `gitdir:` file, or has more than 1 GiB, `riff run`
-runs no git on it, says why, and ends with 1.
+runs no git on it, says why, and ends with 1. When git refuses the
+copy, for example a bundle that is cut, `riff run` says why, and ends
+with 1.
 
 ```mermaid
 flowchart LR
@@ -2516,10 +2520,9 @@ For a folder on another host, add `--host thelio`.
 - An empty volume for the clone of the session, on the disk: the
   session clones there, and the volume goes with the container. No
   folder of your machine with a git tree has write.
-- The objects and the refs of your main clone, `.git/objects`,
-  `.git/refs` and `.git/packed-refs`, at the same path with no write.
-  The container sees no config, no hook and no log of your clone: its
-  config can hold a token.
+- The objects of your main clone, and the list of the branches of its
+  `origin`, with no write: see
+  [Where the clone of a session lives](how-it-works.md#where-the-clone-of-a-session-lives).
 - For a session with no GitHub, the folder `out/` of the folder of the
   session, with write: the bundle of its branch goes there.
 - Your `~/.gitconfig`, with no write. No `~/.config/gh`.
@@ -5264,7 +5267,7 @@ push each change that you want to keep.
 
 ```mermaid
 flowchart TD
-    S["the container of the lead starts"] --> C["riff relay: a clone from the objects and refs of MAIN/.git,<br/>git fetch origin, on the default branch of origin"]
+    S["the container of the lead starts"] --> C["riff relay: a clone from the objects of MAIN/.git and origin-refs,<br/>git fetch origin, on the default branch of origin"]
     C --> L["claude, or claude --resume, in the new clone"]
     L -- "the container ends" --> X["the clone goes:<br/>only what the lead pushed stays"]
     O["leads/OWNER-REPO/clone of an older riff"] -- "the start of a new lead" --> R["it goes, with no git"]

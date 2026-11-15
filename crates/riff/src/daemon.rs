@@ -1075,17 +1075,22 @@ pub struct Start {
     /// in the command of the spec.
     #[serde(default)]
     pub terminal: bool,
-    /// True for a session that needs no GitHub, of `riff run
-    /// --no-github`: the daemon asks for no token
-    /// (01M6Z87JY83V3KR72E2AG8V8KG).
-    #[serde(default)]
-    pub no_github: bool,
     /// What started the lead (#2099, 01M7BNP4ZYJCCEK7ZHCJ3EX3SJ): the line of
     /// the start in the log names it, and so does the line of the lead in
     /// `riff daemon status`.
     /// `None` for a session that is not the lead.
     #[serde(default)]
     pub cause: Option<LeadCause>,
+}
+
+impl Start {
+    /// True for a session that needs no GitHub, of `riff run
+    /// --no-github`: the daemon asks for no token
+    /// (01M6Z87JY83V3KR72E2AG8V8KG). The plan of the clone in the spec is
+    /// the one place that says so ([`crate::session_clone::Plan::no_github`]).
+    pub fn no_github(&self) -> bool {
+        crate::session_clone::Plan::of_spec(&self.spec).is_some_and(|plan| plan.no_github())
+    }
 }
 
 /// A line of `riff` after [`Ask::Start`], [`Ask::Follow`] or
@@ -5610,6 +5615,7 @@ impl<R: Runtime + 'static> Daemon<R> {
         from: Option<Lines<BufReader<OwnedReadHalf>>>,
         out: &Out,
     ) -> Record {
+        let no_github = start.no_github();
         let Start {
             session,
             item,
@@ -5621,7 +5627,6 @@ impl<R: Runtime + 'static> Daemon<R> {
             server,
             me,
             terminal,
-            no_github,
             cause,
         } = start;
         let limit = self.room.limit();
@@ -7545,6 +7550,26 @@ mod tests {
         }
     }
 
+    /// `spec` with the plan of the clone at `clone` of a session of `riff
+    /// run --no-github`: the daemon asks for no token ([`Start::no_github`]).
+    fn no_github(mut spec: SessionSpec, clone: &Path) -> SessionSpec {
+        use crate::session_clone::{Checkout, Origin, Plan, REFS, VAR};
+        let plan = Plan {
+            path: clone.to_owned(),
+            origin: Origin::github("o/r").unwrap(),
+            main: "/src/r/.git".into(),
+            refs: clone.with_file_name(REFS),
+            base: "main".parse().unwrap(),
+            checkout: Checkout::Branch {
+                name: "worktree-issue-12".parse().unwrap(),
+                earlier: false,
+                no_github: true,
+            },
+        };
+        spec.env.push(Env::Value(VAR.into(), plan.to_var()));
+        spec
+    }
+
     /// A daemon on `fake` in a temp folder, with a session folder for
     /// each session.
     pub(super) struct Here {
@@ -7762,10 +7787,10 @@ mod tests {
         /// [`Here::start`], for a session that asks riff-server for its
         /// token on GitHub ([`World::github_token`]).
         pub(super) fn start_asking(&self, name: &str, item: &str) -> Start {
-            Start {
-                no_github: false,
-                ..self.start(name, item)
-            }
+            let mut start = self.start(name, item);
+            let plan = |e: &Env| matches!(e, Env::Value(n, _) if n == crate::session_clone::VAR);
+            start.spec.env.retain(|e| !plan(e));
+            start
         }
 
         pub(super) async fn stop(&mut self) {
@@ -7784,7 +7809,8 @@ mod tests {
             session: format!("{name}-session"),
             item: item.into(),
             folder,
-            spec: spec(name, &clone),
+            // No ask for a token: the tests of the token take the plan out.
+            spec: no_github(spec(name, &clone), &clone),
             start: "Do it.".into(),
             // A secret of the host, for example the token of claude.
             values: vec![(crate::claude_token::VAR.into(), "gho_secret1".into())],
@@ -7792,8 +7818,6 @@ mod tests {
             server: "http://127.0.0.1:1".into(),
             me: me(name),
             terminal: false,
-            // No ask for a token: the tests of the token set it false.
-            no_github: true,
             cause: None,
         }
     }
@@ -9572,7 +9596,6 @@ mod tests {
                 server: "http://127.0.0.1:1".into(),
                 me: me(name),
                 terminal: false,
-                no_github: true,
                 cause: None,
             };
             let record = Record {
@@ -10071,14 +10094,13 @@ mod tests {
             session: "s".into(),
             item: "issue-12".into(),
             folder: root.join("f"),
-            spec: spec("n", &root.join("clone")),
+            spec: no_github(spec("n", &root.join("clone")), &root.join("clone")),
             start: "Do it.".into(),
             values: vec![(crate::claude_token::VAR.into(), "v".into())],
             secrets: vec!["v".into()],
             server: "http://127.0.0.1:1".into(),
             me: me("n"),
             terminal: false,
-            no_github: true,
             cause: None,
         };
         let line = serde_json::to_string(&Hello {
@@ -10089,12 +10111,13 @@ mod tests {
         let Ok(Ask::Start(back)) = hello(&line) else {
             panic!("{line}")
         };
-        assert_eq!(back.spec, spec("n", &root.join("clone")));
+        let clone = root.join("clone");
+        assert_eq!(back.spec, no_github(spec("n", &clone), &clone));
         assert_eq!(
             back.values,
             [(crate::claude_token::VAR.to_owned(), "v".to_owned())]
         );
-        assert!(back.no_github);
+        assert!(back.no_github());
         assert_eq!(back.me, me("n"));
         let ended = Say::Ended(Ended {
             code: None,
@@ -10744,10 +10767,11 @@ mod tests {
                     home: "/home/mike".into(),
                     user: "mike".into(),
                     clone: record.folder.join("clone"),
-                    repo: "o/r".into(),
-                    base: "main".into(),
+                    origin: crate::session_clone::Origin::github("o/r").unwrap(),
+                    base: "main".parse().unwrap(),
                     checkout: crate::session_clone::Checkout::Default,
                     main: record.folder.join("main.git"),
+                    refs: crate::run::refs_in(&record.folder),
                     claude: record.folder.join("claude"),
                     sign_in: crate::run::ClaudeSignIn::Token,
                     gitconfig: None,
@@ -10775,7 +10799,6 @@ mod tests {
                     server: record.server.clone(),
                     me: record.me.clone(),
                     terminal: true,
-                    no_github: true,
                     cause: None,
                 })
             })
@@ -11172,9 +11195,16 @@ mod tests {
         );
 
         // The new container: `claude --resume ID` of the same conversation
-        // in the same clone, and the bind of the new riff.
+        // in the same clone, and the bind of the new riff. This daemon has
+        // no riff-server: the lead gets no token, and the fix ends its
+        // prompt.
         let spec = here.fake.spec(LEAD).unwrap();
         let session = record.live.session.as_str();
+        let prompt = format!(
+            "{} {}",
+            text::lead_again("como-technologies/riff"),
+            text::lead_no_github(text::GH_TOKEN_NONE)
+        );
         assert_eq!(
             spec.command[..5],
             [RELAY_BIN, "relay", "--terminal", "--", "claude"]
@@ -11186,7 +11216,7 @@ mod tests {
                 "--resume",
                 session,
                 "--dangerously-skip-permissions",
-                &text::lead_again("como-technologies/riff")
+                &prompt
             ]
         );
         assert!(!spec.command.iter().any(|a| a == "--session-id"));
@@ -16274,7 +16304,7 @@ mod tests {
         let here =
             Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
         let start = here.start("riff-issue-12-1a2b3c4d", "issue-12");
-        assert!(start.no_github);
+        assert!(start.no_github());
         let folder = start.folder.clone();
         let (_client, name) = here.started(start).await;
         until(|| here.fake.spec(&name).is_some()).await;

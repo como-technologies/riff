@@ -2149,6 +2149,17 @@ page [Requirements](requirements.md) holds the rules of today.
   `tell`, `status` and `blocked`. The daemon refuses each other riff
   tool with a text that says why. Superseded by
   01M4ZV3B6T2KB09WJ59F07HXET.
+- **01M7FDN1Y2EQC56748V6P366NT** The container of a session sees three
+  parts of the git dir of the main clone, at the same path with no
+  write: objects/, refs/, and packed-refs when the main clone has it. It
+  sees no config, no hook, no log and no worktree of the main clone. The
+  same rule holds for riff run, a wave and the lead. Before its fetch
+  from the main clone, the relay makes the git dir riff-main in the .git
+  of the new clone, with its own HEAD and a link to each of those parts,
+  and fetches the branches of origin from it. Then that git dir goes.
+  This supersedes 01M7EY3P0Q8TQF5QRTRDWCYCTQ in part: the bind of the
+  whole git dir of the main clone. Superseded by
+  01M7FMJJB0TZM8875T7GQZAJEA.
 
 ### The waves of the daemon
 

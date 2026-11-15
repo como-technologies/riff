@@ -297,8 +297,10 @@ exec env RIFF_SOCKET="$socket" "$relay" "$@"
 
 /// A fake `claude` in the container. It logs its arguments, its `PATH` and
 /// its `RIFF_CLONE` (to `bin/claude.clone`),
-/// takes the start text, waits while `bin/hold` is there, commits a file
-/// in its working folder when `bin/commit` is there, and prints
+/// takes the start text, waits while `bin/hold` is there, moves
+/// `origin/main` of the clone to a new commit when `bin/new-base` is
+/// there, commits a file in its working folder when `bin/commit` is
+/// there, and prints
 /// `bin/events`. When `bin/tools` is there, it first sends its lines to
 /// the riff tools, through the `riff relay mcp` of its MCP config, and
 /// logs the answers to `bin/mcp.out` until it has one for each request.
@@ -316,6 +318,12 @@ printf '%s' "${RIFF_CLONE-}" > "$dir/claude.clone"
 IFS= read -r line
 printf '%s\n' "$line" > "$dir/run.stdin"
 while [ -f "$dir/hold" ]; do sleep 0.05; done
+# With `new-base`, the default branch of origin in the clone moves to a
+# new commit that the main clone does not have: the bundle needs it.
+if [ -f "$dir/new-base" ]; then
+  git -c user.name=w -c user.email=w@w -c commit.gpgsign=false commit -q --allow-empty -m base &&
+    git update-ref refs/remotes/origin/main HEAD || exit 3
+fi
 # With `commit`, it commits a file in its working folder: the clone.
 if [ -f "$dir/commit" ]; then
   echo work > work.md && git add work.md &&
@@ -1155,19 +1163,22 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
     assert_eq!(session.len(), 36, "{session}");
     let short = &session[..8];
     assert!(folder.ends_with(format!("issue-12-{short}")), "{folder:?}");
-    let (h, c, o) = (
+    let (h, c, o, r) = (
         home.display().to_string(),
         clone.display().to_string(),
         git_dir.display().to_string(),
+        riff::run::refs_in(&folder).display().to_string(),
     );
     let claude = folder.join("claude").display().to_string();
+    let refs = riff::run::refs_in(&folder);
     let plan = riff::session_clone::Plan {
         path: clone.clone(),
-        origin: riff::session_clone::origin(REPO),
+        origin: riff::session_clone::Origin::github(REPO).unwrap(),
         main: git_dir.clone(),
-        base: "main".into(),
+        refs: refs.clone(),
+        base: "main".parse().unwrap(),
         checkout: riff::session_clone::Checkout::Branch {
-            name: "worktree-issue-12".into(),
+            name: "worktree-issue-12".parse().unwrap(),
             earlier: false,
             no_github: false,
         },
@@ -1218,14 +1229,13 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         // folder of the host. The relay clones there.
         "--mount",
         &format!("type=volume,destination={c},U=true"),
-        // 01M7FDN1Y2EQC56748V6P366NT: the objects and the refs of the main
-        // clone, with no write: no config, no hook, no log.
+        // 01M7FMJJB0TZM8875T7GQZAJEA: the objects of the main clone, and
+        // the list of the branches of its `origin` that the host wrote,
+        // with no write: no config, no ref, no hook, no log.
         "-v",
         &format!("{o}/objects:{o}/objects:ro"),
         "-v",
-        &format!("{o}/refs:{o}/refs:ro"),
-        "-v",
-        &format!("{o}/packed-refs:{o}/packed-refs:ro"),
+        &format!("{r}:{r}:ro"),
         "-v",
         &format!("{h}/.gitconfig:{h}/.gitconfig:ro"),
         "-v",
@@ -1840,9 +1850,10 @@ async fn a_session_with_no_github_clones_in_its_container_and_riff_run_takes_its
     // folder of the sessions: only a container clones there.
     let plan = riff::session_clone::Plan {
         path: folder.with_file_name("issue-13-2b3c4d5e").join("clone"),
-        origin: format!("https://github.com/{REPO}.git"),
+        origin: riff::session_clone::Origin::github(REPO).unwrap(),
         main: machine.main.join(".git"),
-        base: "main".into(),
+        refs: riff::run::refs_in(&folder),
+        base: "main".parse().unwrap(),
         checkout: riff::session_clone::Checkout::Default,
     };
     let refused = machine
@@ -1943,6 +1954,69 @@ async fn a_work_session_whose_clone_fails_starts_no_claude() {
     );
 }
 
+/// 01M7FDN9C91TDYPQSFBRHVHRAC, 01M7FMJJDJN9Q5ZPA7ECTGK1MD: the relay of a
+/// session with no GitHub writes its bundle, and `claude` ends with 0.
+/// The bundle needs a commit that the main clone does not have, so `git
+/// bundle unbundle` refuses its copy. `riff run` says why, names no
+/// copy, and ends with 1.
+#[tokio::test]
+async fn riff_run_refuses_a_bundle_that_does_not_unbundle_and_ends_with_1() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    for file in ["no-pr", "clone", "new-base", "commit"] {
+        std::fs::write(machine.bin.path().join(file), "").unwrap();
+    }
+
+    let out = machine
+        .run(None, &["run", "issue-12", "--image", IMAGE, "--no-github"])
+        .await;
+    let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
+    assert_eq!(out.status.code(), Some(1), "{stdout}\n{stderr}");
+    let folder = machine.folder("issue-12");
+    let bundle = folder.join("out/worktree-issue-12.bundle");
+    assert!(bundle.is_file(), "the relay wrote no bundle");
+    let refused = riff::text::run_bundle_refused(&bundle, "git bundle unbundle");
+    let (start, _) = refused.split_at(refused.find(": git bundle unbundle").unwrap());
+    assert!(stdout.contains(start), "{stdout}");
+    assert!(stdout.contains("prerequisite"), "{stdout}");
+    assert!(!folder.join("worktree-issue-12.bundle").exists());
+    let none = riff::text::run_pushed_nothing(None, "worktree-issue-12");
+    assert!(!stdout.contains(&none), "{stdout}");
+}
+
+/// 01M7FDN99KZE54CX17DDEP787V: the fetch of the main clone before a
+/// session of `riff run --no-github` fails: `origin/HEAD` of the main
+/// clone names a branch that `origin` does not have. `riff run` starts no
+/// container, the error names the fetch, and the item is free again.
+#[tokio::test]
+async fn a_fetch_for_no_github_that_fails_starts_no_container() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    let main = &machine.main;
+    git(
+        main,
+        &["update-ref", "refs/remotes/origin/gone", "origin/main"],
+    );
+    git(
+        main,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/gone",
+        ],
+    );
+
+    let out = machine
+        .run(None, &["run", "issue-12", "--image", IMAGE, "--no-github"])
+        .await;
+    let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
+    assert!(!out.status.success(), "{stdout}\n{stderr}");
+    assert!(stderr.contains("fetch"), "{stderr}");
+    assert!(stderr.contains("gone"), "{stderr}");
+    assert!(!machine.bin.path().join("run.args").exists());
+    machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
+}
+
 /// 01M6QCDH3VXFFEFEWJT1H2HQT0 (#1597): the calls of `gh` of `riff run` are
 /// in the tally of the daemon as the caller `run`: the milestone of the
 /// issue before the claim, and the pull request after the session. No call
@@ -1994,7 +2068,7 @@ async fn riff_run_goes_on_from_the_branch_of_an_earlier_session() {
     let args: Vec<String> = machine.read("run.args").lines().map(String::from).collect();
     let plan = lead_plan(&args);
     let branch = riff::session_clone::Checkout::Branch {
-        name: "worktree-issue-12".into(),
+        name: "worktree-issue-12".parse().unwrap(),
         earlier: true,
         no_github: false,
     };
@@ -3511,21 +3585,15 @@ async fn the_daemon_starts_the_lead_from_the_main_clone_of_its_wave_with_the_mer
     assert!(args.iter().any(|a| a == PINNED), "{args:?}");
     assert!(!args.contains(&local), "{args:?}");
     // The lead clones in its container from the git dir of the main clone
-    // of the wave, and the container binds its objects and its refs, with
-    // no write (#2139, 01M7FDN1Y2EQC56748V6P366NT): the same rule as for
-    // each session.
+    // of the wave, and the container binds its objects and the list of
+    // its branches of `origin`, with no write (#2139,
+    // 01M7FMJJB0TZM8875T7GQZAJEA): the same rule as for each session.
     let git_dir = PathBuf::from(git(
         &machine.main,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
     ));
     let o = git_dir.display().to_string();
-    for part in riff::session_clone::MAIN_PARTS {
-        let bind = format!("{o}/{part}:{o}/{part}:ro");
-        assert!(
-            args.windows(2).any(|w| w[0] == "-v" && w[1] == bind),
-            "{bind}: {args:?}"
-        );
-    }
+    main_binds_only_objects(&args, &o);
     let whole = format!("{o}:{o}:ro");
     assert!(!args.contains(&whole), "{args:?}");
     let plan = lead_plan(&args);
@@ -3609,6 +3677,27 @@ fn lead_plan(args: &[String]) -> riff::session_clone::Plan {
         .find_map(|a| a.strip_prefix(&var))
         .unwrap_or_else(|| panic!("no plan of a clone: {args:?}"));
     riff::session_clone::Plan::of_var(plan).unwrap()
+}
+
+/// 01M7FMJJB0TZM8875T7GQZAJEA: of the git dir `git_dir` of the main
+/// clone, the arguments `args` of `podman run` bind only its objects,
+/// with no write, and the file of the list of its branches of `origin`
+/// that the host wrote, with no write. The plan names that file.
+fn main_binds_only_objects(args: &[String], git_dir: &str) {
+    let binds: Vec<&str> = args
+        .windows(2)
+        .filter(|w| w[0] == "-v")
+        .map(|w| w[1].as_str())
+        .collect();
+    let objects = format!("{git_dir}/objects:{git_dir}/objects:ro");
+    assert!(binds.contains(&objects.as_str()), "{objects}: {args:?}");
+    let of_main = binds.iter().filter(|b| b.starts_with(git_dir)).count();
+    assert_eq!(of_main, 1, "{args:?}");
+    let refs = lead_plan(args).refs.display().to_string();
+    assert!(refs.ends_with("/origin-refs"), "{refs}");
+    let bind = format!("{refs}:{refs}:ro");
+    assert!(binds.contains(&bind.as_str()), "{bind}: {args:?}");
+    assert!(Path::new(&refs).is_file(), "{refs}");
 }
 
 /// #2139, 01M7EBBVE6WYKT5JDVASFCYPQQ, 01M7E7ACTYP4RX8TCJ9XSYMMPM: the
@@ -4926,14 +5015,9 @@ async fn a_lead_starts_again_from_the_main_clone_of_the_daemon_not_from_its_alte
     ));
     let o = main.display().to_string();
     let args: Vec<String> = machine.read("run.args").lines().map(String::from).collect();
-    // The objects and the refs of the main clone (01M7FDN1Y2EQC56748V6P366NT).
-    for part in riff::session_clone::MAIN_PARTS {
-        let bind = format!("{o}/{part}:{o}/{part}:ro");
-        assert!(
-            args.windows(2).any(|w| w[0] == "-v" && w[1] == bind),
-            "{bind}: {args:?}"
-        );
-    }
+    // The objects of the main clone and the list of its branches of
+    // `origin` (01M7FMJJB0TZM8875T7GQZAJEA).
+    main_binds_only_objects(&args, &o);
     let shown = other.display().to_string();
     assert!(!args.iter().any(|a| a.contains(&shown)), "{args:?}");
     assert!(

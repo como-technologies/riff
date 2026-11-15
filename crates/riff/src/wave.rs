@@ -837,7 +837,7 @@ use crate::pr::Verdict;
 use crate::room::Slot;
 use crate::run::{self, Facts};
 use crate::runtime::Runtime;
-use crate::session_clone::Checkout;
+use crate::session_clone::{Branch, Checkout, Origin};
 use crate::session_setup::Setup;
 use crate::{
     changes, ghcalls, hooks, identity, kept, look, order, pr, project, repo_setup, rollout,
@@ -1190,12 +1190,13 @@ impl Work {
     /// build calls `look`, the look for its branch on `origin`
     /// ([`run::earlier`]), with the name of the branch. A rebase and a fix
     /// of the checks have a pull request, so their branch is on `origin`.
+    /// A pull number 0 or a commit that is no hash is an error.
     ///
     /// ```
     /// use riff::session_clone::Checkout;
     /// use riff::wave::Work;
     ///
-    /// let branch = |earlier| Checkout::Branch { name: "worktree-issue-12".into(), earlier, no_github: false };
+    /// let branch = |earlier| Checkout::Branch { name: "worktree-issue-12".parse().unwrap(), earlier, no_github: false };
     /// let build = Work::Build { issue: 12 };
     /// assert_eq!(build.checkout(|_| Ok(false))?, branch(false));
     /// assert_eq!(build.checkout(|b| Ok(b == "worktree-issue-12"))?, branch(true));
@@ -1203,25 +1204,30 @@ impl Work {
     /// let no_look = |_: &str| -> anyhow::Result<bool> { panic!("a look") };
     /// let rebase = Work::Rebase { issue: 12, pull: 40, commit: "1a2b".into() };
     /// assert_eq!(rebase.checkout(no_look)?, branch(true));
-    /// let verify = Work::Verify { issue: 12, pull: 40, commit: "1a2b".into() };
-    /// assert_eq!(verify.checkout(no_look)?, Checkout::Pull { pull: 40, commit: "1a2b".into() });
+    /// let verify = |pull, commit: &str| Work::Verify { issue: 12, pull, commit: commit.into() };
+    /// let pull = Checkout::Pull { pull: 40.try_into()?, commit: "1a2b".parse()? };
+    /// assert_eq!(verify(40, "1a2b").checkout(no_look)?, pull);
+    /// assert!(verify(0, "1a2b").checkout(no_look).is_err());
+    /// assert!(verify(40, "--x").checkout(no_look).is_err());
     /// # Ok::<(), anyhow::Error>(())
     /// ```
     pub fn checkout(&self, look: impl FnOnce(&str) -> Result<bool>) -> Result<Checkout> {
-        let branch = |issue: u64, earlier| Checkout::Branch {
-            name: branch_of(issue),
-            earlier,
-            no_github: false,
+        let branch = |issue: u64, earlier| -> Result<Checkout> {
+            Ok(Checkout::Branch {
+                name: branch_of(issue).parse()?,
+                earlier,
+                no_github: false,
+            })
         };
-        Ok(match self {
+        match self {
             Work::Verify {
                 issue: _,
                 pull,
                 commit,
-            } => Checkout::Pull {
-                pull: *pull,
-                commit: commit.clone(),
-            },
+            } => Ok(Checkout::Pull {
+                pull: (*pull).try_into()?,
+                commit: commit.parse()?,
+            }),
             Work::Build { issue } => branch(*issue, look(&branch_of(*issue))?),
             Work::Rebase {
                 issue,
@@ -1234,7 +1240,7 @@ impl Work {
                 commit: _,
                 checks: _,
             } => branch(*issue, true),
-        })
+        }
     }
 
     /// The issue.
@@ -4194,8 +4200,12 @@ impl Live {
 
     /// The steps before the start after the claim: the Claude folder, the
     /// spec with the plan of the clone, and the start text. The session
-    /// clones in its container ([`crate::session_clone`]). `base` is the
-    /// default branch of the repository.
+    /// clones in its container ([`crate::session_clone`]): the host makes
+    /// no clone, and writes only the list of the branches of `origin` of
+    /// the main clone in the folder of the session
+    /// ([`crate::session_clone::write_refs`]). `base` is the default branch
+    /// of the repository, and `sessions` the folder of the sessions
+    /// ([`run::sessions_dir`]).
     #[allow(clippy::too_many_arguments)]
     async fn prepare(
         wave: &Wave,
@@ -4206,9 +4216,10 @@ impl Live {
         frame: Option<run::Frame>,
         session: &str,
         me: &SessionUri,
+        sessions: &Path,
     ) -> Result<Start> {
         let item = work.item();
-        let folder = run::sessions_dir()?.join(format!("{item}-{}", run::short(session)));
+        let folder = sessions.join(format!("{item}-{}", run::short(session)));
         // The sweep reads the repository here, not in the clone
         // (01M7DZ42EVHAT8N5MZEV97G3DW).
         sweep::note_repo(&folder, &wave.repo)?;
@@ -4220,9 +4231,23 @@ impl Live {
             blocking(move || work.checkout(|branch| run::earlier(&main, branch))).await?
         };
         let earlier = checkout.earlier();
+        // The clone of the session starts from the list of the branches of
+        // `origin` of the main clone (01M7FMJJB0TZM8875T7GQZAJEA).
+        {
+            let (common, folder) = (common.clone(), folder.clone());
+            blocking(move || crate::session_clone::write_refs(&common, &folder)).await?;
+        }
         let facts = facts_of(
-            wave, work, pinned, host, base, checkout, session, &folder, common,
-        );
+            wave,
+            work,
+            pinned,
+            host,
+            base.parse()?,
+            checkout,
+            session,
+            &folder,
+            common,
+        )?;
         let sources = session_image::merged_sources(&wave.main)?;
         let auto = crate::permissions::Trust::of(me.place().repo(), &wave.server, &sources);
         run::claude_folder(
@@ -4301,7 +4326,6 @@ impl Live {
             server: wave.server.clone(),
             me: me.clone(),
             terminal: false,
-            no_github: false,
             cause: None,
         })
     }
@@ -4311,36 +4335,37 @@ impl Live {
 /// `folder`: the spec of its container, with the plan of its clone
 /// ([`crate::session_clone`]). `common` is the git dir of the main clone,
 /// `base` the default branch, and `checkout` what the clone checks out
-/// ([`Work::checkout`]).
+/// ([`Work::checkout`]). A repository that is no `OWNER/REPO` is an error.
 #[allow(clippy::too_many_arguments)]
 fn facts_of(
     wave: &Wave,
     work: &Work,
     pinned: &Pinned,
     host: &run::Host,
-    base: &str,
+    base: Branch,
     checkout: Checkout,
     session: &str,
     folder: &Path,
     common: PathBuf,
-) -> Facts {
+) -> Result<Facts> {
     let existing = |p: PathBuf| p.exists().then_some(p);
-    Facts {
+    Ok(Facts {
         session: session.to_owned(),
         item: work.item(),
         image: pinned.image.clone(),
         home: host.home.clone(),
         user: host.user.clone(),
         clone: run::clone_in(folder),
-        repo: wave.repo.clone(),
-        base: base.to_owned(),
+        origin: Origin::github(&wave.repo)?,
+        base,
         checkout,
         main: common,
+        refs: run::refs_in(folder),
         claude: run::claude_in(folder),
         sign_in: host.claude.sign_in(),
         gitconfig: existing(host.home.join(".gitconfig")),
         setup: pinned.setup.clone(),
-    }
+    })
 }
 
 /// The line for the start text of a build when the verify of the pull
@@ -5370,7 +5395,17 @@ impl World for Live {
             }
             self.keep_alive(api.clone(), me.clone(), &session);
             println!("{}", text::wave_claimed(&wave.repo, &item, &session));
-            match Self::prepare(wave, work, pinned, &host, &base, frame, &session, &me).await {
+            // A fault here frees the item too.
+            let prepared = match run::sessions_dir() {
+                Ok(sessions) => {
+                    Self::prepare(
+                        wave, work, pinned, &host, &base, frame, &session, &me, &sessions,
+                    )
+                    .await
+                }
+                Err(e) => Err(e),
+            };
+            match prepared {
                 Ok(start) => Ok(Some(start)),
                 Err(e) => {
                     self.end(&api, &me, &thread, &item).await;
@@ -6566,7 +6601,6 @@ mod tests {
                     server: "http://127.0.0.1:1".into(),
                     me,
                     terminal: false,
-                    no_github: false,
                     cause: None,
                 }))
             })
@@ -11854,8 +11888,7 @@ esac
     /// of the main clone has no write.
     #[test]
     fn the_start_of_a_verify_gives_the_plan_of_the_head_commit_of_the_look() {
-        use crate::runtime::Env;
-        use crate::session_clone::{Checkout, Plan, VAR};
+        use crate::session_clone::{Checkout, Origin, Plan};
 
         let wave = Wave {
             repo: "o/r".into(),
@@ -11876,17 +11909,12 @@ esac
         let session = "1a2b3c4d-0000-4000-8000-000000000000";
         let plan = |work: &Work, earlier| {
             let checkout = work.checkout(|_| Ok(earlier)).unwrap();
+            let base = "main".parse().unwrap();
+            let common = "/src/r/.git".into();
             let facts = facts_of(
-                &wave,
-                work,
-                &pinned,
-                &host,
-                "main",
-                checkout,
-                session,
-                folder,
-                "/src/r/.git".into(),
-            );
+                &wave, work, &pinned, &host, base, checkout, session, folder, common,
+            )
+            .unwrap();
             let spec = run::spec(&facts);
             for bind in &spec.binds {
                 match &bind.source {
@@ -11897,13 +11925,7 @@ esac
                     _ => assert!(!bind.target.starts_with(&facts.clone), "{bind:?}"),
                 }
             }
-            spec.env
-                .iter()
-                .find_map(|e| match e {
-                    Env::Value(name, plan) if name == VAR => Plan::of_var(plan).ok(),
-                    _ => None,
-                })
-                .unwrap()
+            Plan::of_spec(&spec).unwrap()
         };
         let verify = Work::Verify {
             issue: 12,
@@ -11914,12 +11936,13 @@ esac
             plan(&verify, true),
             Plan {
                 path: folder.join("clone"),
-                origin: "https://github.com/o/r.git".into(),
+                origin: Origin::github("o/r").unwrap(),
                 main: "/src/r/.git".into(),
-                base: "main".into(),
+                refs: folder.join("origin-refs"),
+                base: "main".parse().unwrap(),
                 checkout: Checkout::Pull {
-                    pull: 40,
-                    commit: "0123abcd".into(),
+                    pull: 40.try_into().unwrap(),
+                    commit: "0123abcd".parse().unwrap(),
                 },
             }
         );
@@ -11928,12 +11951,104 @@ esac
             assert_eq!(
                 plan(&build, earlier).checkout,
                 Checkout::Branch {
-                    name: "worktree-issue-12".into(),
+                    name: "worktree-issue-12".parse().unwrap(),
                     earlier,
                     no_github: false,
                 }
             );
         }
+    }
+
+    /// #2139, 01M7EY3P0Q8TQF5QRTRDWCYCTQ, 01M7FMJJB0TZM8875T7GQZAJEA: the
+    /// start of a session of a wave, here a rebase, makes no clone on the
+    /// host. The folder of the session gets the Claude folder, the note
+    /// of the repository and the list of the branches of `origin` of the
+    /// main clone, and no clone. The main clone gets no branch and no
+    /// worktree. The spec has the clone as an empty volume, and the plan
+    /// goes on from the branch of the pull request on `origin`.
+    #[tokio::test]
+    async fn the_start_of_a_session_of_a_wave_makes_no_clone_on_the_host() {
+        use crate::session_clone::{Checkout, Plan};
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        git_in(root, &["init", "-q", "--bare", "-b", "main", "origin.git"]);
+        let url = format!("file://{}", root.join("origin.git").display());
+        git_in(root, &["clone", "-q", "--", &url, "main"]);
+        let main = root.join("main");
+        commit_a(&main, "one");
+        git_in(&main, &["push", "-q", "origin", "HEAD:main"]);
+        git_in(&main, &["push", "-q", "origin", "HEAD:worktree-issue-12"]);
+        git_in(&main, &["fetch", "-q", "origin"]);
+        let wave = Wave {
+            repo: "o/r".into(),
+            main: main.clone(),
+            server: "http://127.0.0.1:1".into(),
+            host: "h".into(),
+        };
+        let host = run::Host {
+            home: root.join("home"),
+            user: "mike".into(),
+            claude: run::Claude::Token("t".into()),
+        };
+        let pinned = Pinned {
+            image: "img".into(),
+            setup: Setup::default(),
+        };
+        let work = Work::Rebase {
+            issue: 12,
+            pull: 40,
+            commit: "0123abcd".into(),
+        };
+        let session = "1a2b3c4d-0000-4000-8000-000000000000";
+        let me: SessionUri = format!("riff://mike@thelio/o/r?session={session}#issue-12")
+            .parse()
+            .unwrap();
+        let sessions = root.join("sessions");
+        let start = Live::prepare(
+            &wave, &work, &pinned, &host, "main", None, session, &me, &sessions,
+        )
+        .await
+        .unwrap();
+        let folder = sessions.join("issue-12-1a2b3c4d");
+        assert_eq!(start.folder, folder);
+        assert!(!run::clone_in(&folder).exists(), "a clone on the host");
+        let mut names: Vec<String> = std::fs::read_dir(&folder)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(names, ["claude", "origin-refs", sweep::REPO]);
+        let head = git_in(&main, &["rev-parse", "HEAD"]);
+        assert_eq!(
+            std::fs::read_to_string(run::refs_in(&folder)).unwrap(),
+            format!(
+                "{head} refs/remotes/origin/main\n{head} refs/remotes/origin/worktree-issue-12\n"
+            )
+        );
+        assert_eq!(git_in(&main, &["branch", "--list"]), "* main");
+        assert_eq!(git_in(&main, &["worktree", "list"]).lines().count(), 1);
+        let clone = start
+            .spec
+            .binds
+            .iter()
+            .find(|b| b.target == run::clone_in(&folder));
+        assert_eq!(
+            clone.map(|b| (&b.source, b.write)),
+            Some((&crate::runtime::Source::Empty, true))
+        );
+        let plan = Plan::of_spec(&start.spec).unwrap();
+        assert_eq!(plan.main, main.join(".git"));
+        assert_eq!(plan.refs, run::refs_in(&folder));
+        assert_eq!(
+            plan.checkout,
+            Checkout::Branch {
+                name: "worktree-issue-12".parse().unwrap(),
+                earlier: true,
+                no_github: false,
+            }
+        );
+        assert!(!start.no_github());
     }
 
     /// The git of a test of the council of a verify: a bare `origin` that

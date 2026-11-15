@@ -2454,12 +2454,13 @@ pub fn bundle_copy(folder: &Path, branch: &str) -> PathBuf {
 /// relay wrote the commits of the branch in a bundle in `out/` of the
 /// folder of the session in `sessions`, and `riff run` copied it into the
 /// folder of the session with its checks: no link, the first line of a
-/// git bundle, and `git bundle verify` (01M7EY51P291VZ9YM414Z2Z1MR). The
-/// test fetches the branch from that copy into its own clone, with the
-/// git of the person on the host, pushes it, and opens its pull request
-/// with `gh pr create`. It runs no git on a file that the session can
-/// write: the session never sees the copy. The step fails with no copy:
-/// the session made no commit on the branch, or riff refused its bundle.
+/// git bundle, and `git bundle unbundle` (01M7EY51P291VZ9YM414Z2Z1MR,
+/// 01M7FMJJDJN9Q5ZPA7ECTGK1MD). The test fetches the branch from that
+/// copy into its own clone, with the git of the person on the host,
+/// pushes it, and opens its pull request with `gh pr create`. It runs
+/// no git on a file that the session can write: the session never sees
+/// the copy. The step fails with no copy: the session made no commit on
+/// the branch, or riff refused its bundle.
 fn push_branch(sessions: &Path, issue: u64, stamp: u64, stop: &AtomicBool) -> Result<(), String> {
     let branch = branch(issue);
     let folders = session_folders(sessions, issue);

@@ -1390,13 +1390,16 @@ mod tests {
         let main = root.join("main");
         git(&main, &["commit", "-q", "--allow-empty", "-m", "one"]);
         git(&main, &["push", "-q", "origin", "HEAD:main"]);
+        let refs = root.join(crate::session_clone::REFS);
+        crate::session_clone::write_refs(&main.join(".git"), root).unwrap();
         let plan = |name: &str| crate::session_clone::Plan {
             path: root.join(name).join("clone"),
-            origin: url.clone(),
+            origin: url.parse().unwrap(),
             main: main.join(".git"),
-            base: "main".into(),
+            refs: refs.clone(),
+            base: "main".parse().unwrap(),
             checkout: crate::session_clone::Checkout::Branch {
-                name: "worktree-issue-12".into(),
+                name: "worktree-issue-12".parse().unwrap(),
                 earlier: false,
                 no_github: true,
             },
@@ -1436,11 +1439,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let plan = crate::session_clone::Plan {
             path: dir.path().join("s/clone"),
-            origin: "https://github.com/o/r.git".into(),
+            origin: crate::session_clone::Origin::github("o/r").unwrap(),
             main: dir.path().join("main/.git"),
-            base: "main".into(),
+            refs: dir.path().join("s/origin-refs"),
+            base: "main".parse().unwrap(),
             checkout: crate::session_clone::Checkout::Branch {
-                name: "worktree-issue-12".into(),
+                name: "worktree-issue-12".parse().unwrap(),
                 earlier: false,
                 no_github: true,
             },

@@ -137,10 +137,11 @@ pub fn folder_of_name(data: &Path, name: &str) -> PathBuf {
 ///     home: "/home/mike".into(),
 ///     user: "mike".into(),
 ///     clone: "/d/riff/leads/o-r/clone".into(),
-///     repo: "o/r".into(),
-///     base: "main".into(),
+///     origin: riff::session_clone::Origin::github("o/r").unwrap(),
+///     base: "main".parse().unwrap(),
 ///     checkout: riff::session_clone::Checkout::Default,
 ///     main: "/src/r/.git".into(),
+///     refs: "/d/riff/leads/o-r/origin-refs".into(),
 ///     claude: "/d/riff/leads/o-r/claude".into(),
 ///     sign_in: riff::run::ClaudeSignIn::File("/home/mike/.claude/.credentials.json".into()),
 ///     gitconfig: None,
@@ -181,10 +182,11 @@ pub fn spec(facts: &Facts, repo: &str, start: &str) -> SessionSpec {
 ///     home: "/home/mike".into(),
 ///     user: "mike".into(),
 ///     clone: "/d/riff/leads/o-r/clone".into(),
-///     repo: "o/r".into(),
-///     base: "main".into(),
+///     origin: riff::session_clone::Origin::github("o/r").unwrap(),
+///     base: "main".parse().unwrap(),
 ///     checkout: riff::session_clone::Checkout::Default,
 ///     main: "/src/r/.git".into(),
+///     refs: "/d/riff/leads/o-r/origin-refs".into(),
 ///     claude: "/d/riff/leads/o-r/claude".into(),
 ///     sign_in: riff::run::ClaudeSignIn::Token,
 ///     gitconfig: None,
@@ -1091,7 +1093,7 @@ async fn launch_new(
         session: &session,
         me: &me,
     };
-    let mut start = parts.start(spec, new.start);
+    let mut start = or_end(&api, &me, parts.start(spec, new.start)).await?;
     start.cause = Some(new.cause);
     or_end(&api, &me, ask_start(dir, start).await).await?;
     Ok(session)
@@ -1131,27 +1133,23 @@ struct Parts<'a> {
 
 impl Parts<'_> {
     /// The [`daemon::Start`] of the lead, with the spec that `spec`
-    /// makes ([`spec`], or [`spec_again`]) and the first prompt `prompt`.
-    fn start(&self, spec: fn(&Facts, &str, &str) -> SessionSpec, prompt: &str) -> daemon::Start {
+    /// makes ([`spec`], or [`spec_again`]) and the first prompt `prompt`:
+    /// the facts of [`facts`].
+    fn start(
+        &self,
+        spec: fn(&Facts, &str, &str) -> SessionSpec,
+        prompt: &str,
+    ) -> Result<daemon::Start> {
         let host = self.host;
-        let existing = |p: PathBuf| p.exists().then_some(p);
-        let facts = Facts {
-            session: self.session.to_owned(),
-            item: ITEM.into(),
-            image: self.merged.image.to_string(),
-            home: host.home.clone(),
-            user: host.user.clone(),
-            clone: run::clone_in(self.folder),
-            repo: self.repo.to_owned(),
-            base: crate::permissions::Project::of(self.common).branch,
-            checkout: crate::session_clone::Checkout::Default,
-            main: self.common.to_owned(),
-            claude: run::claude_in(self.folder),
-            sign_in: host.claude.sign_in(),
-            gitconfig: existing(host.home.join(".gitconfig")),
-            setup: self.merged.setup.clone(),
-        };
-        daemon::Start {
+        let facts = facts(
+            self.repo,
+            host,
+            self.merged,
+            self.folder,
+            self.common,
+            self.session,
+        )?;
+        Ok(daemon::Start {
             session: self.session.to_owned(),
             item: ITEM.into(),
             folder: self.folder.to_owned(),
@@ -1162,10 +1160,48 @@ impl Parts<'_> {
             server: self.server.to_owned(),
             me: self.me.clone(),
             terminal: true,
-            no_github: false,
             cause: None,
-        }
+        })
     }
+}
+
+/// The steps of the host before each start of the container of the lead
+/// of `repo`, with the session `session`, in the folder `folder` of the
+/// lead. It writes the list of the branches of `origin` of the main
+/// clone, its git dir `common`, in the folder of the lead
+/// ([`crate::session_clone::write_refs`]). It gives the facts of the
+/// spec ([`spec`], [`spec_again`]): the clone of the lead on the default
+/// branch, the branch of `origin/HEAD` of the main clone
+/// (01M7EY51EMJ6ZEGNW7H852PEGR), with the image and the setup of
+/// `merged`, and the facts of the host `host`.
+pub(crate) fn facts(
+    repo: &str,
+    host: &run::Host,
+    merged: &session_image::Merged,
+    folder: &Path,
+    common: &Path,
+    session: &str,
+) -> Result<Facts> {
+    let refs = run::refs_in(folder);
+    crate::session_clone::write_refs(common, folder)?;
+    let existing = |p: PathBuf| p.exists().then_some(p);
+    Ok(Facts {
+        session: session.to_owned(),
+        item: ITEM.into(),
+        image: merged.image.to_string(),
+        home: host.home.clone(),
+        user: host.user.clone(),
+        clone: run::clone_in(folder),
+        origin: crate::session_clone::Origin::github(repo)?,
+        base: crate::permissions::Project::of(common).branch.parse()?,
+        checkout: crate::session_clone::Checkout::Default,
+        main: common.to_owned(),
+        refs,
+        claude: run::claude_in(folder),
+        sign_in: host.claude.sign_in(),
+        gitconfig: existing(host.home.join(".gitconfig")),
+        setup: merged.setup.clone(),
+    })
 }
 
 /// The main clone of the lead of `repo` in the records of the daemon in
@@ -1270,7 +1306,7 @@ pub fn again(main: Option<&Path>, record: &daemon::Record) -> Result<daemon::Sta
         session: &record.live.session,
         me: &record.me,
     };
-    Ok(parts.start(spec_again, &text::lead_again(&repo)))
+    parts.start(spec_again, &text::lead_again(&repo))
 }
 
 /// What the daemon in the folder `dir` does for `riff lead move`
@@ -1842,10 +1878,11 @@ mod tests {
             home: home.to_owned(),
             user: "mike".into(),
             clone: home.join("clone"),
-            repo: "o/r".into(),
-            base: "main".into(),
+            origin: crate::session_clone::Origin::github("o/r").unwrap(),
+            base: "main".parse().unwrap(),
             checkout: crate::session_clone::Checkout::Default,
             main: home.join("main.git"),
+            refs: home.join("origin-refs"),
             claude: home.join("lead-claude"),
             sign_in: run::ClaudeSignIn::File(file.clone()),
             gitconfig: None,
@@ -1992,10 +2029,11 @@ mod tests {
             home: "/home/mike".into(),
             user: "mike".into(),
             clone: "/d/riff/leads/o-r/clone".into(),
-            repo: "o/r".into(),
-            base: "main".into(),
+            origin: crate::session_clone::Origin::github("o/r").unwrap(),
+            base: "main".parse().unwrap(),
             checkout: crate::session_clone::Checkout::Default,
             main: "/src/r/.git".into(),
+            refs: "/d/riff/leads/o-r/origin-refs".into(),
             claude: "/d/riff/leads/o-r/claude".into(),
             sign_in: run::ClaudeSignIn::Token,
             gitconfig: None,
@@ -2383,5 +2421,66 @@ mod tests {
         assert_eq!(swept.len(), 1, "{swept:?}");
         assert_eq!(swept[0].0, old);
         assert!(swept[0].1.is_ok() && !old.exists());
+    }
+
+    /// 01M7EY51EMJ6ZEGNW7H852PEGR: the default branch of the repository is
+    /// `master`. The facts of the start of the lead take the base from
+    /// `origin/HEAD` of the git dir of the main clone, and the host writes
+    /// the list of the branches of `origin` in the folder of the lead
+    /// (01M7FMJJB0TZM8875T7GQZAJEA). The clone of the plan of the spec of
+    /// the lead is on `master`, with its upstream.
+    #[test]
+    fn the_lead_of_a_repository_on_master_clones_on_master() {
+        let git = |dir: &Path, args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+                .args(["-c", "commit.gpgsign=false"])
+                .args(args)
+                .current_dir(dir)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}: {out:?}");
+            String::from_utf8_lossy(&out.stdout).trim().to_owned()
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        git(
+            root,
+            &["init", "-q", "--bare", "-b", "master", "origin.git"],
+        );
+        let seed = root.join("seed");
+        std::fs::create_dir(&seed).unwrap();
+        git(&seed, &["init", "-q", "-b", "master"]);
+        git(&seed, &["commit", "-q", "--allow-empty", "-m", "one"]);
+        let url = format!("file://{}", root.join("origin.git").display());
+        git(&seed, &["push", "-q", &url, "master"]);
+        git(root, &["clone", "-q", "--", &url, "main"]);
+        let host = run::Host {
+            home: "/home/mike".into(),
+            user: "mike".into(),
+            claude: run::Claude::Token("t".into()),
+        };
+        let merged = session_image::Merged {
+            image: format!("ghcr.io/o/s@sha256:{}", "0".repeat(64))
+                .parse()
+                .unwrap(),
+            setup: Default::default(),
+        };
+        let folder = root.join("leads/o-r");
+        std::fs::create_dir_all(&folder).unwrap();
+        let session = "1a2b3c4d-0000-4000-8000-000000000000";
+        let common = root.join("main/.git");
+        let facts = facts("o/r", &host, &merged, &folder, &common, session).unwrap();
+        let plan = crate::session_clone::Plan::of_spec(&spec(&facts, "o/r", "Start.")).unwrap();
+        assert_eq!(plan.base.as_str(), "master");
+        assert_eq!(plan.checkout, crate::session_clone::Checkout::Default);
+        assert_eq!(plan.refs, run::refs_in(&folder));
+        assert!(plan.refs.is_file());
+        plan.make(false).unwrap();
+        assert_eq!(git(&plan.path, &["branch", "--show-current"]), "master");
+        assert_eq!(
+            git(&plan.path, &["rev-parse", "--abbrev-ref", "@{upstream}"]),
+            "origin/master"
+        );
     }
 }

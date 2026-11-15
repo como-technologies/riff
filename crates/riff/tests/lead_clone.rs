@@ -6,7 +6,7 @@ use std::path::Path;
 use std::process::Command;
 
 use riff::runtime::Source;
-use riff::session_clone::{Checkout, Plan, VAR};
+use riff::session_clone::{Checkout, Origin, Plan};
 
 /// Runs `git ARGS` in `dir`, and gives its output.
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -38,10 +38,11 @@ fn facts(data: &Path) -> riff::run::Facts {
         home: "/home/mike".into(),
         user: "mike".into(),
         clone: data.join("leads/o-r/clone"),
-        repo: "o/r".into(),
-        base: "main".into(),
+        origin: Origin::github("o/r").unwrap(),
+        base: "main".parse().unwrap(),
         checkout: Checkout::Default,
         main: "/src/r/.git".into(),
+        refs: data.join("leads/o-r/origin-refs"),
         claude: data.join("leads/o-r/claude"),
         sign_in: riff::run::ClaudeSignIn::Token,
         gitconfig: None,
@@ -72,18 +73,12 @@ fn the_lead_clones_in_its_container_on_the_default_branch() {
             })
             .collect();
         assert_eq!(writes, std::slice::from_ref(&facts.claude));
-        let plan = spec
-            .env
-            .iter()
-            .find_map(|e| match e {
-                riff::runtime::Env::Value(name, plan) if name == VAR => Plan::of_var(plan).ok(),
-                _ => None,
-            })
-            .unwrap();
+        let plan = Plan::of_spec(&spec).unwrap();
         assert_eq!(plan.path, facts.clone);
-        assert_eq!(plan.origin, "https://github.com/o/r.git");
+        assert_eq!(plan.origin.as_str(), "https://github.com/o/r.git");
         assert_eq!(plan.main, Path::new("/src/r/.git"));
-        assert_eq!(plan.base, "main");
+        assert_eq!(plan.refs, facts.refs);
+        assert_eq!(plan.base.as_str(), "main");
         assert_eq!(plan.checkout, Checkout::Default);
         let args: Vec<String> = riff::podman::terminal_args(&spec)
             .unwrap()
@@ -93,43 +88,6 @@ fn the_lead_clones_in_its_container_on_the_default_branch() {
         let volume = format!("type=volume,destination={},U=true", facts.clone.display());
         assert!(args.contains(&volume), "{args:?}");
     }
-}
-
-/// 01M7EY51EMJ6ZEGNW7H852PEGR: the default branch of the repository is
-/// `master`. The base of the lead is the branch of `origin/HEAD` of the
-/// git dir of the main clone, as the start of the lead reads it, and the
-/// clone of the lead is on `master`, with its upstream.
-#[test]
-fn the_lead_of_a_repository_on_master_clones_on_master() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path();
-    git(
-        root,
-        &["init", "-q", "--bare", "-b", "master", "origin.git"],
-    );
-    let seed = root.join("seed");
-    std::fs::create_dir(&seed).unwrap();
-    git(&seed, &["init", "-q", "-b", "master"]);
-    git(&seed, &["commit", "-q", "--allow-empty", "-m", "one"]);
-    let url = format!("file://{}", root.join("origin.git").display());
-    git(&seed, &["push", "-q", &url, "master"]);
-    git(root, &["clone", "-q", "--", &url, "main"]);
-    let common = root.join("main/.git");
-    let base = riff::permissions::Project::of(&common).branch;
-    assert_eq!(base, "master");
-    let plan = Plan {
-        path: root.join("leads/o-r/clone"),
-        origin: url,
-        main: common,
-        base,
-        checkout: Checkout::Default,
-    };
-    plan.make(true).unwrap();
-    assert_eq!(git(&plan.path, &["branch", "--show-current"]), "master");
-    assert_eq!(
-        git(&plan.path, &["rev-parse", "--abbrev-ref", "@{upstream}"]),
-        "origin/master"
-    );
 }
 
 /// #2140, 01M7EBBVE6WYKT5JDVASFCYPQQ: an older riff left the clone of the

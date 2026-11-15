@@ -242,8 +242,16 @@ pub fn git(dir: &Path) -> Result<Command> {
 /// with no space at the ends. An error names the command and its
 /// stderr.
 pub fn output(dir: &Path, args: &[&str]) -> Result<String> {
+    output_with(dir, args, &[])
+}
+
+/// [`output`] with the variables `vars` of git, for example
+/// `GIT_OBJECT_DIRECTORY` for a folder of objects that goes after
+/// ([`crate::run::take_bundle`]).
+pub fn output_with(dir: &Path, args: &[&str], vars: &[(&str, &Path)]) -> Result<String> {
     let out = git(dir)?
         .args(args)
+        .envs(vars.iter().copied())
         .stdin(Stdio::null())
         .output()
         .with_context(|| text::no_program("git"))?;

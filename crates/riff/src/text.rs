@@ -8644,16 +8644,17 @@ pub const RELAY_NO_COMMAND: &str =
 /// also from `origin` ([`crate::session_clone::Plan::fetches`]).
 ///
 /// ```
-/// use riff::session_clone::{Checkout, Plan};
+/// use riff::session_clone::{Checkout, Origin, Plan};
 ///
 /// let plan = |checkout| Plan {
 ///     path: "/s/clone".into(),
-///     origin: "https://github.com/o/r.git".into(),
+///     origin: Origin::github("o/r").unwrap(),
 ///     main: "/src/r/.git".into(),
-///     base: "main".into(),
+///     refs: "/s/origin-refs".into(),
+///     base: "main".parse().unwrap(),
 ///     checkout,
 /// };
-/// let branch = |earlier| Checkout::Branch { name: "worktree-issue-12".into(), earlier, no_github: false };
+/// let branch = |earlier| Checkout::Branch { name: "worktree-issue-12".parse().unwrap(), earlier, no_github: false };
 /// assert_eq!(
 ///     riff::text::relay_cloned(&plan(branch(true)), true),
 ///     "riff relay: cloned /src/r/.git and fetched https://github.com/o/r.git into /s/clone, \
@@ -8664,7 +8665,7 @@ pub const RELAY_NO_COMMAND: &str =
 ///     "riff relay: cloned /src/r/.git into /s/clone, with no fetch of \
 ///      https://github.com/o/r.git, on the new branch worktree-issue-12."
 /// );
-/// let pull = plan(Checkout::Pull { pull: 7, commit: "0123abcd".into() });
+/// let pull = plan(Checkout::Pull { pull: 7.try_into().unwrap(), commit: "0123abcd".parse().unwrap() });
 /// assert!(riff::text::relay_cloned(&pull, true).ends_with("at 0123abcd, the head of pull request #7."));
 /// assert!(riff::text::relay_cloned(&plan(Checkout::Default), true).ends_with("on the default branch main."));
 /// ```
