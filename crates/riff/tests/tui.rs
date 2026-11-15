@@ -1910,20 +1910,17 @@ esac
 /// 01M7FYVHDJJ288RRV8EBRKSY49 (#2188): in a clone of acme/app, `7` opens
 /// the Decisions tab. It lists the question of the Backlog for brett
 /// first, then the design issue of Wave 3, from the conditional read of
-/// the open issues and no other call of `gh`. `Enter` opens the issue in
-/// the browser, here a fake `xdg-open`, and `o` shows its URL. `a` and
-/// `y` mark the questions of #20 as answered with the code of `riff
+/// the open issues and no other call of `gh`. On Linux, `Enter` opens the
+/// issue in the browser, here a fake `xdg-open`. On macOS, riff opens the
+/// browser with `/usr/bin/open`, which no fake on `PATH` replaces: there,
+/// the test does not press `Enter`. `o` shows the URL of the issue. `a`
+/// and `y` mark the questions of #20 as answered with the code of `riff
 /// questions --answered`: its label goes, and #20 leaves the tab.
 #[tokio::test]
 async fn the_decisions_tab_lists_the_questions_and_the_designs_and_opens_one() {
     let server = crate::common::start_signed_log(vec![crate::common::project("acme/app")]).await;
     let bin = tempfile::tempdir().unwrap();
     isolated::write_program(bin.path().join("gh"), DECISIONS_GH);
-    let opened = bin.path().join("opened");
-    isolated::write_program(
-        bin.path().join("xdg-open"),
-        format!("#!/bin/sh\nprintf '%s' \"$1\" > {}\n", opened.display()),
-    );
     let mut tty = Tty::start_in(
         crate::common::clone_of("acme/app"),
         &server,
@@ -1964,13 +1961,21 @@ async fn the_decisions_tab_lists_the_questions_and_the_designs_and_opens_one() {
 
     // Enter opens the issue in the browser, and `o` shows its URL.
     let url = "https://github.com/acme/app/issues/20";
-    tty.press("\r").await;
-    tty.shows(|rows| rows[22] == format!(" {}", riff::text::tui_opens(url)))
-        .await;
-    let span = isolated::Span::start();
-    while std::fs::read_to_string(&opened).ok().as_deref() != Some(url) {
-        assert!(span.within(WAIT), "the browser opens {url}");
-        tokio::time::sleep(Duration::from_millis(50)).await;
+    #[cfg(target_os = "linux")]
+    {
+        let opened = bin.path().join("opened");
+        isolated::write_program(
+            bin.path().join("xdg-open"),
+            format!("#!/bin/sh\nprintf '%s' \"$1\" > {}\n", opened.display()),
+        );
+        tty.press("\r").await;
+        tty.shows(|rows| rows[22] == format!(" {}", riff::text::tui_opens(url)))
+            .await;
+        let span = Span::start();
+        while std::fs::read_to_string(&opened).ok().as_deref() != Some(url) {
+            assert!(span.within(WAIT), "the browser opens {url}");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
     }
     tty.press("o").await;
     tty.shows(|rows| rows[22] == format!(" {url}")).await;
