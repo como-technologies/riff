@@ -1419,11 +1419,11 @@ mod tests {
     /// space at the end of the line stays.
     #[test]
     fn a_secret_in_the_word_bearer_keeps_no_token_after_it() {
-        for secret in ["Bearer", "Beare", "earer", "Bear", "eare", "arer"] {
-            let scrub = Scrub::new([secret.to_owned()]);
+        for part in ["Bearer", "Beare", "earer", "Bear", "eare", "arer"] {
+            let scrub = Scrub::new([part.to_owned()]);
             let line = clean("Authorization: Bearer xyz-token-1 \t", &scrub);
-            assert!(!line.contains("xyz"), "{secret}: {line}");
-            assert!(line.ends_with(" [secret] \t"), "{secret}: {line:?}");
+            assert!(!line.contains("xyz"), "{part}: {line}");
+            assert!(line.ends_with(" [secret] \t"), "{part}: {line:?}");
         }
     }
 }
