@@ -1597,6 +1597,37 @@ enum DaemonCommand {
         #[arg(long)]
         host: Option<String>,
     },
+    /// Show the lines of the log of the riff daemon
+    ///
+    /// It prints the newest lines of the log file of the riff daemon of
+    /// this host: daemon.log.1, then daemon.log, in the folder of the
+    /// daemon. Each line starts with its time in UTC. riff takes each
+    /// secret out of each line first. On the host, riff reads the files
+    /// itself, so it works also while the daemon is down. Your lead can
+    /// run it in its container: the riff daemon of the host answers on
+    /// the socket of the lead. On a Mac, launchd writes the log of the
+    /// daemon, and riff daemon log names that file.
+    Log {
+        /// Show only the lines at or after TIME: a time of the day in
+        /// your local time, for example 02:12, the last one before now,
+        /// or a date and a time with its zone, for example
+        /// 2026-11-14T07:12Z.
+        #[arg(long, value_name = "TIME")]
+        since: Option<String>,
+        /// Show at most N lines: the newest ones, 1 to 2000.
+        #[arg(long, value_name = "N", default_value_t = riff::daemon::log::LINES)]
+        lines: usize,
+        /// Show only the lines that have TEXT. With more than one --grep,
+        /// the lines that have one of the texts.
+        #[arg(long, value_name = "TEXT")]
+        grep: Vec<String>,
+        /// Ask the riff daemon of HOST, through riff-server. riff waits
+        /// for its reply. Only you in a terminal and your lead in this
+        /// repository can use --host. The daemon of HOST refuses each
+        /// other session, for example a worker.
+        #[arg(long)]
+        host: Option<String>,
+    },
     /// Show or set the limit of this host
     ///
     /// The daemon starts a session only when fewer sessions than the
@@ -3136,6 +3167,17 @@ async fn daemon_command(command: Option<&DaemonCommand>, server: Option<&str>) -
             (None, None) => {}
         }
     }
+    if let Some(DaemonCommand::Log {
+        since,
+        lines,
+        grep,
+        host,
+    }) = command
+    {
+        let since = since.as_deref().map(riff::daemon::log::since).transpose()?;
+        let query = riff::daemon::log::Query::new(since, Some(*lines), grep.clone())?;
+        return daemon_log(host.as_deref(), &query, server).await;
+    }
     if let Some((host, request)) = command.and_then(remote_request) {
         let (server, source) = server_of(server)?;
         let here = identity::place(&identity::working_dir()?)?;
@@ -3179,6 +3221,8 @@ async fn daemon_command(command: Option<&DaemonCommand>, server: Option<&str>) -
             }
             Ok(())
         }
+        // `daemon_log` reads the log.
+        DaemonCommand::Log { .. } => Ok(()),
         DaemonCommand::Limit { .. } => {
             let change = limit_change(command).unwrap_or_default();
             let limit = riff::room::set(&dir, change)?;
@@ -3323,8 +3367,9 @@ fn remote_request(command: &DaemonCommand) -> Option<(&str, riff::daemon::remote
     use riff::daemon::remote::Request;
     let (host, request) = match command {
         DaemonCommand::Status { host } => (host, Request::Status),
-        // `daemon_command` follows the events of another host.
-        DaemonCommand::Events { .. } => return None,
+        // `daemon_command` follows the events of another host, and
+        // `daemon_log` reads the log of another host.
+        DaemonCommand::Events { .. } | DaemonCommand::Log { .. } => return None,
         DaemonCommand::Limit { host, .. } => (host, Request::Limit(limit_change(command)?)),
         DaemonCommand::Cache { clear, host } => (host, Request::Cache { clear: *clear }),
         DaemonCommand::Sweep {
@@ -3399,6 +3444,41 @@ async fn ask_daemon(
     match answer {
         Ok(reply) => {
             println!("{reply}");
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("{e:#}");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// `riff daemon log` (#2156): prints the lines of the log of the daemon
+/// that `query` picks, with no secret. With `host`, riff asks the daemon
+/// of that host through riff-server. In a container, the daemon on the
+/// socket of the session reads the log. On the host, riff reads the log
+/// file itself. It exits with 1 when the read failed, or the daemon
+/// refused.
+async fn daemon_log(
+    host: Option<&str>,
+    query: &riff::daemon::log::Query,
+    server: Option<&str>,
+) -> Result<()> {
+    let socket = riff::session_relay::socket_here().ok();
+    if let Some(host) = host {
+        let (server, source) = server_of(server)?;
+        let here = identity::place(&identity::working_dir()?)?;
+        let reach = Reach::of(&server, source, socket);
+        let request = riff::daemon::remote::Request::Log(query.clone());
+        return ask_daemon(host, &request, &here, &reach).await;
+    }
+    let text = match socket {
+        Some(socket) => Reach::daemon_log(&socket, query).await,
+        None => riff::daemon::log::read_here(&riff::daemon::dir()?, query),
+    };
+    match text {
+        Ok(text) => {
+            println!("{text}");
             Ok(())
         }
         Err(e) => {

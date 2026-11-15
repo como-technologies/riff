@@ -304,7 +304,7 @@ fn the_book_says_when_the_lead_starts_again_after_the_unlock() {
     for words in [
         format!("\n{}\n", riff::text::lead_back_locked(name, &why, every)),
         format!("\n{}\n", riff::text::lead_back(name)),
-        "```sh\njournalctl --user -u riff | grep 'riff-lead-'\n```".to_owned(),
+        "```sh\nriff daemon log --grep 'riff-lead-'\n```".to_owned(),
         "```sh\nriff lead start\n```".to_owned(),
     ] {
         assert!(how.contains(&words), "the how-to has no {words:?}");

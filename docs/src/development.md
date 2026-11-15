@@ -1619,8 +1619,8 @@ Just after a start or a restart, the daemon does not listen yet: while
 systemd says that the unit is active, riff tries again for 5 s. When
 no daemon answers, it shows the state of the unit, and exits with 1.
 On a Mac, the state comes from `launchctl print`, in the same words:
-`active`, `activating`, `failed` or `inactive`. To see the log of the
-daemon on Linux:
+`active`, `activating`, `failed` or `inactive`. To follow the log of
+the daemon on Linux:
 
 ```sh
 journalctl --user -u riff -f
@@ -1631,6 +1631,9 @@ On a Mac:
 ```sh
 tail -f ~/Library/Logs/riff/daemon.log
 ```
+
+To read its last lines, also from the lead, see
+[Read the log of the daemon](#read-the-log-of-the-daemon).
 
 #### When riff cannot read the answer of the daemon
 
@@ -1696,6 +1699,58 @@ When the file has 10 MB, the daemon moves it to `daemon.log.1` and
 starts a new file. So the two files hold the last 10 to 20 MB of lines.
 The file is in the folder of the daemon: `riff daemon status` shows the
 folder.
+
+### Read the log of the daemon
+
+`riff daemon log` prints the newest lines of the two log files, with
+the time in UTC first:
+
+```sh
+riff daemon log --since 02:12 --grep issue-12
+```
+
+| Flag | The lines that show |
+|---|---|
+| `--since TIME` | The lines at or after TIME. A time of the day, for example `02:12`, is in your local time: the last 02:12 before now. A date and a time has its zone, for example `2026-11-14T07:12Z`. |
+| `--grep TEXT` | The lines that have TEXT. With more than one `--grep`, the lines that have one of the texts. |
+| `--lines N` | At most N lines, the newest ones: 1 to 2000. The default is 200. When more lines match, the first line says how many. |
+
+riff reads the files itself, so it works also while the daemon is down.
+It takes each secret out of each line first: a token of GitHub, a key
+of Anthropic, the value of `NAME=value` when NAME names a token, a key,
+a secret or a password, a bearer token, and each secret of the host. So
+`--grep` finds no part of a secret. On a Mac, launchd writes the log of
+the daemon: `riff daemon log` names that file.
+
+### Read the log of the daemon from the lead
+
+The lead runs in a container. It cannot read the journal or the log
+files of a host. It asks the daemon of the host with `--host`:
+
+```sh
+riff daemon log --host thelio --since 02:12 --grep issue-12
+```
+
+The daemon of thelio reads its own log files, takes each secret out,
+and replies through riff-server, as for `riff daemon status --host`.
+With no `--host`, the daemon of the host of the lead answers on the
+socket of the lead. In the container of the lead, a time of the day is
+in the time zone of the container. Give the zone to be sure, for
+example `--since 2026-11-14T07:12Z`. Only you in a terminal and your
+lead in this repository can use `--host`. The daemon of HOST refuses
+each other session, for example a worker.
+
+```mermaid
+sequenceDiagram
+    participant L as riff daemon log in the lead
+    participant S as riff-server
+    participant D as riff daemon on thelio
+    L->>S: daemon log --since 2026-11-14T07:12:00Z --grep issue-12
+    S->>D: wake: the direct message
+    D->>D: read daemon.log.1 and daemon.log, take each secret out
+    D->>S: a direct note to the lead: the lines
+    S-->>L: riff prints the lines
+```
 
 ### See the riff processes of this host
 
@@ -3742,7 +3797,7 @@ such a verify at its read of the status before the claim, its log has a
 line for it:
 
 ```sh
-journalctl --user -u riff | grep 'no new verify request'
+riff daemon log --grep 'no new verify request'
 ```
 
 ```text
@@ -4987,7 +5042,7 @@ riff cannot do the steps after the end of riff-issue-12-1a2b3c4d yet: the OS key
 After the unlock, see these lines, and the claim of each new session:
 
 ```sh
-journalctl --user -u riff | grep -e 'steps after the end' -e 'claims issue-'
+riff daemon log --grep 'steps after the end' --grep 'claims issue-'
 ```
 
 ### Find a session that did not end
@@ -5000,7 +5055,7 @@ minutes after its last call or keep-alive. Find these lines in the log
 of the daemon:
 
 ```sh
-journalctl --user -u riff | grep 'did not end the session'
+riff daemon log --grep 'did not end the session'
 ```
 
 ## Run the lead and watch the riff
@@ -5142,7 +5197,7 @@ riff daemon gets one line for each old clone that stays, with the
 error:
 
 ```sh
-journalctl --user -u riff | grep 'cannot remove the old clone'
+riff daemon log --grep 'cannot remove the old clone'
 ```
 
 The sweep of the riff daemon tries again each 10 minutes. To try again
@@ -5189,15 +5244,15 @@ riff daemon status --host thelio
 To see each start of a lead in the log of the daemon on Linux:
 
 ```sh
-journalctl --user -u riff | grep "The cause:"
+riff daemon log --grep "The cause:"
 ```
 
 ```text
 The lead of como-technologies/riff starts in the container riff-lead-como-technologies-riff: session cc1b0616-6d1e-4b8a-9f3c-2a7e5d0b4c91. The cause: the lead loop (no host held the claim lead).
 ```
 
-The log file of the daemon has the same lines (see
-[Read the log file of the daemon](#read-the-log-file-of-the-daemon)).
+From the lead, add `--host thelio` (see
+[Read the log of the daemon from the lead](#read-the-log-of-the-daemon-from-the-lead)).
 
 | The cause | What started the lead |
 |---|---|
@@ -6976,7 +7031,7 @@ The lead riff-lead-como-technologies-riff ended. riff starts it again with claud
 See both lines on the host:
 
 ```sh
-journalctl --user -u riff | grep 'riff-lead-'
+riff daemon log --grep 'riff-lead-'
 ```
 
 Then attach to the lead, in your clone of the repository:

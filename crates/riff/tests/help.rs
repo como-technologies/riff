@@ -398,6 +398,7 @@ fn the_help_and_the_book_say_who_can_use_each_host_flag() {
     for (args, who) in [
         (&["daemon", "status"][..], daemon),
         (&["daemon", "events"], daemon),
+        (&["daemon", "log"], daemon),
         (&["daemon", "limit"], daemon),
         (&["daemon", "cache"], daemon),
         (&["daemon", "sweep"], daemon),
@@ -425,6 +426,11 @@ fn the_help_and_the_book_say_who_can_use_each_host_flag() {
             daemon,
         ),
         ("development.md", "### Add a host to the wave", daemon),
+        (
+            "development.md",
+            "### Read the log of the daemon from the lead",
+            daemon,
+        ),
         ("start-a-riff.md", "### Stop the lead", daemon),
     ] {
         let text = words(&under(name, heading));

@@ -1193,9 +1193,10 @@ pub enum SessionAsk {
 /// `riff release check`, `riff members`, `riff who`, `riff whoami`,
 /// `riff audit` and `riff session why`, the resume of the riff after
 /// `riff release check`, the run of an item by the lead, and the events
-/// of a session for the lead (#1338, 01M5QVX8D3JE51FAYRWXMAYFAY,
-/// 01M5QW31TFA1W2GWPGRS2Y65GP, 01M5QVX8FFG2FPWZEW61A985CF,
-/// 01M5SMP2FFEHJPZBJVGAWBXNNP). Also the calls of `riff post`, `riff
+/// of a session and the log of the daemon for the lead (#1338, #2156,
+/// 01M5QVX8D3JE51FAYRWXMAYFAY, 01M5QW31TFA1W2GWPGRS2Y65GP,
+/// 01M5QVX8FFG2FPWZEW61A985CF, 01M5SMP2FFEHJPZBJVGAWBXNNP). Also the
+/// calls of `riff post`, `riff
 /// read`, `riff verify` and each other command of a session
 /// ([`crate::reach::COMMANDS`], #1733).
 ///
@@ -1213,6 +1214,11 @@ pub enum SessionAsk {
 /// assert_eq!(serde_json::to_string(&ServerCall::Ends)?, r#"{"call":"ends"}"#);
 /// let log = ServerCall::Log { repo: "o/r".parse().unwrap() };
 /// assert_eq!(serde_json::to_string(&log)?, r#"{"call":"log","repo":"o/r"}"#);
+/// let query = riff::daemon::log::Query { since: None, lines: 200, grep: vec!["issue-12".into()] };
+/// assert_eq!(
+///     serde_json::to_string(&ServerCall::DaemonLog { query })?,
+///     r#"{"call":"daemon_log","query":{"since":null,"lines":200,"grep":["issue-12"]}}"#
+/// );
 /// let free = ServerCall::PlanFree { thread: "o/r".parse().unwrap(), item: "issue-12".into() };
 /// assert_eq!(
 ///     serde_json::to_string(&free)?,
@@ -1275,6 +1281,13 @@ pub enum ServerCall {
         after: u64,
         /// The number of lines of the daemon that the caller has.
         notes: u64,
+    },
+    /// The text of the lines of the log of this daemon that `query`
+    /// picks, with no secret, as `riff daemon log` reads them on the host
+    /// ([`log::read`], #2156). Only the lead may.
+    DaemonLog {
+        /// What `riff daemon log` asks for.
+        query: log::Query,
     },
     /// A request to the daemon of the host `host` through riff-server, as
     /// `riff daemon status --host` makes it on a host
@@ -1626,6 +1639,7 @@ async fn server_call(record: &Record, call: &ServerCall) -> Result<Value> {
         ServerCall::Status => bail!("the daemon answers the status itself"),
         ServerCall::Ps => bail!("the daemon answers the processes itself"),
         ServerCall::Events { .. } => bail!("the daemon answers the events itself"),
+        ServerCall::DaemonLog { .. } => bail!("the daemon answers its log itself"),
     })
 }
 
@@ -6188,6 +6202,12 @@ impl<R: Runtime + 'static> Daemon<R> {
                     ServerCall::Ps => serde_json::to_value(self.ps().await).map_err(Into::into),
                     ServerCall::Events { name, after, notes } => {
                         self.events_page(&record, &name, (after, notes)).await
+                    }
+                    ServerCall::DaemonLog { .. } if !record.terminal => {
+                        Err(anyhow!(text::DAEMON_LOG_ONLY_LEAD))
+                    }
+                    ServerCall::DaemonLog { query } => {
+                        remote::log_text(&self.dir, &query).await.map(Value::String)
                     }
                     ServerCall::Run { item } => self.run_item(&record, &item),
                     ServerCall::Watch { op } => self.watch_op(&record, op),
@@ -14725,6 +14745,79 @@ mod tests {
             .unwrap();
         let page: remote::Page = reply.as_str().unwrap().parse().unwrap();
         assert_eq!(page.end, Some(false), "{page:?}");
+    }
+
+    /// A log of the daemon with a line of issue-12 before 07:12, and
+    /// two after it, one with token-like texts.
+    const LOG: &str = "2026-11-14T07:00:00Z riff daemon: o/r: claims issue-12\n\
+         2026-11-14T07:12:00Z riff daemon: o/r: claims issue-12 again\n\
+         2026-11-14T07:13:00Z riff daemon: issue-12 pushes with ghs_abc1, GH_TOKEN=x and \
+         sk-ant-oat01-x_y\n\
+         2026-11-14T07:14:00Z riff daemon: o/r: claims issue-13\n";
+
+    /// The lines of [`LOG`] of issue-12 since 07:12, with no secret.
+    const LOG_SHOWN: &str = "2026-11-14T07:12:00Z riff daemon: o/r: claims issue-12 again\n\
+         2026-11-14T07:13:00Z riff daemon: issue-12 pushes with [secret], GH_TOKEN=[secret] and \
+         [secret]";
+
+    /// #2156, 01M7EX1PYJ99BDSVJK7MAPDFD0, 01M7EX1Q1F468NWGPJJS0W0ZG9: the
+    /// lead on `a` reads the log of the daemon of `b` through riff-server:
+    /// the lines since a time with a text, and no secret. The daemon of `a`
+    /// has no log file: its error names the file. A worker gets a refusal.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_lead_reads_the_log_of_another_host_and_a_worker_is_refused() {
+        let h = hosts().await;
+        std::fs::write(h.b.dir.join(log::FILE), LOG).unwrap();
+        let since = log::since_at("2026-11-14T07:12Z", &chrono::Utc::now()).unwrap();
+        let query = log::Query::new(Some(since), None, vec!["issue-12".into()]).unwrap();
+        let request = remote::Request::Log(query);
+        let wait = remote::REPLY_WAIT;
+        let reply = remote::ask(&h.api, &h.lead, "b", &request, wait).await;
+        assert_eq!(reply.unwrap(), LOG_SHOWN);
+
+        let none = remote::ask(&h.api, &h.lead, "a", &request, wait).await;
+        let none = none.unwrap_err().to_string();
+        let file = h.a.dir.join(log::FILE).display().to_string();
+        assert!(none.contains(&file), "{none}");
+
+        let worker = SessionUri::new(
+            riff_core::name::Who::new(h.lead.who().user(), Some("w1")).unwrap(),
+            h.lead.place().clone(),
+        );
+        h.api.register(&worker).await.unwrap();
+        let refused = remote::ask(&h.api, &worker, "b", &request, wait).await;
+        let refused = refused.unwrap_err().to_string();
+        assert!(
+            refused.starts_with("refused: \"daemon log --since 2026-11-14T07:12:00Z\n"),
+            "{refused}"
+        );
+        assert!(refused.contains("which is not the lead"), "{refused}");
+    }
+
+    /// #2156, 01M7EX1PYJ99BDSVJK7MAPDFD0: the lead in a container reads
+    /// the log of the daemon of its host on the socket of its session,
+    /// with no secret. A worker gets a refusal.
+    #[tokio::test]
+    async fn the_lead_reads_the_log_of_its_daemon_through_its_socket_and_a_worker_is_refused() {
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        std::fs::write(here.dir.join(log::FILE), LOG).unwrap();
+        let (client, name) = here
+            .started(here.start("riff-issue-12-1a2b3c4d", "issue-12"))
+            .await;
+        drop(client);
+        let worker = session_dir(&here.dir, &name).join(SOCKET);
+        let mut lead = here.start("riff-lead-o-r", "lead");
+        lead.terminal = true;
+        let (_lead_client, lead_name) = here.started(lead).await;
+        let lead = session_dir(&here.dir, &lead_name).join(SOCKET);
+
+        let since = log::since_at("2026-11-14T07:12:00Z", &chrono::Utc::now()).unwrap();
+        let query = log::Query::new(Some(since), None, vec!["issue-12".into()]).unwrap();
+        let shown = crate::reach::Reach::daemon_log(&lead, &query).await;
+        assert_eq!(shown.unwrap(), LOG_SHOWN);
+        let refused = crate::reach::Reach::daemon_log(&worker, &query).await;
+        let refused = format!("{:#}", refused.unwrap_err());
+        assert!(refused.contains(text::DAEMON_LOG_ONLY_LEAD), "{refused}");
     }
 
     /// 01M57GCZXZZRPGGWC5HZS49DGM: a replay gives each line of the

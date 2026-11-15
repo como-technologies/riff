@@ -6695,6 +6695,34 @@ of this part when they merge.
   that failed, and the cause of the last look. Each cause is one line.
   The log of the daemon gets one line when a look reads each folder
   again after a fault.
+- **01M7EX1PVSG64G8EE5SNDRHM7G** `riff daemon log` prints the lines of
+  the log files of the daemon of the host: `daemon.log.1`, then
+  `daemon.log`, in the folder of the daemon. `--since TIME` shows only
+  the lines at or after TIME: a time of the day, `HH:MM` or `HH:MM:SS`,
+  in the local time of the machine where riff runs, the last one before
+  now, or a date and a time with its zone, with or without the seconds.
+  `--grep TEXT` shows only the lines that have TEXT. With more than one
+  `--grep`, a line shows when it has one of the texts. `--lines N` shows
+  at most N lines, the newest ones: 1 to 2000, and 200 with no
+  `--lines`. When more lines match, the first line says how many. A line
+  shows with at most 1000 characters, and the lines with at most 1 MiB:
+  the oldest lines go first. With no log file, riff names the file and
+  the command that shows the log of the daemon, and exits with 1.
+- **01M7EX1PYJ99BDSVJK7MAPDFD0** Only the riff of the host reads the log
+  files for `riff daemon log`, in the folder of the daemon: no session
+  can write there. On the host, riff reads the files itself, also while
+  the daemon is down. In a container, the daemon of the host reads them
+  for the lead on the socket of its session, and refuses each other
+  session. With `--host HOST`, the daemon of HOST reads them, and
+  replies as to each other request with `--host`
+  (01M579Z9MPS86MX7890T6HV18S): only the person and the lead of the
+  person in the repository may ask.
+- **01M7EX1Q1F468NWGPJJS0W0ZG9** Each line of `riff daemon log` loses
+  each secret before riff looks for the text of `--grep` in it, and
+  before riff shows or sends it: the secrets that the daemon takes out
+  of the events of a session, each key of Anthropic, and the secrets
+  that the real-session test takes out of its log. So `--grep` finds no
+  part of a secret.
 
 ### riff relay
 

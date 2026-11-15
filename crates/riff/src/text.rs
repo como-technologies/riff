@@ -8751,6 +8751,112 @@ pub const DAEMON_RUN_ONLY_LEAD: &str = "Only the lead can run an item through th
 pub const DAEMON_EVENTS_ONLY_LEAD: &str =
     "Only the lead can read the events of a session through the riff daemon.";
 
+/// A session that is not the lead asks the daemon for the lines of its
+/// log, for `riff daemon log` (#2156).
+pub const DAEMON_LOG_ONLY_LEAD: &str =
+    "Only the lead can read the log of the riff daemon through the riff daemon.";
+
+/// The text of `riff daemon log` for `found` (#2156): a first line when
+/// older lines match too, then each line. With no line, one line that
+/// says so.
+///
+/// ```
+/// use riff::daemon::log::Found;
+///
+/// let found = Found { lines: vec!["2026-11-14T07:12:00Z riff daemon: a line".into()], more: 0 };
+/// assert_eq!(riff::text::daemon_log(&found), "2026-11-14T07:12:00Z riff daemon: a line");
+/// let more = Found { more: 3, ..found };
+/// assert_eq!(
+///     riff::text::daemon_log(&more),
+///     "riff daemon log: 3 older lines match too. Ask for more with --lines, up to 2000, or for \
+///      fewer with --since or --grep.\n2026-11-14T07:12:00Z riff daemon: a line"
+/// );
+/// assert_eq!(
+///     riff::text::daemon_log(&Found::default()),
+///     "riff daemon log: no line of the log of the riff daemon matches."
+/// );
+/// ```
+pub fn daemon_log(found: &crate::daemon::log::Found) -> String {
+    if found.lines.is_empty() {
+        return "riff daemon log: no line of the log of the riff daemon matches.".to_owned();
+    }
+    let mut lines = Vec::with_capacity(found.lines.len() + 1);
+    if found.more > 0 {
+        lines.push(format!(
+            "riff daemon log: {} older {} too. Ask for more with --lines, up to {}, or for fewer \
+             with --since or --grep.",
+            found.more,
+            if found.more == 1 {
+                "line matches"
+            } else {
+                "lines match"
+            },
+            crate::daemon::log::MOST_LINES
+        ));
+    }
+    lines.extend(found.lines.iter().cloned());
+    lines.join("\n")
+}
+
+/// The folder of the daemon has no log file: on a Mac, launchd writes
+/// the log (#2156).
+///
+/// ```
+/// let text = riff::text::daemon_no_log("/d/daemon.log".as_ref(), "tail -f /l/daemon.log");
+/// assert_eq!(
+///     text,
+///     "riff daemon log: the riff daemon has no log file /d/daemon.log. See its log with: \
+///      tail -f /l/daemon.log"
+/// );
+/// ```
+pub fn daemon_no_log(file: &std::path::Path, log_command: &str) -> String {
+    let mut text = format!(
+        "riff daemon log: the riff daemon has no log file {}.",
+        file.display()
+    );
+    if !log_command.is_empty() {
+        text.push_str(&format!(" See its log with: {log_command}"));
+    }
+    text
+}
+
+/// `riff daemon log --since` with a text that is no time (#2156).
+///
+/// ```
+/// assert!(riff::text::daemon_log_bad_since("noon").contains("2026-11-14T07:12Z"));
+/// ```
+pub fn daemon_log_bad_since(since: &str) -> String {
+    format!(
+        "riff daemon log: --since {since} is no time. Give a time of the day in your local time, \
+         for example 02:12, or a date and a time with its zone, for example 2026-11-14T07:12Z."
+    )
+}
+
+/// `riff daemon log --lines` with a number out of its range (#2156).
+///
+/// ```
+/// assert!(riff::text::daemon_log_bad_lines(0).contains("1 to 2000"));
+/// ```
+pub fn daemon_log_bad_lines(lines: usize) -> String {
+    format!(
+        "riff daemon log: --lines {lines} is out of range. Give 1 to {}.",
+        crate::daemon::log::MOST_LINES
+    )
+}
+
+/// `riff daemon log --grep` with an empty text, or a text with a line
+/// break (#2156).
+///
+/// ```
+/// assert!(riff::text::daemon_log_bad_grep("").contains("one line"));
+/// ```
+pub fn daemon_log_bad_grep(grep: &str) -> String {
+    format!(
+        "riff daemon log: --grep {grep:?} finds no line. Give a text of one line, with one \
+         character or more."
+    )
+}
+
 /// The riff daemon on the socket of the session gave a page of events
 /// that this riff cannot read: it runs another riff.
 pub const DAEMON_NO_PAGE_HERE: &str = "riff: this riff cannot read the reply of the riff daemon: it \
