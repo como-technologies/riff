@@ -15,7 +15,8 @@
 //! ([`report_all`]), in the same way as the end step. The folder stays: the
 //! sweep removes it when the pull request merges or closes
 //! ([`crate::daemon::sweep`]). The report of a kept PASS reads the council
-//! of the pull request in the clone of the folder ([`crate::pr::report`]).
+//! of the pull request in the main clone of the wave, never in the clone
+//! of the folder ([`crate::pr::report`], 01M7DZ4E5BZAD38E3K9A3N277E).
 //!
 //! ```mermaid
 //! flowchart TD
@@ -176,11 +177,9 @@ async fn report_one(
             commit.clone(),
             result.clone(),
         );
-        let (pull, verdict, clone) = (*pull, *verdict, folder.join("clone"));
-        crate::wave::blocking(move || {
-            pr::report(&gh, &repo, &clone, pull, &tested, verdict, &shown)
-        })
-        .await
+        let (pull, verdict, main) = (*pull, *verdict, wave.main.clone());
+        crate::wave::blocking(move || pr::report(&gh, &repo, &main, pull, &tested, verdict, &shown))
+            .await
     };
     let thread = wave.thread()?;
     let reported = match reported {

@@ -448,7 +448,8 @@ impl Pull {
 /// The daemon gives its main clone, never the clone of a verify session:
 /// a session writes its clone, and the host runs no git there
 /// ([`crate::host_git`]). `riff council show` gives the clone where it
-/// runs ([`show`]).
+/// runs ([`show`]), and so does `riff verify pass` ([`crate::pr::report`],
+/// 01M7D11KGEJ8ACFJK6Y10WENJZ).
 pub fn of_pull(
     gh: &Gh,
     main: &Path,

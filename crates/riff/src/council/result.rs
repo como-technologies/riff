@@ -126,13 +126,15 @@ pub fn check(council: &Council, result: &str) -> Result<(), NoLine> {
 /// after its heading up to the next heading of one or two `#`. A line in
 /// a code block is no heading. No line when the result has no such part.
 fn part(result: &str) -> Vec<&str> {
-    let start = markdown::heading(HEADING);
+    let Some(start) = markdown::heading(HEADING) else {
+        return Vec::new();
+    };
     let mut inside = false;
     let mut lines = Vec::new();
     for (line, heading) in markdown::headings(result.lines()) {
         match heading {
-            Some(_) if heading == start => inside = true,
-            Some((level, _)) if start.is_some_and(|(at, _)| level <= at) => inside = false,
+            Some(found) if found == start => inside = true,
+            Some((level, _)) if level <= start.0 => inside = false,
             _ if inside => lines.push(line),
             _ => {}
         }

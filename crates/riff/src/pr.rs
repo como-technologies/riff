@@ -149,8 +149,10 @@
 //! Last, a pass needs a line for each member of the council of the pull
 //! request in the part `## The council` of the result
 //! (01M7CFBZSQEEZNZBR9H1S54GS1, 01M7D11KGEJ8ACFJK6Y10WENJZ). riff reads
-//! the council in the clone, as `riff council show` does
-//! ([`crate::council::pick::of_pull`]), and checks the part
+//! the council as `riff council show` does
+//! ([`crate::council::pick::of_pull`]): `riff verify` in the clone where
+//! it runs, and the daemon in its main clone, never in the clone of a
+//! verify session (01M7DZ4E5BZAD38E3K9A3N277E). Then it checks the part
 //! ([`crate::council::result::check`]). The error of a member with no
 //! line is a [`crate::council::result::NoLine`], so the verify of the wave
 //! can read it as a result with no verdict. A fail needs no such part.
@@ -3389,7 +3391,9 @@ fn closes_no_live_check(gh: &Gh, number: u64, body: &str) -> Result<()> {
 /// [`crate::council::result::NoLine`] that names each member with no
 /// line.
 fn council_named(gh: &Gh, dir: &Path, number: u64, result: &str) -> Result<()> {
-    let (council, _) = crate::council::pick::of_pull(gh, dir, number, |line| eprintln!("{line}"))?;
+    let main = crate::session_image::top(dir)?;
+    let (council, _) =
+        crate::council::pick::of_pull(gh, &main, number, |line| eprintln!("{line}"))?;
     crate::council::result::check(&council, result)?;
     Ok(())
 }
@@ -3439,10 +3443,12 @@ pub fn verify_state(gh: &Gh, repo: &str, commit: &str) -> Result<Option<String>>
 /// ([`rollout::has_live_check`], 01M6WW5WSSRMTBP882FQP3TS2Q), and no
 /// pass whose result has no line for a member of the council
 /// ([`crate::council::result::check`], 01M7CFBZSQEEZNZBR9H1S54GS1).
-/// `dir` is a folder of a clone of `repo`: riff reads the council there.
-/// Before the comment of a pass, it gives the squash message to the
-/// auto-merge ([`squash`], 01M748RKC7BYP8FC6W2E20SQA7). The caller posts
-/// it to the holder of the issue.
+/// `dir` is a folder of a clone of `repo`, where riff reads the council
+/// of a pass: the daemon gives its main clone, never the clone of a verify
+/// session (01M7DZ4E5BZAD38E3K9A3N277E). Before the comment of a pass, it
+/// gives the squash message to the auto-merge ([`squash`],
+/// 01M748RKC7BYP8FC6W2E20SQA7). The caller posts it to the holder of the
+/// issue.
 pub fn report(
     gh: &Gh,
     repo: &str,
