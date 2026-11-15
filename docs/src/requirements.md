@@ -6705,9 +6705,9 @@ of this part when they merge.
   `--grep`, a line shows when it has one of the texts. `--lines N` shows
   at most N lines, the newest ones: 1 to 2000, and 200 with no
   `--lines`. When more lines match, the first line says how many. A line
-  shows with at most 1000 characters, and the lines with at most 1 MiB:
-  the oldest lines go first. With no log file, riff names the file and
-  the command that shows the log of the daemon, and exits with 1.
+  shows with at most 1000 characters. With no log file, riff names the
+  file and the command that shows the log of the daemon, and exits with
+  1.
 - **01M7EX1PYJ99BDSVJK7MAPDFD0** Only the riff of the host reads the log
   files for `riff daemon log`, in the folder of the daemon: no session
   can write there. On the host, riff reads the files itself, also while
@@ -6737,6 +6737,13 @@ of this part when they merge.
 - **01M7F0HECNG3F2H1ZF4JB7WN0Y** When riff cannot read the MCP servers
   of the host for `riff daemon log`, it cannot know their secrets: it
   shows no line, says why, and exits with 1.
+- **01M7F3YFHRQ54RKN9SBJGYWGYY** The lines of one `riff daemon log` have
+  at most 768 KiB in all, each line counted as the text of a JSON
+  string, with its line break: the oldest lines go first. Supersedes
+  01M7EX1PVSG64G8EE5SNDRHM7G in part.
+- **01M7F3YFMAJNJX5YKXB8T54KHV** When riff cannot read the OS keyring
+  for `riff daemon log`, it cannot know the token of `riff
+  claude-token`: it shows no line, says why, and exits with 1.
 
 ### riff relay
 

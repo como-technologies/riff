@@ -14778,7 +14778,9 @@ mod tests {
     /// servers of `b`. The daemon of `a` has no log file: its error names
     /// the file. A worker gets a refusal.
     #[tokio::test(flavor = "multi_thread")]
+    #[allow(clippy::await_holding_lock)]
     async fn the_lead_reads_the_log_of_another_host_and_a_worker_is_refused() {
+        let _token = crate::claude_token::test_token();
         let h = hosts().await;
         std::fs::write(h.b.dir.join(log::FILE), LOG).unwrap();
         std::fs::write(h.b.dir.join(crate::session_mcp::FILE), MCP).unwrap();
@@ -14816,7 +14818,9 @@ mod tests {
     /// socket of its session, with no secret, also of the MCP servers of
     /// the host. A worker gets a refusal.
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn the_lead_reads_the_log_of_its_daemon_through_its_socket_and_a_worker_is_refused() {
+        let _token = crate::claude_token::test_token();
         let here = Here::new(Fake::default().with_image(IMAGE)).await;
         std::fs::write(here.dir.join(log::FILE), LOG).unwrap();
         let (client, name) = here
@@ -14840,6 +14844,109 @@ mod tests {
         let refused = crate::reach::Reach::daemon_log(&worker, &query).await;
         let refused = format!("{:#}", refused.unwrap_err());
         assert!(refused.contains(text::DAEMON_LOG_ONLY_LEAD), "{refused}");
+    }
+
+    /// #2156, 01M7EX1Q1F468NWGPJJS0W0ZG9: the filter of the log of the
+    /// daemon holds each secret that the daemon takes out of the events of
+    /// a session of the same host: the token of `riff claude-token` in the
+    /// OS keyring, else the tokens of the sign-in file of claude, and each
+    /// secret of the MCP servers of the host.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn the_log_filter_holds_each_secret_of_the_events_filter() {
+        let _token = crate::claude_token::test_token();
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        std::fs::write(
+            here.dir.join(crate::session_mcp::FILE),
+            r#"{"mcpServers": {"docs": {"url": "u", "headers": {"X-Docs": "docs-header-value-1"}},
+                "db": {"command": "db", "env": {"DB_AUTH": "db-env-value-2"}}}}"#,
+        )
+        .unwrap();
+        let credentials = here.root.path().join(".credentials.json");
+        let file = r#"{"claudeAiOauth":{"accessToken":"an-access-token-1",
+            "refreshToken":"a-refresh-token-1","expiresAt":9000000000000}}"#;
+        std::fs::write(&credentials, file).unwrap();
+        let mcp = ["docs-header-value-1", "db-env-value-2"];
+        for token in [None, Some("a-keyring-token-1")] {
+            let mut want = match token {
+                Some(token) => {
+                    crate::claude_token::store(&here.dir, token).unwrap();
+                    vec![token]
+                }
+                None => vec!["an-access-token-1", "a-refresh-token-1"],
+            };
+            want.extend(mcp);
+            // The secrets of a start, as `riff run` and the daemon make them.
+            let claude = crate::run::claude_of(&here.dir, &credentials, 0).unwrap();
+            let host = crate::run::Host {
+                home: here.root.path().to_owned(),
+                user: "u".into(),
+                claude,
+            };
+            let start = here.start("riff-issue-12-1a2b3c4d", "issue-12");
+            let (mut spec, mut values, mut events) = (start.spec, start.values, host.secrets());
+            here.daemon.give_mcp(&mut spec, &mut values, &mut events);
+            events.sort();
+            want.sort();
+            assert_eq!(events, want);
+
+            let log = log::secrets_of(&here.dir, Some(&credentials)).unwrap();
+            let missing: Vec<&String> = events.iter().filter(|s| !log.contains(s)).collect();
+            assert!(missing.is_empty(), "{token:?}: {missing:?}");
+        }
+    }
+
+    /// #2156, 01M7F3YFHRQ54RKN9SBJGYWGYY: the lead on `a` asks for the most
+    /// lines of the log of `b`, with lines that have more bytes in JSON
+    /// than in the log: the answer at its byte cap comes back through
+    /// riff-server. Signed, as a daemon with a sign-in posts it, the
+    /// answer fits in one call to riff-server, and riff-server refuses a
+    /// larger call.
+    #[tokio::test(flavor = "multi_thread")]
+    #[allow(clippy::await_holding_lock)]
+    async fn an_answer_of_the_log_at_its_byte_cap_comes_through_riff_server() {
+        use riff_core::wire::{Call, Post};
+        let _token = crate::claude_token::test_token();
+        let h = hosts().await;
+        // Each line has 1000 characters, and about 3300 bytes in JSON.
+        let log: String = (0..log::MOST_LINES)
+            .map(|n| {
+                let rest = "\"\\\u{1}".repeat(log::LINE_CHARS);
+                format!("2026-11-14T07:12:00Z {n:04} {rest}\n")
+            })
+            .collect();
+        std::fs::write(h.b.dir.join(log::FILE), &log).unwrap();
+        let query = log::Query::new(None, Some(log::MOST_LINES), vec![]).unwrap();
+        let request = remote::Request::Log(query.clone());
+        let wait = Duration::from_secs(60);
+        let reply = remote::ask(&h.api, &h.lead, "b", &request, wait).await;
+        let found = log::pick([log.as_bytes()], &query, &Scrub::default()).unwrap();
+        assert!(found.more > 0 && !found.lines.is_empty(), "{}", found.more);
+        let reply = reply.unwrap();
+        assert_eq!(reply, text::daemon_log(&found));
+
+        let body = remote::reply_body(1, "b", &Ok(reply));
+        let to = vec![riff_core::selector::Selector::session("l1")];
+        let mut post = Post::new(&h.lead, None, to, &body);
+        post.sign(&riff_core::dpop::Key::generate(), 1_794_640_320_000);
+        let call = serde_json::to_vec(&post).unwrap().len();
+        assert!(call > log::SERVER_BYTES * 3 / 4, "{call}");
+        assert!(call <= log::SERVER_BYTES, "{call}");
+
+        let url = format!("{}{}", h.api.base(), Post::PATH);
+        for (bytes, refused) in [(log::SERVER_BYTES, false), (log::SERVER_BYTES + 1, true)] {
+            let status = reqwest::Client::new()
+                .post(&url)
+                .header(riff_core::build::HEADER, riff_core::build::VERSION)
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .body(vec![b' '; bytes])
+                .send()
+                .await
+                .unwrap()
+                .status();
+            let too_large = status == reqwest::StatusCode::PAYLOAD_TOO_LARGE;
+            assert_eq!(too_large, refused, "{bytes}: {status}");
+        }
     }
 
     /// 01M57GCZXZZRPGGWC5HZS49DGM: a replay gives each line of the

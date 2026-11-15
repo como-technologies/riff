@@ -542,7 +542,8 @@ pub enum Request {
     /// `riff daemon log`: the lines of the log of the daemon that the
     /// query picks, with no secret ([`super::log::read`], #2156). Its
     /// first line has `--since` and `--lines`. Each text of `--grep` is on
-    /// a line of its own, after `--grep `.
+    /// a line of its own, after `--grep ` (the text of
+    /// [`super::log::Query`]).
     Log(super::log::Query),
     /// `riff daemon sweep`.
     Sweep,
@@ -604,10 +605,10 @@ impl FromStr for Request {
     type Err = ();
 
     fn from_str(body: &str) -> Result<Self, ()> {
-        let (first, rest) = body.split_once('\n').unwrap_or((body, ""));
-        if let ["daemon", "log", ref flags @ ..] = first.split_whitespace().collect::<Vec<_>>()[..]
+        if let Some(flags) = body.strip_prefix("daemon log")
+            && (flags.is_empty() || flags.starts_with([' ', '\n']))
         {
-            return log_of(flags, rest).map(Request::Log);
+            return flags.parse().map(Request::Log).map_err(|_| ());
         }
         match body.split_whitespace().collect::<Vec<_>>()[..] {
             ["daemon", "status"] => Ok(Request::Status),
@@ -686,31 +687,6 @@ fn skips_of(flags: &[&str]) -> Result<Vec<String>, ()> {
         .collect()
 }
 
-/// The [`super::log::Query`] of the flags `flags` of the first line of a
-/// request of `riff daemon log`, and of its other lines `rest`: one
-/// `--grep TEXT` on each.
-fn log_of(flags: &[&str], rest: &str) -> Result<super::log::Query, ()> {
-    let (mut since, mut lines) = (None, None);
-    for pair in flags.chunks(2) {
-        match pair {
-            ["--since", time] => {
-                let at = chrono::DateTime::parse_from_rfc3339(time).map_err(|_| ())?;
-                since = Some(at.timestamp());
-            }
-            ["--lines", count] => lines = Some(count.parse().map_err(|_| ())?),
-            _ => return Err(()),
-        }
-    }
-    let grep = if rest.is_empty() {
-        Vec::new()
-    } else {
-        rest.split('\n')
-            .map(|line| line.strip_prefix("--grep ").map(str::to_owned).ok_or(()))
-            .collect::<Result<_, ()>>()?
-    };
-    super::log::Query::new(since, lines, grep).map_err(|_| ())
-}
-
 /// The [`Change`] of the flags of `riff daemon limit`.
 fn limit_of(flags: &[&str]) -> Result<Change, ()> {
     let mut change = Change::default();
@@ -775,22 +751,7 @@ impl fmt::Display for Request {
             Request::Events { name, after, notes } => {
                 write!(f, "daemon events {name} --after {after} --notes {notes}")
             }
-            Request::Log(query) => {
-                write!(f, "daemon log")?;
-                if let Some(at) = query
-                    .since()
-                    .and_then(|s| chrono::DateTime::from_timestamp(s, 0))
-                {
-                    write!(f, " --since {}", at.format("%Y-%m-%dT%H:%M:%SZ"))?;
-                }
-                if query.lines() != super::log::LINES {
-                    write!(f, " --lines {}", query.lines())?;
-                }
-                for text in query.grep() {
-                    write!(f, "\n--grep {text}")?;
-                }
-                Ok(())
-            }
+            Request::Log(query) => write!(f, "daemon log{query}"),
             Request::Sweep => write!(f, "daemon sweep"),
             Request::Remove { name, force: false } => write!(f, "daemon sweep --remove {name}"),
             Request::Remove { name, force: true } => {

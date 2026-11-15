@@ -41,11 +41,12 @@
 //! (`--grep`), and of them the newest (`--lines`, at most
 //! [`MOST_LINES`]). Each line goes through [`clean`] first
 //! (01M7EX1Q1F468NWGPJJS0W0ZG9): the filter of the events of a session
-//! ([`scrub_of`]: the secrets of this process, of the sign-in file of
-//! `claude` and of the MCP servers of the host), each key of Anthropic,
-//! and the filter of the log of the real-session test
-//! ([`redact`](super::release_test::redact)). So no line has a secret,
-//! and `--grep` finds no part of a secret.
+//! ([`secrets_of`]: the secrets of this process, of the sign-in file of
+//! `claude`, the token of `riff claude-token` and the secrets of the MCP
+//! servers of the host), each key of Anthropic, and the filter of the
+//! log of the real-session test ([`redact`](super::release_test::redact)).
+//! So no line has a secret, and `--grep` finds no part of a secret. The
+//! lines of one answer fit in one post on riff-server ([`MOST_BYTES`]).
 //!
 //! Only the riff of the host reads the files, in the folder of the
 //! daemon: no session can write there (01M7EX1PYJ99BDSVJK7MAPDFD0). On
@@ -66,10 +67,12 @@
 //! ```
 
 use std::collections::VecDeque;
+use std::fmt;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::time::{Duration, Instant};
 
@@ -340,10 +343,23 @@ pub const MOST_LINES: usize = 2000;
 /// in place of the rest of a longer line.
 pub const LINE_CHARS: usize = 1000;
 
-/// The most bytes of the lines of one `riff daemon log`: the reply of
-/// the daemon of another host is one message on riff-server. The oldest
-/// lines go first.
-pub const MOST_BYTES: usize = 1024 * 1024;
+/// The most bytes of the lines of one `riff daemon log`, each line as
+/// the text of a JSON string with its line break ([`json_bytes`]). The
+/// oldest lines go first (01M7F3YFHRQ54RKN9SBJGYWGYY).
+///
+/// The reply of the daemon of another host is one post on riff-server,
+/// and riff-server reads a call of at most [`SERVER_BYTES`]. A signed
+/// post holds its body two times: as a JSON string, and in the base64 of
+/// the JSON of its content, 4/3 of it. So the body has at most 3/7 of
+/// [`SERVER_BYTES`], 898,779 bytes. 768 KiB leaves room for the other
+/// fields of the post. A line with `"`, `\` or a control character has
+/// more bytes in JSON than in the log, so the cap counts the bytes in
+/// JSON.
+pub const MOST_BYTES: usize = 768 * 1024;
+
+/// The most bytes of one call that riff-server reads: the body limit of
+/// axum, which riff-server keeps. A larger call gets 413, and no post.
+pub const SERVER_BYTES: usize = 2 * 1024 * 1024;
 
 /// The last time of `--since`, 9999-12-31T23:59:59Z, in seconds since
 /// the epoch. The first one is 0, 1970-01-01T00:00:00Z. Each time from
@@ -352,8 +368,8 @@ pub const MOST_BYTES: usize = 1024 * 1024;
 pub const LAST_SINCE: i64 = 253_402_300_799;
 
 /// What `riff daemon log` asks for (#2156, 01M7F0HE514TQMGQJKH8CVYY52).
-/// Only [`Query::new`] makes one, also from the JSON of a socket: no
-/// query is out of its range.
+/// Only [`Query::new`] makes one, also from the JSON of a socket and
+/// from the text of a request of `--host`: no query is out of its range.
 ///
 /// ```
 /// use riff::daemon::log::{LAST_SINCE, LINES, Query};
@@ -364,6 +380,7 @@ pub const LAST_SINCE: i64 = 253_402_300_799;
 /// assert!(Query::new(None, Some(2001), vec![]).is_err());
 /// assert!(Query::new(None, None, vec!["".into()]).is_err());
 /// assert!(Query::new(None, None, vec!["a\nb".into()]).is_err());
+/// assert!(Query::new(None, None, vec!["a\rb".into()]).is_err());
 /// assert!(Query::new(Some(-1), None, vec![]).is_err());
 /// assert!(Query::new(Some(LAST_SINCE + 1), None, vec![]).is_err());
 /// assert!(Query::new(Some(LAST_SINCE), None, vec![]).is_ok());
@@ -373,29 +390,93 @@ pub const LAST_SINCE: i64 = 253_402_300_799;
 /// assert_eq!(serde_json::from_str::<Query>(&json)?, query);
 /// assert!(serde_json::from_str::<Query>(r#"{"since":null,"lines":0,"grep":[]}"#).is_err());
 /// assert!(serde_json::from_str::<Query>(r#"{"since":null,"lines":9,"grep":[""]}"#).is_err());
+/// // The text of a request of `--host`: the flags that are not the
+/// // default, each `--grep` on a line of its own.
+/// assert_eq!(query.to_string(), " --since 2026-11-14T07:12:00Z\n--grep issue-12");
+/// assert_eq!(query.to_string().parse::<Query>()?, query);
+/// assert_eq!(Query::new(None, Some(50), vec![])?.to_string(), " --lines 50");
+/// assert_eq!(Query::new(None, None, vec![])?.to_string(), "");
+/// for bad in [" --lines 0", " --since 07:12", " --grep x", "\nissue-12", "\n--grep ", " --lines"] {
+///     assert!(bad.parse::<Query>().is_err(), "{bad}");
+/// }
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "Asked")]
-pub struct Query {
+#[serde(try_from = "Fields", into = "Fields")]
+pub struct Query(Fields);
+
+/// The fields of a [`Query`], as the JSON of a socket has them, before
+/// [`Query::new`] checks them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct Fields {
     since: Option<i64>,
     lines: usize,
     grep: Vec<String>,
 }
 
-/// A [`Query`] as a socket gives it, before [`Query::new`] checks it.
-#[derive(Deserialize)]
-struct Asked {
-    since: Option<i64>,
-    lines: usize,
-    grep: Vec<String>,
-}
-
-impl TryFrom<Asked> for Query {
+impl TryFrom<Fields> for Query {
     type Error = anyhow::Error;
 
-    fn try_from(asked: Asked) -> Result<Query> {
-        Query::new(asked.since, Some(asked.lines), asked.grep)
+    fn try_from(fields: Fields) -> Result<Query> {
+        let Fields { since, lines, grep } = fields;
+        Query::new(since, Some(lines), grep)
+    }
+}
+
+impl From<Query> for Fields {
+    fn from(query: Query) -> Fields {
+        query.0
+    }
+}
+
+/// The flags of the query in the text of the request of `riff daemon
+/// log --host` ([`super::remote::Request::Log`]): ` --since TIME`, in
+/// UTC, and ` --lines N` when N is not [`LINES`], on the line of the
+/// request, then `\n--grep TEXT` for each text.
+impl fmt::Display for Query {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Fields { since, lines, grep } = &self.0;
+        // Query::new keeps `since` in the range of a DateTime.
+        if let Some(at) = since.and_then(|s| DateTime::from_timestamp(s, 0)) {
+            write!(f, " --since {}", at.format("%Y-%m-%dT%H:%M:%SZ"))?;
+        }
+        if *lines != LINES {
+            write!(f, " --lines {lines}")?;
+        }
+        for text in grep {
+            write!(f, "\n--grep {text}")?;
+        }
+        Ok(())
+    }
+}
+
+/// The query of the flags that [`Display`](fmt::Display) writes, with the
+/// checks of [`Query::new`].
+impl FromStr for Query {
+    type Err = anyhow::Error;
+
+    fn from_str(flags: &str) -> Result<Query> {
+        let (first, rest) = flags.split_once('\n').unwrap_or((flags, ""));
+        let (mut since, mut lines) = (None, None);
+        for pair in first.split_whitespace().collect::<Vec<_>>().chunks(2) {
+            match pair {
+                ["--since", time] => since = Some(DateTime::parse_from_rfc3339(time)?.timestamp()),
+                ["--lines", count] => lines = Some(count.parse()?),
+                _ => bail!("riff daemon log has no flag {:?}", pair.join(" ")),
+            }
+        }
+        let grep = if rest.is_empty() {
+            Vec::new()
+        } else {
+            rest.split('\n')
+                .map(|line| {
+                    line.strip_prefix("--grep ")
+                        .map(str::to_owned)
+                        .with_context(|| format!("riff daemon log has no flag {line:?}"))
+                })
+                .collect::<Result<_>>()?
+        };
+        Query::new(since, lines, grep)
     }
 }
 
@@ -417,24 +498,24 @@ impl Query {
         {
             bail!("{}", text::daemon_log_bad_grep(bad));
         }
-        Ok(Query { since, lines, grep })
+        Ok(Query(Fields { since, lines, grep }))
     }
 
     /// The first time of a line, in seconds since the epoch: an older
     /// line does not show. `None`: from the first line.
     pub fn since(&self) -> Option<i64> {
-        self.since
+        self.0.since
     }
 
     /// The most lines: the newest ones show.
     pub fn lines(&self) -> usize {
-        self.lines
+        self.0.lines
     }
 
     /// A line shows only when it has one of these texts. Empty: each line
     /// can show.
     pub fn grep(&self) -> &[String] {
-        &self.grep
+        &self.0.grep
     }
 }
 
@@ -464,7 +545,11 @@ pub struct Found {
 /// assert_eq!(since_at("02:12", &now)?, utc(14, 7, 12));
 /// assert_eq!(since_at("02:12:30", &now)?, utc(14, 7, 12) + 30);
 /// assert_eq!(since_at("2026-11-14T07:12Z", &now)?, utc(14, 7, 12));
+/// assert_eq!(since_at("2026-11-14T07:12z", &now)?, utc(14, 7, 12));
 /// assert_eq!(since_at("2026-11-14T07:12:00Z", &now)?, utc(14, 7, 12));
+/// // The spaces at the ends go.
+/// assert_eq!(since_at(" 02:12 ", &now)?, utc(14, 7, 12));
+/// assert_eq!(since_at(" 2026-11-14T07:12Z ", &now)?, utc(14, 7, 12));
 /// assert_eq!(since_at("2026-11-14T02:12-05:00", &now)?, utc(14, 7, 12));
 /// // The last 04:00 before 03:00 is on the day before.
 /// assert_eq!(since_at("04:00", &now)?, utc(13, 9, 0));
@@ -509,29 +594,57 @@ pub fn since(text: &str) -> Result<i64> {
 }
 
 /// The secrets that [`clean`] takes out of the lines of the log of the
-/// daemon in its folder `dir`: the secrets that the daemon takes out of
-/// the events of a session. They are the secrets of this process and of
-/// the sign-in file of `claude` ([`crate::session_relay::secrets_here`]),
-/// and the secrets of the MCP servers of the host in `dir`
-/// ([`crate::session_mcp::secrets`]). When riff cannot read the MCP
-/// servers, it cannot know their secrets: the error says so
-/// (01M7F0HECNG3F2H1ZF4JB7WN0Y).
+/// daemon in its folder `dir`: each secret that the daemon takes out of
+/// the events of a session (01M7EX1Q1F468NWGPJJS0W0ZG9). They are:
 ///
-/// ```
+/// - the secrets in the variables of this process
+///   ([`crate::session_relay::secrets`]);
+/// - the tokens of the sign-in file `credentials` of `claude`;
+/// - the token of `riff claude-token` in the OS keyring
+///   ([`crate::claude_token::load`]);
+/// - each value of the `env` and the `headers` of the MCP servers of the
+///   host in `dir` ([`crate::session_mcp::secrets`]).
+///
+/// When riff cannot read the MCP servers or the keyring, it cannot know
+/// their secrets: the error says so (01M7F0HECNG3F2H1ZF4JB7WN0Y,
+/// 01M7F3YFMAJNJX5YKXB8T54KHV).
+///
+/// ```standalone_crate
+/// # keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
+/// use riff::daemon::log::secrets_of;
+///
 /// let dir = tempfile::tempdir()?;
 /// let servers = r#"{"mcpServers": {"docs": {"url": "u", "headers": {"X-Key": "a-header-value"}}}}"#;
 /// std::fs::write(dir.path().join("mcp.json"), servers)?;
-/// let scrub = riff::daemon::log::scrub_of(dir.path())?;
-/// assert_eq!(scrub.clean("docs said a-header-value"), "docs said [secret]");
+/// let credentials = dir.path().join(".credentials.json");
+/// std::fs::write(&credentials, r#"{"claudeAiOauth":{"accessToken":"an-access-token","expiresAt":0}}"#)?;
+/// riff::claude_token::store(dir.path(), "a-keyring-token")?;
+/// let secrets = secrets_of(dir.path(), Some(&credentials))?;
+/// for secret in ["an-access-token", "a-keyring-token", "a-header-value"] {
+///     assert!(secrets.iter().any(|s| s == secret), "{secret}");
+/// }
 /// std::fs::write(dir.path().join("mcp.json"), "no")?;
-/// assert!(riff::daemon::log::scrub_of(dir.path()).is_err());
+/// assert!(secrets_of(dir.path(), None).is_err());
 /// # Ok::<(), anyhow::Error>(())
 /// ```
-pub fn scrub_of(dir: &Path) -> Result<Scrub> {
+pub fn secrets_of(dir: &Path, credentials: Option<&Path>) -> Result<Vec<String>> {
     let servers = crate::session_mcp::read(dir).context(text::DAEMON_LOG_NO_MCP)?;
-    let mut secrets = crate::session_relay::secrets_here();
+    let token = crate::claude_token::load().context(text::DAEMON_LOG_NO_KEYRING)?;
+    let file = credentials.and_then(|path| std::fs::read_to_string(path).ok());
+    let var = |name: &str| std::env::var(name).ok();
+    let mut secrets = crate::session_relay::secrets(var, file.as_deref());
+    secrets.extend(token);
     secrets.extend(crate::session_mcp::secrets(&servers));
-    Ok(Scrub::new(secrets))
+    Ok(secrets)
+}
+
+/// The [`Scrub`] of [`secrets_of`] the folder `dir` of the daemon, with
+/// the sign-in file of `claude` that the check of the host reads
+/// ([`crate::run::credentials_in`]).
+pub fn scrub_of(dir: &Path) -> Result<Scrub> {
+    let home = std::env::var_os("HOME").filter(|h| !h.is_empty());
+    let credentials = home.map(|home| crate::run::credentials_in(Path::new(&home)));
+    Ok(Scrub::new(secrets_of(dir, credentials.as_deref())?))
 }
 
 /// The start of a key of Anthropic.
@@ -581,6 +694,23 @@ fn cut(line: String) -> String {
     format!("{}…", &line[..at])
 }
 
+/// The bytes of `line` in a JSON string, with the `\n` after it: the
+/// count of [`MOST_BYTES`].
+///
+/// ```
+/// use riff::daemon::log::json_bytes;
+///
+/// assert_eq!(json_bytes("a line"), 8);
+/// assert_eq!(json_bytes("é"), 4);
+/// // A quote and a backslash have 2 bytes, a control character 6.
+/// assert_eq!(json_bytes("\"\\"), 6);
+/// assert_eq!(json_bytes("\u{1b}"), 8);
+/// ```
+pub fn json_bytes(line: &str) -> usize {
+    // The quotes of the string go, and `\n` comes.
+    serde_json::to_string(line).map_or(line.len(), |json| json.len() - 2) + 2
+}
+
 /// Picks the lines of a [`Query`], one line after the other.
 struct Picker<'a> {
     query: &'a Query,
@@ -598,30 +728,30 @@ impl Picker<'_> {
         if let Some(time) = time_of(raw) {
             self.time = Some(time);
         }
-        if let Some(since) = self.query.since
+        if let Some(since) = self.query.since()
             && self.time.is_none_or(|time| time < since)
         {
             return;
         }
         // The text is found after the clean: no part of a secret.
         let line = clean(raw, self.scrub);
-        let grep = &self.query.grep;
+        let grep = self.query.grep();
         if !grep.is_empty() && !grep.iter().any(|g| line.contains(g.as_str())) {
             return;
         }
         self.picked += 1;
         self.kept.push_back(cut(line));
-        if self.kept.len() > self.query.lines {
+        if self.kept.len() > self.query.lines() {
             self.kept.pop_front();
         }
     }
 
     fn found(mut self) -> Found {
-        let mut bytes: usize = self.kept.iter().map(|l| l.len() + 1).sum();
+        let mut bytes: usize = self.kept.iter().map(|l| json_bytes(l)).sum();
         while bytes > MOST_BYTES
             && let Some(old) = self.kept.pop_front()
         {
-            bytes -= old.len() + 1;
+            bytes -= json_bytes(&old);
         }
         Found {
             more: self.picked - self.kept.len(),
@@ -689,10 +819,10 @@ pub fn pick(
 
 /// The lines of the log of the daemon in its folder `dir` that `query`
 /// picks ([`pick`]), with no secret of [`scrub_of`]: [`OLD`], then
-/// [`FILE`]. With neither file, the error names `log_command`, the
-/// command that shows the log of the daemon on this host, for example on
-/// a Mac.
-pub fn read(dir: &Path, query: &Query, log_command: &str) -> Result<Found> {
+/// [`FILE`]. With neither file, the error names `log_command` when there
+/// is one: the command that shows the log of the daemon on this host,
+/// for example on a Mac.
+pub fn read(dir: &Path, query: &Query, log_command: Option<&str>) -> Result<Found> {
     let mut logs = Vec::new();
     for path in [dir.join(OLD), dir.join(FILE)] {
         match File::open(&path) {
@@ -713,9 +843,9 @@ pub fn read(dir: &Path, query: &Query, log_command: &str) -> Result<Found> {
 /// ([`text::daemon_log`]).
 pub fn read_here(dir: &Path, query: &Query) -> Result<String> {
     let command = crate::platform::service_manager()
-        .map(|m| crate::service::ServiceManager::log_command(&m))
-        .unwrap_or_default();
-    read(dir, query, &command).map(|found| text::daemon_log(&found))
+        .ok()
+        .map(|m| crate::service::ServiceManager::log_command(&m));
+    read(dir, query, command.as_deref()).map(|found| text::daemon_log(&found))
 }
 
 #[cfg(test)]
@@ -786,6 +916,7 @@ mod tests {
     /// secret. A line with no time has the time of the line before.
     #[test]
     fn read_picks_the_lines_of_both_files_since_a_time_with_a_text() {
+        let _token = crate::claude_token::test_token();
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join(OLD),
@@ -799,7 +930,7 @@ mod tests {
         log.extend(b"2026-11-14T07:14:00Z riff daemon: o/r: claims issue-13\n");
         std::fs::write(dir.path().join(FILE), log).unwrap();
         let query = Query::new(Some(AT_0712), None, vec!["issue-12".into()]).unwrap();
-        let found = read(dir.path(), &query, "journalctl --user -u riff").unwrap();
+        let found = read(dir.path(), &query, Some("journalctl --user -u riff")).unwrap();
         assert_eq!(
             found.lines,
             [
@@ -812,7 +943,7 @@ mod tests {
         // With no --since, the line of 07:00 matches too: the newest two
         // of the five lines show, and three more match.
         let newest = Query::new(None, Some(2), vec!["issue-1".into()]).unwrap();
-        let found = read(dir.path(), &newest, "").unwrap();
+        let found = read(dir.path(), &newest, None).unwrap();
         assert_eq!(found.more, 3);
         assert_eq!(
             found.lines[1],
@@ -821,7 +952,7 @@ mod tests {
         // With one file only, riff reads that one.
         std::fs::remove_file(dir.path().join(OLD)).unwrap();
         let all = Query::new(None, None, vec![]).unwrap();
-        assert_eq!(read(dir.path(), &all, "").unwrap().lines.len(), 3);
+        assert_eq!(read(dir.path(), &all, None).unwrap().lines.len(), 3);
     }
 
     /// #2156: with no log file, for example on a Mac, the error names the
@@ -830,10 +961,10 @@ mod tests {
     fn read_with_no_log_file_names_the_log_command() {
         let dir = tempfile::tempdir().unwrap();
         let query = Query::new(None, None, vec![]).unwrap();
-        let error = read(dir.path(), &query, "tail -f /l/daemon.log").unwrap_err();
+        let error = read(dir.path(), &query, Some("tail -f /l/daemon.log")).unwrap_err();
         assert_eq!(
             error.to_string(),
-            text::daemon_no_log(&dir.path().join(FILE), "tail -f /l/daemon.log")
+            text::daemon_no_log(&dir.path().join(FILE), Some("tail -f /l/daemon.log"))
         );
     }
 
@@ -843,6 +974,7 @@ mod tests {
     /// it. When riff cannot read the MCP servers, it shows no line.
     #[test]
     fn read_takes_the_secrets_of_the_mcp_servers_out() {
+        let _token = crate::claude_token::test_token();
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join(crate::session_mcp::FILE),
@@ -858,7 +990,7 @@ mod tests {
         .unwrap();
         let all = Query::new(None, None, vec![]).unwrap();
         assert_eq!(
-            read(dir.path(), &all, "").unwrap().lines,
+            read(dir.path(), &all, None).unwrap().lines,
             [
                 "2026-11-14T07:12:00Z riff daemon: docs said [secret]",
                 "2026-11-14T07:13:00Z riff daemon: db said X=[secret]",
@@ -867,14 +999,44 @@ mod tests {
         for probe in ["docs-header", "db-env"] {
             let query = Query::new(None, None, vec![probe.into()]).unwrap();
             assert!(
-                read(dir.path(), &query, "").unwrap().lines.is_empty(),
+                read(dir.path(), &query, None).unwrap().lines.is_empty(),
                 "{probe}"
             );
         }
         std::fs::write(dir.path().join(crate::session_mcp::FILE), "{").unwrap();
-        let error = format!("{:#}", read(dir.path(), &all, "").unwrap_err());
+        let error = format!("{:#}", read(dir.path(), &all, None).unwrap_err());
         assert!(error.starts_with(text::DAEMON_LOG_NO_MCP), "{error}");
         assert!(error.contains("mcp.json"), "{error}");
+    }
+
+    /// #2156, 01M7EX1Q1F468NWGPJJS0W0ZG9, 01M7F3YFMAJNJX5YKXB8T54KHV: the
+    /// token of `riff claude-token` in the OS keyring goes, as in the
+    /// events of a session, also a token that does not start as a key of
+    /// Anthropic, and `--grep` finds no part of it. When riff cannot read
+    /// the keyring, it shows no line, and says why.
+    #[test]
+    fn read_takes_the_token_of_the_keyring_out() {
+        let _token = crate::claude_token::test_token();
+        let dir = tempfile::tempdir().unwrap();
+        crate::claude_token::store(dir.path(), "a-keyring-token-1").unwrap();
+        std::fs::write(
+            dir.path().join(FILE),
+            "2026-11-14T07:12:00Z riff daemon: claude refused a-keyring-token-1\n",
+        )
+        .unwrap();
+        let all = Query::new(None, None, vec![]).unwrap();
+        assert_eq!(
+            read(dir.path(), &all, None).unwrap().lines,
+            ["2026-11-14T07:12:00Z riff daemon: claude refused [secret]"]
+        );
+        let probe = Query::new(None, None, vec!["keyring-token".into()]).unwrap();
+        assert!(read(dir.path(), &probe, None).unwrap().lines.is_empty());
+
+        crate::claude_token::test_lock();
+        let error = read(dir.path(), &all, None).unwrap_err();
+        assert!(riff_client::secrets::is_locked(&error), "{error:#}");
+        let error = format!("{error:#}");
+        assert!(error.starts_with(text::DAEMON_LOG_NO_KEYRING), "{error}");
     }
 
     /// #2156: an error other than no file names the file or the folder:
@@ -882,11 +1044,12 @@ mod tests {
     /// that is a folder cannot be read.
     #[test]
     fn an_open_error_and_a_read_error_name_the_log() {
+        let _token = crate::claude_token::test_token();
         let root = tempfile::tempdir().unwrap();
         let all = Query::new(None, None, vec![]).unwrap();
         let file = root.path().join("a-file");
         std::fs::write(&file, "").unwrap();
-        let error = format!("{:#}", read(&file, &all, "").unwrap_err());
+        let error = format!("{:#}", read(&file, &all, None).unwrap_err());
         let old = file.join(OLD).display().to_string();
         assert!(
             error.starts_with(&format!("cannot read {old}: ")),
@@ -895,15 +1058,17 @@ mod tests {
 
         let dir = root.path().join("daemon");
         std::fs::create_dir_all(dir.join(FILE)).unwrap();
-        let error = format!("{:#}", read(&dir, &all, "").unwrap_err());
+        let error = format!("{:#}", read(&dir, &all, None).unwrap_err());
         let want = format!("cannot read the log in {}: ", dir.display());
         assert!(error.starts_with(&want), "{error}");
     }
 
-    /// #2156, 01M7EX1PVSG64G8EE5SNDRHM7G: a line of [`LINE_CHARS`]
-    /// characters stays whole, and a longer one is cut to [`LINE_CHARS`]
-    /// characters with its `…`. When the lines have more than
-    /// [`MOST_BYTES`], the oldest go first: they count as more lines.
+    /// #2156, 01M7EX1PVSG64G8EE5SNDRHM7G, 01M7F3YFHRQ54RKN9SBJGYWGYY: a
+    /// line of [`LINE_CHARS`] characters stays whole, and a longer one is
+    /// cut to [`LINE_CHARS`] characters with its `…`. When the lines have
+    /// more than [`MOST_BYTES`] in JSON, the oldest go first, and each line
+    /// that fits stays: they count as more lines. A `"` has 2 bytes in
+    /// JSON.
     #[test]
     fn a_long_line_is_cut_and_the_answer_keeps_its_byte_cap() {
         let whole = "x".repeat(LINE_CHARS);
@@ -912,7 +1077,7 @@ mod tests {
         assert_eq!(cut(long), format!("{}…", &whole[1..]));
 
         let lines: Vec<String> = (0..MOST_LINES)
-            .map(|n| format!("2026-11-14T07:12:00Z {n:04} {}", "é".repeat(LINE_CHARS)))
+            .map(|n| format!("2026-11-14T07:12:00Z {n:04} {}", "\"".repeat(LINE_CHARS)))
             .collect();
         let log = lines.join("\n");
         let query = Query::new(None, Some(MOST_LINES), vec![]).unwrap();
@@ -923,9 +1088,13 @@ mod tests {
                 .iter()
                 .all(|l| l.chars().count() == LINE_CHARS && l.ends_with('…'))
         );
-        let bytes: usize = found.lines.iter().map(|l| l.len() + 1).sum();
-        assert!(bytes <= MOST_BYTES, "{bytes}");
-        assert!(found.more > 0);
+        // Each line has the same bytes in JSON, so the cap keeps the most
+        // lines of that size that fit.
+        let size = json_bytes(&found.lines[0]);
+        assert_eq!(size, 1977);
+        assert_eq!(found.lines.len(), MOST_BYTES / size);
+        let bytes: usize = found.lines.iter().map(|l| json_bytes(l)).sum();
+        assert!(bytes <= MOST_BYTES && bytes + size > MOST_BYTES, "{bytes}");
         assert_eq!(found.more + found.lines.len(), MOST_LINES);
         // The newest lines stay, in their order.
         let numbers: Vec<usize> = found
@@ -949,6 +1118,93 @@ mod tests {
         let all = Query::new(None, None, vec![]).unwrap();
         let found = pick([log.as_bytes()], &all, &Scrub::default()).unwrap();
         assert_eq!(found.lines.len(), 2);
+    }
+
+    /// #2156: a line that ends with `\r\n` shows with no `\r`, also the
+    /// last line, with no `\n`.
+    #[test]
+    fn a_line_shows_with_no_carriage_return() {
+        let log = "2026-11-14T07:12:00Z a line\r\n2026-11-14T07:13:00Z the last\r";
+        let all = Query::new(None, None, vec![]).unwrap();
+        let found = pick([log.as_bytes()], &all, &Scrub::default()).unwrap();
+        assert_eq!(
+            found.lines,
+            [
+                "2026-11-14T07:12:00Z a line",
+                "2026-11-14T07:13:00Z the last"
+            ]
+        );
+    }
+
+    /// A time zone of a test with a change of the clock: UTC-4 up to
+    /// [`Fold::CHANGE`], then UTC-5. So each time from 01:00 to 02:00 of
+    /// 2026-11-01 comes two times.
+    #[derive(Debug, Clone, Copy)]
+    struct Fold;
+
+    impl Fold {
+        /// 2026-11-01T06:00:00Z: 02:00 at UTC-4 is 01:00 at UTC-5.
+        const CHANGE: i64 = 1_793_512_800;
+
+        fn at(utc: i64) -> chrono::FixedOffset {
+            let hours = if utc < Fold::CHANGE { 4 } else { 5 };
+            chrono::FixedOffset::west_opt(hours * 3600).unwrap()
+        }
+    }
+
+    impl TimeZone for Fold {
+        type Offset = chrono::FixedOffset;
+
+        fn from_offset(_: &chrono::FixedOffset) -> Fold {
+            Fold
+        }
+
+        fn offset_from_local_date(
+            &self,
+            local: &chrono::NaiveDate,
+        ) -> chrono::MappedLocalTime<chrono::FixedOffset> {
+            self.offset_from_local_datetime(&local.and_time(NaiveTime::MIN))
+        }
+
+        fn offset_from_local_datetime(
+            &self,
+            local: &NaiveDateTime,
+        ) -> chrono::MappedLocalTime<chrono::FixedOffset> {
+            let local = local.and_utc().timestamp();
+            let fits = |hours| {
+                let offset = chrono::FixedOffset::west_opt(hours * 3600).unwrap();
+                let utc = local - i64::from(offset.local_minus_utc());
+                (Fold::at(utc) == offset).then_some(offset)
+            };
+            match (fits(4), fits(5)) {
+                (Some(first), Some(last)) => chrono::MappedLocalTime::Ambiguous(first, last),
+                (Some(one), None) | (None, Some(one)) => chrono::MappedLocalTime::Single(one),
+                (None, None) => chrono::MappedLocalTime::None,
+            }
+        }
+
+        fn offset_from_utc_date(&self, utc: &chrono::NaiveDate) -> chrono::FixedOffset {
+            Fold::at(utc.and_time(NaiveTime::MIN).and_utc().timestamp())
+        }
+
+        fn offset_from_utc_datetime(&self, utc: &NaiveDateTime) -> chrono::FixedOffset {
+            Fold::at(utc.and_utc().timestamp())
+        }
+    }
+
+    /// #2156, 01M7EX1PVSG64G8EE5SNDRHM7G: a time of the day that comes two
+    /// times at a change of the clock is the first one. A time equal to
+    /// now is now, and a time just after now is on the day before.
+    #[test]
+    fn a_time_of_the_day_at_a_change_of_the_clock_is_the_first_one() {
+        // 03:00 at UTC-5, after the change.
+        let now = Fold.timestamp_opt(Fold::CHANGE + 2 * 3600, 0).unwrap();
+        // 01:30 comes at 05:30Z, then at 06:30Z.
+        assert_eq!(since_at("01:30", &now).unwrap(), Fold::CHANGE - 1800);
+        assert_eq!(since_at("03:00", &now).unwrap(), now.timestamp());
+        // 03:00:01 of 2026-10-31 at UTC-4 is 07:00:01Z.
+        let day_before = Fold::CHANGE - 23 * 3600 + 1;
+        assert_eq!(since_at("03:00:01", &now).unwrap(), day_before);
     }
 
     /// #2156: each key of Anthropic goes, also inside a word, with each

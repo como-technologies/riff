@@ -109,6 +109,31 @@ fn since_and_grep_pick_the_known_lines_of_the_log() {
     );
 }
 
+/// #2156, 01M7EX1PVSG64G8EE5SNDRHM7G: with no `--lines`, riff shows the
+/// newest 200 lines, and its first line says that one older line
+/// matches too.
+#[test]
+fn with_no_lines_flag_riff_shows_the_newest_200_lines() {
+    let env = Isolated::new();
+    let at = Utc::now() - Duration::minutes(5);
+    let lines: Vec<String> = (0..201)
+        .map(|n| line(at, &format!("riff daemon: line {n}")))
+        .collect();
+    write_log(&env, &[], &lines);
+    let out = daemon_log(&env, &[]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let shown = text(&out.stdout);
+    let mut shown = shown.lines();
+    assert_eq!(
+        shown.next(),
+        Some(
+            "riff daemon log: 1 older line matches too. Ask for more with --lines, up to 2000, \
+             or for fewer with --since or --grep."
+        )
+    );
+    assert_eq!(shown.collect::<Vec<_>>(), lines[1..]);
+}
+
 /// #2156, 01M7EX1PVSG64G8EE5SNDRHM7G: a time of the day is in the local
 /// time of the machine where riff runs. At UTC+05:30, the time of the day
 /// of 90 minutes ago picks the line of 60 minutes ago, and not the line
@@ -135,13 +160,24 @@ fn a_time_of_the_day_is_in_the_local_time() {
 /// with a token-like text shows with `[secret]` in its place, and
 /// `--grep` finds no part of a secret: a token of GitHub, a key of
 /// Anthropic, `NAME=value` of a token, a bearer token, the value of a
-/// secret variable of the host, and each value of the `headers` and the
-/// `env` of an MCP server of the host, as in the events of a session.
-/// When riff cannot read the MCP servers, it shows no line, and exits
-/// with 1.
+/// secret variable of the host, each value of the `headers` and the
+/// `env` of an MCP server of the host, the token of `riff claude-token`
+/// in the keyring and the tokens of the sign-in file of claude, as in the
+/// events of a session. When riff cannot read the MCP servers, it shows
+/// no line, and exits with 1.
 #[test]
 fn a_line_with_a_token_like_text_is_filtered() {
     let env = Isolated::new();
+    let secrets = env.riff_home().join("secrets");
+    riff_client::secrets::file_set(&secrets, riff::claude_token::NAME, "a-keyring-token-3")
+        .unwrap();
+    let claude = env.home().join(".claude");
+    std::fs::create_dir_all(&claude).unwrap();
+    std::fs::write(
+        claude.join(".credentials.json"),
+        r#"{"claudeAiOauth":{"accessToken":"an-access-token-4","expiresAt":0}}"#,
+    )
+    .unwrap();
     let at = Utc::now() - Duration::minutes(5);
     let lines = [
         line(
@@ -165,6 +201,10 @@ fn a_line_with_a_token_like_text_is_filtered() {
             at,
             "riff daemon: docs refused docs-header-value-1, db refused db-env-value-2",
         ),
+        line(
+            at,
+            "riff daemon: claude refused a-keyring-token-3 and an-access-token-4",
+        ),
     ];
     write_log(&env, &[], &lines);
     let servers = env.riff_home().join("daemon").join(riff::session_mcp::FILE);
@@ -186,7 +226,8 @@ fn a_line_with_a_token_like_text_is_filtered() {
              {stamp} riff daemon: podman run -e GH_TOKEN=[secret] -e RIFF_ITEM=issue-12\n\
              {stamp} riff daemon: Authorization: Bearer [secret]\n\
              {stamp} riff daemon: the token [secret] of the host\n\
-             {stamp} riff daemon: docs refused [secret], db refused [secret]\n"
+             {stamp} riff daemon: docs refused [secret], db refused [secret]\n\
+             {stamp} riff daemon: claude refused [secret] and [secret]\n"
         )
     );
     for probe in [
@@ -197,6 +238,8 @@ fn a_line_with_a_token_like_text_is_filtered() {
         "a-token-of",
         "docs-header",
         "db-env",
+        "keyring-token",
+        "access-token",
     ] {
         let out = daemon_log(&env, &["--grep", probe]);
         assert_eq!(

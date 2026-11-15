@@ -8766,6 +8766,11 @@ pub const DAEMON_LOG_NO_MCP: &str = "riff daemon log: riff shows no line, becaus
      read the MCP servers of the host, and so it cannot take their secrets out. Fix the file, \
      or remove it";
 
+/// `riff daemon log` cannot read the OS keyring, so it cannot know the
+/// token of `riff claude-token` (#2156).
+pub const DAEMON_LOG_NO_KEYRING: &str = "riff daemon log: riff shows no line, because it cannot \
+     read the OS keyring, and so it cannot take the token of riff claude-token out";
+
 /// The text of `riff daemon log` for `found` (#2156): a first line when
 /// older lines match too, then each line. With no line, one line that
 /// says so (01M7F0HEA4GVKQ47Q5GN29FQ22).
@@ -8781,6 +8786,8 @@ pub const DAEMON_LOG_NO_MCP: &str = "riff daemon log: riff shows no line, becaus
 ///     "riff daemon log: 3 older lines match too. Ask for more with --lines, up to 2000, or for \
 ///      fewer with --since or --grep.\n2026-11-14T07:12:00Z riff daemon: a line"
 /// );
+/// let one = Found { more: 1, ..more };
+/// assert!(riff::text::daemon_log(&one).starts_with("riff daemon log: 1 older line matches too."));
 /// assert_eq!(
 ///     riff::text::daemon_log(&Found::default()),
 ///     "riff daemon log: no line of the log of the riff daemon matches."
@@ -8812,20 +8819,24 @@ pub fn daemon_log(found: &crate::daemon::log::Found) -> String {
 /// the log (#2156).
 ///
 /// ```
-/// let text = riff::text::daemon_no_log("/d/daemon.log".as_ref(), "tail -f /l/daemon.log");
+/// let file = "/d/daemon.log".as_ref();
 /// assert_eq!(
-///     text,
+///     riff::text::daemon_no_log(file, Some("tail -f /l/daemon.log")),
 ///     "riff daemon log: the riff daemon has no log file /d/daemon.log. See its log with: \
 ///      tail -f /l/daemon.log"
 /// );
+/// assert_eq!(
+///     riff::text::daemon_no_log(file, None),
+///     "riff daemon log: the riff daemon has no log file /d/daemon.log."
+/// );
 /// ```
-pub fn daemon_no_log(file: &std::path::Path, log_command: &str) -> String {
+pub fn daemon_no_log(file: &std::path::Path, log_command: Option<&str>) -> String {
     let mut text = format!(
         "riff daemon log: the riff daemon has no log file {}.",
         file.display()
     );
-    if !log_command.is_empty() {
-        text.push_str(&format!(" See its log with: {log_command}"));
+    if let Some(command) = log_command {
+        text.push_str(&format!(" See its log with: {command}"));
     }
     text
 }

@@ -1720,11 +1720,13 @@ It takes each secret out of each line first, as from the events of a
 session: a token of GitHub, a key of Anthropic, the value of
 `NAME=value` when NAME names a token, a key, a secret or a password, a
 bearer token, the secrets in the environment of riff and in the sign-in
-file of claude, and each value of the `env` and the `headers` of the
-MCP servers of the host (`riff daemon mcp add`). So `--grep` finds no
-part of a secret. When riff cannot read the file of the MCP servers, it
-shows no line: fix the file, or remove it. On a Mac, launchd writes the
-log of the daemon: `riff daemon log` names that file.
+file of claude, the token of `riff claude-token`, and each value of the
+`env` and the `headers` of the MCP servers of the host (`riff daemon mcp
+add`). So `--grep` finds no part of a secret. When riff cannot read the
+file of the MCP servers, it shows no line: fix the file, or remove it.
+When riff cannot read the OS keyring, it shows no line too: unlock the
+keyring. On a Mac, launchd writes the log of the daemon: `riff daemon
+log` names that file.
 
 ### See more lines of the log of the daemon
 
@@ -1736,7 +1738,10 @@ riff daemon log --lines 2000 --grep issue-12
 ```
 
 A line shows with at most 1000 characters: a longer line ends with `…`.
-The lines of one answer have at most 1 MiB: the oldest lines go first.
+The lines of one answer have at most 768 KiB as JSON text, so that the
+answer of another host fits in one post on riff-server: the oldest
+lines go first. In JSON, a `"`, a `\` or a control character has more
+bytes than in the log.
 
 ### Read the log of the daemon from the lead
 
