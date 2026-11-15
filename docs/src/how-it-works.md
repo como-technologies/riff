@@ -6039,10 +6039,10 @@ flowchart LR
 
 ### Work through the decisions in the TUI
 
-The Decisions tab shows each decision that waits for a person in one
-place: each open issue with the label `question` or `design`, in a
-wave, in the Backlog, or in neither. It shows the issues of your
-projects, the same projects as the Waves tab (see
+The Decisions tab shows in one place each decision that waits for a
+person. A decision is an open issue with the label `question` or
+`design`, in a wave, in the Backlog, or in neither. It shows the issues
+of your projects, the same projects as the Waves tab (see
 [What reads the projects](#what-reads-the-projects)). Run riff with no
 command, and press `7` for the Decisions tab:
 

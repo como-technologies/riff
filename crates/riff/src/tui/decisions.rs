@@ -109,7 +109,9 @@ use riff_core::name::{ThreadName, allowed};
 
 use super::forge::{BACKLOG, Entry, Reads};
 use super::view::{DIM, Layout, WARNING, width, window};
-use super::waves::{BOLD, MOVE_KEYS, SELECTED, age, cut, padded, repo_url, short_repo, short_wave};
+use super::waves::{
+    BOLD, ISSUE_KEYS, MOVE_KEYS, SELECTED, age, cut, padded, repo_url, short_repo, short_wave,
+};
 use super::{Action, Effect, Key, OnRows, State, Tab};
 use crate::text;
 
@@ -389,6 +391,9 @@ impl Decision {
 /// assert_eq!(names("**Questions for @nate and ann**"), ["nate", "ann"]);
 /// assert_eq!(names("## Questions for mike, nate, and ann"), ["mike", "nate", "ann"]);
 /// assert_eq!(names("## Questions for mike,nate"), ["mike", "nate"]);
+/// assert_eq!(names("## Questions for mike And nate"), ["mike", "nate"]);
+/// assert_eq!(names("## Questions for and mike"), ["and"]);
+/// assert_eq!(names("## Questions for ,mike"), none);
 /// assert_eq!(names("## Questions for ada.lovelace and ann."), ["ada.lovelace", "ann"]);
 /// assert_eq!(names("## Questions for mike. And nate, later"), ["mike"]);
 /// assert_eq!(names("## Questions for mike about the board"), ["mike"]);
@@ -765,7 +770,6 @@ pub fn rows(decisions: &Decisions, repos: &[ThreadName], user: &str, people: &[&
         if !rows.is_empty() {
             rows.push(Row::Blank);
         }
-        let unread: Vec<String> = unread.iter().map(|repo| repo.to_string()).collect();
         rows.push(Row::Text(text::decisions_unread(&unread)));
     }
     rows
@@ -893,7 +897,8 @@ fn line(row: &Row, selected: bool, shape: &Shape) -> Line<'static> {
         Row::Columns => Line::styled(
             cut(
                 &format!(
-                    "      {}{}{}{}FOR",
+                    "{}{}{}{}{}FOR",
+                    " ".repeat(LEAD),
                     column("ITEM", shape.item),
                     column("WAVE", WAVE),
                     column("TITLE", shape.title),
@@ -921,41 +926,47 @@ fn item_line(item: &Item, selected: bool, shape: &Shape) -> Line<'static> {
         item,
         persons,
     } = item;
-    let sel = if selected { ">" } else { " " };
-    let (mark, style): (&str, Style) = match decision.asked() {
-        true => ("?", WARNING),
-        false => ("·", DIM),
-    };
     let title = text::safe(&decision.title);
     let wave = text::safe(&decision.place.name());
     if !shape.wide {
         // `> ? #2173  Wave 60  The verify of a pull…`
-        return Line::from(vec![
-            Span::raw(format!("{sel} ")),
-            Span::styled(mark, style),
-            Span::raw(format!(
-                " {}{}",
-                item_column(item, shape.item),
-                column(&wave, WAVE)
-            )),
+        let mut spans = lead(selected, decision.asked(), NARROW_LEAD);
+        spans.extend([
+            Span::raw(item_column(item, shape.item)),
+            Span::raw(column(&wave, WAVE)),
             Span::raw(cut(&title, shape.title)),
         ]);
+        return Line::from(spans);
     }
     let labels = text::safe(&decision.labels.join(" "));
     let persons = match persons.is_empty() {
         true => "-".to_owned(),
         false => text::safe(&persons.join(" ")),
     };
-    Line::from(vec![
-        Span::raw(format!("{sel} ")),
-        Span::styled(mark, style),
-        Span::raw("   "),
+    let mut spans = lead(selected, decision.asked(), LEAD);
+    spans.extend([
         Span::raw(item_column(item, shape.item)),
         Span::raw(column(&wave, WAVE)),
         Span::raw(column(&title, shape.title)),
         Span::raw(column(&labels, shape.labels)),
         Span::raw(cut(&persons, FOR)),
-    ])
+    ]);
+    Line::from(spans)
+}
+
+/// The spans of the lead of an item, in `columns`: `>` when the row is
+/// `selected`, the mark `?` of an issue that asks questions (`asked`) or
+/// `·`, and spaces.
+fn lead(selected: bool, asked: bool, columns: usize) -> Vec<Span<'static>> {
+    let (mark, style): (&str, Style) = match asked {
+        true => ("?", WARNING),
+        false => ("·", DIM),
+    };
+    vec![
+        Span::raw(if selected { "> " } else { "  " }),
+        Span::styled(mark, style),
+        Span::raw(" ".repeat(columns.saturating_sub(3))),
+    ]
 }
 
 /// The note of the Decisions tab when the note line has no other
@@ -1004,12 +1015,8 @@ pub fn keys_of(layout: Layout) -> Vec<(&'static str, &'static str, Option<Key>)>
 pub fn help_keys() -> Vec<(&'static str, &'static str)> {
     MOVE_KEYS
         .into_iter()
-        .chain([
-            ("Enter", "open the issue in the browser"),
-            ("o", "show the URL"),
-            ("a", "mark as answered"),
-            ("y n", "answer the question"),
-        ])
+        .chain([("Enter", "open the issue in the browser")])
+        .chain(ISSUE_KEYS)
         .collect()
 }
 

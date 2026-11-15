@@ -393,7 +393,7 @@ fn a_first_read_that_fails_names_the_project_with_no_read() {
     );
     let failed = || Err("gh: HTTP 502".to_owned());
     state.read_decisions(vec![(thread(RIFF), failed())], NOW);
-    let unread = |repo: &str| Row::Text(text::decisions_unread(&[repo.to_owned()]));
+    let unread = |repo: &str| Row::Text(text::decisions_unread(&[&thread(repo)]));
     assert_eq!(state.decision_rows(), [unread(RIFF)]);
     let rows = drawn(&state, 80, 24);
     assert_eq!(
@@ -480,6 +480,39 @@ fn two_projects_with_the_same_name_name_the_owner_and_each_row_fits() {
     assert_eq!(narrow[4], "  ? …ies/riff#2173  Wave 60   The verif…");
 }
 
+/// 01M7GFGRJMAYZVG68EP3B916T8: at 80 columns too, an item wider than the
+/// columns that the others leave loses its start, so that its number
+/// shows. The title keeps 10 columns, and the labels get none.
+#[test]
+fn a_wide_item_loses_its_start_at_80_columns_too() {
+    let long = "como-technologies/a-repository-with-a-long-name";
+    let fork = "n8behavior/a-repository-with-a-long-name";
+    let mut state = with_project(with_project(mock_up(), long), fork);
+    let two = decision(
+        long,
+        2,
+        "Which store?",
+        Some("Wave 2"),
+        &["question"],
+        &["mike"],
+    );
+    state.read_decisions(
+        vec![
+            (thread(RIFF), Ok(Vec::new())),
+            (thread(long), Ok(vec![two])),
+            (thread(fork), Ok(Vec::new())),
+        ],
+        NOW,
+    );
+    let rows = drawn(&state, 80, 24);
+    assert!(rows[3].ends_with("  WAVE      TITLE     FOR"), "{rows:#?}");
+    assert_eq!(
+        rows[4],
+        " > ?   …nologies/a-repository-with-a-long-name#2  Wave 2    Which s…  mike"
+    );
+    assert!(rows.iter().all(|row| width(row) <= 80), "{rows:#?}");
+}
+
 /// 01M7GFH1D93M7F7S82E788EFHG: with no project of the person, the tab
 /// says so, as the Waves tab.
 #[test]
@@ -558,6 +591,44 @@ fn a_click_selects_a_row_and_a_double_click_opens_it() {
     assert_eq!(selected(&state), Some(1739));
     // The title of a part is no row to select.
     assert_eq!(state.on_click(&view, 10, 7, true), None);
+}
+
+/// 01M6VAZKG8FS4HEA9VSA4Z4YF1, 01M7FYVHDJJ288RRV8EBRKSY49: a click on a
+/// key of the key line presses it. `↑↓` is no place to click.
+#[test]
+fn a_click_on_a_key_of_the_key_line_presses_it() {
+    let mut state = mock_up();
+    let keys = " ↑↓ select  Enter open  o URL  a answered  r read again  ? help  q quit";
+    assert_eq!(drawn(&state, 80, 24)[23], keys);
+    let view = compute_view(&state, Rect::new(0, 0, 80, 24), NOW);
+    let at = |word: &str| u16::try_from(keys[..keys.find(word).unwrap()].chars().count()).unwrap();
+    assert_eq!(view.hit(at("↑↓"), 23), None);
+    let issue = IssueRef {
+        repo: thread(RIFF),
+        number: 2173,
+    };
+    assert_eq!(
+        state.on_click(&view, at("Enter"), 23, false),
+        Some(Action::Browse(issue))
+    );
+    state.note("an old note");
+    assert_eq!(state.on_click(&view, at("o URL"), 23, false), None);
+    assert_eq!(
+        state.shown_note(),
+        Some("https://github.com/como-technologies/riff/issues/2173")
+    );
+    assert_eq!(state.on_click(&view, at("a answered"), 23, false), None);
+    assert_eq!(
+        state.asked().as_deref(),
+        Some("Mark the questions of #2173 of como-technologies/riff as answered? y/N")
+    );
+    state.on_key(Key::Char('n'));
+    assert_eq!(
+        state.on_click(&view, at("read again"), 23, false),
+        Some(Action::Look)
+    );
+    assert_eq!(view.hit(at("? help"), 23), Some(Key::Help));
+    assert_eq!(view.hit(at("q quit"), 23), Some(Key::Quit));
 }
 
 /// 01M7FYVHB1APFXPXA71PMD18EH: with more than one project, an item names

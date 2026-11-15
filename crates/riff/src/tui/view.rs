@@ -997,6 +997,13 @@ mod tests {
         let view = compute_view(&state, Rect::new(0, 0, 80, 24), NOW);
         let at = u16::try_from(rows[0].chars().count()).unwrap() - 2;
         assert_eq!(view.hit(at, 0), Some(Key::Open(Tab::Decisions)));
+        // A click on the number of each tab opens it.
+        for tab in Tab::ALL {
+            let label = format!("{} {}", tab.number(), tab.name());
+            let start = rows[0].find(&label).unwrap();
+            let at = u16::try_from(rows[0][..start].chars().count()).unwrap();
+            assert_eq!(view.hit(at, 0), Some(Key::Open(tab)), "{label}");
+        }
         // With fewer news, two spaces fit again.
         state.on_key(Key::Open(Tab::Chat));
         state.on_key(Key::Open(Tab::Decisions));

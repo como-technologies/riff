@@ -1431,6 +1431,14 @@ pub(super) const MOVE_KEYS: [(&str, &str); 3] = [
     ("g G", "the first or last row"),
 ];
 
+/// The keys of an issue in the help popup of the Waves tab and of the
+/// Decisions tab (01M7FYVHDJJ288RRV8EBRKSY49).
+pub(super) const ISSUE_KEYS: [(&str, &str); 3] = [
+    ("o", "show the URL"),
+    ("a", "mark as answered"),
+    ("y n", "answer the question"),
+];
+
 /// The keys of the Waves tab in the help popup, before the keys of the
 /// frame.
 pub fn help_keys() -> Vec<(&'static str, &'static str)> {
@@ -1441,12 +1449,10 @@ pub fn help_keys() -> Vec<(&'static str, &'static str)> {
             ("← → Space", "fold a board"),
             ("h", "hold the item"),
             ("f", "free the item"),
-            ("a", "mark as answered"),
             ("p", "pause the repository"),
             ("P", "pause the whole riff"),
-            ("o", "show the URL"),
-            ("y n", "answer the question"),
         ])
+        .chain(ISSUE_KEYS)
         .collect()
 }
 

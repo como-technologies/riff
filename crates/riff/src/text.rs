@@ -1752,9 +1752,8 @@ pub fn questions_faults(repos: &[String]) -> String {
     )
 }
 
-/// The line on stderr of `riff questions --web`, and the note of `Enter`
-/// in the Decisions tab of the TUI (01M7FYVHDJJ288RRV8EBRKSY49): the
-/// address that riff opens in the browser.
+/// The line on stderr of `riff questions --web`: the address that riff
+/// opens in the browser.
 ///
 /// ```
 /// assert_eq!(
@@ -1786,13 +1785,15 @@ pub fn questions_not_asked(repo: &str, number: u64) -> String {
 /// that no read gave yet (01M7GBGD8EH2B1DXZ8NADZ1A85).
 ///
 /// ```
+/// let (r, s) = ("o/r".parse()?, "o/s".parse()?);
 /// assert_eq!(
-///     riff::text::decisions_unread(&["o/r".into(), "o/s".into()]),
+///     riff::text::decisions_unread(&[&r, &s]),
 ///     "No read of the decisions of o/r and o/s worked yet."
 /// );
+/// # Ok::<(), riff_core::name::NameError>(())
 /// ```
-pub fn decisions_unread(repos: &[String]) -> String {
-    let repos: Vec<String> = repos.iter().map(|repo| safe(repo)).collect();
+pub fn decisions_unread(repos: &[&ThreadName]) -> String {
+    let repos: Vec<String> = repos.iter().map(|repo| safe(&repo.to_string())).collect();
     format!(
         "No read of the decisions of {} worked yet.",
         repos.join(" and ")
