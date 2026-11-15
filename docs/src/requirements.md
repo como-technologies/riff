@@ -8462,9 +8462,9 @@ of this part when they merge.
   each folder that the daemon removed and each folder that stays, with
   the reason (01M7DZ4E02PX5Y0WMHFCJ9KS14), or one line that it removed
   none.
-- **01M53S7WDPQ2GWHJWJ6SZXZ5PN** A job of the daemon keeps each folder
-  of its item from before the clone of its session to the end of its
-  last step after the end. The steps after the end read the folder, for
+- **01M53S7WDPQ2GWHJWJ6SZXZ5PN** A job of the daemon keeps the folder
+  of its session from before the clone to the end of its last step
+  after the end. The steps after the end read the folder, for
   example `events.jsonl` of a verify, and the daemon has no record of
   the session then. This is also true for a job that a new daemon takes
   up.
@@ -8591,6 +8591,12 @@ of this part when they merge.
   home. They say that the home is in memory, in folders of 1 GiB each
   (01M7DYR99QK609NF61GGCN75QQ), and that a larger write there fails with
   "No space left on device".
+- **01M7GCESN7RY3GW6ZPP9PBM87D** A job of the daemon keeps only the
+  folder of its own session: each folder of its item that was not there
+  at the start of the job, and the folder of the session that a new
+  daemon took up. The folder of an older session of the item is the
+  folder of an ended session for the sweep and for riff daemon sweep
+  --remove. Supersedes 01M53S7WDPQ2GWHJWJ6SZXZ5PN in part.
 
 ### How the relay drives claude
 
