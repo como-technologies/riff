@@ -14085,6 +14085,29 @@ pub fn swept_old(days: u64) -> String {
     format!("it had no change for {days} days")
 }
 
+/// Why the sweep removed an old clone of a lead that stayed at a start
+/// of the lead (#2153).
+pub const SWEPT_OLD_CLONE: &str = "it was an old clone of the lead";
+
+/// The sweep kept the old clone `old` of a lead: riff cannot remove it,
+/// also with `podman unshare`, for the error `why` (#2153).
+///
+/// ```
+/// let line = riff::text::swept_old_clone_stays("/d/leads/o-r/old-clone".as_ref(), "busy");
+/// assert_eq!(
+///     line,
+///     "riff kept the old clone /d/leads/o-r/old-clone of the lead: riff cannot remove it: busy. \
+///      The next sweep will try again."
+/// );
+/// ```
+pub fn swept_old_clone_stays(old: &Path, why: &str) -> String {
+    format!(
+        "riff kept the old clone {} of the lead: riff cannot remove it: {why}. The next sweep \
+         will try again.",
+        old.display()
+    )
+}
+
 /// The sweep kept the folder `folder`: it has no file `repo`, so riff
 /// does not know its repository and asks the forge nothing. It goes after
 /// `days` days with no change (01M7DZ4E02PX5Y0WMHFCJ9KS14).
@@ -14892,6 +14915,27 @@ pub fn lead_clone_kept(clone: &Path, why: &str) -> String {
         "riff did not make a new clone for the lead: {why}. The lead will start with its old \
          clone at {}, which does not have the new commits of origin.",
         clone.display()
+    )
+}
+
+/// The start of a new lead: riff cannot remove the old clone `old` of
+/// the lead, also with `podman unshare`, for the error `why`. The new
+/// lead starts with its new clone, and the old clone stays for the sweep
+/// of the daemon (#2153).
+///
+/// ```
+/// let line = riff::text::lead_old_clone_stays("/d/leads/o-r/old-clone".as_ref(), "busy");
+/// assert_eq!(
+///     line,
+///     "riff cannot remove the old clone /d/leads/o-r/old-clone of the lead: busy. The lead will \
+///      start with its new clone, and the sweep of the riff daemon will try again."
+/// );
+/// ```
+pub fn lead_old_clone_stays(old: &Path, why: &str) -> String {
+    format!(
+        "riff cannot remove the old clone {} of the lead: {why}. The lead will start with its \
+         new clone, and the sweep of the riff daemon will try again.",
+        old.display()
     )
 }
 

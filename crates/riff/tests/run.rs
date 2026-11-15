@@ -116,6 +116,9 @@ esac
 }
 
 /// A fake `podman`. `image exists` fails when `bin/no-image` is there.
+/// `unshare` makes each folder of its `find` writable, as the root of the
+/// user namespace may write it, and runs it; it fails when
+/// `bin/no-unshare` is there.
 /// `pull` logs, and fails when `bin/no-pull` is there. `run` with
 /// `--network=none` prints the version of `claude` and `gh` in the image,
 /// and of `/usr/local/bin/gh` when `bin/own-gh` is there, else it fails as
@@ -195,6 +198,14 @@ case "$1" in
     [ "$*" = "volume inspect --format {{.Mountpoint}} riff-sccache" ] || exit 2
     [ -d "$dir/volume" ] || exit 125
     echo "$dir/volume"; exit 0 ;;
+  # The root of the user namespace may write each folder: the fake makes
+  # each folder under the folder of a find writable, then runs it. It
+  # fails while the file `no-unshare` is there.
+  unshare) echo "podman $*" >> "$dir/podman.log"
+    if [ -f "$dir/no-unshare" ]; then echo 'Error: cannot unshare' >&2; exit 125; fi
+    shift
+    [ "$1" = find ] && chmod -R u+w "$2"
+    exec "$@" ;;
   # The daemon reads the version of claude and gh in the image
   # (01M5SNTPHHXP54YBTV09JNRY3F): new enough, and no container starts.
   run) case " $* " in
@@ -3364,6 +3375,107 @@ async fn a_new_lead_gets_a_new_clone_and_the_host_runs_no_git_in_the_old_clone()
         "{said}"
     );
     assert!(!mark.exists(), "the program of the clone of the lead ran");
+    std::fs::remove_file(&hold).unwrap();
+    machine.lead_ends().await;
+}
+
+/// Ends the lead `lead` of `machine`, whose fake claude waits while the
+/// file `hold` is there. Then the host joins again, and its daemon starts
+/// the next lead. It gives the session of the next lead.
+async fn next_lead(machine: &Machine, hold: &Path, lead: &str) -> String {
+    std::fs::remove_file(hold).unwrap();
+    machine.lead_ends().await;
+    std::fs::write(hold, "").unwrap();
+    machine.ok(None, &["host", "join"]).await;
+    let started = Instant::now();
+    while lead_session_of(machine) == lead {
+        assert!(started.elapsed() < isolated::HANG, "no new lead");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    machine.lead_starts().await;
+    machine.ok(None, &["host", "leave"]).await;
+    lead_session_of(machine)
+}
+
+/// Makes the folder `dir/ro` with a file, and makes it read-only: the
+/// person cannot remove it with no `chmod`, as with the module cache of
+/// Go.
+fn read_only_folder(dir: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let ro = dir.join("ro");
+    std::fs::create_dir_all(&ro).unwrap();
+    std::fs::write(ro.join("f"), "").unwrap();
+    std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o555)).unwrap();
+}
+
+/// 01M7EBBVE6WYKT5JDVASFCYPQQ (#2153): the old lead left a read-only
+/// folder in its clone, and an earlier start left an old clone with a
+/// read-only folder. The next start removes both with `podman unshare`,
+/// and the new lead starts. When `podman unshare` fails too, the new lead
+/// still starts: each old clone stays with one line in the log, and the
+/// sweep of the daemon removes it later.
+#[tokio::test]
+async fn a_new_lead_starts_when_riff_cannot_remove_its_old_clone() {
+    let machine = Machine::new().await;
+    machine.claude_token();
+    let hold = machine.bin.path().join("hold");
+    std::fs::write(&hold, "").unwrap();
+    let mut lead = machine.daemon_lead().await;
+    let folder = machine.env.riff_home().join("leads/como-technologies-riff");
+    let clone = folder.join("clone");
+    let stuck = folder.join(riff::lead::OLD_CLONE);
+
+    // podman unshare removes each old clone.
+    read_only_folder(&clone);
+    read_only_folder(&stuck);
+    lead = next_lead(&machine, &hold, &lead).await;
+    assert!(clone.join("README.md").exists() && !clone.join("ro").exists());
+    assert_eq!(riff::lead::old_clones(&folder), Vec::<PathBuf>::new());
+    assert!(machine.read("podman.log").contains("podman unshare find"));
+
+    // podman unshare fails: the old clones stay, and the lead starts.
+    std::fs::write(machine.bin.path().join("no-unshare"), "").unwrap();
+    read_only_folder(&clone);
+    read_only_folder(&stuck);
+    lead = next_lead(&machine, &hold, &lead).await;
+    let second = folder.join(format!("{}-2", riff::lead::OLD_CLONE));
+    assert_eq!(
+        riff::lead::old_clones(&folder),
+        [stuck.clone(), second.clone()]
+    );
+    assert!(clone.join("README.md").exists() && !clone.join("ro").exists());
+    let out = machine.read("daemon.out");
+    for old in [&stuck, &second] {
+        let line = format!(
+            "riff cannot remove the old clone {} of the lead: ",
+            old.display()
+        );
+        assert_eq!(out.matches(&line).count(), 1, "{out}");
+    }
+    assert!(
+        out.contains(&riff::text::lead_starts(
+            REPO,
+            LEAD_NAME,
+            &lead,
+            &LeadCause::LeadLoop
+        )),
+        "{out}"
+    );
+
+    // The sweep tries again: it keeps them while podman unshare fails,
+    // and removes them after.
+    let out = machine.ok(None, &["daemon", "sweep"]).await;
+    let kept = format!("riff kept the old clone {} of the lead: ", stuck.display());
+    assert!(out.contains(&kept), "{out}");
+    std::fs::remove_file(machine.bin.path().join("no-unshare")).unwrap();
+    let out = machine.ok(None, &["daemon", "sweep"]).await;
+    for old in [&stuck, &second] {
+        let line = riff::text::swept(old, riff::text::SWEPT_OLD_CLONE);
+        assert!(out.contains(&line), "{out}");
+    }
+    assert_eq!(riff::lead::old_clones(&folder), Vec::<PathBuf>::new());
+    assert!(clone.join("README.md").exists());
     std::fs::remove_file(&hold).unwrap();
     machine.lead_ends().await;
 }

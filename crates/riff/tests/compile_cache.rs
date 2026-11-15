@@ -63,3 +63,28 @@ fn riff_measures_and_empties_a_volume_that_the_person_cannot_read() {
     assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
     assert!(riff::compile_cache::measure(&dir).unwrap() < 1_000_000);
 }
+
+/// 01M7EBBVE6WYKT5JDVASFCYPQQ (#2153): an old clone of a lead holds a
+/// read-only folder, and a folder of a user of the container. The person
+/// cannot remove them, and riff removes the old clone with `podman
+/// unshare`.
+#[test]
+fn riff_removes_a_folder_with_a_read_only_folder_and_a_folder_of_the_container() {
+    use std::os::unix::fs::PermissionsExt;
+
+    if podman(&["info", "--format", "{{.Host.Security.Rootless}}"]).as_deref() != Some("true\n") {
+        eprintln!("skip: no rootless podman");
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let old = root.path().join("leads/o-r/old-clone");
+    let ro = old.join("ro");
+    std::fs::create_dir_all(&ro).unwrap();
+    std::fs::write(ro.join("f"), "").unwrap();
+    std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o555)).unwrap();
+    fill_as_container_user(&old);
+    assert!(std::fs::remove_dir_all(&old).is_err());
+
+    riff::compile_cache::remove(&old).unwrap();
+    assert!(!old.exists());
+}

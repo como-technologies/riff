@@ -1668,9 +1668,10 @@ enum DaemonCommand {
     /// pull request of its branch merged or closed, when its issue is
     /// closed and its branch has no pull request, or when the folder had
     /// no change for 30 days. It runs no git in the clone: the work of the
-    /// clone that is not on origin goes with the folder. It prints each
-    /// folder that it removed, and each folder that stays for a fault,
-    /// with the reason.
+    /// clone that is not on origin goes with the folder. It also removes
+    /// each old clone of a lead that a start of the lead could not remove.
+    /// It prints each folder that it removed, and each folder that stays
+    /// for a fault, with the reason.
     Sweep {
         /// Remove the folder NAME of one ended session, for example
         /// issue-12-1a2b3c4d. riff removes it when the pull request of its
