@@ -8787,9 +8787,10 @@ of this part when they merge.
   reads and writes no file through it. A read takes only a plain file: a
   FIFO or a device gives an error at once. A transcript that is a link
   counts as no transcript. A test reads the code of riff: it finds each
-  line that names such a folder, and checks that the function of that
-  line follows no link. This supersedes 01M509TK01PW3RN2YPRJD38RSX in
-  part.
+  line that names such a folder, each function that calls the guard,
+  and each function that calls one of these. It checks that each
+  function that it finds follows no link. This supersedes
+  01M509TK01PW3RN2YPRJD38RSX in part.
 
 ### Process
 

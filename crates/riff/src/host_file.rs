@@ -33,13 +33,17 @@
 //!   ([`crate::usage::transcripts_in`], [`crate::usage::written_in`],
 //!   [`crate::usage::Replies::read`]), the file `alternates` of a clone
 //!   ([`crate::lead::linked_main`]), and the mode of the socket of a
-//!   session. The host reads no file in a volume: it only measures and
-//!   clears the cache of sccache, with no follow of a link
-//!   ([`crate::compile_cache`]).
+//!   session. The host takes the path that the file `alternates` names
+//!   as it is, and follows no link in it
+//!   ([`crate::daemon::remote::linked_clones`]). The host reads no file
+//!   in a volume: it only measures and clears the cache of sccache, with
+//!   no follow of a link ([`crate::compile_cache`]).
 //! - A test of this module reads the code of riff. It finds each
 //!   production line that names the clone, the Claude folder or the
-//!   folder of the socket of a session or a lead, and the function of
-//!   that line follows no link. Each step above goes through this module.
+//!   folder of the socket of a session or a lead. It finds each function
+//!   that calls this module, and each function that calls one of these.
+//!   Each function that it finds follows no link. Each step above goes
+//!   through this module.
 //!
 //! ```mermaid
 //! flowchart LR
@@ -139,9 +143,7 @@ fn parts(root: &Path, name: &Path) -> Result<Vec<OsString>> {
 /// [`text::host_file_link`] when it is a link.
 fn fault(dir: &OwnedFd, at: &Path, part: &OsStr, errno: Errno) -> anyhow::Error {
     let path = at.join(part);
-    let link = fstatat(dir, part, AtFlags::AT_SYMLINK_NOFOLLOW)
-        .is_ok_and(|stat| Kind::of(&stat) == Kind::Link);
-    if link {
+    if kind_at(dir, part) == Some(Kind::Link) {
         anyhow::anyhow!("{}", text::host_file_link(&path))
     } else {
         anyhow::Error::new(std::io::Error::from(errno)).context(format!("open {}", path.display()))
@@ -583,7 +585,8 @@ mod tests {
 
 /// The scan of the code of riff (01M7FE5FYFAR92PM3EJJ211VM2): it finds
 /// each production line that names a folder that a container writes,
-/// and checks the steps of the host there.
+/// and each function that gets a path there from its caller. It checks
+/// that the steps of the host there follow no link.
 #[cfg(test)]
 mod scan {
     use std::collections::BTreeMap;
@@ -594,12 +597,13 @@ mod scan {
     /// The words of a production line that names a folder that a
     /// container writes in a folder of a session or a lead: its clone, its
     /// Claude folder, and the folder of its socket.
-    const NAMES: [&str; 5] = [
+    const NAMES: [&str; 6] = [
         "join(\"claude\")",
         "join(\"clone\")",
         "\"claude/",
         "\"clone/",
         "owned.socket",
+        "session_dir(",
     ];
 
     /// Each production line that names such a folder, as the scan finds
@@ -607,8 +611,18 @@ mod scan {
     /// fails the scan: read and write in the folder only through
     /// [`super`], then add the line here.
     const NAMED: &[(&str, &str)] = &[
-        // The folder of the socket: its bind, its record, the remove of
-        // the folder, and its socket ([`crate::daemon`], `bind_in`).
+        // The folder of the socket: its path, its bind, its record, the
+        // remove of the folder, and its socket ([`crate::daemon`],
+        // `bind_in`).
+        (
+            "daemon.rs",
+            "pub fn session_dir(dir: &Path, name: &str) -> PathBuf {",
+        ),
+        ("daemon.rs", "socket: session_dir(&self.dir, &name),"),
+        (
+            "daemon.rs",
+            "let _ = std::fs::remove_dir_all(session_dir(&self.dir, &name));",
+        ),
         (
             "daemon.rs",
             "let _ = std::fs::remove_dir_all(&owned.socket);",
@@ -662,9 +676,23 @@ mod scan {
         ("daemon.rs", "fn bind_in("),
     ];
 
+    /// The calls that take a path in such a folder: the guard, and each
+    /// function of riff that calls it. A function with one of them gets
+    /// the path from a line of [`NAMED`] or from its caller, so it follows
+    /// no link, as a function with a line of [`NAMED`].
+    const GUARDED: [&str; 6] = [
+        "host_file::",
+        "claude_folder(",
+        "transcripts_with_times(",
+        "Replies::read(",
+        "linked_main(",
+        "bind_in(",
+    ];
+
     /// The calls that read or write a file, or look at it, with each link
-    /// followed. No function of [`STEPS`], and no function with a line of
-    /// [`NAMED`], has one of them, but on a line of [`OUTSIDE`].
+    /// followed. No function of [`STEPS`], no function with a line of
+    /// [`NAMED`], and no function with a call of [`GUARDED`] has one of
+    /// them, but on a line of [`OUTSIDE`].
     const FOLLOWS: [&str; 19] = [
         "std::fs::read(",
         "std::fs::read_to_string(",
@@ -711,8 +739,18 @@ mod scan {
             "daemon.rs",
             "log: std::fs::read_to_string(events).unwrap_or_default(),",
         ),
+        ("daemon.rs", "let log = std::fs::OpenOptions::new()"),
+        ("daemon.rs", "(std::fs::File::create(&events), 0, 0)"),
+        // The records of the daemon.
+        (
+            "daemon.rs",
+            "let Ok(entries) = std::fs::read_dir(self.dir.join(LIVE)) else {",
+        ),
+        ("daemon.rs", "let record = std::fs::read_to_string(&path)"),
         // The folder of the sessions and the folder of the leads.
         ("daemon/remote.rs", "std::fs::read_dir(root)"),
+        // The main clone in the records of the daemon.
+        ("daemon/remote.rs", "let real = main.canonicalize().ok();"),
     ];
 
     /// The code of riff: each file `.rs` of `src`, with its name in `src`
@@ -788,21 +826,43 @@ mod scan {
             .collect()
     }
 
+    /// The name of the function that starts at `line`.
+    fn name_of(line: &str) -> &str {
+        let after = line.split_once("fn ").map_or(line, |(_, after)| after);
+        &after[..after.find(['(', '<']).unwrap_or(after.len())]
+    }
+
+    /// The scan of the code `text` of `file`: each line that names a
+    /// folder that a container writes, and each line with a call of
+    /// [`FOLLOWS`] in a function with such a line or with a call of
+    /// [`GUARDED`].
+    fn scan(file: &str, text: &str) -> (Vec<String>, Vec<String>) {
+        let lines = production(text);
+        let (mut found, mut follow) = (Vec::new(), Vec::new());
+        for (at, (_, line)) in lines.iter().enumerate() {
+            let named = NAMES.iter().any(|name| line.contains(name));
+            if named {
+                found.push(line.trim().to_owned());
+            }
+            if named || GUARDED.iter().any(|call| line.contains(call)) {
+                follow.extend(follows(file, &body(&lines, holder(&lines, at))));
+            }
+        }
+        (found, follow)
+    }
+
     /// 01M7FE5FYFAR92PM3EJJ211VM2: the scan finds each line of riff that
-    /// names a folder that a container writes. Each one is known, and each
-    /// function with such a line follows no link.
+    /// names a folder that a container writes. Each one is known. Each
+    /// function with such a line, or with a call of [`GUARDED`], follows
+    /// no link.
     #[test]
     fn each_name_of_a_folder_that_a_container_writes_is_known() {
         let mut found: Vec<(String, String)> = Vec::new();
         let mut follow = Vec::new();
         for (file, text) in code().iter().filter(|(f, _)| f != "host_file.rs") {
-            let lines = production(text);
-            for (at, (_, line)) in lines.iter().enumerate() {
-                if NAMES.iter().any(|name| line.contains(name)) {
-                    found.push((file.clone(), line.trim().to_owned()));
-                    follow.extend(follows(file, &body(&lines, holder(&lines, at))));
-                }
-            }
+            let (named, followed) = scan(file, text);
+            found.extend(named.into_iter().map(|line| (file.clone(), line)));
+            follow.extend(followed);
         }
         let count = |list: Vec<(String, String)>| {
             let mut counts: BTreeMap<(String, String), usize> = BTreeMap::new();
@@ -865,6 +925,32 @@ mod scan {
         }
     }
 
+    /// Each function of riff that calls the guard has its call in
+    /// [`GUARDED`]: the scan checks each function that calls it too.
+    #[test]
+    fn each_caller_of_the_guard_is_guarded() {
+        let mut missing = Vec::new();
+        for (file, text) in code().iter().filter(|(f, _)| f != "host_file.rs") {
+            let lines = production(text);
+            for (at, _) in lines.iter().enumerate() {
+                if !lines[at].1.contains("host_file::") {
+                    continue;
+                }
+                let name = name_of(lines[holder(&lines, at)].1);
+                let call = format!("{name}(");
+                if !GUARDED.iter().any(|g| g.ends_with(&call)) {
+                    missing.push(format!("{file}: {name}"));
+                }
+            }
+        }
+        missing.dedup();
+        assert!(
+            missing.is_empty(),
+            "a caller of host_file is not in GUARDED:\n{}",
+            missing.join("\n")
+        );
+    }
+
     /// Each line of [`OUTSIDE`] is a production line of its file: a line
     /// that went does not stay in the list.
     #[test]
@@ -889,6 +975,31 @@ mod scan {
             found,
             ["x.rs:3: let _ = std::fs::read(claude.join(\"settings.json\"));"]
         );
+    }
+
+    /// A function that gets the path of a clone from its caller names no
+    /// folder, but its call of the guard shows it: the scan checks it.
+    #[test]
+    fn the_scan_checks_a_function_that_gets_the_path_from_its_caller() {
+        let file = "fn links(clone: &Path) -> bool {\n    \
+                    linked_main(clone).is_ok_and(|p| p.canonicalize().is_ok())\n}\n\
+                    fn other(clone: &Path) -> bool {\n    clone.exists()\n}\n";
+        let (found, follow) = scan("x.rs", file);
+        assert!(found.is_empty(), "{found:?}");
+        assert_eq!(
+            follow,
+            ["x.rs:2: linked_main(clone).is_ok_and(|p| p.canonicalize().is_ok())"]
+        );
+    }
+
+    #[test]
+    fn the_name_of_a_function_is_up_to_its_arguments() {
+        assert_eq!(
+            name_of("    pub fn read(paths: &[PathBuf]) -> Replies {"),
+            "read"
+        );
+        assert_eq!(name_of("fn bind_in<P>(dir: P) {"), "bind_in");
+        assert_eq!(name_of("pub(crate) async fn a() {"), "a");
     }
 
     #[test]

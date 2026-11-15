@@ -1287,9 +1287,12 @@ pub fn main_of(dir: &Path, repo: &str) -> Result<Option<PathBuf>> {
     Ok(served.map(|served| served.wave.main))
 }
 
-/// The file of a clone that names the folders of the objects that it
-/// links to.
-const ALTERNATES: &str = ".git/objects/info/alternates";
+/// The folder of the objects of a clone.
+const OBJECTS: &str = ".git/objects";
+
+/// The file in [`OBJECTS`] that names the folders of the objects that
+/// the clone links to.
+const ALTERNATES: &str = "info/alternates";
 
 /// The main clone that the clone at `clone` links to: `git clone
 /// --reference MAIN` ([`fresh_clone`]) writes `MAIN/.git/objects` in the
@@ -1319,9 +1322,9 @@ const ALTERNATES: &str = ".git/objects/info/alternates";
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn linked_main(clone: &Path) -> Result<PathBuf> {
-    let objects = clone.join(".git/objects");
-    let file = clone.join(ALTERNATES);
-    let text = crate::host_file::read_to_string(clone, Path::new(ALTERNATES))?
+    let name = Path::new(OBJECTS).join(ALTERNATES);
+    let (objects, file) = (clone.join(OBJECTS), clone.join(&name));
+    let text = crate::host_file::read_to_string(clone, &name)?
         .with_context(|| format!("cannot read {}", file.display()))?;
     let line = text
         .lines()

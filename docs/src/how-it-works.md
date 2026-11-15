@@ -453,21 +453,34 @@ flowchart LR
     L -- yes --> E["the start stops<br/>the error names the link<br/>your file does not change"]
 ```
 
-The error names the link:
+The riff daemon starts the lead, so the error goes to the log of the
+daemon, as the cause of a start that failed. riff chat gets one line of
+`riff-bot` for it, and the daemon waits before its next start of the
+lead. The error names the link:
 
 ```text
 riff follows no link in a folder that a session can write: /home/mike/.local/share/riff/leads/acme-app/claude/settings.json is a link. Remove it, and start again.
 ```
 
+On Linux, find the error in the log of the daemon (see also
+[See the daemon](development.md#see-the-daemon)):
+
+```sh
+journalctl --user -u riff | grep 'follows no link'
+```
+
 Find each link in the Claude folder of the lead. Then remove the link
 that the error names: `rm` removes the link, not the file that it
-names. Then start the lead again:
+names:
 
 ```sh
 find ~/.local/share/riff/leads/OWNER-REPO/claude -type l
 rm ~/.local/share/riff/leads/OWNER-REPO/claude/settings.json
-riff lead start
 ```
+
+The daemon starts the lead at the end of its wait. To start the lead at
+once, see
+[When the lead fails to start](#when-the-lead-fails-to-start).
 
 ### The home of a session is in memory
 
@@ -7109,10 +7122,13 @@ journalctl --user -u riff | grep 'The next start of a lead'
 
 When you fixed the cause, the daemon starts the lead at the end of the
 wait. `riff lead start` starts no lead. To start the lead at once,
-restart the riff daemon on the host: the new daemon has no wait.
+start the riff daemon on the host again: the new daemon has no wait.
+`riff daemon restart` does not do it: it starts no new daemon when the
+daemon runs the riff on disk. On a Mac, see
+[Restart or stop the daemon](development.md#restart-or-stop-the-daemon).
 
 ```sh
-riff daemon restart
+systemctl --user restart riff
 ```
 
 ### Name the lead

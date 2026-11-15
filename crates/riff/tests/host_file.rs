@@ -145,7 +145,11 @@ fn a_fifo_in_the_claude_folder_gives_an_error_at_once() {
 
 /// The how-to "When a session puts a link in its folder" in the book: the
 /// row of the files of the machine points to it, its error is the error
-/// of riff, and its commands are real.
+/// of riff, it finds the error in the log of the daemon, and its commands
+/// are real. Only the daemon starts a lead: `riff lead start` starts
+/// none, so the how-to points to the start of the lead by the daemon.
+/// There, a new daemon starts the lead at once: `riff daemon restart`
+/// starts no new daemon when the daemon runs the riff on disk.
 #[test]
 fn the_book_says_what_to_do_with_a_link_in_the_folder_of_the_lead() {
     let page = crate::book::page("how-it-works.md");
@@ -157,15 +161,31 @@ fn the_book_says_what_to_do_with_a_link_in_the_folder_of_the_lead() {
         "/home/mike/.local/share/riff/leads/acme-app/claude/settings.json",
     ));
     assert!(how_to.contains(&error), "{how_to}");
+    assert!(error.contains("follows no link"), "{error}");
+    assert!(
+        how_to.contains("(#when-the-lead-fails-to-start)"),
+        "the how-to points to the wait of the daemon"
+    );
     assert_eq!(
         crate::book::commands_in(how_to),
         [
+            "journalctl --user -u riff | grep 'follows no link'",
             "find ~/.local/share/riff/leads/OWNER-REPO/claude -type l",
             "rm ~/.local/share/riff/leads/OWNER-REPO/claude/settings.json",
-            "riff lead start",
         ]
     );
-    crate::book::each_is_real(&["riff lead start".to_owned()]);
+    let heading = "#### When the lead fails to start";
+    let rest = &page[page.find(heading).expect("the wait is in the book") + heading.len()..];
+    let wait = &rest[..rest.find("\n### ").unwrap_or(rest.len())];
+    assert_eq!(
+        crate::book::commands_in(wait).last().map(String::as_str),
+        Some("systemctl --user restart riff"),
+        "{wait}"
+    );
+    assert_eq!(
+        riff::text::daemon_restart(riff::daemon::remote::Restart::Newest, "1"),
+        "The riff daemon runs the riff on disk, build 1. It does not start again."
+    );
     assert!(
         page.contains("(#when-a-session-puts-a-link-in-its-folder)"),
         "the row of the files of the machine points to the how-to"
