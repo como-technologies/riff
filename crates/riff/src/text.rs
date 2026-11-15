@@ -7265,6 +7265,48 @@ pub fn host_git_refused(dir: &Path, folder: &Path) -> String {
     )
 }
 
+/// The error of the guard of the files of the host in a folder that a
+/// container writes ([`crate::host_file`]): `path` is a link there, and
+/// the host follows no link.
+///
+/// ```
+/// use std::path::Path;
+///
+/// assert_eq!(
+///     riff::text::host_file_link(Path::new("/l/o-r/claude/.claude.json")),
+///     "riff follows no link in a folder that a session can write: /l/o-r/claude/.claude.json \
+///      is a link. Remove it, and start again."
+/// );
+/// ```
+pub fn host_file_link(path: &Path) -> String {
+    format!(
+        "riff follows no link in a folder that a session can write: {} is a link. Remove it, and \
+         start again.",
+        path.display()
+    )
+}
+
+/// The error of the guard of the files of the host when `path`, in a
+/// folder that a container writes, is no plain file, for example a FIFO
+/// ([`crate::host_file::read`]).
+///
+/// ```
+/// use std::path::Path;
+///
+/// assert_eq!(
+///     riff::text::host_file_not_plain(Path::new("/l/o-r/claude/.claude.json")),
+///     "riff reads only a plain file in a folder that a session can write: \
+///      /l/o-r/claude/.claude.json is no plain file. Remove it, and start again."
+/// );
+/// ```
+pub fn host_file_not_plain(path: &Path) -> String {
+    format!(
+        "riff reads only a plain file in a folder that a session can write: {} is no plain file. \
+         Remove it, and start again.",
+        path.display()
+    )
+}
+
 /// `riff run` on a host that is not Linux (01M4ZBGK7SFEXE1AGH6Z0YQHJP).
 pub const RUN_LINUX_ONLY: &str = "riff run needs Linux: riff starts no session on this OS. The \
      sessions on a Mac come with #1649.";

@@ -431,7 +431,7 @@ pub(crate) fn hostile_clone(clone: &Path, mark: &Path) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// The clone of [`hostile_clone`] runs its program at a `git status`
@@ -456,7 +456,7 @@ mod tests {
     /// The production code of `file`, with its line numbers: no comment
     /// line, and no item of `#[cfg(test)]`. Such an item ends at its own
     /// `;`, or at the `}` with the indent of the attribute.
-    fn production(file: &str) -> Vec<(usize, &str)> {
+    pub(crate) fn production(file: &str) -> Vec<(usize, &str)> {
         let mut lines = Vec::new();
         let mut test: Option<String> = None;
         let mut skip: Option<String> = None;
@@ -486,7 +486,7 @@ mod tests {
     }
 
     /// Each file `.rs` of `dir` and of its folders.
-    fn sources(dir: &Path, all: &mut Vec<PathBuf>) {
+    pub(crate) fn sources(dir: &Path, all: &mut Vec<PathBuf>) {
         for entry in std::fs::read_dir(dir).unwrap().flatten() {
             let path = entry.path();
             if path.is_dir() {

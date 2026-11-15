@@ -314,13 +314,16 @@ pub async fn end_served(dir: PathBuf, served: Served) {
 }
 
 /// True when the folder `clone` has a `.git/objects/info/alternates` that
-/// names the main clone `main`: its objects live in `main`.
+/// names the main clone `main`: its objects live in `main`. `git clone
+/// --reference` writes the real path of the main clone there. So the host
+/// takes the path of the file as it is, and compares it with `main` and
+/// with the real path of `main`: it follows no link that the clone names
+/// (01M7FE5FYFAR92PM3EJJ211VM2).
 fn links_to(clone: &Path, main: &Path) -> bool {
-    let same = |a: &Path, b: &Path| match (a.canonicalize(), b.canonicalize()) {
-        (Ok(a), Ok(b)) => a == b,
-        _ => a == b,
-    };
-    crate::lead::linked_main(clone).is_ok_and(|linked| same(&linked, main))
+    // The main clone in the records of the daemon.
+    let real = main.canonicalize().ok();
+    crate::lead::linked_main(clone)
+        .is_ok_and(|linked| linked == main || real.as_deref() == Some(linked.as_path()))
 }
 
 /// The clones that link to the main clone `main`: the clone of each session
@@ -331,7 +334,7 @@ fn links_to(clone: &Path, main: &Path) -> bool {
 /// use riff::daemon::remote::linked_clones;
 ///
 /// let root = tempfile::tempdir()?;
-/// let main = root.path().join("daemon/clones/o/r");
+/// let main = root.path().canonicalize()?.join("daemon/clones/o/r");
 /// std::fs::create_dir_all(main.join(".git/objects"))?;
 /// let clone = |path: &str, objects: &std::path::Path| -> std::io::Result<()> {
 ///     let info = root.path().join(path).join("clone/.git/objects/info");
@@ -343,6 +346,16 @@ fn links_to(clone: &Path, main: &Path) -> bool {
 /// clone("data/sessions/issue-2-2b3c4d5e", &root.path().join("other/.git/objects"))?;
 /// assert_eq!(linked_clones(&root.path().join("data"), &main), 2);
 /// assert_eq!(linked_clones(&root.path().join("none"), &main), 0);
+/// // A link to the main clone: git writes the real path of the main clone.
+/// let by_link = root.path().join("by-link");
+/// std::os::unix::fs::symlink(&main, &by_link)?;
+/// assert_eq!(linked_clones(&root.path().join("data"), &by_link), 2);
+/// // A clone names a link in its own folder to the main clone: the host
+/// // follows no link that a clone names, so it does not count.
+/// let own = root.path().join("data/sessions/issue-3-3c4d5e6f/clone/main");
+/// clone("data/sessions/issue-3-3c4d5e6f", &own.join(".git/objects"))?;
+/// std::os::unix::fs::symlink(&main, &own)?;
+/// assert_eq!(linked_clones(&root.path().join("data"), &main), 2);
 /// # Ok::<(), std::io::Error>(())
 /// ```
 pub fn linked_clones(data: &Path, main: &Path) -> usize {

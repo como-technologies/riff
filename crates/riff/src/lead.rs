@@ -677,10 +677,7 @@ fn started(record: &daemon::Record) -> std::time::SystemTime {
 /// The last write to the transcript of the lead of `record`, if it has
 /// one.
 fn written(record: &daemon::Record) -> Option<std::time::SystemTime> {
-    crate::usage::transcripts_in(&record.folder.join("claude"), &record.live.session)
-        .iter()
-        .filter_map(|path| std::fs::metadata(path).and_then(|m| m.modified()).ok())
-        .max()
+    crate::usage::written_in(&record.folder.join("claude"), &record.live.session)
 }
 
 /// The file of the end of the last turn of a lead, in the folder of the
@@ -1290,13 +1287,22 @@ pub fn main_of(dir: &Path, repo: &str) -> Result<Option<PathBuf>> {
     Ok(served.map(|served| served.wave.main))
 }
 
+/// The folder of the objects of a clone.
+const OBJECTS: &str = ".git/objects";
+
+/// The file in [`OBJECTS`] that names the folders of the objects that
+/// the clone links to.
+const ALTERNATES: &str = "info/alternates";
+
 /// The main clone that the clone at `clone` links to: `git clone
 /// --reference MAIN` ([`fresh_clone`]) writes `MAIN/.git/objects` in the
 /// file `.git/objects/info/alternates` of the clone. The session writes
 /// that file. So the daemon only counts with it the clones that need a
 /// main clone ([`daemon::remote::linked_clones`]), and runs no git in
 /// the folder that it names: the main clone of a lead comes from
-/// [`main_of`] (01M7EAZ9N9DY7JPXZP1V8JY01E).
+/// [`main_of`] (01M7EAZ9N9DY7JPXZP1V8JY01E). It reads the file through
+/// [`crate::host_file`]: a link in the clone gives an error, as no file
+/// does (01M7FE5FYFAR92PM3EJJ211VM2).
 ///
 /// ```
 /// let dir = tempfile::tempdir()?;
@@ -1307,12 +1313,18 @@ pub fn main_of(dir: &Path, repo: &str) -> Result<Option<PathBuf>> {
 /// assert_eq!(riff::lead::linked_main(&clone)?, std::path::Path::new("/src/riff"));
 /// // A clone with no link names no main clone.
 /// assert!(riff::lead::linked_main(dir.path()).is_err());
+///
+/// // The host reads no file of the person through a link.
+/// std::fs::remove_file(info.join("alternates"))?;
+/// std::fs::write(dir.path().join("person"), "/src/riff/.git/objects\n")?;
+/// std::os::unix::fs::symlink(dir.path().join("person"), info.join("alternates"))?;
+/// assert!(riff::lead::linked_main(&clone).is_err());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn linked_main(clone: &Path) -> Result<PathBuf> {
-    let objects = clone.join(".git/objects");
-    let file = objects.join("info/alternates");
-    let text = std::fs::read_to_string(&file)
+    let name = Path::new(OBJECTS).join(ALTERNATES);
+    let (objects, file) = (clone.join(OBJECTS), clone.join(&name));
+    let text = crate::host_file::read_to_string(clone, &name)?
         .with_context(|| format!("cannot read {}", file.display()))?;
     let line = text
         .lines()
