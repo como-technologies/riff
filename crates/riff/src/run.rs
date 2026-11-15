@@ -217,6 +217,7 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
@@ -1033,9 +1034,15 @@ pub fn sign_in(file: &str, now_ms: i64) -> Result<SignIn> {
 /// of the person for a session (01M6Z87A04EXTT1FFJSJ1EM6TB), so no list
 /// holds that one either.
 ///
+/// The scrub finds the range of each match in the text first, then
+/// hides their union ([`Scrub::found`], [`hide`]). So a short secret in a
+/// long one does not cut the long one, in each order of the list.
+///
 /// ```
 /// use riff::run::Scrub;
 ///
+/// let mcp = Scrub::new(["live".to_owned(), "sk_live_51HxyzAbCdEf".to_owned()]);
+/// assert_eq!(mcp.clean("stripe refused sk_live_51HxyzAbCdEf"), "stripe refused [secret]");
 /// let scrub = Scrub::new(["sk-ant-oat01-secret1".to_owned(), "".to_owned()]);
 /// assert_eq!(scrub.clean("token sk-ant-oat01-secret1 here"), "token [secret] here");
 /// assert_eq!(scrub.clean("no token"), "no token");
@@ -1063,22 +1070,37 @@ impl Scrub {
         }
     }
 
-    /// `text` with each secret replaced by [`HIDDEN`].
+    /// `text` with one [`HIDDEN`] in place of each run of the union of
+    /// [`Scrub::found`] ([`hide`]).
     pub fn clean<'a>(&self, text: &'a str) -> Cow<'a, str> {
-        let mut out = Cow::Borrowed(text);
-        for secret in &self.secrets {
-            if out.contains(secret.as_str()) {
-                out = Cow::Owned(out.replace(secret.as_str(), HIDDEN));
-            }
+        let found = self.found(text);
+        if found.is_empty() {
+            Cow::Borrowed(text)
+        } else {
+            Cow::Owned(hide(text, found))
         }
-        for start in TOKEN_STARTS {
-            if out.contains(start) {
-                out = Cow::Owned(tokens_out(&out, start, |c| {
-                    c.is_ascii_alphanumeric() || c == '_'
-                }));
-            }
-        }
-        out
+    }
+
+    /// The range in `text` of each match of each secret, also of two
+    /// matches that overlap, and of each token of GitHub ([`tokens`]).
+    ///
+    /// ```
+    /// use riff::run::Scrub;
+    ///
+    /// let scrub = Scrub::new(["aaaa".to_owned()]);
+    /// assert_eq!(scrub.found("x aaaaa ghs_b1"), [2..6, 3..7, 8..14]);
+    /// ```
+    pub fn found(&self, text: &str) -> Vec<Range<usize>> {
+        let part = |c: char| c.is_ascii_alphanumeric() || c == '_';
+        self.secrets
+            .iter()
+            .flat_map(|secret| matches(text, secret))
+            .chain(
+                TOKEN_STARTS
+                    .iter()
+                    .flat_map(|start| tokens(text, start, part)),
+            )
+            .collect()
     }
 }
 
@@ -1086,32 +1108,69 @@ impl Scrub {
 /// person, of a user to server, of a refresh, and a fine-grained one.
 pub const TOKEN_STARTS: [&str; 6] = ["ghs_", "gho_", "ghp_", "ghu_", "ghr_", "github_pat_"];
 
-/// `text` with each token that starts with `start` replaced by
-/// [`HIDDEN`]: `start` and each character after it that `part` takes.
-/// `start` alone stays.
+/// The range of each match of `secret` in `text`, also of two matches
+/// that overlap. `secret` is not empty.
+fn matches<'a>(text: &'a str, secret: &'a str) -> impl Iterator<Item = Range<usize>> + 'a {
+    let step = secret.chars().next().map_or(1, char::len_utf8);
+    let mut from = 0;
+    std::iter::from_fn(move || {
+        let at = from + text.get(from..)?.find(secret)?;
+        from = at + step;
+        Some(at..at + secret.len())
+    })
+}
+
+/// The range of each token in `text` that starts with `start`: `start`
+/// and each character after it that `part` takes. A `start` with no such
+/// character after it is no token.
 ///
 /// ```
-/// use riff::run::tokens_out;
+/// use riff::run::tokens;
 ///
 /// let part = |c: char| c.is_ascii_alphanumeric() || c == '-';
-/// assert_eq!(tokens_out("a=ghs_A-9,ghs_b end", "ghs_", part), "a=[secret],[secret] end");
-/// assert_eq!(tokens_out("ghs_ alone, and no_ghs", "ghs_", part), "ghs_ alone, and no_ghs");
+/// let found: Vec<_> = tokens("a=ghs_A-9,ghs_ end", "ghs_", part).collect();
+/// assert_eq!(found, [2..9]);
 /// ```
-pub fn tokens_out(text: &str, start: &str, part: fn(char) -> bool) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(at) = rest.find(start) {
-        let after = &rest[at + start.len()..];
+pub fn tokens<'a>(
+    text: &'a str,
+    start: &'a str,
+    part: fn(char) -> bool,
+) -> impl Iterator<Item = Range<usize>> + 'a {
+    text.match_indices(start).filter_map(move |(at, _)| {
+        let after = &text[at + start.len()..];
         let len = after.find(|c: char| !part(c)).unwrap_or(after.len());
-        out.push_str(&rest[..at]);
-        if len == 0 {
-            out.push_str(start);
-        } else {
-            out.push_str(HIDDEN);
+        (len > 0).then(|| at..at + start.len() + len)
+    })
+}
+
+/// `text` with one [`HIDDEN`] in place of each run of the union of
+/// `found`: two ranges that overlap or touch make one run. Each range
+/// starts and ends at a character of `text`.
+///
+/// ```
+/// use riff::run::hide;
+///
+/// assert_eq!(hide("a b c d e", vec![6..7, 2..3, 2..5]), "a [secret] [secret] e");
+/// assert_eq!(hide("abcdef", vec![0..2, 2..4]), "[secret]ef");
+/// assert_eq!(hide("no secret", Vec::new()), "no secret");
+/// ```
+pub fn hide(text: &str, mut found: Vec<Range<usize>>) -> String {
+    found.sort_by_key(|range| range.start);
+    let mut runs: Vec<Range<usize>> = Vec::new();
+    for range in found {
+        match runs.last_mut() {
+            Some(run) if range.start <= run.end => run.end = run.end.max(range.end),
+            _ => runs.push(range),
         }
-        rest = &after[len..];
     }
-    out.push_str(rest);
+    let mut out = String::with_capacity(text.len());
+    let mut shown = 0;
+    for run in runs {
+        out.push_str(&text[shown..run.start]);
+        out.push_str(HIDDEN);
+        shown = run.end;
+    }
+    out.push_str(&text[shown..]);
     out
 }
 

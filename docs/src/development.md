@@ -1736,6 +1736,13 @@ With no white space after `Bearer` and its quotes and colons, nothing
 goes: `xyz` shows in `Bearer:xyz` and in
 `{"token_type":"Bearer","access_token":"xyz"}`.
 
+riff finds each secret of this list on the line as the daemon wrote
+it. Then it puts one `[secret]` in place of each run of secrets. So a
+secret goes whole, also when another rule finds a part of it. For
+example, with the MCP value `correct horse battery staple`, the line
+`-e DB_PASSWORD=correct horse battery staple` shows as
+`-e DB_PASSWORD=[secret]`.
+
 When riff cannot read the file of the MCP servers, it shows no line:
 fix the file, or remove it. When riff cannot read the OS keyring, it
 shows no line too: unlock the keyring. On a Mac, launchd writes the log

@@ -14771,7 +14771,7 @@ mod tests {
 
     /// The lines of [`LOG`] of issue-12 since 07:12, with no secret. A
     /// word that starts like a token goes whole, with its comma
-    /// (01M7FS2HD407ZCTF60EX7XZ2FF).
+    /// (01M7FXE86QYC8D6P6WDK69ZSMA).
     const LOG_SHOWN: &str = "2026-11-14T07:12:00Z riff daemon: o/r: claims issue-12 again\n\
          2026-11-14T07:13:00Z riff daemon: issue-12 pushes with [secret] GH_TOKEN=[secret] and \
          [secret]\n\

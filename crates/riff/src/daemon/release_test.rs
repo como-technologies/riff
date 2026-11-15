@@ -72,6 +72,7 @@
 //!     D -- "just real-session --skip .mozilla" --> T["the test: ~/.mozilla of HOST"]
 //! ```
 
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -83,7 +84,7 @@ use riff_client::daemons::Test;
 use super::remote::Served;
 use crate::cycle::{TestState, status_args};
 use crate::pr::Gh;
-use crate::run::HIDDEN;
+use crate::run::hide;
 use crate::text;
 use crate::watches::{Op, Watches};
 
@@ -330,15 +331,8 @@ fn finish(
 /// How many last lines of the log the comment of a fail holds.
 const TAIL_LINES: usize = 30;
 
-/// `text` with each secret cut out: a word that starts like a token of
-/// GitHub or Anthropic, and the value of `NAME=value` when NAME names a
-/// token, a key, a secret or a password ([`word_out`]). After the word
-/// `Bearer` ([`ends_with_bearer`], 01M7FFA3GN7F2GW3NGYJPTMKN3,
-/// 01M7FS2HFPJ18E102RWWK3XZ75) and the white space after it, each
-/// character goes up to the next space or tab, or to the end of the
-/// line: the token, its quotes and the rest of the word, for example the
-/// rest of the JSON (01M7FN5SSWJRDXWTAYAERBAAFB). The white space stays,
-/// also at the end of the line.
+/// `text` with each secret cut out: [`hide`] of [`redacted`], on each
+/// line. The white space stays, also at the end of the line.
 ///
 /// ```
 /// use riff::daemon::release_test::redact;
@@ -351,46 +345,72 @@ const TAIL_LINES: usize = 30;
 /// assert_eq!(redact("step 6 of 10"), "step 6 of 10");
 /// ```
 pub fn redact(text: &str) -> String {
-    let mut out = Vec::new();
-    for line in text.lines() {
-        let mut shown = String::with_capacity(line.len());
-        let mut rest = line;
-        let mut after_bearer = false;
-        while let Some(start) = rest.find(|c: char| !c.is_whitespace()) {
-            shown.push_str(&rest[..start]);
-            rest = &rest[start..];
-            let end = if after_bearer {
-                rest.find([' ', '\t'])
-            } else {
-                rest.find(char::is_whitespace)
-            };
-            let (word, after) = rest.split_at(end.unwrap_or(rest.len()));
-            if after_bearer {
-                shown.push_str(HIDDEN);
-            } else {
-                shown.push_str(&word_out(word));
-            }
-            after_bearer = ends_with_bearer(word);
-            rest = after;
-        }
-        shown.push_str(rest);
-        out.push(shown);
-    }
-    out.join("\n")
+    let lines: Vec<String> = text
+        .lines()
+        .map(|line| hide(line, redacted(line)))
+        .collect();
+    lines.join("\n")
 }
 
-/// `word` with its secret cut out: the whole word when it starts like a
-/// token of GitHub or Anthropic, and the value of `NAME=value` when NAME
-/// names a token, a key, a secret or a password.
+/// The range of each secret in `text` that [`redact`] cuts out: a word
+/// that starts like a token of GitHub or Anthropic, and the value of
+/// `NAME=value` when NAME names a token, a key, a secret or a password
+/// ([`secret_in`]). After the word `Bearer` ([`ends_with_bearer`],
+/// 01M7FFA3GN7F2GW3NGYJPTMKN3, 01M7FS2HFPJ18E102RWWK3XZ75) and the white
+/// space after it, each character goes up to the next space or tab, or
+/// to the end of the line: the token, its quotes and the rest of the
+/// word, for example the rest of the JSON (01M7FN5SSWJRDXWTAYAERBAAFB).
 ///
 /// ```
-/// use riff::daemon::release_test::word_out;
+/// use riff::daemon::release_test::redacted;
 ///
-/// assert_eq!(word_out("ghp_abc123"), "[secret]");
-/// assert_eq!(word_out(",DB_PASSWORD=hunter2"), ",DB_PASSWORD=[secret]");
-/// assert_eq!(word_out("task-2"), "task-2");
+/// assert_eq!(redacted("GH_TOKEN=abc ghp_a1"), [9..12, 13..19]);
+/// assert_eq!(redacted("Bearer xyz\nBearer\nabc"), [7..10]);
 /// ```
-pub fn word_out(word: &str) -> String {
+pub fn redacted(text: &str) -> Vec<Range<usize>> {
+    let mut found = Vec::new();
+    let mut at = 0;
+    for line in text.split_inclusive('\n') {
+        let mut after_bearer = false;
+        let mut end = 0;
+        while let Some(skip) = line[end..].find(|c: char| !c.is_whitespace()) {
+            let start = end + skip;
+            let rest = &line[start..];
+            let len = if after_bearer {
+                rest.find([' ', '\t', '\n'])
+            } else {
+                rest.find(char::is_whitespace)
+            }
+            .unwrap_or(rest.len());
+            let word = &rest[..len];
+            let secret = if after_bearer {
+                Some(0..len)
+            } else {
+                secret_in(word)
+            };
+            if let Some(secret) = secret {
+                found.push(at + start + secret.start..at + start + secret.end);
+            }
+            after_bearer = ends_with_bearer(word);
+            end = start + len;
+        }
+        at += line.len();
+    }
+    found
+}
+
+/// The range of the secret in `word`: the whole word when it starts like
+/// a token of GitHub or Anthropic, and the value of `NAME=value` when
+/// NAME names a token, a key, a secret or a password.
+///
+/// ```
+/// use riff::daemon::release_test::secret_in;
+///
+/// assert_eq!(secret_in("ghp_abc123"), Some(0..10));
+/// assert_eq!(secret_in(",DB_PASSWORD=hunter2"), Some(13..20));
+/// assert_eq!(secret_in("task-2"), None);
+/// ```
+pub fn secret_in(word: &str) -> Option<Range<usize>> {
     const NAMES: [&str; 4] = ["TOKEN", "KEY", "SECRET", "PASSWORD"];
     // `sk-` is the start of each key of Anthropic.
     let mut prefixes = crate::run::TOKEN_STARTS.iter().chain(&["sk-"]);
@@ -398,11 +418,11 @@ pub fn word_out(word: &str) -> String {
         && !value.is_empty()
         && NAMES.iter().any(|n| name.to_ascii_uppercase().contains(n))
     {
-        format!("{name}={HIDDEN}")
+        Some(name.len() + 1..word.len())
     } else if prefixes.any(|p| word.starts_with(p)) {
-        HIDDEN.to_owned()
+        Some(0..word.len())
     } else {
-        word.to_owned()
+        None
     }
 }
 

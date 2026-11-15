@@ -6768,17 +6768,23 @@ of this part when they merge.
   rest of the word, for example the rest of the JSON. Supersedes
   01M7FJB2HQAVFWCJNMPCX483ZH in full, and 01M7FFA3GN7F2GW3NGYJPTMKN3 in
   part.
-- **01M7FS2HD407ZCTF60EX7XZ2FF** `riff daemon log` cleans each line in
-  three steps. First, the filter of the log of the real-session test
-  reads the line as the daemon wrote it. Then the secrets that the
-  daemon takes out of the events of a session go. Then each key of
-  Anthropic goes.
+- **01M7FS2HD407ZCTF60EX7XZ2FF** The filter of the log of the
+  real-session test reads each line of `riff daemon log` as the daemon
+  wrote it.
 - **01M7FS2HFPJ18E102RWWK3XZ75** The filter of the log of the
   real-session test, and so of `riff daemon log`, finds the word
   `Bearer` also with quotes or colons just after it, for example
   `"Bearer"` or `Bearer:`. These quotes and colons stay. The part that
   01M7FN5SSWJRDXWTAYAERBAAFB hides starts after the white space after
   them.
+- **01M7FXE86QYC8D6P6WDK69ZSMA** `riff daemon log` finds the parts of a
+  line to hide on the line as the daemon wrote it, with each filter on
+  the same text: each match of each secret that the daemon takes out of
+  the events of a session, also two matches that overlap, each part that
+  the filter of the log of the real-session test hides, and each key of
+  Anthropic. Then it puts one `[secret]` in place of each run of the
+  union of these parts: two parts that overlap or touch make one run.
+  Supersedes 01M7FS2HD407ZCTF60EX7XZ2FF in part.
 
 ### riff relay
 

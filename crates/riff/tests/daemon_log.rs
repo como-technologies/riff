@@ -416,32 +416,73 @@ fn the_rest_of_the_word_after_bearer_goes_in_each_form_of_a_header() {
     }
 }
 
-/// #2156, 01M7EX1Q1F468NWGPJJS0W0ZG9, 01M7FS2HD407ZCTF60EX7XZ2FF: an MCP
-/// server of the host with the value `Bearer` keeps no token after the
-/// word `Bearer`, and `--grep` finds no part of the token.
+/// #2156, 01M7EX1Q1F468NWGPJJS0W0ZG9, 01M7FS2HD407ZCTF60EX7XZ2FF,
+/// 01M7FXE86QYC8D6P6WDK69ZSMA: a
+/// secret of an MCP server of the host goes whole, also when the filter
+/// of the real-session test or the key of Anthropic finds a part of it,
+/// and `--grep` finds no part of it. The value `Bearer` keeps no token
+/// after it.
 #[test]
-fn a_secret_of_the_host_that_is_bearer_keeps_no_token_after_it() {
+fn a_secret_of_the_host_that_another_filter_finds_in_part_goes_whole() {
     let env = Isolated::new();
     let at = Utc::now() - Duration::minutes(5);
-    let raw = line(at, "riff daemon: Authorization: Bearer xyz-token-1");
-    write_log(&env, &[], &[raw]);
+    let pairs = [
+        (
+            "Cookie: sessionid=8f2kq9x7ab; csrftoken=Zt0k3n",
+            "Cookie: [secret]",
+        ),
+        (
+            r#"{"X-Api-Key":"c2VjcmV0dmFsdWUxMjM0NQ=="}"#,
+            r#"{"X-Api-Key":"[secret]"#,
+        ),
+        (
+            "-e DB_PASSWORD=correct horse battery staple",
+            "-e DB_PASSWORD=[secret]",
+        ),
+        ("docs sent Bearer abc-one def-two", "docs sent [secret]"),
+        (
+            "Authorization: Bearer xyz-token-1",
+            "Authorization: [secret] [secret]",
+        ),
+        ("token prefix-sk-ant-oat01-abc here", "token [secret] here"),
+    ];
+    let lines = pairs.map(|(l, _)| line(at, &format!("riff daemon: {l}")));
+    write_log(&env, &[], &lines);
     std::fs::write(
         env.riff_home().join("daemon").join(riff::session_mcp::FILE),
-        r#"{"mcpServers":{"api":{"command":"x","env":{"AUTH_SCHEME":"Bearer"}}}}"#,
+        r#"{"mcpServers":{
+            "web":{"url":"u","headers":{"Cookie":"sessionid=8f2kq9x7ab; csrftoken=Zt0k3n",
+                "X-Api-Key":"c2VjcmV0dmFsdWUxMjM0NQ==","X-Docs":"Bearer abc-one def-two"}},
+            "db":{"command":"db","env":{"DB":"correct horse battery staple",
+                "AUTH_SCHEME":"Bearer","OTHER":"prefix-sk-ant-oat01-abc"}}}}"#,
     )
     .unwrap();
     let out = daemon_log(&env, &[]);
     assert!(out.status.success(), "{}", text(&out.stderr));
     let stamp = at.format("%Y-%m-%dT%H:%M:%SZ");
-    assert_eq!(
-        text(&out.stdout),
-        format!("{stamp} riff daemon: Authorization: [secret] [secret]\n")
-    );
-    let out = daemon_log(&env, &["--grep", "xyz-token"]);
-    assert_eq!(
-        text(&out.stdout),
-        "riff daemon log: no line of the log of the riff daemon matches.\n"
-    );
+    let shown: String = pairs
+        .iter()
+        .map(|(_, shown)| format!("{stamp} riff daemon: {shown}\n"))
+        .collect();
+    assert_eq!(text(&out.stdout), shown);
+    for probe in [
+        "8f2kq9x7ab",
+        "Zt0k3n",
+        "c2VjcmV0dmFsdWUxMjM0NQ",
+        "horse",
+        "abc-one",
+        "def-two",
+        "xyz-token",
+        "prefix",
+        "oat01",
+    ] {
+        let out = daemon_log(&env, &["--grep", probe]);
+        assert_eq!(
+            text(&out.stdout),
+            "riff daemon log: no line of the log of the riff daemon matches.\n",
+            "{probe}"
+        );
+    }
 }
 
 /// #2156, 01M7EX1PVSG64G8EE5SNDRHM7G, 01M7F0HE514TQMGQJKH8CVYY52: with
