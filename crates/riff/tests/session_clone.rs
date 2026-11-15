@@ -177,9 +177,10 @@ fn a_session_clones_and_pushes_in_its_container_and_the_next_goes_on_from_the_br
     assert_eq!(std::fs::read_to_string(root.join("first/env")).unwrap(), "");
     let alternates =
         std::fs::read_to_string(first.path.join(".git/objects/info/alternates")).unwrap();
+    // git writes the real path of the main clone.
     assert_eq!(
-        alternates.trim(),
-        main.join(".git/objects").display().to_string()
+        std::fs::canonicalize(alternates.trim()).unwrap(),
+        std::fs::canonicalize(main.join(".git/objects")).unwrap()
     );
     let pushed = git(
         &main,

@@ -357,9 +357,10 @@ mod tests {
         assert_eq!(plan.make().unwrap(), Made::New { earlier: false });
         let alternates =
             std::fs::read_to_string(plan.path.join(".git/objects/info/alternates")).unwrap();
+        // git writes the real path: on a Mac, /var is a link to /private/var.
         assert_eq!(
-            alternates.trim(),
-            origin.main.join(".git/objects").display().to_string()
+            std::fs::canonicalize(alternates.trim()).unwrap(),
+            std::fs::canonicalize(origin.main.join(".git/objects")).unwrap()
         );
         assert_eq!(
             git_in(&plan.path, &["branch", "--show-current"]),
