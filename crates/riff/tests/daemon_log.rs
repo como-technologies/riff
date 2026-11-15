@@ -316,9 +316,10 @@ fn a_secret_at_the_cut_of_a_long_line_goes_whole() {
     assert_eq!(text(&out.stdout), format!("{head} [secret] …\n"));
 }
 
-/// #2156, 01M7EX1Q1F468NWGPJJS0W0ZG9, 01M7FFA3GN7F2GW3NGYJPTMKN3: the
-/// token after `Bearer` goes in each form of a header, and `--grep`
-/// finds no part of it.
+/// #2156, 01M7EX1Q1F468NWGPJJS0W0ZG9, 01M7FFA3GN7F2GW3NGYJPTMKN3,
+/// 01M7FJB2HQAVFWCJNMPCX483ZH: the token after `Bearer` goes in each
+/// form of a header, with each secret in the rest of its word, and
+/// `--grep` finds no part of them.
 #[test]
 fn a_bearer_token_goes_in_each_form_of_a_header() {
     let env = Isolated::new();
@@ -328,6 +329,10 @@ fn a_bearer_token_goes_in_each_form_of_a_header() {
         r#"riff daemon: Authorization: "Bearer quoted-form-3""#,
         "riff daemon: Authorization:Bearer nospace-form-4",
         "riff daemon: Authorization: Bearer  twospace-form-5",
+        "riff daemon: Authorization: bearer\ttab-form-6",
+        "riff daemon: Authorization: Bearer xyz,DB_PASSWORD=hunter2",
+        r#"riff daemon: {"Authorization":"Bearer xyz","env":"DB_PASSWORD=hunter2"}"#,
+        "riff daemon: Authorization: Bearer abc:def",
     ];
     write_log(&env, &[], &lines.map(|l| line(at, l)));
     let out = daemon_log(&env, &[]);
@@ -339,10 +344,23 @@ fn a_bearer_token_goes_in_each_form_of_a_header() {
             "{stamp} riff daemon: {{\"Authorization\":\"Bearer [secret]\"}}\n\
              {stamp} riff daemon: Authorization: \"Bearer [secret]\"\n\
              {stamp} riff daemon: Authorization:Bearer [secret]\n\
-             {stamp} riff daemon: Authorization: Bearer  [secret]\n"
+             {stamp} riff daemon: Authorization: Bearer  [secret]\n\
+             {stamp} riff daemon: Authorization: bearer\t[secret]\n\
+             {stamp} riff daemon: Authorization: Bearer [secret]\n\
+             {stamp} riff daemon: {{\"Authorization\":\"Bearer [secret]\",\"env\":\"DB_PASSWORD=[secret]\n\
+             {stamp} riff daemon: Authorization: Bearer [secret]\n"
         )
     );
-    for probe in ["json-form", "quoted-form", "nospace-form", "twospace-form"] {
+    for probe in [
+        "json-form",
+        "quoted-form",
+        "nospace-form",
+        "twospace-form",
+        "tab-form",
+        "xyz",
+        "hunter2",
+        ":def",
+    ] {
         let out = daemon_log(&env, &["--grep", probe]);
         assert_eq!(
             text(&out.stdout),

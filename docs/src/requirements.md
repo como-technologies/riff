@@ -6761,7 +6761,13 @@ of this part when they merge.
   real-session test, and so of `riff daemon log`, takes out the token
   after the word `Bearer` in each form of a header: after a space, a
   quote or a colon, for example in JSON, and after more spaces or a tab.
-  The quotes and the rest of the JSON stay.
+- **01M7FJB2HQAVFWCJNMPCX483ZH** In the filter of the log of the
+  real-session test, the token after `Bearer` starts after the opening
+  quotes of the next word. It ends at the closing quote: the first `"`
+  or `'` at the end of the word, or before `,`, `}`, `]` or `)`. The
+  quotes and the rest of the word stay, and the other rules of the
+  filter take each secret out of that rest. A word with no closing quote
+  goes whole. Supersedes 01M7FFA3GN7F2GW3NGYJPTMKN3 in part.
 
 ### riff relay
 
