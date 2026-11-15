@@ -12978,7 +12978,7 @@ pub fn wave_spent_fix(item: &str, pull: u64, head: &str, starts: u32, reason: &s
          #{pull} after the FAIL of its verify, and the pull request still has that head. The \
          last session ended: {reason}. It starts no more fix of this head until riff host join \
          again. A new head starts a new count. Read the FAIL: gh pr view {pull} --comments",
-        head.get(..7).unwrap_or(head)
+        short(head)
     )
 }
 

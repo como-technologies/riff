@@ -234,9 +234,7 @@ async fn report_one(
         Err(e) => {
             // The same end as a report that fails with no kept result.
             let failed = crate::wave::refused_pass(api, me, kept.session(folder), &e).await;
-            if let crate::wave::ReportFailed::RefusedPass(end) = failed {
-                ends.push(end);
-            }
+            ends.extend(failed.refused());
             let _ = std::fs::remove_dir_all(folder);
             // The read above found the pull request open.
             let body = crate::wave::no_report(item, *pull, &e, true);

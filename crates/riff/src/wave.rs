@@ -3642,59 +3642,79 @@ async fn post_end(api: &Api, record: &Record, ended: Ended, found: Found) {
     session.post_end(api, &record.me, found).await;
 }
 
-/// What the steps found of the verify `session` whose report failed with
-/// `error`. When riff refused its PASS for a member of the council with
-/// no line ([`crate::council::result::NoLine`]), the end of the session
-/// goes to the thread `ends`, as `me`, with the [`Found`] of the refusal
-/// ([`ReportFailed::found`]): so the record and the reason that the daemon
-/// keeps agree (01M7G6H601C6NYC7ACSF6GVW50). This comes before the folder
-/// of the session goes. After each other error, it posts nothing. The end
-/// step (`after_verify`) and the report of a kept result after the reset
-/// ([`kept`]) both use it.
-pub async fn refused_pass(
-    api: &Api,
-    me: &SessionUri,
-    session: crate::ends::Session<'_>,
-    error: &anyhow::Error,
-) -> ReportFailed {
-    if !error.is::<crate::council::result::NoLine>() {
-        return ReportFailed::Other;
+pub use refused::{ReportFailed, refused_pass};
+
+/// The end of a verify whose PASS riff refused for a member of the council
+/// with no line (01M7G6H601C6NYC7ACSF6GVW50). Only [`refused_pass`] makes
+/// a [`ReportFailed`], so its end and what the steps found agree.
+mod refused {
+    use riff_client::api::Api;
+    use riff_core::name::SessionUri;
+
+    use crate::council::result::NoLine;
+    use crate::ends::{End, Found, Session};
+
+    /// What the steps found of the verify `session` whose report failed
+    /// with `error`. When riff refused its PASS for a member of the council
+    /// with no line ([`NoLine`]), the end of the session goes to the thread
+    /// `ends`, as `me`, with the [`Found`] of the refusal
+    /// ([`ReportFailed::found`]): so the record and the reason that the
+    /// daemon keeps agree (01M7G6H601C6NYC7ACSF6GVW50). This comes before
+    /// the folder of the session goes. After each other error, it posts
+    /// nothing. The end step (`after_verify`) and the report of a kept
+    /// result after the reset ([`crate::kept`]) both use it.
+    pub async fn refused_pass(
+        api: &Api,
+        me: &SessionUri,
+        session: Session<'_>,
+        error: &anyhow::Error,
+    ) -> ReportFailed {
+        if !error.is::<NoLine>() {
+            return ReportFailed { refused: None };
+        }
+        let end = session.post_end(api, me, ReportFailed::REFUSED).await;
+        ReportFailed { refused: Some(end) }
     }
-    ReportFailed::RefusedPass(session.post_end(api, me, ReportFailed::REFUSED).await)
-}
 
-/// What [`refused_pass`] found of a verify whose report failed.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ReportFailed {
-    /// riff refused its PASS for a member of the council with no line: the
-    /// end that the session posted in the thread `ends`.
-    RefusedPass(crate::ends::End),
-    /// Another error: the steps posted no end.
-    Other,
-}
-
-impl ReportFailed {
-    /// What the steps found of a refused PASS, and what its end says.
-    const REFUSED: Found = Found::NoVerdict;
-
-    /// What the steps found: a result with no verdict for a refused PASS
-    /// (01M7G3DR4R4KF5RSD94F6ZN80H), and nothing after another error.
+    /// What [`refused_pass`] found of a verify whose report failed. Its
+    /// field is private to this module, so only [`refused_pass`] makes it.
+    /// So this does not compile:
     ///
-    /// ```
+    /// ```compile_fail,E0451
     /// use riff::daemon::Ended;
-    /// use riff::ends::{End, Found};
+    /// use riff::ends::End;
     /// use riff::run::Scrub;
     /// use riff::wave::ReportFailed;
     ///
     /// let clean = Ended { code: Some(0), failed: false };
     /// let end = End::from_events("verify-issue-7", "1a2b3c4d", clean, "", &Scrub::new([]));
-    /// assert_eq!(ReportFailed::RefusedPass(end).found(), Found::NoVerdict);
-    /// assert_eq!(ReportFailed::Other.found(), Found::Unread);
+    /// let failed = ReportFailed { refused: Some(end) };
     /// ```
-    pub fn found(&self) -> Found {
-        match self {
-            ReportFailed::RefusedPass(_) => ReportFailed::REFUSED,
-            ReportFailed::Other => Found::Unread,
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct ReportFailed {
+        /// The end that the session posted in the thread `ends` when riff
+        /// refused its PASS: none after another error.
+        refused: Option<End>,
+    }
+
+    impl ReportFailed {
+        /// What the steps found of a refused PASS, and what its end says.
+        const REFUSED: Found = Found::NoVerdict;
+
+        /// What the steps found: a result with no verdict for a refused
+        /// PASS (01M7G3DR4R4KF5RSD94F6ZN80H), and nothing after another
+        /// error.
+        pub fn found(&self) -> Found {
+            match self.refused {
+                Some(_) => ReportFailed::REFUSED,
+                None => Found::Unread,
+            }
+        }
+
+        /// The end that the session of a refused PASS posted in the thread
+        /// `ends`: none after another error.
+        pub fn refused(self) -> Option<End> {
+            self.refused
         }
     }
 }
@@ -14998,6 +15018,51 @@ esac
             first: "docs".parse().unwrap(),
             rest: vec!["big-o".parse().unwrap()],
         }
+    }
+
+    /// 01M7G6H601C6NYC7ACSF6GVW50, 01M7G3DR4R4KF5RSD94F6ZN80H: only
+    /// `refused_pass` makes a `ReportFailed`. For a PASS that riff refused
+    /// for a member of the council with no line, it gives the end that the
+    /// session posted in the thread `ends`, and that end says what the
+    /// steps found: a result with no verdict. After another error, it gives
+    /// no end, the steps found nothing, and it posts no record.
+    #[tokio::test]
+    async fn a_refused_pass_gives_the_end_that_it_posted_and_what_the_steps_found() {
+        let built = Built::new().await;
+        std::fs::write(built.dir.path().join(crate::daemon::EVENTS), "the result\n").unwrap();
+        let session = crate::ends::Session {
+            item: "verify-issue-12",
+            id: &built.record.live.session,
+            commit: Some("1a2b3c4d5e"),
+            folder: built.dir.path(),
+            ended: Ended {
+                code: Some(0),
+                failed: false,
+            },
+        };
+
+        let refused = anyhow::Error::new(docs_and_big_o());
+        let failed = refused_pass(&built.api, &built.lead, session, &refused).await;
+        let found = failed.found();
+        assert_eq!(found, Found::NoVerdict);
+        let end = failed.refused().expect("the end of a refused PASS");
+        assert_eq!(end.said, found.said());
+        assert_eq!(end.reason(), "exit code 0, and no PASS or FAIL");
+        assert_eq!(end.head.as_deref(), Some("1a2b3c4"));
+        assert_eq!(end.tail, ["the result"]);
+        let records = crate::ends::read(&built.api, &built.lead).await.unwrap();
+        let [record] = &records[..] else {
+            panic!("one record: {records:?}");
+        };
+        assert_eq!(record.tag("item"), "verify-issue-12");
+        assert_eq!(record.reason, end.reason());
+
+        let other = anyhow!("gh: Bad Gateway (HTTP 502)");
+        let failed = refused_pass(&built.api, &built.lead, session, &other).await;
+        assert_eq!(failed.found(), Found::Unread);
+        assert_eq!(failed.refused(), None);
+        let records = crate::ends::read(&built.api, &built.lead).await.unwrap();
+        assert_eq!(records.len(), 1, "no second record: {records:?}");
     }
 
     /// 01M7CFBZSQEEZNZBR9H1S54GS1, 01M7D11KGEJ8ACFJK6Y10WENJZ,
