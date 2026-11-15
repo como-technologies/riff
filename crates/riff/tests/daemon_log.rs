@@ -349,9 +349,47 @@ fn the_value_of_each_secret_name_goes_in_any_case() {
     );
 }
 
-/// #2156, 01M7G3CSVWSV6RTGJY1WMFGV7V: a line of 256 KiB of starts of
-/// tokens of GitHub, and a line of 256 KiB of starts of keys of
-/// Anthropic, each show as one `[secret]`, in a short time.
+/// #2156, 01M7GCP0ST7RACEV1GTZCZ9KAP, 01M7GCP11AAPM078B2CXTDH03K: a
+/// quoted value with a space goes up to its closing quote, also with the
+/// text of the name in the middle of NAME and with the quote before
+/// NAME. `--grep` finds no word of the value, and the next word stays.
+#[test]
+fn a_quoted_value_with_a_space_goes_whole() {
+    let env = Isolated::new();
+    let at = Utc::now() - Duration::minutes(5);
+    let names = "-e DB_PASSWORD=\"qqone qqtwo\" -e SECRET_KEY_BASE='qqthree qqfour' \
+                 \"GH_TOKEN=qqfive qqsix\" next-word";
+    write_log(
+        &env,
+        &[],
+        &[line(at, &format!("riff daemon: podman run {names}"))],
+    );
+    let out = daemon_log(&env, &[]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let stamp = at.format("%Y-%m-%dT%H:%M:%SZ");
+    let shown = format!(
+        "{stamp} riff daemon: podman run -e DB_PASSWORD=[secret] \
+         -e SECRET_KEY_BASE=[secret] \"GH_TOKEN=[secret] next-word\n"
+    );
+    assert_eq!(text(&out.stdout), shown);
+    for word in ["qqone", "qqtwo", "qqfour", "qqsix"] {
+        let out = daemon_log(&env, &["--grep", word]);
+        assert_eq!(
+            text(&out.stdout),
+            "riff daemon log: no line of the log of the riff daemon matches.\n",
+            "{word}"
+        );
+    }
+    let out = daemon_log(&env, &["--grep", "next-word"]);
+    assert_eq!(text(&out.stdout), shown);
+}
+
+/// #2156, 01M7G3CSVWSV6RTGJY1WMFGV7V, 01M7GD6J18WNK7JEFKXMS8YDCH: a line
+/// of 256 KiB of starts of tokens of GitHub, of starts of keys of
+/// Anthropic, of quoted values, and of values with a `\` before each
+/// space, each show as one `[secret]`. A line of 256 KiB of `Bearer` with
+/// a no-break space after each one shows its first `Bearer` and one
+/// `[secret]`. Each goes in a short time.
 #[test]
 fn a_long_line_of_starts_of_tokens_goes_in_a_short_time() {
     let env = Isolated::new();
@@ -360,6 +398,9 @@ fn a_long_line_of_starts_of_tokens_goes_in_a_short_time() {
     let lines = [
         line(at, &format!("riff daemon: {}", long("ghs_"))),
         line(at, &format!("riff daemon: {}", long("sk-ant-"))),
+        line(at, &format!("riff daemon: {}", long("KEY=\"a \""))),
+        line(at, &format!("riff daemon: {}end", long("KEY=a\\ "))),
+        line(at, &format!("riff daemon: {}", long("Bearer\u{a0}"))),
     ];
     write_log(&env, &[], &lines);
     let begin = std::time::Instant::now();
@@ -369,7 +410,11 @@ fn a_long_line_of_starts_of_tokens_goes_in_a_short_time() {
     let stamp = at.format("%Y-%m-%dT%H:%M:%SZ");
     assert_eq!(
         text(&out.stdout),
-        format!("{stamp} riff daemon: [secret]\n{stamp} riff daemon: [secret]\n")
+        format!(
+            "{stamp} riff daemon: [secret]\n{stamp} riff daemon: [secret]\n\
+             {stamp} riff daemon: KEY=[secret]\n{stamp} riff daemon: KEY=[secret]\n\
+             {stamp} riff daemon: Bearer\u{a0}[secret]\n"
+        )
     );
     assert!(took < std::time::Duration::from_secs(20), "{took:?}");
 }

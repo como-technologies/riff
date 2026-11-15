@@ -360,38 +360,44 @@ pub fn redact(text: &str) -> String {
 /// space after it, each character goes up to the next space or tab, or
 /// to the end of the line: the token, its quotes and the rest of the
 /// word, for example the rest of the JSON (01M7FN5SSWJRDXWTAYAERBAAFB).
+/// Each word in that part has the other rules too, so the value of a
+/// `NAME=value` in it goes up to its closing quote
+/// (01M7GCP0ST7RACEV1GTZCZ9KAP).
 ///
 /// ```
 /// use riff::daemon::release_test::redacted;
 ///
 /// assert_eq!(redacted("GH_TOKEN=abc ghp_a1"), [9..12, 13..19]);
 /// assert_eq!(redacted("Bearer xyz\nBearer\nabc ghp_a1"), [7..10, 22..28]);
+/// assert_eq!(redacted(r#"GH_TOKEN="a b" ok"#), [9..14]);
 /// ```
 pub fn redacted(text: &str) -> Vec<Range<usize>> {
     let mut found = Vec::new();
     let mut at = 0;
     for line in text.split_inclusive('\n') {
         let mut after_bearer = false;
+        // The end of the part after the last `Bearer`: a word in it is
+        // hidden already, so the part is found once (01M7GD6J18WNK7JEFKXMS8YDCH).
+        let mut bearer_end = 0;
         let mut end = 0;
         while let Some(skip) = line[end..].find(|c: char| !c.is_whitespace()) {
             let start = end + skip;
             let rest = &line[start..];
-            let len = if after_bearer {
-                rest.find([' ', '\t', '\n'])
-            } else {
-                rest.find(char::is_whitespace)
+            let mut len = rest.find(char::is_whitespace).unwrap_or(rest.len());
+            let secret = secret_in(rest);
+            // The scan goes on after the value (01M7GD6J18WNK7JEFKXMS8YDCH).
+            if let Some(secret) = &secret {
+                len = len.max(secret.end);
             }
-            .unwrap_or(rest.len());
-            let word = &rest[..len];
-            let secret = if after_bearer {
-                Some(0..len)
-            } else {
-                secret_in(word)
-            };
-            if let Some(secret) = secret {
+            if after_bearer && start >= bearer_end {
+                let part = rest.find([' ', '\t', '\n']).unwrap_or(rest.len());
+                let part = secret.as_ref().map_or(part, |s| part.max(s.end));
+                found.push(at + start..at + start + part);
+                bearer_end = start + part;
+            } else if let Some(secret) = secret {
                 found.push(at + start + secret.start..at + start + secret.end);
             }
-            after_bearer = ends_with_bearer(word);
+            after_bearer = ends_with_bearer(&rest[..len]);
             end = start + len;
         }
         at += line.len();
@@ -399,10 +405,13 @@ pub fn redacted(text: &str) -> Vec<Range<usize>> {
     found
 }
 
-/// The range of the secret in `word`: the whole word when it starts like
-/// a token of GitHub or Anthropic, and the value of `NAME=value` when
-/// NAME names a token, a key, a secret or a password. The value is all
-/// the text after the first `=`, also each `=` in it.
+/// The range of the secret at the start of `text`, a word and the rest
+/// of its line. It is the whole word when the word starts like a token
+/// of GitHub or Anthropic. It is the value of `NAME=value` when NAME has
+/// the text TOKEN, KEY, SECRET or PASSWORD, in any place and in any case
+/// (01M7GCP11AAPM078B2CXTDH03K). The value starts after the first `=`,
+/// and goes up to [`word_end`]: each `=` in it, and its quotes with each
+/// white space in them (01M7GCP0ST7RACEV1GTZCZ9KAP).
 ///
 /// ```
 /// use riff::daemon::release_test::secret_in;
@@ -410,25 +419,96 @@ pub fn redacted(text: &str) -> Vec<Range<usize>> {
 /// assert_eq!(secret_in("ghp_abc123"), Some(0..10));
 /// assert_eq!(secret_in(",DB_PASSWORD=hunter2"), Some(13..20));
 /// assert_eq!(secret_in("OPENAI_API_KEY=abc1"), Some(15..19));
+/// assert_eq!(secret_in("SECRET_KEY_BASE=8f2k"), Some(16..20));
 /// assert_eq!(secret_in("--password=x3"), Some(11..13));
 /// assert_eq!(secret_in("API_KEY=c2VjcmV0=="), Some(8..18));
-/// assert_eq!(secret_in("GH_TOKEN="), None);
-/// assert_eq!(secret_in("task-2"), None);
+/// assert_eq!(secret_in(r#"DB_PASSWORD="a b" ok"#), Some(12..17));
+/// assert_eq!(secret_in(r#""GH_TOKEN=a b" ok"#), Some(10..14));
+/// assert_eq!(secret_in("GH_TOKEN=abc ok"), Some(9..12));
+/// assert_eq!(secret_in("GH_TOKEN= ok"), None);
+/// assert_eq!(secret_in("task-2 ok"), None);
 /// ```
-pub fn secret_in(word: &str) -> Option<Range<usize>> {
+pub fn secret_in(text: &str) -> Option<Range<usize>> {
     const NAMES: [&str; 4] = ["TOKEN", "KEY", "SECRET", "PASSWORD"];
     // `sk-` is the start of each key of Anthropic.
     let mut prefixes = crate::run::TOKEN_STARTS.iter().chain(&["sk-"]);
+    let word = &text[..text.find(char::is_whitespace).unwrap_or(text.len())];
     if let Some((name, value)) = word.split_once('=')
         && !value.is_empty()
         && NAMES.iter().any(|n| name.to_ascii_uppercase().contains(n))
     {
-        Some(name.len() + 1..word.len())
+        Some(name.len() + 1..word_end(text))
     } else if prefixes.any(|p| word.starts_with(p)) {
         Some(0..word.len())
     } else {
         None
     }
+}
+
+/// A quote of [`word_end`], by the mark that opens and closes it.
+#[derive(Clone, Copy)]
+enum Quote {
+    /// `"`.
+    Double,
+    /// `'`.
+    Single,
+    /// `\"`, outside quotes: a `"` in a string of JSON or of Rust.
+    Escaped,
+}
+
+/// The end of the first word of `text`, as a shell reads it: at the
+/// first white space outside quotes (01M7GCP0ST7RACEV1GTZCZ9KAP). A `"`,
+/// a `'`, or a `\"` outside quotes opens a quote, and the same mark
+/// closes it. Outside a `'` quote, a `\` keeps the next character in the
+/// word, apart from the `\"` that opens or closes a quote. With no
+/// closing quote, the word ends at the last character of `text` that is
+/// not white space.
+///
+/// ```
+/// use riff::daemon::release_test::word_end;
+///
+/// assert_eq!(word_end("abc def"), 3);
+/// assert_eq!(word_end(r#"K="a b" c"#), 7);
+/// assert_eq!(word_end(r#"K='a "b' c"#), 8);
+/// assert_eq!(word_end(r#""K=a b" c"#), 7);
+/// assert_eq!(word_end(r#"K="a \" b" c"#), 10);
+/// assert_eq!(word_end(r#"K=\"a b\" c"#), 9);
+/// assert_eq!(word_end(r"K=a\ b c"), 6);
+/// assert_eq!(word_end("K=\"a b  \n"), 6);
+/// ```
+pub fn word_end(text: &str) -> usize {
+    let mut quote = None;
+    let mut end = 0;
+    let mut chars = text.char_indices();
+    while let Some((at, c)) = chars.next() {
+        if c.is_whitespace() {
+            if quote.is_none() {
+                return at;
+            }
+            continue;
+        }
+        end = at + c.len_utf8();
+        match (quote, c) {
+            (None, '"') => quote = Some(Quote::Double),
+            (None, '\'') => quote = Some(Quote::Single),
+            (Some(Quote::Double), '"') | (Some(Quote::Single), '\'') => quote = None,
+            (None | Some(Quote::Double | Quote::Escaped), '\\') => {
+                let Some((at, next)) = chars.next() else {
+                    break;
+                };
+                match (quote, next) {
+                    (None, '"') => quote = Some(Quote::Escaped),
+                    (Some(Quote::Escaped), '"') => quote = None,
+                    _ => {}
+                }
+                if !next.is_whitespace() {
+                    end = at + next.len_utf8();
+                }
+            }
+            _ => {}
+        }
+    }
+    end
 }
 
 /// `word` ends with the word `Bearer`, in any case, before its quotes
@@ -628,6 +708,110 @@ mod tests {
         assert_eq!(secret_in("GH_TOKEN="), None);
         assert_eq!(redact("-e GH_TOKEN= x"), "-e GH_TOKEN= x");
         assert_eq!(redact("RIFF_ITEM=issue-12"), "RIFF_ITEM=issue-12");
+    }
+
+    /// #2156, 01M7GCP11AAPM078B2CXTDH03K: NAME names a secret with the
+    /// text at its start, in its middle or at its end, in any case, also
+    /// in a longer word. A NAME with none of the texts names no secret.
+    #[test]
+    fn a_name_with_the_text_in_any_place_names_a_secret() {
+        for name in [
+            "SECRET_KEY_BASE",
+            "AWS_ACCESS_KEY_ID",
+            "GITHUB_TOKEN_RO",
+            "PASSWORD_1",
+            "my_Secret_value",
+            "MONKEY",
+            "TOKEN",
+        ] {
+            let word = format!("{name}=hunter2");
+            assert_eq!(secret_in(&word), Some(name.len() + 1..word.len()), "{word}");
+            assert_eq!(
+                redact(&format!("-e {word} ok")),
+                format!("-e {name}=[secret] ok")
+            );
+        }
+        for word in ["TOKE=2", "PASS_WORD=3", "K_E_Y=4"] {
+            assert_eq!(secret_in(word), None, "{word}");
+        }
+    }
+
+    /// #2156, 01M7GCP0ST7RACEV1GTZCZ9KAP: a quoted value with white space
+    /// in it goes up to its closing quote, with the rest of its word: in
+    /// `"` and in `'`, with the quote before NAME as in JSON or in the
+    /// `Debug` of a command, with a `\"` in a `"` quote, with a `\"`
+    /// outside quotes, and with a `\` before a space. The next word
+    /// stays.
+    #[test]
+    fn a_quoted_value_with_a_space_goes_up_to_its_closing_quote() {
+        for (line, shown) in [
+            (
+                r#"podman run -e DB_PASSWORD="qqone qqtwo" x"#,
+                "podman run -e DB_PASSWORD=[secret] x",
+            ),
+            ("DB_PASSWORD='correct horse' x", "DB_PASSWORD=[secret] x"),
+            (r#"GH_TOKEN="abc def" x"#, "GH_TOKEN=[secret] x"),
+            (
+                r#"SECRET_KEY_BASE='a "b c' x"#,
+                "SECRET_KEY_BASE=[secret] x",
+            ),
+            (r#"DB_PASSWORD="a b"'c d'e f"#, "DB_PASSWORD=[secret] f"),
+            (
+                r#""podman" "-e" "DB_PASSWORD=a b" "x""#,
+                r#""podman" "-e" "DB_PASSWORD=[secret] "x""#,
+            ),
+            (
+                r#"{"env":"DB_PASSWORD=a b","n":1} x"#,
+                r#"{"env":"DB_PASSWORD=[secret] x"#,
+            ),
+            (r#""DB_PASSWORD=\"a b\"" x"#, r#""DB_PASSWORD=[secret] x"#),
+            (r#"DB_PASSWORD="a \" b" x"#, "DB_PASSWORD=[secret] x"),
+            (
+                r#"{"msg":"run DB_PASSWORD=\"a b\" x"}"#,
+                r#"{"msg":"run DB_PASSWORD=[secret] x"}"#,
+            ),
+            (r"DB_PASSWORD=a\ b x", "DB_PASSWORD=[secret] x"),
+            (r#"GH_TOKEN="abc" x"#, "GH_TOKEN=[secret] x"),
+        ] {
+            assert_eq!(redact(line), shown, "{line}");
+        }
+    }
+
+    /// #2156, 01M7GCP0ST7RACEV1GTZCZ9KAP: with no closing quote, the
+    /// value goes up to the end of the line, and the white space at the
+    /// end of the line stays. The next line has its own quotes.
+    #[test]
+    fn a_quoted_value_with_no_closing_quote_goes_to_the_end_of_the_line() {
+        assert_eq!(redact(r#"DB_PASSWORD="a b c"#), "DB_PASSWORD=[secret]");
+        assert_eq!(redact("GH_TOKEN='a b \t"), "GH_TOKEN=[secret] \t");
+        assert_eq!(
+            redact("GH_TOKEN=\"a b\nnext line\" x"),
+            "GH_TOKEN=[secret]\nnext line\" x"
+        );
+    }
+
+    /// #2156, 01M7GCP0ST7RACEV1GTZCZ9KAP, 01M7FN5SSWJRDXWTAYAERBAAFB: in
+    /// the part after `Bearer`, a quoted value of `NAME=value` goes up to
+    /// its closing quote too, also after a white space that is not a
+    /// space or a tab. After it, the next word stays.
+    #[test]
+    fn a_quoted_value_after_bearer_goes_up_to_its_closing_quote() {
+        for (line, shown) in [
+            (
+                r#"Authorization: Bearer x,DB_PASSWORD="a b" end"#,
+                "Authorization: Bearer [secret] end",
+            ),
+            (
+                "Bearer x\u{a0}DB_PASSWORD=\"a b\" end",
+                "Bearer [secret] end",
+            ),
+            (
+                "Bearer x\u{a0}Bearer\u{a0}GH_TOKEN='a b' end",
+                "Bearer [secret] end",
+            ),
+        ] {
+            assert_eq!(redact(line), shown, "{line:?}");
+        }
     }
 
     /// #2156, 01M7FFA3GN7F2GW3NGYJPTMKN3, 01M7FN5SSWJRDXWTAYAERBAAFB,

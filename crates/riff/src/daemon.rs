@@ -14756,11 +14756,12 @@ mod tests {
     }
 
     /// A log of the daemon with a line of issue-12 before 07:12, and
-    /// three after it, with token-like texts and the value of a header of
-    /// an MCP server of the host ([`MCP`]).
+    /// three after it, with token-like texts, a quoted value with a space,
+    /// and the value of a header of an MCP server of the host ([`MCP`]).
     const LOG: &str = "2026-11-14T07:00:00Z riff daemon: o/r: claims issue-12\n\
          2026-11-14T07:12:00Z riff daemon: o/r: claims issue-12 again\n\
-         2026-11-14T07:13:00Z riff daemon: issue-12 pushes with ghs_abc1, GH_TOKEN=x and \
+         2026-11-14T07:13:00Z riff daemon: issue-12 pushes with ghs_abc1, GH_TOKEN=x \
+         DB_PASSWORD=\"qqone qqtwo\" and \
          sk-ant-oat01-x_y\n\
          2026-11-14T07:14:00Z riff daemon: o/r: claims issue-13\n\
          2026-11-14T07:15:00Z riff daemon: issue-12: docs refused docs-header-value-1\n";
@@ -14771,16 +14772,18 @@ mod tests {
 
     /// The lines of [`LOG`] of issue-12 since 07:12, with no secret. A
     /// word that starts like a token goes whole, with its comma
-    /// (01M7FXE86QYC8D6P6WDK69ZSMA).
+    /// (01M7FXE86QYC8D6P6WDK69ZSMA). A quoted value goes up to its
+    /// closing quote (01M7GCP0ST7RACEV1GTZCZ9KAP).
     const LOG_SHOWN: &str = "2026-11-14T07:12:00Z riff daemon: o/r: claims issue-12 again\n\
-         2026-11-14T07:13:00Z riff daemon: issue-12 pushes with [secret] GH_TOKEN=[secret] and \
-         [secret]\n\
+         2026-11-14T07:13:00Z riff daemon: issue-12 pushes with [secret] GH_TOKEN=[secret] \
+         DB_PASSWORD=[secret] and [secret]\n\
          2026-11-14T07:15:00Z riff daemon: issue-12: docs refused [secret]";
 
-    /// #2156, 01M7EX1PYJ99BDSVJK7MAPDFD0, 01M7EX1Q1F468NWGPJJS0W0ZG9: the
-    /// lead on `a` reads the log of the daemon of `b` through riff-server:
-    /// the lines since a time with a text, and no secret, also of the MCP
-    /// servers of `b`. The daemon of `a` has no log file: its error names
+    /// #2156, 01M7EX1PYJ99BDSVJK7MAPDFD0, 01M7EX1Q1F468NWGPJJS0W0ZG9,
+    /// 01M7GCP0ST7RACEV1GTZCZ9KAP: the lead on `a` reads the log of the
+    /// daemon of `b` through riff-server: the lines since a time with a
+    /// text, and no secret, also of the MCP servers of `b` and no word of
+    /// a quoted value. The daemon of `a` has no log file: its error names
     /// the file. A worker gets a refusal.
     #[tokio::test(flavor = "multi_thread")]
     #[allow(clippy::await_holding_lock)]
@@ -14795,7 +14798,8 @@ mod tests {
         let wait = remote::REPLY_WAIT;
         let reply = remote::ask(&h.api, &h.lead, "b", &request, wait).await;
         assert_eq!(reply.unwrap(), LOG_SHOWN);
-        let probe = log::Query::new(None, None, vec!["docs-header".into()]).unwrap();
+        let probe = vec!["docs-header".into(), "qqtwo".into()];
+        let probe = log::Query::new(None, None, probe).unwrap();
         let reply = remote::ask(&h.api, &h.lead, "b", &remote::Request::Log(probe), wait).await;
         assert_eq!(reply.unwrap(), text::daemon_log(&log::Found::default()));
 
@@ -14818,10 +14822,11 @@ mod tests {
         assert!(refused.contains("which is not the lead"), "{refused}");
     }
 
-    /// #2156, 01M7EX1PYJ99BDSVJK7MAPDFD0, 01M7EX1Q1F468NWGPJJS0W0ZG9: the
-    /// lead in a container reads the log of the daemon of its host on the
-    /// socket of its session, with no secret, also of the MCP servers of
-    /// the host. A worker gets a refusal.
+    /// #2156, 01M7EX1PYJ99BDSVJK7MAPDFD0, 01M7EX1Q1F468NWGPJJS0W0ZG9,
+    /// 01M7GCP0ST7RACEV1GTZCZ9KAP: the lead in a container reads the log of
+    /// the daemon of its host on the socket of its session, with no
+    /// secret, also of the MCP servers of the host and no word of a quoted
+    /// value. A worker gets a refusal.
     #[tokio::test]
     #[allow(clippy::await_holding_lock)]
     async fn the_lead_reads_the_log_of_its_daemon_through_its_socket_and_a_worker_is_refused() {
@@ -14843,7 +14848,8 @@ mod tests {
         let query = log::Query::new(Some(since), None, vec!["issue-12".into()]).unwrap();
         let shown = crate::reach::Reach::daemon_log(&lead, &query).await;
         assert_eq!(shown.unwrap(), LOG_SHOWN);
-        let probe = log::Query::new(None, None, vec!["docs-header".into()]).unwrap();
+        let probe = vec!["docs-header".into(), "qqtwo".into()];
+        let probe = log::Query::new(None, None, probe).unwrap();
         let shown = crate::reach::Reach::daemon_log(&lead, &probe).await;
         assert_eq!(shown.unwrap(), text::daemon_log(&log::Found::default()));
         let refused = crate::reach::Reach::daemon_log(&worker, &query).await;

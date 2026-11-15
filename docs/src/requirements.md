@@ -6785,6 +6785,25 @@ of this part when they merge.
   Anthropic. Then it puts one `[secret]` in place of each run of the
   union of these parts: two parts that overlap or touch make one run.
   Supersedes 01M7FS2HD407ZCTF60EX7XZ2FF in part.
+- **01M7GCP0ST7RACEV1GTZCZ9KAP** The filter of the log of the
+  real-session test, and so of `riff daemon log`, hides the value of
+  `NAME=value` up to the first white space outside quotes, also in the
+  part after the word `Bearer`. A `"`, a `'`, or a `\"` outside quotes
+  opens a quote, also before NAME, and the same mark closes it. Outside
+  a `'` quote, a `\` keeps the next character in the value, apart from
+  the `\"` that opens or closes a quote. With no closing quote, the
+  value goes up to the last character of the line that is not white
+  space.
+- **01M7GCP11AAPM078B2CXTDH03K** For the filter of the log of the
+  real-session test, and so of `riff daemon log`, NAME of `NAME=value`
+  names a secret when it has the text TOKEN, KEY, SECRET or PASSWORD in
+  any place and in any case, also in a longer word: for example
+  `SECRET_KEY_BASE`, `GITHUB_TOKEN_RO`, `db_password` or `MONKEY`.
+- **01M7GD6J18WNK7JEFKXMS8YDCH** The filter of the log of the
+  real-session test, and so of `riff daemon log`, goes on after the end
+  of each value of `NAME=value` that it hides, and finds the part after
+  `Bearer` only once, also when a `Bearer` is in that part. So the time
+  to filter a line grows with its length, not with its square.
 
 ### riff relay
 

@@ -1724,8 +1724,11 @@ part of them:
   up to the next space or tab: the token, its quotes and the rest of the
   word, also the rest of the JSON. A quote or a colon just after
   `Bearer` stays, as in `"Bearer" [secret]`;
-- the value of `NAME=value` when NAME names a token, a key, a secret or
-  a password;
+- the value of `NAME=value` when NAME has the text `TOKEN`, `KEY`,
+  `SECRET` or `PASSWORD` in any place and in any case, as in
+  `SECRET_KEY_BASE`. The value goes up to the first white space outside
+  quotes: `DB_PASSWORD="a b" x` shows as `DB_PASSWORD=[secret] x`. With
+  no closing quote, the value goes up to the end of the line;
 - the secrets in the environment of riff, and in the sign-in file of
   claude;
 - the token of `riff claude-token`;
