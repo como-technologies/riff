@@ -427,7 +427,7 @@ pub fn follow_origin(main: &Path, mut say: impl FnMut(&str)) -> Result<Branch> {
         let look = ["ls-remote", "--symref", "origin", "HEAD"];
         crate::git_credential::keyring_open(main, "origin", &look)?;
         let base = origin_head(&git(main, &look)?)?;
-        fetch_origin(main, &[&base])?;
+        fetch_origin(main, &base)?;
         git(main, &["remote", "set-head", "origin", base.as_str()])?;
         anyhow::Ok(base)
     })();
@@ -441,12 +441,28 @@ pub fn follow_origin(main: &Path, mut say: impl FnMut(&str)) -> Result<Branch> {
     })
 }
 
-/// Fetches each branch of `branches` from `origin` into
-/// `refs/remotes/origin` of the main clone `main`, with no tag: the one
-/// refspec of riff for a branch of `origin`. Before the `git`, it checks
-/// the keyring ([`crate::git_credential::keyring_open`]). The default
-/// branch comes this way ([`follow_origin`]), and the branch of the item
-/// of `riff run --no-github` ([`crate::run::fetch_for_no_github`]).
+/// The refspec of riff that fetches the branch `name` of `origin` into
+/// `refs/remotes/origin` of a clone, with force: the one place of it.
+/// [`fetch_origin`] fetches with it, and so do the merges of the order
+/// ([`crate::order::merges`]) and the council of a pull request
+/// ([`crate::council::pick::of_pull`]).
+///
+/// ```
+/// assert_eq!(
+///     riff::session_image::refspec("main"),
+///     "+refs/heads/main:refs/remotes/origin/main"
+/// );
+/// ```
+pub fn refspec(name: &str) -> String {
+    format!("+refs/heads/{name}:refs/remotes/origin/{name}")
+}
+
+/// Fetches the branch `branch` from `origin` into `refs/remotes/origin`
+/// of the main clone `main`, with no tag ([`refspec`]). Before the
+/// `git`, it checks the keyring
+/// ([`crate::git_credential::keyring_open`]). The default branch comes
+/// this way ([`follow_origin`]), and the branch of the item of `riff run
+/// --no-github` ([`crate::run::fetch_for_no_github`]).
 ///
 /// ```
 /// use riff::session_image::fetch_origin;
@@ -472,21 +488,17 @@ pub fn follow_origin(main: &Path, mut say: impl FnMut(&str)) -> Result<Branch> {
 /// git(&main, &["push", "-q", "origin", "HEAD:main", "HEAD:work", "v1"]);
 /// git(&main, &["tag", "-d", "v1"]);
 ///
-/// fetch_origin(&main, &[&"work".parse()?])?;
+/// fetch_origin(&main, &"work".parse()?)?;
 /// assert_eq!(git(&main, &["rev-parse", "origin/work"]), git(&origin, &["rev-parse", "work"]));
 /// assert_eq!(git(&main, &["tag"]), "");
 /// // A branch that origin does not have: the error names the fetch.
-/// let error = fetch_origin(&main, &[&"gone".parse()?]).unwrap_err();
+/// let error = fetch_origin(&main, &"gone".parse()?).unwrap_err();
 /// assert!(format!("{error:#}").starts_with("git fetch "), "{error:#}");
 /// # Ok::<(), anyhow::Error>(())
 /// ```
-pub fn fetch_origin(main: &Path, branches: &[&Branch]) -> Result<()> {
-    let specs: Vec<String> = branches
-        .iter()
-        .map(|name| format!("+refs/heads/{name}:refs/remotes/origin/{name}"))
-        .collect();
-    let mut fetch = vec!["fetch", "--quiet", "--no-tags", "origin"];
-    fetch.extend(specs.iter().map(String::as_str));
+pub fn fetch_origin(main: &Path, branch: &Branch) -> Result<()> {
+    let spec = refspec(branch.as_str());
+    let fetch = ["fetch", "--quiet", "--no-tags", "origin", &spec];
     crate::git_credential::keyring_open(main, "origin", &fetch)?;
     git(main, &fetch).map(drop)
 }

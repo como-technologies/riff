@@ -6160,8 +6160,8 @@ of this part when they merge.
   `riff daemon uninstall` removes nothing, and `riff update` does no
   step for the daemon.
 - **01M4ZDTVSP0T1YENKAWGKA114D** The daemon binds the folder of the
-  socket of a session at `/run/riff` in its container, with write, and
-  sets `RIFF_SOCKET=/run/riff/riff.sock`. Each session has its own
+  socket of a session at `/run/riff` in its container, and sets
+  `RIFF_SOCKET=/run/riff/riff.sock`. Each session has its own
   listener. So the listener tells the daemon which session asks: a
   hello on the socket gets the session ID, the item and the name of the
   container. The folder goes at the end of the session.
@@ -6775,6 +6775,11 @@ of this part when they merge.
   session clones in its container, so no clone of the host needs the
   objects of the main clone. This supersedes 01M6QRDBG1JTX5NV1C8TB7AG36
   in part: the clones that link to it.
+- **01M7GJBEG0S8N30EXD7DWYTKK8** The daemon binds the folder of the
+  socket of a session at /run/riff with no write. A connect to the
+  socket needs no write of its folder. So no process of the container
+  can rename the socket, or put another socket in its place. This
+  supersedes 01M4ZDTVSP0T1YENKAWGKA114D in part: the bind with write.
 
 ### riff relay
 
@@ -8784,6 +8789,11 @@ of this part when they merge.
   name only ends with that name does not count, so no other person can
   stop the sessions of an item with such a ref. The same look holds for
   a wave.
+- **01M7GJBE6N1ZPDBZWRYQP1GY2F** The clone of a session names each start
+  point with its full name: refs/remotes/origin/BRANCH for the default
+  branch and for the branch of the item. So a tag or a branch of origin
+  whose short name is origin/BRANCH changes no start point, and stops no
+  session.
 - **01M7GCESN7RY3GW6ZPP9PBM87D** A job of the daemon keeps only the
   folder of its own session: each folder of its item that was not there
   at the start of the job, and the folder of the session that a new
@@ -8845,14 +8855,25 @@ of this part when they merge.
 - **01M7GE3KYR7JZHDV5S7PKAZX57** At its start, before the clone and
   before claude, the relay makes a random key, and gives it to the
   daemon on the socket of the session. The daemon takes one key for each
-  container: the first one, before the first hello of the relay. It
-  keeps only the SHA-256 of the key, in the record of the session. Each
-  note of the relay has the key, and the daemon keeps no note with
-  another key or with none. Only the relay has the key, in its memory:
-  claude does not get it, and the relay makes itself not dumpable, so no
-  other process of the container can read its memory. When the daemon
-  keeps no note, for a bad key or past 8 notes, it says so, and the
-  relay prints the note on its stderr.
+  container: the first one. It keeps only the SHA-256 of the key, in the
+  record of the session. Each note of the relay has the key, and the
+  daemon keeps no note with another key or with none. Only the relay has
+  the key, in its memory: claude does not get it, and the relay makes
+  itself not dumpable, so no other process of the container can read its
+  memory. When the daemon keeps no note, for a bad key or past 8 notes,
+  it says so, and the relay prints the note on its stderr.
+- **01M7GJBESDBCHWB7SAT60JETEJ** The relay waits for the answer of the
+  daemon to its key before the clone and before claude. While the daemon
+  is away, or gives no answer, the relay gives the same key again each
+  250 ms. The daemon takes the same key again as done. The first hello
+  of the relay closes nothing. When the daemon refuses the key, the
+  relay says each note on its stderr only. This supersedes
+  01M7GE3KYR7JZHDV5S7PKAZX57 in part: the key only before the first
+  hello.
+- **01M7GJBFAJDCYCMRDSWSX3VNWX** Each line that riff relay -- COMMAND
+  itself prints on its stderr starts with `riff relay: `: also the error
+  when the command does not start, and the error when the relay has no
+  socket.
 
 ### The home of the person
 

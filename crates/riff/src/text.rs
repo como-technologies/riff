@@ -8680,7 +8680,9 @@ pub fn daemon_session_gone(name: &str) -> String {
 pub const RELAY: &str = "riff relay: ";
 
 /// The line `note` of `riff relay` itself: [`RELAY`], then `note`. Each
-/// note of the relay and each line of the relay on stderr is one.
+/// note of the relay is one, and so is each line that `riff relay --
+/// COMMAND` itself prints on its stderr, also its error
+/// (01M7GJBFAJDCYCMRDSWSX3VNWX).
 ///
 /// ```
 /// assert_eq!(

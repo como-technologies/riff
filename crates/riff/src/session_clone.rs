@@ -37,13 +37,15 @@
 //! | The view of the main clone | the relay makes the git dir `.git/riff-main` in the clone ([`VIEW`]): its own `HEAD`, an empty `refs/`, a link to `MAIN/.git/objects`, and a link to the file [`REFS`] as its `packed-refs`. Then `git fetch VIEW 'refs/remotes/origin/*:refs/remotes/origin/*'`: the branches of `origin` as the main clone had them. Then the view goes |
 //! | With a token | `git fetch --prune origin`: the branches of GitHub, with only the objects that the main clone does not have. git takes the token of the session from `gh` |
 //! | The default branch | `git remote set-head origin BASE`: the default branch that the host gives ([`Plan::base`]) |
-//! | The lead | `git switch -c BASE --track origin/BASE` ([`Checkout::Default`]) |
-//! | A build, a rebase, a fix of the checks, with the branch on `origin` | `git switch -c BRANCH --track origin/BRANCH`: the session goes on from the work that it pushed ([`Checkout::Branch`]) |
-//! | The same, with no branch on `origin` | `git switch -c BRANCH --no-track origin/BASE` |
+//! | The lead | `git switch -c BASE --track refs/remotes/origin/BASE` ([`Checkout::Default`]) |
+//! | A build, a rebase, a fix of the checks, with the branch on `origin` | `git switch -c BRANCH --track refs/remotes/origin/BRANCH`: the session goes on from the work that it pushed ([`Checkout::Branch`]) |
+//! | The same, with no branch on `origin` | `git switch -c BRANCH --no-track refs/remotes/origin/BASE` |
 //! | A verify | with a token, `git fetch origin refs/pull/N/head`; then `git checkout --detach COMMIT` ([`Checkout::Pull`]): the head commit of the pull request, also from a fork. A push to the pull request after the look does not change what the verify reads |
 //!
-//! Each start point is explicit, so no config of the person, for example
-//! `checkout.guess=false`, changes the branch. The host looks for the
+//! Each start point is explicit, with its full name
+//! ([`Branch::of_origin`]): no config of the person, for example
+//! `checkout.guess=false`, and no tag `origin/BRANCH` of `origin` changes
+//! the branch or stops the clone. The host looks for the
 //! branch of the item on `origin` one time ([`crate::run::earlier`]), and
 //! the plan holds the answer ([`Checkout::Branch`]): the start text and
 //! the clone agree. Each name in the plan has a type that parses:
@@ -82,7 +84,7 @@
 //!     D->>R: podman run: an empty volume at CLONE, the objects of MAIN, origin-refs, RIFF_CLONE
 //!     R->>M: git init, the alternates, git fetch of the view: no object copied
 //!     R->>G: with a token: git fetch origin, only the new objects
-//!     R->>R: git switch -c BRANCH --track origin/BRANCH, or a new branch
+//!     R->>R: git switch -c BRANCH --track refs/remotes/origin/BRANCH, or a new branch
 //!     R->>R: start claude in CLONE
 //!     R->>G: claude pushes BRANCH
 //!     Note over R: the container ends: its volume goes
@@ -206,6 +208,21 @@ impl FromStr for Branch {
             bail!("{name:?} is no name of a git branch");
         }
         Ok(Branch(name.to_owned()))
+    }
+}
+
+impl Branch {
+    /// The full name of the branch of `origin` in a clone:
+    /// `refs/remotes/origin/NAME`. riff names each start point of a clone
+    /// with it, so a tag `origin/NAME` changes none.
+    ///
+    /// ```
+    /// let main: riff::session_clone::Branch = "main".parse()?;
+    /// assert_eq!(main.of_origin(), "refs/remotes/origin/main");
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn of_origin(&self) -> String {
+        format!("refs/remotes/origin/{self}")
     }
 }
 
@@ -636,7 +653,9 @@ impl Plan {
         }
         let base = self.base.as_str();
         git(dir, &["remote", "set-head", "origin", base])?;
-        let from_base = format!("origin/{base}");
+        // Full names: a tag `origin/BRANCH` of `origin` changes no start
+        // point (01M7GJBE6N1ZPDBZWRYQP1GY2F).
+        let from_base = self.base.of_origin();
         match &self.checkout {
             Checkout::Default => {
                 git(dir, &["switch", "-q", "-c", base, "--track", &from_base])?;
@@ -646,7 +665,7 @@ impl Plan {
                 earlier: true,
                 no_github: _,
             } => {
-                let from = format!("origin/{name}");
+                let from = name.of_origin();
                 git(
                     dir,
                     &["switch", "-q", "-c", name.as_str(), "--track", &from],
@@ -793,7 +812,7 @@ impl Plan {
         if !listed.lines().any(|line| line == head) {
             return Ok(None);
         }
-        let range = format!("refs/remotes/origin/{}..{head}", self.base);
+        let range = format!("{}..{head}", self.base.of_origin());
         if git(&self.path, &["rev-list", "--count", &range])? == "0" {
             return Ok(None);
         }
@@ -1112,6 +1131,41 @@ mod tests {
             git_in(&next.path, &["rev-parse", "--abbrev-ref", "@{upstream}"]),
             "origin/worktree-issue-12"
         );
+    }
+
+    /// 01M7GJBE6N1ZPDBZWRYQP1GY2F: `origin` has the tags `origin/main` and
+    /// `origin/worktree-issue-12`, on the commit of another branch, and
+    /// the clone with a token fetches them. Each start point has its full
+    /// name: the lead, the next session of the item and a new branch each
+    /// start from the branch of `origin`, not from the tag.
+    #[test]
+    fn a_tag_with_the_name_of_a_branch_of_origin_changes_no_start_point() {
+        let origin = Remote::new();
+        let first = origin.plan("first", branch("worktree-issue-12", false));
+        first.make(true).unwrap();
+        let work = Remote::commit(&first.path, "WIP: two");
+        git_in(&first.path, &["push", "-q", "origin", "worktree-issue-12"]);
+        git_in(&first.path, &["switch", "-q", "-c", "decoy"]);
+        let decoy = Remote::commit(&first.path, "decoy");
+        git_in(&first.path, &["push", "-q", "origin", "decoy"]);
+        for tag in ["origin/main", "origin/worktree-issue-12"] {
+            let tag = format!("{decoy}:refs/tags/{tag}");
+            git_in(&first.path, &["push", "-q", "origin", &tag]);
+        }
+        let main = git_in(&origin.main, &["rev-parse", "origin/main"]);
+        let starts = [
+            ("lead", Checkout::Default, &main),
+            ("next", branch("worktree-issue-12", true), &work),
+            ("new", branch("worktree-issue-13", false), &main),
+        ];
+        for (folder, checkout, want) in starts {
+            let plan = origin.plan(folder, checkout);
+            assert_eq!(plan.make(true).unwrap(), Made::New, "{folder}");
+            let tag = git_in(&plan.path, &["rev-parse", "refs/tags/origin/main"]);
+            assert_eq!(tag, decoy, "{folder}: git fetched no tag");
+            let head = git_in(&plan.path, &["rev-parse", "HEAD"]);
+            assert_eq!(&head, want, "{folder}");
+        }
     }
 
     /// The lead gets the default branch of `origin`, with its upstream.

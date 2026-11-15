@@ -2164,18 +2164,14 @@ The daemon asks riff-server for no token. The container gets no
 `GH_TOKEN` and no `hosts.yml`, so `gh`, `git fetch` and `git push` do
 not work there. For the clone of such a session, see
 [Where the clone of a session lives](how-it-works.md#where-the-clone-of-a-session-lives).
-Before the start, `riff run` fetches the default branch from `origin`
-into your clone, with your git. When an earlier session pushed the
-branch of the item, it fetches that branch too, and the session goes
-on from it. When the fetch of the default branch fails, riff says so
-in one line, and the session starts from the default branch of your
-clone. When the fetch of the branch of the item fails, no session
-starts. The start text holds the body of the
-issue. The session commits on its branch, and pushes nothing. `riff
-whoami` in the session shows `github   none`. Its clone goes with its
-container, so when `claude` ends, `riff relay` writes the commits of
-the branch in a bundle: `out/worktree-issue-12.bundle` in the folder
-of the session.
+When an earlier session pushed the branch of the item, `riff run` also
+fetches that branch from `origin` into your clone before the start,
+with your git, and the session goes on from it. When that fetch fails,
+no session starts. The start text holds the body of the issue. The
+session commits on its branch, and pushes nothing. `riff whoami` in the
+session shows `github   none`. Its clone goes with its container, so
+when `claude` ends, `riff relay` writes the commits of the branch in a
+bundle: `out/worktree-issue-12.bundle` in the folder of the session.
 
 The session can write the folder `out/`, so `riff run` trusts no file
 there. It opens the bundle with no link, and reads its first line: that
@@ -2583,8 +2579,10 @@ For a folder on another host, add `--host thelio`.
 - The lowest CPU priority: nice 19, and the CPU weight 1 in
   `riff.slice`. See
   [The priority of a session](#the-priority-of-a-session).
-- The folder of its own socket of the daemon at `/run/riff`, with
-  write, and `RIFF_SOCKET=/run/riff/riff.sock`.
+- The folder of its own socket of the daemon at `/run/riff`, with no
+  write, and `RIFF_SOCKET=/run/riff/riff.sock`. A process of the
+  session can connect to the socket, but cannot rename it or put
+  another socket in its place.
 - Your riff binary at `/opt/riff/riff`, with no write. Its
   `riff relay` is the entrypoint of the container. So the riff in a
   session is the riff of your machine.

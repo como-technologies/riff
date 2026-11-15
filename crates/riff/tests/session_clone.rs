@@ -151,10 +151,13 @@ fn the_podman_arguments_of_a_work_session_and_a_verify_have_no_writable_bind_of_
 }
 
 /// A session of the test: the folder of its `gh`, with a token when
-/// `token` is true, and the git config of the person in its home.
+/// `token` is true, the git config of the person in its home, and the
+/// fake daemon on its socket.
 struct Session {
     gh: PathBuf,
     gitconfig: PathBuf,
+    socket: PathBuf,
+    daemon: FakeDaemon,
 }
 
 impl Session {
@@ -168,7 +171,14 @@ impl Session {
         }
         let gitconfig = root.join("gitconfig");
         std::fs::write(&gitconfig, "[checkout]\n\tguess = false\n").unwrap();
-        Session { gh, gitconfig }
+        let socket = root.join("riff.sock");
+        let daemon = FakeDaemon::start(&socket);
+        Session {
+            gh,
+            gitconfig,
+            socket,
+            daemon,
+        }
     }
 
     /// Runs `riff relay --terminal -- sh -c SCRIPT` in the folder of the
@@ -188,14 +198,26 @@ impl Session {
         terminal: bool,
         script: &str,
     ) -> Output {
+        self.relay_command(env, plan, terminal, &["sh", "-c", script])
+    }
+
+    /// [`Session::relay_with`] with the command `command`.
+    fn relay_command(
+        &self,
+        env: &isolated::Isolated,
+        plan: &Plan,
+        terminal: bool,
+        command: &[&str],
+    ) -> Output {
         std::fs::create_dir_all(&plan.path).unwrap();
         let mut args = vec!["relay"];
         args.extend(terminal.then_some("--terminal"));
-        args.extend(["--", "sh", "-c", script]);
+        args.push("--");
+        args.extend(command);
         env.riff()
             .args(args)
             .env(VAR, plan.to_var().unwrap())
-            .env("RIFF_SOCKET", env.path().join("riff.sock"))
+            .env("RIFF_SOCKET", &self.socket)
             .env(riff::daemon::gh_token::CONFIG_VAR, &self.gh)
             .env("GIT_CONFIG_GLOBAL", &self.gitconfig)
             .current_dir(&plan.path)
@@ -433,12 +455,15 @@ fn a_session_starts_on_the_default_branch_of_origin_after_a_rename() {
 }
 
 /// A fake riff daemon on the socket `socket` of a session. It answers
-/// each key of the notes with done, and each note with `answer`, and
-/// keeps them in order. It relays a session: the close of the input, and
-/// an ack for each event and for the exit.
+/// each key of the notes with done, after it closed the connection of
+/// the first `unanswered` keys with no answer, and each note with
+/// `answer`. It keeps each key and each note in order. It relays a
+/// session: the close of the input, and an ack for each event and for
+/// the exit.
 struct FakeDaemon {
     asks: Arc<Mutex<Vec<SessionAsk>>>,
     answer: Arc<Mutex<Say>>,
+    unanswered: Arc<Mutex<usize>>,
 }
 
 impl FakeDaemon {
@@ -446,7 +471,8 @@ impl FakeDaemon {
         let listener = UnixListener::bind(socket).unwrap();
         let asks = Arc::new(Mutex::new(Vec::new()));
         let answer = Arc::new(Mutex::new(Say::Done));
-        let (kept, said) = (asks.clone(), answer.clone());
+        let unanswered = Arc::new(Mutex::new(0));
+        let (kept, said, left) = (asks.clone(), answer.clone(), unanswered.clone());
         std::thread::spawn(move || {
             for conn in listener.incoming() {
                 let mut conn = conn.unwrap();
@@ -477,6 +503,15 @@ impl FakeDaemon {
                         kept.lock().unwrap().push(ask);
                         say(&said.lock().unwrap().clone());
                     }
+                    ask @ SessionAsk::NoteKey { .. } => {
+                        kept.lock().unwrap().push(ask);
+                        let mut left = left.lock().unwrap();
+                        if *left > 0 {
+                            *left -= 1;
+                            continue;
+                        }
+                        say(&Say::Done);
+                    }
                     ask => {
                         kept.lock().unwrap().push(ask);
                         say(&Say::Done);
@@ -484,7 +519,11 @@ impl FakeDaemon {
                 }
             }
         });
-        FakeDaemon { asks, answer }
+        FakeDaemon {
+            asks,
+            answer,
+            unanswered,
+        }
     }
 
     /// Each key and each note that the relay gave, in order, from now on.
@@ -518,7 +557,7 @@ fn the_relay_gives_the_daemon_its_key_then_its_notes_and_prints_a_note_only_when
         )
     };
     let text = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
-    let daemon = FakeDaemon::start(&env.path().join("riff.sock"));
+    let daemon = &session.daemon;
     // The key and the note of one relay.
     let key_and_note = |asks: &[SessionAsk]| -> (String, String) {
         let [
@@ -577,4 +616,95 @@ fn the_relay_gives_the_daemon_its_key_then_its_notes_and_prints_a_note_only_when
     let cloned = riff::text::relay_cloned(&third, true);
     assert_eq!(line, cloned);
     assert_eq!(text(&out.stderr).matches(&cloned).count(), 1, "{out:?}");
+}
+
+/// 01M7GJBESDBCHWB7SAT60JETEJ: the daemon closes the connection of the
+/// first two keys of the relay with no answer. The relay gives the same
+/// key again, and makes the clone, says its note and starts the command
+/// only after the daemon took the key. So no other process of the
+/// container can give a key first. With a terminal, as the lead, and
+/// with none, as a worker.
+#[test]
+fn the_relay_starts_nothing_before_the_daemon_takes_its_key() {
+    let env = isolated::Isolated::new();
+    let root = env.path().join("work");
+    std::fs::create_dir_all(&root).unwrap();
+    let (url, main) = origin_and_main(&root);
+    let session = Session::new(&root, true);
+    let sessions = env.riff_home().join("sessions");
+    for (name, terminal) in [("issue-12-1a2b3c4d", true), ("issue-12-2b3c4d5e", false)] {
+        *session.daemon.unanswered.lock().unwrap() = 2;
+        let plan = plan_at(
+            sessions.join(name).join("clone"),
+            &url,
+            &main,
+            branch(false),
+        );
+        let out = session.relay_with(&env, &plan, terminal, "touch ../ran");
+        assert!(out.status.success(), "{out:?}");
+        let asks = session.daemon.take();
+        let [
+            SessionAsk::NoteKey { key: one, .. },
+            SessionAsk::NoteKey { key: two, .. },
+            SessionAsk::NoteKey { key: three, .. },
+            SessionAsk::Note {
+                line, key: with, ..
+            },
+        ] = &asks[..]
+        else {
+            panic!("{terminal}: {asks:?}");
+        };
+        assert!(one == two && two == three && three == with, "{terminal}");
+        assert_eq!(*line, riff::text::relay_cloned(&plan, true), "{terminal}");
+        assert!(plan.path.with_file_name("ran").exists(), "{terminal}");
+    }
+}
+
+/// 01M7GJBFAJDCYCMRDSWSX3VNWX: each line that `riff relay` itself prints
+/// on its stderr starts with `riff relay: `, also its error: a command
+/// that does not start, with a terminal and with none, and no socket.
+/// The exit is 1.
+#[test]
+fn each_line_of_the_relay_itself_on_its_stderr_starts_with_riff_relay() {
+    let env = isolated::Isolated::new();
+    let root = env.path().join("work");
+    std::fs::create_dir_all(&root).unwrap();
+    let (url, main) = origin_and_main(&root);
+    let session = Session::new(&root, true);
+    let sessions = env.riff_home().join("sessions");
+    let lines = |out: &Output| -> Vec<String> {
+        String::from_utf8_lossy(&out.stderr)
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    };
+    let program = "/nonexistent/claude";
+    for (name, terminal) in [("issue-12-1a2b3c4d", true), ("issue-12-2b3c4d5e", false)] {
+        let plan = plan_at(
+            sessions.join(name).join("clone"),
+            &url,
+            &main,
+            branch(false),
+        );
+        let out = session.relay_command(&env, &plan, terminal, &[program]);
+        assert_eq!(out.status.code(), Some(1), "{out:?}");
+        let lines = lines(&out);
+        assert!(!lines.is_empty(), "{out:?}");
+        for line in &lines {
+            assert!(line.starts_with(riff::text::RELAY), "{terminal}: {line}");
+        }
+        let error = riff::text::relay(&riff::text::no_program(program));
+        assert!(lines.last().unwrap().starts_with(&error), "{lines:?}");
+    }
+    let out = env
+        .riff()
+        .args(["relay", "--", "true"])
+        .env_remove("RIFF_SOCKET")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert_eq!(
+        lines(&out),
+        [riff::text::relay(riff::text::RELAY_NO_SOCKET)]
+    );
 }

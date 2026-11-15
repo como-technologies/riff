@@ -3,8 +3,10 @@
 //!
 //! # Design
 //!
-//! A container writes each bind with write: its clone, its Claude folder,
-//! the folder of its socket and its volumes. It can put a link there, for
+//! A container writes each bind with write: its clone, its Claude folder
+//! and its volumes. It sees the folder of its socket with no write
+//! (01M7GJBEG0S8N30EXD7DWYTKK8), and the host keeps the guard there too.
+//! A container can put a link in a folder that it writes, for
 //! example `.claude.json -> ~/.bashrc`, and the paths are the same in the
 //! container and on the host. A write of the host that follows the link
 //! writes over a file of the person. A read that follows it can bring a
@@ -595,9 +597,9 @@ mod scan {
 
     use crate::host_git::tests::{production, sources};
 
-    /// The words of a production line that names a folder that a
-    /// container writes in a folder of a session or a lead: its clone, its
-    /// Claude folder, and the folder of its socket.
+    /// The words of a production line that names a folder of a session or
+    /// a lead that a container sees: its clone, its Claude folder, and the
+    /// folder of its socket.
     const NAMES: [&str; 8] = [
         "join(\"claude\")",
         "join(\"clone\")",

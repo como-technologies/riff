@@ -1237,7 +1237,7 @@ mod tests {
                     write: true,
                 },
                 path(format!("{folder}/gh"), false),
-                path("/run/riff".into(), true),
+                path("/run/riff".into(), false),
             ],
             ..spec()
         };

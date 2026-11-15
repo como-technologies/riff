@@ -652,6 +652,23 @@ pub fn new_session_id() -> String {
     )
 }
 
+/// `N` random bytes of the OS, in lowercase hex: `2 * N` digits. The mark
+/// of a smoke test ([`crate::smoke`]) and the key of the notes of a relay
+/// ([`crate::daemon::NoteKey`]) come from here.
+///
+/// ```
+/// let mark = riff::identity::random_hex::<4>();
+/// assert_eq!(mark.len(), 8);
+/// assert!(mark.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)));
+/// assert_ne!(riff::identity::random_hex::<16>(), riff::identity::random_hex::<16>());
+/// ```
+pub fn random_hex<const N: usize>() -> String {
+    let mut bytes = [0u8; N];
+    // The OS random source fails only when the OS is broken.
+    getrandom::fill(&mut bytes).expect("the OS gives random bytes");
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

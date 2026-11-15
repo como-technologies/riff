@@ -423,7 +423,7 @@ pub fn merges(main: &Path, branch: &str, lanes: &mut BTreeMap<u64, Lane>) {
             });
     let tip = format!("refs/remotes/origin/{branch}");
     if over {
-        missing.push(format!("+refs/heads/{branch}:{tip}"));
+        missing.push(crate::session_image::refspec(branch));
     }
     if !missing.is_empty() {
         let mut args = vec!["fetch", "-q", "--no-write-fetch-head", "origin"];

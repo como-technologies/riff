@@ -257,7 +257,7 @@ while [ $# -gt 0 ]; do
     -v)
       case "$2" in
         *:/opt/riff/riff:ro) relay="${2%:/opt/riff/riff:ro}" ;;
-        *:/run/riff) socket="${2%:/run/riff}/riff.sock" ;;
+        *:/run/riff:ro) socket="${2%:/run/riff:ro}/riff.sock" ;;
       esac
       shift 2 ;;
     # With `clone`, the container gets the plan of its clone, the folder
@@ -1250,7 +1250,7 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         "-v",
         &format!("{gh}:{gh}:ro"),
         "-v",
-        &format!("{socket}:/run/riff"),
+        &format!("{socket}:/run/riff:ro"),
         "-v",
         &format!("{riff}:/opt/riff/riff:ro"),
         // The same binary is the gh of the container (#1582).

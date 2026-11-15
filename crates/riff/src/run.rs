@@ -235,7 +235,7 @@
 //! | The env and the volumes of the repository | `[session.env]` and `[session.volumes]` of the merged `riff.toml` ([`crate::session_setup`]). riff sets no variable and no volume of a language or a tool | 01M5SMVVC4GQS310CVK3H9CMQ7, 01M5SMW28KT5D5HPRH7KAZ8TVC |
 //! | The caps | `--memory` and `--cpus`: the defaults, and the daemon puts the caps of the host at the start ([`crate::room::Limit::caps`]) | 01M4Z60B7XT7462XMV49GJTVSJ, 01M56Q4AQ86V99RC8CA1KGCMSZ |
 //! | `claude` | `--model` of the merged `riff.toml`, `opus` by default ([`Setup::claude`]), `-p` in stream-json, the riff session ID, the auto mode | 01M6VAQWECJ6N6VJF66KCMNYD1, 01M4Z60B82FHN2YG9YJHW8XZX1, 01M4Z81ATZK3FX9GRFTM236FE6 |
-//! | The socket of the session | the daemon adds it: its folder at `/run/riff` with write, and `RIFF_SOCKET` | 01M4ZDTVSP0T1YENKAWGKA114D |
+//! | The socket of the session | the daemon adds it: its folder at `/run/riff` with no write, and `RIFF_SOCKET` | 01M4ZDTVSP0T1YENKAWGKA114D, 01M7GJBEG0S8N30EXD7DWYTKK8 |
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -2124,7 +2124,7 @@ pub fn lists_ref(listed: &str, name: &str) -> bool {
 /// `origin` too.
 pub fn fetch_for_no_github(main: &Path, branch: &Branch, earlier: bool) -> Result<()> {
     match earlier {
-        true => session_image::fetch_origin(main, &[branch]),
+        true => session_image::fetch_origin(main, branch),
         false => Ok(()),
     }
 }

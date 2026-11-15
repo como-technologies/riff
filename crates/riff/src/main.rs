@@ -3639,12 +3639,18 @@ async fn relay_command(
             }
             Ok(())
         }
-        None if terminal => {
-            let code = riff::session_relay::terminal(&session).await?;
-            std::process::exit(code)
-        }
         None => {
-            let code = riff::session_relay::main(session).await?;
+            let ran = if terminal {
+                riff::session_relay::terminal(&session).await
+            } else {
+                riff::session_relay::main(session).await
+            };
+            // Each line of the relay itself starts with `riff relay: `,
+            // also its error (01M7GJBFAJDCYCMRDSWSX3VNWX).
+            let code = ran.unwrap_or_else(|e| {
+                eprintln!("{}", text::relay(&format!("{e:#}")));
+                1
+            });
             std::process::exit(code)
         }
     }
