@@ -3639,7 +3639,10 @@ async fn relay_command(
             }
             Ok(())
         }
-        None if terminal => Err(riff::session_relay::terminal(&session)),
+        None if terminal => {
+            let code = riff::session_relay::terminal(&session).await?;
+            std::process::exit(code)
+        }
         None => {
             let code = riff::session_relay::main(session).await?;
             std::process::exit(code)

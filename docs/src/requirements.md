@@ -5789,8 +5789,8 @@ of this part when they merge.
   one line, and uses the merged pin.
 - **01M51STPPWYFKQ1ESCNA6V3WV2** When the fetch of the default branch
   fails, riff says so in one line, and reads the branch that the clone
-  has. A main clone with no `origin/HEAD` has no merged pin: riff stops,
-  and gives the fix `git remote set-head origin --auto`.
+  has. A main clone with no `origin/HEAD` then has no merged pin: riff
+  stops, and gives the fix `git remote set-head origin --auto`.
 - **01M51SVXQK037E20R7WAY66532** `riff image`, `riff init` and the image
   of this folder in `riff update --check` read `riff.toml` of the
   working tree. So a person can try the pin of a branch before its
@@ -8768,13 +8768,17 @@ of this part when they merge.
   is cut or zeroed is refused. The main clone gets no object, and the
   folder of objects goes. This supersedes 01M7EY3WHQQP9330CZ736HK0FJ in
   part: git bundle verify.
-- **01M7G29PSP7X56X8E60A3KRV4V** riff run and the lead take the default
-  branch of a session from origin, with one git ls-remote --symref from
-  the main clone: the branch of the HEAD of origin, not origin/HEAD of
-  the main clone, which a rename of the default branch on GitHub does
-  not change. The start text and the plan of the clone name that branch.
-  When the HEAD of origin names no branch, no session starts, and the
-  error says why. This supersedes 01M7EY3WM6XYQR3CXNMM6MFA5C.
+- **01M7G81XGBPP23H9T7V0WX87QZ** Before each read of the merged pin with
+  a fetch, riff asks origin for the branch of its HEAD with one git
+  ls-remote --symref from the main clone, fetches that branch into
+  refs/remotes/origin of the main clone, and sets origin/HEAD of the
+  main clone to it. So a rename of the default branch on GitHub needs no
+  step of the person, and the pin, the setup, the sources, the start
+  text and the plan of the clone of riff run and of the lead name one
+  branch. When the look or the fetch fails, or the HEAD of origin names
+  no branch, riff says so in one line, and reads origin/HEAD as the
+  clone has it. This supersedes 01M7G29PSP7X56X8E60A3KRV4V in full, and
+  01M51STPPWYFKQ1ESCNA6V3WV2 in part: a main clone with no origin/HEAD.
 - **01M7GCESN7RY3GW6ZPP9PBM87D** A job of the daemon keeps only the
   folder of its own session: each folder of its item that was not there
   at the start of the job, and the folder of the session that a new
@@ -8819,12 +8823,20 @@ of this part when they merge.
 - **01M4Z60B84FTGMXDZ1F52DC98C** riff keeps the MCP servers of the
   claude.ai account of the person in a session, as a plain `claude` has
   them.
-- **01M7G39RG8TC27717MMT20FTSW** The daemon keeps each note of the relay
-  in the output of the container of a session, a line that starts with
-  "riff relay: ", as a line of the session, and writes it to its log. So
-  riff daemon events NAME shows it, also after the end of the session.
-  When the clone of a session fails, the relay prints one such note that
-  names the step, and claude does not start.
+- **01M7G824SYKB3BN2MN9A9JKAG0** The relay says each note of its own to
+  the daemon on the socket of the session, also with a terminal: the
+  line of the clone, why the clone failed, and the bundle of a session
+  with no GitHub or why it failed, each in one line. The daemon keeps at
+  most 8 notes of each container of a session as lines of the session,
+  each with no control character and no secret, and cut to at most 500
+  characters after the scrub. It writes each kept note to its log. So
+  riff daemon events NAME shows them, also after the end of the session.
+  No line of the output of the container is a note. The relay also
+  prints a note on its stderr when it has a terminal, or when the daemon
+  did not take the note. When the clone of a session fails, the relay
+  says one note that names the step, prints no other text of it, and
+  claude does not start. This supersedes 01M7G39RG8TC27717MMT20FTSW in
+  full.
 
 ### The home of the person
 

@@ -1540,13 +1540,18 @@ pub async fn page(
             }
             // The follow starts at the event 0, so the daemon gives each
             // line of its own from the first one, in its place: `said`
-            // counts the lines of the session.
+            // counts the lines of the session. They count in the limit of
+            // the page too (01M57D4FX5VHQR150QTDS6BA1C): the next page
+            // goes on after the last one.
             Some(Say::Line { text }) => {
                 said += 1;
                 if said > notes {
                     page.lines.push(text);
                     page.notes = said;
                     new = true;
+                    if page.lines.len() >= PAGE_LINES {
+                        break;
+                    }
                 }
             }
             Some(Say::Ended(ended)) => {

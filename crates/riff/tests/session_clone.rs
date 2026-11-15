@@ -329,10 +329,11 @@ fn a_session_with_no_token_starts_from_the_main_clone_on_a_private_repository() 
     );
 }
 
-/// #2139, 01M7G39RG8TC27717MMT20FTSW: a clone that fails starts no
-/// command, and the folder of the clone is empty again. The note of the
-/// relay names the step on one line: the daemon keeps it
-/// ([`riff::session_relay::NOTE`]).
+/// #2139, 01M7G824SYKB3BN2MN9A9JKAG0: a clone that fails starts no
+/// command, and the folder of the clone is empty again. The relay says
+/// one note that names the step on one line, and no other text of the
+/// fault: with a terminal, it prints the note on stderr, and here no
+/// daemon takes it. It exits with 1.
 #[test]
 fn a_clone_that_fails_starts_no_command() {
     let env = isolated::Isolated::new();
@@ -342,7 +343,7 @@ fn a_clone_that_fails_starts_no_command() {
     let none = format!("file://{}", root.join("none.git").display());
     let plan = plan_at(root.join("s/clone"), &none, &main, Checkout::Default);
     let out = Session::new(&root, true).relay(&env, &plan, "touch ../ran");
-    assert!(!out.status.success(), "{out:?}");
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
     let stderr = String::from_utf8_lossy(&out.stderr);
     let note = riff::text::relay_clone_failed("");
     let line = stderr.lines().find(|l| l.starts_with(note.trim_end()));
@@ -350,17 +351,23 @@ fn a_clone_that_fails_starts_no_command() {
         line.is_some_and(|l| l.contains("fetch -q --prune origin")),
         "{out:?}"
     );
-    assert!(stderr.contains(riff::text::RELAY_NO_CLONE), "{out:?}");
+    assert_eq!(
+        stderr.matches("claude did not start").count(),
+        1,
+        "{stderr}"
+    );
+    assert!(!stderr.contains("Error"), "{stderr}");
     assert!(!root.join("s/ran").exists());
     assert_eq!(std::fs::read_dir(&plan.path).unwrap().count(), 0);
 }
 
-/// 01M7G29PSP7X56X8E60A3KRV4V: the default branch moved from `main` to
+/// 01M7G81XGBPP23H9T7V0WX87QZ: the default branch moved from `main` to
 /// `trunk` on `origin` after the main clone, so its `origin/HEAD` still
-/// names `main`. The host asks `origin` ([`riff::run::on_origin`]): the
-/// default branch is `trunk`. The clone with the token prunes
-/// `origin/main`, and the new branch of the item starts from
-/// `origin/trunk`.
+/// names `main`. The step of the image asks `origin`
+/// ([`riff::session_image::follow_origin`]): the default branch is
+/// `trunk`, and `origin/HEAD` of the main clone names it now. The clone
+/// with the token prunes `origin/main`, and the new branch of the item
+/// starts from `origin/trunk`.
 #[test]
 fn a_session_starts_on_the_default_branch_of_origin_after_a_rename() {
     let env = isolated::Isolated::new();
@@ -368,23 +375,24 @@ fn a_session_starts_on_the_default_branch_of_origin_after_a_rename() {
     std::fs::create_dir_all(&root).unwrap();
     let (url, main) = origin_and_main(&root);
     git(&root.join("origin.git"), &["branch", "-m", "main", "trunk"]);
-    git(&main, &["fetch", "-q", "origin"]);
     assert_eq!(
         git(&main, &["symbolic-ref", "refs/remotes/origin/HEAD"]),
         "refs/remotes/origin/main"
     );
+    let base = riff::session_image::follow_origin(&main, |line| panic!("{line}")).unwrap();
+    assert_eq!(base.as_str(), "trunk");
+    assert_eq!(
+        git(&main, &["symbolic-ref", "refs/remotes/origin/HEAD"]),
+        "refs/remotes/origin/trunk"
+    );
     let item = "worktree-issue-12".parse().unwrap();
-    let asked = riff::run::on_origin(&main, Some(&item)).unwrap();
-    let want = riff::run::OnOrigin {
-        base: "trunk".parse().unwrap(),
-        earlier: false,
-    };
-    assert_eq!(asked, want);
+    let earlier = riff::run::earlier(&main, &item).unwrap();
+    assert!(!earlier);
 
     let path = env.riff_home().join("sessions/issue-12-1a2b3c4d/clone");
     let plan = Plan {
-        base: asked.base,
-        ..plan_at(path, &url, &main, branch(asked.earlier))
+        base,
+        ..plan_at(path, &url, &main, branch(earlier))
     };
     let out = Session::new(&root, true).relay(&env, &plan, "true");
     assert!(out.status.success(), "{out:?}");

@@ -4513,10 +4513,11 @@ async fn a_default_branch_that_does_not_read_starts_no_work_and_the_next_look_re
     }
 }
 
-/// 01M7G29PSP7X56X8E60A3KRV4V: `riff run` names the default branch of
+/// 01M7G81XGBPP23H9T7V0WX87QZ: `riff run` names the default branch of
 /// `origin`, the branch of its `HEAD`, here `master`. The default branch
 /// moved from `main` on `origin` after the clone, so `origin/HEAD` of the
-/// main clone still names `main`: riff does not read it.
+/// main clone still names `main`. The step of the image sets it to
+/// `master`, and the plan of the clone names `master` too.
 #[tokio::test]
 async fn riff_run_names_the_default_branch_of_origin() {
     let machine = Machine::new().await;
@@ -4539,6 +4540,38 @@ async fn riff_run_names_the_default_branch_of_origin() {
     let start = machine.read("run.stdin");
     assert!(start.contains("Never push to master."), "{start}");
     assert!(!start.contains("Never push to main."), "{start}");
+    assert_eq!(
+        git(&machine.main, &["symbolic-ref", "refs/remotes/origin/HEAD"]),
+        "refs/remotes/origin/master"
+    );
+    let args = machine.read("run.args");
+    assert!(args.contains(r#""base":"master""#), "{args}");
+}
+
+/// 01M7G81XGBPP23H9T7V0WX87QZ: the `HEAD` of `origin` names no branch.
+/// `riff run` says so in one line, reads `origin/HEAD` as the main clone
+/// has it, and the session starts on `main`.
+#[tokio::test]
+async fn riff_run_with_a_head_of_origin_that_names_no_branch_says_so_and_reads_the_clone() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    let url = git(&machine.main, &["remote", "get-url", "origin"]);
+    git(
+        Path::new(&url),
+        &["symbolic-ref", "HEAD", "refs/heads/gone"],
+    );
+
+    let out = machine.run(None, &["run", "issue-12"]).await;
+    let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
+    assert!(out.status.success(), "{stdout}\n{stderr}");
+    let line = riff::text::image_no_fetch("origin/main", riff::text::ORIGIN_NO_DEFAULT);
+    assert_eq!(stdout.matches(&line).count(), 1, "{stdout}");
+    let start = machine.read("run.stdin");
+    assert!(start.contains("Never push to main."), "{start}");
+    assert_eq!(
+        git(&machine.main, &["symbolic-ref", "refs/remotes/origin/HEAD"]),
+        "refs/remotes/origin/main"
+    );
 }
 
 /// 01M5QYBWPAJ219BE8QKVKG1TWW (#1352): the start text of a build of a

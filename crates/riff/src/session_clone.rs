@@ -173,7 +173,7 @@ macro_rules! parsed_name {
 /// assert_eq!("feature/a.b".parse::<Branch>()?.to_string(), "feature/a.b");
 /// let bad = [
 ///     "", "-x", "a..b", "a b", "a~1", "a^", "a:b", "a?", "a*", "a[", "a\\b", "/a", "a/",
-///     "a//b", ".a", "a/.b", "a.", "a.lock", "a@{1}", "@", "HEAD", "a\u{7f}",
+///     "a//b", ".a", "a/.b", "a.", "a.lock", "a@{1}", "@", "HEAD", "a\u{7f}", "a\u{9b}",
 /// ];
 /// for name in bad {
 ///     assert!(name.parse::<Branch>().is_err(), "{name:?}");
@@ -191,7 +191,7 @@ impl FromStr for Branch {
     type Err = anyhow::Error;
 
     fn from_str(name: &str) -> Result<Branch> {
-        let bad_char = |c: char| c.is_ascii_control() || " ~^:?*[\\".contains(c);
+        let bad_char = |c: char| c.is_control() || " ~^:?*[\\".contains(c);
         let bad_part =
             |part: &str| part.is_empty() || part.starts_with('.') || part.ends_with(".lock");
         if name == "@"
@@ -473,12 +473,12 @@ pub struct Plan {
     /// which the host wrote ([`write_refs`]): the container sees it at
     /// the same path, with no write.
     pub refs: PathBuf,
-    /// The default branch of `origin`, as the host gives it: `riff run`
-    /// and the lead ask `origin` for the branch of its `HEAD`
-    /// ([`crate::run::on_origin`], 01M7G29PSP7X56X8E60A3KRV4V), a wave
-    /// reads it from GitHub ([`crate::pr::default_branch`]). No ref of
-    /// the main clone gives it: a rename on GitHub does not change
-    /// `origin/HEAD` there.
+    /// The default branch of `origin`, as the host gives it: for `riff
+    /// run` and the lead, the step of the image asks `origin` for the
+    /// branch of its `HEAD`, fetches it, and sets `origin/HEAD` of the
+    /// main clone to it ([`crate::session_image::follow_origin`],
+    /// 01M7G81XGBPP23H9T7V0WX87QZ). A wave reads it from GitHub
+    /// ([`crate::pr::default_branch`]).
     pub base: Branch,
     /// What the clone checks out.
     pub checkout: Checkout,

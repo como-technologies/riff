@@ -2076,7 +2076,9 @@ pub fn main_clone(dir: &Path) -> Result<(PathBuf, PathBuf)> {
 /// goes on from it (01M4Z81AX3ND5RX7V1GEY4HMF5). The host asks `origin`
 /// from the main clone `main`, with `git ls-remote`, and makes no clone:
 /// the session clones in its container ([`crate::session_clone`],
-/// 01M7DZ42C8SY2GV5ZQJZHM2VTV).
+/// 01M7DZ42C8SY2GV5ZQJZHM2VTV). It is the one look for the branch of an
+/// item, for `riff run` and for a wave. The default branch comes from the
+/// step of the image ([`session_image::follow_origin`]).
 pub fn earlier(main: &Path, branch: &Branch) -> Result<bool> {
     let remote = crate::host_git::output(main, &["remote", "get-url", "origin"])?;
     let head = format!("refs/heads/{branch}");
@@ -2085,72 +2087,6 @@ pub fn earlier(main: &Path, branch: &Branch) -> Result<bool> {
             .trim()
             .is_empty(),
     )
-}
-
-/// What the host asks `origin` before the start of a session of `riff
-/// run` or of the lead ([`on_origin`], 01M7G29PSP7X56X8E60A3KRV4V).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OnOrigin {
-    /// The default branch of `origin`: the branch of its `HEAD`. A rename
-    /// of the default branch on GitHub does not change `origin/HEAD` of
-    /// the main clone, so riff does not read that ref.
-    pub base: Branch,
-    /// `origin` has the branch of the item: the session goes on from it
-    /// (01M4Z81AX3ND5RX7V1GEY4HMF5).
-    pub earlier: bool,
-}
-
-impl OnOrigin {
-    /// The facts in `listed`, the output of `git ls-remote --symref --
-    /// URL HEAD refs/heads/BRANCH`, with `branch` the branch of the item.
-    /// A `HEAD` that names no branch, as on an empty repository, is an
-    /// error.
-    ///
-    /// ```
-    /// use riff::run::OnOrigin;
-    ///
-    /// let branch = "worktree-issue-12".parse()?;
-    /// let listed = "ref: refs/heads/trunk\tHEAD\n1a2b\tHEAD\n3c4d\trefs/heads/worktree-issue-12\n";
-    /// let on = OnOrigin::of_listed(listed, Some(&branch))?;
-    /// assert_eq!(on, OnOrigin { base: "trunk".parse()?, earlier: true });
-    /// assert!(!OnOrigin::of_listed(listed, None)?.earlier);
-    /// // Only the branch of the item counts.
-    /// let other = "ref: refs/heads/main\tHEAD\n3c4d\trefs/heads/x/worktree-issue-12\n";
-    /// assert!(!OnOrigin::of_listed(other, Some(&branch))?.earlier);
-    /// assert!(OnOrigin::of_listed("3c4d\trefs/heads/worktree-issue-12\n", Some(&branch)).is_err());
-    /// # Ok::<(), anyhow::Error>(())
-    /// ```
-    pub fn of_listed(listed: &str, branch: Option<&Branch>) -> Result<OnOrigin> {
-        let item = branch.map(|b| format!("refs/heads/{b}"));
-        let mut base = None;
-        let mut earlier = false;
-        for line in listed.lines() {
-            match line.split_once('\t') {
-                Some((target, "HEAD")) => {
-                    base = target.strip_prefix("ref: refs/heads/").or(base);
-                }
-                Some((_, name)) => earlier |= item.as_deref() == Some(name),
-                None => {}
-            }
-        }
-        let base = base.ok_or_else(|| anyhow!("{}", text::ORIGIN_NO_DEFAULT))?;
-        Ok(OnOrigin {
-            base: base.parse()?,
-            earlier,
-        })
-    }
-}
-
-/// Asks `origin` of the main clone `main` with one `git ls-remote
-/// --symref`: its default branch, and with `branch`, whether it has the
-/// branch of the item (01M7G29PSP7X56X8E60A3KRV4V). The host makes no
-/// clone for it.
-pub fn on_origin(main: &Path, branch: Option<&Branch>) -> Result<OnOrigin> {
-    let remote = crate::host_git::output(main, &["remote", "get-url", "origin"])?;
-    let item = branch.map(|b| format!("refs/heads/{b}"));
-    let mut args = vec!["ls-remote", "--symref", "--", &remote, "HEAD"];
-    args.extend(item.as_deref());
-    OnOrigin::of_listed(&git_credential::run(main, &remote, &args)?, branch)
 }
 
 /// Before the start of a session of `riff run --no-github`: fetches the
@@ -2580,7 +2516,7 @@ pub async fn run_with(
         &session,
         item,
         issue,
-        (image, &merged.setup, no_github),
+        (image, &merged, no_github),
         &mut steps,
     )
     .await;
@@ -2612,7 +2548,7 @@ async fn work(
     session: &str,
     item: &str,
     issue: u64,
-    (image, setup, no_github): (&str, &Setup, bool),
+    (image, merged, no_github): (&str, &session_image::Merged, bool),
     steps: &mut EndSteps,
 ) -> Result<i32> {
     let folder = sessions_dir()?.join(format!("{item}-{}", short(session)));
@@ -2636,16 +2572,17 @@ async fn work(
         crate::permissions::Role::Worker,
     )?;
     let branch: Branch = branch(item).parse()?;
-    // One look on `origin`: its default branch, and the branch of the item
-    // (01M7G29PSP7X56X8E60A3KRV4V).
-    let OnOrigin { base, earlier } = on_origin(main, Some(&branch))?;
+    // The step of the image asked `origin` for its default branch
+    // (01M7G81XGBPP23H9T7V0WX87QZ), and this is the one look for the
+    // branch of the item.
+    let earlier = earlier(main, &branch)?;
     let repo = me.place().repo_text();
     let plan = Plan {
         path: clone,
         origin: Origin::github(&repo)?,
         main: common.to_owned(),
         refs: refs_in(&folder),
-        base,
+        base: merged.base.clone(),
         checkout: Checkout::Branch {
             name: branch.clone(),
             earlier,
@@ -2680,7 +2617,7 @@ async fn work(
         claude,
         sign_in: checked.host.claude.sign_in(),
         gitconfig: existing(home.join(".gitconfig")),
-        setup: setup.clone(),
+        setup: merged.setup.clone(),
     };
     let spec = spec(&facts);
     let base = &facts.plan.base;
@@ -2841,7 +2778,7 @@ pub const BUNDLE_LIMIT: u64 = 1 << 30;
 /// // A gitdir file is no bundle: riff runs no git on it.
 /// std::fs::write(&out, "gitdir: /tmp/elsewhere\n")?;
 /// let error = riff::run::take_bundle(&out, &copy, dir.path()).unwrap_err();
-/// assert_eq!(error.to_string(), "it is no git bundle");
+/// assert_eq!(error.to_string(), riff::text::RUN_BUNDLE_NOT_GIT);
 /// assert!(!copy.exists());
 /// // A link is no plain file.
 /// std::fs::remove_file(&out)?;
@@ -2879,7 +2816,9 @@ impl Opened {
             .open(out);
         let mut file = match opened {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(e) if e.raw_os_error() == Some(nix::libc::ELOOP) => bail!("it is a link"),
+            Err(e) if e.raw_os_error() == Some(nix::libc::ELOOP) => {
+                bail!("{}", text::RUN_BUNDLE_LINK)
+            }
             Err(e) => return Err(e).with_context(|| format!("cannot open {}", out.display())),
             Ok(file) => file,
         };
@@ -2887,19 +2826,21 @@ impl Opened {
             .metadata()
             .with_context(|| format!("cannot read {}", out.display()))?;
         if !meta.is_file() {
-            bail!("it is no plain file");
+            bail!("{}", text::RUN_BUNDLE_NOT_FILE);
         }
         if meta.len() > limit {
             bail!("{}", text::run_bundle_too_large(limit));
         }
         let mut head = [0; BUNDLE_HEAD];
         match file.read_exact(&mut head) {
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => bail!("it is no git bundle"),
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                bail!("{}", text::RUN_BUNDLE_NOT_GIT)
+            }
             Err(e) => return Err(e).with_context(|| format!("cannot read {}", out.display())),
             Ok(()) => {}
         }
         if !BUNDLE_HEADS.contains(&&head) {
-            bail!("it is no git bundle");
+            bail!("{}", text::RUN_BUNDLE_NOT_GIT);
         }
         Ok(Some(Opened {
             out: out.to_owned(),
@@ -2941,7 +2882,7 @@ impl Opened {
             .with_context(|| format!("cannot make {}", copy.display()))?;
         to.write_all(&self.head)
             .with_context(|| format!("cannot write {}", copy.display()))?;
-        let head = BUNDLE_HEAD as u64;
+        let head = u64::try_from(BUNDLE_HEAD)?;
         let rest = (limit + 1).saturating_sub(head);
         let copied = std::io::copy(&mut (&mut self.file).take(rest), &mut to)
             .with_context(|| format!("cannot copy {} to {}", self.out.display(), copy.display()))?;
@@ -3024,7 +2965,7 @@ mod tests {
         let copy = root.join("worktree-issue-12.bundle");
 
         let error = take_bundle(&out, &copy, &git_dir).unwrap_err();
-        assert_eq!(error.to_string(), "it is no git bundle");
+        assert_eq!(error.to_string(), text::RUN_BUNDLE_NOT_GIT);
         assert!(!copy.exists());
         assert!(!mark.exists(), "the program of the git dir ran");
 
@@ -3083,10 +3024,10 @@ mod tests {
         let nowhere = root.join("none/copy.bundle");
         std::fs::write(&out, "# v4 git bundle\nmore bytes of no bundle\n").unwrap();
         let error = take_bundle(&out, &nowhere, root).unwrap_err();
-        assert_eq!(error.to_string(), "it is no git bundle");
+        assert_eq!(error.to_string(), text::RUN_BUNDLE_NOT_GIT);
         std::fs::write(&out, "# v2").unwrap();
         let error = take_bundle(&out, &copy, root).unwrap_err();
-        assert_eq!(error.to_string(), "it is no git bundle");
+        assert_eq!(error.to_string(), text::RUN_BUNDLE_NOT_GIT);
         assert!(!copy.exists());
     }
 
@@ -3371,49 +3312,6 @@ mod tests {
         git(&main, &["push", "-q", "origin", "HEAD:worktree-issue-12"]);
         assert!(earlier(&main, &name("worktree-issue-12")).unwrap());
         assert_eq!(std::fs::read_dir(root).unwrap().count(), 2);
-    }
-
-    /// 01M7G29PSP7X56X8E60A3KRV4V: one `git ls-remote --symref` gives the
-    /// default branch of `origin` and the branch of the item. The default
-    /// branch moves on `origin` to `trunk`, and `origin/HEAD` of the main
-    /// clone stays on `main`: the host names `trunk`. When the `HEAD` of
-    /// `origin` names no branch, no session starts, and the error says why.
-    #[test]
-    fn the_host_asks_origin_for_its_default_branch() {
-        let root = tempfile::tempdir().unwrap();
-        let root = root.path();
-        git(root, &["init", "-q", "--bare", "-b", "main", "origin.git"]);
-        git(root, &["clone", "-q", "origin.git", "main"]);
-        let (main, origin) = (root.join("main"), root.join("origin.git"));
-        git(&main, &["commit", "-q", "--allow-empty", "-m", "start"]);
-        git(&main, &["push", "-q", "origin", "HEAD:main"]);
-        git(&main, &["remote", "set-head", "origin", "main"]);
-        let item = name("worktree-issue-12");
-        let on = |base: &str, earlier| OnOrigin {
-            base: name(base),
-            earlier,
-        };
-        assert_eq!(on_origin(&main, Some(&item)).unwrap(), on("main", false));
-
-        git(
-            &main,
-            &[
-                "push",
-                "-q",
-                "origin",
-                "HEAD:trunk",
-                "HEAD:worktree-issue-12",
-            ],
-        );
-        git(&origin, &["symbolic-ref", "HEAD", "refs/heads/trunk"]);
-        assert_eq!(on_origin(&main, Some(&item)).unwrap(), on("trunk", true));
-        assert_eq!(on_origin(&main, None).unwrap(), on("trunk", false));
-        let stale = git(&main, &["symbolic-ref", "refs/remotes/origin/HEAD"]);
-        assert_eq!(stale, "refs/remotes/origin/main");
-
-        git(&origin, &["symbolic-ref", "HEAD", "refs/heads/gone"]);
-        let error = on_origin(&main, Some(&item)).unwrap_err();
-        assert_eq!(error.to_string(), text::ORIGIN_NO_DEFAULT);
     }
 
     /// #1858, 01M749XKWD72JYB3QD8RYNHKTV: a step of the host with a time

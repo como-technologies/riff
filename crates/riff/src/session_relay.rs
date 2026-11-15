@@ -50,14 +50,40 @@
 //! Before it starts `claude`, also with a terminal, the relay makes the
 //! clone of the session in its container from the plan in
 //! [`crate::session_clone::VAR`] ([`clone_here`], #2139). When the clone
-//! fails, `claude` does not start: the relay prints the note
-//! [`text::relay_clone_failed`], which names the step, and ends with an
-//! error. The daemon keeps each note of the relay ([`NOTE`]).
-//! `claude` does not get the variable. For a session with no GitHub, the
-//! end of `claude` comes after the bundle of its branch
+//! fails, `claude` does not start: the relay says the note
+//! [`text::relay_clone_failed`], which names the step, and exits with 1
+//! ([`NoClone`]). `claude` does not get the variable. For a session with
+//! no GitHub, the end of `claude` comes after the bundle of its branch
 //! ([`crate::session_clone::Plan::bundle`]): so the bundle is there when
-//! the daemon gets the exit. When the bundle fails, the relay prints the
-//! error, and the exit code is 1 also after a `claude` that ended with 0.
+//! the daemon gets the exit. When the bundle fails, the note says why,
+//! and the exit code is 1 also after a `claude` that ended with 0.
+//!
+//! # The notes
+//!
+//! The relay says each note of its own, the clone, why it failed and the
+//! bundle, to the daemon on the socket of the session ([`say_note`],
+//! [`SessionAsk::Note`], 01M7G824SYKB3BN2MN9A9JKAG0). The daemon keeps a
+//! few of them as lines of the session, and writes them to its log
+//! ([`daemon::kept_note`]). So `riff daemon events NAME` shows why a clone
+//! failed, also after the end of the session, and also for the lead,
+//! whose output the daemon does not read. No line of the output of the
+//! container is a note: the relay copies the stderr of `claude`, and
+//! `claude` can write any line there.
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant R as riff relay
+//!     participant D as riff daemon
+//!     participant C as claude
+//!     R->>R: the clone, in the volume of the clone
+//!     R->>D: note: riff relay: cloned ...
+//!     D-->>R: done
+//!     Note over D: a line of the session, and a line of its log
+//!     R->>C: start claude
+//!     C-->>R: stderr: riff relay: cloned ... (a fake)
+//!     R->>D: the stderr of the container
+//!     Note over D: a line for the followers of now only
+//! ```
 //!
 //! # The protocol
 //!
@@ -662,7 +688,7 @@ pub async fn relay(
     loop {
         if let Ok(conn) = connect(socket).await {
             if away {
-                let _ = notes.send(text::RELAY_BACK.into());
+                let _ = notes.send(text::relay(text::RELAY_BACK));
                 away = false;
             }
             if let Some(code) = connected(conn, &mut link, &mut from_claude, wait, &notes).await {
@@ -670,7 +696,7 @@ pub async fn relay(
             }
         }
         if !away {
-            let _ = notes.send(text::RELAY_AWAY.into());
+            let _ = notes.send(text::relay(text::RELAY_AWAY));
             away = true;
         }
         // While the daemon is away, take the lines of claude, and try
@@ -684,7 +710,7 @@ pub async fn relay(
                     take(&mut link, up, wait);
                 }
                 () = until(link.deadline) => {
-                    let _ = notes.send(text::RELAY_GAVE_UP.into());
+                    let _ = notes.send(text::relay(text::RELAY_GAVE_UP));
                     return link.exit.and_then(|(_, code)| code);
                 }
             }
@@ -782,7 +808,7 @@ async fn connected(
                 }
             }
             () = until(link.deadline) => {
-                let _ = notes.send(text::RELAY_GAVE_UP.into());
+                let _ = notes.send(text::relay(text::RELAY_GAVE_UP));
                 return Some(link.exit.and_then(|(_, code)| code));
             }
         }
@@ -800,12 +826,14 @@ pub fn socket_here() -> Result<PathBuf> {
 /// Starts `command` with pipes for its stdin, stdout and stderr, and
 /// keeps its process ID in `pid`. With the plan `plan` of a session with
 /// no GitHub, its end comes after the bundle of the branch
-/// ([`bundle_after`]): so the bundle is there when the daemon gets the
-/// exit.
+/// ([`bundle_after`]) and its note to the daemon on the socket at
+/// `socket` ([`say_note`]): so the bundle is there when the daemon gets
+/// the exit.
 fn spawn_claude(
     command: &[String],
     pid: &Arc<AtomicU32>,
     plan: Option<&crate::session_clone::Plan>,
+    socket: &Path,
 ) -> Result<Child> {
     let (program, args) = command
         .split_first()
@@ -826,73 +854,138 @@ fn spawn_claude(
         child.stderr.take().context("the stderr of claude")?,
     );
     let plan = plan.filter(|p| p.bundle_file().is_some()).cloned();
+    let socket = socket.to_owned();
     Ok(Child {
         stdin: Box::new(stdin),
         stdout: Box::new(stdout),
         stderr: Box::new(stderr),
         end: Box::pin(async move {
             let code = child.wait().await.ok().and_then(|s| s.code());
-            match plan {
-                Some(plan) => tokio::task::spawn_blocking(move || bundle_after(&plan, code))
-                    .await
-                    .unwrap_or(Some(1)),
-                None => code,
+            let Some(plan) = plan else {
+                return code;
+            };
+            let (code, note) = tokio::task::spawn_blocking(move || bundle_after(&plan, code))
+                .await
+                .unwrap_or((Some(1), None));
+            if let Some(note) = note {
+                say_note(Some(&socket), &note, false).await;
             }
+            code
         }),
     })
 }
 
 /// Writes the bundle of the plan `plan` of a session with no GitHub
-/// after `claude` ended with `code` ([`crate::session_clone::Plan::bundle`]),
-/// and prints a line on stderr. It gives the exit code of the session:
-/// `code`, or 1 when the bundle failed and `claude` ended with 0 or with
-/// no code. So the error of a bundle is not lost.
-fn bundle_after(plan: &crate::session_clone::Plan, code: Option<i32>) -> Option<i32> {
+/// after `claude` ended with `code` ([`crate::session_clone::Plan::bundle`]).
+/// It gives the exit code of the session, and the note of the bundle
+/// ([`text::relay_bundled`], [`text::relay_bundle_failed`]), one line.
+/// The code is `code`, or 1 when the bundle failed and `claude` ended
+/// with 0 or with no code. So the error of a bundle is not lost.
+fn bundle_after(
+    plan: &crate::session_clone::Plan,
+    code: Option<i32>,
+) -> (Option<i32>, Option<String>) {
     match plan.bundle() {
-        Ok(Some(bundle)) => {
-            eprintln!("{}", text::relay_bundled(&bundle));
-            code
-        }
-        Ok(None) => code,
+        Ok(bundle) => (code, bundle.map(|bundle| text::relay_bundled(&bundle))),
         Err(e) => {
-            eprintln!("riff relay: {e:#}");
-            match code {
+            let code = match code {
                 Some(code) if code != 0 => Some(code),
                 _ => Some(1),
-            }
+            };
+            (code, Some(text::relay_bundle_failed(&format!("{e:#}"))))
         }
     }
 }
 
-/// The start of each note of the relay on stderr, for example the line
-/// of the clone ([`crate::text::relay_cloned`]). The daemon keeps each
-/// such line of a session for a later follower, and writes it to its
-/// log (01M7G39RG8TC27717MMT20FTSW): so `riff daemon events NAME` shows
-/// why a clone failed, also after the end of the session.
-pub const NOTE: &str = "riff relay: ";
+/// The longest wait of the relay for the answer of the daemon to a note
+/// ([`send_note`]).
+pub const NOTE_WAIT: Duration = Duration::from_secs(5);
+
+/// Sends the note `line` of the relay itself to the daemon on the socket
+/// at `socket` ([`SessionAsk::Note`], 01M7G824SYKB3BN2MN9A9JKAG0), and
+/// waits for its answer at most [`NOTE_WAIT`]. The daemon keeps it as a
+/// line of the session, and writes it to its log.
+pub async fn send_note(socket: &Path, line: &str) -> Result<()> {
+    let ask = async {
+        let conn = connect(socket).await?;
+        let (read, mut write) = conn.into_split();
+        let mut lines = BufReader::new(read).lines();
+        let note = SessionAsk::Note {
+            protocol: PROTOCOL,
+            line: line.to_owned(),
+        };
+        send(&mut write, &note).await?;
+        while let Some(line) = lines.next_line().await? {
+            match serde_json::from_str::<Say>(&line) {
+                Ok(Say::Done) => return Ok(()),
+                Ok(Say::Failed { error }) => anyhow::bail!("{error}"),
+                _ => {}
+            }
+        }
+        anyhow::bail!("the daemon went away")
+    };
+    tokio::time::timeout(NOTE_WAIT, ask)
+        .await
+        .map_err(|_| anyhow!("the daemon did not take the note in time"))?
+}
+
+/// Says the note `line` of the relay: to the daemon on the socket at
+/// `socket` ([`send_note`]), and on stderr with a terminal (`terminal`),
+/// or when the daemon did not take it (01M7G824SYKB3BN2MN9A9JKAG0). So a
+/// note never goes twice to the daemon: the daemon reads the stderr of a
+/// session with no terminal. It gives true when the daemon took it.
+pub async fn say_note(socket: Option<&Path>, line: &str, terminal: bool) -> bool {
+    let taken = match socket {
+        Some(socket) => send_note(socket, line).await.is_ok(),
+        None => false,
+    };
+    if terminal || !taken {
+        eprintln!("{line}");
+    }
+    taken
+}
+
+/// The clone of the session failed: the relay said why in one note
+/// ([`clone_here`]), and `claude` does not start. The relay exits with 1,
+/// and prints no other text of the fault.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NoClone;
 
 /// Makes the clone of this session in its container from the plan in
-/// [`crate::session_clone::VAR`], and prints its line on stderr
-/// ([`crate::session_clone::Plan::make_line`], #2139). It gives the
-/// plan, or `None` with no plan. Both paths of the relay call it before
-/// `claude` starts: [`main`] and [`terminal`]. The relay of a takeover
-/// finds the clone there. When the clone fails, it prints the note
-/// [`crate::text::relay_clone_failed`], which names the step, and the
-/// error is [`crate::text::RELAY_NO_CLONE`].
-pub fn clone_here() -> Result<Option<crate::session_clone::Plan>> {
-    let Some(plan) = crate::session_clone::Plan::here()? else {
-        return Ok(None);
-    };
-    match plan.make_line() {
-        Ok(line) => {
+/// [`crate::session_clone::VAR`] ([`crate::session_clone::Plan::make_line`],
+/// #2139), and says its note on the socket at `socket` ([`say_note`]),
+/// with `terminal` for a session with a terminal. It gives the plan, or
+/// `None` with no plan. Both paths of the relay call it before `claude`
+/// starts: [`main`] and [`terminal`]. The relay of a takeover finds the
+/// clone there, and says no note. When the clone fails, the note is
+/// [`text::relay_clone_failed`], which names the step, and the error is
+/// [`NoClone`].
+pub async fn clone_here(
+    socket: Option<&Path>,
+    terminal: bool,
+) -> std::result::Result<Option<crate::session_clone::Plan>, NoClone> {
+    let made = tokio::task::spawn_blocking(|| {
+        let Some(plan) = crate::session_clone::Plan::here()? else {
+            return anyhow::Ok(None);
+        };
+        let line = plan.make_line()?;
+        Ok(Some((plan, line)))
+    })
+    .await
+    .map_err(anyhow::Error::from)
+    .and_then(|made| made);
+    match made {
+        Ok(None) => Ok(None),
+        Ok(Some((plan, line))) => {
             if let Some(line) = line {
-                eprintln!("{line}");
+                say_note(socket, &line, terminal).await;
             }
             Ok(Some(plan))
         }
         Err(e) => {
-            eprintln!("{}", text::relay_clone_failed(&format!("{e:#}")));
-            Err(anyhow!("{}", text::RELAY_NO_CLONE))
+            let note = text::relay_clone_failed(&format!("{e:#}"));
+            say_note(socket, &note, terminal).await;
+            Err(NoClone)
         }
     }
 }
@@ -901,7 +994,7 @@ pub fn clone_here() -> Result<Option<crate::session_clone::Plan>> {
 /// relays it on the socket of `RIFF_SOCKET` ([`relay`]). After a
 /// takeover, it starts the [`resumed`] command. A SIGTERM or a SIGINT
 /// goes to `claude`. It gives the exit code of `claude`, or 1 after a
-/// signal.
+/// signal, and 1 when the clone failed ([`NoClone`]).
 pub async fn main(command: Vec<String>) -> Result<i32> {
     use tokio::signal::unix::{SignalKind, signal};
     let socket = socket_here()?;
@@ -912,9 +1005,11 @@ pub async fn main(command: Vec<String>) -> Result<i32> {
     // not claude.
     let mut term = signal(SignalKind::terminate())?;
     let mut int = signal(SignalKind::interrupt())?;
-    let plan = tokio::task::spawn_blocking(clone_here).await??;
+    let Ok(plan) = clone_here(Some(&socket), false).await else {
+        return Ok(1);
+    };
     let pid = Arc::new(AtomicU32::new(0));
-    let child = spawn_claude(&command, &pid, plan.as_ref())?;
+    let child = spawn_claude(&command, &pid, plan.as_ref(), &socket)?;
     {
         let pid = pid.clone();
         tokio::spawn(async move {
@@ -944,7 +1039,10 @@ pub async fn main(command: Vec<String>) -> Result<i32> {
             let _ = stderr.write_all(format!("{line}\n").as_bytes()).await;
         }
     });
-    let again: Again = Box::new(move || spawn_claude(&again_command, &pid, plan.as_ref()));
+    let again: Again = {
+        let socket = socket.clone();
+        Box::new(move || spawn_claude(&again_command, &pid, plan.as_ref(), &socket))
+    };
     let code = relay(
         child,
         again,
@@ -989,19 +1087,18 @@ pub fn riff_first(path: Option<&OsStr>) -> OsString {
 /// tools in the place of this process, so it keeps the terminal: the
 /// lead, and the `claude` of a takeover (01M4Z60B81RTZT71PN5HV0GZHX). Its
 /// `PATH` has the riff of the container first ([`riff_first`]). It
-/// gives an error only when the command does not start.
-pub fn terminal(command: &[String]) -> anyhow::Error {
+/// gives 1 when the clone failed ([`NoClone`]): the note said why. It
+/// gives an error when the command does not start.
+pub async fn terminal(command: &[String]) -> Result<i32> {
     use std::os::unix::process::CommandExt;
-    let bin = match std::env::current_exe() {
-        Ok(bin) => bin,
-        Err(e) => return anyhow!(e).context("cannot find the path of riff"),
-    };
+    let bin = std::env::current_exe().context("cannot find the path of riff")?;
     let command = with_tools(command, &bin, &more_here());
     let Some((program, args)) = command.split_first() else {
-        return anyhow!("{}", text::RELAY_NO_COMMAND);
+        anyhow::bail!("{}", text::RELAY_NO_COMMAND);
     };
-    if let Err(e) = clone_here() {
-        return e;
+    let socket = socket_here().ok();
+    if clone_here(socket.as_deref(), true).await.is_err() {
+        return Ok(1);
     }
     let error = std::process::Command::new(program)
         .args(args)
@@ -1009,7 +1106,7 @@ pub fn terminal(command: &[String]) -> anyhow::Error {
         .env_remove(crate::session_clone::VAR)
         .env("PATH", riff_first(std::env::var_os("PATH").as_deref()))
         .exec();
-    anyhow!(error).context(text::no_program(program))
+    Err(anyhow!(error).context(text::no_program(program)))
 }
 
 /// `riff relay watch`: waits for the next wake of the session through
@@ -1385,10 +1482,12 @@ mod tests {
         );
     }
 
-    /// #2139, 01M7EY3WHQQP9330CZ736HK0FJ: for a session with no GitHub,
-    /// the end of `claude` comes after the bundle of its branch, so the
-    /// daemon gets the exit when the bundle is there. When the bundle
-    /// fails, the end is 1, also after a `claude` that ended with 0.
+    /// #2139, 01M7EY3WHQQP9330CZ736HK0FJ, 01M7G824SYKB3BN2MN9A9JKAG0: for
+    /// a session with no GitHub, the end of `claude` comes after the bundle
+    /// of its branch and its note to the daemon, so the daemon gets the
+    /// exit when the bundle is there. When the bundle fails, the note says
+    /// why in one line, and the end is 1, also after a `claude` that ended
+    /// with 0.
     #[tokio::test]
     async fn the_end_of_claude_with_no_github_comes_after_the_bundle() {
         let dir = tempfile::tempdir().unwrap();
@@ -1423,6 +1522,7 @@ mod tests {
                 no_github: true,
             },
         };
+        let daemon = Daemon::new();
         let end = |plan: &crate::session_clone::Plan, code: i32| {
             plan.make(false).unwrap();
             let script = format!(
@@ -1432,27 +1532,47 @@ mod tests {
             );
             let command: Vec<String> = ["sh", "-c", &script].map(String::from).into();
             let pid = Arc::new(AtomicU32::new(0));
-            spawn_claude(&command, &pid, Some(plan)).unwrap().end
+            let end = spawn_claude(&command, &pid, Some(plan), &daemon.socket)
+                .unwrap()
+                .end;
+            tokio::spawn(end)
+        };
+        // The daemon takes the note before the end.
+        let note = || async {
+            let (ask, _, mut write) = daemon.accept().await;
+            let SessionAsk::Note { line, .. } = ask else {
+                panic!("{ask:?}");
+            };
+            say(&mut write, &Say::Done).await;
+            line
         };
         let done = plan("s");
-        assert_eq!(end(&done, 0).await, Some(0));
+        let ended = end(&done, 0);
         let bundle = root.join("s/out/worktree-issue-12.bundle");
+        assert_eq!(note().await, text::relay_bundled(&bundle));
+        assert_eq!(ended.await.unwrap(), Some(0));
         assert_eq!(done.bundle_file(), Some(bundle.clone()));
         assert!(bundle.is_file(), "no bundle at the end of claude");
         // The folder of the bundle is a file: the bundle fails. The end
         // is 1 after a `claude` that ended with 0, and the code of a
         // `claude` that failed stays.
-        for (name, code, ended) in [("t", 0, 1), ("u", 3, 3)] {
+        for (name, code, want) in [("t", 0, 1), ("u", 3, 3)] {
             let fails = plan(name);
             std::fs::create_dir_all(root.join(name)).unwrap();
             std::fs::write(root.join(name).join("out"), "").unwrap();
-            assert_eq!(end(&fails, code).await, Some(ended), "{name}");
+            let ended = end(&fails, code);
+            let line = note().await;
+            let failed = text::relay_bundle_failed("");
+            assert!(line.starts_with(failed.trim_end()), "{line}");
+            assert!(!line.contains('\n'), "{line}");
+            assert_eq!(ended.await.unwrap(), Some(want), "{name}");
         }
     }
 
     /// 01M7EY3WHQQP9330CZ736HK0FJ: the end of a `claude` that ended with no
-    /// code (a signal) and a bundle that fails is 1. With no bundle to
-    /// write, the end is the code of `claude`.
+    /// code (a signal) and a bundle that fails is 1, and the note says why.
+    /// With no bundle to write, the end is the code of `claude`, with no
+    /// note.
     #[test]
     fn a_bundle_that_fails_after_a_signal_ends_with_1() {
         let dir = tempfile::tempdir().unwrap();
@@ -1470,12 +1590,41 @@ mod tests {
         };
         // No clone at the path: git fails in the bundle step.
         std::fs::create_dir_all(dir.path().join("s/out/worktree-issue-12.bundle")).unwrap();
-        assert_eq!(bundle_after(&plan, None), Some(1));
+        let (code, note) = bundle_after(&plan, None);
+        assert_eq!(code, Some(1));
+        let failed = text::relay_bundle_failed("");
+        assert!(note.is_some_and(|n| n.starts_with(failed.trim_end())));
         let with_github = crate::session_clone::Plan {
             checkout: crate::session_clone::Checkout::Default,
             ..plan
         };
-        assert_eq!(bundle_after(&with_github, Some(5)), Some(5));
+        assert_eq!(bundle_after(&with_github, Some(5)), (Some(5), None));
+    }
+
+    /// 01M7G824SYKB3BN2MN9A9JKAG0: the relay says a note to the daemon on
+    /// the socket of the session. With no daemon, the send fails, and
+    /// [`say_note`] says that the daemon did not take it: the note goes
+    /// to stderr.
+    #[tokio::test]
+    async fn the_relay_says_a_note_to_the_daemon_on_the_socket() {
+        let daemon = Daemon::new();
+        let socket = daemon.socket.clone();
+        let said =
+            tokio::spawn(
+                async move { say_note(Some(&socket), "riff relay: cloned.", false).await },
+            );
+        let (ask, _, mut write) = daemon.accept().await;
+        assert!(
+            matches!(&ask, SessionAsk::Note { line, protocol: PROTOCOL } if line == "riff relay: cloned."),
+            "{ask:?}"
+        );
+        say(&mut write, &Say::Done).await;
+        assert!(said.await.unwrap());
+
+        let mut gone = daemon;
+        gone.stop();
+        assert!(!say_note(Some(&gone.socket), "riff relay: cloned.", false).await);
+        assert!(!say_note(None, "riff relay: cloned.", true).await);
     }
 
     /// A fake daemon on a socket in a temp folder.
@@ -1767,7 +1916,7 @@ mod tests {
 
         // claude goes on while the daemon is away.
         claude.print("e3").await;
-        assert_eq!(noted.recv().await.unwrap(), text::RELAY_AWAY);
+        assert_eq!(noted.recv().await.unwrap(), text::relay(text::RELAY_AWAY));
 
         // A new daemon has the first event only: the relay sends 2 and
         // 3 again, and gives no input twice.
@@ -1809,7 +1958,7 @@ mod tests {
         );
         say(&mut write, &Say::Ack { seq: 4 }).await;
         assert_eq!(relay.await.unwrap(), Some(0));
-        assert_eq!(noted.recv().await.unwrap(), text::RELAY_BACK);
+        assert_eq!(noted.recv().await.unwrap(), text::relay(text::RELAY_BACK));
     }
 
     #[tokio::test]
@@ -1866,8 +2015,11 @@ mod tests {
         });
         claude.end(0).await;
         assert_eq!(relay.await.unwrap(), Some(0));
-        assert_eq!(noted.recv().await.unwrap(), text::RELAY_AWAY);
-        assert_eq!(noted.recv().await.unwrap(), text::RELAY_GAVE_UP);
+        assert_eq!(noted.recv().await.unwrap(), text::relay(text::RELAY_AWAY));
+        assert_eq!(
+            noted.recv().await.unwrap(),
+            text::relay(text::RELAY_GAVE_UP)
+        );
     }
 
     #[tokio::test]

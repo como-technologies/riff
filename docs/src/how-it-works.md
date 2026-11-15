@@ -519,20 +519,12 @@ no write. Before `claude` starts, `riff relay` clones there:
 
 Each start point is explicit, so a setting of your `~/.gitconfig`, for
 example `checkout.guess = false`, changes no branch. The default
-branch is the default branch on GitHub: before each start, `riff run`
-and the lead ask `origin` for the branch of its `HEAD`, with `git
-ls-remote --symref`, and a wave reads it from GitHub at each look. So
-when you rename the default branch on GitHub, your clone needs no step.
-
-When a step fails, `claude` does not start, and the session ends. The
-relay prints one line that names the step. `riff run` shows it. For a
-session of a wave, the log of the riff daemon has the line, and `riff
-daemon events` shows it for 5 minutes after the end:
-
-```sh
-journalctl --user -u riff | grep 'the clone failed'
-riff daemon events riff-issue-12-1a2b3c4d
-```
+branch is the default branch on GitHub. Before each start, riff asks
+`origin` for the branch of its `HEAD` with `git ls-remote --symref`,
+fetches that branch into your clone, and sets `origin/HEAD` of your
+clone to it. So when you rename the default branch on GitHub, your
+clone needs no step. When riff cannot ask `origin`, it says so in one
+line, and uses `origin/HEAD` as your clone has it.
 
 The volume is on the disk, and goes with the container.
 
@@ -566,6 +558,25 @@ To see the branches of `origin` that a session started from, read its
 ```sh
 cat ~/.local/share/riff/sessions/issue-12-1a2b3c4d/origin-refs
 ```
+
+#### See why the clone of a session failed
+
+When a step of the clone fails, `claude` does not start, and the
+session ends. The relay says one line that names the step, and gives
+it to the riff daemon on the socket of the session. The daemon keeps
+the line, also for the lead, and writes it to its log. `riff run`
+shows it, and `riff daemon events` shows it for 5 minutes after the
+end. The lead also shows it in its terminal.
+
+```sh
+journalctl --user -u riff | grep 'the clone failed'
+riff daemon events riff-issue-12-1a2b3c4d
+```
+
+The daemon keeps at most 8 such lines of a container, each with no
+control character and no secret, and at most 500 characters long. A
+line that `claude` writes on its stderr is never one of them, also
+when it starts with `riff relay:`.
 
 ### The home of a session is in memory
 

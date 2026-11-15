@@ -1138,9 +1138,11 @@ riff image
 ### Only a merged pin counts
 
 The sessions use only the merged pin: the image that `riff.toml` pins
-on the default branch of `origin`. riff fetches that branch first. The
-waves of the daemon, `riff host join`, `riff run`, the start of a lead
-and the update steps of the daemon use the merged pin. An edit of
+on the default branch of `origin`. riff first asks `origin` for that
+branch, fetches it, and sets `origin/HEAD` of the main clone to it: see
+[Where the clone of a session lives](how-it-works.md#where-the-clone-of-a-session-lives).
+The waves of the daemon, `riff host join`, `riff run`, the start of a
+lead and the update steps of the daemon use the merged pin. An edit of
 `riff.toml` that is not merged changes no session, also an edit in the
 main clone. When `riff.toml` of the main clone pins another image, riff
 tells you in one line, and uses the merged pin:
@@ -1164,8 +1166,9 @@ branch in one session before the merge, give it to `riff run`:
 riff run issue-12 --image "$(riff image)"
 ```
 
-When the main clone has no `origin/HEAD`, riff cannot find the merged
-pin, and stops. Set `origin/HEAD` in the main clone:
+When riff cannot ask `origin` and the main clone has no `origin/HEAD`,
+riff cannot find the merged pin, and stops. Set `origin/HEAD` in the
+main clone:
 
 ```sh
 git remote set-head origin --auto

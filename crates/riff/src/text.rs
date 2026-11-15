@@ -4390,7 +4390,18 @@ pub const FORGE_MAX: usize = 256;
 /// assert_eq!(forge(&"b".repeat(FORGE_MAX)), "b".repeat(FORGE_MAX));
 /// ```
 pub fn forge(text: &str) -> String {
-    let flat: Vec<char> = anstream::adapter::strip_str(text)
+    cut(&plain_line(text), FORGE_MAX)
+}
+
+/// `text` in one line, safe to print: with no escape sequence and no
+/// control character, and each line break and tab a space. [`forge`]
+/// cuts it too.
+///
+/// ```
+/// assert_eq!(riff::text::plain_line("a\x1b[31mb\x1b[0m\r\nc\td\u{9b}\x07"), "ab  c d");
+/// ```
+pub fn plain_line(text: &str) -> String {
+    anstream::adapter::strip_str(text)
         .to_string()
         .chars()
         .filter_map(|c| match c {
@@ -4398,10 +4409,24 @@ pub fn forge(text: &str) -> String {
             c if c.is_control() => None,
             c => Some(c),
         })
-        .collect();
-    match flat.len() > FORGE_MAX {
-        true => flat[..FORGE_MAX - 1].iter().chain(['…'].iter()).collect(),
-        false => flat.into_iter().collect(),
+        .collect()
+}
+
+/// `text` with at most `max` characters, the last one `…` when it cuts.
+///
+/// ```
+/// assert_eq!(riff::text::cut("abcdef", 4), "abc…");
+/// assert_eq!(riff::text::cut("abcd", 4), "abcd");
+/// assert_eq!(riff::text::cut("äöüß", 3), "äö…");
+/// ```
+pub fn cut(text: &str, max: usize) -> String {
+    match text.chars().count() > max {
+        true => text
+            .chars()
+            .take(max.saturating_sub(1))
+            .chain(['…'])
+            .collect(),
+        false => text.to_owned(),
     }
 }
 
@@ -7982,12 +8007,30 @@ pub fn run_bundle_too_large(limit: u64) -> String {
     )
 }
 
+/// The reason of [`run_bundle_refused`] for a link at the path of the
+/// bundle ([`crate::run::take_bundle`]).
+pub const RUN_BUNDLE_LINK: &str = "it is a link";
+
+/// The reason of [`run_bundle_refused`] for a folder or another file
+/// that is no plain file at the path of the bundle.
+pub const RUN_BUNDLE_NOT_FILE: &str = "it is no plain file";
+
+/// The reason of [`run_bundle_refused`] for a file whose first line is
+/// not that of a git bundle ([`crate::run::BUNDLE_HEADS`]).
+pub const RUN_BUNDLE_NOT_GIT: &str = "it is no git bundle";
+
 /// The `HEAD` of `origin` names no branch, for example on an empty
-/// repository: riff knows no default branch, and starts no session
-/// ([`crate::run::on_origin`], 01M7G29PSP7X56X8E60A3KRV4V).
-pub const ORIGIN_NO_DEFAULT: &str = "The HEAD of origin names no branch, so riff knows no \
-     default branch of the repository, and starts no session. Push the default branch to \
-     origin, then start again.";
+/// repository ([`crate::session_image::follow_origin`],
+/// 01M7G81XGBPP23H9T7V0WX87QZ): the cause in [`image_no_fetch`].
+///
+/// ```
+/// assert_eq!(
+///     riff::text::image_no_fetch("origin/main", riff::text::ORIGIN_NO_DEFAULT),
+///     "riff cannot fetch origin/main: the HEAD of origin names no branch. \
+///      riff uses riff.toml of origin/main as the clone has it."
+/// );
+/// ```
+pub const ORIGIN_NO_DEFAULT: &str = "the HEAD of origin names no branch";
 
 /// `riff run --no-github` in a container (01M6Z87JY83V3KR72E2AG8V8KG):
 /// there the daemon runs the item as a job of the wave.
@@ -8633,18 +8676,34 @@ pub fn daemon_session_gone(name: &str) -> String {
     format!("The container {name} does not run. The riff daemon drops its record.")
 }
 
-/// `riff relay` lost the socket of its session: it keeps the events.
-pub const RELAY_AWAY: &str =
-    "riff relay: the riff daemon is away. claude runs on, and the relay keeps its events.";
+/// The start of each line of `riff relay` itself ([`relay`]).
+pub const RELAY: &str = "riff relay: ";
 
-/// `riff relay` reached the daemon again.
-pub const RELAY_BACK: &str =
-    "riff relay: the riff daemon is back. The relay sends the kept events.";
+/// The line `note` of `riff relay` itself: [`RELAY`], then `note`. Each
+/// note of the relay and each line of the relay on stderr is one.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::relay(riff::text::RELAY_BACK),
+///     "riff relay: the riff daemon is back. The relay sends the kept events."
+/// );
+/// ```
+pub fn relay(note: &str) -> String {
+    format!("{RELAY}{note}")
+}
+
+/// `riff relay` lost the socket of its session: it keeps the events
+/// ([`relay`]).
+pub const RELAY_AWAY: &str = "the riff daemon is away. claude runs on, and the relay keeps its \
+     events.";
+
+/// `riff relay` reached the daemon again ([`relay`]).
+pub const RELAY_BACK: &str = "the riff daemon is back. The relay sends the kept events.";
 
 /// After the end of `claude`, the daemon did not take the last events
-/// in time.
-pub const RELAY_GAVE_UP: &str = "riff relay: claude ended, and the riff daemon did not take its \
-     last events in time. The relay ends.";
+/// in time ([`relay`]).
+pub const RELAY_GAVE_UP: &str = "claude ended, and the riff daemon did not take its last events \
+     in time. The relay ends.";
 
 /// `riff relay` with no socket of its session.
 pub const RELAY_NO_SOCKET: &str =
@@ -8654,9 +8713,9 @@ pub const RELAY_NO_SOCKET: &str =
 pub const RELAY_NO_COMMAND: &str =
     "riff relay needs the command of the session: riff relay -- claude -p ...";
 
-/// `riff relay` made the clone of its session in the container
-/// ([`crate::session_clone`]): from the main clone, and with `fetched`
-/// also from `origin` ([`crate::session_clone::Plan::fetches`]).
+/// The note of `riff relay` after it made the clone of its session in
+/// the container ([`crate::session_clone`]): from the main clone, and with
+/// `fetched` also from `origin` ([`crate::session_clone::Plan::fetches`]).
 ///
 /// ```
 /// use riff::session_clone::{Checkout, Origin, Plan};
@@ -8701,17 +8760,17 @@ pub fn relay_cloned(plan: &crate::session_clone::Plan, fetched: bool) -> String 
         Checkout::Pull { pull, commit } => format!("at {commit}, the head of pull request #{pull}"),
     };
     let (main, origin, path) = (plan.main.display(), &plan.origin, plan.path.display());
-    if fetched {
-        format!("riff relay: cloned {main} and fetched {origin} into {path}, {on}.")
+    relay(&if fetched {
+        format!("cloned {main} and fetched {origin} into {path}, {on}.")
     } else {
-        format!("riff relay: cloned {main} into {path}, with no fetch of {origin}, {on}.")
-    }
+        format!("cloned {main} into {path}, with no fetch of {origin}, {on}.")
+    })
 }
 
 /// The note of the relay when the clone of the session failed for the
 /// reason `why`, with the step that failed
-/// ([`crate::session_relay::clone_here`]): one line, so the daemon keeps
-/// all of it ([`crate::session_relay::NOTE`]).
+/// ([`crate::session_relay::clone_here`]): one line, the one text of the
+/// fault (01M7G824SYKB3BN2MN9A9JKAG0).
 ///
 /// ```
 /// assert_eq!(
@@ -8721,23 +8780,14 @@ pub fn relay_cloned(plan: &crate::session_clone::Plan, fetched: bool) -> String 
 /// );
 /// ```
 pub fn relay_clone_failed(why: &str) -> String {
-    let why: Vec<&str> = why
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .collect();
-    format!(
-        "riff relay: the clone failed, so claude did not start: {}",
-        why.join(" ")
-    )
+    relay(&format!(
+        "the clone failed, so claude did not start: {}",
+        flat(why)
+    ))
 }
 
-/// The error of the relay after [`relay_clone_failed`]: the note before
-/// it names the step.
-pub const RELAY_NO_CLONE: &str = "the clone of the session failed, so claude did not start";
-
 /// The line of the log of the daemon for the note `note` of the relay of
-/// the session in the container `name` ([`crate::session_relay::NOTE`]).
+/// the session in the container `name` ([`crate::daemon::SessionAsk::Note`]).
 ///
 /// ```
 /// assert_eq!(
@@ -8749,8 +8799,8 @@ pub fn daemon_relay_note(name: &str, note: &str) -> String {
     format!("riff daemon: {name}: {note}")
 }
 
-/// `riff relay` wrote the commits of a session with no GitHub in the
-/// bundle `bundle` ([`crate::session_clone::Plan::bundle`]).
+/// The note of `riff relay` after it wrote the commits of a session with
+/// no GitHub in the bundle `bundle` ([`crate::session_clone::Plan::bundle`]).
 ///
 /// ```
 /// assert_eq!(
@@ -8759,10 +8809,24 @@ pub fn daemon_relay_note(name: &str, note: &str) -> String {
 /// );
 /// ```
 pub fn relay_bundled(bundle: &Path) -> String {
-    format!(
-        "riff relay: the commits of the branch are in the bundle {}.",
+    relay(&format!(
+        "the commits of the branch are in the bundle {}.",
         bundle.display()
-    )
+    ))
+}
+
+/// The note of `riff relay` when the bundle of a session with no GitHub
+/// failed for the reason `why` ([`crate::session_clone::Plan::bundle`]):
+/// one line.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::relay_bundle_failed("git bundle create: fatal: one\nfatal: two"),
+///     "riff relay: the bundle of the branch failed: git bundle create: fatal: one fatal: two"
+/// );
+/// ```
+pub fn relay_bundle_failed(why: &str) -> String {
+    relay(&format!("the bundle of the branch failed: {}", flat(why)))
 }
 
 /// `riff relay ARGS` runs as the hook `event` of `claude`, and this riff

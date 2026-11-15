@@ -1189,9 +1189,11 @@ impl Parts<'_> {
 /// clone, its git dir `common`, in the folder of the lead
 /// ([`crate::session_clone::write_refs`]). It gives the facts of the
 /// spec ([`spec`], [`spec_again`]): the clone of the lead on the default
-/// branch (01M7EY51EMJ6ZEGNW7H852PEGR), the branch of the `HEAD` of
-/// `origin` ([`run::on_origin`], 01M7G29PSP7X56X8E60A3KRV4V), with the
-/// image and the setup of `merged`, and the facts of the host `host`.
+/// branch (01M7EY51EMJ6ZEGNW7H852PEGR), with the image, the setup and the
+/// default branch of `merged`, and the facts of the host `host`. The step
+/// of the image fetched that branch into the main clone
+/// ([`session_image::follow_origin`], 01M7G81XGBPP23H9T7V0WX87QZ): so a
+/// lead with no token starts from it too.
 pub(crate) fn facts(
     repo: &str,
     host: &run::Host,
@@ -1200,7 +1202,7 @@ pub(crate) fn facts(
     common: &Path,
     session: &str,
 ) -> Result<Facts> {
-    let base = run::on_origin(common, None)?.base;
+    let base = merged.base.clone();
     crate::session_clone::write_refs(common, folder)?;
     let existing = |p: PathBuf| p.exists().then_some(p);
     Ok(Facts {
@@ -2465,13 +2467,15 @@ mod tests {
         assert!(swept[0].1.is_ok() && !old.exists());
     }
 
-    /// 01M7EY51EMJ6ZEGNW7H852PEGR, 01M7G29PSP7X56X8E60A3KRV4V: the default
+    /// 01M7EY51EMJ6ZEGNW7H852PEGR, 01M7G81XGBPP23H9T7V0WX87QZ: the default
     /// branch of the repository moved from `master` to `trunk` on `origin`
-    /// after the main clone, so `origin/HEAD` of the main clone still names
-    /// `master`. The facts of the start of the lead take the base from the
-    /// `HEAD` of `origin`, and the host writes the list of the branches of
-    /// `origin` in the folder of the lead (01M7FMJJB0TZM8875T7GQZAJEA). The
-    /// clone of the plan of the spec of the lead is on `trunk`, with its
+    /// after the main clone, and the main clone fetched nothing since. The
+    /// step of the image of the start of the lead asks `origin`, fetches
+    /// `trunk` into the main clone and sets its `origin/HEAD`. The facts
+    /// take the base from the merged config, and the host writes the list
+    /// of the branches of `origin` in the folder of the lead
+    /// (01M7FMJJB0TZM8875T7GQZAJEA). The clone of the plan of a lead with
+    /// no token, which fetches nothing from GitHub, is on `trunk`, with its
     /// upstream.
     #[test]
     fn the_lead_clones_on_the_default_branch_of_origin_after_a_rename() {
@@ -2495,33 +2499,31 @@ mod tests {
         let seed = root.join("seed");
         std::fs::create_dir(&seed).unwrap();
         git(&seed, &["init", "-q", "-b", "master"]);
-        git(&seed, &["commit", "-q", "--allow-empty", "-m", "one"]);
+        let image = format!("ghcr.io/o/s@sha256:{}", "0".repeat(64));
+        let pin = format!("[session]\nimage = \"{image}\"\n");
+        std::fs::write(seed.join(session_image::FILE), &pin).unwrap();
+        git(&seed, &["add", session_image::FILE]);
+        git(&seed, &["commit", "-q", "-m", "one"]);
         let url = format!("file://{}", root.join("origin.git").display());
         git(&seed, &["push", "-q", &url, "master"]);
         git(root, &["clone", "-q", "--", &url, "main"]);
         let origin = root.join("origin.git");
         git(&origin, &["branch", "-m", "master", "trunk"]);
-        git(&root.join("main"), &["fetch", "-q", "origin"]);
-        let stale = git(
-            &root.join("main"),
-            &["rev-parse", "--abbrev-ref", "origin/HEAD"],
-        );
+        let main = root.join("main");
+        let stale = git(&main, &["rev-parse", "--abbrev-ref", "origin/HEAD"]);
         assert_eq!(stale, "origin/master");
         let host = run::Host {
             home: "/home/mike".into(),
             user: "mike".into(),
             claude: run::Claude::Token("t".into()),
         };
-        let merged = session_image::Merged {
-            image: format!("ghcr.io/o/s@sha256:{}", "0".repeat(64))
-                .parse()
-                .unwrap(),
-            setup: Default::default(),
-        };
+        let merged = session_image::merged_config(&main, |_| {}).unwrap();
+        assert_eq!(merged.image.to_string(), image);
+        assert_eq!(merged.base.as_str(), "trunk");
         let folder = root.join("leads/o-r");
         std::fs::create_dir_all(&folder).unwrap();
         let session = "1a2b3c4d-0000-4000-8000-000000000000";
-        let common = root.join("main/.git");
+        let common = main.join(".git");
         let facts = facts("o/r", &host, &merged, &folder, &common, session).unwrap();
         let plan = crate::session_clone::Plan::of_spec(&spec(&facts, "o/r", "Start.")).unwrap();
         assert_eq!(plan.base.as_str(), "trunk");
@@ -2533,6 +2535,10 @@ mod tests {
         assert_eq!(
             git(&plan.path, &["rev-parse", "--abbrev-ref", "@{upstream}"]),
             "origin/trunk"
+        );
+        assert_eq!(
+            git(&plan.path, &["rev-parse", "HEAD"]),
+            git(&origin, &["rev-parse", "trunk"])
         );
     }
 }

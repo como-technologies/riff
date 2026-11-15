@@ -123,7 +123,7 @@
 //! | [`Ask::Status`] | [`Say::Status`] |
 //! | [`Ask::Ps`] | [`Say::Ps`]: the riff processes of the host and of each container ([`Daemon::ps`], [`crate::ps`]) |
 //! | [`Ask::Image`] | [`Say::Line`] for a pull, then [`Say::Done`] or [`Say::Failed`] |
-//! | [`Ask::Start`] | [`Say::Started`], each [`Say::Event`] and [`Say::Stderr`], and a [`Say::Line`] for each note of the relay ([`crate::session_relay::NOTE`]: the daemon keeps it, and writes it to its log), then [`Say::Ended`] or [`Say::Failed`] |
+//! | [`Ask::Start`] | [`Say::Started`], each [`Say::Event`] and [`Say::Stderr`], and a [`Say::Line`] for each kept note of the relay ([`SessionAsk::Note`]), then [`Say::Ended`] or [`Say::Failed`] |
 //! | [`Ask::Follow`] | each [`Say::Event`] after a number, and each [`Say::Line`] of the daemon about the session in its place, then as [`Ask::Start`]. For a session that ended in the last [`KEEP_END`]: then [`Say::Ended`] |
 //! | [`Ask::Join`] | [`Say::Done`] when the daemon runs the wave and serves the repository, or [`Say::Failed`] |
 //! | [`Ask::Leave`] | [`Say::Line`] for each step, then [`Say::Done`] when the host had the part workers or a session to end, or [`Say::Failed`] ([`Daemon::leave_repo`]) |
@@ -159,6 +159,7 @@
 //! | [`SessionAsk::Prompt`] | ends the block of the lead on riff-server, and says [`Say::Done`] ([`Daemon::prompted`]) |
 //! | [`SessionAsk::Idle`] | keeps the end of the turn of the lead, looks at an old lead again soon, and says [`Say::Done`] ([`Daemon::turn_ended`]) |
 //! | [`SessionAsk::GhCalls`] | adds the calls of `gh` of the session to the tally of the calls, and says [`Say::Done`] ([`Daemon::tally_calls`], [`crate::ghcalls`]) |
+//! | [`SessionAsk::Note`] | keeps the note of the relay as a line of the session, at most [`NOTES`] of them, each cut to [`NOTE_MAX`] characters with no control character and no secret ([`kept_note`]), writes it to its log, and says [`Say::Done`] (01M7G824SYKB3BN2MN9A9JKAG0) |
 //!
 //! # A session
 //!
@@ -652,6 +653,38 @@ pub const EXIT_GRACE: Duration = Duration::from_secs(60);
 /// is longer than the gap between two pages of `riff daemon events
 /// --host` ([`remote::follow_events`]).
 pub const KEEP_END: Duration = Duration::from_secs(5 * 60);
+
+/// The most notes of the relay that the daemon keeps of each container
+/// of a session ([`SessionAsk::Note`], 01M7G824SYKB3BN2MN9A9JKAG0).
+pub const NOTES: usize = 8;
+
+/// The most characters of a note of the relay that the daemon keeps
+/// ([`kept_note`]).
+pub const NOTE_MAX: usize = 500;
+
+/// The note `line` of the relay as the daemon keeps it and logs it
+/// (01M7G824SYKB3BN2MN9A9JKAG0): one line with no escape sequence and no
+/// control character ([`text::plain_line`]), then with no secret of
+/// `scrub`, then cut to [`NOTE_MAX`] characters. The scrub reads the text
+/// that shows, so a control character in a secret hides no part of it.
+/// The cut comes after the scrub, so it leaves no part of a secret.
+///
+/// ```
+/// use riff::daemon::{NOTE_MAX, kept_note};
+/// use riff::run::Scrub;
+///
+/// let scrub = Scrub::new(["sk-ant-oat01-AAAABBBB".to_owned()]);
+/// assert_eq!(kept_note("riff relay: cloned.\x1b[2J\x1b]0;x\x07", &scrub), "riff relay: cloned.");
+/// assert_eq!(kept_note("a sk-ant-oat01-AAAA\x01BBBB b", &scrub), "a [secret] b");
+/// assert_eq!(kept_note("one\ntwo\tthree\u{9b}", &scrub), "one two three");
+/// let long = format!("{}sk-ant-oat01-AAAABBBB", "x".repeat(NOTE_MAX - 4));
+/// let kept = kept_note(&long, &scrub);
+/// assert_eq!(kept.chars().count(), NOTE_MAX);
+/// assert!(kept.ends_with('…') && !kept.contains("sk-"), "{kept}");
+/// ```
+pub fn kept_note(line: &str, scrub: &crate::run::Scrub) -> String {
+    text::cut(&scrub.clean(&text::plain_line(line)), NOTE_MAX)
+}
 
 /// The longest time that the status waits for the runtime to say the image
 /// digest of one container ([`Daemon::status`], 01M5TKPG5WZ1T58FNAMZNP6CJ5).
@@ -1196,6 +1229,17 @@ pub enum SessionAsk {
         protocol: u32,
         /// The calls, with no time: the daemon gives them its own.
         calls: Vec<crate::ghcalls::Record>,
+    },
+    /// A note of the relay of the session itself, for example the line of
+    /// the clone or why it failed: `riff relay` says it before `claude`
+    /// starts and after it ends (01M7G824SYKB3BN2MN9A9JKAG0). The daemon
+    /// keeps it as a line of the session ([`kept_note`]). The answer is
+    /// [`Say::Done`].
+    Note {
+        /// [`PROTOCOL`] of the relay.
+        protocol: u32,
+        /// The note, one line.
+        line: String,
     },
 }
 
@@ -2256,6 +2300,9 @@ struct SessionState {
     /// the number of events before it: a new follower gets each one in
     /// its place (01M57GCZXZZRPGGWC5HZS49DGM).
     lines: Vec<(u64, String)>,
+    /// The number of notes of the relay in `lines`: at most [`NOTES`]
+    /// ([`Owned::note`]).
+    notes: usize,
     /// The token of the session on GitHub, for its revoke at the end
     /// ([`gh_token`]). `None` for the token of the person.
     gh_token: Option<Zeroizing<String>>,
@@ -2378,6 +2425,21 @@ impl Owned {
     fn say_line(state: &mut SessionState, text: String) {
         state.lines.push((state.seq, text.clone()));
         Self::tell(state, &Say::Line { text });
+    }
+
+    /// Keeps the note `line` of the relay ([`SessionAsk::Note`]) as a
+    /// line of the session ([`kept_note`]), and gives the line for the log
+    /// of the daemon. Past [`NOTES`] notes, it keeps none, and gives
+    /// `None` (01M7G824SYKB3BN2MN9A9JKAG0).
+    fn note(&self, line: &str) -> Option<String> {
+        let mut state = self.lock();
+        if state.notes >= NOTES {
+            return None;
+        }
+        state.notes += 1;
+        let note = kept_note(line, &self.scrub);
+        Self::say_line(&mut state, note.clone());
+        Some(text::daemon_relay_note(&self.name, &note))
     }
 
     /// `claude` of the session refused its sign-in. With a token set, the
@@ -5502,6 +5564,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                 end: None,
                 waiting: Vec::new(),
                 lines: Vec::new(),
+                notes: 0,
                 gh_token: None,
             }),
             notes,
@@ -5806,23 +5869,17 @@ impl<R: Runtime + 'static> Daemon<R> {
                 return record;
             }
         };
-        // The output of the container: the notes of the relay and the
-        // stderr of claude. A note of the relay, for example the clone or
-        // why it failed, is a line of the session for a later follower,
-        // and a line of the log.
+        // The output of the container: the stderr of the relay and of
+        // claude, for the followers of now. No line of it is a note of the
+        // relay: the relay says each note on the socket of the session
+        // ([`SessionAsk::Note`], 01M7G824SYKB3BN2MN9A9JKAG0).
         for output in [running.events, running.errors] {
-            let (scrub, owned, name) = (scrub.clone(), owned.clone(), name.clone());
+            let (scrub, owned) = (scrub.clone(), owned.clone());
             tokio::spawn(async move {
                 let mut lines = BufReader::new(output).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
                     let line = scrub.clean(&line).into_owned();
-                    if line.starts_with(crate::session_relay::NOTE) {
-                        let line = text::safe(&line);
-                        println!("{}", text::daemon_relay_note(&name, &line));
-                        Owned::say_line(&mut owned.lock(), line);
-                    } else {
-                        Owned::tell(&mut owned.lock(), &Say::Stderr { line });
-                    }
+                    Owned::tell(&mut owned.lock(), &Say::Stderr { line });
                 }
             });
         }
@@ -6202,6 +6259,15 @@ impl<R: Runtime + 'static> Daemon<R> {
             Ok(SessionAsk::GhCalls { calls, .. }) => {
                 let name = owned.lock().record.live.name.clone();
                 self.tally_calls(&name, calls);
+                let (out, written) = writer(write);
+                out.say(Say::Done);
+                drop(out);
+                let _ = written.await;
+            }
+            Ok(SessionAsk::Note { line, .. }) => {
+                if let Some(log) = owned.note(&line) {
+                    println!("{log}");
+                }
                 let (out, written) = writer(write);
                 out.say(Say::Done);
                 drop(out);
@@ -8191,34 +8257,91 @@ mod tests {
         assert_eq!(here.fake.exit(&name), Some(Exit::SUCCESS));
     }
 
-    /// #2139, 01M7G39RG8TC27717MMT20FTSW: a note of the relay in the output
-    /// of the container, here why the clone failed, is a line of the
-    /// session. The follower of the start gets it, and so does a follower
-    /// after the end, as `riff daemon events NAME` shows it. Each other
-    /// line of the output is a line of stderr, for the followers of now
-    /// only.
+    /// The longest wait of a test for a line of the daemon.
+    const LINE_WAIT: Duration = Duration::from_secs(10);
+
+    /// The next line of `client`, in [`LINE_WAIT`].
+    async fn next_in_time(client: &mut Client) -> Say {
+        tokio::time::timeout(LINE_WAIT, client.next())
+            .await
+            .expect("no line of the daemon in time")
+            .unwrap()
+            .expect("the daemon went away")
+    }
+
+    /// #2139, 01M7G824SYKB3BN2MN9A9JKAG0: the relay says its notes on the
+    /// socket of the session. The daemon keeps each one as a line of the
+    /// session: one line, with no control character and no secret, also a
+    /// secret that a control character splits, and cut to [`NOTE_MAX`]
+    /// characters. It keeps at most [`NOTES`], and gives the line of its
+    /// log for each kept one. The follower of the start gets them, and so
+    /// does a follower after the end, as `riff daemon events NAME` shows
+    /// them. A line of the output of the container is a line of stderr for
+    /// the followers of now only, also one that reads as a note.
     #[tokio::test]
-    async fn a_note_of_the_relay_is_a_line_of_the_session_also_after_its_end() {
-        let note = text::relay_clone_failed("git fetch -q --prune origin: fatal: no repo");
-        let output = [note.as_str(), "a note"];
+    async fn the_notes_of_the_relay_on_its_socket_are_lines_of_the_session_also_after_its_end() {
+        let forged = text::relay(text::RELAY_BACK);
+        let output = [forged.as_str(), "a line of claude"];
         let here = Here::new(Fake::default().with_image(IMAGE).with_events(output)).await;
         let start = here.start("riff-issue-12-1a2b3c4d", "issue-12");
         let (mut client, name) = here.started(start).await;
-        let line = Say::Line { text: note };
+        let socket = session_dir(&here.dir, &name).join(SOCKET);
+        let failed = text::relay_clone_failed("git fetch -q --prune origin: fatal: no repo");
+        crate::session_relay::send_note(&socket, &failed)
+            .await
+            .unwrap();
+
+        // The line of the log of the daemon, and the scrub of a secret
+        // that a control character splits.
+        let owned = here.daemon.lock().get(&name).cloned().unwrap();
+        let log = owned.note("riff relay: a gho_sec\x01ret1 b\nc").unwrap();
+        assert_eq!(
+            log,
+            text::daemon_relay_note(&name, &format!("riff relay: a {HIDDEN} b c"))
+        );
+        let long = format!("riff relay: \x1b[2J{}", "x".repeat(2 * NOTE_MAX));
+        for _ in 2..NOTES {
+            crate::session_relay::send_note(&socket, &long)
+                .await
+                .unwrap();
+        }
+        // Past the limit, the daemon takes the note, and keeps none.
+        crate::session_relay::send_note(&socket, "riff relay: one too many")
+            .await
+            .unwrap();
+        assert_eq!(owned.note("riff relay: one more"), None);
+
+        let cut = format!("riff relay: {}…", "x".repeat(NOTE_MAX - 13));
+        let mut kept = vec![failed.clone(), format!("riff relay: a {HIDDEN} b c")];
+        kept.extend(std::iter::repeat_n(cut.clone(), NOTES - 2));
+        let is_note =
+            |say: &Say| matches!(say, Say::Line { text } if text.starts_with(text::RELAY));
         let mut said = Vec::new();
-        while !said.contains(&line) {
-            said.push(client.next().await.unwrap().unwrap());
+        while said.iter().filter(|say| is_note(say)).count() < NOTES {
+            said.push(next_in_time(&mut client).await);
         }
         let (mut relay, _) = Relay::connect(&session_dir(&here.dir, &name), 0, false).await;
         assert!(matches!(relay.next().await, Say::Input { .. }));
         relay.exit(1, 1).await;
-        let (rest, end) = to_the_end(&mut client).await;
+        let (rest, end) = tokio::time::timeout(LINE_WAIT, to_the_end(&mut client))
+            .await
+            .unwrap();
         said.extend(rest);
         assert!(matches!(end, Some(Say::Ended(_))), "{end:?}");
-        let stderr = Say::Stderr {
-            line: "a note".into(),
+        let notes = |said: &[Say]| -> Vec<String> {
+            said.iter()
+                .filter_map(|say| match say {
+                    Say::Line { text } if text.starts_with(text::RELAY) => Some(text.clone()),
+                    _ => None,
+                })
+                .collect()
         };
-        assert!(said.contains(&stderr), "{said:?}");
+        assert_eq!(notes(&said), kept);
+        assert_eq!(cut.chars().count(), NOTE_MAX);
+        for line in [forged.as_str(), "a line of claude"] {
+            let stderr = Say::Stderr { line: line.into() };
+            assert!(said.contains(&stderr), "{said:?}");
+        }
 
         let mut later = Client::connect(&here.dir).await.unwrap();
         let follow = Ask::Follow {
@@ -8226,10 +8349,15 @@ mod tests {
             after: 0,
         };
         later.ask(follow).await.unwrap();
-        let (seen, end) = to_the_end(&mut later).await;
+        let (seen, end) = tokio::time::timeout(LINE_WAIT, to_the_end(&mut later))
+            .await
+            .unwrap();
         assert!(matches!(end, Some(Say::Ended(_))), "{end:?}");
-        assert!(seen.contains(&line), "{seen:?}");
-        assert!(!seen.contains(&stderr), "{seen:?}");
+        assert_eq!(notes(&seen), kept);
+        assert!(
+            !seen.iter().any(|say| matches!(say, Say::Stderr { .. })),
+            "{seen:?}"
+        );
     }
 
     #[tokio::test]
@@ -14860,6 +14988,34 @@ mod tests {
                 end: None
             }
         );
+    }
+
+    /// 01M57D4FX5VHQR150QTDS6BA1C: the lines of the daemon about a
+    /// session count in the limit of a page too. A page has at most
+    /// [`remote::PAGE_LINES`] of them, and the next page goes on after the
+    /// last one, with each line one time.
+    #[tokio::test]
+    async fn a_page_has_at_most_its_limit_of_lines_of_the_daemon() {
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let (client, name) = here
+            .started(here.start("riff-issue-12-1a2b3c4d", "issue-12"))
+            .await;
+        drop(client);
+        let owned = here.daemon.lock().get(&name).cloned().unwrap();
+        let all: Vec<String> = (0..remote::PAGE_LINES + 5)
+            .map(|n| format!("line {n}"))
+            .collect();
+        for line in &all {
+            Owned::say_line(&mut owned.lock(), line.clone());
+        }
+        let hold = Duration::from_millis(200);
+        let first = remote::page(&here.dir, &name, (0, 0), hold).await.unwrap();
+        assert_eq!(first.lines, all[..remote::PAGE_LINES]);
+        assert_eq!(first.notes, u64::try_from(remote::PAGE_LINES).unwrap());
+        let next = remote::page(&here.dir, &name, (0, first.notes), hold)
+            .await
+            .unwrap();
+        assert_eq!(next.lines, all[remote::PAGE_LINES..]);
     }
 
     /// 01M5SMP2FFEHJPZBJVGAWBXNNP (#1441): the lead asks a page of the
