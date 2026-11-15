@@ -256,30 +256,33 @@ pub fn tag(version: Semver) -> String {
     format!("v{version}")
 }
 
-/// True when `listed`, the output of `git ls-remote --tags origin
-/// refs/tags/TAG`, has the tag `tag` itself: a line that names
-/// `refs/tags/TAG`, or `refs/tags/TAG^{}` of an annotated tag
-/// (01M7GHMMWCPR6XDNCCY1281PPF). `git ls-remote` also lists each ref
-/// whose name only ends with `refs/tags/TAG`, so a person with a push
-/// could make such a decoy tag.
+/// True when `listed`, the output of `git ls-remote origin NAME`, has a
+/// line that names the ref `name` itself, for example
+/// `refs/tags/v3.3.0` (01M7GHMMWCPR6XDNCCY1281PPF). `git ls-remote` also
+/// lists each ref whose name only ends with `NAME`, so a person with a
+/// push could make a decoy tag `refs/tags/x/refs/tags/v3.3.0`. For an
+/// annotated tag, it lists the line of the tag itself, and no line
+/// `^{}`.
 ///
 /// ```
-/// use riff::cycle::lists_tag;
+/// use riff::cycle::lists_ref;
 ///
-/// assert!(lists_tag("1a2b\trefs/tags/v3.3.0\n", "v3.3.0"));
-/// assert!(lists_tag("1a2b\trefs/tags/v3.3.0\n3c4d\trefs/tags/v3.3.0^{}\n", "v3.3.0"));
-/// assert!(!lists_tag("", "v3.3.0"));
+/// let name = "refs/tags/v3.3.0";
+/// assert!(lists_ref("1a2b\trefs/tags/v3.3.0\n", name));
+/// assert!(lists_ref("1a2b\trefs/tags/x/refs/tags/v3.3.0\n3c4d\trefs/tags/v3.3.0\n", name));
+/// assert!(!lists_ref("", name));
 /// // A decoy tag whose name only ends with the name of the tag.
-/// assert!(!lists_tag("1a2b\trefs/tags/x/refs/tags/v3.3.0\n", "v3.3.0"));
-/// assert!(!lists_tag("1a2b\trefs/tags/x/refs/tags/v3.3.0^{}\n", "v3.3.0"));
-/// assert!(!lists_tag("1a2b\trefs/tags/v3.3.0.1\n", "v3.3.0"));
+/// assert!(!lists_ref("1a2b\trefs/tags/x/refs/tags/v3.3.0\n", name));
+/// assert!(!lists_ref("1a2b\trefs/tags/v3.3.0.1\n", name));
+/// // Only the name itself counts: not the line `^{}`, and not a line
+/// // with no tab.
+/// assert!(!lists_ref("3c4d\trefs/tags/v3.3.0^{}\n", name));
+/// assert!(!lists_ref("refs/tags/v3.3.0\n", name));
 /// ```
-pub fn lists_tag(listed: &str, tag: &str) -> bool {
-    let name = format!("refs/tags/{tag}");
-    let peeled = format!("{name}^{{}}");
+pub fn lists_ref(listed: &str, name: &str) -> bool {
     listed.lines().any(|line| {
         line.split_once('\t')
-            .is_some_and(|(_, listed)| listed == name || listed == peeled)
+            .is_some_and(|(_, named)| named == name)
     })
 }
 
@@ -718,7 +721,7 @@ pub trait Forge {
     /// Sets the status `riff/verify` of `commit` to a success.
     fn pass_verify(&self, commit: &str, description: &str) -> Result<()>;
     /// True when the forge has the tag `tag`, by its full name
-    /// ([`lists_tag`]).
+    /// `refs/tags/TAG` ([`lists_ref`]).
     fn tag_exists(&self, tag: &str) -> Result<bool>;
     /// Makes the annotated tag `tag` on `commit`, and pushes only it. The
     /// ruleset `releases` of the forge decides the push.
@@ -3560,7 +3563,7 @@ impl Forge for GitHub {
     fn tag_exists(&self, tag: &str) -> Result<bool> {
         let name = format!("refs/tags/{tag}");
         let listed = self.remote_git(&self.dir, &["ls-remote", "--tags", "origin", &name])?;
-        Ok(lists_tag(&listed, tag))
+        Ok(lists_ref(&listed, &name))
     }
 
     fn push_tag(&self, tag: &str, commit: &str) -> Result<()> {
