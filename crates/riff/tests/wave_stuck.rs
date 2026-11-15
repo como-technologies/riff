@@ -489,35 +489,6 @@ fn a_failed_check_of_another_app_is_a_notice_with_its_link_and_no_build() {
     assert_eq!(issues.stuck[&2], "checks");
 }
 
-/// The words of the shell line `line`: a word in `"` or `'` keeps its
-/// spaces.
-fn shell_words(line: &str) -> Vec<String> {
-    let (mut words, mut word, mut quote, mut any) = (Vec::new(), String::new(), None, false);
-    for c in line.chars() {
-        match (quote, c) {
-            (None, '"' | '\'') => {
-                quote = Some(c);
-                any = true;
-            }
-            (Some(q), c) if c == q => quote = None,
-            (None, ' ') => {
-                if any {
-                    words.push(std::mem::take(&mut word));
-                }
-                any = false;
-            }
-            (_, c) => {
-                word.push(c);
-                any = true;
-            }
-        }
-    }
-    if any {
-        words.push(word);
-    }
-    words
-}
-
 /// 01M74HD9XRS2PM121JD2A6QRD6: "Review a CodeQL alert", under "Fix a
 /// failed check of another app" in the book, gives the three choices,
 /// lists the open alerts of a pull request, and dismisses one with a
@@ -578,7 +549,7 @@ fn the_book_shows_how_the_lead_reviews_a_codeql_alert() {
     }
 
     // The dismiss gives the state, a reason of GitHub and a comment.
-    let words = shell_words(&commands[2]);
+    let words = crate::book::shell_words(&commands[2]);
     assert_eq!(
         words[..5],
         [
@@ -753,6 +724,7 @@ fn a_failed_codeql_is_a_notice_of_an_optional_check_or_of_another_app() {
 
 #[test]
 fn shell_words_keep_the_spaces_of_a_quoted_word() {
+    let shell_words = crate::book::shell_words;
     assert_eq!(
         shell_words(r#"gh api  -f a="b c" 'd e'"#),
         ["gh", "api", "-f", "a=b c", "d e"]

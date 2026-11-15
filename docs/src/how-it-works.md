@@ -424,10 +424,10 @@ Repair podman. The next start of a session with a volume reads the
 folders again. The log of the daemon then says `riff reads the folders
 of the podman volumes again`. On Linux, find the lines of the fault and
 of the new read in the log (see also
-[See the daemon](development.md#see-the-daemon)):
+[Read the log of the daemon](development.md#read-the-log-of-the-daemon)):
 
 ```sh
-journalctl --user -u riff | grep 'folders of the podman volumes'
+riff daemon log --grep 'folders of the podman volumes'
 ```
 
 #### When a session puts a link in its folder
@@ -463,10 +463,10 @@ riff follows no link in a folder that a session can write: /home/mike/.local/sha
 ```
 
 On Linux, find the error in the log of the daemon (see also
-[See the daemon](development.md#see-the-daemon)):
+[Read the log of the daemon](development.md#read-the-log-of-the-daemon)):
 
 ```sh
-journalctl --user -u riff | grep 'follows no link'
+riff daemon log --grep 'follows no link'
 ```
 
 Find each link in the Claude folder of the lead. Then remove the link
@@ -1194,7 +1194,7 @@ flowchart TD
   changes nothing. With `RIFF_RELEASES` set, the daemon
   changes nothing.
 - The daemon logs one line for its gate and one line for each step.
-  See them with `journalctl --user -u riff.service`.
+  See them with `riff daemon log`.
 - A step that needs you shows in the log, with its fix.
 
 The update and the daemon say what they did in their logs:
@@ -7144,10 +7144,11 @@ flowchart LR
 ```
 
 The log of the riff daemon on the host has the cause of each fault, and
-the wait. To find the cause, run this on the host:
+the wait. To find the cause, run this on the host, or in the lead with
+`--host HOST`:
 
 ```sh
-journalctl --user -u riff | grep 'The next start of a lead'
+riff daemon log --grep 'The next start of a lead'
 ```
 
 When you fixed the cause, the daemon starts the lead at the end of the
@@ -7962,7 +7963,7 @@ These commands work in the container:
 | `riff run`, `riff wave list`, `riff wave move`, `riff wave end --move-open-to-backlog`, `riff host join` | Only the lead: the waves and their items. |
 | `riff audit`, `riff questions`, `riff session why`, `riff denials` | Only the lead: find out about a wave. |
 | `riff release test`, `cut`, `verify`, `status`, `hold`, `check`, `retry` and `rollback` | Only the lead: the release cycle. |
-| `riff daemon status`, `riff daemon events`, `riff ps`, and each command with `--host`, for example `riff build --host` | Only the lead: the daemons of your hosts. |
+| `riff daemon status`, `riff daemon events`, `riff daemon log`, `riff ps`, and each command with `--host`, for example `riff build --host` | Only the lead: the daemons of your hosts. |
 | `riff lead restart` | Only the lead, on the word of its person: it writes its notes first, then the daemon of its host ends it, and a new lead starts. |
 | `riff project list` | Read the projects of the riff. |
 | `riff init --check` | The checks of the session image and the riff binary. |
@@ -8447,7 +8448,7 @@ sequenceDiagram
 To see each renew of the daemon on a Linux host:
 
 ```sh
-journalctl --user -u riff | grep 'has new rights'
+riff daemon log --grep 'has new rights'
 ```
 
 ```text

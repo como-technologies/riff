@@ -41,9 +41,10 @@
 //! the sessions, the holds of a thread, the members, the state of `riff who`
 //! and `riff whoami`, the records of the thread `ends`, and the person on
 //! GitHub for `riff pr open` ([`Reach::person`]). Only the lead
-//! can resume the whole riff, read the log for an audit, run an item and
-//! follow the events of a session with `riff daemon events`: the daemon
-//! knows by the socket which session asks. `riff daemon events NAME` asks
+//! can resume the whole riff, read the log for an audit, run an item,
+//! follow the events of a session with `riff daemon events`, and read
+//! the log of the daemon with `riff daemon log` ([`Reach::daemon_log`]):
+//! the daemon knows by the socket which session asks. `riff daemon events NAME` asks
 //! the daemon on the socket, and `riff daemon events NAME --host HOST`
 //! asks the daemon of HOST through it ([`Reach::follow_events`],
 //! #1441).
@@ -311,6 +312,19 @@ impl Reach {
     /// each answer at most `limit` (#1923).
     pub async fn daemon_ps(socket: &std::path::Path, limit: Duration) -> Result<crate::ps::Ps> {
         ask_within(socket, &ServerCall::Ps, limit).await
+    }
+
+    /// The text of the lines of the log of the daemon on the socket that
+    /// `query` picks, for `riff daemon log` in a container (#2156). Only
+    /// the lead may.
+    pub async fn daemon_log(
+        socket: &std::path::Path,
+        query: &crate::daemon::log::Query,
+    ) -> Result<String> {
+        let call = ServerCall::DaemonLog {
+            query: query.clone(),
+        };
+        ask(socket, &call).await
     }
 
     /// The reply of the daemon of `host` to `request`, through the
@@ -1035,6 +1049,10 @@ pub const COMMANDS: &[InContainer] = &[
         "riff-issue-12-1a2b3c4d",
         "--host",
         "thelio",
+    ]),
+    socket(&["daemon", "log", "--grep", "issue-12"]),
+    socket(&[
+        "daemon", "log", "--since", "02:12", "--grep", "issue-12", "--host", "thelio",
     ]),
     socket(&["daemon", "limit", "--sessions", "4", "--host", "thelio"]),
     socket(&["daemon", "cache", "--host", "thelio"]),

@@ -6695,6 +6695,91 @@ of this part when they merge.
   that failed, and the cause of the last look. Each cause is one line.
   The log of the daemon gets one line when a look reads each folder
   again after a fault.
+- **01M7EX1PVSG64G8EE5SNDRHM7G** `riff daemon log` prints the lines of
+  the log files of the daemon of the host: `daemon.log.1`, then
+  `daemon.log`, in the folder of the daemon. `--since TIME` shows only
+  the lines at or after TIME: a time of the day, `HH:MM` or `HH:MM:SS`,
+  in the local time of the machine where riff runs, or a date and a time
+  with its zone, with or without the seconds. `--grep TEXT` shows only
+  the lines that have TEXT. With more than one `--grep`, a line shows
+  when it has one of the texts. `--lines N` shows at most N lines, the
+  newest ones: 1 to 2000, and 200 with no `--lines`. A line shows with
+  at most 1000 characters. With no log file, riff names the file and the
+  command that shows the log of the daemon, and exits with 1.
+- **01M7EX1PYJ99BDSVJK7MAPDFD0** Only the riff of the host reads the log
+  files for `riff daemon log`, in the folder of the daemon: no session
+  can write there. On the host, riff reads the files itself, also while
+  the daemon is down. In a container, the daemon of the host reads them
+  for the lead on the socket of its session, and refuses each other
+  session. With `--host HOST`, the daemon of HOST reads them, and
+  replies as to each other request with `--host`
+  (01M579Z9MPS86MX7890T6HV18S): only the person and the lead of the
+  person in the repository may ask.
+- **01M7EX1Q1F468NWGPJJS0W0ZG9** Each line of `riff daemon log` loses
+  each secret before riff looks for the text of `--grep` in it, and
+  before riff shows or sends it: the secrets that the daemon takes out
+  of the events of a session, each key of Anthropic, and the secrets
+  that the real-session test takes out of its log. So `--grep` finds no
+  part of a secret.
+- **01M7F0HE514TQMGQJKH8CVYY52** `riff daemon log` refuses a `--grep`
+  with no character or with a line break, and a `--since` before
+  1970-01-01T00:00Z or after 9999-12-31T23:59Z: it says what the flag
+  takes, and exits with 1. The daemon refuses such a query on a socket
+  too.
+- **01M7F0HE7JY09V4XA2KMKPX2P6** For `--since` of `riff daemon log`, a
+  line of the log of the daemon with no time at its start, for example
+  the rest of a long line, has the time of the line before it. Such a
+  line before the first line with a time shows only with no `--since`.
+- **01M7F0HEA4GVKQ47Q5GN29FQ22** When no line matches, `riff daemon log`
+  prints one line that says so, and exits with 0.
+- **01M7F0HECNG3F2H1ZF4JB7WN0Y** When riff cannot read the MCP servers
+  of the host for `riff daemon log`, it cannot know their secrets: it
+  shows no line, says why, and exits with 1.
+- **01M7F3YFHRQ54RKN9SBJGYWGYY** The lines of one `riff daemon log` have
+  at most 768 KiB in all, each line counted as the text of a JSON
+  string, with its line break: the oldest lines go first. Supersedes
+  01M7EX1PVSG64G8EE5SNDRHM7G in part.
+- **01M7F3YFMAJNJX5YKXB8T54KHV** When riff cannot read the OS keyring
+  for `riff daemon log`, it cannot know the token of `riff
+  claude-token`: it shows no line, says why, and exits with 1.
+- **01M7F7GWKP5EQ9SWNKZ6VX3VX8** For `--since` of `riff daemon log`, a
+  time of the day comes each time that the clock of the machine shows
+  it: two times on a day when the clock goes back, and not at all on a
+  day when the clock skips it. riff takes the last one at or before now.
+  Supersedes 01M7EX1PVSG64G8EE5SNDRHM7G in part.
+- **01M7F7GWP88VC0QETN4GNTTJEV** When older lines match, the first line
+  of `riff daemon log` says how many, and what to ask for. Under 2000
+  `--lines`, it asks for a larger `--lines`. At 2000 lines, or when the
+  byte cap drops lines, it names that limit, and asks for fewer lines
+  with `--since` or `--grep`. Supersedes 01M7EX1PVSG64G8EE5SNDRHM7G in
+  part.
+- **01M7FBZ2C2SNJCXKESA6MGEQ5M** `--grep` of `riff daemon log` looks for
+  its text in the whole line, with no secret. riff cuts the line to 1000
+  characters after that: a line with the text after its character 1000
+  shows too.
+- **01M7FXE86QYC8D6P6WDK69ZSMA** `riff daemon log` finds the parts of a
+  line to hide on the line as the daemon wrote it, with each filter on
+  the same text: each match of each secret that the daemon takes out of
+  the events of a session, also two matches that overlap, each part that
+  the filter of the log of the real-session test hides, and each key of
+  Anthropic. Then it puts one `[secret]` in place of each run of the
+  union of these parts: two parts that overlap or touch make one run.
+- **01M7GCP11AAPM078B2CXTDH03K** For the filter of the log of the
+  real-session test, and so of `riff daemon log`, NAME of `NAME=value`
+  names a secret when it has the text TOKEN, KEY, SECRET or PASSWORD in
+  any place and in any case, also in a longer word: for example
+  `SECRET_KEY_BASE`, `GITHUB_TOKEN_RO`, `db_password` or `MONKEY`.
+- **01M7GGCT0Z0GXM3BCAAGX7CE6Q** The filter of the log of the
+  real-session test, and so of `riff daemon log`, parses no quotes and
+  no escapes. On each line, it hides the rest of the line after the
+  first of these: the `=` of a `NAME=` whose NAME names a secret
+  (01M7GCP11AAPM078B2CXTDH03K), with NAME the run of letters, digits and
+  `_` just before the `=`, at any place in the line; and the word
+  `Bearer` in any case, with no letter or digit just before or after it.
+  The white space just after them, and at the end of the line, stays. A
+  word that starts like a token of GitHub or with `sk-` goes whole, also
+  when it has a `NAME=` in it. So the filter can hide more than a
+  secret, and never less.
 
 ### riff relay
 
@@ -8797,6 +8882,18 @@ of this part when they merge.
   and each function that calls one of these. It checks that each
   function that it finds follows no link. This supersedes
   01M509TK01PW3RN2YPRJD38RSX in part.
+- **01M7G01XCJGVYZBHW20GVGWG6K** The scrub of the events of a session
+  finds the range of each match of each secret and of each token of
+  GitHub in the text, also of two matches that overlap, and also of a
+  secret that starts with a character of more than one byte. It puts one
+  `[secret]` in place of each run of the union of these ranges: two
+  ranges that overlap or touch make one run. So no secret cuts another
+  secret that holds it, in each order of the list.
+- **01M7G3CSVWSV6RTGJY1WMFGV7V** The scrub of the events of a session,
+  and the filter of `riff daemon log`, skip each start of a token that
+  ends in the last token of the same start that they found. So the time
+  to scrub a line grows with its length, not with its square, and a
+  long line from a session holds the daemon for no long time.
 
 ### Process
 

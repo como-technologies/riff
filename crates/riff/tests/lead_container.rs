@@ -1,6 +1,7 @@
 //! `riff members`, `riff who`, `riff whoami`, `riff session why`, `riff run`,
-//! `riff plan hold`, `riff plan free` and `riff daemon events` in the
-//! container of the lead (#1338, #1441, #1619): with
+//! `riff plan hold`, `riff plan free`, `riff daemon events` and `riff
+//! daemon log` in the container of the lead (#1338, #1441, #1619, #2156):
+//! with
 //! `RIFF_SOCKET` and no `RIFF_SERVER`, each reads or asks through the socket
 //! of the session, over a fake daemon socket.
 //! Nothing listens at the riff-server of the machine: a command that
@@ -578,4 +579,110 @@ async fn daemon_events_in_a_container_shows_a_refusal_of_the_daemon() {
         text(&out.stderr)
     );
     assert_eq!(common::call_names(&asked), ["events"]);
+}
+
+/// The lines that the fake daemon gives for `riff daemon log`.
+const LOG_LINES: &str = "2026-11-14T07:12:00Z riff daemon: o/r: claims issue-12";
+
+/// #2156: `riff daemon log` in the container of the lead asks the daemon
+/// on the socket of the session, with the query of its flags, and prints
+/// its text.
+#[tokio::test(flavor = "multi_thread")]
+async fn daemon_log_in_a_container_asks_the_daemon_through_the_socket() {
+    let container = Container::new();
+    let (_dir, socket, asked) = common::session_socket(|_| Ok(Value::String(LOG_LINES.to_owned())));
+    let args = [
+        "daemon",
+        "log",
+        "--since",
+        "2026-11-14T07:12Z",
+        "--lines",
+        "50",
+        "--grep",
+        "issue-12",
+        "--grep",
+        "the cause",
+    ];
+    let out = container.riff(&socket, &args).await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(text(&out.stderr), "");
+    assert_eq!(text(&out.stdout), format!("{LOG_LINES}\n"));
+    assert_eq!(common::call_names(&asked), ["daemon_log"]);
+    let asked = asked.lock().unwrap();
+    assert_eq!(
+        asked[0]["query"],
+        json!({"since": 1_794_640_320, "lines": 50, "grep": ["issue-12", "the cause"]})
+    );
+}
+
+/// #2156: `riff daemon log --host HOST` in the container of the lead asks
+/// the daemon of HOST through the socket: the request has the time of
+/// `--since` in UTC, and each text of `--grep` on a line of its own.
+#[tokio::test(flavor = "multi_thread")]
+async fn daemon_log_with_a_host_in_a_container_asks_the_daemon_of_the_host_through_the_socket() {
+    let container = Container::new();
+    let (_dir, socket, asked) = common::session_socket(|_| Ok(Value::String(LOG_LINES.to_owned())));
+    let args = [
+        "daemon",
+        "log",
+        "--host",
+        "thelio",
+        "--since",
+        "2026-11-14T02:12-05:00",
+        "--grep",
+        "issue-12",
+    ];
+    let out = container.riff(&socket, &args).await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(text(&out.stdout), format!("{LOG_LINES}\n"));
+    assert_eq!(common::call_names(&asked), ["host"]);
+    let asked = asked.lock().unwrap();
+    assert_eq!(asked[0]["host"], "thelio");
+    assert_eq!(
+        asked[0]["request"],
+        "daemon log --since 2026-11-14T07:12:00Z\n--grep issue-12"
+    );
+}
+
+/// #2156, 01M7EX1PYJ99BDSVJK7MAPDFD0: a worker that runs `riff daemon
+/// log` gets the refusal of the daemon, and exits with 1. A bad flag asks
+/// no daemon.
+#[tokio::test(flavor = "multi_thread")]
+async fn daemon_log_in_a_container_shows_a_refusal_of_the_daemon() {
+    let container = Container::new();
+    let (_dir, socket, asked) =
+        common::session_socket(|_| Err(riff::text::DAEMON_LOG_ONLY_LEAD.into()));
+    let out = container.riff(&socket, &["daemon", "log"]).await;
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        text(&out.stderr).contains(riff::text::DAEMON_LOG_ONLY_LEAD),
+        "{}",
+        text(&out.stderr)
+    );
+    let out = container
+        .riff(&socket, &["daemon", "log", "--since", "noon"])
+        .await;
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        text(&out.stderr).contains(&riff::text::daemon_log_bad_since("noon")),
+        "{}",
+        text(&out.stderr)
+    );
+    // With --host too: the time of the request has 4 digits in its year.
+    let args = [
+        "daemon",
+        "log",
+        "--host",
+        "thelio",
+        "--since",
+        "+10000-01-01T00:00Z",
+    ];
+    let out = container.riff(&socket, &args).await;
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        text(&out.stderr).contains(&riff::text::daemon_log_since_range()),
+        "{}",
+        text(&out.stderr)
+    );
+    assert_eq!(common::call_names(&asked), ["daemon_log"]);
 }

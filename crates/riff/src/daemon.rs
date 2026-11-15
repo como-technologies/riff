@@ -1195,11 +1195,12 @@ pub enum SessionAsk {
 /// A call of [`SessionAsk::Server`]: the reads of `riff wave list`,
 /// `riff release check`, `riff members`, `riff who`, `riff whoami`,
 /// `riff audit` and `riff session why`, the resume of the riff after
-/// `riff release check`, the run of an item by the lead, and the events
-/// of a session for the lead (#1338, 01M5QVX8D3JE51FAYRWXMAYFAY,
+/// `riff release check`, the run of an item by the lead, the events of
+/// a session for the lead (#1338, 01M5QVX8D3JE51FAYRWXMAYFAY,
 /// 01M5QW31TFA1W2GWPGRS2Y65GP, 01M5QVX8FFG2FPWZEW61A985CF,
-/// 01M5SMP2FFEHJPZBJVGAWBXNNP). Also the calls of `riff post`, `riff
-/// read`, `riff verify` and each other command of a session
+/// 01M5SMP2FFEHJPZBJVGAWBXNNP), and the log of the daemon for the lead
+/// (#2156, 01M7EX1PYJ99BDSVJK7MAPDFD0). Also the calls of `riff post`,
+/// `riff read`, `riff verify` and each other command of a session
 /// ([`crate::reach::COMMANDS`], #1733).
 ///
 /// ```
@@ -1216,6 +1217,14 @@ pub enum SessionAsk {
 /// assert_eq!(serde_json::to_string(&ServerCall::Ends)?, r#"{"call":"ends"}"#);
 /// let log = ServerCall::Log { repo: "o/r".parse().unwrap() };
 /// assert_eq!(serde_json::to_string(&log)?, r#"{"call":"log","repo":"o/r"}"#);
+/// let query = riff::daemon::log::Query::new(None, None, vec!["issue-12".into()]).unwrap();
+/// assert_eq!(
+///     serde_json::to_string(&ServerCall::DaemonLog { query })?,
+///     r#"{"call":"daemon_log","query":{"since":null,"lines":200,"grep":["issue-12"]}}"#
+/// );
+/// // A query out of its range on the socket is no call.
+/// let bad = r#"{"call":"daemon_log","query":{"since":null,"lines":0,"grep":[]}}"#;
+/// assert!(serde_json::from_str::<ServerCall>(bad).is_err());
 /// let free = ServerCall::PlanFree { thread: "o/r".parse().unwrap(), item: "issue-12".into() };
 /// assert_eq!(
 ///     serde_json::to_string(&free)?,
@@ -1278,6 +1287,13 @@ pub enum ServerCall {
         after: u64,
         /// The number of lines of the daemon that the caller has.
         notes: u64,
+    },
+    /// The text of the lines of the log of this daemon that `query`
+    /// picks, with no secret, as `riff daemon log` reads them on the host
+    /// ([`log::read`], #2156). Only the lead may.
+    DaemonLog {
+        /// What `riff daemon log` asks for.
+        query: log::Query,
     },
     /// A request to the daemon of the host `host` through riff-server, as
     /// `riff daemon status --host` makes it on a host
@@ -1629,6 +1645,7 @@ async fn server_call(record: &Record, call: &ServerCall) -> Result<Value> {
         ServerCall::Status => bail!("the daemon answers the status itself"),
         ServerCall::Ps => bail!("the daemon answers the processes itself"),
         ServerCall::Events { .. } => bail!("the daemon answers the events itself"),
+        ServerCall::DaemonLog { .. } => bail!("the daemon answers its log itself"),
     })
 }
 
@@ -6191,6 +6208,12 @@ impl<R: Runtime + 'static> Daemon<R> {
                     ServerCall::Ps => serde_json::to_value(self.ps().await).map_err(Into::into),
                     ServerCall::Events { name, after, notes } => {
                         self.events_page(&record, &name, (after, notes)).await
+                    }
+                    ServerCall::DaemonLog { .. } if !record.terminal => {
+                        Err(anyhow!(text::DAEMON_LOG_ONLY_LEAD))
+                    }
+                    ServerCall::DaemonLog { query } => {
+                        remote::log_text(&self.dir, &query).await.map(Value::String)
                     }
                     ServerCall::Run { item } => self.run_item(&record, &item),
                     ServerCall::Watch { op } => self.watch_op(&record, op),
@@ -13795,6 +13818,8 @@ mod tests {
     const REPO: &str = "como-technologies/riff";
 
     async fn hosts() -> Hosts {
+        // The person comes from the keyring: a test that runs alone has it too.
+        riff_client::secrets::mock_store();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
@@ -14764,6 +14789,213 @@ mod tests {
             .unwrap();
         let page: remote::Page = reply.as_str().unwrap().parse().unwrap();
         assert_eq!(page.end, Some(false), "{page:?}");
+    }
+
+    /// A log of the daemon with a line of issue-12 before 07:12, and
+    /// three after it, with token-like texts, a secret value after a quote
+    /// with a space, and the value of a header of an MCP server of the
+    /// host ([`MCP`]).
+    const LOG: &str = "2026-11-14T07:00:00Z riff daemon: o/r: claims issue-12\n\
+         2026-11-14T07:12:00Z riff daemon: o/r: claims issue-12 again\n\
+         2026-11-14T07:13:00Z riff daemon: issue-12 pushes with ghs_abc1, sk-ant-oat01-x_y \
+         and {\"msg\":\"x y\",\"env\":\"DB_PASSWORD=qqone qqtwo\"} x\n\
+         2026-11-14T07:14:00Z riff daemon: o/r: claims issue-13\n\
+         2026-11-14T07:15:00Z riff daemon: issue-12: docs refused docs-header-value-1\n";
+
+    /// The MCP servers of the host: `docs`, with a secret header.
+    const MCP: &str =
+        r#"{"mcpServers": {"docs": {"url": "u", "headers": {"X-Docs": "docs-header-value-1"}}}}"#;
+
+    /// The lines of [`LOG`] of issue-12 since 07:12, with no secret. A
+    /// word that starts like a token goes whole, with its comma
+    /// (01M7FXE86QYC8D6P6WDK69ZSMA). The rest of the line after
+    /// `DB_PASSWORD=` goes (01M7GGCT0Z0GXM3BCAAGX7CE6Q).
+    const LOG_SHOWN: &str = "2026-11-14T07:12:00Z riff daemon: o/r: claims issue-12 again\n\
+         2026-11-14T07:13:00Z riff daemon: issue-12 pushes with [secret] [secret] \
+         and {\"msg\":\"x y\",\"env\":\"DB_PASSWORD=[secret]\n\
+         2026-11-14T07:15:00Z riff daemon: issue-12: docs refused [secret]";
+
+    /// #2156, 01M7EX1PYJ99BDSVJK7MAPDFD0, 01M7EX1Q1F468NWGPJJS0W0ZG9,
+    /// 01M7GGCT0Z0GXM3BCAAGX7CE6Q: the lead on `a` reads the log of the
+    /// daemon of `b` through riff-server: the lines since a time with a
+    /// text, and no secret, also of the MCP servers of `b` and no word
+    /// after `DB_PASSWORD=`. The daemon of `a` has no log file: its error
+    /// names the file. A worker gets a refusal.
+    #[tokio::test(flavor = "multi_thread")]
+    #[allow(clippy::await_holding_lock)]
+    async fn the_lead_reads_the_log_of_another_host_and_a_worker_is_refused() {
+        let _token = crate::claude_token::test_token();
+        let h = hosts().await;
+        std::fs::write(h.b.dir.join(log::FILE), LOG).unwrap();
+        std::fs::write(h.b.dir.join(crate::session_mcp::FILE), MCP).unwrap();
+        let since = log::since_at("2026-11-14T07:12Z", &chrono::Utc::now()).unwrap();
+        let query = log::Query::new(Some(since), None, vec!["issue-12".into()]).unwrap();
+        let request = remote::Request::Log(query);
+        let wait = remote::REPLY_WAIT;
+        let reply = remote::ask(&h.api, &h.lead, "b", &request, wait).await;
+        assert_eq!(reply.unwrap(), LOG_SHOWN);
+        let probe = vec!["docs-header".into(), "qqtwo".into()];
+        let probe = log::Query::new(None, None, probe).unwrap();
+        let reply = remote::ask(&h.api, &h.lead, "b", &remote::Request::Log(probe), wait).await;
+        assert_eq!(reply.unwrap(), text::daemon_log(&log::Found::default()));
+
+        let none = remote::ask(&h.api, &h.lead, "a", &request, wait).await;
+        let none = none.unwrap_err().to_string();
+        let file = h.a.dir.join(log::FILE).display().to_string();
+        assert!(none.contains(&file), "{none}");
+
+        let worker = SessionUri::new(
+            riff_core::name::Who::new(h.lead.who().user(), Some("w1")).unwrap(),
+            h.lead.place().clone(),
+        );
+        h.api.register(&worker).await.unwrap();
+        let refused = remote::ask(&h.api, &worker, "b", &request, wait).await;
+        let refused = refused.unwrap_err().to_string();
+        assert!(
+            refused.starts_with("refused: \"daemon log --since 2026-11-14T07:12:00Z\n"),
+            "{refused}"
+        );
+        assert!(refused.contains("which is not the lead"), "{refused}");
+    }
+
+    /// #2156, 01M7EX1PYJ99BDSVJK7MAPDFD0, 01M7EX1Q1F468NWGPJJS0W0ZG9,
+    /// 01M7GGCT0Z0GXM3BCAAGX7CE6Q: the lead in a container reads the log of
+    /// the daemon of its host on the socket of its session, with no
+    /// secret, also of the MCP servers of the host and no word after
+    /// `DB_PASSWORD=`. A worker gets a refusal.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn the_lead_reads_the_log_of_its_daemon_through_its_socket_and_a_worker_is_refused() {
+        let _token = crate::claude_token::test_token();
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        std::fs::write(here.dir.join(log::FILE), LOG).unwrap();
+        let (client, name) = here
+            .started(here.start("riff-issue-12-1a2b3c4d", "issue-12"))
+            .await;
+        drop(client);
+        let worker = session_dir(&here.dir, &name).join(SOCKET);
+        let mut lead = here.start("riff-lead-o-r", "lead");
+        lead.terminal = true;
+        let (_lead_client, lead_name) = here.started(lead).await;
+        let lead = session_dir(&here.dir, &lead_name).join(SOCKET);
+        std::fs::write(here.dir.join(crate::session_mcp::FILE), MCP).unwrap();
+
+        let since = log::since_at("2026-11-14T07:12:00Z", &chrono::Utc::now()).unwrap();
+        let query = log::Query::new(Some(since), None, vec!["issue-12".into()]).unwrap();
+        let shown = crate::reach::Reach::daemon_log(&lead, &query).await;
+        assert_eq!(shown.unwrap(), LOG_SHOWN);
+        let probe = vec!["docs-header".into(), "qqtwo".into()];
+        let probe = log::Query::new(None, None, probe).unwrap();
+        let shown = crate::reach::Reach::daemon_log(&lead, &probe).await;
+        assert_eq!(shown.unwrap(), text::daemon_log(&log::Found::default()));
+        let refused = crate::reach::Reach::daemon_log(&worker, &query).await;
+        let refused = format!("{:#}", refused.unwrap_err());
+        assert!(refused.contains(text::DAEMON_LOG_ONLY_LEAD), "{refused}");
+    }
+
+    /// #2156, 01M7EX1Q1F468NWGPJJS0W0ZG9: the filter of the log of the
+    /// daemon holds each secret that the daemon takes out of the events of
+    /// a session of the same host: the token of `riff claude-token` in the
+    /// OS keyring, else the tokens of the sign-in file of claude, and each
+    /// secret of the MCP servers of the host.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn the_log_filter_holds_each_secret_of_the_events_filter() {
+        let _token = crate::claude_token::test_token();
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        std::fs::write(
+            here.dir.join(crate::session_mcp::FILE),
+            r#"{"mcpServers": {"docs": {"url": "u", "headers": {"X-Docs": "docs-header-value-1"}},
+                "db": {"command": "db", "env": {"DB_AUTH": "db-env-value-2"}}}}"#,
+        )
+        .unwrap();
+        let credentials = here.root.path().join(".credentials.json");
+        let file = r#"{"claudeAiOauth":{"accessToken":"an-access-token-1",
+            "refreshToken":"a-refresh-token-1","expiresAt":9000000000000}}"#;
+        std::fs::write(&credentials, file).unwrap();
+        let mcp = ["docs-header-value-1", "db-env-value-2"];
+        for token in [None, Some("a-keyring-token-1")] {
+            let mut want = match token {
+                Some(token) => {
+                    crate::claude_token::store(&here.dir, token).unwrap();
+                    vec![token]
+                }
+                None => vec!["an-access-token-1", "a-refresh-token-1"],
+            };
+            want.extend(mcp);
+            // The secrets of a start, as `riff run` and the daemon make them.
+            let claude = crate::run::claude_of(&here.dir, &credentials, 0).unwrap();
+            let host = crate::run::Host {
+                home: here.root.path().to_owned(),
+                user: "u".into(),
+                claude,
+            };
+            let start = here.start("riff-issue-12-1a2b3c4d", "issue-12");
+            let (mut spec, mut values, mut events) = (start.spec, start.values, host.secrets());
+            here.daemon.give_mcp(&mut spec, &mut values, &mut events);
+            events.sort();
+            want.sort();
+            assert_eq!(events, want);
+
+            let log = log::secrets_of(&here.dir, Some(&credentials)).unwrap();
+            let missing: Vec<&String> = events.iter().filter(|s| !log.contains(s)).collect();
+            assert!(missing.is_empty(), "{token:?}: {missing:?}");
+        }
+    }
+
+    /// #2156, 01M7F3YFHRQ54RKN9SBJGYWGYY: the lead on `a` asks for the most
+    /// lines of the log of `b`, with lines that have more bytes in JSON
+    /// than in the log: the answer at its byte cap comes back through
+    /// riff-server. Signed, as a daemon with a sign-in posts it, the
+    /// answer fits in one call to riff-server, and riff-server refuses a
+    /// larger call.
+    #[tokio::test(flavor = "multi_thread")]
+    #[allow(clippy::await_holding_lock)]
+    async fn an_answer_of_the_log_at_its_byte_cap_comes_through_riff_server() {
+        use riff_core::wire::{Call, Post};
+        let _token = crate::claude_token::test_token();
+        let h = hosts().await;
+        // Each line has 1000 characters, and about 3300 bytes in JSON.
+        let log: String = (0..log::MOST_LINES)
+            .map(|n| {
+                let rest = "\"\\\u{1}".repeat(log::LINE_CHARS);
+                format!("2026-11-14T07:12:00Z {n:04} {rest}\n")
+            })
+            .collect();
+        std::fs::write(h.b.dir.join(log::FILE), &log).unwrap();
+        let query = log::Query::new(None, Some(log::MOST_LINES), vec![]).unwrap();
+        let request = remote::Request::Log(query.clone());
+        let wait = Duration::from_secs(60);
+        let reply = remote::ask(&h.api, &h.lead, "b", &request, wait).await;
+        let found = log::pick([log.as_bytes()], &query, &Scrub::default()).unwrap();
+        let more = found.more().map(|more| more.limit);
+        assert_eq!(more, Some(log::Limit::MostBytes));
+        assert!(!found.lines().is_empty());
+        let reply = reply.unwrap();
+        assert_eq!(reply, text::daemon_log(&found));
+
+        let body = remote::reply_body(1, "b", &Ok(reply));
+        let to = vec![riff_core::selector::Selector::session("l1")];
+        let mut post = Post::new(&h.lead, None, to, &body);
+        post.sign(&riff_core::dpop::Key::generate(), 1_794_640_320_000);
+        let call = serde_json::to_vec(&post).unwrap().len();
+        assert!(call > log::SERVER_BYTES * 3 / 4, "{call}");
+        assert!(call <= log::SERVER_BYTES, "{call}");
+
+        let url = format!("{}{}", h.api.base(), Post::PATH);
+        for (bytes, refused) in [(log::SERVER_BYTES, false), (log::SERVER_BYTES + 1, true)] {
+            let status = reqwest::Client::new()
+                .post(&url)
+                .header(riff_core::build::HEADER, riff_core::build::VERSION)
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .body(vec![b' '; bytes])
+                .send()
+                .await
+                .unwrap()
+                .status();
+            let too_large = status == reqwest::StatusCode::PAYLOAD_TOO_LARGE;
+            assert_eq!(too_large, refused, "{bytes}: {status}");
+        }
     }
 
     /// 01M57GCZXZZRPGGWC5HZS49DGM: a replay gives each line of the

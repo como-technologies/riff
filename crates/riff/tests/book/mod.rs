@@ -80,3 +80,35 @@ pub fn each_is_real(commands: &[String]) {
             .success();
     }
 }
+
+/// The name of each page of the book, in order.
+pub fn pages() -> Vec<String> {
+    let mut names: Vec<String> = fs::read_dir(dir())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".md"))
+        .collect();
+    names.sort();
+    names
+}
+
+/// The words of the shell command `command`: a text in `'` or `"` is one
+/// word, with its spaces and with no quote.
+pub fn shell_words(command: &str) -> Vec<String> {
+    let (mut words, mut word, mut quote) = (Vec::new(), None::<String>, None);
+    for c in command.chars() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => word.get_or_insert_default().push(c),
+            None if c == '\'' || c == '"' => {
+                quote = Some(c);
+                word.get_or_insert_default();
+            }
+            None if c.is_whitespace() => words.extend(word.take()),
+            None => word.get_or_insert_default().push(c),
+        }
+    }
+    assert!(quote.is_none(), "a quote has no end: {command}");
+    words.extend(word);
+    words
+}
