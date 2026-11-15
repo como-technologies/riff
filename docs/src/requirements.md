@@ -7541,21 +7541,23 @@ of this part when they merge.
   fault of a step after the read keeps what the read found for the
   reason of the end (`wave::then`). Supersedes
   01M5A5HXKZTDP5M5HY2FHCEBZA in part.
-- **01M7G3DR4R4KF5RSD94F6ZN80H** The reason of the end of a verify that
-  the daemon keeps for the message "started N times" says "no PASS or
-  FAIL" when the result has none, or when riff refuses its PASS for a
-  member of the council with no line (01M7CFBZSQEEZNZBR9H1S54GS1). After
-  another fault of the report, it says nothing of a result. It names the
-  denied tool calls of the session, also when a step after the end
-  removes the folder of the session. When riff refuses a kept PASS after
-  the reset of a limit of GitHub, the daemon keeps the reason of its
-  record in the thread `ends` (`kept::Reports::ends`).
+- **01M7G3DR4R4KF5RSD94F6ZN80H** After a clean end of a verify, the
+  reason of the end that the daemon keeps for the message "started N
+  times" says "no PASS or FAIL" when the result has none, or when riff
+  refuses its PASS for a member of the council with no line
+  (01M7CFBZSQEEZNZBR9H1S54GS1). After another end, or another fault of
+  the report, it says nothing of a result. It names the denied tool
+  calls of the session, also when a step after the end removes the
+  folder of the session. When riff refuses a kept PASS after the reset
+  of a limit of GitHub, the daemon keeps the reason of its record in the
+  thread `ends` (`kept::Reports::ends`).
 - **01M7G6H601C6NYC7ACSF6GVW50** A verify session of a wave whose PASS
   riff refuses for a member of the council with no line
   (01M7CFBZSQEEZNZBR9H1S54GS1) leaves one record in the thread `ends`,
   as a verify with no PASS or FAIL does (01M5SMP2D4MGME90EHVKAQHQ26).
-  Its reason says "no PASS or FAIL", and the post goes before the folder
-  of the verify goes. `riff session why verify-issue-N` shows it. A
+  Its reason is the reason that the daemon keeps
+  (01M7G3DR4R4KF5RSD94F6ZN80H), and the post goes before the folder of
+  the verify goes. `riff session why verify-issue-N` shows it. A
   kept PASS that riff refuses after the reset of a limit of GitHub
   (01M6H1N332TZ17CQQ8A5CQKG7B) leaves the same record.
 

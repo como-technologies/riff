@@ -3642,25 +3642,29 @@ async fn post_end(api: &Api, record: &Record, ended: Ended, found: Found) {
     session.post_end(api, &record.me, found).await;
 }
 
-/// The end of the verify `session` whose report failed with `error`, when
-/// riff refused its PASS for a member of the council with no line
-/// ([`crate::council::result::NoLine`]): a result with no verdict
-/// ([`Found::NoVerdict`], 01M7G3DR4R4KF5RSD94F6ZN80H). That end goes to
-/// the thread `ends`, as `me`, so this comes before the folder of the
-/// session goes (01M7G6H601C6NYC7ACSF6GVW50). After each other error, the
-/// steps found nothing ([`Found::Unread`]): it posts nothing, and gives
-/// none. The end step (`after_verify`) and the report of a kept result
-/// after the reset ([`kept`]) both use it.
+/// What the steps found of the verify `session` whose report failed with
+/// `error`, and the end that it posted. When riff refused its PASS for a
+/// member of the council with no line
+/// ([`crate::council::result::NoLine`]), they found a result with no
+/// verdict ([`Found::NoVerdict`], 01M7G3DR4R4KF5RSD94F6ZN80H). That end
+/// goes to the thread `ends`, as `me`, with the [`Found`] that it gives:
+/// so the record and the reason that the daemon keeps agree
+/// (01M7G6H601C6NYC7ACSF6GVW50). This comes before the folder of the
+/// session goes. After each other error, the steps found nothing
+/// ([`Found::Unread`]): it posts nothing, and gives no end. The end step
+/// (`after_verify`) and the report of a kept result after the reset
+/// ([`kept`]) both use it.
 pub async fn refused_pass(
     api: &Api,
     me: &SessionUri,
     session: crate::ends::Session<'_>,
     error: &anyhow::Error,
-) -> Option<crate::ends::End> {
-    match error.is::<crate::council::result::NoLine>() {
-        true => Some(session.post_end(api, me, Found::NoVerdict).await),
-        false => None,
+) -> (Found, Option<crate::ends::End>) {
+    if !error.is::<crate::council::result::NoLine>() {
+        return (Found::Unread, None);
     }
+    let found = Found::NoVerdict;
+    (found, Some(session.post_end(api, me, found).await))
 }
 
 /// Waits until the steps after the end of the session of `record` can read
@@ -4104,7 +4108,9 @@ async fn after_verify(
     let item = &record.live.item;
     let found = last_result(&record.folder.join(crate::daemon::EVENTS));
     let Some((verdict, result)) = found.as_deref().and_then(verdict) else {
-        post_end(api, record, ended, Found::NoVerdict).await;
+        // The record and the reason that the daemon keeps say the same.
+        let found = Found::NoVerdict;
+        post_end(api, record, ended, found).await;
         let _ = std::fs::remove_dir_all(&record.folder);
         let steps = async {
             let open = open_now(&gh, pull).await;
@@ -4113,7 +4119,7 @@ async fn after_verify(
                 .await?;
             Ok(vec![body])
         };
-        return Ok(then(record, Found::NoVerdict, steps).await);
+        return Ok(then(record, found, steps).await);
     };
     let (repo, tested, shown) = (wave.repo.clone(), commit.to_owned(), result.clone());
     let (reporter, main) = (gh.clone(), wave.main.clone());
@@ -4124,10 +4130,7 @@ async fn after_verify(
         Err(e) => {
             let error = format!("{e:#}");
             let session = crate::ends::Session::of(record, ended);
-            let found = match refused_pass(api, me, session, &e).await {
-                Some(_) => Found::NoVerdict,
-                None => Found::Unread,
-            };
+            let (found, _) = refused_pass(api, me, session, &e).await;
             let result = kept::Kept {
                 repo: wave.repo.clone(),
                 item: item.clone(),
@@ -14681,20 +14684,20 @@ esac
         assert!(records.is_empty(), "no record: {records:?}");
     }
 
-    /// A riff-server that refuses each post in the thread `ends` with a
+    /// A riff-server that refuses each post in the thread `thread` with a
     /// 409: a refusal, which the client does not try again. It gives the
     /// URL.
-    async fn server_that_refuses_ends_posts() -> String {
+    async fn server_that_refuses_posts_in(thread: &'static str) -> String {
         use axum::response::IntoResponse;
         use riff_core::wire::Call;
 
         let refuses = axum::middleware::from_fn(
-            |request: axum::extract::Request, next: axum::middleware::Next| async move {
+            move |request: axum::extract::Request, next: axum::middleware::Next| async move {
                 let (parts, body) = request.into_parts();
                 let bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
-                let ends = format!("\"thread\":\"{}\"", crate::ends::THREAD);
+                let refused = format!("\"thread\":\"{thread}\"");
                 let post = parts.uri.path() == riff_core::wire::Post::PATH;
-                if post && String::from_utf8_lossy(&bytes).contains(&ends) {
+                if post && String::from_utf8_lossy(&bytes).contains(&refused) {
                     return axum::http::StatusCode::CONFLICT.into_response();
                 }
                 let body = axum::body::Body::from(bytes);
@@ -14719,7 +14722,7 @@ esac
     /// session, so the daemon keeps its reason.
     #[tokio::test]
     async fn a_refused_kept_pass_whose_record_fails_still_gives_its_end() {
-        let built = Built::at(server_that_refuses_ends_posts().await).await;
+        let built = Built::at(server_that_refuses_posts_in(crate::ends::THREAD).await).await;
         let (fork, sessions) = council_fork();
         let wave = Wave {
             main: fork.main.clone(),
@@ -14728,27 +14731,7 @@ esac
         let bin = tempfile::tempdir().unwrap();
         let gh = pass_gh(bin.path(), &fork.head);
         let folder = sessions.join("verify-issue-12-1");
-        verify_folder(&fork, &folder);
-        let result = "- It works.\n\n## The council\n\n- design: no finding.\n\
-                      - testing: no finding.\n";
-        let event = serde_json::json!({ "type": "result", "result": format!("PASS\n\n{result}") });
-        std::fs::write(folder.join(crate::daemon::EVENTS), format!("{event}\n")).unwrap();
-        let ended = Ended {
-            code: Some(0),
-            failed: false,
-        };
-        kept::Kept {
-            repo: "o/r".into(),
-            item: "verify-issue-12".into(),
-            session: built.record.live.session.clone(),
-            ended,
-            pull: 7,
-            commit: fork.head.clone(),
-            verdict: Verdict::Pass,
-            result: result.into(),
-        }
-        .keep(&folder)
-        .unwrap();
+        keep_pass_with_no_line(&built, &fork, &folder);
 
         let reports = kept::report_all(&gh, &built.api, &built.lead, &wave, &sessions).await;
         let message = text::wave_no_council_line("verify-issue-12", 7, &docs_and_big_o(), true);
@@ -14766,6 +14749,72 @@ esac
         assert_eq!(one.message.body, message);
         let records = crate::ends::read(&built.api, &built.lead).await.unwrap();
         assert!(records.is_empty(), "the post failed: {records:?}");
+    }
+
+    /// 01M7G3DR4R4KF5RSD94F6ZN80H, 01M7G6H601C6NYC7ACSF6GVW50: riff
+    /// refuses a kept PASS after the reset for a member of the council with
+    /// no line, and riff-server refuses the message to the lead in the
+    /// thread of the wave. The report of that result fails, and gives no
+    /// line. The session still leaves its record in the thread `ends`,
+    /// the folder goes, and the report still gives the end of the session,
+    /// so the daemon keeps the reason of that record.
+    #[tokio::test]
+    async fn a_refused_kept_pass_whose_message_fails_still_gives_its_end() {
+        let built = Built::at(server_that_refuses_posts_in("o/r").await).await;
+        let thread = built.wave.thread().unwrap();
+        assert_eq!(thread.to_string(), "o/r");
+        let (fork, sessions) = council_fork();
+        let wave = Wave {
+            main: fork.main.clone(),
+            ..built.wave.clone()
+        };
+        let bin = tempfile::tempdir().unwrap();
+        let gh = pass_gh(bin.path(), &fork.head);
+        let folder = sessions.join("verify-issue-12-1");
+        keep_pass_with_no_line(&built, &fork, &folder);
+
+        let reports = kept::report_all(&gh, &built.api, &built.lead, &wave, &sessions).await;
+        assert!(reports.lines.is_empty(), "the message failed: {reports:?}");
+        let [end] = &reports.ends[..] else {
+            panic!("one end: {reports:?}");
+        };
+        assert_eq!(end.reason(), "exit code 0, and no PASS or FAIL");
+        assert!(!folder.exists(), "the folder goes");
+        let got = built.api.read(&built.lead, &thread, true).await.unwrap();
+        assert!(got.is_empty(), "the post failed: {got:?}");
+        let records = crate::ends::read(&built.api, &built.lead).await.unwrap();
+        let [record] = &records[..] else {
+            panic!("one record: {records:?}");
+        };
+        assert_eq!(record.tag("item"), "verify-issue-12");
+        assert_eq!(record.reason, end.reason());
+    }
+
+    /// Keeps in the folder `folder` of a session the PASS of the verify of
+    /// pull request 7 of `fork`, as the end step keeps it on a limit of
+    /// GitHub. Its result has no line for docs and big-o
+    /// ([`docs_and_big_o`]), and its session ended with exit code 0.
+    fn keep_pass_with_no_line(built: &Built, fork: &Fork, folder: &Path) {
+        verify_folder(fork, folder);
+        let result = "- It works.\n\n## The council\n\n- design: no finding.\n\
+                      - testing: no finding.\n";
+        let event = serde_json::json!({ "type": "result", "result": format!("PASS\n\n{result}") });
+        std::fs::write(folder.join(crate::daemon::EVENTS), format!("{event}\n")).unwrap();
+        kept::Kept {
+            repo: "o/r".into(),
+            item: "verify-issue-12".into(),
+            session: built.record.live.session.clone(),
+            ended: Ended {
+                code: Some(0),
+                failed: false,
+            },
+            pull: 7,
+            commit: fork.head.clone(),
+            verdict: Verdict::Pass,
+            result: result.into(),
+        }
+        .keep(folder)
+        .unwrap();
     }
 
     /// 01M4ZV3B6R4WSEJXYT7QPRWT6X: a report that fails for another reason
@@ -14969,7 +15018,7 @@ esac
         };
         assert_eq!(first.tag("item"), "verify-issue-12");
         assert_eq!(first.tag("head"), &fork.head[..7]);
-        assert_eq!(first.reason, "exit code 0, and no PASS or FAIL");
+        assert_eq!(first.reason, end.reason(), "the record and the kept reason");
         let [tail] = &first.tail[..] else {
             panic!("the line of the result: {first:?}");
         };
