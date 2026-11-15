@@ -127,8 +127,11 @@ esac
 /// its start in `bin/run.slice`, and
 /// plays the container on the host: it runs the riff of the bind at
 /// `/opt/riff/riff` as the entrypoint, `riff relay`, with the socket of
-/// the bind at `/run/riff`. With `-d` (a terminal), it runs it in the
-/// background, and `wait` waits for its end. `stop` logs, and ends the
+/// the bind at `/run/riff`. With `bin/clone`, it also makes the folder of
+/// the volume of the clone, runs the relay in the working folder, and
+/// gives it `RIFF_CLONE` and `GH_CONFIG_DIR` of its `-e` values, so the
+/// relay clones as in a container. With `-d` (a terminal), it runs it in
+/// the background, and `wait` waits for its end. `stop` logs, and ends the
 /// `run`. `container inspect` says `true` while the `run` runs, and gives the text of
 /// `bin/digest` as the image digest, or fails with no such file. `attach`
 /// and `exec` log, and end at once. An `exec` whose command does not
@@ -256,11 +259,28 @@ while [ $# -gt 0 ]; do
         *:/run/riff) socket="${2%:/run/riff}/riff.sock" ;;
       esac
       shift 2 ;;
+    # With `clone`, the container gets the plan of its clone, the folder
+    # of its gh and its new volume, as podman gives them.
+    -e)
+      case "$2" in
+        RIFF_CLONE=*) plan="${2#RIFF_CLONE=}" ;;
+        GH_CONFIG_DIR=*) ghdir="${2#GH_CONFIG_DIR=}" ;;
+      esac
+      shift 2 ;;
+    --mount)
+      case "$2" in
+        type=volume,destination=*) volume="${2#type=volume,destination=}"; volume="${volume%%,*}" ;;
+      esac
+      shift 2 ;;
     -d) detach=1; shift ;;
-    -w) shift 2; break ;;
+    -w) workdir="$2"; shift 2; break ;;
     *) shift ;;
   esac
 done
+if [ -f "$dir/clone" ] && [ -n "$plan" ]; then
+  mkdir -p "$volume" && cd "$workdir" || exit 125
+  export RIFF_CLONE="$plan" GH_CONFIG_DIR="$ghdir"
+fi
 # The image, then the entrypoint /opt/riff/riff.
 shift 2
 if [ -n "$detach" ]; then
@@ -274,7 +294,8 @@ exec env RIFF_SOCKET="$socket" "$relay" "$@"
 }
 
 /// A fake `claude` in the container. It logs its arguments and its `PATH`,
-/// takes the start text, waits while `bin/hold` is there, and prints
+/// takes the start text, waits while `bin/hold` is there, commits a file
+/// in its working folder when `bin/commit` is there, and prints
 /// `bin/events`. When `bin/tools` is there, it first sends its lines to
 /// the riff tools, through the `riff relay mcp` of its MCP config, and
 /// logs the answers to `bin/mcp.out` until it has one for each request.
@@ -291,6 +312,11 @@ printf '%s\n' "$@" > "$dir/claude.args"
 IFS= read -r line
 printf '%s\n' "$line" > "$dir/run.stdin"
 while [ -f "$dir/hold" ]; do sleep 0.05; done
+# With `commit`, it commits a file in its working folder: the clone.
+if [ -f "$dir/commit" ]; then
+  echo work > work.md && git add work.md &&
+    git -c user.name=w -c user.email=w@w -c commit.gpgsign=false commit -q -m "WIP: work" || exit 3
+fi
 echo "a line on stderr with GHTOKEN" >&2
 if [ -f "$dir/tools" ]; then
   for arg; do config=$arg; done
@@ -1116,11 +1142,10 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
     // The arguments of podman: each bind and value, in order.
     let folder = machine.folder("issue-12");
     let clone = folder.join("clone");
-    let objects = PathBuf::from(git(
+    let git_dir = PathBuf::from(git(
         &machine.main,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    ))
-    .join("objects");
+    ));
     let args: Vec<String> = machine.read("run.args").lines().map(String::from).collect();
     let session = args[args.iter().position(|a| a == "--session-id").unwrap() + 1].clone();
     assert_eq!(session.len(), 36, "{session}");
@@ -1129,15 +1154,19 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
     let (h, c, o) = (
         home.display().to_string(),
         clone.display().to_string(),
-        objects.display().to_string(),
+        git_dir.display().to_string(),
     );
     let claude = folder.join("claude").display().to_string();
     let plan = riff::session_clone::Plan {
         path: clone.clone(),
         origin: riff::session_clone::origin(REPO),
-        reference: objects.parent().unwrap().to_owned(),
-        checkout: riff::session_clone::Checkout::Branch("worktree-issue-12".into()),
-        bundle: None,
+        main: git_dir.clone(),
+        base: "main".into(),
+        checkout: riff::session_clone::Checkout::Branch {
+            name: "worktree-issue-12".into(),
+            earlier: false,
+            bundle: None,
+        },
     }
     .to_var();
     // The folder of the token of the session: no token of the person
@@ -1754,6 +1783,71 @@ async fn riff_run_with_no_github_asks_for_no_token_and_names_the_push() {
     machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
 }
 
+/// 01M7EY3P0Q8TQF5QRTRDWCYCTQ, 01M7EY3WHQQP9330CZ736HK0FJ: the work
+/// session of `riff run --no-github` runs `riff relay` with the plan of
+/// its clone, as in its container: with `RIFF_SOCKET`, in the folder of
+/// the sessions, where the guard refuses the git of the host. With no
+/// token, the relay clones from the main clone only, with `origin` on
+/// GitHub, and the session commits. The relay writes the bundle, `riff
+/// run` copies it with its checks into the folder of the session and
+/// names the copy, and the main clone fetches the branch from the copy.
+#[tokio::test]
+async fn a_session_with_no_github_clones_in_its_container_and_riff_run_takes_its_bundle() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    for file in ["no-pr", "clone", "commit"] {
+        std::fs::write(machine.bin.path().join(file), "").unwrap();
+    }
+
+    let out = machine
+        .run(None, &["run", "issue-12", "--image", IMAGE, "--no-github"])
+        .await;
+    let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
+    assert!(out.status.success(), "{stdout}\n{stderr}");
+    let folder = machine.folder("issue-12");
+    let copy = folder.join("worktree-issue-12.bundle");
+    let push = riff::text::run_pushed_nothing(Some(&copy), "worktree-issue-12");
+    assert!(stdout.contains(&push), "{stdout}");
+    let clone = folder.join("clone");
+    assert_eq!(
+        git(&clone, &["remote", "get-url", "origin"]),
+        format!("https://github.com/{REPO}.git")
+    );
+    assert_eq!(
+        git(&clone, &["branch", "--show-current"]),
+        "worktree-issue-12"
+    );
+    let at = copy.to_string_lossy();
+    git(&machine.main, &["fetch", "-q", &at, "worktree-issue-12"]);
+    assert_eq!(
+        git(&machine.main, &["log", "-1", "--format=%s", "FETCH_HEAD"]),
+        "WIP: work"
+    );
+    // On the host, with no `RIFF_SOCKET`, the guard refuses git in the
+    // folder of the sessions: only a container clones there.
+    let plan = riff::session_clone::Plan {
+        path: folder.with_file_name("issue-13-2b3c4d5e").join("clone"),
+        origin: format!("https://github.com/{REPO}.git"),
+        main: machine.main.join(".git"),
+        base: "main".into(),
+        checkout: riff::session_clone::Checkout::Default,
+    };
+    let refused = machine
+        .env
+        .riff()
+        .args(["relay", "--terminal", "--", "true"])
+        .env_remove("RIFF_SOCKET")
+        .env(riff::session_clone::VAR, plan.to_var())
+        .output()
+        .unwrap();
+    assert!(!refused.status.success(), "{refused:?}");
+    assert!(
+        text(&refused.stderr).contains("riff runs no git on the host"),
+        "{}",
+        text(&refused.stderr)
+    );
+}
+
 /// 01M6QCDH3VXFFEFEWJT1H2HQT0 (#1597): the calls of `gh` of `riff run` are
 /// in the tally of the daemon as the caller `run`: the milestone of the
 /// issue before the claim, and the pull request after the session. No call
@@ -1804,7 +1898,11 @@ async fn riff_run_goes_on_from_the_branch_of_an_earlier_session() {
     assert!(!machine.folder("issue-12").join("clone").exists());
     let args: Vec<String> = machine.read("run.args").lines().map(String::from).collect();
     let plan = lead_plan(&args);
-    let branch = riff::session_clone::Checkout::Branch("worktree-issue-12".into());
+    let branch = riff::session_clone::Checkout::Branch {
+        name: "worktree-issue-12".into(),
+        earlier: true,
+        bundle: None,
+    };
     assert_eq!(plan.checkout, branch);
     assert!(
         machine
@@ -3317,21 +3415,20 @@ async fn the_daemon_starts_the_lead_from_the_main_clone_of_its_wave_with_the_mer
     let args: Vec<String> = machine.read("run.args").lines().map(String::from).collect();
     assert!(args.iter().any(|a| a == PINNED), "{args:?}");
     assert!(!args.contains(&local), "{args:?}");
-    // The lead clones in its container with the objects of the main clone
-    // of the wave, and the container binds them, with no write (#2139).
-    let objects = PathBuf::from(git(
+    // The lead clones in its container from the git dir of the main clone
+    // of the wave, and the container binds it, with no write (#2139).
+    let git_dir = PathBuf::from(git(
         &machine.main,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    ))
-    .join("objects");
-    let o = objects.display().to_string();
+    ));
+    let o = git_dir.display().to_string();
     let bind = format!("{o}:{o}:ro");
     assert!(
         args.windows(2).any(|w| w[0] == "-v" && w[1] == bind),
         "{args:?}"
     );
     let plan = lead_plan(&args);
-    assert_eq!(plan.reference, objects.parent().unwrap());
+    assert_eq!(plan.main, git_dir);
     assert_eq!(plan.checkout, riff::session_clone::Checkout::Default);
 
     std::fs::remove_file(&hold).unwrap();
@@ -4725,8 +4822,7 @@ async fn a_lead_starts_again_from_the_main_clone_of_the_daemon_not_from_its_alte
     let main = PathBuf::from(git(
         &machine.main,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    ))
-    .join("objects");
+    ));
     let o = main.display().to_string();
     let args: Vec<String> = machine.read("run.args").lines().map(String::from).collect();
     let bind = format!("{o}:{o}:ro");

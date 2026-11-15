@@ -49,12 +49,13 @@
 //!
 //! Before it starts `claude`, also with a terminal, the relay makes the
 //! clone of the session in its container from the plan in
-//! [`crate::session_clone::VAR`] ([`crate::session_clone::Plan::make`],
-//! #2139). When the clone fails, `claude` does not start, and the relay
-//! ends with the error. `claude` does not get the variable. For a
-//! session with no GitHub, the end of `claude` comes after the bundle of
-//! its branch ([`crate::session_clone::Plan::bundle`]): so the bundle is
-//! there when the daemon gets the exit.
+//! [`crate::session_clone::VAR`] ([`clone_here`], #2139). When the clone
+//! fails, `claude` does not start, and the relay ends with the error.
+//! `claude` does not get the variable. For a session with no GitHub, the
+//! end of `claude` comes after the bundle of its branch
+//! ([`crate::session_clone::Plan::bundle`]): so the bundle is there when
+//! the daemon gets the exit. When the bundle fails, the relay prints the
+//! error, and the exit code is 1 also after a `claude` that ended with 0.
 //!
 //! # The protocol
 //!
@@ -797,8 +798,8 @@ pub fn socket_here() -> Result<PathBuf> {
 /// Starts `command` with pipes for its stdin, stdout and stderr, and
 /// keeps its process ID in `pid`. With the plan `plan` of a session with
 /// no GitHub, its end comes after the bundle of the branch
-/// ([`crate::session_clone::Plan::bundle`]): so the bundle is there when
-/// the daemon gets the exit.
+/// ([`bundle_after`]): so the bundle is there when the daemon gets the
+/// exit.
 fn spawn_claude(
     command: &[String],
     pid: &Arc<AtomicU32>,
@@ -822,24 +823,59 @@ fn spawn_claude(
         child.stdout.take().context("the stdout of claude")?,
         child.stderr.take().context("the stderr of claude")?,
     );
-    let plan = plan.filter(|p| p.bundle.is_some()).cloned();
+    let plan = plan.filter(|p| p.bundle_file().is_some()).cloned();
     Ok(Child {
         stdin: Box::new(stdin),
         stdout: Box::new(stdout),
         stderr: Box::new(stderr),
         end: Box::pin(async move {
             let code = child.wait().await.ok().and_then(|s| s.code());
-            if let Some(plan) = plan {
-                match tokio::task::spawn_blocking(move || plan.bundle()).await {
-                    Ok(Ok(Some(bundle))) => eprintln!("{}", text::relay_bundled(&bundle)),
-                    Ok(Ok(None)) => {}
-                    Ok(Err(e)) => eprintln!("riff relay: {e:#}"),
-                    Err(e) => eprintln!("riff relay: {e}"),
-                }
+            match plan {
+                Some(plan) => tokio::task::spawn_blocking(move || bundle_after(&plan, code))
+                    .await
+                    .unwrap_or(Some(1)),
+                None => code,
             }
-            code
         }),
     })
+}
+
+/// Writes the bundle of the plan `plan` of a session with no GitHub
+/// after `claude` ended with `code` ([`crate::session_clone::Plan::bundle`]),
+/// and prints a line on stderr. It gives the exit code of the session:
+/// `code`, or 1 when the bundle failed and `claude` ended with 0 or with
+/// no code. So the error of a bundle is not lost.
+fn bundle_after(plan: &crate::session_clone::Plan, code: Option<i32>) -> Option<i32> {
+    match plan.bundle() {
+        Ok(Some(bundle)) => {
+            eprintln!("{}", text::relay_bundled(&bundle));
+            code
+        }
+        Ok(None) => code,
+        Err(e) => {
+            eprintln!("riff relay: {e:#}");
+            match code {
+                Some(code) if code != 0 => Some(code),
+                _ => Some(1),
+            }
+        }
+    }
+}
+
+/// Makes the clone of this session in its container from the plan in
+/// [`crate::session_clone::VAR`], and prints its line on stderr
+/// ([`crate::session_clone::Plan::make_line`], #2139). It gives the
+/// plan, or `None` with no plan. Both paths of the relay call it before
+/// `claude` starts: [`main`] and [`terminal`]. The relay of a takeover
+/// finds the clone there.
+pub fn clone_here() -> Result<Option<crate::session_clone::Plan>> {
+    let Some(plan) = crate::session_clone::Plan::here()? else {
+        return Ok(None);
+    };
+    if let Some(line) = plan.make_line()? {
+        eprintln!("{line}");
+    }
+    Ok(Some(plan))
 }
 
 /// `riff relay -- COMMAND`: starts `COMMAND` with the riff tools, and
@@ -857,16 +893,7 @@ pub async fn main(command: Vec<String>) -> Result<i32> {
     // not claude.
     let mut term = signal(SignalKind::terminate())?;
     let mut int = signal(SignalKind::interrupt())?;
-    // The session clones in its container before claude starts (#2139).
-    let plan = crate::session_clone::Plan::here()?;
-    if let Some(plan) = plan.clone() {
-        let made = tokio::task::spawn_blocking(move || plan.make_line())
-            .await
-            .map_err(|e| anyhow!("{e}"))??;
-        if let Some(line) = made {
-            eprintln!("{line}");
-        }
-    }
+    let plan = tokio::task::spawn_blocking(clone_here).await??;
     let pid = Arc::new(AtomicU32::new(0));
     let child = spawn_claude(&command, &pid, plan.as_ref())?;
     {
@@ -954,13 +981,8 @@ pub fn terminal(command: &[String]) -> anyhow::Error {
     let Some((program, args)) = command.split_first() else {
         return anyhow!("{}", text::RELAY_NO_COMMAND);
     };
-    // The session clones in its container before claude starts (#2139).
-    // The relay of a takeover finds the clone there.
-    let plan = crate::session_clone::Plan::here();
-    match plan.and_then(|plan| plan.map_or(Ok(None), |plan| plan.make_line())) {
-        Ok(Some(line)) => eprintln!("{line}"),
-        Ok(None) => {}
-        Err(e) => return e,
+    if let Err(e) = clone_here() {
+        return e;
     }
     let error = std::process::Command::new(program)
         .args(args)
@@ -1344,9 +1366,10 @@ mod tests {
         );
     }
 
-    /// #2139: for a session with no GitHub, the end of `claude` comes
-    /// after the bundle of its branch, so the daemon gets the exit when
-    /// the bundle is there.
+    /// #2139, 01M7EY3WHQQP9330CZ736HK0FJ: for a session with no GitHub,
+    /// the end of `claude` comes after the bundle of its branch, so the
+    /// daemon gets the exit when the bundle is there. When the bundle
+    /// fails, the end is 1, also after a `claude` that ended with 0.
     #[tokio::test]
     async fn the_end_of_claude_with_no_github_comes_after_the_bundle() {
         let dir = tempfile::tempdir().unwrap();
@@ -1367,25 +1390,34 @@ mod tests {
         let main = root.join("main");
         git(&main, &["commit", "-q", "--allow-empty", "-m", "one"]);
         git(&main, &["push", "-q", "origin", "HEAD:main"]);
-        git(&main, &["remote", "set-head", "origin", "main"]);
-        let bundle = root.join("out/worktree-issue-12.bundle");
-        let plan = crate::session_clone::Plan {
-            path: root.join("s/clone"),
-            origin: url,
-            reference: main.join(".git"),
-            checkout: crate::session_clone::Checkout::Branch("worktree-issue-12".into()),
-            bundle: Some(bundle.clone()),
+        let plan = |name: &str, bundle: PathBuf| crate::session_clone::Plan {
+            path: root.join(name).join("clone"),
+            origin: url.clone(),
+            main: main.join(".git"),
+            base: "main".into(),
+            checkout: crate::session_clone::Checkout::Branch {
+                name: "worktree-issue-12".into(),
+                earlier: false,
+                bundle: Some(bundle),
+            },
         };
-        plan.make().unwrap();
-        let script = format!(
-            "cd {} && git -c user.name=w -c user.email=w@w commit -q --allow-empty -m two",
-            plan.path.display()
-        );
-        let command: Vec<String> = ["sh", "-c", &script].map(String::from).into();
-        let pid = Arc::new(AtomicU32::new(0));
-        let child = spawn_claude(&command, &pid, Some(&plan)).unwrap();
-        assert_eq!(child.end.await, Some(0));
+        let end = |plan: &crate::session_clone::Plan| {
+            plan.make(false).unwrap();
+            let script = format!(
+                "cd {} && git -c user.name=w -c user.email=w@w commit -q --allow-empty -m two",
+                plan.path.display()
+            );
+            let command: Vec<String> = ["sh", "-c", &script].map(String::from).into();
+            let pid = Arc::new(AtomicU32::new(0));
+            spawn_claude(&command, &pid, Some(plan)).unwrap().end
+        };
+        let bundle = root.join("out/worktree-issue-12.bundle");
+        assert_eq!(end(&plan("s", bundle.clone())).await, Some(0));
         assert!(bundle.is_file(), "no bundle at the end of claude");
+        // The folder of the bundle is a file: the bundle fails.
+        std::fs::write(root.join("file"), "").unwrap();
+        let fails = plan("t", root.join("file/out/worktree-issue-12.bundle"));
+        assert_eq!(end(&fails).await, Some(1));
     }
 
     /// A fake daemon on a socket in a temp folder.

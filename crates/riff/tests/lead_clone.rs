@@ -39,9 +39,9 @@ fn facts(data: &Path) -> riff::run::Facts {
         user: "mike".into(),
         clone: data.join("leads/o-r/clone"),
         repo: "o/r".into(),
+        base: "main".into(),
         checkout: Checkout::Default,
-        bundle: None,
-        objects: "/src/r/.git/objects".into(),
+        main: "/src/r/.git".into(),
         claude: data.join("leads/o-r/claude"),
         sign_in: riff::run::ClaudeSignIn::Token,
         gitconfig: None,
@@ -82,7 +82,8 @@ fn the_lead_clones_in_its_container_on_the_default_branch() {
             .unwrap();
         assert_eq!(plan.path, facts.clone);
         assert_eq!(plan.origin, "https://github.com/o/r.git");
-        assert_eq!(plan.reference, Path::new("/src/r/.git"));
+        assert_eq!(plan.main, Path::new("/src/r/.git"));
+        assert_eq!(plan.base, "main");
         assert_eq!(plan.checkout, Checkout::Default);
         let args: Vec<String> = riff::podman::terminal_args(&spec)
             .unwrap()

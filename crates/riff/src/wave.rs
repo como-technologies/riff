@@ -1183,28 +1183,50 @@ impl Work {
     /// What the clone of the session of this work checks out, in its
     /// container ([`crate::session_clone`]): the branch of the item for a
     /// build, a rebase and a fix of the checks, and the head commit of the
-    /// look for a verify, detached (01M5QVARWYFHTQV5THNRB09SZA).
+    /// look for a verify, detached (01M5QVARWYFHTQV5THNRB09SZA). `earlier`
+    /// is the look of a build for its branch on `origin`
+    /// ([`run::earlier`]). A rebase and a fix of the checks have a pull
+    /// request, so their branch is on `origin`.
     ///
     /// ```
     /// use riff::session_clone::Checkout;
     /// use riff::wave::Work;
     ///
-    /// let branch = Checkout::Branch("worktree-issue-12".into());
-    /// assert_eq!(Work::Build { issue: 12 }.checkout(), branch);
+    /// let branch = |earlier| Checkout::Branch { name: "worktree-issue-12".into(), earlier, bundle: None };
+    /// assert_eq!(Work::Build { issue: 12 }.checkout(false), branch(false));
+    /// assert_eq!(Work::Build { issue: 12 }.checkout(true), branch(true));
     /// let rebase = Work::Rebase { issue: 12, pull: 40, commit: "1a2b".into() };
-    /// assert_eq!(rebase.checkout(), branch);
+    /// assert_eq!(rebase.checkout(false), branch(true));
     /// let verify = Work::Verify { issue: 12, pull: 40, commit: "1a2b".into() };
-    /// assert_eq!(verify.checkout(), Checkout::Pull { pull: 40, commit: "1a2b".into() });
+    /// assert_eq!(verify.checkout(false), Checkout::Pull { pull: 40, commit: "1a2b".into() });
     /// ```
-    pub fn checkout(&self) -> Checkout {
+    pub fn checkout(&self, earlier: bool) -> Checkout {
+        let branch = |issue: u64, earlier| Checkout::Branch {
+            name: branch_of(issue),
+            earlier,
+            bundle: None,
+        };
         match self {
-            Work::Verify { pull, commit, .. } => Checkout::Pull {
+            Work::Verify {
+                issue: _,
+                pull,
+                commit,
+            } => Checkout::Pull {
                 pull: *pull,
                 commit: commit.clone(),
             },
-            Work::Build { issue } | Work::Rebase { issue, .. } | Work::Checks { issue, .. } => {
-                Checkout::Branch(branch_of(*issue))
+            Work::Build { issue } => branch(*issue, earlier),
+            Work::Rebase {
+                issue,
+                pull: _,
+                commit: _,
             }
+            | Work::Checks {
+                issue,
+                pull: _,
+                commit: _,
+                checks: _,
+            } => branch(*issue, true),
         }
     }
 
@@ -4196,15 +4218,20 @@ impl Live {
             work.role(),
         )?;
         let (main, common) = run::main_clone(&wave.main)?;
+        // The one look for the branch of a build on `origin`: the start
+        // text and the clone of the session agree (01M7EY3P0Q8TQF5QRTRDWCYCTQ).
+        let earlier = match work {
+            Work::Build { issue } => {
+                let (main, branch) = (main.clone(), branch_of(*issue));
+                blocking(move || run::earlier(&main, &branch)).await?
+            }
+            Work::Rebase { .. } | Work::Checks { .. } | Work::Verify { .. } => true,
+        };
         let start = match work {
             Work::Build { issue } => {
                 let issue = *issue;
                 let branch = branch_of(issue);
                 let repo = wave.repo.clone();
-                let earlier = {
-                    let (main, branch) = (main.clone(), branch.clone());
-                    blocking(move || run::earlier(&main, &branch)).await?
-                };
                 let failed = blocking(move || {
                     let pulls = rollout::pulls(&forge(&repo), &repo)?;
                     Ok(failed_verify(&pulls, issue))
@@ -4266,9 +4293,9 @@ impl Live {
             user: host.user.clone(),
             clone,
             repo: wave.repo.clone(),
-            checkout: work.checkout(),
-            bundle: None,
-            objects: common.join("objects"),
+            base: base.to_owned(),
+            checkout: work.checkout(earlier),
+            main: common,
             claude,
             sign_in: host.claude.sign_in(),
             gitconfig: existing(host.home.join(".gitconfig")),

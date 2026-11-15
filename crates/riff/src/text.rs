@@ -7899,38 +7899,62 @@ pub fn run_start_no_github(
 
 /// The end of a session of `riff run --no-github`
 /// (01M6Z87JY83V3KR72E2AG8V8KG) with no pull request: it pushed nothing.
-/// The person pushes the branch `branch` from its bundle `bundle`, in a
-/// clone of their own. With no bundle, the session made no commit that
-/// `origin` does not have.
+/// The person pushes the branch `branch` from `bundle`: the copy of the
+/// bundle of the session that riff checked
+/// ([`crate::run::take_bundle`]), in a clone of their own. With no
+/// bundle, the session made no commit that `origin` does not have, or
+/// the relay could not write the bundle, and then ended with 1.
 ///
 /// ```
-/// let bundle = "/s/issue-12/out/worktree-issue-12.bundle";
+/// let bundle = "/s/issue-12/worktree-issue-12.bundle";
 /// assert_eq!(
 ///     riff::text::run_pushed_nothing(Some(bundle.as_ref()), "worktree-issue-12"),
-///     "The session had no GitHub, so it pushed nothing. Its commits are in the bundle \
-///      /s/issue-12/out/worktree-issue-12.bundle. Push them from your clone:\n  \
+///     "The session had no GitHub, so it pushed nothing. riff checked its bundle, and copied \
+///      it to /s/issue-12/worktree-issue-12.bundle. Push its commits from your clone:\n  \
 ///      git fetch origin\n  \
-///      git fetch /s/issue-12/out/worktree-issue-12.bundle worktree-issue-12\n  \
+///      git fetch /s/issue-12/worktree-issue-12.bundle worktree-issue-12\n  \
 ///      git push origin FETCH_HEAD:refs/heads/worktree-issue-12"
 /// );
 /// assert_eq!(
 ///     riff::text::run_pushed_nothing(None, "worktree-issue-12"),
-///     "The session had no GitHub, so it pushed nothing. It made no commit on worktree-issue-12 \
-///      that origin does not have."
+///     "The session had no GitHub, so it pushed nothing, and it left no bundle of \
+///      worktree-issue-12: it made no commit that origin does not have, or the relay could \
+///      not write the bundle and ended with 1."
 /// );
 /// ```
 pub fn run_pushed_nothing(bundle: Option<&Path>, branch: &str) -> String {
     let Some(bundle) = bundle else {
         return format!(
-            "The session had no GitHub, so it pushed nothing. It made no commit on {branch} that \
-             origin does not have."
+            "The session had no GitHub, so it pushed nothing, and it left no bundle of {branch}: \
+             it made no commit that origin does not have, or the relay could not write the \
+             bundle and ended with 1."
         );
     };
     let bundle = bundle.display();
     format!(
-        "The session had no GitHub, so it pushed nothing. Its commits are in the bundle {bundle}. \
-         Push them from your clone:\n  git fetch origin\n  git fetch {bundle} {branch}\n  \
-         git push origin FETCH_HEAD:refs/heads/{branch}"
+        "The session had no GitHub, so it pushed nothing. riff checked its bundle, and copied it \
+         to {bundle}. Push its commits from your clone:\n  git fetch origin\n  git fetch \
+         {bundle} {branch}\n  git push origin FETCH_HEAD:refs/heads/{branch}"
+    )
+}
+
+/// `riff run` refused the file `file` in the place of the bundle of a
+/// session with no GitHub, for the reason `why`
+/// ([`crate::run::take_bundle`]). The session can write that file, so
+/// riff ran no git on it.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::run_bundle_refused("/s/out/b.bundle".as_ref(), "it is no git bundle"),
+///     "The session had no GitHub, so it pushed nothing. riff refused the file \
+///      /s/out/b.bundle: it is no git bundle. riff ran no git on it."
+/// );
+/// ```
+pub fn run_bundle_refused(file: &Path, why: &str) -> String {
+    format!(
+        "The session had no GitHub, so it pushed nothing. riff refused the file {}: {why}. riff \
+         ran no git on it.",
+        file.display()
     )
 }
 
@@ -8027,9 +8051,24 @@ pub fn run_not_sent(item: &str, steps: &[&str]) -> String {
     )
 }
 
+/// The sentence about the clone of a session that ended with no open
+/// pull request: the clone went with the container
+/// (01M7EY51KJR7RT5TZJ4FX558NP). [`run_no_pull`] and [`wave_no_pull`]
+/// say it.
+pub const CLONE_WENT: &str =
+    "Its clone went with its container: only the work that it pushed stays.";
+
 /// A session of `riff run` with no open pull request.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::run_no_pull("worktree-issue-12"),
+///     "No open pull request has the branch worktree-issue-12. Its clone went with its \
+///      container: only the work that it pushed stays."
+/// );
+/// ```
 pub fn run_no_pull(branch: &str) -> String {
-    format!("No open pull request has the branch {branch}. The work is in the clone.")
+    format!("No open pull request has the branch {branch}. {CLONE_WENT}")
 }
 
 /// `riff run` lost the daemon before the end of its session: it waits
@@ -8585,8 +8624,8 @@ pub const RELAY_NO_COMMAND: &str =
     "riff relay needs the command of the session: riff relay -- claude -p ...";
 
 /// `riff relay` made the clone of its session in the container
-/// ([`crate::session_clone`]). `earlier` is true when the branch of the
-/// item was on `origin`.
+/// ([`crate::session_clone`]): from the main clone, and with `token`
+/// also from `origin`.
 ///
 /// ```
 /// use riff::session_clone::{Checkout, Plan};
@@ -8594,34 +8633,47 @@ pub const RELAY_NO_COMMAND: &str =
 /// let plan = |checkout| Plan {
 ///     path: "/s/clone".into(),
 ///     origin: "https://github.com/o/r.git".into(),
-///     reference: "/src/r/.git".into(),
+///     main: "/src/r/.git".into(),
+///     base: "main".into(),
 ///     checkout,
-///     bundle: None,
 /// };
-/// let branch = plan(Checkout::Branch("worktree-issue-12".into()));
+/// let branch = |earlier| Checkout::Branch { name: "worktree-issue-12".into(), earlier, bundle: None };
 /// assert_eq!(
-///     riff::text::relay_cloned(&branch, true),
-///     "riff relay: cloned https://github.com/o/r.git into /s/clone, on the branch \
-///      worktree-issue-12 of origin."
+///     riff::text::relay_cloned(&plan(branch(true)), true),
+///     "riff relay: cloned /src/r/.git and fetched https://github.com/o/r.git into /s/clone, \
+///      on the branch worktree-issue-12 of origin."
 /// );
-/// assert!(riff::text::relay_cloned(&branch, false).ends_with("on the new branch worktree-issue-12."));
+/// assert_eq!(
+///     riff::text::relay_cloned(&plan(branch(false)), false),
+///     "riff relay: cloned /src/r/.git into /s/clone, with no token for \
+///      https://github.com/o/r.git, on the new branch worktree-issue-12."
+/// );
 /// let pull = plan(Checkout::Pull { pull: 7, commit: "0123abcd".into() });
-/// assert!(riff::text::relay_cloned(&pull, false).ends_with("at 0123abcd, the head of pull request #7."));
-/// assert!(riff::text::relay_cloned(&plan(Checkout::Default), false).ends_with("on the default branch."));
+/// assert!(riff::text::relay_cloned(&pull, true).ends_with("at 0123abcd, the head of pull request #7."));
+/// assert!(riff::text::relay_cloned(&plan(Checkout::Default), true).ends_with("on the default branch main."));
 /// ```
-pub fn relay_cloned(plan: &crate::session_clone::Plan, earlier: bool) -> String {
+pub fn relay_cloned(plan: &crate::session_clone::Plan, token: bool) -> String {
     use crate::session_clone::Checkout;
     let on = match &plan.checkout {
-        Checkout::Default => "on the default branch".to_owned(),
-        Checkout::Branch(branch) if earlier => format!("on the branch {branch} of origin"),
-        Checkout::Branch(branch) => format!("on the new branch {branch}"),
+        Checkout::Default => format!("on the default branch {}", plan.base),
+        Checkout::Branch {
+            name,
+            earlier: true,
+            bundle: _,
+        } => format!("on the branch {name} of origin"),
+        Checkout::Branch {
+            name,
+            earlier: false,
+            bundle: _,
+        } => format!("on the new branch {name}"),
         Checkout::Pull { pull, commit } => format!("at {commit}, the head of pull request #{pull}"),
     };
-    format!(
-        "riff relay: cloned {} into {}, {on}.",
-        plan.origin,
-        plan.path.display()
-    )
+    let (main, origin, path) = (plan.main.display(), &plan.origin, plan.path.display());
+    if token {
+        format!("riff relay: cloned {main} and fetched {origin} into {path}, {on}.")
+    } else {
+        format!("riff relay: cloned {main} into {path}, with no token for {origin}, {on}.")
+    }
 }
 
 /// `riff relay` wrote the commits of a session with no GitHub in the
@@ -13419,8 +13471,7 @@ pub fn wave_wip_head(item: &str, number: u64, branch: &str, commit: &str, sessio
 pub fn wave_no_pull(item: &str, branch: &str) -> String {
     format!(
         "{item}: the session of the wave ended, and no open pull request has the branch \
-         {branch}. Its clone went with its container: only the work that it pushed stays. riff \
-         commits and pushes nothing. The item is free."
+         {branch}. {CLONE_WENT} riff commits and pushes nothing. The item is free."
     )
 }
 

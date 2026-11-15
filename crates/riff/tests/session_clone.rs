@@ -1,8 +1,10 @@
 //! Each session clones and pushes in its container (#2139). The host binds
 //! no git tree with write into a container: the clone of a session is an
-//! empty volume of its container, and the relay clones there before
-//! `claude` starts. The work of a session is what it pushed, and the next
-//! session of the item goes on from the branch on `origin`.
+//! empty volume of its container, and the relay clones there from the git
+//! dir of the main clone, with no write, before `claude` starts. With a
+//! token, it fetches `origin` too. The work of a session is what it
+//! pushed, and the next session of the item goes on from the branch on
+//! `origin`.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -59,9 +61,9 @@ fn facts(root: &Path, main: &Path, work: &Work) -> Facts {
         user: "mike".into(),
         clone: folder.join("clone"),
         repo: "o/r".into(),
-        checkout: work.checkout(),
-        bundle: None,
-        objects: main.join(".git/objects"),
+        base: "main".into(),
+        checkout: work.checkout(false),
+        main: main.join(".git"),
         claude: folder.join("claude"),
         sign_in: ClaudeSignIn::Token,
         gitconfig: None,
@@ -69,11 +71,11 @@ fn facts(root: &Path, main: &Path, work: &Work) -> Facts {
     }
 }
 
-/// #2139: the arguments of `podman` for a work session and a verify bind
-/// no git tree with write. The clone is a new volume of the container,
-/// the objects of the main clone have no write, and the plan of the clone
-/// names what the relay checks out: the branch of the item, or the head
-/// commit of the pull request.
+/// #2139, 01M7EY3P0Q8TQF5QRTRDWCYCTQ: the arguments of `podman` for a
+/// work session and a verify bind no git tree with write. The clone is a
+/// new volume of the container, the git dir of the main clone has no
+/// write, and the plan of the clone names what the relay checks out: the
+/// branch of the item, or the head commit of the pull request.
 #[test]
 fn the_podman_arguments_of_a_work_session_and_a_verify_have_no_writable_bind_of_a_git_tree() {
     let root = tempfile::tempdir().unwrap();
@@ -100,8 +102,8 @@ fn the_podman_arguments_of_a_work_session_and_a_verify_have_no_writable_bind_of_
             args.windows(2).any(|w| w[0] == "--mount" && w[1] == volume),
             "{args:?}"
         );
-        let objects = facts.objects.display().to_string();
-        let ro = format!("{objects}:{objects}:ro");
+        let git_dir = facts.main.display().to_string();
+        let ro = format!("{git_dir}:{git_dir}:ro");
         assert!(
             args.windows(2).any(|w| w[0] == "-v" && w[1] == ro),
             "{args:?}"
@@ -123,46 +125,98 @@ fn the_podman_arguments_of_a_work_session_and_a_verify_have_no_writable_bind_of_
             .unwrap();
         assert_eq!(plan.path, facts.clone);
         assert_eq!(plan.origin, "https://github.com/o/r.git");
-        assert_eq!(plan.reference, main.join(".git"));
-        assert_eq!(plan.checkout, work.checkout());
+        assert_eq!(plan.main, main.join(".git"));
+        assert_eq!(plan.checkout, work.checkout(false));
     }
 }
 
-/// Runs `riff relay --terminal -- sh -c SCRIPT` in the folder of the
-/// clone of `plan`, as the container runs it: the folder is there and
-/// empty, as a new volume is, and the plan is in [`VAR`].
-fn relay(env: &isolated::Isolated, plan: &Plan, script: &str) -> Output {
-    std::fs::create_dir_all(&plan.path).unwrap();
-    env.riff()
-        .args(["relay", "--terminal", "--", "sh", "-c", script])
-        .env(VAR, plan.to_var())
-        .current_dir(&plan.path)
-        .output()
-        .unwrap()
+/// A session of the test: the folder of its `gh`, with a token when
+/// `token` is true, and the git config of the person in its home.
+struct Session {
+    gh: PathBuf,
+    gitconfig: PathBuf,
 }
 
-/// #2139: the relay clones before `claude` starts, from `origin` with the
-/// objects of the main clone, on a new branch of the item. The session
-/// commits and pushes in its container, and `claude` does not get the
-/// plan. The next session of the item clones again, and goes on from the
-/// pushed branch. The relay of a takeover keeps the clone that is there.
+impl Session {
+    /// The session in `root`. The git config of the person has
+    /// `checkout.guess=false`: the start points of the clone are explicit.
+    fn new(root: &Path, token: bool) -> Session {
+        let gh = root.join(if token { "gh-token" } else { "gh-none" });
+        std::fs::create_dir_all(&gh).unwrap();
+        if token {
+            std::fs::write(gh.join(riff::daemon::gh_token::HOSTS), "github.com:\n").unwrap();
+        }
+        let gitconfig = root.join("gitconfig");
+        std::fs::write(&gitconfig, "[checkout]\n\tguess = false\n").unwrap();
+        Session { gh, gitconfig }
+    }
+
+    /// Runs `riff relay --terminal -- sh -c SCRIPT` in the folder of the
+    /// clone of `plan`, as the container runs it: with `RIFF_SOCKET`, the
+    /// folder is there and empty, as a new volume is, and the plan is in
+    /// [`VAR`].
+    fn relay(&self, env: &isolated::Isolated, plan: &Plan, script: &str) -> Output {
+        std::fs::create_dir_all(&plan.path).unwrap();
+        env.riff()
+            .args(["relay", "--terminal", "--", "sh", "-c", script])
+            .env(VAR, plan.to_var())
+            .env("RIFF_SOCKET", env.path().join("riff.sock"))
+            .env(riff::daemon::gh_token::CONFIG_VAR, &self.gh)
+            .env("GIT_CONFIG_GLOBAL", &self.gitconfig)
+            .current_dir(&plan.path)
+            .output()
+            .unwrap()
+    }
+}
+
+/// The plan of a clone of `main` at `path`, with `origin` at `url`.
+fn plan_at(path: PathBuf, url: &str, main: &Path, checkout: Checkout) -> Plan {
+    Plan {
+        path,
+        origin: url.to_owned(),
+        main: main.join(".git"),
+        base: "main".into(),
+        checkout,
+    }
+}
+
+/// The branch of issue 12, with no bundle.
+fn branch(earlier: bool) -> Checkout {
+    Checkout::Branch {
+        name: "worktree-issue-12".into(),
+        earlier,
+        bundle: None,
+    }
+}
+
+/// #2139, 01M7EY3P0Q8TQF5QRTRDWCYCTQ: the relay clones before `claude`
+/// starts, in the folder of the sessions, from the git dir of the main
+/// clone with no object copied, and with the token from `origin`, on a new
+/// branch of the item. The session commits and pushes in its container,
+/// and `claude` does not get the plan. The next session of the item
+/// clones again, and goes on from the pushed branch, also with
+/// `checkout.guess=false` in the git config of the person. The relay of a
+/// takeover keeps the clone that is there.
 #[test]
 fn a_session_clones_and_pushes_in_its_container_and_the_next_goes_on_from_the_branch() {
     let env = isolated::Isolated::new();
     let root = env.path().join("work");
     std::fs::create_dir_all(&root).unwrap();
     let (url, main) = origin_and_main(&root);
-    let plan = |name: &str| Plan {
-        path: root.join(name).join("clone"),
-        origin: url.clone(),
-        reference: main.join(".git"),
-        checkout: Checkout::Branch("worktree-issue-12".into()),
-        bundle: None,
+    let session = Session::new(&root, true);
+    let sessions = env.riff_home().join("sessions");
+    let plan = |name: &str, earlier| {
+        plan_at(
+            sessions.join(name).join("clone"),
+            &url,
+            &main,
+            branch(earlier),
+        )
     };
     let text = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
 
-    let first = plan("first");
-    let out = relay(
+    let first = plan("issue-12-1a2b3c4d", false);
+    let out = session.relay(
         &env,
         &first,
         "printf '%s' \"$RIFF_CLONE\" > ../env && echo two > a && \
@@ -171,17 +225,16 @@ fn a_session_clones_and_pushes_in_its_container_and_the_next_goes_on_from_the_br
     );
     assert!(out.status.success(), "{out:?}");
     assert!(
-        text(&out.stderr).contains(&riff::text::relay_cloned(&first, false)),
+        text(&out.stderr).contains(&riff::text::relay_cloned(&first, true)),
         "{out:?}"
     );
-    assert_eq!(std::fs::read_to_string(root.join("first/env")).unwrap(), "");
+    assert_eq!(
+        std::fs::read_to_string(first.path.parent().unwrap().join("env")).unwrap(),
+        ""
+    );
     let alternates =
         std::fs::read_to_string(first.path.join(".git/objects/info/alternates")).unwrap();
-    // git writes the real path of the main clone.
-    assert_eq!(
-        std::fs::canonicalize(alternates.trim()).unwrap(),
-        std::fs::canonicalize(main.join(".git/objects")).unwrap()
-    );
+    assert_eq!(Path::new(alternates.trim()), main.join(".git/objects"));
     let pushed = git(
         &main,
         &["ls-remote", "origin", "refs/heads/worktree-issue-12"],
@@ -190,15 +243,15 @@ fn a_session_clones_and_pushes_in_its_container_and_the_next_goes_on_from_the_br
     assert!(pushed.starts_with(&work), "{pushed}");
 
     // The next session: a new clone, on the pushed branch.
-    let next = plan("next");
-    let out = relay(&env, &next, "git log -1 --format=%s > ../seen");
+    let next = plan("issue-12-2b3c4d5e", true);
+    let out = session.relay(&env, &next, "git log -1 --format=%s > ../seen");
     assert!(out.status.success(), "{out:?}");
     assert!(
         text(&out.stderr).contains(&riff::text::relay_cloned(&next, true)),
         "{out:?}"
     );
     assert_eq!(
-        std::fs::read_to_string(root.join("next/seen")).unwrap(),
+        std::fs::read_to_string(next.path.parent().unwrap().join("seen")).unwrap(),
         "WIP: two\n"
     );
     assert_eq!(git(&next.path, &["rev-parse", "HEAD"]), work);
@@ -206,32 +259,58 @@ fn a_session_clones_and_pushes_in_its_container_and_the_next_goes_on_from_the_br
     // A takeover runs the relay again in the same container: the clone
     // stays as it is.
     std::fs::write(next.path.join("mine"), "").unwrap();
-    let out = relay(&env, &next, "true");
+    let out = session.relay(&env, &next, "true");
     assert!(out.status.success(), "{out:?}");
     assert!(!text(&out.stderr).contains("cloned"), "{out:?}");
     assert!(next.path.join("mine").exists());
 }
 
-/// #2139: a clone that fails starts no command, and the error names the
-/// step.
+/// #2139, 01M7EY3P0Q8TQF5QRTRDWCYCTQ: a session with no token, a lead with
+/// no token of an App or a session of `riff run --no-github`, fetches
+/// nothing from GitHub. So it starts on a private repository too: here an
+/// `origin` that asks for a sign-in that the session does not have. Its
+/// clone starts from the main clone.
+#[test]
+fn a_session_with_no_token_starts_from_the_main_clone_on_a_private_repository() {
+    let env = isolated::Isolated::new();
+    let root = env.path().join("work");
+    std::fs::create_dir_all(&root).unwrap();
+    let (_, main) = origin_and_main(&root);
+    let private = "https://github.com/como-technologies/no-such-private-repo.git";
+    let lead = plan_at(
+        env.riff_home().join("leads/o-r/clone"),
+        private,
+        &main,
+        Checkout::Default,
+    );
+    let out = Session::new(&root, false).relay(&env, &lead, "git log -1 --format=%s > ../seen");
+    assert!(out.status.success(), "{out:?}");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains(&riff::text::relay_cloned(&lead, false)),
+        "{out:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(env.riff_home().join("leads/o-r/seen")).unwrap(),
+        "one\n"
+    );
+}
+
+/// #2139: a clone that fails starts no command, the error names the step,
+/// and the folder of the clone is empty again.
 #[test]
 fn a_clone_that_fails_starts_no_command() {
     let env = isolated::Isolated::new();
     let root = env.path().join("work");
     std::fs::create_dir_all(&root).unwrap();
     let (_, main) = origin_and_main(&root);
-    let plan = Plan {
-        path: root.join("s/clone"),
-        origin: format!("file://{}", root.join("none.git").display()),
-        reference: main.join(".git"),
-        checkout: Checkout::Default,
-        bundle: None,
-    };
-    let out = relay(&env, &plan, "touch ../ran");
+    let none = format!("file://{}", root.join("none.git").display());
+    let plan = plan_at(root.join("s/clone"), &none, &main, Checkout::Default);
+    let out = Session::new(&root, true).relay(&env, &plan, "touch ../ran");
     assert!(!out.status.success(), "{out:?}");
     assert!(
-        String::from_utf8_lossy(&out.stderr).contains("clone -q --reference"),
+        String::from_utf8_lossy(&out.stderr).contains("fetch -q --prune origin"),
         "{out:?}"
     );
     assert!(!root.join("s/ran").exists());
+    assert_eq!(std::fs::read_dir(&plan.path).unwrap().count(), 0);
 }
