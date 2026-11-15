@@ -10202,14 +10202,14 @@ that builds it merges.
 - **01M7FYVHB1APFXPXA71PMD18EH** The Decisions tab of the TUI lists each
   open issue with the label `question` or `design` of each project of
   the person, the projects of the Waves tab: in a wave, in the Backlog,
-  or with no milestone. Each row shows the number, the wave or
-  `Backlog`, the title, the labels, and each person that a heading
-  `Questions for PERSON` of the body names. The rows whose questions
-  name the person of the TUI come first, under `QUESTIONS FOR PERSON`,
-  and the others after them, under `OTHER DECISIONS`. In each part, the
-  rows go in the order of the waves, then the Backlog, then the other
-  milestones, then no milestone, and in number order. With more than one
-  project, an item names its repository, as `riff#2173`. While the tab
+  or in neither. Each row shows the number, the wave or `Backlog`, the
+  title, the labels, and each person that a heading `Questions for
+  PERSON` of the body names. The rows whose questions name the person
+  of the TUI come first, under `QUESTIONS FOR PERSON`, and the others
+  after them, under `OTHER DECISIONS`. In each part, the rows go in the
+  order of the waves, then the Backlog, then the others, and in number
+  order. With more than one project, an item names its repository, as
+  `riff#2173`. While the tab
   shows, the TUI reads the open issues with the conditional REST read of
   the Waves tab, and no other call: when the tab opens, each 60 seconds,
   at once on `r`, and soon after a wake of GitHub. An issue whose labels

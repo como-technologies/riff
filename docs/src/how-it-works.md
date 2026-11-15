@@ -6011,9 +6011,9 @@ flowchart LR
 
 The Decisions tab shows each decision that waits for a person in one
 place: each open issue with the label `question` or `design`, in a
-wave, in the Backlog, or with no milestone. It shows the issues of
-your projects, the same projects as the Waves tab. Run riff with no
-command, and press `7` for the Decisions tab:
+wave, in the Backlog, or in neither. It shows the issues of your
+projects, the same projects as the Waves tab. Run riff with no command,
+and press `7` for the Decisions tab:
 
 ```sh
 riff
@@ -6042,7 +6042,7 @@ other decisions come after them:
   the same name.
 - `?` marks an issue with the label `question`. `·` marks a design
   issue with no open question.
-- `WAVE` is `Wave N`, `Backlog`, or `-` for an issue with no milestone.
+- `WAVE` is `Wave N`, `Backlog`, or `-` for an issue in neither.
   In each part, the current wave comes first, then the later waves,
   then the Backlog.
 - With more than one project, the item names its repository, as

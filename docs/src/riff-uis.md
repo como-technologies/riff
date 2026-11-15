@@ -163,7 +163,7 @@ tab comes with a build item:
 | [D #1639](https://github.com/como-technologies/riff/issues/1639) | 4 Machines: the numbers of each host, the link and riff-server, the limit of a host, and the filter of the hosts (#1702). Built: see [See the hosts in the TUI](how-it-works.md#see-the-hosts-in-the-tui) and [Filter the hosts in the TUI](how-it-works.md#filter-the-hosts-in-the-tui). |
 | [G #1642](https://github.com/como-technologies/riff/issues/1642) | 5 Devices: list the devices, add one with a QR code, remove one. |
 | [F #1641](https://github.com/como-technologies/riff/issues/1641) | 6 Reports: the usage, the audit and the log of a session. Built: see [See the tokens in the TUI](development.md#see-the-tokens-in-the-tui), [Audit a wave in the TUI](development.md#audit-a-wave-in-the-tui) and [See the events in the TUI](development.md#see-the-events-in-the-tui). |
-| [#2188](https://github.com/como-technologies/riff/issues/2188) | 7 Decisions: each open issue with the label `question` or `design`, in a wave, in the Backlog or with no milestone, the questions for you first. Built: see [Work through the decisions in the TUI](how-it-works.md#work-through-the-decisions-in-the-tui). |
+| [#2188](https://github.com/como-technologies/riff/issues/2188) | 7 Decisions: each open issue with the label `question` or `design`, in a wave, in the Backlog or in neither, the questions for you first. Built: see [Work through the decisions in the TUI](how-it-works.md#work-through-the-decisions-in-the-tui). |
 
 Until its build item merges, the Devices tab says that it is not built
 yet.
