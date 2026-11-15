@@ -316,36 +316,47 @@
   when"; a security fault; a finding of the last verify that stays; a
   fault that the verifier shows in the diff since the head of the last
   verify. The verifier puts each other finding that it shows in the part
-  `## New findings` of its result, one line each. Supersedes
+  `## New findings` of its result, one list item each. Supersedes
   01M7CFBZQ0QNE65WBQ31FSDWGR in part: the verify of a fix head.
 - **01M7GDQWGCBVJE6S4MJDEJ6P8T** The riff daemon reads the head of the
-  last verify of a pull request in its newest comment `verify result:`.
-  The commit of that comment is a hash of 7 to 40 hex digits. The
-  comment counts only when the status `riff/verify` of its commit is a
-  failure and links to that comment. When that verify failed at another
-  commit, the head now is a fix head. The start text of its verify says
-  the rule of a fix head, gives the head of the last verify, and gives
-  the command of the diff since it. The start text of each other verify
-  has no such part. When riff cannot read the comments or the status,
-  the verify is a first verify.
+  last verify of a pull request one time, at the start of its verify, in
+  the newest comment `verify result:` of the account of the report: the
+  account of the writes of the daemon. riff takes no comment of another
+  account. The commit of that comment is a hash of 7 to 40 hex digits.
+  The comment counts only when the newest status `riff/verify` of its
+  commit is a failure that the same account set, with a link to that
+  comment. When that verify failed at another commit, the head now is a
+  fix head. The start text of its verify says the rule of a fix head,
+  gives the head of the last verify, and gives the command of the diff
+  since it. The start text of each other verify has no such part. When
+  riff cannot read the comments or the status, the verify is a first
+  verify.
 - **01M7GDQWK92WWTTE361JGWDVGY** The report of the verify of a fix head
-  files each line of the part `## New findings` of the result as an
+  files each list item of the part `## New findings` of the result as an
   issue of its own, in the Backlog, with the line `Found by: #PR`. The
-  report checks again that the head is a fix head, so the report of a
-  first verify files nothing. When the repository has no open Backlog,
-  the issue is in no wave and not in the Backlog. The report files them
-  after the checks of a pass and before the comment. In the comment and
-  in the post of the result, each such line starts with the number of
-  its issue, `#N: `. riff files no line that starts so.
+  daemon keeps the head of the last verify from the start of the verify
+  in the folder of the session, and its report takes it from there: the
+  report reads no comment again. `riff verify` by hand reads the last
+  verify when it reports. The report of a first verify files nothing.
+  When the repository has no open Backlog, the issue is in no wave and
+  not in the Backlog. The report files them after the checks of a pass
+  and before the comment. In the comment and in the post of the result,
+  each such line starts with the number of its issue, `#N: `. riff files
+  no line that starts so. When GitHub refuses an issue, not on a limit,
+  its line stays with no issue, and the report goes on. A limit stops
+  the report.
 - **01M7GKK1C6SG8NKFEDV5XRYX17** The report of a verify files at most 10
-  lines of the part `## New findings` of one result: the first 10 list
-  items, filed or not. A list item is a list mark, then a space or a
-  tab, then the finding. Each line after them stays in the result with
-  no issue.
+  list items of the part `## New findings` of one result: the first 10
+  list items, filed or not. A list item is a list mark, then a space or
+  a tab, then the finding. Each list item after them stays in the result
+  with no issue, and so does each line with no list mark.
 - **01M7GKK1F8FTWX2C2NEGW8JAX1** `riff verify` writes the number of the
-  issue of each line of `## New findings` that it files into the file of
-  `--file`, also when the report fails after the filing. A second run
-  with the same file files no line twice.
+  issue of each list item of `## New findings` that it files into the
+  file of `--file`, also when the report fails after the filing. A
+  second run with the same file files no line twice. riff does not write
+  through a link at that file: it writes a new file and renames it. When
+  riff cannot write the file, it prints each line that it filed, with
+  the number of its issue.
 - **01M7GKK1J8PWKH0GQPD490KR6D** The body of the issue of a new finding
   has the finding as its first line and the line `Found by: #PR` as its
   last line. No error of the filing holds the text of the finding.

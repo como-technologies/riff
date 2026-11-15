@@ -16,7 +16,9 @@
 //! sweep removes it when the pull request merges or closes
 //! ([`crate::daemon::sweep`]). The report of a kept PASS reads the council
 //! of the pull request in the main clone of the wave, never in the clone
-//! of the folder ([`crate::pr::report`], 01M7DZ4E5BZAD38E3K9A3N277E).
+//! of the folder ([`crate::pr::report`], 01M7DZ4E5BZAD38E3K9A3N277E). The
+//! report of a kept result of a fix head takes the head of the last verify
+//! from the folder too ([`crate::wave::LAST_HEAD`]), as the end step does.
 //!
 //! ```mermaid
 //! flowchart TD
@@ -171,7 +173,7 @@ async fn report_one(
         return Ok(text::wave_kept_dropped(item, *pull, commit));
     }
     let (reported, result) =
-        crate::wave::report(gh, wave, (*pull, commit), *verdict, result.clone()).await;
+        crate::wave::report(gh, wave, folder, (*pull, commit), *verdict, result.clone()).await;
     let thread = wave.thread()?;
     let reported = match reported {
         Ok(reported) => reported,

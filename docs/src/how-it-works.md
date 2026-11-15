@@ -3711,19 +3711,25 @@ So each fix only has to fix the faults of the last verify, and the
 verifies of a pull request come to an end. The first verify of a pull
 request fails on each finding that the verifier shows.
 
-The riff daemon finds the head of the last verify in the newest
-comment `verify result:` of the pull request. Each account can write a
-comment. So the comment counts only when the status `riff/verify` of
-its commit is a failure and links to that comment. Only an account
-that can push sets a status, and the report of a verify sets it with
-the link to its comment. When that verify failed at another commit,
-the head now is a fix head. Then the start text of the verify gives
-the rule, the head of the last verify, and the diff since it, for
-example `git diff 9f8e7d6 HEAD`. When riff cannot read the comments or
-the status, the verify is a first verify.
+At the start of a verify, the riff daemon finds the head of the last
+verify in the newest comment `verify result:` of the account of riff:
+the lead App `riff-OWNER-lead`, or your account when the riff has no
+lead App on the repository. riff takes no comment of another account.
+The comment counts only when the newest status `riff/verify` of its
+commit is a failure that the same account set, with a link to that
+comment. When that verify failed at another commit, the head now is a
+fix head. Then the start text of the verify gives the rule, the head
+of the last verify, and the diff since it, for example
+`git diff 9f8e7d6 HEAD`. When riff cannot read the comments or the
+status, the verify is a first verify.
+
+The daemon keeps that head in the folder of the session, and the
+report of the verify takes it from there. So the verifier and the
+report use the same rule, also when a new comment comes while the
+verify runs.
 
 The verifier puts each other finding that it shows in the part
-`## New findings` of its result, one line each, in the form of a
+`## New findings` of its result, one list item each, in the form of a
 finding of the council:
 
 ```markdown
@@ -3732,42 +3738,61 @@ finding of the council:
 - crates/riff/src/text.rs:120: .riff/council/docs.md "No stale text": the rustdoc names an old flag.
 ```
 
-The report of the verify of a fix head files each line as an issue of
-its own in the Backlog, with the line `Found by: #40`. Then the line in
-the result names its issue: `- #77: crates/riff/src/text.rs:120: ...`.
-riff files no line that names an issue already. It files only the
-first 10 lines of a result: each line after them stays in the result
-with no issue. The report checks again that the head is a fix head, so
-the report of a first verify files nothing. When the repository has no
-open Backlog, the issue is in no wave and not in the Backlog. A pass
-that riff refuses files nothing.
+The report of the verify of a fix head files each list item as an
+issue of its own in the Backlog, with the line `Found by: #40`. Then
+the line in the result names its issue:
+`- #77: crates/riff/src/text.rs:120: ...`. riff files no line that
+names an issue already, and no line with no list mark. It files only
+the first 10 list items of a result: each list item after them stays
+in the result with no issue. The report of a first verify files
+nothing. When the repository has no open Backlog, the issue is in no
+wave and not in the Backlog. A pass that riff refuses files nothing.
+When GitHub refuses an issue, not on a limit, its line stays with no
+issue, and the report goes on.
 
-`riff verify` by hand files the lines in the same way. It writes the
-number of each issue into the file of `--file`, also when the report
-fails after the filing. So a second run with the same file files no
-line twice.
+`riff verify` by hand files the list items in the same way. It reads
+the last verify when it reports. It writes the number of each issue
+into the file of `--file`, also when the report fails after the
+filing. So a second run with the same file files no line twice.
 
 ```mermaid
 flowchart TD
-    H["a new head of PR #40"] --> L{"the newest comment verify result:<br/>a FAIL of another commit,<br/>whose riff/verify failure<br/>links to that comment?"}
+    H["a new head of PR #40"] --> L{"the newest comment verify result:<br/>of the account of riff, a FAIL of another commit,<br/>whose riff/verify failure of that account<br/>links to that comment?"}
     L -- "no" --> F["a first verify: each shown finding fails it"]
     L -- "yes" --> X["the verify of a fix head:<br/>the start text gives the rule<br/>and git diff LAST HEAD"]
     X --> K{"a shown finding is a criterion,<br/>a security fault, a finding that stays,<br/>or in the diff since LAST?"}
     K -- "yes" --> T["it fails the verify"]
     K -- "no" --> N["the part ## New findings"]
-    N --> I["the report files the first 10 lines:<br/>issues in the Backlog, Found by: #40"]
+    N --> I["the report files the first 10 list items:<br/>issues in the Backlog, Found by: #40"]
     I --> R["the result names each issue: #77"]
+```
+
+##### Run riff verify again when it cannot write the file
+
+riff does not write through a link at the file of `--file`. When riff
+cannot write the file, for example when it is a link, the report goes
+on, and riff prints each line that it filed, with the number of its
+issue. Put those lines into the file in place of the old lines. Then
+a second run files no line twice:
+
+```sh
+riff verify fail 40 --file result.md
 ```
 
 ##### List the issues that the verifies of a pull request filed
 
 The line `Found by: #40` is the last line of the body of each issue that
-the verifies of pull request 40 filed. A finding can name another pull
-request, so the command keeps only the issues whose last line names
-pull request 40:
+the verifies of pull request 40 filed. Each account can open an issue
+with that line, and a finding can name another pull request. So the
+command keeps only the issues of the account of riff whose last line
+names pull request 40. Put the owner of the repository in place of
+`OWNER`. When the riff has no lead App on the repository, put your
+account in place of `app/riff-OWNER-lead`. A search of GitHub gives
+at most 1000 issues, and `gh issue list` gives 30 with no `--limit`:
 
 ```sh
-gh issue list --state all --search '"Found by: #40" in:body' --json number,title,body \
+gh issue list --state all --limit 1000 --json number,title,body \
+  --search '"Found by: #40" in:body author:app/riff-OWNER-lead' \
   --jq '.[] | select(.body | test("\nFound by: #40\\s*$")) | "#\(.number) \(.title)"'
 ```
 

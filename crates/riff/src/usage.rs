@@ -1127,7 +1127,7 @@ impl<'a> Forge<'a> {
     /// GitHub App, with no call to GitHub, else `gh api user`. A `gh` that
     /// writes as the daemon writes as its bot
     /// ([`Gh::writer`], 01M6XZJFE2ZTR5RE3AWM30R704).
-    fn login(&self) -> Result<String> {
+    pub fn login(&self) -> Result<String> {
         if let Some(bot) = self.gh.writer() {
             return Ok(text::forge(bot));
         }

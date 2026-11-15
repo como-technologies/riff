@@ -12,10 +12,11 @@
 //! of the verify of a fix head ([`crate::pr::report`]) files each such
 //! finding as an issue of its own ([`file()`]), and writes the number of
 //! its issue before it: `- #77: src/a.rs:12: ...`. A finding that starts
-//! so is filed already. The daemon keeps the result with the numbers
-//! when the report fails on a limit ([`crate::kept`]), and `riff verify`
-//! writes them into the file of `--file`, so a second report of the same
-//! result files nothing twice.
+//! so is filed already. A filing that GitHub refuses, not on a limit,
+//! leaves its line as it is, with no issue. The daemon keeps the result
+//! with the numbers when the report fails on a limit ([`crate::kept`]),
+//! and `riff verify` writes them into the file of `--file`, so a second
+//! report of the same result files nothing twice.
 //!
 //! Only the first [`MOST`] list items of the parts count, filed or not
 //! (01M7GKK1C6SG8NKFEDV5XRYX17): a result can file no more issues than
@@ -45,7 +46,7 @@
 //! let mut result = "FAIL\n\n## New findings\n\n- src/a.rs:12: the rustdoc names an old flag.\n\
 //!                   - #70: src/b.rs:3: a test gap.\n".to_owned();
 //! assert_eq!(unfiled(&result), ["src/a.rs:12: the rustdoc names an old flag."]);
-//! file(&mut result, |_| Ok(77))?;
+//! file(&mut result, |_| Ok(Some(77)))?;
 //! assert!(result.ends_with("- #77: src/a.rs:12: the rustdoc names an old flag.\n- #70: src/b.rs:3: a test gap.\n"));
 //! assert!(unfiled(&result).is_empty());
 //! # Ok::<(), anyhow::Error>(())
@@ -73,33 +74,35 @@ pub fn unfiled(result: &str) -> Vec<&str> {
         .collect()
 }
 
-/// Files each finding of [`unfiled`] with `issue`, which gives the number
-/// of its issue, and writes `#N: ` before the finding in its line. It
-/// writes each number in `result` as it goes: at the first fault of
-/// `issue`, it stops and gives the fault, and each line before it keeps
-/// its number.
+/// Files each finding of [`unfiled`] with `issue`, and writes `#N: `
+/// before the finding in its line. `issue` gives the number of the issue
+/// of a finding, or `None` when it filed no issue: then the line stays as
+/// it is. It writes each number in `result` as it goes: at the first
+/// fault of `issue`, it stops and gives the fault, and each line before
+/// it keeps its number.
 ///
 /// ```
 /// use riff::council::found::file;
 ///
-/// let mut result = "## New findings\n\n- one.\n- two.\n- three.\n".to_owned();
+/// let mut result = "## New findings\n\n- one.\n- two.\n- three.\n- four.\n".to_owned();
 /// let mut next = 76;
 /// let fault = file(&mut result, |finding| {
 ///     next += 1;
 ///     match finding {
-///         "two." => anyhow::bail!("HTTP 502"),
-///         _ => Ok(next),
+///         "two." => Ok(None),
+///         "three." => anyhow::bail!("HTTP 403: API rate limit exceeded"),
+///         _ => Ok(Some(next)),
 ///     }
 /// });
-/// assert_eq!(fault.unwrap_err().to_string(), "HTTP 502");
-/// assert_eq!(result, "## New findings\n\n- #77: one.\n- two.\n- three.\n");
+/// assert_eq!(fault.unwrap_err().to_string(), "HTTP 403: API rate limit exceeded");
+/// assert_eq!(result, "## New findings\n\n- #77: one.\n- two.\n- three.\n- four.\n");
 /// ```
-pub fn file(result: &mut String, mut issue: impl FnMut(&str) -> Result<u64>) -> Result<()> {
+pub fn file(result: &mut String, mut issue: impl FnMut(&str) -> Result<Option<u64>>) -> Result<()> {
     let mut out = String::with_capacity(result.len());
     let mut fault = None;
     for (line, found) in lines(result) {
         match found.filter(|_| fault.is_none()).map(|f| (f, issue(f))) {
-            Some((finding, Ok(number))) => {
+            Some((finding, Ok(Some(number)))) => {
                 let at = line.trim_end().len() - finding.len();
                 out.push_str(&format!("{}#{number}: {}", &line[..at], &line[at..]));
             }
@@ -107,7 +110,7 @@ pub fn file(result: &mut String, mut issue: impl FnMut(&str) -> Result<u64>) -> 
                 fault = Some(e);
                 out.push_str(line);
             }
-            None => out.push_str(line),
+            Some((_, Ok(None))) | None => out.push_str(line),
         }
     }
     *result = out;
@@ -194,7 +197,7 @@ mod tests {
     fn a_filed_line_keeps_its_mark_and_its_end() {
         let mut result = "## New findings\r\n\r\n  * one.\r\n10. two.".to_owned();
         let mut numbers = [12, 13].into_iter();
-        file(&mut result, |_| Ok(numbers.next().unwrap())).unwrap();
+        file(&mut result, |_| Ok(numbers.next())).unwrap();
         assert_eq!(
             result,
             "## New findings\r\n\r\n  * #12: one.\r\n10. #13: two."
@@ -211,14 +214,14 @@ mod tests {
     fn a_second_report_files_only_the_rest() {
         let mut result = "## New findings\n\n- one.\n- two.\n".to_owned();
         let fault = file(&mut result, |finding| match finding {
-            "one." => Ok(77),
+            "one." => Ok(Some(77)),
             _ => anyhow::bail!("the limit is out"),
         });
         assert!(fault.is_err());
         let mut asked = Vec::new();
         file(&mut result, |finding| {
             asked.push(finding.to_owned());
-            Ok(78)
+            Ok(Some(78))
         })
         .unwrap();
         assert_eq!(asked, ["two."]);
@@ -239,7 +242,7 @@ mod tests {
         let mut next = 76;
         file(&mut result, |_| {
             next += 1;
-            Ok(next)
+            Ok(Some(next))
         })
         .unwrap();
         assert_eq!(next, 76 + 9);

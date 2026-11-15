@@ -5571,24 +5571,49 @@ pub fn verify_not_posted(verdict: Verdict, number: u64, done: &Reported, error: 
     )
 }
 
-/// The line of `riff verify` when it cannot write the issues of the new
-/// findings into the file of the result `file` (01M7GKK1F8FTWX2C2NEGW8JAX1).
+/// The line of `riff verify` when it cannot read the last verify of the
+/// pull request `number`, on the fault `error`
+/// (01M7GDQWGCBVJE6S4MJDEJ6P8T): the verify is a first verify, so riff
+/// files no new finding.
 ///
 /// ```
-/// let error = std::io::Error::other("the disk is full");
+/// let error = anyhow::anyhow!("gh: Bad credentials (HTTP 401)");
 /// assert_eq!(
-///     riff::text::verify_file_not_written(std::path::Path::new("r.md"), &error),
-///     "riff verify: riff filed issues for the new findings, but cannot write their numbers \
-///      into r.md: the disk is full. Put each number before its line, as #77:, before you run \
-///      riff verify again."
+///     riff::text::verify_no_last(40, &error),
+///     "riff verify: riff cannot read the last verify of pull request #40: gh: Bad credentials \
+///      (HTTP 401). So this verify is a first verify, and riff files no new finding."
 /// );
 /// ```
-pub fn verify_file_not_written(file: &Path, error: &std::io::Error) -> String {
+pub fn verify_no_last(number: u64, error: &anyhow::Error) -> String {
+    format!(
+        "riff verify: riff cannot read the last verify of pull request #{number}: {error:#}. So \
+         this verify is a first verify, and riff files no new finding."
+    )
+}
+
+/// The message of `riff verify` when it cannot write the issues of the
+/// new findings into the file of the result `file`, on the fault `error`
+/// (01M7GKK1F8FTWX2C2NEGW8JAX1), for example a link at `file`
+/// ([`crate::host_file::write`]): it gives each line that riff filed,
+/// with the number of its issue, `lines`.
+///
+/// ```
+/// let error = anyhow::anyhow!("r.md is a link.");
+/// assert_eq!(
+///     riff::text::verify_file_not_written(std::path::Path::new("r.md"), &error, &["- #77: one."]),
+///     "riff verify: riff filed issues for the new findings, but cannot write their numbers \
+///      into r.md: r.md is a link. Put these lines into r.md in place of their old lines before \
+///      you run riff verify again:\n- #77: one."
+/// );
+/// ```
+pub fn verify_file_not_written(file: &Path, error: &anyhow::Error, lines: &[&str]) -> String {
+    let (file, error) = (file.display(), format!("{error:#}"));
     format!(
         "riff verify: riff filed issues for the new findings, but cannot write their numbers \
-         into {}: {error}. Put each number before its line, as #77:, before you run riff verify \
-         again.",
-        file.display()
+         into {file}: {}. Put these lines into {file} in place of their old lines before you run \
+         riff verify again:\n{}",
+        error.trim_end_matches('.'),
+        lines.join("\n")
     )
 }
 
@@ -7717,11 +7742,23 @@ pub fn verify_control(base: &str, commit: &str) -> String {
     )
 }
 
+/// The words of step 9 of the start text of a verify for a finding that
+/// the verifier shows ([`verify_first_rule`], [`verify_fix_rule`]).
+const VERIFY_SHOWN: &str = "finding that you show, with a test, a run or a read of the code,";
+
 /// The rule of step 9 of the start text of a verify that is not of a fix
 /// head ([`wave_verify_start`], 01M7CFBZQ0QNE65WBQ31FSDWGR): each shown
 /// finding fails the verify.
-pub const VERIFY_FIRST_RULE: &str =
-    "A finding that you show, with a test, a run or a read of the code, fails the verify.";
+///
+/// ```
+/// assert_eq!(
+///     riff::text::verify_first_rule(),
+///     "A finding that you show, with a test, a run or a read of the code, fails the verify."
+/// );
+/// ```
+pub fn verify_first_rule() -> String {
+    format!("A {VERIFY_SHOWN} fails the verify.")
+}
 
 /// The last sentence of step 9 of each start text of a verify
 /// ([`wave_verify_start`], 01M7CFBZQ0QNE65WBQ31FSDWGR), after the rule.
@@ -7753,25 +7790,28 @@ pub fn verify_fix_diff(last: &str) -> String {
 /// 01M7GDQWDA1Z08V4EDMP255ZF1): a shown finding fails the verify only on a
 /// criterion, a security fault, a finding of the last verify that stays,
 /// or a fault in the diff since `last`. Each other shown finding goes in
-/// the part `## New findings`, and the report files the first
+/// the part `## New findings`, one list item each
+/// ([`crate::markdown::list_item`]), and the report files the first
 /// [`crate::council::found::MOST`] of them (01M7GKK1C6SG8NKFEDV5XRYX17).
 /// [`VERIFY_NOT_SHOWN`] comes after it.
 ///
 /// ```
 /// let rule = riff::text::verify_fix_rule(40, "9f8e7d6c5b4a");
+/// assert!(rule.starts_with("This head is a fix, so a finding that you show, with a test, a run or a read of the code, fails the verify only when"));
 /// assert!(rule.contains("fails the verify only when it is one of these: a fail of a criterion of \"Done when\"; a security fault; a finding of the last verify that stays; a fault in the diff since 9f8e7d6c5b4a."));
-/// assert!(rule.contains("Put each other finding that you show in the part `## New findings` of your result, one line each"));
-/// assert!(rule.ends_with("riff files the first 10 lines, each as an issue of its own in the Backlog, with the line `Found by: #40`, and names the issue in the result."));
+/// assert!(rule.contains("Put each other finding that you show in the part `## New findings` of your result, one list item each: `- ` and then the finding"));
+/// assert!(rule.ends_with("riff files the first 10 list items, each as an issue of its own in the Backlog, with the line `Found by: #40`, and names the issue in the result. A line with no list mark gets no issue."));
 /// ```
 pub fn verify_fix_rule(pull: u64, last: &str) -> String {
     format!(
-        "This head is a fix, so a finding that you show, with a test, a run or a read of the code, \
-         fails the verify only when it is one of these: a fail of a criterion of \"Done when\"; a \
-         security fault; a finding of the last verify that stays; a fault in the diff since \
-         {last}. Put each other finding that you show in the part `{}` of your result, one line \
-         each, as a finding of the council: the file, the line, the rule and the fault. riff \
-         files the first {} lines, each as an issue of its own in the Backlog, with the line \
-         `{FOUND_BY} #{pull}`, and names the issue in the result.",
+        "This head is a fix, so a {VERIFY_SHOWN} fails the verify only when it is one of these: a \
+         fail of a criterion of \"Done when\"; a security fault; a finding of the last verify \
+         that stays; a fault in the diff since {last}. Put each other finding that you show in \
+         the part `{}` of your result, one list item each: `- ` and then the finding, as a \
+         finding of the council: the file, the line, the rule and the fault. riff files the \
+         first {} list items, each as an issue of its own in the Backlog, with the line \
+         `{FOUND_BY} #{pull}`, and names the issue in the result. A line with no list mark gets \
+         no issue.",
         crate::council::found::HEADING,
         crate::council::found::MOST
     )
@@ -7787,7 +7827,8 @@ const FOUND_TITLE: usize = 100;
 
 /// The title of the issue of the new finding `finding` of a verify
 /// (01M7GDQWK92WWTTE361JGWDVGY): the finding, cut at a space to at most
-/// 100 characters, with `...` at the cut.
+/// 100 characters, with `...` at the cut. A finding with no space before
+/// the cut is cut in its word.
 ///
 /// ```
 /// use riff::text::found_title;
@@ -7798,6 +7839,11 @@ const FOUND_TITLE: usize = 100;
 /// assert!(title.chars().count() <= 100, "{title}");
 /// assert!(title.starts_with("src/a.rs:12: word word"));
 /// assert!(title.ends_with(" word..."), "{title}");
+/// // 100 characters stay as they are.
+/// let hundred = "é".repeat(100);
+/// assert_eq!(found_title(&hundred), hundred);
+/// // One word of 101 characters: 97 of them and the cut.
+/// assert_eq!(found_title(&"a".repeat(101)), format!("{}...", "a".repeat(97)));
 /// ```
 pub fn found_title(finding: &str) -> String {
     if finding.chars().count() <= FOUND_TITLE {
@@ -7809,33 +7855,35 @@ pub fn found_title(finding: &str) -> String {
 }
 
 /// The body of the issue of the new finding `finding` of the verify of the
-/// pull request `pull` at `commit` (01M7GDQWK92WWTTE361JGWDVGY,
-/// 01M7GKK1J8PWKH0GQPD490KR6D): the finding, why it did not fail the
-/// verify, where riff filed it, and the line `Found by: #PULL` as the
-/// last line. `backlog` is false when the repository has no open Backlog,
-/// and the issue gets no milestone. The finding is the first line, so the
-/// body has only one line `Found by:` after a line break: its last line.
-/// The search of the book for that last line lists only the issues of
-/// `pull`, also for a finding that names another pull request (see
-/// "What fails the verify of a fix head" in the book).
+/// pull request `pull` at `commit`, a fix head after the FAIL at `last`
+/// (01M7GDQWK92WWTTE361JGWDVGY, 01M7GKK1J8PWKH0GQPD490KR6D): the finding,
+/// why it did not fail the verify, where riff filed it, and the line
+/// `Found by: #PULL` as the last line. `backlog` is false when the
+/// repository has no open Backlog, and the issue gets no milestone. The
+/// finding is the first line, so the body has only one line `Found by:`
+/// after a line break: its last line. The search of the book for that
+/// last line lists only the issues of `pull`, also for a finding that
+/// names another pull request (see "What fails the verify of a fix head"
+/// in the book).
 ///
 /// ```
 /// use riff::text::found_body;
 ///
 /// assert_eq!(
-///     found_body(40, "1a2b3c4d5e", "src/a.rs:12: a gap.", true),
+///     found_body((40, "1a2b3c4d5e"), "9f8e7d6c5b", "src/a.rs:12: a gap.", true),
 ///     "src/a.rs:12: a gap.\n\nThe verify of #40 found this at the commit 1a2b3c4. It did not \
-///      fail the verify: the fault is in code that the fix did not change. riff filed it in the \
-///      Backlog.\n\nFound by: #40\n"
+///      fail the verify: the fault is in code that the fix since the commit 9f8e7d6 did not \
+///      change. riff filed it in the Backlog.\n\nFound by: #40\n"
 /// );
-/// let none = found_body(40, "1a2b3c4d5e", "Found by: #41", false);
+/// let none = found_body((40, "1a2b3c4d5e"), "9f8e7d6c5b", "Found by: #41", false);
 /// assert!(none.contains("riff filed it in no milestone: the repository has no open Backlog."));
 /// assert!(none.starts_with("Found by: #41\n\n"));
 /// assert_eq!(none.matches("\nFound by: ").count(), 1);
 /// assert!(none.ends_with("\n\nFound by: #40\n"));
 /// ```
-pub fn found_body(pull: u64, commit: &str, finding: &str, backlog: bool) -> String {
-    let commit = commit.get(..7).unwrap_or(commit);
+pub fn found_body((pull, commit): (u64, &str), last: &str, finding: &str, backlog: bool) -> String {
+    let short = |commit: &str| commit.get(..7).unwrap_or(commit).to_owned();
+    let (commit, last) = (short(commit), short(last));
     let filed = match backlog {
         true => "riff filed it in the Backlog.",
         false => "riff filed it in no milestone: the repository has no open Backlog.",
@@ -7843,8 +7891,8 @@ pub fn found_body(pull: u64, commit: &str, finding: &str, backlog: bool) -> Stri
     let finding = finding.replace(['\r', '\n'], " ");
     format!(
         "{finding}\n\nThe verify of #{pull} found this at the commit {commit}. It did not fail \
-         the verify: the fault is in code that the fix did not change. {filed}\n\n{FOUND_BY} \
-         #{pull}\n"
+         the verify: the fault is in code that the fix since the commit {last} did not change. \
+         {filed}\n\n{FOUND_BY} #{pull}\n"
     )
 }
 
@@ -7860,6 +7908,25 @@ pub fn found_body(pull: u64, commit: &str, finding: &str, backlog: bool) -> Stri
 /// ```
 pub fn found_no_number(path: &str) -> String {
     format!("gh api -X POST {path} gave no number of the new issue of a finding")
+}
+
+/// The line on stderr for a new finding that riff could not file, on a
+/// fault `error` of GitHub that is no limit (01M7GDQWK92WWTTE361JGWDVGY):
+/// its line stays in the result with no issue, and the report goes on.
+///
+/// ```
+/// let error = anyhow::anyhow!("gh api -X POST repos/o/r/issues: HTTP 422: Validation Failed");
+/// assert_eq!(
+///     riff::text::found_not_filed(&error),
+///     "riff: riff filed no issue for a new finding: gh api -X POST repos/o/r/issues: HTTP 422: \
+///      Validation Failed. Its line stays in the result with no issue."
+/// );
+/// ```
+pub fn found_not_filed(error: &anyhow::Error) -> String {
+    format!(
+        "riff: riff filed no issue for a new finding: {error:#}. Its line stays in the result \
+         with no issue."
+    )
 }
 
 /// The line of the start text of a worker about the body of the pull
@@ -14287,7 +14354,7 @@ pub fn wave_checks_rerun(
 /// let first = riff::text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4d5e6f", &checks, None);
 /// assert!(!first.contains("9f8e7d6c5b4a"));
 /// assert!(!first.contains("New findings"));
-/// assert!(first.contains(&format!("\n9. Check each finding in the code. {} {}\n", riff::text::VERIFY_FIRST_RULE, riff::text::VERIFY_NOT_SHOWN)));
+/// assert!(first.contains(&format!("\n9. Check each finding in the code. {} {}\n", riff::text::verify_first_rule(), riff::text::VERIFY_NOT_SHOWN)));
 /// ```
 pub fn wave_verify_start(
     repo: &str,
@@ -14328,7 +14395,7 @@ pub fn wave_verify_start(
                 crate::council::found::HEADING
             ),
         ),
-        None => (String::new(), VERIFY_FIRST_RULE.to_owned(), String::new()),
+        None => (String::new(), verify_first_rule(), String::new()),
     };
     format!(
         "You are a verifier of riff. You run in a container, in your own clone of {repo}, at the \

@@ -507,17 +507,19 @@ enum Command {
     /// the body with its trailers as the last paragraph. This turns
     /// auto-merge on, also when it was off: to keep a pull request from the
     /// merge, hold its verify-issue-N before the verify starts. The verify
-    /// of a fix head, a head after a FAIL, files each line of the part
-    /// "## New findings" as an issue in the Backlog, up to 10 lines.
+    /// of a fix head, a head after a FAIL, files each list item of the part
+    /// "## New findings" as an issue in the Backlog, up to 10 items: a line
+    /// with "- " and the finding.
     Verify {
         /// pass sets the status success, fail sets failure.
         verdict: VerdictArg,
         /// The number of the pull request.
         number: u64,
         /// The result: each criterion, what you did to check it, and for a
-        /// pass the part "## The council". For each line of the part "##
-        /// New findings" that riff files as an issue, riff writes the
-        /// number of the issue into this file.
+        /// pass the part "## The council". For each list item of the part
+        /// "## New findings" that riff files as an issue, riff writes the
+        /// number of the issue into this file. riff does not write through
+        /// a link.
         #[arg(long)]
         file: std::path::PathBuf,
         /// The commit that you tested. The default is HEAD of this
@@ -2819,24 +2821,24 @@ async fn cli() -> Result<()> {
             };
             let thread = thread_or_default(None, &here)?;
             let verdict = verdict.into();
+            let (gh, repo) = (pr::Gh::here("verify"), thread.to_string());
+            // By hand, riff reads the last verify when it reports, and
+            // only for a result with a new finding
+            // (01M7GDQWGCBVJE6S4MJDEJ6P8T).
+            let last = match riff::council::found::unfiled(&read).is_empty() {
+                true => None,
+                false => pr::last_failed(&gh, &repo, number, &tested).unwrap_or_else(|e| {
+                    eprintln!("{}", text::verify_no_last(number, &e));
+                    None
+                }),
+            };
             let mut result = read.clone();
-            let reported = pr::report(
-                &pr::Gh::here("verify"),
-                &thread.to_string(),
-                &dir,
-                number,
-                &tested,
-                verdict,
-                &mut result,
-            );
+            let at = (number, tested.as_str());
+            let reported = pr::report(&gh, &repo, &dir, at, verdict, &mut result, last.as_deref());
             // The issue of each new finding stays in the file, also after
             // a fault, so a second run files it no second time
             // (01M7GKK1F8FTWX2C2NEGW8JAX1).
-            if result != read
-                && let Err(e) = std::fs::write(&file, &result)
-            {
-                eprintln!("{}", text::verify_file_not_written(&file, &e));
-            }
+            keep_filed(&file, &read, &result);
             let reported = reported?;
             println!("{}", text::verify_reported(verdict, number, &reported));
             let state = match verdict {
@@ -2922,6 +2924,26 @@ async fn cli() -> Result<()> {
         | Command::Wave { .. } => unreachable!("handled before the identity"),
     }
     Ok(())
+}
+
+/// Writes `result`, with the issue of each new finding that the report
+/// filed, into `file`, the file of `riff verify --file` that held `read`
+/// (01M7GKK1F8FTWX2C2NEGW8JAX1). It writes through no link
+/// ([`pr::write_result`]). When it cannot write the file, it prints each
+/// line that the report filed, with the number of its issue: the filing
+/// keeps the number of lines.
+fn keep_filed(file: &std::path::Path, read: &str, result: &str) {
+    if result == read {
+        return;
+    }
+    if let Err(e) = pr::write_result(file, result) {
+        let filed: Vec<&str> = result
+            .lines()
+            .zip(read.lines())
+            .filter_map(|(new, old)| (new != old).then_some(new))
+            .collect();
+        eprintln!("{}", text::verify_file_not_written(file, &e, &filed));
+    }
 }
 
 /// The words of `command` when it needs the host

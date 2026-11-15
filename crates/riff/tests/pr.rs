@@ -1006,13 +1006,15 @@ async fn verify_pass_refuses_a_result_with_no_line_for_a_member_of_the_council()
 }
 
 /// The fake forge of the issues of new findings
-/// (01M7GDQWK92WWTTE361JGWDVGY): the last verify of pull request 40
-/// failed at `9f8e7d6c`, and the status of that commit names its
+/// (01M7GDQWK92WWTTE361JGWDVGY): the person mike runs `riff verify`. The
+/// last verify of pull request 40, in a comment of mike, failed at
+/// `9f8e7d6c`, and the status of that commit that mike set links that
 /// comment, so the head is a fix head (01M7GDQWGCBVJE6S4MJDEJ6P8T). The
 /// open milestone Backlog has the number 5. Each new issue gets the next
 /// number from 77, and its body goes to `issue-N.json`.
-const FOUND: &str = r#"*'issues/40/comments'*) printf '7\tverify result: FAIL for issue-12, commit 9f8e7d6c.\n' ;;
-*'commits/9f8e7d6c/status'*) printf 'failure\thttps://github.com/como-technologies/riff/pull/40#issuecomment-7\n' ;;
+const FOUND: &str = r#"*'api user --jq .login'*) echo mike ;;
+*'issues/40/comments'*) printf '%s\n' '{"id":7,"login":"mike","body":"verify result: FAIL for issue-12, commit 9f8e7d6c.\n\n1. It fails."}' ;;
+*'commits/9f8e7d6c/statuses'*) echo '[{"context":"riff/verify","state":"failure","target_url":"https://github.com/como-technologies/riff/pull/40#issuecomment-7","creator":{"login":"mike"}}]' ;;
 *'/milestones?state=open&per_page=100'*) echo '[{"number":5,"title":"Backlog","open_issues":0,"closed_issues":0}]' ;;
 *'-X POST repos/como-technologies/riff/issues '*) n=$(cat "$dir/issue" 2>/dev/null || echo 76); n=$((n + 1)); echo $n > "$dir/issue"; cp "$7" "$dir/issue-$n.json"; printf 'HTTP/2.0 201 Created\r\n\r\n{"number":%s}\n' $n ;;"#;
 
@@ -1083,7 +1085,7 @@ async fn verify_files_each_new_finding_as_an_issue_in_the_backlog_and_names_it()
     let issue = |finding: &str| {
         serde_json::json!({
             "title": finding,
-            "body": riff::text::found_body(40, "1a2b3c4d", finding, true),
+            "body": riff::text::found_body((40, "1a2b3c4d"), "9f8e7d6c", finding, true),
             "milestone": 5,
         })
     };
@@ -1130,7 +1132,7 @@ async fn a_new_finding_gets_no_milestone_with_no_open_backlog() {
     let issue = |finding: &str| {
         serde_json::json!({
             "title": finding,
-            "body": riff::text::found_body(40, "1a2b3c4d", finding, false),
+            "body": riff::text::found_body((40, "1a2b3c4d"), "9f8e7d6c", finding, false),
         })
     };
     assert_eq!(
@@ -1184,6 +1186,74 @@ async fn verify_of_a_first_head_files_no_new_finding() {
     assert!(!log.contains(FILE_ISSUE), "{log}");
     assert!(!log.contains("/milestones"), "{log}");
     assert_eq!(std::fs::read_to_string(&result).unwrap(), found);
+}
+
+/// 01M7GDQWGCBVJE6S4MJDEJ6P8T: when `riff verify` cannot read the last
+/// verify, the verify is a first verify: riff says so, files no new
+/// finding, and reports the result.
+#[tokio::test]
+async fn verify_that_cannot_read_the_last_verify_files_nothing() {
+    let broken = r#"*'issues/40/comments'*) echo 'gh: Bad credentials (HTTP 401)' >&2; exit 1 ;;"#;
+    let machine = Machine::new(&format!("{broken}\n{FOUND}\n{VERIFY}")).await;
+    machine.claim("author", "issue-12").await;
+    let found = with_new_findings();
+    let result = machine.write("result.md", &found);
+    let fail = [
+        "verify", "fail", "40", "--file", &result, "--commit", "1a2b3c4d",
+    ];
+    let out = machine.run("verifier", &fail).await;
+    let stderr = text(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert!(
+        stderr.contains(
+            "riff verify: riff cannot read the last verify of pull request #40: gh api \
+             --paginate repos/como-technologies/riff/issues/40/comments"
+        ),
+        "{stderr}"
+    );
+    let log = log(machine.bin.path());
+    assert!(!log.contains(FILE_ISSUE), "{log}");
+    assert!(log.contains("-f state=failure"), "{log}");
+    assert_eq!(std::fs::read_to_string(&result).unwrap(), found);
+}
+
+/// 01M7GKK1F8FTWX2C2NEGW8JAX1, 01M7FE5FYFAR92PM3EJJ211VM2: `riff verify`
+/// writes the issues of the new findings through no link. A link at the
+/// file of `--file`, as a container can put in the clone of a session,
+/// keeps the file that it names as it was. riff says that it cannot
+/// write the file, and gives each line that it filed with the number of
+/// its issue. The report goes on.
+#[tokio::test]
+async fn verify_writes_the_issues_of_the_new_findings_through_no_link() {
+    let machine = Machine::new(&format!("{FOUND}\n{VERIFY}")).await;
+    machine.claim("author", "issue-12").await;
+    let found = with_new_findings();
+    let person = machine.write("person.md", &found);
+    let link = machine.repo.path().join("result.md");
+    std::os::unix::fs::symlink(&person, &link).unwrap();
+    let link = link.display().to_string();
+    let fail = [
+        "verify", "fail", "40", "--file", &link, "--commit", "1a2b3c4d",
+    ];
+    let out = machine.run("verifier", &fail).await;
+    let stderr = text(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert_eq!(std::fs::read_to_string(&person).unwrap(), found);
+    assert!(
+        stderr.contains(&format!(
+            "riff verify: riff filed issues for the new findings, but cannot write their \
+             numbers into {link}: "
+        )),
+        "{stderr}"
+    );
+    for line in ["- #77: ", "- #78: "].map(|n| FILED.lines().find(|l| l.starts_with(n)).unwrap()) {
+        assert!(
+            stderr.contains(&format!("\n{line}")),
+            "no {line:?} in {stderr}"
+        );
+    }
+    let log = log(machine.bin.path());
+    assert!(log.contains("-f state=failure"), "{log}");
 }
 
 /// The fake forge of a pull request that changes `riff.toml` from the

@@ -133,10 +133,10 @@ fn each_reply_of_the_forge_that_riff_reads_has_no_control_character() {
         &gh,
         "acme/app",
         clone.path(),
-        40,
-        "abc1234",
+        (40, "abc1234"),
         Verdict::Pass,
         &mut result,
+        None,
     )
     .unwrap();
     clean(&reported.commit);
