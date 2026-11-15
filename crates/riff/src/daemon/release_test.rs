@@ -680,9 +680,10 @@ mod tests {
     }
 
     /// #2156, 01M7GGCT0Z0GXM3BCAAGX7CE6Q: NAME is at any place in the line:
-    /// after a quote, a `,`, a `;`, a `&`, a `?`, a space or another `=`,
-    /// also when an earlier quote of the line has a space in it. The rest
-    /// of the line goes, with its quotes.
+    /// after a quote, a `,`, a `;`, a `&`, a `?`, a space, another `=`, or
+    /// a character of more than one byte that is no letter, also when an
+    /// earlier quote of the line has a space in it. The rest of the line
+    /// goes, with its quotes.
     #[test]
     fn a_secret_name_at_any_place_in_the_line_hides_the_rest_of_it() {
         for (line, shown) in [
@@ -722,6 +723,8 @@ mod tests {
                 r#"{"env":"DB_PASSWORD=a b"} x"#,
                 r#"{"env":"DB_PASSWORD=[secret]"#,
             ),
+            ("a\u{a0}GH_TOKEN=x y", "a\u{a0}GH_TOKEN=[secret]"),
+            ("a→DB_PASSWORD=x", "a→DB_PASSWORD=[secret]"),
         ] {
             assert_eq!(redact(line), shown, "{line}");
         }
@@ -762,8 +765,8 @@ mod tests {
     /// word `Bearer` goes in each form of a header: a plain one, in JSON,
     /// in quotes, with no space after the colon, with two spaces, with a
     /// tab, with a no-break space, with a `"`, a `'` or a `:` after
-    /// `Bearer`, and in single quotes. The white space just after
-    /// `Bearer` stays.
+    /// `Bearer`, in single quotes, and after a letter whose lower case has
+    /// more bytes. The white space just after `Bearer` stays.
     #[test]
     fn the_rest_of_the_line_after_bearer_goes_in_each_form_of_a_header() {
         for (line, shown) in [
@@ -820,11 +823,24 @@ mod tests {
             ),
             ("a Bearer xyz Bearer abc end", "a Bearer [secret]"),
             ("ghp_abc1 Bearer xyz", "[secret] Bearer [secret]"),
+            ("İ Bearer xyz", "İ Bearer [secret]"),
         ] {
             assert_eq!(redact(line), shown, "{line:?}");
         }
         for line in ["Bearer", "Bearer ", "a Bearers b", "Bearer\nnext line"] {
             assert_eq!(redact(line), line, "{line:?}");
+        }
+    }
+
+    /// #2156, 01M7GGCT0Z0GXM3BCAAGX7CE6Q: the rest of the line goes from
+    /// the first of a secret name and `Bearer`, in each order.
+    #[test]
+    fn the_rest_goes_from_the_first_of_a_secret_name_and_bearer() {
+        for (line, shown) in [
+            ("a GH_TOKEN=x Bearer y", "a GH_TOKEN=[secret]"),
+            ("a Bearer y GH_TOKEN=x", "a Bearer [secret]"),
+        ] {
+            assert_eq!(redact(line), shown, "{line}");
         }
     }
 
