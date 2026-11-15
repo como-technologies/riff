@@ -5782,13 +5782,15 @@ impl<R: Runtime + 'static> Daemon<R> {
             }
         };
         // The output of the container: the notes of the relay and the
-        // stderr of claude.
+        // stderr of claude, with no secret and no control character
+        // (01M7FTC1DFAYKQAB6EPDCJ18ZA). The filter comes first: so an
+        // escape sequence in a secret hides no part of it.
         for output in [running.events, running.errors] {
             let (scrub, owned) = (scrub.clone(), owned.clone());
             tokio::spawn(async move {
                 let mut lines = BufReader::new(output).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
-                    let line = scrub.clean(&line).into_owned();
+                    let line = scrub.clean(&text::safe(&line)).into_owned();
                     Owned::tell(&mut owned.lock(), &Say::Stderr { line });
                 }
             });
@@ -8130,6 +8132,28 @@ mod tests {
         assert!(!socket.exists());
         assert!(!record_path(&here.dir, &name).exists());
         assert_eq!(here.fake.exit(&name), Some(Exit::SUCCESS));
+    }
+
+    /// 01M7FTC1DFAYKQAB6EPDCJ18ZA: each line of the output of the
+    /// container goes to riff with no control character. An escape
+    /// sequence in a secret hides no part of it.
+    #[tokio::test]
+    async fn the_output_of_the_container_has_no_control_character_and_no_secret() {
+        let hostile = "a\x1b]0;owned\x07b\x1b[2J\x1b[1;1Hc\u{9b}d\re gho_sec\x1b[0mret1";
+        let here = Here::new(Fake::default().with_image(IMAGE).with_events([hostile])).await;
+        let (mut client, name) = here
+            .started(here.start("riff-issue-12-1a2b3c4d", "issue-12"))
+            .await;
+        let socket = session_dir(&here.dir, &name);
+        let (mut relay, _) = Relay::connect(&socket, 0, false).await;
+        assert!(matches!(relay.next().await, Say::Input { .. }));
+        relay.event(1, TURN[0]).await;
+        relay.exit(2, 0).await;
+        let (said, _) = to_the_end(&mut client).await;
+        let stderr = Say::Stderr {
+            line: format!("abcde {HIDDEN}"),
+        };
+        assert!(said.contains(&stderr), "{said:?}");
     }
 
     #[tokio::test]

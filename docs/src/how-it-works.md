@@ -482,6 +482,38 @@ The daemon starts the lead at the end of its wait. To start the lead at
 once, see
 [When the lead fails to start](#when-the-lead-fails-to-start).
 
+### The output of a session on your terminal
+
+`riff run` prints the output of its session on your terminal: the lines
+of each event, each line that is not JSON, and the stderr of the
+container. `riff daemon events` prints the same lines, also with
+`--host`, and so does the Session log of the TUI. `riff session why`
+prints the last lines of the output of a session.
+
+A session can write an escape sequence in its output, for example
+because a prompt injection told it to. Such a sequence can move the
+cursor, hide or rewrite a line, or set the title of your terminal. riff
+prints no control character of a session. It removes each escape
+sequence and each control character, also the C1 control U+009B. It
+keeps the tab and the line break. So a session cannot change your
+terminal.
+
+```mermaid
+flowchart LR
+    S["the session: a line with<br/>ESC [2J, ESC ]0;title or U+009B"] --> D["the riff daemon"]
+    D --> R["riff removes each escape sequence<br/>and each control character"]
+    R --> T["your terminal: the text only"]
+```
+
+The file `events.jsonl` in the folder of the session keeps each event
+as the session gave it, with no secret. To see the control characters
+of a session, show the file with `cat -v`. It shows each control
+character as a mark, for example ESC as `^[`:
+
+```sh
+cat -v ~/.local/share/riff/sessions/issue-12-1a2b3c4d/events.jsonl
+```
+
 ### The home of a session is in memory
 
 The home of a session is a tmpfs: its files are in the memory of the

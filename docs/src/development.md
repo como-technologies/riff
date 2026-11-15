@@ -2219,7 +2219,9 @@ riff daemon events riff-issue-12-1a2b3c4d
 and each new event until the session ends. It also shows the lines of
 the daemon, for example why it stops the session. Press Ctrl-C to stop
 the view: the session goes on. The file `events.jsonl` in the folder
-of the session also has each event, with no secret.
+of the session also has each event, with no secret. riff prints no
+control character of a session: see
+[The output of a session on your terminal](how-it-works.md#the-output-of-a-session-on-your-terminal).
 
 The daemon keeps the end of a session for 5 minutes. In that time,
 `riff daemon events` shows the events and the end of a session that

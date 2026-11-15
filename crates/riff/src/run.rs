@@ -1125,8 +1125,10 @@ pub fn user_line(text: &str) -> String {
 /// The most characters of one shown part of an event.
 const SHOWN: usize = 160;
 
-/// The first line of `text`, at most [`SHOWN`] characters.
+/// The first line of `text` with no control character
+/// ([`text::safe`]), at most [`SHOWN`] characters.
 fn first(text: &str) -> String {
+    let text = text::safe(text);
     let line = text.trim().lines().next().unwrap_or("");
     match line.char_indices().nth(SHOWN) {
         Some((at, _)) => format!("{}…", &line[..at]),
@@ -1152,6 +1154,8 @@ fn tool_input(input: &Value) -> String {
 }
 
 /// The lines that the terminal shows for one event of `claude`, or none.
+/// No line has a control character of the session ([`text::safe`],
+/// 01M7FTC1DFAYKQAB6EPDCJ18ZA).
 ///
 /// ```
 /// use riff::run::event_lines;
@@ -1174,10 +1178,15 @@ fn tool_input(input: &Value) -> String {
 /// assert_eq!(event_lines(&result), ["end: success, 8 turns, 22 s, 0.17 USD"]);
 ///
 /// assert!(event_lines(&json!({"type":"rate_limit_event"})).is_empty());
+///
+/// // A text that clears the screen and sets the title of the terminal.
+/// let owned = json!({"type":"assistant","message":{"content":[
+///     {"type":"text","text":"\u{1b}[2J\u{1b}]0;owned\u{7}done\u{9b}"}]}});
+/// assert_eq!(event_lines(&owned), ["done"]);
 /// ```
 pub fn event_lines(event: &Value) -> Vec<String> {
     let str_of = |key: &str| event[key].as_str().unwrap_or("?");
-    match (str_of("type"), event["subtype"].as_str()) {
+    let lines = match (str_of("type"), event["subtype"].as_str()) {
         ("system", Some("init")) => vec![format!(
             "start: model {}, permission mode {}",
             str_of("model"),
@@ -1223,7 +1232,8 @@ pub fn event_lines(event: &Value) -> Vec<String> {
             event["total_cost_usd"].as_f64().unwrap_or(0.0)
         )],
         _ => Vec::new(),
-    }
+    };
+    lines.iter().map(|line| text::safe(line)).collect()
 }
 
 /// The content blocks of the message of an event.
@@ -2046,17 +2056,19 @@ impl View {
 
     /// The lines that the terminal shows for one line of the output of
     /// the session: the lines of its event, or the line itself when it
-    /// is not JSON.
+    /// is not JSON. No line has a control character of the session
+    /// ([`text::safe`], 01M7FTC1DFAYKQAB6EPDCJ18ZA).
     ///
     /// ```
     /// let mut view = riff::run::View::default();
     /// assert_eq!(view.shown("not json"), ["not json"]);
+    /// assert_eq!(view.shown("\x1b[1Anot\x1b[2K json\u{9b}\r"), ["not json"]);
     /// assert!(view.shown(r#"{"type":"system","subtype":"background_tasks_changed","tasks":[]}"#).is_empty());
     /// ```
     pub fn shown(&mut self, line: &str) -> Vec<String> {
         match serde_json::from_str::<Value>(line) {
             Ok(event) => self.lines(&event),
-            Err(_) => vec![line.to_owned()],
+            Err(_) => vec![text::safe(line)],
         }
     }
 }
@@ -3158,6 +3170,59 @@ mod tests {
              "content":[{"type":"text","text":"no"},{"type":"text","text":"file"}]},
             {"type":"tool_result","is_error":false,"content":"fine"}]}});
         assert_eq!(event_lines(&event), ["! the tool failed: no file"]);
+    }
+
+    /// A text of a session that sets the title of the terminal, clears
+    /// the screen, moves the cursor, has the C1 control U+009B and goes
+    /// back to the start of the line.
+    const HOSTILE: &str = "a\x1b]0;owned\x07b\x1b[2J\x1b[1;1Hc\u{9b}d\re";
+
+    /// 01M7FTC1DFAYKQAB6EPDCJ18ZA: a plain line and each text of an event
+    /// show with no control character.
+    #[test]
+    fn a_line_of_a_session_shows_no_control_character() {
+        let mut view = View::default();
+        assert_eq!(view.shown(HOSTILE), ["abcde"]);
+        let events = [
+            json!({"type":"system","subtype":"init","model":HOSTILE,"permissionMode":HOSTILE}),
+            json!({"type":"assistant","message":{"content":[
+                {"type":"text","text":HOSTILE},
+                {"type":"tool_use","name":HOSTILE,"input":{"command":HOSTILE}}]}}),
+            json!({"type":"user","message":{"content":[
+                {"type":"tool_result","is_error":true,"content":HOSTILE}]}}),
+            json!({"type":"system","subtype":"permission_denied","reason":HOSTILE}),
+            json!({"type":"system","subtype":"background_tasks_changed",
+                "tasks":[{"description":HOSTILE}]}),
+            json!({"type":"result","subtype":HOSTILE}),
+        ];
+        let shown: Vec<String> = events
+            .iter()
+            .flat_map(|event| view.shown(&event.to_string()))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                "start: model abcde, permission mode abcde",
+                "abcde",
+                "> abcde: abcde",
+                "! the tool failed: abcde",
+                "permission_denied: reason abcde",
+                "end: abcde, 0 turns, 0 s, 0.00 USD",
+                "wait: claude waits for 1 background task: abcde",
+            ]
+        );
+    }
+
+    /// 01M7FTC1DFAYKQAB6EPDCJ18ZA: the cut at [`SHOWN`] counts only the
+    /// characters that show, and a text of control characters alone shows
+    /// no line.
+    #[test]
+    fn the_cut_of_a_text_counts_no_control_character() {
+        let text = format!("{}done", "\x1b[2K".repeat(SHOWN));
+        let event = json!({"type":"assistant","message":{"content":[
+            {"type":"text","text":text},
+            {"type":"text","text":"\x1b[2J\u{9b}"}]}});
+        assert_eq!(event_lines(&event), ["done"]);
     }
 
     #[test]

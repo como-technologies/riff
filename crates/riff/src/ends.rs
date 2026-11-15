@@ -119,7 +119,8 @@ pub struct End {
     pub failed: bool,
     /// The tool of each call that auto mode denied in the last turn.
     pub denied: Vec<String>,
-    /// The last [`TAIL`] lines of its output.
+    /// The last [`TAIL`] lines of its output, with no control character
+    /// (01M7FTC1DFAYKQAB6EPDCJ18ZA).
     pub tail: Vec<String>,
 }
 
@@ -170,10 +171,10 @@ impl End {
         let tail = lines[lines.len().saturating_sub(TAIL)..]
             .iter()
             .map(|line| {
-                let line = scrub.clean(line);
+                let line = scrub.clean(&crate::text::safe(line)).into_owned();
                 match line.char_indices().nth(LINE_MAX) {
                     Some((at, _)) => format!("{}...", &line[..at]),
-                    None => line.into_owned(),
+                    None => line,
                 }
             })
             .collect();
@@ -321,6 +322,31 @@ mod tests {
 
     fn ended(code: Option<i32>, failed: bool) -> Ended {
         Ended { code, failed }
+    }
+
+    /// 01M7FTC1DFAYKQAB6EPDCJ18ZA: `riff session why` prints the last
+    /// lines with no control character, and an escape sequence in a
+    /// secret hides no part of it.
+    #[test]
+    fn the_record_has_no_control_character_of_the_session() {
+        let events = "a\x1b]0;owned\x07b\x1b[2J\x1b[1;1Hc\u{9b}d\re secret-\x1b[0mtoken-1\n\
+                      {\"type\":\"assistant\",\"text\":\"\u{9b}2Kdone\"}\n";
+        let scrub = Scrub::new(["secret-token-1".to_owned()]);
+        let end = End::from_events(
+            "issue-9",
+            "0123456789",
+            ended(Some(1), true),
+            events,
+            &scrub,
+        );
+        assert_eq!(
+            end.tail,
+            ["abcde [secret]", r#"{"type":"assistant","text":"2Kdone"}"#]
+        );
+        let record = Record::parse(&end.body(), 0).unwrap();
+        let why = why("issue-9", &[record]);
+        assert!(why.ends_with("\nabcde [secret]\n{\"type\":\"assistant\",\"text\":\"2Kdone\"}"));
+        assert!(!why.chars().any(|c| c.is_control() && c != '\n'), "{why:?}");
     }
 
     /// 01M5A5HXKZTDP5M5HY2FHCEBZA.

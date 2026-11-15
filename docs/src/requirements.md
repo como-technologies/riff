@@ -8591,6 +8591,15 @@ of this part when they merge.
   home. They say that the home is in memory, in folders of 1 GiB each
   (01M7DYR99QK609NF61GGCN75QQ), and that a larger write there fails with
   "No space left on device".
+- **01M7FTC1DFAYKQAB6EPDCJ18ZA** Each text of a session that riff prints
+  on the terminal of a person goes through one filter (`text::safe`):
+  each line of an event, each line of the output that is not JSON, and
+  each line of the stderr of the container. The filter removes each
+  escape sequence and each control character, also the C1 control
+  U+009B, and keeps the tab and the line break. This holds for `riff
+  run`, `riff daemon events` with and without `--host`, the Session log
+  of the TUI, and the last lines of output in `riff session why`. A
+  session cannot change the terminal of the person.
 
 ### How the relay drives claude
 
