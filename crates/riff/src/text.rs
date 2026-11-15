@@ -1571,6 +1571,8 @@ pub fn setup_check(path: &std::path::Path, left: &Rules) -> String {
 ///     question: vec![],
 ///     waits: vec![],
 ///     rebases: vec![],
+///     merged: vec![],
+///     live: vec![],
 /// };
 /// let items = Items {
 ///     boards: vec![
@@ -2259,6 +2261,76 @@ pub fn waves_ended(title: &str, closed: u64) -> String {
 /// ```
 pub fn waves_moved(items: &[u64], title: &str) -> String {
     format!("Moved {} to {title}.", numbers(items))
+}
+
+/// The comment of `riff wave next` on the issue: it starts with
+/// [`crate::rollout::MORE_WORK`] and the merged pull request `pull`
+/// (01M7DYWXWZKDB6VZ2KYYJQ4NF7).
+///
+/// ```
+/// let comment = riff::rollout::Comment { body: riff::text::wave_more_work(882) };
+/// assert!(comment.more_after(882));
+/// assert_eq!(
+///     comment.body,
+///     "More work after #882. A lead told the wave that this issue has more work. The wave will \
+///      start a session for its next pull request."
+/// );
+/// ```
+pub fn wave_more_work(pull: u64) -> String {
+    format!(
+        "{}{pull}. A lead told the wave that this issue has more work. The wave will start a \
+         session for its next pull request.",
+        crate::rollout::MORE_WORK
+    )
+}
+
+/// The answer to `riff wave next` (01M7DYWXWZKDB6VZ2KYYJQ4NF7).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::waves_next(872, 882),
+///     "Told the wave: #872 has more work after #882. The wave will start a session for its next \
+///      pull request. riff wave list shows it."
+/// );
+/// ```
+pub fn waves_next(issue: u64, pull: u64) -> String {
+    format!(
+        "Told the wave: #{issue} has more work after #{pull}. The wave will start a session for \
+         its next pull request. riff wave list shows it."
+    )
+}
+
+/// The refusal of `riff wave next` for an issue that is not open
+/// (01M7DYWXWZKDB6VZ2KYYJQ4NF7).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::waves_next_closed(872),
+///     "#872 is not an open issue. riff wave next takes only an open issue. riff added no comment."
+/// );
+/// ```
+pub fn waves_next_closed(issue: u64) -> String {
+    format!(
+        "#{issue} is not an open issue. riff wave next takes only an open issue. riff added no \
+         comment."
+    )
+}
+
+/// The refusal of `riff wave next` for an issue that no merged pull
+/// request keeps out of the free work (01M7DYWXWZKDB6VZ2KYYJQ4NF7).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::waves_next_free(872),
+///     "No merged pull request keeps #872 out of the free work, so the wave can take it now. \
+///      riff added no comment. riff wave list shows its group."
+/// );
+/// ```
+pub fn waves_next_free(issue: u64) -> String {
+    format!(
+        "No merged pull request keeps #{issue} out of the free work, so the wave can take it now. \
+         riff added no comment. riff wave list shows its group."
+    )
 }
 
 /// The answer to `riff wave end N --move-open-to-backlog`
@@ -7167,6 +7239,30 @@ pub fn no_program(program: &str) -> String {
     format!("riff cannot start {program}. Install it, or put it on PATH.")
 }
 
+/// The error of the guard of git on the host (01M7DZ429QFWTSEA6JH1DVZJM0):
+/// `dir` is under the folder of the sessions `folder`.
+///
+/// ```
+/// use std::path::Path;
+///
+/// let text = riff::text::host_git_refused(Path::new("/s/issue-12-1a2b3c4d/clone"), Path::new("/s"));
+/// assert_eq!(
+///     text,
+///     "riff runs no git on the host in /s/issue-12-1a2b3c4d/clone: it is in the folder of the \
+///      sessions /s, and a session can write the git config there. Run git in the container \
+///      of the session, or in a clone of your own."
+/// );
+/// ```
+pub fn host_git_refused(dir: &Path, folder: &Path) -> String {
+    format!(
+        "riff runs no git on the host in {}: it is in the folder of the sessions {}, and a \
+         session can write the git config there. Run git in the container of the session, or in \
+         a clone of your own.",
+        dir.display(),
+        folder.display()
+    )
+}
+
 /// `riff run` on a host that is not Linux (01M4ZBGK7SFEXE1AGH6Z0YQHJP).
 pub const RUN_LINUX_ONLY: &str = "riff run needs Linux: riff starts no session on this OS. The \
      sessions on a Mac come with #1649.";
@@ -7568,6 +7664,29 @@ pub fn body_in_sentences() -> String {
     )
 }
 
+/// The line of each start text of a build, a rebase, a fix of checks and
+/// a verify about a large build tree (#2113, 01M7DYRDPST1Z3CB37GR3ZPQ5B):
+/// it goes in `/tmp`, on the disk. The home of the session is in memory,
+/// in tmpfs folders of [`crate::runtime::HOME_TMPFS_GIB`] each
+/// (01M7DYR99QK609NF61GGCN75QQ).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::build_trees(),
+///     "Make a second worktree or another large build tree in /tmp, on the disk. Your home is \
+///      in memory, in folders of 1 GiB each, apart from your clone and the volumes of the \
+///      repository: a larger write there fails with \"No space left on device\"."
+/// );
+/// ```
+pub fn build_trees() -> String {
+    format!(
+        "Make a second worktree or another large build tree in /tmp, on the disk. Your home is \
+         in memory, in folders of {} GiB each, apart from your clone and the volumes of the \
+         repository: a larger write there fails with \"No space left on device\".",
+        crate::runtime::HOME_TMPFS_GIB
+    )
+}
+
 /// The start text of a session of `riff run`: the work item, the
 /// branch, and the frame of the body of the pull request
 /// (01M4Z81APKC14AVNJWCGRQKNVW). It tells the session to leave no
@@ -7593,6 +7712,7 @@ pub fn body_in_sentences() -> String {
 /// assert!(text.contains("Leave no background task at the end of your work"));
 /// assert!(text.contains("Never end a turn while a background task runs"));
 /// assert!(text.contains(riff::text::ISSUE_BY_COMMENT));
+/// assert!(text.contains(&riff::text::build_trees()));
 /// assert!(text.contains("Run each check in the foreground"));
 /// assert!(text.contains("Commit and push the branch before the end of your work"));
 /// // The text names no file as required and no command (01M5RN89WH3PHV3BHMJ25T3SX4).
@@ -7622,6 +7742,7 @@ pub fn run_start(
         ""
     };
     let sentences = body_in_sentences();
+    let trees = build_trees();
     format!(
         "You are a worker of riff. You run in a container, in your own clone of {repo}, on the \
          branch {branch}. Do the work item issue-{issue}, then stop. riff does the claim, the \
@@ -7649,6 +7770,7 @@ pub fn run_start(
          continue after its result. Leave no background task at the end of your work.\n\
          9. Reply with the URL of the pull request in one line.\n\n\
          {ISSUE_BY_COMMENT}\n\
+         {trees}\n\
          Do not print the environment or a token."
     )
 }
@@ -7667,6 +7789,7 @@ pub fn run_start(
 /// assert!(text.ends_with(&format!("The issue #12, as riff read it on the host:\n\n{body}")));
 /// assert!(!text.contains("gh issue view") && !text.contains("git push -u") && !text.contains("gh pr create"));
 /// assert!(text.contains("Leave no background task at the end of your work"));
+/// assert!(text.contains(&riff::text::build_trees()));
 /// let again = riff::text::run_start_no_github("o/r", 12, "worktree-issue-12", "1a2b", body, true);
 /// assert!(again.contains("earlier session"));
 /// ```
@@ -7683,6 +7806,7 @@ pub fn run_start_no_github(
     } else {
         ""
     };
+    let trees = build_trees();
     format!(
         "You are a worker of riff. You run in a container, in your own clone of {repo}, on the \
          branch {branch}. You have no GitHub: gh, git fetch and git push do not work, and the \
@@ -7704,6 +7828,7 @@ pub fn run_start_no_github(
          in the background. Never end a turn while a background task runs: a session does not \
          continue after its result. Leave no background task at the end of your work.\n\
          7. Reply with the last commit of the branch in one line.\n\n\
+         {trees}\n\
          Do not print the environment or a token.\n\n\
          The issue #{issue}, as riff read it on the host:\n\n{body}"
     )
@@ -8673,17 +8798,6 @@ pub fn daemon_claude_back(host: &str) -> String {
         "The sign-in of claude on {} is back: it has 2 hours or more left.",
         safe(host)
     )
-}
-
-/// The note to the lead: the sweep kept a folder whose clone holds work
-/// that is not on `origin`, with the `line` of the sweep
-/// (01M57D3FEJPHD962GW0H82N8E6).
-///
-/// ```
-/// assert_eq!(riff::text::daemon_kept_work("riff kept the folder /s/x."), "riff daemon: riff kept the folder /s/x.");
-/// ```
-pub fn daemon_kept_work(line: &str) -> String {
-    format!("riff daemon: {line}")
 }
 
 /// A sign-in in the facts of a host (01M57D3FGV57W96A7SWTEFRCGW).
@@ -12797,26 +12911,23 @@ pub fn wave_wip_head(item: &str, number: u64, branch: &str, commit: &str, sessio
     )
 }
 
-/// A build of a wave ended with no open pull request.
+/// A build of a wave ended with no open pull request. riff pushes
+/// nothing from its clone (01M7DZ4E2P5RJMQE0W9K1AAA4P).
+///
+/// ```
+/// let text = riff::text::wave_no_pull("issue-12", "worktree-issue-12", std::path::Path::new("/c"));
+/// assert_eq!(
+///     text,
+///     "issue-12: the session of the wave ended, and no open pull request has the branch \
+///      worktree-issue-12. Its work that is not on origin is only in the clone /c: riff \
+///      commits and pushes nothing there. The item is free."
+/// );
+/// ```
 pub fn wave_no_pull(item: &str, branch: &str, clone: &Path) -> String {
     format!(
         "{item}: the session of the wave ended, and no open pull request has the branch \
-         {branch}. The work is in the clone {}. The item is free.",
-        clone.display()
-    )
-}
-
-/// A build of a wave ended with no push, and riff saved its work.
-///
-/// ```
-/// let text = riff::text::wave_saved("issue-12", "worktree-issue-12", "1a2b3c4", std::path::Path::new("/c"));
-/// assert!(text.contains("branch worktree-issue-12"));
-/// assert!(text.contains("1a2b3c4"));
-/// ```
-pub fn wave_saved(item: &str, branch: &str, commit: &str, clone: &Path) -> String {
-    format!(
-        "{item}: the session of the wave ended and pushed nothing. riff saved the work of the \
-         clone {} on the branch {branch}, in a WIP commit {commit}. The item is free.",
+         {branch}. Its work that is not on origin is only in the clone {}: riff commits and \
+         pushes nothing there. The item is free.",
         clone.display()
     )
 }
@@ -13102,6 +13213,7 @@ pub fn wave_failed_verify(number: u64, commit: &str, url: &str) -> String {
 /// assert!(text.contains("turn on auto-merge when it is off: gh pr merge --auto --squash 40"));
 /// assert!(text.contains("New checks and a new verify of the new commit follow"));
 /// assert!(text.contains(riff::text::ISSUE_BY_COMMENT));
+/// assert!(text.contains(&riff::text::build_trees()));
 /// assert!(text.contains("--trailer \"Riff-Session: 9f8e\""));
 /// assert!(!text.contains("gh pr create"));
 /// ```
@@ -13115,6 +13227,7 @@ pub fn wave_rebase_start(
     session: &str,
 ) -> String {
     let commit = commit.get(..7).unwrap_or(commit);
+    let trees = build_trees();
     format!(
         "You are a worker of riff. You run in a container, in your own clone of {repo}, on the \
          branch {branch} of pull request #{pull}. The pull request has a conflict with {base} at \
@@ -13143,6 +13256,7 @@ pub fn wave_rebase_start(
          continue after its result. Leave no background task at the end of your work.\n\
          9. Reply with the URL of the pull request in one line.\n\n\
          {ISSUE_BY_COMMENT}\n\
+         {trees}\n\
          Do not print the environment or a token."
     )
 }
@@ -13226,6 +13340,7 @@ fn check_names(checks: &[String]) -> String {
 /// assert!(text.contains("Change no code. Run the failed jobs again one time"));
 /// assert!(text.contains("A known flake"));
 /// assert!(text.contains(riff::text::ISSUE_BY_COMMENT));
+/// assert!(text.contains(&riff::text::build_trees()));
 /// assert!(text.contains("gh run rerun RUN_ID --failed"));
 /// assert!(text.contains("--trailer \"Riff-Session: 9f8e\""));
 /// assert!(!text.contains("gh pr create"));
@@ -13246,6 +13361,7 @@ pub fn wave_checks_start(
 ) -> String {
     let commit = commit.get(..7).unwrap_or(commit);
     let names = check_names(checks);
+    let trees = build_trees();
     format!(
         "You are a worker of riff. You run in a container, in your own clone of {repo}, on the \
          branch {branch} of pull request #{pull}. The pull request cannot merge: {names} \
@@ -13284,6 +13400,7 @@ pub fn wave_checks_start(
          continue after its result. Leave no background task at the end of your work.\n\
          8. Reply with the URL of the pull request in one line.\n\n\
          {ISSUE_BY_COMMENT}\n\
+         {trees}\n\
          Do not print the environment or a token."
     )
 }
@@ -13607,6 +13724,7 @@ pub fn wave_checks_rerun(
 /// // A verifier reads only: each finding goes in its result
 /// // (01M6WWG3S60XYGTNBQH7S3F6D1).
 /// assert!(text.contains(riff::text::VERIFY_READS_ONLY));
+/// assert!(text.contains(&riff::text::build_trees()));
 /// assert!(!text.contains("gh issue comment"));
 /// // A test runs from the test build of CI (01M75NDGTPJGFSZMTJV04ZFR1D).
 /// assert!(text.contains(riff::text::VERIFY_CI_TESTS));
@@ -13657,6 +13775,7 @@ pub fn wave_verify_start(
         format!("\n   {VERIFY_CI_TESTS}")
     };
     let control = verify_control(base, commit);
+    let trees = build_trees();
     format!(
         "You are a verifier of riff. You run in a container, in your own clone of {repo}, at the \
          commit {commit} of pull request #{pull}, detached. Check the work of issue-{issue} \
@@ -13699,6 +13818,7 @@ pub fn wave_verify_start(
          The result is public: it holds no secret and no security fault. Tell the lead a \
          security fault with the riff tool tell. A live security fault that a member finds goes \
          to the lead too, not into the result.\n\n\
+         {trees}\n\
          Do not print the environment or a token."
     )
 }
@@ -13754,108 +13874,56 @@ pub fn swept(folder: &Path, why: &str) -> String {
     format!("riff removed the folder {}: {why}.", folder.display())
 }
 
-/// The sweep pushed the leftover work of the folder `folder` to the
-/// branches `branches` of `origin`, and removed the folder, for the
-/// reason `over`. `lost` counts the files that git does not track: they
-/// went with the folder.
-///
-/// ```
-/// use std::path::Path;
-///
-/// let folder = Path::new("/s/issue-12-1a2b3c4d");
-/// let one = ["riff-kept/issue-12-1a2b3c4d".to_owned()];
-/// assert_eq!(
-///     riff::text::swept_pushed(folder, "the pull request #40 merged", &one, 0),
-///     "riff removed the folder /s/issue-12-1a2b3c4d: the pull request #40 merged. Its work is on the branch riff-kept/issue-12-1a2b3c4d of origin."
-/// );
-/// assert!(riff::text::swept_pushed(folder, "x", &one, 2).ends_with("2 files that git do not track went with the folder."));
-/// let three = ["riff-kept/a".to_owned(), "riff-kept/a-b".to_owned(), "riff-kept/a-c/d".to_owned()];
-/// assert!(riff::text::swept_pushed(folder, "x", &three, 0).ends_with(
-///     "Its work is on the branches riff-kept/a, riff-kept/a-b and riff-kept/a-c/d of origin."
-/// ));
-/// ```
-pub fn swept_pushed(folder: &Path, over: &str, branches: &[String], lost: usize) -> String {
-    let names = match branches {
-        [] => "no branch".to_owned(),
-        [one] => format!("the branch {one}"),
-        [first @ .., last] => format!("the branches {} and {last}", first.join(", ")),
-    };
-    let mut line = format!(
-        "riff removed the folder {}: {over}. Its work is on {names} of origin.",
-        folder.display()
-    );
-    if lost > 0 {
-        let files = if lost == 1 { "file" } else { "files" };
-        let verb = if lost == 1 { "does" } else { "do" };
-        line.push_str(&format!(
-            " {lost} {files} that git {verb} not track went with the folder."
-        ));
-    }
-    line
-}
-
-/// The sweep removed the folder `folder`, for the reason `why`. Its
-/// clone had only `lost` files that git does not track: nothing went to
-/// `origin`.
-///
-/// ```
-/// use std::path::Path;
-///
-/// let folder = Path::new("/s/issue-12-1a2b3c4d");
-/// assert_eq!(
-///     riff::text::swept_untracked(folder, "the pull request #40 merged", 1),
-///     "riff removed the folder /s/issue-12-1a2b3c4d: the pull request #40 merged. 1 file that git does not track went with the folder."
-/// );
-/// ```
-pub fn swept_untracked(folder: &Path, over: &str, lost: usize) -> String {
-    let (files, verb) = if lost == 1 {
-        ("file", "does")
-    } else {
-        ("files", "do")
-    };
-    format!(
-        "riff removed the folder {}: {over}. {lost} {files} that git {verb} not track went with \
-         the folder.",
-        folder.display()
-    )
-}
-
-/// The sweep could not push the work of the folder `folder` for the
-/// reason `why`, so it kept the folder (`over` is why the work is over).
-///
-/// ```
-/// use std::path::Path;
-///
-/// let folder = Path::new("/s/issue-12-1a2b3c4d");
-/// assert_eq!(
-///     riff::text::swept_push_failed(folder, "the pull request #40 merged", "git push: denied"),
-///     "riff kept the folder /s/issue-12-1a2b3c4d: the pull request #40 merged, but riff could not push its work: git push: denied. The next sweep tries again."
-/// );
-/// ```
-pub fn swept_push_failed(folder: &Path, over: &str, why: &str) -> String {
-    let why = why.trim_end().trim_end_matches('.');
-    format!(
-        "riff kept the folder {}: {over}, but riff could not push its work: {why}. The next \
-         sweep tries again.",
-        folder.display()
-    )
-}
-
-/// The one note to the lead after a sweep: `lines` says what the sweep
-/// pushed, removed and deleted. `None` for no line.
+/// The one note to the lead after a sweep: `lines` says which old
+/// branches `riff-kept` the sweep deleted (01M5NVKNS35SC8P514GYDJSRQM).
+/// `None` for no line.
 ///
 /// ```
 /// let note = riff::text::daemon_kept_digest(&["a.".into(), "b.".into()]).unwrap();
-/// assert_eq!(note, "riff daemon: the sweep moved the leftover work of kept folders.\na.\nb.");
+/// assert_eq!(note, "riff daemon: the sweep deleted old branches riff-kept of origin.\na.\nb.");
 /// assert_eq!(riff::text::daemon_kept_digest(&[]), None);
 /// ```
 pub fn daemon_kept_digest(lines: &[String]) -> Option<String> {
     (!lines.is_empty()).then(|| {
         format!(
-            "riff daemon: the sweep moved the leftover work of kept folders.\n{}",
+            "riff daemon: the sweep deleted old branches riff-kept of origin.\n{}",
             lines.join("\n")
         )
     })
+}
+
+/// Why the sweep removed a folder that had no change for `days` days
+/// (01M7DZ4E02PX5Y0WMHFCJ9KS14).
+///
+/// ```
+/// assert_eq!(riff::text::swept_old(30), "it had no change for 30 days");
+/// ```
+pub fn swept_old(days: u64) -> String {
+    format!("it had no change for {days} days")
+}
+
+/// The sweep kept the folder `folder`: it has no file `repo`, so riff
+/// does not know its repository and asks the forge nothing. It goes after
+/// `days` days with no change (01M7DZ4E02PX5Y0WMHFCJ9KS14).
+///
+/// ```
+/// use std::path::Path;
+///
+/// assert_eq!(
+///     riff::text::swept_no_repo(Path::new("/s/issue-12-1a2b3c4d"), 30),
+///     "riff kept the folder /s/issue-12-1a2b3c4d: it has no file repo, so riff does not know its \
+///      repository. It goes after 30 days with no change, or remove it with riff daemon sweep \
+///      --remove issue-12-1a2b3c4d --force."
+/// );
+/// ```
+pub fn swept_no_repo(folder: &Path, days: u64) -> String {
+    let name = folder.file_name().unwrap_or_default().to_string_lossy();
+    format!(
+        "riff kept the folder {}: it has no file repo, so riff does not know its repository. It \
+         goes after {days} days with no change, or remove it with riff daemon sweep --remove \
+         {name} --force.",
+        folder.display()
+    )
 }
 
 /// The sweep deleted the branch `branch` of `origin`, older than
@@ -13896,27 +13964,6 @@ pub fn swept_why(issue: u64, fate: &crate::daemon::sweep::Fate) -> Option<String
             "the issue #{issue} is closed, and its branch has no pull request"
         )),
     }
-}
-
-/// The sweep kept the folder `folder` of a session whose work is over,
-/// for the reason `why` (01M53S7WAXD46YPN0DR96XSTMG): its clone holds
-/// work that is not on `origin` ([`crate::daemon::sweep::Local::why`]),
-/// or riff cannot read it.
-///
-/// ```
-/// use std::path::Path;
-///
-/// let folder = Path::new("/s/issue-12-1a2b3c4d");
-/// assert_eq!(
-///     riff::text::swept_kept(folder, "the pull request #40 merged", "its clone has 1 commit that is not pushed"),
-///     "riff kept the folder /s/issue-12-1a2b3c4d: the pull request #40 merged, but its clone has 1 commit that is not pushed. Push the work, or remove the folder."
-/// );
-/// ```
-pub fn swept_kept(folder: &Path, over: &str, why: &str) -> String {
-    format!(
-        "riff kept the folder {}: {over}, but {why}. Push the work, or remove the folder.",
-        folder.display()
-    )
 }
 
 /// The sweep kept the folder `folder`: a step on the forge failed, for
@@ -14100,6 +14147,7 @@ pub const LEAD_RULES: [(&str, &str); 24] = [
 /// assert!(text.contains("`/opt/riff/riff wave list`"));
 /// assert!(text.contains("`/opt/riff/riff wave move ITEM --to WAVE`"));
 /// assert!(text.contains("`/opt/riff/riff wave end NUMBER --move-open-to-backlog`"));
+/// assert!(text.contains("`/opt/riff/riff wave next ISSUE`"));
 /// assert!(text.contains("file an issue for it"));
 /// assert!(!text.contains("--milestone"));
 /// assert!(!text.contains("gh issue edit"));
@@ -14117,7 +14165,9 @@ work. Your riff tools act on riff-server: `whoami`, `who`, `threads`, `read`, `p
 `/opt/riff/riff wave list`. To make, rename or end a wave, run `/opt/riff/riff wave make`, \
 `/opt/riff/riff wave rename` or `/opt/riff/riff wave end`. To move items to a wave or to the \
 Backlog, run `/opt/riff/riff wave move ITEM --to WAVE`; to end a wave with open items, run \
-`/opt/riff/riff wave end NUMBER --move-open-to-backlog`. When the auto mode checker blocks a release command, file an issue for it: the list of denials has the record. Sessions talk in threads. A post \
+`/opt/riff/riff wave end NUMBER --move-open-to-backlog`. When an item in the group `merged` of \
+the list has more work, run `/opt/riff/riff wave next ISSUE`: the wave will start a session for \
+its next pull request. When the auto mode checker blocks a release command, file an issue for it: the list of denials has the record. Sessions talk in threads. A post \
 wakes only the \
 sessions that its `to` selectors match; text in the body never wakes anyone. To reach only the person of a user, add `person: true` to the selector: it wakes the terminals of the person, and no agent session. Use `tell` for a \
 direct message. The notes are one text that riff keeps for your project: the running \
@@ -15747,6 +15797,51 @@ mod tests {
             wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &checks),
         ] {
             assert!(!text.contains("plain sentences"), "{text}");
+        }
+    }
+
+    /// #2113 (01M7DYRDPST1Z3CB37GR3ZPQ5B): the start text of a build, a
+    /// rebase, a fix of checks and a verify says one time where a second
+    /// worktree or another large build tree goes, and why: the home is in
+    /// memory, in folders of 1 GiB. The line comes before the last line
+    /// about the environment.
+    #[test]
+    fn each_start_text_of_a_session_says_where_a_large_build_tree_goes() {
+        let line = build_trees();
+        for words in [
+            "second worktree or another large build tree in /tmp, on the disk",
+            "Your home is in memory, in folders of 1 GiB each",
+            "apart from your clone and the volumes of the repository",
+            "fails with \"No space left on device\"",
+        ] {
+            assert!(line.contains(words), "{line}");
+        }
+        let frame = "Closes #12\n\nSUMMARY\n\nIssue: #12\nMilestone: Wave 3\n";
+        let checks = ["CI".to_owned()];
+        let mut texts = Vec::new();
+        for earlier in [false, true] {
+            texts.push(run_start(
+                "o/r", "main", 12, "b", "1a", frame, "Wave 3", earlier,
+            ));
+            texts.push(run_start_no_github(
+                "o/r",
+                12,
+                "b",
+                "1a",
+                "Done when: x",
+                earlier,
+            ));
+        }
+        texts.extend([
+            wave_rebase_start("o/r", "main", 12, 40, "1a2b3c4", "b", "1a"),
+            wave_checks_start("o/r", "main", 12, 40, "1a2b3c4", &checks, "b", "1a"),
+            wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &checks),
+            wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &[]),
+        ]);
+        for text in texts {
+            assert_eq!(text.matches(&line).count(), 1, "{text}");
+            let next = format!("{line}\nDo not print the environment or a token.");
+            assert!(text.contains(&next), "{text}");
         }
     }
 

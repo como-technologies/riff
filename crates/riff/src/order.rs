@@ -329,15 +329,14 @@ pub fn merges(main: &Path, lanes: &mut BTreeMap<u64, Lane>) {
         .map(|lane| format!("refs/pull/{}/head", lane.pull))
         .collect();
     if !missing.is_empty() {
-        let fetch = ["GIT_TERMINAL_PROMPT=0", "git", "fetch", "-q"];
-        let mut args = [fetch.as_slice(), &["--no-write-fetch-head", "origin"]].concat();
+        let mut args = vec!["fetch", "-q", "--no-write-fetch-head", "origin"];
         args.extend(missing.iter().map(String::as_str));
         // A failed fetch brings no head: the merges of those heads do not
         // run, and their pull requests stay in one group. So does a fetch
         // that would ask a locked `gh` for a credential
         // (01M78TSH2VNHA75RR1HXC5Z27G).
-        if crate::git_credential::keyring_open(main, "origin", &args[2..]).is_ok() {
-            let _ = crate::run::output_within("env", main, &args, FETCH_WAIT);
+        if crate::git_credential::keyring_open(main, "origin", &args).is_ok() {
+            let _ = crate::host_git::within(main, &args, FETCH_WAIT);
         }
     }
     for (one, two) in pairs {
@@ -386,9 +385,8 @@ fn clean(main: &Path, one: &str, two: &str) -> bool {
 /// The exit code of `git ARGS` in `dir`, with no prompt and no output.
 /// `None` when `git` does not run, or a signal ends it.
 fn git_code(dir: &Path, args: &[&str]) -> Option<i32> {
-    std::process::Command::new("git")
-        .arg("-C")
-        .arg(dir)
+    crate::host_git::git(dir)
+        .ok()?
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
         .stdin(Stdio::null())

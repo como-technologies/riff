@@ -1699,7 +1699,10 @@ async fn the_waves_tab_shows_the_board_and_holds_frees_and_pauses() {
         calls.contains("api -i repos/acme/app/issues?state=open"),
         "{calls}"
     );
-    assert!(!calls.contains("pr list"), "no open pull request: {calls}");
+    assert!(
+        !calls.contains("pr list --repo acme/app --state open"),
+        "no open pull request: {calls}"
+    );
 
     // `h` on #13: a reason, then `y`. The hold shows at the next look.
     tty.press("j").await;
@@ -1745,6 +1748,137 @@ async fn the_waves_tab_shows_the_board_and_holds_frees_and_pauses() {
     // The repository stays paused.
     tty.shows(|rows| rows[2].starts_with(" ▼ acme/app · Wave 3 · paused"))
         .await;
+
+    tty.press("q").await;
+    assert_eq!(tty.exits().await, Some(0));
+}
+
+/// A fake `gh` for the clone of acme/app with merged items (#2145): the
+/// open issues 872, 873 and 1854 of Wave 3. 872 has the comment `Merged
+/// in #882`, and the pull request #1866 of 1854 merged with `Refs #1854`.
+/// The "Done when" of 1854 has a `Live:` line. It gives the REST reads of
+/// the Waves tab, and the reads of `riff wave list` and `riff wave next`.
+/// A comment on 872 goes to the file `more` of its folder, and 872 has it
+/// from then on. It logs each call to the file `calls` of its folder.
+const MERGED_GH: &str = r#"#!/bin/sh
+dir=$(dirname "$0")
+echo "$*" >> "$dir/calls"
+more=''
+said=1
+if [ -f "$dir/more" ]; then
+  more=$(printf ',{"body":"%s"}' "$(cat "$dir/more")")
+  said=2
+fi
+case "$*" in
+  'issue comment 872 --body-file -') cat > "$dir/more" ;;
+  'issue view 872 '*)
+    printf '{"number":872,"state":"OPEN","title":"Two parts","body":"Done when: A test.","comments":[{"body":"Merged in #882 (abc)"}%s]}\n' "$more" ;;
+  'issue list '*)
+    printf '[{"number":872,"title":"Two parts","milestone":{"title":"Wave 3"},"body":"Done when: A test.","comments":[{"body":"Merged in #882 (abc)"}%s]},' "$more"
+    printf '{"number":873,"title":"Show the board","milestone":{"title":"Wave 3"},"body":"Done when: A test.","comments":[]},'
+    printf '{"number":1854,"title":"Run it live","milestone":{"title":"Wave 3"},"body":"Done when: Live: it runs.","comments":[]}]\n' ;;
+  'pr list --repo acme/app --state merged '*)
+    echo '[{"number":1866,"state":"MERGED","headRefName":"worktree-issue-1854","body":"Refs #1854","mergeCommit":{"oid":"def"}}]' ;;
+  pr*) echo '[]' ;;
+  *'issues/872/comments'*)
+    printf 'HTTP/2.0 200 OK\r\n\r\n[{"body":"Merged in #882 (abc)"}%s]' "$more" ;;
+  *'issues?state=open'*)
+    printf 'HTTP/2.0 200 OK\r\n\r\n'
+    printf '[{"number":872,"title":"Two parts","milestone":{"number":3,"title":"Wave 3"},"body":"Done when: A test.","comments":%s},' "$said"
+    printf '{"number":873,"title":"Show the board","milestone":{"number":3,"title":"Wave 3"},"body":"Done when: A test."},'
+    printf '{"number":1854,"title":"Run it live","milestone":{"number":3,"title":"Wave 3"},"body":"Done when: Live: it runs."}]' ;;
+  *milestones*) echo '[{"number":3,"title":"Wave 3","open_issues":3,"closed_issues":0}]' ;;
+  *'state=closed'*|*'state=all'*) printf 'HTTP/2.0 200 OK\r\n\r\n[]' ;;
+  'api repos/acme/app') echo '{"default_branch":"main"}' ;;
+  *) echo '[]' ;;
+esac
+"#;
+
+/// The stdout of `riff ARGS` in the clone of the TUI `tty`, with the fake
+/// `gh` of the folder `bin`, as brett at the riff-server `server`.
+async fn riff_beside(tty: &Tty, server: &str, bin: &std::path::Path, args: &[&str]) -> String {
+    let mut cmd = Isolated::shared().riff();
+    cmd.args(args)
+        .current_dir(tty.home())
+        .env("RIFF_SERVER", server)
+        .env("RIFF_USER", "brett")
+        .env("RIFF_HOST", "thelio")
+        .env("RIFF_HOME", tty.home())
+        .env("PATH", crate::common::path_with(bin))
+        .env_remove("RIFF_SESSION")
+        .env_remove("CLAUDE_CODE_SESSION_ID");
+    let out = tokio::task::spawn_blocking(move || cmd.output().unwrap())
+        .await
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "riff {args:?}: {stderr}");
+    String::from_utf8(out.stdout).unwrap()
+}
+
+/// 01M7E25WB42HQQ34CRNXPZFHHR, 01M7DYX2Q2VJW5V4RNQEEHCVKS (#2145): the
+/// Waves tab and `riff wave list` read the same facts of [`MERGED_GH`]:
+/// 872 is merged in #882, and 1854 waits for its check after the release
+/// of #1866. The tab shows each as a merged row, never as a free row.
+/// After `riff wave next 872`, a new read of the tab (`r`) shows 872 as
+/// a free row, and the list has no group `merged`. With no key, the first
+/// item is the selected one.
+#[tokio::test]
+async fn the_waves_tab_shows_the_merged_items_of_riff_wave_list() {
+    let server = crate::common::start_signed_log(vec![crate::common::project("acme/app")]).await;
+    let bin = tempfile::tempdir().unwrap();
+    isolated::write_program(bin.path().join("gh"), MERGED_GH);
+    let mut tty = Tty::start_in(
+        crate::common::clone_of("acme/app"),
+        &server,
+        "brett",
+        "thelio",
+        true,
+        &[("PATH", crate::common::path_with(bin.path()))],
+    );
+    tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
+
+    tty.press("3").await;
+    let rows = tty
+        .shows(|rows| rows.iter().any(|r| r.contains("#1854")))
+        .await;
+    assert!(rows[2].ends_with(" 1 free 2 merged"), "{rows:#?}");
+    assert_eq!(
+        rows[4..7],
+        [
+            " > ○   free    #873   Show the board                  -                    -",
+            "   ✓   merged  #872   Two parts                       PR #882 merged       -",
+            "   ✓   merged  #1854  Run it live                     PR #1866 live check  -",
+        ],
+        "{rows:#?}"
+    );
+    let list = riff_beside(&tty, &server, bin.path(), &["wave", "list"]).await;
+    assert!(
+        list.contains("\n  merged: #872 (in #882)\n  live check: #1854 (in #1866)\n"),
+        "{list}"
+    );
+
+    let told = riff_beside(&tty, &server, bin.path(), &["wave", "next", "872"]).await;
+    assert_eq!(told, format!("{}\n", riff::text::waves_next(872, 882)));
+    tty.press("r").await;
+    let rows = tty
+        .shows(|rows| rows.iter().any(|r| r.contains("free    #872")))
+        .await;
+    assert!(rows[2].ends_with(" 2 free 1 merged"), "{rows:#?}");
+    assert_eq!(
+        rows[4..7],
+        [
+            " > ○   free    #872   Two parts                       -                    -",
+            "   ○   free    #873   Show the board                  -                    -",
+            "   ✓   merged  #1854  Run it live                     PR #1866 live check  -",
+        ],
+        "{rows:#?}"
+    );
+    let list = riff_beside(&tty, &server, bin.path(), &["wave", "list"]).await;
+    assert!(!list.contains("merged:"), "{list}");
+    assert!(
+        list.contains("\n  live check: #1854 (in #1866)\n"),
+        "{list}"
+    );
 
     tty.press("q").await;
     assert_eq!(tty.exits().await, Some(0));

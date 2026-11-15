@@ -93,7 +93,6 @@ mod release;
 mod release_cycle;
 #[cfg(target_os = "linux")]
 mod run;
-mod save;
 mod secrets;
 mod session;
 mod session_image;

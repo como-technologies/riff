@@ -112,7 +112,7 @@ sequenceDiagram
     W->>G: the free items and the pull requests that wait for a verify
     W->>D: room for one more session?
     D->>S: a new worker session, and its claim of issue-12
-    D->>D: a clone of the item, with --reference MAIN
+    D->>D: a clone of the item, with --reference MAIN, in new-clones, then moved into the folder of the session
     D->>C: podman run --init: riff relay -- claude
     C->>D: the riff tools, on the socket of the session
     D->>S: read, post, tell and status, as the worker session
@@ -361,7 +361,7 @@ hold each decision of the design.
 | What sessions share | How riff keeps them apart | What a session can still do to another |
 |---|---|---|
 | The files of your machine | Each session is a rootless podman container (`--userns=keep-id`). It writes only its binds: its own clone, its own Claude folder, the folder of its socket and the volumes that `riff.toml` names. Each other write goes to the copy-on-write layer of the container, and goes when the session ends. | Nothing outside its binds. See the rows of git and of the caches. |
-| git: the clone and its alternates | Each session has its own clone, made with `git clone --reference MAIN` in a folder of riff. The container sees the objects of the main clone at the same path, with no write. No session writes the git dir of the main clone or of another session. The clone goes when its item ends, after its push. | Nothing in the clone of another session. A `git gc` of the main clone can remove an object that a session clone reads. |
+| git: the clone and its alternates | Each session has its own clone, made with `git clone --reference MAIN` in a folder of riff, `new-clones/ITEM-ID8`, and then moved into the folder of the session. The container sees the objects of the main clone at the same path, with no write. No session writes the git dir of the main clone or of another session. The host runs no git in the clone of a session: the session writes the git config of its clone, and a git config can name a program that git runs. One guard of riff refuses each git call on your machine in the folder of the sessions. The sweep reads only GitHub and the file `repo` of the folder, and the council of a verify reads the main clone. The clone goes when its item ends. | Nothing in the clone of another session. A `git gc` of the main clone can remove an object that a session clone reads. |
 | git: the config | `~/.gitconfig` is bound with no write, or as an overlay whose changes go when the session ends. riff writes no git config of yours. A session writes only the config of its own clone. | Nothing. |
 | git: the commit | A commit has the bot of the GitHub App of the session as its author, for example `riff-como-technologies[bot]`, with the noreply email of the bot, and a `Riff-Session:` trailer that names the session. Where the Apps are not on the repository, it has your git identity. A session commits with no signature: riff sets `commit.gpgsign=false` in the environment of the container, so it applies to each git call of the session. The squash merge on GitHub makes the commit on `main` from the message that `riff verify pass` gives: the body of the pull request, which ends with `Riff-Session:` and `Co-authored-by:` you. No gpg agent goes into a container. See [Find the commits of a session](development.md#find-the-commits-of-a-session). | Nothing. The trailer `Riff-Session:` tells the commits of two sessions apart. |
 | git: the repository on GitHub | Each session pushes its own branch from its own clone. The daemon makes the claims, not the session: see the next row. | With your sign-in, a session can push to the branch of another session, or delete it. |
@@ -370,13 +370,62 @@ hold each decision of the design.
 | `/tmp` | Each container has its own `/tmp`. It goes when the session ends. | Nothing. |
 | The ports | Each container has its own loopback. A test port of one session does not hit another. | It can reach a port that listens on the network of your machine, as each program on it can. |
 | The caches | riff sets no cache. A repository names its cache volumes in `riff.toml`. The `riff.toml` of riff names one volume for `CARGO_HOME` and one for the folder of sccache. Both are bound with write. The tools lock them themselves. The toolchain is in the image, with no write. A new clone has no `target/`: a warm sccache makes its build short. | It can write a bad file in a cache, and a later build of another session uses it. |
-| Your home | The home of the container is an empty tmpfs at the path of your home. riff binds your `~/.gitconfig` and the Claude folder of the session on top of it. Each folder above a bind belongs to the session user: see [The folders of the home above a volume](development.md#the-folders-of-the-home-above-a-volume). Each other write in that home goes when the session ends. riff writes nothing in your home outside its own folders. It does not write `~/.claude`, `~/.claude.json`, a git config or a shell file. | It reads `~/.gitconfig`. It does not see `~/.config/gh`. |
+| Your home | The home of the container is an empty tmpfs at the path of your home, in memory: see [The home of a session is in memory](#the-home-of-a-session-is-in-memory). riff binds your `~/.gitconfig` and the Claude folder of the session on top of it. Each folder above a bind belongs to the session user: see [The folders of the home above a volume](development.md#the-folders-of-the-home-above-a-volume). Each other write in that home goes when the session ends. riff writes nothing in your home outside its own folders. It does not write `~/.claude`, `~/.claude.json`, a git config or a shell file. | It reads `~/.gitconfig`. It does not see `~/.config/gh`. |
 | The CPU | Each container gets `--cpus`, 8 by default. riff sets no build jobs: a tool reads the CPUs of its container. `riff daemon limit --cpus N` sets it for the host. The daemon keeps one limit for the host: the number of live sessions, at most 3 by default. Each process of a container runs at the lowest CPU priority: see [The priority of a session](development.md#the-priority-of-a-session). | A build of one session makes the builds of the others slower, up to its limit. |
 | The memory | Each container gets `--memory`, 8 GB by default. `riff daemon limit --memory GB` sets it for the host. A session past its limit loses its own processes, not those of another session. The daemon starts no new session while the free memory is below a floor, 8 GB by default. | It takes memory, up to its limit, that a new session needs. |
 | The network | Each session reaches the internet, as a plain `claude` does. No proxy and no filter. | It uses the same connection and reaches each service that your machine reaches. |
 | The sign-in of `gh` | The session acts on GitHub as a bot of a GitHub App of the riff, with a token for its one repository and the rights of its role: see [Who acts on GitHub for each role](#who-acts-on-github-for-each-role). The container never gets your token. Where the Apps are not on the repository, no worker and no verify starts, and the lead starts with no token on GitHub: see [Repair riff with claude on the host](#repair-riff-with-claude-on-the-host). The image has `gh` at `/usr/bin/gh`. The daemon binds the binary of riff at `/usr/local/bin/gh`: it counts each call for `riff daemon status` (see [See how the daemon uses the GitHub limit](development.md#see-how-the-daemon-uses-the-github-limit)), and runs the real `gh`. An image with its own `gh` at `/usr/local/bin/gh` gets no bind: its `gh` runs as it is, with no count. No secret goes into a log line, a message or a file of a clone. | A worker can change an issue or a comment of another session: the right `issues: write` has no smaller part. The guard puts the change back: see [Add to an issue](#add-to-an-issue). |
 | The sign-in of `claude` | Each session has its own Claude folder in a folder of riff. riff trusts the clone of the session there, as you trust the main clone. The daemon gives the session the long-lived token of `riff claude-token`, kept in the OS keyring, in `CLAUDE_CODE_OAUTH_TOKEN`. With no token, riff binds your `~/.claude/.credentials.json` with no write, and starts no session while its access token has less than 60 minutes left. riff never changes your own Claude config. | It uses the limits of your plan that another session needs. |
 | The daemon and the riff tools | Each relay talks to the daemon through its own Unix socket, in a folder that only that session sees. The socket tells the daemon which session asks. The daemon serves the riff tools of the session on riff-server, as its worker session. A session gets only the riff tools that talk: `whoami`, `who`, `threads`, `read`, `post`, `tell`, `status` and `blocked`. No riff tool of a session acts on a folder of your machine or on a claim. The admin steps need a person at the CLI. No riff tool does them. | It can send messages to other sessions through the riff tools. |
+
+### The home of a session is in memory
+
+The home of a session is a tmpfs: its files are in the memory of the
+container, and count against its `--memory`. Each folder above a bind
+is a tmpfs of its own: for example `~/.cache`, `~/.local/share`, and
+the folder of the session above `clone/`. Each of these tmpfs holds
+1 GiB at most. A write over that size fails at once with "No space left
+on device", and the error names the file. So a large tree in the home
+does not fill the memory, and the kernel kills no build with signal 9.
+
+A session writes little in its home: the logs of `claude` in
+`~/.cache/claude-cli-nodejs`, the state of `gh` in `~/.local/state/gh`,
+and the files of a tool that has no volume. A large tree goes on the
+disk:
+
+| Where | What goes there | When it goes |
+|---|---|---|
+| The clone, `clone/` | The work of the item, and its build, for example `target/`. | When the item ends, after its push. |
+| `/tmp` | A second worktree, or another large build tree. | When the session ends. |
+| A volume of `riff.toml` | A large cache of a tool, for example `CARGO_HOME`: see [Set the env and the volumes of a session](development.md#set-the-env-and-the-volumes-of-a-session). | Never: the next sessions use it. |
+
+```mermaid
+flowchart TD
+    S["a session"] --> H["its home: a tmpfs for each folder,<br/>in memory, 1 GiB each"]
+    S --> C["clone/: on the disk"]
+    S --> T["/tmp: on the disk"]
+    S --> V["the volumes of riff.toml: on the disk"]
+    H -- "a write over 1 GiB" --> E["No space left on device"]
+```
+
+### Make a second worktree in a session
+
+The start text of each work session and of each verify says where a
+second worktree or another large build tree goes: in `/tmp`. To make
+one, run this in the clone of a session:
+
+```sh
+git worktree add /tmp/second origin/main
+```
+
+To see where each folder is, run this in the clone of a session:
+
+```sh
+df -h ~ .. . /tmp
+```
+
+The home `~` and the folder of the session `..` show `tmpfs` with a
+size of 1.0G. The clone `.` and `/tmp` show the disk.
 
 ## Where the env of a session comes from
 
@@ -3247,7 +3296,7 @@ place:
 | Lever | Where it lives |
 |---|---|
 | A check of each criterion of the `Done when:` line, and the Gate | Each verify, as this section says. The verify reads the Gate, and does not run it again. |
-| A control: a test that finds the fault | The prompt of each verify. Today the prompt does not give it: [#1871](https://github.com/como-technologies/riff/issues/1871) puts it back. |
+| A control: a test that finds the fault | The start text of each verify gives the control in a step of its own, "Run a control": see [Verify finished work](#verify-finished-work). |
 | A test for each new requirement | The job `Hygiene` of each pull request, with the rule `unnamed`: see [Name a new requirement in a test](development.md#name-a-new-requirement-in-a-test). |
 | An adversarial review: what can break, invalid states, round trips, the docs and security | The council of each verify: see [The council of a verify](#the-council-of-a-verify). |
 | A person and a risk level | The gates before the code and the sign-off of a person, a design: [#585](https://github.com/como-technologies/riff/issues/585). |
@@ -3718,6 +3767,44 @@ An issue with a line `Live:` in "Done when" gets `Refs #12` with no
 `--refs`: see
 [Leave the issue open for a check after the
 release](development.md#leave-the-issue-open-for-a-check-after-the-release).
+
+#### Start the next pull request of an issue
+
+After a pull request with `Refs #12` merges, issue 12 stays open. The
+wave starts no session for it: `riff wave list` shows it in the group
+`merged`, for example `merged: #12 (in #40)`, and the Waves tab shows a
+`merged` row (see
+[See the merged items in the TUI](#see-the-merged-items-in-the-tui)).
+When the issue has more work, the lead tells the wave:
+
+```sh
+riff wave next 12
+```
+
+riff adds the comment `More work after #40` to the issue. At its next
+look, the wave counts the merge of #40 no more, and starts a session
+for the next pull request of the issue. That session reads the
+comments of the issue, and does the rest of "Done when". It gives its
+last pull request `Closes #12`. For a pull request before the last, it
+uses `--refs`, and the lead runs `riff wave next 12` again after its
+merge.
+
+```mermaid
+sequenceDiagram
+    participant G as GitHub
+    participant W as the wave
+    participant L as the lead
+    G->>G: pull request #40 merges with Refs #12
+    W->>G: look: #12 is merged, no session
+    L->>G: riff wave next 12: the comment More work after #40
+    W->>G: look: #12 is free
+    W->>W: a session for the next pull request of #12
+```
+
+riff refuses an issue that is not open, and an issue that no merged
+pull request keeps from the wave. Then it adds no comment. An issue
+with a `Live:` line and no more work stays in the group `live check`
+until its check after the release.
 
 ### Wait for the merge
 
@@ -5792,6 +5879,40 @@ flowchart LR
     N --> Q["riff questions"]
 ```
 
+### See the merged items in the TUI
+
+An open issue whose pull request merged with `Refs #N` is no free work:
+the wave starts no session for it (see
+[Start the next pull request of an issue](#start-the-next-pull-request-of-an-issue)).
+The Waves tab shows it as `riff wave list` does. Run riff with no
+command, and press `3` for the Waves tab:
+
+```sh
+riff
+```
+
+The board of the current wave has a `merged` row for each such item,
+with the pull request that merged:
+
+```text
+   ○   free    #1620  Add the flag --format           -                    -
+   ✓   merged  #1622  The book names the flag         PR #1630 merged      -
+   ✓   merged  #1640  Run it on pangolin              PR #1650 live check  -
+```
+
+- `PR #1630 merged`: the item is in the group `merged` of
+  `riff wave list`. When it has more work, run `riff wave next 1622`.
+  At the next read of the tab, it is a `free` row.
+- `PR #1650 live check`: the "Done when" of the item has a `Live:`
+  line. It waits for its check after the release, and is in the group
+  `live check` of `riff wave list`.
+- `o` on a `merged` row shows the URL of the pull request that merged.
+
+The tab reads the comments `Merged in #PR` and `More work after #PR`
+of the items of the current wave, and the last 100 merged pull
+requests, as the wave does. So the tab, `riff wave list` and the wave
+agree on each item.
+
 ## Pause the riff
 
 riff has two pauses:
@@ -7772,7 +7893,9 @@ flowchart TD
   merged, and each issue of its `Needs:` line is closed. An issue is
   merged when it has the comment `Merged in #`, or when its pull request
   merged with `Refs #N`, or with `Closes #N` in the last hour (see
-  [What the wave does](development.md#what-the-wave-does)).
+  [What the wave does](development.md#what-the-wave-does)). A comment
+  `More work after #PR` takes that pull request out (see
+  [Start the next pull request of an issue](#start-the-next-pull-request-of-an-issue)).
   A pull request counts for the issue that it names (see
   [See the item of a pull request](#see-the-item-of-a-pull-request)).
   An item counts one time: while its pull request waits for a verify

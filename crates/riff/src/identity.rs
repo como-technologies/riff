@@ -40,7 +40,7 @@
 use std::ffi::OsString;
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -453,10 +453,8 @@ fn asked(dir: &Path, args: &[&str], absent: &[&str]) -> Result<Option<String>> {
     let mut tried = 0;
     loop {
         tried += 1;
-        let run = Command::new("git")
+        let run = crate::host_git::git(dir)?
             .env("LC_ALL", "C")
-            .arg("-C")
-            .arg(dir)
             .args(args)
             .output();
         match reading(run, absent) {
@@ -604,12 +602,7 @@ fn base_name(path: &str) -> String {
 }
 
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .output()
-        .ok()?;
+    let out = crate::host_git::git(dir).ok()?.args(args).output().ok()?;
     out.status
         .success()
         .then(|| String::from_utf8_lossy(&out.stdout).trim().to_owned())

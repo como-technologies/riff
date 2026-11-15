@@ -634,9 +634,10 @@ enum Command {
     /// Plan the waves of this repository
     ///
     /// The lead plans the waves with riff wave list, riff wave make, riff
-    /// wave rename and riff wave end. They use the gh of this machine, on
-    /// the repository of this folder. To run the current wave on a host,
-    /// use riff host join.
+    /// wave rename and riff wave end. riff wave next starts the next pull
+    /// request of an issue. They use the gh of this machine, on the
+    /// repository of this folder. To run the current wave on a host, use
+    /// riff host join.
     Wave {
         #[command(subcommand)]
         command: WaveCommand,
@@ -1441,8 +1442,12 @@ enum WaveCommand {
     /// waits for the answer of a person, and the wave starts no build of it.
     /// An item in "verify waits for #N" changes a file of the pull request
     /// #N, and their heads conflict: its verify waits until #N merges or its
-    /// verify fails. When riff cannot read riff-server, it shows only the
-    /// waves and their numbers.
+    /// verify fails. An item in merged has a pull request that merged with
+    /// Refs #N, and the wave starts no build of it: when it has more work,
+    /// run riff wave next N. An item in "live check" is the same, with a
+    /// Live: line in its "Done when": it waits for its check after the
+    /// release. When riff cannot read riff-server, it shows only the waves
+    /// and their numbers.
     ///
     /// riff keeps its read of GitHub for 60 seconds for each repository on
     /// this machine, and each run shares it. The list names the age of a
@@ -1512,6 +1517,19 @@ enum WaveCommand {
         /// Move each open item of the wave to the Backlog, then end the wave.
         #[arg(long)]
         move_open_to_backlog: bool,
+    },
+    /// Start the next pull request of an open issue
+    ///
+    /// Use it for an issue with more than one pull request. After a pull
+    /// request with Refs #N merges, the issue stays open, and the wave
+    /// starts no session for it: riff wave list shows it in merged. riff
+    /// adds the comment "More work after #PR" to the issue. Then the wave
+    /// counts that merge no more, and starts a session for the next pull
+    /// request. riff refuses an issue that is not open, and an issue that
+    /// no merged pull request keeps from the wave. Then it adds no comment.
+    Next {
+        /// The number of the issue, for example 872.
+        issue: u64,
     },
 }
 
@@ -1646,15 +1664,16 @@ enum DaemonCommand {
     ///
     /// The daemon does it by itself at its start and each 10 minutes.
     /// It removes the folder of each session that does not run, when the
-    /// pull request of its branch merged or closed, or when its issue is
-    /// closed and its branch has no pull request. A folder whose clone has
-    /// a file that is not committed, or a commit that is not pushed,
-    /// stays. It prints each folder that it removed, and each folder that
-    /// stays with work in its clone, with the reason.
+    /// pull request of its branch merged or closed, when its issue is
+    /// closed and its branch has no pull request, or when the folder had
+    /// no change for 30 days. It runs no git in the clone: the work of the
+    /// clone that is not on origin goes with the folder. It prints each
+    /// folder that it removed, and each folder that stays for a fault,
+    /// with the reason.
     Sweep {
         /// Remove the folder NAME of one ended session, for example
         /// issue-12-1a2b3c4d. riff removes it when the pull request of its
-        /// work merged, with its leftover work and all. It never removes the
+        /// work merged, with the work of its clone. It never removes the
         /// folder of a session that runs.
         #[arg(long, value_name = "NAME")]
         remove: Option<String>,
@@ -2277,6 +2296,14 @@ async fn cli() -> Result<()> {
                 forget_wave_list();
                 Some(text::waves_ended(&ended.title, ended.closed_issues))
             }
+            WaveCommand::Next { issue } => {
+                let Some(repo) = folder_repo() else {
+                    anyhow::bail!(text::waves_no_repo());
+                };
+                let pull = riff::waves::next(&gh, &repo, *issue)?;
+                forget_wave_list();
+                Some(text::waves_next(*issue, pull))
+            }
             WaveCommand::List { .. } | WaveCommand::Move { .. } | WaveCommand::End { .. } => None,
         };
         if let Some(line) = line {
@@ -2539,7 +2566,10 @@ async fn cli() -> Result<()> {
                 no_release,
                 move_open_to_backlog: true,
             } => wave_end_moving(&reach, &here, *number, no_release.as_deref()).await?,
-            WaveCommand::Make { .. } | WaveCommand::Rename { .. } | WaveCommand::End { .. } => {
+            WaveCommand::Make { .. }
+            | WaveCommand::Rename { .. }
+            | WaveCommand::End { .. }
+            | WaveCommand::Next { .. } => {
                 unreachable!("handled before the identity")
             }
         }
@@ -4643,13 +4673,18 @@ async fn wave_list(reach: &Reach, here: &riff_core::name::Place, fresh: bool) ->
 /// repository of the folder, after a step that changes the waves, so that
 /// the next list shows the step (#1609). It never fails.
 fn forget_wave_list() {
-    let repo = identity::working_dir()
-        .and_then(|dir| identity::place(&dir))
-        .ok()
-        .and_then(|here| here.default_thread());
-    if let Some(repo) = repo {
-        riff::wave_list::forget(&repo.to_string());
+    if let Some(repo) = folder_repo() {
+        riff::wave_list::forget(&repo);
     }
+}
+
+/// The repository of the working folder, `OWNER/REPO`, or `None` outside
+/// a clone.
+fn folder_repo() -> Option<String> {
+    let here = identity::working_dir()
+        .and_then(|dir| identity::place(&dir))
+        .ok()?;
+    Some(here.default_thread()?.to_string())
 }
 
 /// `riff` with no command, in a terminal: the TUI

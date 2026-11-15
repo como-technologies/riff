@@ -218,7 +218,6 @@
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use anyhow::{Context, Result};
 use riff_core::name::Repo;
@@ -1232,12 +1231,7 @@ pub(crate) fn write(path: &Path, text: &str) -> Result<()> {
 }
 
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .output()
-        .ok()?;
+    let out = crate::host_git::git(dir).ok()?.args(args).output().ok()?;
     out.status
         .success()
         .then(|| String::from_utf8_lossy(&out.stdout).trim().to_owned())
@@ -1246,6 +1240,8 @@ fn git(dir: &Path, args: &[&str]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::process::Command;
+
     use super::*;
 
     fn git_in(dir: &Path, args: &[&str]) {
@@ -2090,6 +2086,7 @@ mod tests {
                 for step in [
                     "/opt/riff/riff wave move ITEM --to WAVE",
                     "/opt/riff/riff wave end NUMBER --move-open-to-backlog",
+                    "/opt/riff/riff wave next ISSUE",
                 ] {
                     assert!(steps.contains(&step.to_owned()), "{steps:#?}");
                 }

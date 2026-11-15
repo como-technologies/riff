@@ -35,7 +35,9 @@
 //!   no session claims, that has no comment `Merged in #`, no merged
 //!   pull request with `Refs #N` ([`merges`], #1754), and no merged pull
 //!   request that closes it in the last [`CLOSES_FOR`]
-//!   (01M75WEDFKXGHMRFR73D1QDZCE), whose
+//!   (01M75WEDFKXGHMRFR73D1QDZCE), but each pull request that a comment
+//!   `More work after #PR` of `riff wave next` names
+//!   ([`Issue::merged_pull`], 01M7DYWXWZKDB6VZ2KYYJQ4NF7), whose
 //!   `Needs:` issues are all closed, and whose body has a line that
 //!   starts with `Done when:`, or a heading of `Done when`
 //!   ([`Issue::has_done_when`], 01M5R0HEP1MXWYY643F1N1DWEM,
@@ -440,6 +442,19 @@ pub struct Comment {
     pub body: String,
 }
 
+/// The start of the comment of `riff wave next`: the issue has more work
+/// after the merge of the pull request that follows (#2112).
+pub const MORE_WORK: &str = "More work after #";
+
+/// The number at the start of `body` after `start`, after the spaces.
+fn number_after(body: &str, start: &str) -> Option<u64> {
+    let rest = body.trim_start().strip_prefix(start)?;
+    let end = rest
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(rest.len());
+    rest[..end].parse().ok()
+}
+
 impl Comment {
     /// True when the comment starts with `Merged in #PULL`, for the pull
     /// request `pull`.
@@ -454,18 +469,47 @@ impl Comment {
     /// assert!(!comment("It merged in #40.").merged_in(40));
     /// ```
     pub fn merged_in(&self, pull: u64) -> bool {
-        self.body
-            .trim_start()
-            .strip_prefix(&format!("Merged in #{pull}"))
-            .is_some_and(|rest| !rest.starts_with(|c: char| c.is_ascii_digit()))
+        self.merged_pull() == Some(pull)
+    }
+
+    /// The pull request of a comment that starts with `Merged in #PULL`.
+    ///
+    /// ```
+    /// use riff::rollout::Comment;
+    ///
+    /// let comment = |body: &str| Comment { body: body.into() };
+    /// assert_eq!(comment("Merged in #40 (abc)").merged_pull(), Some(40));
+    /// assert_eq!(comment("Merged in #").merged_pull(), None);
+    /// assert_eq!(comment("More work after #40.").merged_pull(), None);
+    /// ```
+    pub fn merged_pull(&self) -> Option<u64> {
+        number_after(&self.body, "Merged in #")
+    }
+
+    /// True when the comment starts with `More work after #PULL`
+    /// ([`MORE_WORK`]), for the pull request `pull`: a lead told the wave
+    /// that the issue has more work after that merge (`riff wave next`,
+    /// 01M7DYWXWZKDB6VZ2KYYJQ4NF7).
+    ///
+    /// ```
+    /// use riff::rollout::Comment;
+    ///
+    /// let comment = |body: &str| Comment { body: body.into() };
+    /// assert!(comment("More work after #40. The wave will start a session.").more_after(40));
+    /// assert!(!comment("More work after #40").more_after(4));
+    /// assert!(!comment("Merged in #40").more_after(40));
+    /// ```
+    pub fn more_after(&self, pull: u64) -> bool {
+        number_after(&self.body, MORE_WORK) == Some(pull)
     }
 }
 
 impl Issue {
-    /// True when a comment says `Merged in #PR`, or a merged pull request
-    /// of the issue counts ([`Issue::merge`]): with `Refs #N`, the issue
-    /// waits only for its checks after the release. A merge that closes
-    /// the issue keeps it merged until the close reaches the look
+    /// True when a merged pull request keeps the issue out of the free
+    /// work ([`Issue::merged_pull`]): with `Refs #N`, the issue waits only
+    /// for its checks after the release, or for a lead who tells the wave
+    /// that it has more work (01M7DYWXWZKDB6VZ2KYYJQ4NF7). A merge that
+    /// closes the issue keeps it merged until the close reaches the look
     /// (01M75WEDFKXGHMRFR73D1QDZCE).
     ///
     /// ```
@@ -479,11 +523,41 @@ impl Issue {
     /// assert!(!Issue::default().merged());
     /// ```
     pub fn merged(&self) -> bool {
-        self.merge.is_some()
-            || self
-                .comments
-                .iter()
-                .any(|c| c.body.trim_start().starts_with("Merged in #"))
+        self.merged_pull().is_some()
+    }
+
+    /// The merged pull request that keeps the issue out of the free work:
+    /// the newest of its merge ([`Issue::merge`]) and of the pull requests
+    /// of its comments `Merged in #PULL`. A pull request that a comment
+    /// `More work after #PULL` names does not count
+    /// (01M7DYWXWZKDB6VZ2KYYJQ4NF7): a lead told the wave that the issue has
+    /// more work after it (`riff wave next`).
+    ///
+    /// ```
+    /// use riff::rollout::{Comment, Issue, Merge};
+    ///
+    /// let comments = |bodies: &[&str]| bodies.iter().map(|b| Comment { body: (*b).into() }).collect();
+    /// let merge = |pull| Some(Merge { pull, commit: "abc".into(), closes: false });
+    /// let issue = Issue { comments: comments(&["Merged in #40 (abc)"]), ..Issue::default() };
+    /// assert_eq!(issue.merged_pull(), Some(40));
+    /// // The lead told the wave: more work after #40.
+    /// let more = Issue { comments: comments(&["Merged in #40 (abc)", "More work after #40."]), ..issue };
+    /// assert_eq!(more.merged_pull(), None);
+    /// // The next pull request #45 merged with `Refs #N` too.
+    /// let next = Issue { merge: merge(45), ..more.clone() };
+    /// assert_eq!(next.merged_pull(), Some(45));
+    /// // A merge before its comment `Merged in`, and a word of the lead.
+    /// let told = Issue { merge: merge(40), comments: comments(&["More work after #40."]), ..Issue::default() };
+    /// assert_eq!(told.merged_pull(), None);
+    /// ```
+    pub fn merged_pull(&self) -> Option<u64> {
+        let said = self.comments.iter().filter_map(Comment::merged_pull);
+        self.merge
+            .iter()
+            .map(|m| m.pull)
+            .chain(said)
+            .filter(|pull| !self.comments.iter().any(|c| c.more_after(*pull)))
+            .max()
     }
 
     /// The merge of the issue ([`Issue::merge`]) with `Refs #N` when no
@@ -2708,8 +2782,15 @@ pub fn closing(at: &str, now: i64) -> bool {
 /// also before the comment `Merged in`, and before its close reaches the
 /// look.
 pub fn merges(gh: &Gh, repo: &str) -> Result<HashMap<u64, Merge>> {
-    let pulls: Vec<MergedPull> = gh.read_json(&merged_args(repo))?;
-    Ok(merges_of(&pulls, crate::daemon::now_ms()))
+    Ok(merges_of(&merged_pulls(gh, repo)?, crate::daemon::now_ms()))
+}
+
+/// The last 100 merged pull requests of the repository `repo`
+/// (`OWNER/REPO`), with one `gh pr list`: the read of [`merges`]. The
+/// Waves tab of the TUI keeps them while the open issues do not change
+/// ([`crate::tui::forge::Kept::merges`]).
+pub fn merged_pulls(gh: &Gh, repo: &str) -> Result<Vec<MergedPull>> {
+    gh.read_json(&merged_args(repo))
 }
 
 /// The arguments of `gh` for the last 100 merged pull requests of `repo`
@@ -3605,6 +3686,57 @@ mod tests {
         assert_eq!(work(&["issue-13"]), ["verify-issue-13", "issue-12"]);
         assert_eq!(work(&["verify-issue-13"]), ["issue-12"]);
         assert!(work(&["issue-12", "verify-issue-13"]).is_empty());
+    }
+
+    /// 01M7DYWXWZKDB6VZ2KYYJQ4NF7 (#2112): the first pull request of 872
+    /// merged with `Refs #872`, so the issue is no free work. The comment
+    /// `More work after #882` of `riff wave next` makes it free work for
+    /// its next pull request. The merge of that one with `Refs #872` makes
+    /// it merged again. An issue with a `Live:` line and no such comment
+    /// stays merged.
+    #[test]
+    fn more_work_after_a_merged_pull_request_makes_the_issue_free_again() {
+        let issues = |comments: &[&str], merge: Option<u64>| -> Vec<Issue> {
+            let comments = comments.iter().map(|b| Comment { body: (*b).into() });
+            let item = |number, body: &str| Issue {
+                number,
+                body: body.into(),
+                comments: comments.clone().collect(),
+                milestone: Some(Milestone {
+                    title: "Wave 59".into(),
+                }),
+                merge: merge.map(|pull| Merge {
+                    pull,
+                    commit: "abc".into(),
+                    closes: false,
+                }),
+                ..Issue::default()
+            };
+            vec![
+                item(872, "## Done when:\n\n- A test.\n"),
+                item(1854, "## Done when:\n\n- A test.\n- Live: it runs.\n"),
+            ]
+        };
+        let free = |issues: &[Issue]| free_items(issues, "Wave 59", &HashSet::new(), &[]);
+        // The merge, before and after its comment `Merged in`.
+        assert!(free(&issues(&[], Some(882))).is_empty());
+        let said = ["Merged in #882 (abc)."];
+        assert!(free(&issues(&said, Some(882))).is_empty());
+        assert!(free(&issues(&said, None)).is_empty());
+        // The lead tells the wave: more work after #882.
+        let more = ["Merged in #882 (abc).", "More work after #882."];
+        assert_eq!(free(&issues(&more, Some(882))), [872, 1854]);
+        assert_eq!(free(&issues(&more[1..], Some(882))), [872, 1854]);
+        // The next pull request #890 merged with `Refs #N` too.
+        assert!(free(&issues(&more, Some(890))).is_empty());
+        let more_again = [
+            &more[..],
+            &["Merged in #890 (def).", "More work after #890."],
+        ]
+        .concat();
+        assert_eq!(free(&issues(&more_again, Some(890))), [872, 1854]);
+        // A word for another pull request frees nothing.
+        assert!(free(&issues(&["More work after #881."], Some(882))).is_empty());
     }
 
     /// `gh pr list --limit 100` with `commits` asks GitHub for 1,000,000

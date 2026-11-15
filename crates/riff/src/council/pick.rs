@@ -3,7 +3,8 @@
 //! `riff council show PR` (01M7CFBZ7839WHMFARR4T6W13W,
 //! 01M7CFBZCDFGG1MV4DEAACQVXK, 01M7CFBZF1BZ0E7H0D4Q7KKY1T,
 //! 01M7CFBZHQZ8FDT3Q0NGYKBZWB, 01M7CFBZMCE36ZRXD0GBCM4MFX,
-//! 01M7CRX642WTS71F4D4YQVVFJY, 01M7CRX66K9Q750SB8M2MPG6V7).
+//! 01M7CRX642WTS71F4D4YQVVFJY, 01M7CRX66K9Q750SB8M2MPG6V7,
+//! 01M7DZ4E5BZAD38E3K9A3N277E).
 //!
 //! # Design
 //!
@@ -16,6 +17,11 @@
 //! ([`super::of_branch`]). It reads no file of the head and no file of the
 //! folder: a pull request does not change the council of its own verify
 //! ([`show`]).
+//!
+//! The riff daemon reads the council of a pull request with [`of_pull`] in
+//! its main clone (01M7DZ4E5BZAD38E3K9A3N277E): the fetch of the base
+//! branch and the reads of git run there. It runs no git in the clone of
+//! a verify session, which the session wrote ([`crate::host_git`]).
 //!
 //! ```mermaid
 //! flowchart TD
@@ -431,41 +437,45 @@ impl Pull {
     }
 }
 
-/// The text of `riff council show PR` in the folder `dir`: the council
-/// of the pull request `number` ([`of_pull`], 01M7CFBZMCE36ZRXD0GBCM4MFX,
-/// 01M7CRX66K9Q750SB8M2MPG6V7).
-pub fn show(gh: &Gh, dir: &Path, number: u64, say: impl FnMut(&str)) -> Result<String> {
-    let (council, branch) = of_pull(gh, dir, number, say)?;
-    Ok(council.text(number, &branch))
-}
-
-/// The council of the pull request `number`, from the clone of the folder
-/// `dir`, and the branch `origin/BASE` whose member files it read. It
-/// reads the pull request with `gh` ([`Pull::read`]), fetches its base
-/// branch `BASE` from `origin`, and picks the council from the member
-/// files of `origin/BASE` over the default set ([`pick`]). When the fetch
-/// fails, it says so to `say`, and reads `origin/BASE` as the clone has
-/// it. `riff council show` and a pass of a verify read the council so
-/// (01M7D11KGEJ8ACFJK6Y10WENJZ).
+/// The council of the pull request `number`, read in the clone `main`
+/// (01M7CFBZMCE36ZRXD0GBCM4MFX, 01M7DZ4E5BZAD38E3K9A3N277E), and the
+/// branch of its member files, `origin/BASE`. It reads the pull request
+/// with `gh` ([`Pull::read`]), fetches its base branch `BASE` from
+/// `origin` in `main`, and picks the council from the member files of
+/// `origin/BASE` over the default set ([`pick`]). When the fetch fails,
+/// it says so to `say`, and reads `origin/BASE` as `main` has it.
+///
+/// The daemon gives its main clone, never the clone of a verify session:
+/// a session writes its clone, and the host runs no git there
+/// ([`crate::host_git`]). `riff council show` gives the clone where it
+/// runs ([`show`]).
 pub fn of_pull(
     gh: &Gh,
-    dir: &Path,
+    main: &Path,
     number: u64,
     mut say: impl FnMut(&str),
 ) -> Result<(Council, String)> {
     let pull = Pull::read(gh, number)?;
-    let top = top(dir)?;
     let branch = format!("origin/{}", pull.base);
     // Full names: no name of a branch reads as an option of git.
     let tracking = format!("refs/remotes/{branch}");
     let refspec = format!("+refs/heads/{}:{tracking}", pull.base);
     let fetch = ["fetch", "--quiet", "origin", &refspec];
-    if let Err(e) = crate::git_credential::run(&top, "origin", &fetch) {
+    if let Err(e) = crate::git_credential::run(main, "origin", &fetch) {
         say(&text::council_no_fetch(&branch, &format!("{e:#}")));
     }
-    let members = of_branch(&top, &tracking)
+    let members = of_branch(main, &tracking)
         .with_context(|| format!("riff cannot read the council of {}", text::forge(&branch)))?;
     Ok((pick(members, &pull.change), branch))
+}
+
+/// The text of `riff council show PR` in the folder `dir`: the council
+/// of the pull request `number` (01M7CFBZMCE36ZRXD0GBCM4MFX,
+/// 01M7CRX66K9Q750SB8M2MPG6V7), as [`of_pull`] reads it in the clone of
+/// `dir`. It reads no file of the head and no file of the work tree.
+pub fn show(gh: &Gh, dir: &Path, number: u64, say: impl FnMut(&str)) -> Result<String> {
+    let (council, branch) = of_pull(gh, &top(dir)?, number, say)?;
+    Ok(council.text(number, &branch))
 }
 
 #[cfg(test)]

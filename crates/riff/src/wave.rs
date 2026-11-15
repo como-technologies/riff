@@ -399,15 +399,28 @@
 //! at the next look. The sweep adds it too, when it is still missing (see
 //! "The clones").
 //!
+//! An issue can have more than one pull request: each one before the last
+//! has `Refs #N` (01M3JFEXMPNFEV4HBZJQ15JD25). `riff wave next N` adds the
+//! comment `More work after #PR` ([`crate::waves::next`],
+//! 01M7DYWXWZKDB6VZ2KYYJQ4NF7). The free work counts that pull request no
+//! more ([`rollout::Issue::merged_pull`]), so the wave takes the issue at
+//! its next look, and starts a session for its next pull request. An issue
+//! with a `Live:` line and no such comment stays no free work, and `riff
+//! wave list` shows it in `live check` (01M7DYX2Q2VJW5V4RNQEEHCVKS).
+//!
 //! ```mermaid
 //! sequenceDiagram
 //!     participant G as GitHub
 //!     participant W as the loop of the wave
+//!     participant L as the lead
 //!     G->>G: pull request #40 merges with Refs #12: the issue stays open
 //!     W->>G: look: open issues, open and merged pull requests
 //!     Note over W: #12 is merged: no free work
 //!     W->>G: gh issue comment 12: Merged in #40 (COMMIT)
 //!     W->>W: pick: the next free item
+//!     L->>G: riff wave next 12: More work after #40
+//!     W->>G: look: #12 is free work
+//!     W->>W: pick: a session for the next pull request of #12
 //! ```
 //!
 //! # A merge that closes the issue
@@ -741,13 +754,13 @@
 //! (01M4Z81ARSTAK8HR96S084SDFD). Before each look, the sweep of the
 //! daemon removes the folder of each session of the repository that does
 //! not run, when the pull request of its branch merged or closed, or its
-//! issue is closed, and its clone holds no work that is not on `origin`
-//! ([`crate::daemon::sweep`], 01M53NJ5V27BCHDNHK2THQQZZQ,
-//! 01M53S7WAXD46YPN0DR96XSTMG). For a merged pull request with `Refs #N`,
-//! it first adds the comment `Merged in #PR (COMMIT)` to the issue, when
-//! the issue does not have it (see "A merge that leaves the issue open").
-//! The folder of a verify that did not pass goes at its end. The daemon
-//! also sweeps with no wave.
+//! issue is closed, or when the folder had no change for 30 days. It
+//! looks into no clone ([`crate::daemon::sweep`],
+//! 01M53NJ5V27BCHDNHK2THQQZZQ, 01M7DZ4E02PX5Y0WMHFCJ9KS14). For a merged
+//! pull request with `Refs #N`, it first adds the comment `Merged in #PR
+//! (COMMIT)` to the issue, when the issue does not have it (see "A merge
+//! that leaves the issue open"). The folder of a verify that did not
+//! pass goes at its end. The daemon also sweeps with no wave.
 //!
 //! A job holds `Daemon::in_job` of its item from before the clone of
 //! its session to the end of `finish`, so the sweep keeps its folder
@@ -3285,21 +3298,6 @@ fn branch_of(issue: u64) -> String {
     run::branch(&format!("issue-{issue}"))
 }
 
-/// Saves the work of the clone of `record` when its build pushed nothing:
-/// a WIP commit on the branch of `issue`, pushed ([`crate::leave::save`],
-/// 01M5P26VSA7AA99K1RYG83R8J9). It gives the commit. A fault shows on
-/// stderr.
-async fn save_work(record: &Record, issue: u64) -> Option<String> {
-    let (clone, branch) = (record.folder.join("clone"), branch_of(issue));
-    match blocking(move || crate::leave::save(&clone, &branch)).await {
-        Ok(saved) => saved.map(|(_, commit)| commit),
-        Err(e) => {
-            eprintln!("riff daemon: {}: {e:#}", record.live.name);
-            None
-        }
-    }
-}
-
 /// What a build fixed on a pull request. When the pull request still
 /// has the head commit, the session pushed nothing.
 #[derive(Debug, Clone, Copy)]
@@ -3346,8 +3344,9 @@ async fn still_failed(gh: pr::Gh, repo: String, number: u64) -> Result<Vec<Strin
 /// a note with the reason in place of the verify request, as `riff run`
 /// does ([`run::no_verify`], 01M51KH0H7J35PEKMHP5KQB84T).
 ///
-/// The pair is `(fix, saved)`: the commit of `saved` is the WIP commit
-/// that riff pushed for a build with no push.
+/// A build with no pull request gets a note to the lead with its branch
+/// and its clone. riff commits nothing and pushes nothing for it: it runs
+/// no git in the clone (01M7DZ4E2P5RJMQE0W9K1AAA4P).
 ///
 /// After a rebase, `fix` is the head commit that had the conflict. When
 /// the pull request still has that head, the session pushed nothing: the
@@ -3364,7 +3363,7 @@ async fn after_build(
     record: &Record,
     wave: &Wave,
     issue: u64,
-    (fix, saved): (Option<Fix<'_>>, Option<&str>),
+    fix: Option<Fix<'_>>,
     ended: Ended,
 ) -> Result<Vec<String>> {
     let branch = branch_of(issue);
@@ -3462,12 +3461,7 @@ async fn after_build(
             ),
         },
         None => (
-            match saved {
-                Some(commit) => {
-                    text::wave_saved(item, &branch, commit, &record.folder.join("clone"))
-                }
-                None => text::wave_no_pull(item, &branch, &record.folder.join("clone")),
-            },
+            text::wave_no_pull(item, &branch, &record.folder.join("clone")),
             Kind::Note,
         ),
     };
@@ -3794,6 +3788,9 @@ impl Live {
     ) -> Result<Start> {
         let item = work.item();
         let folder = run::sessions_dir()?.join(format!("{item}-{}", run::short(session)));
+        // The sweep reads the repository here, not in the clone
+        // (01M7DZ42EVHAT8N5MZEV97G3DW).
+        sweep::note_repo(&folder, &wave.repo)?;
         let clone = folder.join("clone");
         let claude = folder.join("claude");
         let sources = session_image::merged_sources(&wave.main)?;
@@ -3926,34 +3923,37 @@ fn failed_verify(pulls: &[rollout::Pull], issue: u64) -> Option<String> {
 /// it fetches `refs/pull/PULL/head` from `origin` first. It checks out
 /// the commit, not the ref: a push to the pull request after the look
 /// does not change what the verify reads
-/// (01M5QVARWYFHTQV5THNRB09SZA).
+/// (01M5QVARWYFHTQV5THNRB09SZA). Each git step runs in the new clone
+/// before it moves into the folder of the session ([`run::clone_in_new`],
+/// 01M7DZ42C8SY2GV5ZQJZHM2VTV).
 fn clone_at(main: &Path, clone: &Path, pull: u64, commit: &str) -> Result<()> {
-    let remote = run::output("git", main, &["remote", "get-url", "origin"])?;
+    let remote = crate::host_git::output(main, &["remote", "get-url", "origin"])?;
     let top = main.to_string_lossy();
-    let path = clone.to_string_lossy();
-    git_credential::run(
-        main,
-        &remote,
-        &["clone", "-q", "--reference", &top, "--", &remote, &path],
-    )?;
-    git_credential::run(
-        clone,
-        "origin",
-        &["fetch", "-q", "origin", &format!("refs/pull/{pull}/head")],
-    )?;
-    run::output(
-        "git",
-        clone,
-        &[
-            "-c",
-            "advice.detachedHead=false",
-            "checkout",
-            "-q",
-            "--detach",
-            commit,
-        ],
-    )?;
-    Ok(())
+    run::clone_in_new(clone, |new| {
+        let path = new.to_string_lossy();
+        git_credential::run(
+            main,
+            &remote,
+            &["clone", "-q", "--reference", &top, "--", &remote, &path],
+        )?;
+        git_credential::run(
+            new,
+            "origin",
+            &["fetch", "-q", "origin", &format!("refs/pull/{pull}/head")],
+        )?;
+        crate::host_git::output(
+            new,
+            &[
+                "-c",
+                "advice.detachedHead=false",
+                "checkout",
+                "-q",
+                "--detach",
+                commit,
+            ],
+        )?;
+        Ok(())
+    })
 }
 
 /// The free work of a wave with the fixes of the pull requests that
@@ -4990,23 +4990,14 @@ impl World for Live {
             let done = match &job.work {
                 Work::Build { issue } => {
                     let gh = forge(&wave.repo);
-                    let saved = save_work(record, *issue).await;
-                    after_build(
-                        gh,
-                        &api,
-                        record,
-                        wave,
-                        *issue,
-                        (None, saved.as_deref()),
-                        ended,
-                    )
-                    .await
-                    .map(Finish::from)
+                    after_build(gh, &api, record, wave, *issue, None, ended)
+                        .await
+                        .map(Finish::from)
                 }
                 Work::Rebase { issue, commit, .. } => {
                     let gh = forge(&wave.repo);
                     let fix = Some(Fix::Rebase(commit));
-                    after_build(gh, &api, record, wave, *issue, (fix, None), ended)
+                    after_build(gh, &api, record, wave, *issue, fix, ended)
                         .await
                         .map(Finish::from)
                 }
@@ -5018,7 +5009,7 @@ impl World for Live {
                 } => {
                     let gh = forge(&wave.repo);
                     let fix = Some(Fix::Checks(commit, checks));
-                    after_build(gh, &api, record, wave, *issue, (fix, None), ended)
+                    after_build(gh, &api, record, wave, *issue, fix, ended)
                         .await
                         .map(Finish::from)
                 }
@@ -5580,8 +5571,8 @@ mod tests {
         sessions: u64,
         /// A build ends with no pull request.
         no_pull: bool,
-        /// Each folder is `ITEM-ID8` with a git clone of `o/r`, so that
-        /// the sweep acts on it.
+        /// Each folder is `ITEM-ID8` with the file `repo` of `o/r`, so
+        /// that the sweep acts on it.
         git: bool,
         /// The fate of the folders of each issue, else it stays.
         fates: BTreeMap<u64, Fate>,
@@ -5670,6 +5661,8 @@ mod tests {
         labels: BTreeMap<u64, Vec<String>>,
         /// The items whose body has no `Done when:` line.
         bare: BTreeSet<u64>,
+        /// The items whose "Done when" has a `Live:` line.
+        live: BTreeSet<u64>,
         /// Each post of the look: the item whose holder gets it, or `None`
         /// for the lead, the kind, and the body.
         posts: Vec<(Option<String>, Kind, String)>,
@@ -5759,9 +5752,10 @@ mod tests {
                     .get(n)
                     .cloned()
                     .unwrap_or_else(|| format!("item {n}")),
-                body: match self.bare.contains(n) {
-                    true => "No line.".into(),
-                    false => "Done when: it works.".into(),
+                body: match (self.bare.contains(n), self.live.contains(n)) {
+                    (true, _) => "No line.".into(),
+                    (false, true) => "Done when:\n- It works.\n- Live: it runs.".into(),
+                    (false, false) => "Done when: it works.".into(),
                 },
                 milestone: Some(wave()),
                 labels: self
@@ -6093,7 +6087,7 @@ mod tests {
                 let clone = folder.join("clone");
                 std::fs::create_dir_all(&clone)?;
                 if forge.git {
-                    crate::daemon::sweep::tests::origin(&clone, "https://github.com/o/r.git");
+                    crate::daemon::sweep::note_repo(&folder, "o/r")?;
                 }
                 let spec = SessionSpec {
                     name,
@@ -8106,6 +8100,83 @@ esac
         assert_eq!(started, ["issue-2"], "no build of the merged item");
         assert_eq!(forge.merged_in_fails, 0);
         assert_eq!(forge.merged_ins, [(1, 41, "1a2b3c4d".to_owned())]);
+    }
+
+    /// What `riff wave list` shows of the forge of `here`: its open issues
+    /// as the free work reads them ([`crate::top::issues_of`]), its open
+    /// pull requests, and its claims.
+    fn listed_forge(here: &Here) -> String {
+        let (open, claims) = {
+            let forge = here.forge();
+            (forge.open(), forge.claims.clone())
+        };
+        let issues = crate::top::with_pulls(crate::top::issues_of(open.issues), &open.pulls);
+        let who = claims
+            .iter()
+            .map(|(item, session)| {
+                let uri = format!("riff://mike@thelio/o/r?session={session}&claim={item}");
+                serde_json::from_value(serde_json::json!({ "uri": uri, "live": true })).unwrap()
+            })
+            .collect();
+        let items = crate::waves::Items::of("o/r", &issues, who, &BTreeMap::new());
+        let milestone = riff_client::waves::Milestone {
+            number: 1,
+            title: "Wave 1".into(),
+            open_issues: 2,
+            closed_issues: 0,
+        };
+        text::waves_list(&[milestone], Some(&items))
+    }
+
+    /// 01M7DYWXWZKDB6VZ2KYYJQ4NF7, 01M7DYX2Q2VJW5V4RNQEEHCVKS (#2112): the
+    /// pull request #41 of item 1 merged with `Refs #1`, and so did #42 of
+    /// item 2, whose "Done when" has a `Live:` line. The wave starts no
+    /// session, and `riff wave list` names why: `merged` and `live check`.
+    /// Then the lead tells the wave that item 1 has more work (`riff wave
+    /// next 1`): the wave starts one session for its next pull request, and
+    /// none for the check after the release of item 2.
+    #[tokio::test]
+    async fn more_work_after_a_merge_starts_one_session_and_a_live_check_none() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1, 2], 2, free).await;
+        {
+            let mut forge = here.forge();
+            forge.live.insert(2);
+            for (issue, pull) in [(1, 41), (2, 42)] {
+                let merge = rollout::Merge {
+                    pull,
+                    commit: format!("m{pull}"),
+                    closes: false,
+                };
+                forge.merges.insert(issue, merge);
+            }
+        }
+        here.run();
+        here.until(2, |h| h.forge().merged_ins.len() == 2).await;
+        here.idle(2).await;
+        assert!(here.forge().starts.is_empty(), "{:?}", here.forge().starts);
+        let list = listed_forge(&here);
+        assert_eq!(
+            list,
+            "Wave 1  current  2 open, 0 closed\n  merged: #1 (in #41)\n  live check: #2 (in #42)"
+        );
+
+        // `riff wave next 1` adds the comment of the lead.
+        let more = text::wave_more_work(41);
+        here.forge().comments.entry(1).or_default().push(more);
+        here.until(2, |h| h.running("issue-1").is_some()).await;
+        here.idle(2).await;
+        let started: Vec<String> = here.forge().starts.iter().map(|(i, _)| i.clone()).collect();
+        assert_eq!(
+            started,
+            ["issue-1"],
+            "one session, and none for the live check"
+        );
+        let list = listed_forge(&here);
+        assert_eq!(
+            list,
+            "Wave 1  current  2 open, 0 closed\n  claimed: #1\n  live check: #2 (in #42)"
+        );
     }
 
     /// The wave of the open items 1 and 2: each pull request waits for a
@@ -11107,6 +11178,13 @@ esac
             }
         }
 
+        /// The clone of the verify, in the folder of a session under
+        /// `sessions/`. So the new clone of [`run::clone_in_new`] is in
+        /// `new-clones/` of this test, and no other test shares it.
+        fn verify_clone(&self) -> PathBuf {
+            self.dir.path().join("sessions/verify-7-1a2b3c4d/clone")
+        }
+
         /// Whether the repository `repo` has the commit `commit`.
         fn has(repo: &Path, commit: &str) -> bool {
             std::process::Command::new("git")
@@ -11126,7 +11204,7 @@ esac
     fn the_clone_of_a_verify_has_the_head_commit_of_a_pull_request_from_a_fork() {
         let fork = Fork::new();
         assert!(!Fork::has(&fork.main, &fork.head), "origin has no branch");
-        let clone = fork.dir.path().join("verify/clone");
+        let clone = fork.verify_clone();
         clone_at(&fork.main, &clone, 7, &fork.head).unwrap();
         assert_eq!(git_in(&clone, &["rev-parse", "HEAD"]), fork.head);
         assert_eq!(git_in(&clone, &["branch", "--show-current"]), "");
@@ -11144,7 +11222,7 @@ esac
             &fork.fork,
             &["push", "-q", "origin", "HEAD:refs/pull/7/head"],
         );
-        let clone = fork.dir.path().join("verify/clone");
+        let clone = fork.verify_clone();
         clone_at(&fork.main, &clone, 7, &fork.head).unwrap();
         assert_eq!(git_in(&clone, &["rev-parse", "HEAD"]), fork.head);
         assert_eq!(std::fs::read_to_string(clone.join("a")).unwrap(), "two");
@@ -11155,7 +11233,7 @@ esac
     #[test]
     fn the_clone_of_a_verify_fails_with_the_ref_when_origin_does_not_have_it() {
         let fork = Fork::new();
-        let clone = fork.dir.path().join("verify/clone");
+        let clone = fork.verify_clone();
         let error = clone_at(&fork.main, &clone, 8, &fork.head).unwrap_err();
         assert!(error.to_string().contains("refs/pull/8/head"), "{error}");
     }
@@ -11279,7 +11357,7 @@ esac
                 &self.record,
                 &self.wave,
                 12,
-                (fix, None),
+                fix,
                 Ended {
                     code: Some(1),
                     failed: true,
@@ -11333,11 +11411,16 @@ esac
         assert!(shown.contains("ended: exit code 1."), "{shown}");
     }
 
-    /// 01M5P26VSA7AA99K1RYG83R8J9: a build that pushed nothing, and that
-    /// riff saved, gives the lead one note with the branch and the commit.
+    /// 01M7DZ4E2P5RJMQE0W9K1AAA4P: a build that pushed nothing gives the
+    /// lead one note with the branch and the clone. riff runs no git in
+    /// the clone: its git config names a program, and that program does
+    /// not run.
     #[tokio::test]
-    async fn a_saved_build_tells_the_lead_the_branch_and_the_commit() {
+    async fn a_build_that_pushed_nothing_gets_a_note_and_no_git_in_its_clone() {
         let built = Built::new().await;
+        let clone = built.record.folder.join("clone");
+        let mark = built.dir.path().join("mark");
+        crate::host_git::hostile_clone(&clone, &mark);
         let gh = pr::Gh::at(isolated::write_program(
             built.dir.path().join("gh"),
             "#!/bin/sh\nexit 1\n",
@@ -11346,24 +11429,23 @@ esac
             code: Some(0),
             failed: false,
         };
-        after_build(
-            gh,
-            &built.api,
-            &built.record,
-            &built.wave,
-            12,
-            (None, Some("1a2b3c4")),
-            ended,
-        )
-        .await
-        .unwrap();
+        after_build(gh, &built.api, &built.record, &built.wave, 12, None, ended)
+            .await
+            .unwrap();
         let thread = built.wave.thread().unwrap();
         let got = built.api.read(&built.lead, &thread, true).await.unwrap();
         let [one] = &got[..] else {
             panic!("one message: {got:?}");
         };
-        assert!(one.message.body.contains("worktree-issue-12"), "{one:?}");
-        assert!(one.message.body.contains("1a2b3c4"), "{one:?}");
+        assert_eq!(one.message.kind, Kind::Note);
+        assert_eq!(
+            one.message.body,
+            text::wave_no_pull("issue-12", "worktree-issue-12", &clone)
+        );
+        assert!(
+            !mark.exists(),
+            "a program of the git config of the clone ran"
+        );
     }
 
     /// 01M5SMP2D4MGME90EHVKAQHQ26 (#1441): a verify that ends with no PASS

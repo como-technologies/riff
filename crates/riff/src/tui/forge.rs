@@ -13,6 +13,8 @@
 //! |---|---|---|
 //! | The open issues, their titles, waves, labels and `Needs:` lines | a conditional REST read of each page of `repos/R/issues?state=open` ([`open_path`]) | A `304` costs no point. A new page costs one REST call |
 //! | The pull requests that wait or are stuck | `gh pr list` with the checks ([`crate::rollout::pulls`]), only when the list of issues has an open pull request, and the ruleset of `main` when a head has a failed check ([`crate::rollout::Pull::required`]) | About 2 GraphQL points. The ruleset is two REST calls, one time in 10 minutes |
+//! | The last 100 merged pull requests, as the free work reads them | `gh pr list --state merged` ([`crate::rollout::merged_pulls`]), only when the list of the open issues changed since the last read of them ([`Kept::merges`]) | About 1 GraphQL point |
+//! | The comments of each open issue of the current wave that has a comment | a conditional REST read of `repos/R/issues/N/comments` ([`comments_path`]) | A `304` costs no point |
 //! | The items that closed in the current wave | a conditional REST read of `repos/R/issues?state=closed&milestone=N` ([`closed_path`]) | A `304` costs no point |
 //! | The full check of `main` | the check runs of each required check ([`crate::look::read_main`]), and the jobs of a run that goes or failed | A few REST calls |
 //!
@@ -26,6 +28,19 @@
 //! entry in the list (#1566). So while a pull request is open, each read
 //! calls `gh pr list`, as `riff top` does each minute. With no open pull
 //! request, a read that changed nothing costs no point.
+//!
+//! The merged pull requests and the comments give the board the facts of
+//! `riff wave list` (01M7DYX2Q2VJW5V4RNQEEHCVKS,
+//! 01M7E25WB42HQQ34CRNXPZFHHR). An open issue that a merged pull request
+//! keeps out of the free work ([`crate::rollout::Issue::merged_pull`]) is
+//! in [`Issues::merged`] ([`crate::top::issues_of`]), and the Waves tab
+//! shows it as a `merged` row ([`super::waves`]). A merge takes its pull
+//! request out of the list of the open issues, so it changes the `ETag`
+//! of a page of that list. While each page gives the `ETag` of the last
+//! read of the merged pull requests, the read keeps them. The wave adds
+//! the comment `Merged in #PR` at its first look after a merge, so an
+//! older merge counts by its comment. The comment `More work after #PR`
+//! of `riff wave next` takes the pull request out again.
 //!
 //! [`Kept`] keeps the `ETag` and the body of each conditional read, so a
 //! `304` gives the body of the last reply again. A read that fails keeps
@@ -46,22 +61,26 @@
 //!     R["a read of a repository"] --> O["the open issues: each page,<br/>with its ETag (a 304 is free)"]
 //!     O --> P{"an open pull request<br/>in the list?"}
 //!     P -- yes --> L["gh pr list with the checks"]
-//!     P -- no --> C
-//!     L --> C["the closed items of the current wave,<br/>with their ETag"]
+//!     P -- no --> G
+//!     L --> G{"the ETags of the open issues<br/>as at the last read of the merged ones?"}
+//!     G -- no --> D["gh pr list --state merged"]
+//!     G -- yes --> S
+//!     D --> S["the comments of each issue of the current wave<br/>with a comment, with their ETag"]
+//!     S --> C["the closed items of the current wave,<br/>with their ETag"]
 //!     C --> M["the full check of main"]
 //!     M --> F["Forge: the facts of the board"]
 //! ```
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use riff_client::waves::{Issue, Issues, QUESTION, is_tracker, wave_number};
+use riff_client::waves::{Issues, wave_number};
 use serde::Deserialize;
 
 use crate::pr::{Gate, Gh, Reply};
-use crate::rollout::{Label, Pull, Verify};
+use crate::rollout::{Comment, Label, Merge, MergedPull, Pull, Verify};
 use crate::typeahead::OpenIssue;
 
 /// The time between two reads of the forge while the Waves tab shows.
@@ -102,6 +121,19 @@ pub fn closed_path(repo: &str, milestone: u64) -> String {
     format!("repos/{repo}/issues?state=closed&milestone={milestone}&per_page={PER_PAGE}")
 }
 
+/// The REST path of the comments of the issue `issue` of `repo`: its
+/// first 100 comments.
+///
+/// ```
+/// assert_eq!(
+///     riff::tui::forge::comments_path("o/r", 872),
+///     "repos/o/r/issues/872/comments?per_page=100"
+/// );
+/// ```
+pub fn comments_path(repo: &str, issue: u64) -> String {
+    format!("repos/{repo}/issues/{issue}/comments?per_page={PER_PAGE}")
+}
+
 /// An entry of the REST list of the issues: an issue, or a pull request.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Entry {
@@ -124,22 +156,38 @@ pub struct Entry {
     /// The time it opened, for example `2026-11-07T10:00:00Z`.
     #[serde(default, deserialize_with = "crate::text::forge_de_opt")]
     pub created_at: Option<String>,
-    /// The body. Only its `Needs:` line counts ([`crate::rollout::needs`]).
+    /// The body. Only its `Needs:` line ([`crate::rollout::needs`]) and
+    /// its `Live:` line ([`crate::rollout::has_live_check`]) count.
     #[serde(default)]
     pub body: Option<String>,
+    /// The number of its comments.
+    #[serde(default)]
+    pub comments: u64,
+    /// Its comments, when [`read`] read them: only for an issue of the
+    /// current wave that has a comment ([`comments_path`]).
+    #[serde(skip)]
+    pub said: Vec<Comment>,
+    /// The merge of its merged pull request, when [`read`] found one
+    /// ([`Kept::merges`]).
+    #[serde(skip)]
+    pub merge: Option<Merge>,
 }
 
 impl Entry {
-    /// The issue of the entry: its title, its wave, whether it is a tracker
-    /// or a question, and its needs.
-    fn issue(self) -> Issue {
-        Issue {
-            tracker: is_tracker(&self.title, self.labels.iter().map(|l| l.name.as_str())),
-            question: self.labels.iter().any(|l| l.name == QUESTION),
-            needs: crate::rollout::needs(self.body.as_deref().unwrap_or_default()),
+    /// The open issue of the entry, as the free work of the wave reads it
+    /// ([`crate::rollout::Issue`]): with its comments and its merge, when
+    /// [`read`] found them.
+    fn open(self) -> crate::rollout::Issue {
+        crate::rollout::Issue {
             number: self.number,
             title: self.title,
-            milestone: self.milestone.map(|m| m.title),
+            body: self.body.unwrap_or_default(),
+            comments: self.said,
+            milestone: self
+                .milestone
+                .map(|m| crate::rollout::Milestone { title: m.title }),
+            labels: self.labels,
+            merge: self.merge,
         }
     }
 }
@@ -288,12 +336,17 @@ impl Forge {
     /// The facts of the open entries `open` of the REST list of the
     /// issues, with the open pull requests `pulls` of `gh pr list`. The
     /// pull requests of the list are no items: [`Forge::of`] drops them,
-    /// and keeps their last update for the age of their row.
+    /// and keeps their last update for the age of their row. The issues
+    /// are as `riff wave list` reads them ([`crate::top::issues_of`]): an
+    /// issue that its comments or its merge keep out of the free work is
+    /// in [`Issues::merged`] (01M7E25WB42HQQ34CRNXPZFHHR).
     ///
     /// ```
+    /// use riff::rollout::Comment;
     /// use riff::tui::forge::{Entry, Forge};
+    /// use riff_client::waves::Merged;
     ///
-    /// let open: Vec<Entry> = serde_json::from_str(r#"[
+    /// let mut open: Vec<Entry> = serde_json::from_str(r#"[
     ///   {"number": 12, "title": "Show the board", "milestone": {"number": 5, "title": "Wave 3: Boards"}},
     ///   {"number": 13, "title": "Hold it", "milestone": {"number": 5, "title": "Wave 3: Boards"},
     ///    "labels": [{"name": "question"}]},
@@ -303,15 +356,19 @@ impl Forge {
     ///   {"number": 16, "title": "Release v4.11.0", "milestone": {"number": 5, "title": "Wave 3: Boards"},
     ///    "labels": [{"name": "release"}]},
     ///   {"number": 40, "title": "Show the board", "pull_request": {"url": "x"},
-    ///    "updated_at": "2026-11-07T10:00:00Z"}
+    ///    "updated_at": "2026-11-07T10:00:00Z"},
+    ///   {"number": 17, "title": "Run it", "milestone": {"number": 5, "title": "Wave 3: Boards"},
+    ///    "body": "Done when:\n- Live: it runs.", "comments": 1}
     /// ]"#)?;
+    /// // The comment of the merge of #39, as `read` reads it.
+    /// open[6].said = vec![Comment { body: "Merged in #39 (abc)".into() }];
     /// let pulls: Vec<riff::rollout::Pull> = serde_json::from_str(r#"[
     ///   {"number": 40, "headRefName": "worktree-issue-12", "isDraft": false, "statusCheckRollup": []}
     /// ]"#)?;
     /// let forge = Forge::of(open, &pulls);
     /// // The pull request is no item.
     /// assert!(!forge.issues.titles.contains_key(&40));
-    /// assert_eq!(forge.issues.wave(), Some(&("Wave 3: Boards".into(), vec![12, 13, 16])));
+    /// assert_eq!(forge.issues.wave(), Some(&("Wave 3: Boards".into(), vec![12, 13, 16, 17])));
     /// assert_eq!(forge.milestones["Wave 3: Boards"], 5);
     /// assert_eq!(forge.issues.questions, [13].into());
     /// // #15 is open, and #2 is not.
@@ -322,6 +379,8 @@ impl Forge {
     /// let pull = &forge.pulls[&12];
     /// assert_eq!((pull.number, pull.word.as_str()), (40, "verify"));
     /// assert_eq!(pull.updated, Some(1_794_045_600));
+    /// // #17 is merged in #39, and waits for its check after the release.
+    /// assert_eq!(forge.issues.merged, [(17, Merged { pull: 39, live: true })].into());
     /// # Ok::<(), serde_json::Error>(())
     /// ```
     pub fn of(open: Vec<Entry>, pulls: &[Pull]) -> Forge {
@@ -348,8 +407,8 @@ impl Forge {
             }
         }
         forge.releases.sort_unstable();
-        let issues = entries.into_iter().map(Entry::issue).collect();
-        forge.issues = crate::top::with_pulls(Issues::of(issues), pulls);
+        let issues = entries.into_iter().map(Entry::open).collect();
+        forge.issues = crate::top::with_pulls(crate::top::issues_of(issues), pulls);
         for pull in pulls {
             let Some(item) = pull.issue() else {
                 continue;
@@ -414,12 +473,19 @@ pub fn closed_of(entries: Vec<Entry>) -> Vec<Closed> {
 }
 
 /// The `ETag` and the body of each conditional read of the TUI, by its
-/// path, from one read to the next. A clone shares them: the reads of the
-/// Waves tab and of the Sessions tab keep one set.
+/// path, from one read to the next, and the last merged pull requests of
+/// each repository ([`Kept::merges`]). A clone shares them: the reads of
+/// the Waves tab and of the Sessions tab keep one set.
 #[derive(Debug, Clone, Default)]
 pub struct Kept {
     replies: Arc<Mutex<BTreeMap<String, (String, String)>>>,
+    /// The last merged pull requests of each repository.
+    merged: Arc<Mutex<BTreeMap<String, MergedRead>>>,
 }
+
+/// The last merged pull requests of a repository, with the `ETag` of each
+/// page of its open issues at their read ([`Kept::merges`]).
+type MergedRead = (Vec<String>, Vec<MergedPull>);
 
 impl Kept {
     /// The body of the REST path `path` now ([`Gh::ask_for`]): for a
@@ -448,22 +514,29 @@ impl Kept {
     /// # Ok::<(), anyhow::Error>(())
     /// ```
     pub fn body(&self, gh: &Gh, path: &str) -> Result<String> {
+        Ok(self.tagged(gh, path)?.0)
+    }
+
+    /// [`Kept::body`], and the `ETag` of the reply: `None` for a reply
+    /// with none.
+    fn tagged(&self, gh: &Gh, path: &str) -> Result<(String, Option<String>)> {
         let last = self.replies().get(path).cloned();
         match gh.ask_for(path, last.as_ref().map(|(etag, _)| etag.as_str()))? {
             Reply::Same => match last {
-                Some((_, body)) => Ok(body),
+                Some((etag, body)) => Ok((body, Some(etag))),
                 None => bail!("gh api {path}: GitHub answered 304 to a read with no ETag"),
             },
             Reply::New { etag, body } => {
-                match etag {
+                match &etag {
                     Some(etag) => {
-                        self.replies().insert(path.to_owned(), (etag, body.clone()));
+                        self.replies()
+                            .insert(path.to_owned(), (etag.clone(), body.clone()));
                     }
                     None => {
                         self.replies().remove(path);
                     }
                 }
-                Ok(body)
+                Ok((body, etag))
             }
         }
     }
@@ -473,27 +546,102 @@ impl Kept {
         self.replies.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The entries of the REST list at `path` now.
-    fn entries(&self, gh: &Gh, path: &str) -> Result<Vec<Entry>> {
-        let body = self.body(gh, path)?;
+    /// The entries of the REST list at `path` now, and the `ETag` of the
+    /// reply.
+    fn entries(&self, gh: &Gh, path: &str) -> Result<(Vec<Entry>, Option<String>)> {
+        let (body, etag) = self.tagged(gh, path)?;
+        let entries = serde_json::from_str(&body).with_context(|| format!("gh api {path}"))?;
+        Ok((entries, etag))
+    }
+
+    /// The comments of the issue `issue` of `repo` now, with the
+    /// conditional read of [`comments_path`].
+    fn comments(&self, gh: &Gh, repo: &str, issue: u64) -> Result<Vec<Comment>> {
+        let path = comments_path(repo, issue);
+        let body = self.body(gh, &path)?;
         serde_json::from_str(&body).with_context(|| format!("gh api {path}"))
+    }
+
+    /// The merges of the last 100 merged pull requests of `repo`, by
+    /// issue, as the free work counts them ([`crate::rollout::merges`]).
+    /// `open` is the `ETag` of each page of the open issues of `repo`
+    /// now, `None` when a page has none. A merge takes its pull request out
+    /// of the open issues, so it gives a page a new `ETag`. While `open` is
+    /// as at the last read of the merged pull requests, this gives the
+    /// merges of that read, and calls no `gh`. Else it reads them again
+    /// with `gh pr list` ([`crate::rollout::merged_pulls`]), and keeps
+    /// them with `open`. A read that fails keeps nothing, and gives the
+    /// merges of the last read, or none (01M7E25WB42HQQ34CRNXPZFHHR).
+    ///
+    /// ```
+    /// use riff::pr::Gh;
+    /// use riff::tui::forge::Kept;
+    ///
+    /// let dir = tempfile::tempdir()?;
+    /// let script = r#"#!/bin/sh
+    /// echo "$*" >> "$(dirname "$0")/calls"
+    /// printf '%s\n' '[{"number":882,"state":"MERGED","headRefName":"worktree-issue-872","body":"Refs #872\n","mergeCommit":{"oid":"abc"}}]'
+    /// "#;
+    /// let gh = Gh::at(isolated::write_program(dir.path().join("gh"), script));
+    /// let calls = || std::fs::read_to_string(dir.path().join("calls")).unwrap().lines().count();
+    /// let kept = Kept::default();
+    /// let v1 = vec![r#""v1""#.to_owned()];
+    /// assert_eq!(kept.merges(&gh, "o/r", Some(&v1))[&872].pull, 882);
+    /// assert_eq!(calls(), 1);
+    /// // The open issues did not change: no call.
+    /// assert_eq!(kept.merges(&gh, "o/r", Some(&v1))[&872].pull, 882);
+    /// assert_eq!(calls(), 1);
+    /// // They changed, or a page has no ETag: a read.
+    /// kept.merges(&gh, "o/r", Some(&[r#""v2""#.to_owned()]));
+    /// kept.merges(&gh, "o/r", None);
+    /// assert_eq!(calls(), 3);
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn merges(&self, gh: &Gh, repo: &str, open: Option<&[String]>) -> HashMap<u64, Merge> {
+        let last = self.merged().get(repo).cloned();
+        let pulls = match (last, open) {
+            (Some((tags, pulls)), Some(open)) if tags == open => pulls,
+            (last, _) => match crate::rollout::merged_pulls(gh, repo) {
+                Ok(pulls) => {
+                    if let Some(open) = open {
+                        self.merged()
+                            .insert(repo.to_owned(), (open.to_vec(), pulls.clone()));
+                    }
+                    pulls
+                }
+                Err(_) => last.map(|(_, pulls)| pulls).unwrap_or_default(),
+            },
+        };
+        crate::rollout::merges_of(&pulls, crate::daemon::now_ms())
+    }
+
+    /// The merged pull requests that this keeps. The lock holds for no
+    /// call of `gh`.
+    fn merged(&self) -> MutexGuard<'_, BTreeMap<String, MergedRead>> {
+        self.merged.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
 /// The open entries of `repo`: the issues and the pull requests of each
 /// page of the REST list of the open issues, with the `ETag` that `kept`
-/// keeps, up to [`MOST_PAGES`].
-fn open(gh: &Gh, repo: &str, kept: &Kept) -> Result<Vec<Entry>> {
+/// keeps, up to [`MOST_PAGES`]. With them, the `ETag` of each page:
+/// `None` when a page has none.
+fn open(gh: &Gh, repo: &str, kept: &Kept) -> Result<(Vec<Entry>, Option<Vec<String>>)> {
     let mut open = Vec::new();
+    let mut tags = Some(Vec::new());
     for page in 1..=MOST_PAGES {
-        let entries = kept.entries(gh, &open_path(repo, page))?;
+        let (entries, etag) = kept.entries(gh, &open_path(repo, page))?;
+        tags = tags.zip(etag).map(|(mut tags, etag)| {
+            tags.push(etag);
+            tags
+        });
         let full = entries.len() >= PER_PAGE;
         open.extend(entries);
         if !full {
             break;
         }
     }
-    Ok(open)
+    Ok((open, tags))
 }
 
 /// The open issues of `repo` for the Sessions tab (#1707,
@@ -531,12 +679,13 @@ fn open(gh: &Gh, repo: &str, kept: &Kept) -> Result<Vec<Entry>> {
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn titles(gh: &Gh, repo: &str, kept: &Kept) -> Result<Issues> {
-    let issues = open(gh, repo, kept)?
+    let (open, _) = open(gh, repo, kept)?;
+    let issues = open
         .into_iter()
         .filter(|e| e.pull_request.is_none())
-        .map(Entry::issue)
+        .map(Entry::open)
         .collect();
-    Ok(Issues::of(issues))
+    Ok(crate::top::issues_of(issues))
 }
 
 /// The open issues of `repo` for the list of `#` in `riff chat` and in
@@ -575,7 +724,8 @@ pub fn titles(gh: &Gh, repo: &str, kept: &Kept) -> Result<Issues> {
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn open_issues(gh: &Gh, repo: &str, kept: &Kept) -> Result<Vec<OpenIssue>> {
-    Ok(open(gh, repo, kept)?
+    let (open, _) = open(gh, repo, kept)?;
+    Ok(open
         .into_iter()
         .filter(|e| e.pull_request.is_none())
         .map(|e| OpenIssue {
@@ -602,11 +752,29 @@ pub fn open_issues_each(
         .collect()
 }
 
+/// The issues of the current wave in the open entries `open`: the
+/// `Wave N` milestone with the lowest N, as [`Issues::wave`] finds it.
+fn current_wave(open: &[Entry]) -> BTreeSet<u64> {
+    let wave = |e: &Entry| wave_number(&e.milestone.as_ref()?.title);
+    let issues = || open.iter().filter(|e| e.pull_request.is_none());
+    let Some(first) = issues().filter_map(wave).min() else {
+        return BTreeSet::new();
+    };
+    issues()
+        .filter(|e| wave(e) == Some(first))
+        .map(|e| e.number)
+        .collect()
+}
+
 /// The facts of the forge of `repo` (`OWNER/REPO`) for its board, with
 /// `gh` and the replies that `kept` keeps. It fails with the error of
 /// `gh` when the open issues cannot be read. The other reads give no
 /// facts when they fail: the board counts only the claims and the holds,
-/// as in `riff top`.
+/// as in `riff top`. Each issue gets the merge of its merged pull request
+/// ([`Kept::merges`]), and each issue of the current wave with a comment
+/// gets its comments ([`comments_path`]), as `riff wave list` reads them
+/// (01M7E25WB42HQQ34CRNXPZFHHR). A read of the comments that fails gives
+/// none.
 ///
 /// ```
 /// use riff::pr::Gh;
@@ -621,6 +789,7 @@ pub fn open_issues_each(
 ///     printf 'HTTP/2.0 200 OK\r\nEtag: "v1"\r\n\r\n[{"number":12,"title":"Show it","milestone":{"number":5,"title":"Wave 3"}}]' ;;
 ///   *'issues?state=closed'*)
 ///     printf 'HTTP/2.0 200 OK\r\nEtag: "v2"\r\n\r\n[{"number":11,"title":"Old","state_reason":"completed"}]' ;;
+///   'pr list --repo o/r --state merged '*) echo '[]' ;;
 ///   *) echo 'gh: Not Found (HTTP 404)' >&2; exit 1 ;;
 /// esac
 /// "#;
@@ -629,25 +798,39 @@ pub fn open_issues_each(
 /// let forge = read(&gh, "o/r", &kept)?;
 /// assert_eq!(forge.issues.titles[&12], "Show it");
 /// assert_eq!(forge.closed.as_ref().unwrap()[0].number, 11);
-/// // No open pull request: no `gh pr list`.
-/// let calls = std::fs::read_to_string(dir.path().join("calls"))?;
-/// assert!(!calls.contains("pr list"), "{calls}");
-/// // A read that changed nothing gives the same facts.
+/// // No open pull request: no `gh pr list` of the open ones. One of the
+/// // merged ones.
+/// let pr_lists = || {
+///     let calls = std::fs::read_to_string(dir.path().join("calls")).unwrap();
+///     calls.lines().filter(|c| c.starts_with("pr list")).map(String::from).collect::<Vec<_>>()
+/// };
+/// let merged = format!("pr list --repo o/r --state merged --limit 100 --json {}", riff::rollout::MERGED_FIELDS);
+/// assert_eq!(pr_lists(), [merged]);
+/// // A read that changed nothing gives the same facts, with no `gh pr list`.
 /// assert_eq!(read(&gh, "o/r", &kept)?, forge);
+/// assert_eq!(pr_lists().len(), 1);
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn read(gh: &Gh, repo: &str, kept: &Kept) -> Result<Forge> {
-    let open = open(gh, repo, kept)?;
+    let (mut open, tags) = open(gh, repo, kept)?;
     let pulls = match open.iter().any(|e| e.pull_request.is_some()) {
         true => crate::rollout::pulls(gh, repo).unwrap_or_default(),
         false => Vec::new(),
     };
+    let mut merges = kept.merges(gh, repo, tags.as_deref());
+    let wave = current_wave(&open);
+    for entry in open.iter_mut().filter(|e| e.pull_request.is_none()) {
+        entry.merge = merges.remove(&entry.number);
+        if entry.comments > 0 && wave.contains(&entry.number) {
+            entry.said = kept.comments(gh, repo, entry.number).unwrap_or_default();
+        }
+    }
     let mut forge = Forge::of(open, &pulls);
     forge.closed = match forge.wave_milestone() {
         Some(milestone) => kept
             .entries(gh, &closed_path(repo, milestone))
             .ok()
-            .map(closed_of),
+            .map(|(entries, _)| closed_of(entries)),
         None => Some(Vec::new()),
     };
     forge.main = read_main(gh, repo).ok().flatten();
@@ -715,7 +898,9 @@ mod tests {
 
     /// A fake `gh` in `dir` that answers the REST reads of o/r from the
     /// files of `dir`: `open` (with its `ETag` in `open.etag`), `closed`,
-    /// `pulls`, `runs` and `jobs`. It logs each call to `calls`.
+    /// `pulls`, `merged`, `runs` and `jobs`, and the comments of each
+    /// issue N from `comments-N` (with its `ETag` in `comments-N.etag`, or
+    /// `[]`). It logs each call to `calls`.
     fn fake(dir: &std::path::Path) -> Gh {
         let script = r#"#!/bin/sh
 dir=$(dirname "$0")
@@ -725,6 +910,19 @@ case "$*" in
   *"If-None-Match: $tag"*'state=open'*) echo 'gh: HTTP 304' >&2; exit 1 ;;
   *'issues?state=open'*) printf 'HTTP/2.0 200 OK\r\nEtag: %s\r\n\r\n' "$tag"; cat "$dir/open" ;;
   *'issues?state=closed'*) printf 'HTTP/2.0 200 OK\r\n\r\n'; cat "$dir/closed" ;;
+  *'/comments?'*)
+    all="$*"; n=${all##*issues/}; n=${n%%/*}
+    said=$(cat "$dir/comments-$n.etag" 2>/dev/null)
+    if [ -n "$said" ]; then
+      case "$all" in
+        *"If-None-Match: $said "*) echo 'gh: HTTP 304' >&2; exit 1 ;;
+      esac
+      printf 'HTTP/2.0 200 OK\r\nEtag: %s\r\n\r\n' "$said"
+    else
+      printf 'HTTP/2.0 200 OK\r\n\r\n'
+    fi
+    cat "$dir/comments-$n" 2>/dev/null || echo '[]' ;;
+  'pr list --repo o/r --state merged '*) cat "$dir/merged" ;;
   'pr list'*) cat "$dir/pulls" ;;
   'api repos/o/r') echo '{"default_branch":"main"}' ;;
   'api repos/o/r/rules/branches/main'*) echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Gate"}]}}]' ;;
@@ -736,6 +934,7 @@ esac
         std::fs::write(dir.join("open.etag"), "\"v1\"").unwrap();
         std::fs::write(dir.join("closed"), "[]").unwrap();
         std::fs::write(dir.join("pulls"), "[]").unwrap();
+        std::fs::write(dir.join("merged"), "[]").unwrap();
         std::fs::write(dir.join("runs"), r#"{"check_runs":[]}"#).unwrap();
         std::fs::write(dir.join("jobs"), "[]").unwrap();
         Gh::at(isolated::write_program(dir.join("gh"), script))
@@ -743,6 +942,15 @@ esac
 
     fn calls(dir: &std::path::Path) -> String {
         std::fs::read_to_string(dir.join("calls")).unwrap_or_default()
+    }
+
+    /// The start of the call of `gh pr list` for the open pull requests.
+    const OPEN_PULLS: &str = "pr list --repo o/r --state open";
+
+    /// The calls of `gh pr list` for the merged pull requests.
+    fn merged_reads(dir: &std::path::Path) -> usize {
+        let merged = crate::rollout::merged_args("o/r").join(" ");
+        calls(dir).lines().filter(|c| *c == merged).count()
     }
 
     /// The list of issues has the pull requests too: the read drops them
@@ -761,7 +969,7 @@ esac
         let kept = Kept::default();
         let first = read(&gh, "o/r", &kept).unwrap();
         assert_eq!(first.issues.wave(), Some(&("Wave 3".into(), vec![12])));
-        assert!(!calls(dir.path()).contains("pr list"));
+        assert!(!calls(dir.path()).contains(OPEN_PULLS));
         let again = read(&gh, "o/r", &kept).unwrap();
         assert_eq!(again, first);
         assert!(
@@ -784,10 +992,98 @@ esac
         )
         .unwrap();
         let read = read(&gh, "o/r", &kept).unwrap();
-        assert!(calls(dir.path()).contains("pr list"));
+        assert!(calls(dir.path()).contains(OPEN_PULLS));
         assert_eq!(read.issues.titles.keys().collect::<Vec<_>>(), [&12]);
         assert_eq!(read.issues.verify, [12].into());
         assert_eq!(read.pulls[&12].number, 40);
+    }
+
+    /// 01M7E25WB42HQQ34CRNXPZFHHR (#2145): the read gives the board the
+    /// facts of `riff wave list`. 872 has the comment `Merged in #882`, and
+    /// the pull request #1866 of 1854 merged with `Refs #1854`. The "Done
+    /// when" of 1854 has a `Live:` line. The read reads the comments of
+    /// 872 only: 1854 and 873 have none, and 900 is in a later wave. A read
+    /// that changed nothing reads no merged pull request again, and gets a
+    /// `304` for the comments. After the comment of `riff wave next 872`,
+    /// 872 is merged no more. A read of the merged pull requests that fails
+    /// keeps the last ones.
+    #[test]
+    fn the_read_gives_the_merged_items_of_riff_wave_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let gh = fake(dir.path());
+        let wave = |n: u64| format!(r#"{{"number":{n},"title":"Wave {n}"}}"#);
+        let open = |said: u64| {
+            format!(
+                r#"[{{"number":872,"title":"Two parts","milestone":{},"body":"Done when:\n- A test.","comments":{said}}},
+                    {{"number":1854,"title":"Run it","milestone":{},"body":"Done when:\n- Live: it runs."}},
+                    {{"number":873,"title":"Show it","milestone":{},"body":"Done when:\n- A test."}},
+                    {{"number":900,"title":"Later","milestone":{},"comments":2}}]"#,
+                wave(3),
+                wave(3),
+                wave(3),
+                wave(4)
+            )
+        };
+        let said = |bodies: &[&str]| {
+            let comments: Vec<serde_json::Value> = bodies
+                .iter()
+                .map(|b| serde_json::json!({ "body": b, "user": { "login": "m" } }))
+                .collect();
+            serde_json::to_string(&comments).unwrap()
+        };
+        let write = |name: &str, text: &str| std::fs::write(dir.path().join(name), text).unwrap();
+        write("open", &open(1));
+        write("comments-872", &said(&["Merged in #882 (abc)"]));
+        write("comments-872.etag", r#""c1""#);
+        write(
+            "merged",
+            r#"[{"number":1866,"state":"MERGED","headRefName":"worktree-issue-1854",
+                "body":"Refs #1854\n","mergeCommit":{"oid":"def"}}]"#,
+        );
+        let merged = |forge: &Forge| -> Vec<(u64, u64, bool)> {
+            let merged = forge.issues.merged.iter();
+            merged.map(|(n, m)| (*n, m.pull, m.live)).collect()
+        };
+        let comments = || -> Vec<String> {
+            let log = calls(dir.path());
+            let reads = log.lines().filter(|c| c.contains("/comments?"));
+            reads.map(String::from).collect()
+        };
+        let kept = Kept::default();
+        let first = read(&gh, "o/r", &kept).unwrap();
+        assert_eq!(merged(&first), [(872, 882, false), (1854, 1866, true)]);
+        assert_eq!(
+            comments(),
+            ["api -i repos/o/r/issues/872/comments?per_page=100"]
+        );
+        assert_eq!(merged_reads(dir.path()), 1);
+
+        // Nothing changed: no read of the merged pull requests, and a
+        // `304` for the comments.
+        assert_eq!(read(&gh, "o/r", &kept).unwrap(), first);
+        assert_eq!(merged_reads(dir.path()), 1);
+        assert_eq!(
+            comments()[1],
+            r#"api -i -H If-None-Match: "c1" repos/o/r/issues/872/comments?per_page=100"#
+        );
+
+        // `riff wave next 872` adds its comment: 872 and its comments
+        // change.
+        write("open", &open(2));
+        write("open.etag", r#""v2""#);
+        let more = crate::text::wave_more_work(882);
+        write("comments-872", &said(&["Merged in #882 (abc)", &more]));
+        write("comments-872.etag", r#""c2""#);
+        let next = read(&gh, "o/r", &kept).unwrap();
+        assert_eq!(merged(&next), [(1854, 1866, true)]);
+        assert_eq!(merged_reads(dir.path()), 2, "the open issues changed");
+
+        // The read of the merged pull requests fails: the last ones stay.
+        write("merged", "not json");
+        write("open.etag", r#""v3""#);
+        let failed = read(&gh, "o/r", &kept).unwrap();
+        assert_eq!(merged(&failed), [(1854, 1866, true)]);
+        assert_eq!(merged_reads(dir.path()), 3);
     }
 
     /// The Sessions tab reads the titles with the conditional read of the

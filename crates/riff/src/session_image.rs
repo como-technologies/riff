@@ -110,7 +110,7 @@
 
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::str::FromStr;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -539,9 +539,7 @@ fn lacks_config(main: &Path, head: &str) -> bool {
 /// Runs `git ARGS` in `dir` with no prompt, and gives its stdout. An
 /// error names the command and its stderr, in one line.
 pub(crate) fn git(dir: &Path, args: &[&str]) -> Result<String> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
+    let out = crate::host_git::git(dir)?
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
         .stdin(Stdio::null())
@@ -626,9 +624,7 @@ pub fn of_folder(dir: &Path) -> Result<Image> {
 
 /// The top of the git work tree of the folder `dir`.
 pub(crate) fn top(dir: &Path) -> Result<PathBuf> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
+    let out = crate::host_git::git(dir)?
         .args(["rev-parse", "--show-toplevel"])
         .env("GIT_TERMINAL_PROMPT", "0")
         .output()
@@ -731,7 +727,7 @@ pub(crate) fn test_clone(
 /// Runs `git ARGS` in `dir` for a test, with no config of the person.
 #[cfg(test)]
 pub(crate) fn test_git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
+    let status = std::process::Command::new("git")
         .args([
             "-c",
             "user.name=t",

@@ -4,7 +4,8 @@
 //! a clone of `origin` at the head of the pull request, detached. They
 //! go to the base commit of the pull request, not to the tip of `main`,
 //! and back to the head, and they change no file. "Verify finished
-//! work" in the book says that the start text gives the control.
+//! work" in the book says that the start text gives the control, and
+//! the row of the control in "The levers of a verify" names its step.
 
 use std::path::Path;
 use std::process::Command;
@@ -146,4 +147,41 @@ fn the_control_of_a_verify_runs_at_the_base_commit_and_goes_back_to_the_head() {
     ] {
         assert!(flat.contains(words), "no {words:?} in {part}");
     }
+}
+
+/// The row of the control in "The levers of a verify" names the step of
+/// the start text that gives the control, and links "Verify finished
+/// work" (01M7CF3FPNSR0G8EZ3JY3CA34S, #2135).
+#[test]
+fn the_levers_of_a_verify_name_the_step_of_the_control() {
+    let part = crate::book::part("how-it-works.md", "Verify finished work");
+    assert!(
+        !part.contains("Today the prompt does not give it"),
+        "{part}"
+    );
+    let levers = between(&part, "### The levers of a verify\n", "\n### ");
+    let row = between(levers, "| A control:", "\n");
+    assert!(
+        row.contains("The start text of each verify gives the control in a step of its own"),
+        "{row}"
+    );
+    assert!(
+        row.contains("[Verify finished work](#verify-finished-work)"),
+        "{row}"
+    );
+
+    // The row names the step by its first words, and the start text has
+    // a step of its own that starts with them.
+    let name = between(row, "\"", "\":");
+    let name = name.strip_prefix('"').unwrap();
+    let step = riff::text::verify_control("main", "1a2b3c4d5e6f");
+    assert!(step.starts_with(&format!("{name}:")), "{name:?} {step}");
+    let checks = ["CI".to_owned()];
+    let text = riff::text::wave_verify_start("o/r", "main", 12, PULL, "1a2b3c4d5e6f", &checks);
+    let own = text.lines().find(|line| {
+        line.split_once(". ")
+            .is_some_and(|(n, rest)| n.parse::<u32>().is_ok() && rest.starts_with(name))
+    });
+    let own = own.unwrap_or_else(|| panic!("no step {name:?} in {text}"));
+    assert!(own.ends_with(&step), "{own}");
 }

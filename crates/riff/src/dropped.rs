@@ -71,7 +71,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::Duration;
 
 use riff_core::name::SessionUri;
@@ -232,9 +232,10 @@ pub fn item_of(branch: &str) -> Option<&str> {
 /// `wait`. False when the fetch fails or takes longer, for example with
 /// no remote.
 pub async fn fetch(dir: &Path, wait: Duration) -> bool {
-    let fetch = tokio::process::Command::new("git")
-        .arg("-C")
-        .arg(dir)
+    let Ok(git) = crate::host_git::git(dir) else {
+        return false;
+    };
+    let fetch = tokio::process::Command::from(git)
         .args(["fetch", "--quiet", "--prune", "origin"])
         .env("GIT_TERMINAL_PROMPT", "0")
         .stdin(Stdio::null())
@@ -490,9 +491,8 @@ fn worktrees(dir: &Path) -> Vec<Worktree> {
 }
 
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
+    let out = crate::host_git::git(dir)
+        .ok()?
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
         .stdin(Stdio::null())
@@ -506,6 +506,8 @@ fn git(dir: &Path, args: &[&str]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::process::Command;
+
     use super::*;
 
     fn run(dir: &Path, args: &[&str]) {
