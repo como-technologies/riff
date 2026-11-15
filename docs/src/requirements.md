@@ -8591,6 +8591,33 @@ of this part when they merge.
   home. They say that the home is in memory, in folders of 1 GiB each
   (01M7DYR99QK609NF61GGCN75QQ), and that a larger write there fails with
   "No space left on device".
+- **01M7FTC1DFAYKQAB6EPDCJ18ZA** Each text of a session that riff prints
+  on the terminal of a person goes through one filter (`text::safe`):
+  each line of an event, each line of the output that is not JSON, each
+  line of the stderr of the container, and each name, tag, reason, line
+  and text of a record of the thread `ends` or `denials`, which a
+  session can post. The filter removes each escape sequence and each
+  control character, also the C1 control U+009B, and keeps the tab and
+  the line break. This holds for `riff run`, `riff daemon events` with
+  and without `--host`, the Session log of the TUI, `riff session why`,
+  and `riff denials` as text and as JSON. A session cannot change the
+  terminal of the person.
+- **01M7FYCX6HRGHM2NR4RT8GS46P** Each scrub of riff (`Scrub::clean`)
+  finds each secret and each token of GitHub in the raw text. Each
+  character that the filter of 01M7FTC1DFAYKQAB6EPDCJ18ZA takes out can
+  come between two characters of a match, or be one of them, and a
+  match starts as early as it can. The scrub hides the union of the
+  matches, with each character next to them that the filter takes out,
+  and puts one `[secret]` in place of each part that it hides. So no
+  secret cuts another, and a filter after the scrub takes out no
+  character of a mark. The time of a scrub grows with the length of the
+  text, not with its square. riff filters a text after its scrub
+  (`Scrub::safe`): each line of the stderr of the container, after the
+  scrub of the relay, and each denied tool and each last line of a
+  record of the thread `ends`. So no part of a secret shows there when
+  an escape sequence comes before it or inside it. The scrub reads a
+  line of JSON as text: there, an escape sequence is the text `\u001b`,
+  and it splits a match.
 
 ### How the relay drives claude
 

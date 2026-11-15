@@ -274,7 +274,8 @@ exec env RIFF_SOCKET="$socket" "$relay" "$@"
 }
 
 /// A fake `claude` in the container. It logs its arguments and its `PATH`,
-/// takes the start text, waits while `bin/hold` is there, and prints
+/// takes the start text, waits while `bin/hold` is there, prints
+/// `bin/stderr` to its stderr when it is there, and prints
 /// `bin/events`. When `bin/tools` is there, it first sends its lines to
 /// the riff tools, through the `riff relay mcp` of its MCP config, and
 /// logs the answers to `bin/mcp.out` until it has one for each request.
@@ -292,6 +293,7 @@ IFS= read -r line
 printf '%s\n' "$line" > "$dir/run.stdin"
 while [ -f "$dir/hold" ]; do sleep 0.05; done
 echo "a line on stderr with GHTOKEN" >&2
+[ -f "$dir/stderr" ] && cat "$dir/stderr" >&2
 if [ -f "$dir/tools" ]; then
   for arg; do config=$arg; done
   riff=$(printf '%s' "$config" | sed -n 's/.*"command":"\([^"]*\)".*/\1/p')
@@ -1486,6 +1488,70 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         )),
         "{thread}"
     );
+    machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
+}
+
+/// 01M7FTC1DFAYKQAB6EPDCJ18ZA: a session sends an escape sequence, a CSI
+/// sequence and the C1 control U+009B, as a plain line, in a text of
+/// claude and on its stderr. `riff run` and `riff daemon events` print
+/// each line with no control character. A token on stderr shows no part,
+/// also with an escape sequence before it or inside it, after the scrub
+/// of the relay and then of the daemon (01M7FYCX6HRGHM2NR4RT8GS46P).
+#[tokio::test]
+async fn riff_run_and_daemon_events_print_no_control_character_of_a_session() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    let hostile = "a\x1b]0;owned\x07b\x1b[2J\x1b[1;1Hc\u{9b}d\re";
+    let said = serde_json::json!({"type":"assistant","message":{"content":[
+        {"type":"text","text":format!("text {hostile}")}]}});
+    let all = events();
+    let turn: Vec<&str> = all.lines().collect();
+    std::fs::write(
+        machine.bin.path().join("events"),
+        format!("{}\nplain {hostile}\n{said}\n{}\n", turn[0], turn[4]),
+    )
+    .unwrap();
+    std::fs::write(
+        machine.bin.path().join("stderr"),
+        format!(
+            "stderr {hostile}\ntoken \x1b{GH_TOKEN} \x1b[{GH_TOKEN} \x1b[{}\x1b[0m{} {}\x1b[0m{}\n",
+            &GH_TOKEN[..2],
+            &GH_TOKEN[2..],
+            &GH_TOKEN[..8],
+            &GH_TOKEN[8..]
+        ),
+    )
+    .unwrap();
+    let out = machine.run(None, &["run", "issue-12"]).await;
+    let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
+    assert!(out.status.success(), "{stdout}\n{stderr}");
+
+    // The daemon keeps the end of the session: riff daemon events shows it
+    // from its start.
+    let name = container(&machine);
+    let view = machine.run(None, &["daemon", "events", &name]).await;
+    let viewed = text(&view.stdout);
+    assert!(view.status.success(), "{viewed}\n{}", text(&view.stderr));
+    for (shown, parts) in [
+        (&stdout, &["plain abcde", "text abcde"][..]),
+        // The relay and the daemon hide each token, and the mark shows
+        // whole.
+        (
+            &stderr,
+            &["stderr abcde", "token [secret] [secret] [secret] [secret]"][..],
+        ),
+        (&viewed, &["plain abcde", "text abcde"][..]),
+    ] {
+        for part in parts {
+            assert!(shown.contains(part), "{part}\nnot in\n{shown}");
+        }
+        assert!(
+            !shown.chars().any(|c| c.is_control() && c != '\n'),
+            "{shown:?}"
+        );
+        assert!(!shown.contains(&GH_TOKEN[1..]), "{shown}");
+        assert!(!shown.contains(&GH_TOKEN[8..]), "{shown}");
+    }
     machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
 }
 

@@ -54,7 +54,7 @@
 //! assert_eq!(end.reason(), "exit code 1, 3 denied tool calls (Bash, Write)");
 //! let record = Record::parse(&end.body(), 9).unwrap();
 //! assert_eq!(record.tag("item"), "issue-1202");
-//! assert_eq!(record.reason, end.reason());
+//! assert_eq!(record.reason, end.reason().as_str());
 //! assert_eq!(record.tail, ["last line"]);
 //!
 //! let verify = End { item: "verify-issue-1202".into(), head: Some("988cb7b".into()), code: Some(0), failed: false, denied: vec![], ..end };
@@ -73,6 +73,7 @@ use serde::{Deserialize, Serialize};
 use crate::daemon::{EVENTS, Ended};
 use crate::room::Role;
 use crate::run::Scrub;
+use crate::text::{OneLine, Safe};
 
 /// The thread of the records.
 pub const THREAD: &str = "ends";
@@ -117,10 +118,11 @@ pub struct End {
     pub code: Option<i32>,
     /// True when a turn ended with an error, or a stop ended it.
     pub failed: bool,
-    /// The tool of each call that auto mode denied in the last turn.
-    pub denied: Vec<String>,
+    /// The tool of each call that auto mode denied in the last turn. The
+    /// reason names each one, on the first line of the record.
+    pub denied: Vec<OneLine>,
     /// The last [`TAIL`] lines of its output.
-    pub tail: Vec<String>,
+    pub tail: Vec<Safe>,
 }
 
 impl End {
@@ -145,7 +147,9 @@ impl End {
         }
     }
 
-    /// [`End::of`] for the text `events` of the events file.
+    /// [`End::of`] for the text `events` of the events file. Each denied
+    /// tool and each line of the tail has no secret and no control
+    /// character ([`Scrub::safe`], 01M7FYCX6HRGHM2NR4RT8GS46P).
     pub fn from_events(
         item: &str,
         session: &str,
@@ -162,7 +166,10 @@ impl End {
             .and_then(|event| {
                 event["permission_denials"].as_array().map(|all| {
                     all.iter()
-                        .map(|d| d["tool_name"].as_str().unwrap_or("?").to_owned())
+                        .map(|d| {
+                            let tool = scrub.safe(d["tool_name"].as_str().unwrap_or("?"));
+                            OneLine::new(tool.as_str())
+                        })
                         .collect()
                 })
             })
@@ -170,10 +177,10 @@ impl End {
         let tail = lines[lines.len().saturating_sub(TAIL)..]
             .iter()
             .map(|line| {
-                let line = scrub.clean(line);
-                match line.char_indices().nth(LINE_MAX) {
-                    Some((at, _)) => format!("{}...", &line[..at]),
-                    None => line.into_owned(),
+                let line = scrub.safe(line);
+                match line.as_str().char_indices().nth(LINE_MAX) {
+                    Some((at, _)) => format!("{}...", &line.as_str()[..at]).into(),
+                    None => line,
                 }
             })
             .collect();
@@ -202,7 +209,7 @@ impl End {
             }
         };
         if !self.denied.is_empty() {
-            let mut tools: Vec<&str> = self.denied.iter().map(String::as_str).collect();
+            let mut tools: Vec<&str> = self.denied.iter().map(OneLine::as_str).collect();
             tools.sort_unstable();
             tools.dedup();
             reason += &format!(
@@ -228,7 +235,7 @@ impl End {
         );
         for line in &self.tail {
             body.push('\n');
-            body.push_str(line);
+            body.push_str(line.as_str());
         }
         body
     }
@@ -245,22 +252,31 @@ pub async fn post(api: &Api, me: &SessionUri, end: &End) -> Result<()> {
 }
 
 /// One record of the thread [`THREAD`]. The daemon gives the records to a
-/// session in a container as JSON (#1338).
+/// session in a container as JSON (#1338). A session can post a record,
+/// so each text of it is [`Safe`] (01M7FTC1DFAYKQAB6EPDCJ18ZA).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Record {
     /// The time of the post, in milliseconds since the Unix epoch.
     pub at_ms: u64,
     /// Each tag, by name.
-    pub tags: BTreeMap<String, String>,
+    pub tags: BTreeMap<Safe, Safe>,
     /// The reason in words.
-    pub reason: String,
+    pub reason: Safe,
     /// The last lines of the output.
-    pub tail: Vec<String>,
+    pub tail: Vec<Safe>,
 }
 
 impl Record {
     /// The record of the body `body` of a post at `at_ms`. `None` when
     /// the body is no record.
+    ///
+    /// ```
+    /// let body = "ended item=issue-1 session=a\x1b[2Jb head=- code=1 failed=yes denied=0: exit\x1b]0;owned\x07 code 1\n\u{9b}2Jlast";
+    /// let record = riff::ends::Record::parse(body, 0).unwrap();
+    /// assert_eq!(record.tag("session"), "ab");
+    /// assert_eq!(record.reason, "exit code 1");
+    /// assert_eq!(record.tail, ["2Jlast"]);
+    /// ```
     pub fn parse(body: &str, at_ms: u64) -> Option<Record> {
         let mut lines = body.lines();
         let (tags, reason) = lines.next()?.strip_prefix("ended ")?.split_once(": ")?;
@@ -269,19 +285,19 @@ impl Record {
             .map(|tag| tag.split_once('='))
             .collect::<Option<Vec<_>>>()?
             .into_iter()
-            .map(|(k, v)| (k.to_owned(), v.to_owned()))
+            .map(|(k, v)| (Safe::new(k), Safe::new(v)))
             .collect();
         Some(Record {
             at_ms,
             tags,
-            reason: reason.to_owned(),
-            tail: lines.map(str::to_owned).collect(),
+            reason: Safe::new(reason),
+            tail: lines.map(Safe::new).collect(),
         })
     }
 
     /// The value of the tag `name`, or `-`.
     pub fn tag(&self, name: &str) -> &str {
-        self.tags.get(name).map_or("-", String::as_str)
+        self.tags.get(name).map_or("-", Safe::as_str)
     }
 }
 
@@ -323,6 +339,91 @@ mod tests {
         Ended { code, failed }
     }
 
+    /// True when `text` has a control character other than the line
+    /// break.
+    fn has_control(text: &str) -> bool {
+        text.chars().any(|c| c.is_control() && c != '\n')
+    }
+
+    /// 01M7FTC1DFAYKQAB6EPDCJ18ZA, 01M7FYCX6HRGHM2NR4RT8GS46P: `riff
+    /// session why` prints the last lines and the denied tools with no
+    /// control character and no secret. An escape sequence before a
+    /// secret, or inside it, hides no part of it. Each denied tool is on
+    /// one line.
+    #[test]
+    fn the_record_has_no_control_character_of_the_session() {
+        let events = "a\x1b]0;owned\x07b\x1b[2J\x1b[1;1Hc\u{9b}d\re secret-\x1b[0mtoken-1\n\
+                      \x1bsecret-token-1 \x1b[gh\x1b[0mo_abcdef123\n\
+                      {\"type\":\"assistant\",\"text\":\"\u{9b}2Kdone\"}\n\
+                      {\"type\":\"result\",\"permission_denials\":[\
+                      {\"tool_name\":\"Ba\\u001b[2Jsh\\n\\tnext\\u009b\"},\
+                      {\"tool_name\":\"\\u001bsecret-token-1\"},\
+                      {\"tool_name\":\"mcp__secret-token-1\"}]}\n";
+        let scrub = Scrub::new(["secret-token-1".to_owned()]);
+        let end = End::from_events(
+            "issue-9",
+            "0123456789",
+            ended(Some(1), true),
+            events,
+            &scrub,
+        );
+        assert_eq!(
+            end.tail[..3],
+            [
+                "abcde [secret]",
+                "[secret] [secret]",
+                r#"{"type":"assistant","text":"2Kdone"}"#
+            ]
+        );
+        assert!(
+            !end.tail
+                .iter()
+                .any(|line| line.as_str().contains("token-1") || line.as_str().contains("abcdef"))
+        );
+        assert_eq!(end.denied, ["Bash next", "[secret]", "mcp__[secret]"]);
+        let record = Record::parse(&end.body(), 0).unwrap();
+        assert_eq!(
+            record.reason,
+            "exit code 1, 3 denied tool calls (Bash next, [secret], mcp__[secret])"
+        );
+        let why = why("issue-9", &[record]);
+        assert!(why.contains(
+            "\nabcde [secret]\n[secret] [secret]\n{\"type\":\"assistant\",\"text\":\"2Kdone\"}\n"
+        ));
+        assert!(!has_control(&why), "{why:?}");
+    }
+
+    /// 01M7FTC1DFAYKQAB6EPDCJ18ZA: a session can post a record in the
+    /// thread [`THREAD`]. `riff session why` shows its tags, its reason
+    /// and its last lines with no control character.
+    #[test]
+    fn session_why_shows_no_control_character_of_a_posted_record() {
+        let body = "ended item=issue-9 session=1a2b\x1b[2J3c4d head=\u{9b}1A- code=1 failed=yes denied=0: \
+                    exit\x1b]0;owned\x07 code 1\u{9b}\n\
+                    \x1b[1A\x1b[2Klast\x1b[0m line\r\n\
+                    \u{9b}2Jmore\x07";
+        let record = Record::parse(body, 0).unwrap();
+        let why = why("issue-9", &[record]);
+        assert_eq!(
+            why,
+            "issue-9: 1 session ended with no pull request.\n\
+             - 1a2b3c4d, for the head 1A-, ended: exit code 1.\n\
+             The last one is 1a2b3c4d. Its last 2 lines of output:\n\
+             last line\n\
+             2Jmore"
+        );
+        assert!(!has_control(&why), "{why:?}");
+    }
+
+    /// 01M7FTC1DFAYKQAB6EPDCJ18ZA: the cut at [`LINE_MAX`] counts only the
+    /// characters that show.
+    #[test]
+    fn the_cut_of_a_line_of_the_record_counts_no_control_character() {
+        let line = format!("{}{}b\n", "\x1b[2K".repeat(LINE_MAX), "a".repeat(LINE_MAX));
+        let end = End::from_events("issue-9", "s", ended(Some(1), true), &line, &Scrub::new([]));
+        assert_eq!(end.tail, [format!("{}...", "a".repeat(LINE_MAX)).as_str()]);
+    }
+
     /// 01M5A5HXKZTDP5M5HY2FHCEBZA.
     #[test]
     fn the_record_has_the_last_50_lines_with_no_secret_and_the_denials() {
@@ -341,8 +442,12 @@ mod tests {
         );
         assert_eq!(end.session, "01234567");
         assert_eq!(end.tail.len(), TAIL);
-        assert!(end.tail[0].starts_with("line 32"), "{:?}", end.tail[0]);
-        let long = &end.tail[TAIL - 2];
+        assert!(
+            end.tail[0].as_str().starts_with("line 32"),
+            "{:?}",
+            end.tail[0]
+        );
+        let long = end.tail[TAIL - 2].as_str();
         assert!(
             long.starts_with("[secret]") && long.ends_with("..."),
             "{long}"

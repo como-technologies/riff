@@ -4360,11 +4360,104 @@ const INDENT: &str = "       ";
 /// assert_eq!(riff::text::safe("\x1b[31mred\x1b[0m\x08\r\n\tok\u{9b}"), "red\n\tok");
 /// ```
 pub fn safe(text: &str) -> String {
-    anstream::adapter::strip_str(text)
-        .to_string()
-        .chars()
-        .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
+    kept(text)
+        .into_iter()
+        .filter_map(|(c, kept)| kept.then_some(c))
         .collect()
+}
+
+/// Each character of `text`, and true when [`safe`] keeps it: the map
+/// from the text that shows back to the raw text.
+///
+/// ```
+/// let kept = riff::text::kept("a\x1b[2Jb\u{9b}\n");
+/// let shown: Vec<bool> = kept.iter().map(|(_, kept)| *kept).collect();
+/// assert_eq!(shown, [true, false, false, false, false, true, false, true]);
+/// ```
+pub fn kept(text: &str) -> Vec<(char, bool)> {
+    let mut printable = vec![false; text.len()];
+    for part in anstream::adapter::strip_str(text) {
+        let at = part.as_ptr() as usize - text.as_ptr() as usize;
+        printable[at..at + part.len()].fill(true);
+    }
+    text.char_indices()
+        .map(|(at, c)| {
+            let kept = printable[at] && (!c.is_control() || c == '\n' || c == '\t');
+            (c, kept)
+        })
+        .collect()
+}
+/// A text with no escape sequence and no control character but the tab
+/// and the line break ([`safe`]): safe to print on a terminal, also after
+/// a read from the wire. A line of the output of a container is one, and
+/// so is each text of a record that a session can post
+/// (01M7FTC1DFAYKQAB6EPDCJ18ZA).
+///
+/// ```
+/// use std::collections::BTreeMap;
+/// use riff::text::Safe;
+///
+/// let line = Safe::new("a\x1b]0;owned\x07b\x1b[2J\tc\u{9b}");
+/// assert_eq!(line, "ab\tc");
+/// let read: Safe = serde_json::from_str(r#""a\u001b[2Jb\u009b""#)?;
+/// assert_eq!(read.to_string(), "ab");
+/// assert_eq!(serde_json::to_string(&read)?, r#""ab""#);
+/// let tags = BTreeMap::from([(Safe::new("ro\x1b[2Jle"), Safe::new("lead"))]);
+/// assert_eq!(tags.get("role"), Some(&Safe::new("lead")));
+/// # Ok::<(), serde_json::Error>(())
+/// ```
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(from = "String", into = "String")]
+pub struct Safe(String);
+
+impl Safe {
+    /// `text` with no escape sequence and no control character.
+    pub fn new(text: &str) -> Self {
+        Self(safe(text))
+    }
+
+    /// The text.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for Safe {
+    fn from(text: String) -> Self {
+        Self::new(&text)
+    }
+}
+
+impl From<&str> for Safe {
+    fn from(text: &str) -> Self {
+        Self::new(text)
+    }
+}
+
+impl From<Safe> for String {
+    fn from(text: Safe) -> Self {
+        text.0
+    }
+}
+
+impl std::fmt::Display for Safe {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::borrow::Borrow<str> for Safe {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+
+impl PartialEq<&str> for Safe {
+    fn eq(&self, other: &&str) -> bool {
+        self.0 == *other
+    }
 }
 
 /// The most characters of a text of the forge that riff keeps
@@ -10208,6 +10301,12 @@ impl std::fmt::Display for OneLine {
     }
 }
 
+impl PartialEq<&str> for OneLine {
+    fn eq(&self, other: &&str) -> bool {
+        self.0 == *other
+    }
+}
+
 /// A check of `riff init` that passed.
 ///
 /// ```
@@ -13034,7 +13133,10 @@ pub fn session_why_none(item: &str) -> String {
 
 /// `riff session why` for `item`: each of its records `mine`, oldest
 /// first, one line for each session with its head commit (#1651), then the
-/// last lines of the output of the last session.
+/// last lines of the output of the last session. A session can post a
+/// record in the thread [`crate::ends::THREAD`], so each tag, each reason
+/// and each line of a record is a [`Safe`] text
+/// (01M7FTC1DFAYKQAB6EPDCJ18ZA).
 ///
 /// ```
 /// use riff::ends::Record;
@@ -13055,6 +13157,15 @@ pub fn session_why_none(item: &str) -> String {
 ///      - 5e6f7a8b, for the head 988cb7b, ended: exit code 0, and no PASS or FAIL.\n\
 ///      - 9c0d1e2f, for the head 3dfbec5, ended: exit code 0, and no PASS or FAIL.\n\
 ///      The last one is 9c0d1e2f. Its last 2 lines of output:\none\ntwo"
+/// );
+///
+/// // A record that a session posted: it sets the title and clears the screen.
+/// let posted = Record::parse("ended item=issue-1 session=a\x1b[2Jb head=\u{9b}2K- code=1 failed=yes denied=0: exit\x1b]0;owned\x07 code 1\n\x1b[1Alast\r", 0).unwrap();
+/// assert_eq!(
+///     riff::text::session_why("issue-1", &[&posted]),
+///     "issue-1: 1 session ended with no pull request.\n\
+///      - ab, for the head 2K-, ended: exit code 1.\n\
+///      The last one is ab. Its last 1 line of output:\nlast"
 /// );
 /// ```
 pub fn session_why(item: &str, mine: &[&crate::ends::Record]) -> String {
@@ -13084,7 +13195,7 @@ pub fn session_why(item: &str, mine: &[&crate::ends::Record]) -> String {
         ));
         for line in &last.tail {
             text.push('\n');
-            text.push_str(line);
+            text.push_str(line.as_str());
         }
     }
     text

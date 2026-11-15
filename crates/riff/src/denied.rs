@@ -70,6 +70,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::run::Scrub;
+use crate::text::Safe;
 use riff_client::api::Api;
 
 /// The thread of the records.
@@ -643,15 +644,17 @@ pub fn keep_input(stdin: &str, queue: &Queue, worker: bool) -> Result<Option<Str
     Ok(input.session_id)
 }
 
-/// One record of the thread [`THREAD`]: its tags and its text.
+/// One record of the thread [`THREAD`]: its tags and its text. A session
+/// can post a record, so each name, tag and text of it is [`Safe`]
+/// (01M7FTC1DFAYKQAB6EPDCJ18ZA).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Record {
     /// The time of the post, in milliseconds since the Unix epoch.
     pub at_ms: u64,
     /// Each tag, by name.
-    pub tags: BTreeMap<String, String>,
+    pub tags: BTreeMap<Safe, Safe>,
     /// The text after the tags.
-    pub text: String,
+    pub text: Safe,
     /// The whole body of the post.
     #[serde(skip)]
     pub body: String,
@@ -671,6 +674,12 @@ impl Record {
     /// assert_eq!(record.tag("none"), "-");
     /// assert_eq!(record.text, "git push origin");
     /// assert!(Record::parse("hello", 5).is_none());
+    ///
+    /// // A record that a session posted: it sets the title and clears the screen.
+    /// let posted = "denied rea\x1b[2Kson=x\x1b]0;owned\x07 tool=Bash head=-: \u{9b}git\x1b[1A push";
+    /// let record = Record::parse(posted, 5).unwrap();
+    /// assert_eq!(record.tag("reason"), "x");
+    /// assert_eq!(record.text, "git push");
     /// ```
     pub fn parse(body: &str, at_ms: u64) -> Option<Record> {
         let mut rest = body.strip_prefix("denied ")?;
@@ -691,13 +700,13 @@ impl Record {
                     None => (value, &after[end..]),
                 }
             };
-            tags.insert(key.to_owned(), value.to_owned());
+            tags.insert(Safe::new(key), Safe::new(value));
             if let Some(text) = after.strip_prefix(':') {
                 return Some(Record {
                     at_ms,
                     tags,
                     body: body.to_owned(),
-                    text: text.strip_prefix(' ').unwrap_or(text).to_owned(),
+                    text: Safe::new(text.strip_prefix(' ').unwrap_or(text)),
                 });
             }
             rest = after.strip_prefix(' ')?;
@@ -706,7 +715,7 @@ impl Record {
 
     /// The value of the tag `name`, or `-`.
     pub fn tag(&self, name: &str) -> &str {
-        self.tags.get(name).map_or("-", String::as_str)
+        self.tags.get(name).map_or("-", Safe::as_str)
     }
 }
 
