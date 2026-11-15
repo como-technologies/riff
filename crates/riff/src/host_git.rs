@@ -37,6 +37,9 @@
 //!   container. So in a container session (`RIFF_SOCKET`,
 //!   [`crate::cycle::in_container`]) these two folders are not in
 //!   [`guarded`].
+//! - At a stop of the host, the daemon pushes the work of each session
+//!   with the git of its container: `podman exec`, not the git of the
+//!   host ([`crate::host_stop`], 01M7EWYHX092A3QWM38RNXYWMA).
 //!
 //! ```mermaid
 //! flowchart LR

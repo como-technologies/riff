@@ -97,6 +97,7 @@ pub mod hold;
 pub mod home;
 pub mod hooks;
 pub mod host_git;
+pub mod host_stop;
 pub mod hygiene_rules;
 
 pub mod identity;

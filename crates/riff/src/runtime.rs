@@ -40,6 +40,7 @@
 //! | Draw the terminal again at the next attach | [`Runtime::redraw`] | `podman exec NAME nice -n 19 stty -F /dev/console rows ROWS cols COLS` |
 //! | Start with a terminal | [`Runtime::start_terminal`] | as the start, with `nice -n 19 podman run --rm -d -i -t ...` ([`crate::podman::terminal_args`]), then `podman wait NAME` |
 //! | Run a command with a terminal | [`Runtime::exec`] | `podman exec -it NAME nice -n 19 COMMAND` ([`crate::podman::exec_args`]) |
+//! | Run a command with no terminal, and get its output | [`Runtime::run_in`] | `podman exec NAME nice -n 19 COMMAND` ([`crate::podman::run_in_args`]) |
 //! | Find out if a live session reaches the network | [`Runtime::reaches`] | `podman exec NAME nice -n 19 getent hosts api.anthropic.com` |
 //! | Find the image digest of a live session | [`Runtime::digest`] | `podman container inspect --format {{.ImageDigest}} NAME` |
 //! | List the processes of a live session | [`Runtime::processes`] | `podman top NAME pid ppid etime args` ([`crate::podman::top_args`]) |
@@ -79,6 +80,7 @@ use std::future::Future;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::pin::Pin;
+use std::process::{Output, Stdio};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::task::{Context, Poll, ready};
 
@@ -486,6 +488,13 @@ pub trait Runtime: Send + Sync {
     /// this process, until the command ends.
     fn exec(&self, name: &str, command: &[String]) -> impl Future<Output = Result<Exit>> + Send;
 
+    /// Runs `command` in the live session `name` with no terminal and no
+    /// input, until it ends, and gives its exit and what it printed: the
+    /// push of the work of a session at a stop of the host
+    /// ([`crate::host_stop`]). A drop of the call ends the command.
+    fn run_in(&self, name: &str, command: &[String])
+    -> impl Future<Output = Result<Output>> + Send;
+
     /// The count of the links of the file `path` in the live session
     /// `name`. A file of the host that the session binds has 0 links when
     /// the host replaced it: the session holds the old file
@@ -614,6 +623,10 @@ impl Runtime for NoSessions {
     }
 
     async fn exec(&self, _name: &str, _command: &[String]) -> Result<Exit> {
+        no_session()
+    }
+
+    async fn run_in(&self, _name: &str, _command: &[String]) -> Result<Output> {
         no_session()
     }
 
@@ -761,6 +774,9 @@ struct Book {
     /// The sessions whose list of processes never comes
     /// ([`Fake::with_hung_processes`]).
     hung: BTreeSet<String>,
+    /// The sessions where a command of [`Runtime::run_in`] never ends
+    /// ([`Fake::with_hung_run`]).
+    hung_runs: BTreeSet<String>,
     /// The bytes that the command of a session writes to the terminal
     /// at each attach and each exec ([`Fake::with_terminal_bytes`]).
     writes: Vec<u8>,
@@ -1004,6 +1020,49 @@ impl Fake {
     /// `podman top` does not when podman hangs.
     pub fn with_hung_processes(self, name: &str) -> Self {
         self.lock().hung.insert(name.to_owned());
+        self
+    }
+
+    /// A command of [`Runtime::run_in`] in the session `name` never ends,
+    /// as a `git push` that gets no answer. In each other session, the
+    /// command runs on this machine, in the `workdir` of the spec.
+    ///
+    /// ```
+    /// use std::time::Duration;
+    /// use riff::runtime::{Fake, Runtime, SessionSpec};
+    ///
+    /// let dir = tempfile::tempdir()?;
+    /// let spec = |name: &str| SessionSpec {
+    ///     name: name.into(),
+    ///     image: "i".into(),
+    ///     home: "/h".into(),
+    ///     workdir: dir.path().into(),
+    ///     binds: vec![],
+    ///     env: vec![],
+    ///     memory: "8g".into(),
+    ///     cpus: 4,
+    ///     command: vec![],
+    /// };
+    /// let fake = Fake::default().with_image("i").with_hung_run("s2");
+    /// let pwd = ["pwd".to_owned()];
+    /// tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(async {
+    ///     let _s1 = fake.start(&spec("s1"), &[]).await?;
+    ///     let _s2 = fake.start(&spec("s2"), &[]).await?;
+    ///     let out = fake.run_in("s1", &pwd).await?;
+    ///     assert!(out.status.success());
+    ///     let here = dir.path().canonicalize()?;
+    ///     assert_eq!(String::from_utf8(out.stdout)?.trim(), here.to_str().unwrap());
+    ///     let hung = tokio::time::timeout(Duration::from_millis(50), fake.run_in("s2", &pwd));
+    ///     assert!(hung.await.is_err());
+    ///     // A session that does not run runs no command.
+    ///     assert!(fake.run_in("s3", &pwd).await.is_err());
+    ///     Ok::<(), anyhow::Error>(())
+    /// })?;
+    /// assert_eq!(fake.calls(), ["start s1", "start s2", "run s1 pwd", "run s2 pwd", "run s3 pwd"]);
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn with_hung_run(self, name: &str) -> Self {
+        self.lock().hung_runs.insert(name.to_owned());
         self
     }
 
@@ -1254,6 +1313,33 @@ impl Runtime for Fake {
             }
             _ => bail!("no session {name} runs"),
         }
+    }
+
+    /// Runs `command` on this machine in the folder of the session, the
+    /// `workdir` of its spec, as a container does: a test gives it a real
+    /// clone. With [`Fake::with_hung_run`], it never ends.
+    async fn run_in(&self, name: &str, command: &[String]) -> Result<Output> {
+        let workdir = {
+            let mut book = self.lock();
+            let program = command.first().map_or("", String::as_str);
+            book.calls.push(format!("run {name} {program}"));
+            let Some(played) = book.sessions.get(name).filter(|p| p.exit.is_none()) else {
+                bail!("no session {name} runs");
+            };
+            let workdir = played.spec.workdir.clone();
+            (!book.hung_runs.contains(name)).then_some(workdir)
+        };
+        let Some(workdir) = workdir else {
+            return std::future::pending().await;
+        };
+        let (program, args) = command.split_first().ok_or_else(|| anyhow!("no command"))?;
+        Ok(tokio::process::Command::new(program)
+            .args(args)
+            .current_dir(workdir)
+            .stdin(Stdio::null())
+            .kill_on_drop(true)
+            .output()
+            .await?)
     }
 
     async fn links(&self, name: &str, path: &Path) -> Result<u64> {

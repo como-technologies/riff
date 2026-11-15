@@ -453,6 +453,18 @@
 //!     D2-->>R: event 3
 //! ```
 //!
+//! # A stop of the host
+//!
+//! A stop or a restart of the host ends each container. Before it, each
+//! work session pushes its work as a WIP commit to the branch of its item,
+//! in its container ([`Daemon::push_work`], 01M7EWYHX092A3QWM38RNXYWMA).
+//! On Linux, logind holds the stop while the daemon holds a delay lock
+//! ([`crate::platform::host_stops`]). The log names each session that
+//! pushed and each one that did not (01M7EWYR79TXXNCD731FHX9K6B). At its
+//! next start, the daemon does the steps after the end of each session
+//! whose container does not run, and the wave starts the item again on
+//! that branch. See [`crate::host_stop`] for the design.
+//!
 //! # A new riff
 //!
 //! `riff update` puts a new riff on disk, and the daemon goes on with
@@ -3385,6 +3397,40 @@ impl<R: Runtime + 'static> Daemon<R> {
             .values()
             .map(|owned| owned.lock().record.clone())
             .collect()
+    }
+
+    /// At a stop or a restart of the host, each work session pushes its
+    /// work as a WIP commit to the branch of its item, in its container
+    /// ([`crate::host_stop`], 01M7EWYHX092A3QWM38RNXYWMA). The pushes
+    /// run at the same time, for at most `limit` in all: a session that
+    /// does not answer holds nothing (01M7EWYR79TXXNCD731FHX9K6B). It
+    /// gives the lines of the log: one for the stop, then one for each
+    /// work session.
+    pub async fn push_work(&self, limit: Duration) -> Vec<String> {
+        use crate::host_stop::{Pushed, wip_command, works};
+        let sessions: Vec<(String, String)> = self
+            .records()
+            .iter()
+            .filter(|r| works(r))
+            .map(|r| (r.live.name.clone(), crate::run::branch(&r.live.item)))
+            .collect();
+        let pushes = sessions.iter().map(|(name, branch)| async move {
+            let command = wip_command(branch);
+            match tokio::time::timeout(limit, self.runtime.run_in(name, &command)).await {
+                Ok(Ok(out)) => match Pushed::of(&out) {
+                    Pushed::Pushed => text::host_stop_pushed(name, branch),
+                    Pushed::OnOrigin => text::host_stop_on_origin(name, branch),
+                    Pushed::Failed(why) => text::host_stop_not_pushed(name, branch, &why),
+                },
+                Ok(Err(e)) => text::host_stop_not_pushed(name, branch, &format!("{e:#}")),
+                Err(_) => {
+                    text::host_stop_not_pushed(name, branch, &text::host_stop_no_answer(limit))
+                }
+            }
+        });
+        let mut lines = vec![text::host_stops(sessions.len(), limit)];
+        lines.extend(futures::future::join_all(pushes).await);
+        lines
     }
 
     /// The session ID of the lead of `repo` (`OWNER/REPO`) that this daemon
@@ -7223,6 +7269,22 @@ async fn serve_on(dir: PathBuf, listener: UnixListener) -> Result<()> {
     daemon.stale_every();
     daemon.leads_again_every();
     daemon.watch_every(crate::watches::every());
+    // At a stop of the host, each work session pushes its work
+    // (01M7EWYHX092A3QWM38RNXYWMA, 01M7EWYR9V4FHSJ83KBH3GP53X).
+    let pusher = daemon.clone();
+    tokio::spawn(async move {
+        let at_stop = |limit| {
+            let daemon = pusher.clone();
+            async move {
+                for line in daemon.push_work(limit).await {
+                    println!("{line}");
+                }
+            }
+        };
+        if let Err(e) = crate::platform::host_stops(at_stop).await {
+            println!("{}", text::host_stop_unheard(&format!("{e:#}")));
+        }
+    });
     // The steps of an update of this release: the rules of Claude
     // Code, the unit, the images (01M51QFPJAABDP1V7WFY8NQR60).
     let steps = dir.clone();
@@ -8898,6 +8960,183 @@ mod tests {
         assert_eq!(here.fake.exit(&name), None);
         // The record stays for the next daemon.
         assert!(record_path(&here.dir, &name).exists());
+    }
+
+    /// Runs git in `dir` for a test, and gives what it printed.
+    fn git_in(dir: &Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    }
+
+    /// A bare origin in `root` with one commit on `main`, and the main
+    /// clone of the host.
+    fn origin_in(root: &Path) -> (PathBuf, PathBuf) {
+        let (origin, main) = (root.join("origin.git"), root.join("main"));
+        git_in(root, &["init", "-q", "--bare", "-b", "main", "origin.git"]);
+        git_in(root, &["clone", "-q", "origin.git", "main"]);
+        git_in(
+            &main,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "start",
+            ],
+        );
+        git_in(&main, &["push", "-q", "origin", "HEAD:main"]);
+        (origin, main)
+    }
+
+    /// Makes the clone of a session at `clone`, from `origin`, on the
+    /// branch `branch` when it is given, else on `main`.
+    fn session_clone(origin: &Path, clone: &Path, branch: Option<&str>) {
+        let (origin, at) = (origin.to_str().unwrap(), clone.to_str().unwrap());
+        git_in(clone, &["clone", "-q", origin, at]);
+        git_in(clone, &["config", "user.name", "riff test"]);
+        git_in(clone, &["config", "user.email", "test@example.com"]);
+        if let Some(branch) = branch {
+            git_in(clone, &["switch", "-q", "-c", branch]);
+        }
+    }
+
+    /// 01M7EWYHX092A3QWM38RNXYWMA, 01M7EWYR79TXXNCD731FHX9K6B (#2164): at a
+    /// stop of the host, each work session pushes its work as a WIP commit
+    /// to the branch of its item, and the next session of the item goes on
+    /// from that branch. A clone with no work pushes nothing, a clone on
+    /// another branch pushes nothing, and the lead and a verify run no
+    /// push. The log has one line for each work session.
+    #[tokio::test]
+    async fn at_a_stop_of_the_host_each_work_session_pushes_its_work_as_a_wip_commit() {
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let (origin, main) = origin_in(here.root.path());
+        let lead = started_lead(&here).await;
+        let mut clients = Vec::new();
+        let sessions = [
+            ("riff-issue-1-aaaaaaaa", "issue-1", true, true),
+            ("riff-issue-2-bbbbbbbb", "issue-2", true, true),
+            // A session that did no work yet.
+            ("riff-issue-3-cccccccc", "issue-3", true, false),
+            // A clone that is not on the branch of its item.
+            ("riff-issue-4-dddddddd", "issue-4", false, true),
+        ];
+        for (name, item, on_branch, work) in sessions {
+            let start = here.start(name, item);
+            let branch = crate::run::branch(item);
+            let clone = &start.spec.workdir;
+            session_clone(&origin, clone, on_branch.then_some(branch.as_str()));
+            if work {
+                std::fs::write(clone.join(format!("{item}.md")), "work").unwrap();
+            }
+            clients.push(here.started(start).await);
+        }
+        clients.push(
+            here.started(here.start("riff-verify-issue-5-eeeeeeee", "verify-issue-5"))
+                .await,
+        );
+
+        let limit = Duration::from_secs(30);
+        let lines = here.daemon.push_work(limit).await;
+        assert_eq!(
+            lines,
+            [
+                text::host_stops(4, limit),
+                text::host_stop_pushed("riff-issue-1-aaaaaaaa", "worktree-issue-1"),
+                text::host_stop_pushed("riff-issue-2-bbbbbbbb", "worktree-issue-2"),
+                text::host_stop_on_origin("riff-issue-3-cccccccc", "worktree-issue-3"),
+                text::host_stop_not_pushed(
+                    "riff-issue-4-dddddddd",
+                    "worktree-issue-4",
+                    "the clone is on main, not on worktree-issue-4"
+                ),
+            ]
+        );
+        for item in ["issue-1", "issue-2"] {
+            let head = format!("refs/heads/worktree-{item}");
+            let subject = git_in(&origin, &["log", "-1", "--format=%s", &head]);
+            assert_eq!(subject, crate::host_stop::WIP_MESSAGE);
+            assert_eq!(
+                git_in(&origin, &["show", &format!("{head}:{item}.md")]),
+                "work"
+            );
+        }
+        let others = ["branch", "--list", "worktree-issue-3", "worktree-issue-4"];
+        assert_eq!(git_in(&origin, &others), "");
+        // Only the work sessions ran the push: not the lead, not the verify.
+        let runs: Vec<String> = here
+            .fake
+            .calls()
+            .into_iter()
+            .filter(|c| c.starts_with("run "))
+            .collect();
+        assert_eq!(
+            runs,
+            ["1-aaaaaaaa", "2-bbbbbbbb", "3-cccccccc", "4-dddddddd"]
+                .map(|n| format!("run riff-issue-{n} sh"))
+        );
+        assert!(!runs.iter().any(|r| r.contains(&lead.live.name)));
+
+        // The next session of the item goes on from the branch.
+        let next = here
+            .root
+            .path()
+            .join("sessions/riff-issue-1-ffffffff/clone");
+        assert!(crate::run::make_clone(&main, &next, "worktree-issue-1").unwrap());
+        let subject = git_in(&next, &["log", "-1", "--format=%s"]);
+        assert_eq!(subject, crate::host_stop::WIP_MESSAGE);
+        assert!(next.join("issue-1.md").is_file());
+    }
+
+    /// 01M7EWYR79TXXNCD731FHX9K6B (#2164): a work session that does not
+    /// answer in the time limit holds no stop. The other session pushes its
+    /// work, the log names the session that did not answer, and the stop of
+    /// the daemon goes on.
+    #[tokio::test]
+    async fn a_work_session_that_does_not_answer_in_the_time_limit_holds_no_stop() {
+        let hung = "riff-issue-2-bbbbbbbb";
+        let fake = Fake::default().with_image(IMAGE).with_hung_run(hung);
+        let mut here = Here::new(fake).await;
+        let (origin, _) = origin_in(here.root.path());
+        let mut clients = Vec::new();
+        for (name, item) in [("riff-issue-1-aaaaaaaa", "issue-1"), (hung, "issue-2")] {
+            let start = here.start(name, item);
+            let branch = crate::run::branch(item);
+            session_clone(&origin, &start.spec.workdir, Some(&branch));
+            std::fs::write(start.spec.workdir.join("work.md"), "work").unwrap();
+            clients.push(here.started(start).await);
+        }
+
+        let limit = Duration::from_secs(5);
+        let began = std::time::Instant::now();
+        let lines = here.daemon.push_work(limit).await;
+        assert!(began.elapsed() < limit * 2, "{:?}", began.elapsed());
+        assert_eq!(
+            lines,
+            [
+                text::host_stops(2, limit),
+                text::host_stop_pushed("riff-issue-1-aaaaaaaa", "worktree-issue-1"),
+                text::host_stop_not_pushed(hung, "worktree-issue-2", "no answer in 5 s"),
+            ]
+        );
+        let head = "refs/heads/worktree-issue-1";
+        let subject = git_in(&origin, &["log", "-1", "--format=%s", head]);
+        assert_eq!(subject, crate::host_stop::WIP_MESSAGE);
+        assert_eq!(
+            git_in(&origin, &["branch", "--list", "worktree-issue-2"]),
+            ""
+        );
+        here.stop().await;
+        assert!(status(&here.dir).await.is_err());
     }
 
     /// 01M78VFEVC5HZF8RATE11W28PB (#2040): a FAIL that the daemon keeps

@@ -8073,6 +8073,123 @@ pub fn daemon_listens(socket: &Path, pid: u32, build: &str) -> String {
 pub const DAEMON_STOPS: &str =
     "The riff daemon stops. It stopped no session: each container runs on.";
 
+/// The first line of the log of the daemon at a stop or a restart of the
+/// host (01M7EWYR79TXXNCD731FHX9K6B): `works` work sessions push their
+/// work, for at most `limit`.
+///
+/// ```
+/// use std::time::Duration;
+/// use riff::text::host_stops;
+///
+/// let limit = Duration::from_secs(4);
+/// assert_eq!(
+///     host_stops(2, limit),
+///     "The host stops: 2 work sessions push their work as WIP commits, for at most 4 s."
+/// );
+/// assert_eq!(
+///     host_stops(1, limit),
+///     "The host stops: 1 work session pushes its work as a WIP commit, for at most 4 s."
+/// );
+/// assert_eq!(host_stops(0, limit), "The host stops: no work session runs, so none pushes work.");
+/// ```
+pub fn host_stops(works: usize, limit: std::time::Duration) -> String {
+    let secs = limit.as_secs_f64();
+    match works {
+        0 => "The host stops: no work session runs, so none pushes work.".into(),
+        1 => format!(
+            "The host stops: 1 work session pushes its work as a WIP commit, for at most {secs} s."
+        ),
+        n => format!(
+            "The host stops: {n} work sessions push their work as WIP commits, for at most {secs} s."
+        ),
+    }
+}
+
+/// A work session pushed its work at a stop of the host
+/// (01M7EWYHX092A3QWM38RNXYWMA).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::host_stop_pushed("riff-issue-12-1a2b3c4d", "worktree-issue-12"),
+///     "riff-issue-12-1a2b3c4d: the host stops, and the session pushed its work to the branch \
+///      worktree-issue-12 on origin, with a WIP commit of each change. The next session of the \
+///      item goes on from that branch."
+/// );
+/// ```
+pub fn host_stop_pushed(name: &str, branch: &str) -> String {
+    format!(
+        "{name}: the host stops, and the session pushed its work to the branch {branch} on \
+         origin, with a WIP commit of each change. The next session of the item goes on from \
+         that branch."
+    )
+}
+
+/// A work session pushed nothing at a stop of the host: origin has each
+/// commit of its clone, and the clone has no change
+/// (01M7EWYHX092A3QWM38RNXYWMA).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::host_stop_on_origin("riff-issue-12-1a2b3c4d", "worktree-issue-12"),
+///     "riff-issue-12-1a2b3c4d: the host stops, and origin has the work of the session \
+///      already: its clone has no change, and no commit that origin does not have. It pushed \
+///      nothing to worktree-issue-12."
+/// );
+/// ```
+pub fn host_stop_on_origin(name: &str, branch: &str) -> String {
+    format!(
+        "{name}: the host stops, and origin has the work of the session already: its clone has \
+         no change, and no commit that origin does not have. It pushed nothing to {branch}."
+    )
+}
+
+/// A work session did not push its work at a stop of the host, for the
+/// reason `why` (01M7EWYR79TXXNCD731FHX9K6B).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::host_stop_not_pushed("riff-issue-12-1a2b3c4d", "worktree-issue-12", "no answer in 4 s"),
+///     "riff-issue-12-1a2b3c4d: the host stops, and the session did not push its work to the \
+///      branch worktree-issue-12: no answer in 4 s. The stop goes on. Its work that is not on \
+///      origin stays only in its clone."
+/// );
+/// ```
+pub fn host_stop_not_pushed(name: &str, branch: &str, why: &str) -> String {
+    format!(
+        "{name}: the host stops, and the session did not push its work to the branch {branch}: \
+         {why}. The stop goes on. Its work that is not on origin stays only in its clone."
+    )
+}
+
+/// The reason of [`host_stop_not_pushed`] for a session that did not
+/// answer in the time limit `limit`.
+///
+/// ```
+/// use std::time::Duration;
+///
+/// assert_eq!(riff::text::host_stop_no_answer(Duration::from_secs(4)), "no answer in 4 s");
+/// ```
+pub fn host_stop_no_answer(limit: std::time::Duration) -> String {
+    format!("no answer in {} s", limit.as_secs_f64())
+}
+
+/// The daemon cannot take the delay lock of logind, for the reason `why`
+/// (01M7EWYR9V4FHSJ83KBH3GP53X).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::host_stop_unheard("riff cannot reach the system bus"),
+///     "riff hears of no stop of the host: riff cannot reach the system bus. At a stop or a \
+///      restart of the host, the work sessions push no work."
+/// );
+/// ```
+pub fn host_stop_unheard(why: &str) -> String {
+    format!(
+        "riff hears of no stop of the host: {why}. At a stop or a restart of the host, the work \
+         sessions push no work."
+    )
+}
+
 /// The daemon starts a session.
 pub fn daemon_session_starts(name: &str, item: &str, session: &str) -> String {
     format!("The session {session} starts: {item} in the container {name}.")

@@ -42,6 +42,7 @@
 //! | [`Socket`]: the path of a socket in a long folder | `/proc/self/fd/N/NAME` | the plain path, of at most [`SOCKET_MOST`] bytes (01M6Z49RD4F6EX4K9FF2Z0CET9) |
 //! | [`service_manager`]: the manager of the daemon | systemd, `systemctl --user` | launchd, `launchctl` ([`launchd`], 01M6Z49H6CHSPV0FJZWY2MYHEM) |
 //! | The CPU weight of the slice of the sessions | `systemctl --user set-property --runtime` ([`systemd::set_cpu_weight`], 01M778VSP6Z29FCPGX5S76ME1T) | none: no session runs on macOS |
+//! | [`host_stops`]: a stop or a restart of the host | a delay lock of logind and its signal `PrepareForShutdown`, on the system bus ([`logind`], 01M7EWYHX092A3QWM38RNXYWMA) | none: no session runs on macOS |
 //!
 //! ```mermaid
 //! flowchart LR
@@ -76,6 +77,8 @@ use crate::{auto_update, binary, identity, local};
 pub mod linux;
 #[cfg(target_os = "linux")]
 use linux as os;
+#[cfg(target_os = "linux")]
+pub mod logind;
 #[cfg(target_os = "linux")]
 pub mod systemd;
 
@@ -380,6 +383,18 @@ impl Socket {
 /// (01M6Z49H6CHSPV0FJZWY2MYHEM). An error with no home.
 pub fn service_manager() -> anyhow::Result<Manager> {
     os::service_manager()
+}
+
+/// Runs `at_stop` at each stop and restart of the host, before the stop
+/// goes on, with the time limit of the pushes ([`crate::host_stop`],
+/// 01M7EWYHX092A3QWM38RNXYWMA): on Linux, while a delay lock of logind
+/// holds the stop. It ends only with an error, for example when riff
+/// cannot reach the system bus. On macOS, no session runs: it ends at
+/// once.
+pub async fn host_stops<F: std::future::Future<Output = ()>>(
+    at_stop: impl FnMut(std::time::Duration) -> F,
+) -> anyhow::Result<()> {
+    os::host_stops(at_stop).await
 }
 
 #[cfg(test)]

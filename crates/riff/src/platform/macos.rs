@@ -25,6 +25,14 @@ pub(super) fn service_manager() -> Result<Manager> {
     super::launchd::Launchd::here()
 }
 
+/// No session runs on macOS (01M6Z49R87D50VD4RS0BP641MM): the daemon
+/// waits for no stop of the host, and takes no lock.
+pub(super) async fn host_stops<F: std::future::Future<Output = ()>>(
+    _at_stop: impl FnMut(Duration) -> F,
+) -> Result<()> {
+    Ok(())
+}
+
 /// The ID of the process in the form of `libproc`.
 fn raw(pid: u32) -> Option<i32> {
     i32::try_from(pid).ok()

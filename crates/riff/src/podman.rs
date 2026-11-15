@@ -723,6 +723,21 @@ pub fn exec_args(name: &str, command: &[String]) -> Vec<String> {
     exec_of(&["-it"], name, command.iter().map(String::as_str))
 }
 
+/// The arguments of `podman` for [`Runtime::run_in`]: `command` in the
+/// container `name` with no terminal, at nice 19 ([`exec_of`]). It runs
+/// in the working folder of the container: the clone of the session.
+///
+/// ```
+/// let command = ["sh".to_owned(), "-c".to_owned(), "exit 0".to_owned()];
+/// assert_eq!(
+///     riff::podman::run_in_args("riff-issue-12-1a2b3c4d", &command),
+///     ["exec", "riff-issue-12-1a2b3c4d", "nice", "-n", "19", "sh", "-c", "exit 0"]
+/// );
+/// ```
+pub fn run_in_args(name: &str, command: &[String]) -> Vec<String> {
+    exec_of(&[], name, command.iter().map(String::as_str))
+}
+
 /// Runs `podman ARGS` with no stdin and no stdout, and gives its exit.
 /// podman shows its progress and its errors on stderr.
 async fn quiet(args: &[&str]) -> Result<ExitStatus> {
@@ -909,6 +924,18 @@ impl Runtime for Podman {
             .await
             .with_context(|| text::no_program(PODMAN))?;
         Ok(status.into())
+    }
+
+    /// `podman exec NAME nice -n 19 COMMAND` ([`run_in_args`]), with no
+    /// input. A drop of the call ends `podman exec`.
+    async fn run_in(&self, name: &str, command: &[String]) -> Result<std::process::Output> {
+        podman()
+            .args(run_in_args(name, command))
+            .stdin(Stdio::null())
+            .kill_on_drop(true)
+            .output()
+            .await
+            .with_context(|| text::no_program(PODMAN))
     }
 
     /// `podman exec NAME nice -n 19 stat -c %h PATH` ([`links_args`]).

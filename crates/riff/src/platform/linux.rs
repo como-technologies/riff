@@ -25,6 +25,18 @@ pub(super) fn service_manager() -> anyhow::Result<Manager> {
     super::systemd::Systemd::here()
 }
 
+/// Runs `at_stop` at each stop and restart of the host that logind
+/// tells, while a delay lock of logind holds the stop
+/// ([`super::logind`]). The time limit of `at_stop` comes from the delay
+/// of logind ([`crate::host_stop::limit_of`]).
+pub(super) async fn host_stops<F: std::future::Future<Output = ()>>(
+    mut at_stop: impl FnMut(std::time::Duration) -> F,
+) -> anyhow::Result<()> {
+    let (logind, delay) = super::logind::Logind::connect().await?;
+    let limit = crate::host_stop::limit_of(delay);
+    crate::host_stop::each_stop(logind, move || at_stop(limit)).await
+}
+
 pub(super) fn process(pid: u32) -> Option<Process> {
     let root = Path::new(PROC);
     let own = std::fs::read_link(root.join("self/ns/pid")).ok();

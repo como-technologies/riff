@@ -6683,6 +6683,29 @@ of this part when they merge.
   the guard the folders of the volumes of the runtime: the folder of the
   volumes of podman, the folder of each volume, and the folder of the
   host that a volume binds.
+- **01M7EWYHX092A3QWM38RNXYWMA** At a stop or a restart of the host,
+  each work session of the daemon pushes its work before its container
+  ends. A work session is each session that is not the lead and not a
+  verify. On Linux, the daemon holds a delay lock of logind for
+  `shutdown`. At `PrepareForShutdown`, it runs one step in the container
+  of each work session, all at the same time: the git of the container
+  commits each change as the commit `WIP: the host stops`, with no hook
+  and no signature, and pushes `HEAD` to the branch of the item with
+  `--force-with-lease`. The step refuses a clone that is not on the
+  branch of the item. When origin has each commit of the clone and the
+  clone has no change, it pushes nothing. Then the daemon drops the
+  lock. When logind cancels the stop, the daemon takes the lock again.
+- **01M7EWYR79TXXNCD731FHX9K6B** At a stop of the host, the daemon waits
+  for the pushes of 01M7EWYHX092A3QWM38RNXYWMA at most the delay of
+  logind (`InhibitDelayMaxSec`) less 1 second, and at least 1 second. A
+  session that does not answer in that time does not hold the stop: it
+  ends with its container. The log of the daemon has one line at the
+  stop of the host, and one line for each work session: it pushed its
+  work, origin had its work already, it did not push and why, or it did
+  not answer in the time limit.
+- **01M7EWYR9V4FHSJ83KBH3GP53X** When the daemon cannot take the delay
+  lock of logind, its log has one line that says so and why. At a stop
+  of the host, its sessions then push nothing.
 
 ### riff relay
 
