@@ -233,8 +233,10 @@ async fn report_one(
         Err(e) if ghcalls::is_limit_error(&e) => return Err(e),
         Err(e) => {
             // The same end as a report that fails with no kept result.
-            let (_, end) = crate::wave::refused_pass(api, me, kept.session(folder), &e).await;
-            ends.extend(end);
+            let failed = crate::wave::refused_pass(api, me, kept.session(folder), &e).await;
+            if let crate::wave::ReportFailed::RefusedPass(end) = failed {
+                ends.push(end);
+            }
             let _ = std::fs::remove_dir_all(folder);
             // The read above found the pull request open.
             let body = crate::wave::no_report(item, *pull, &e, true);

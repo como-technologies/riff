@@ -13400,20 +13400,20 @@ pub fn wave_build_limit(item: &str, branch: &str) -> String {
 
 /// A build ended, and the read of the pull request of its branch failed
 /// with `error`, not on a limit of GitHub: riff does not know if the
-/// branch has one, and tells the lead that the wave reads it again
+/// branch has one, and tells the lead that the wave will read it again
 /// (#2170, 01M7FVQP0N4ZEZ7SBP9WE9YWMS).
 ///
 /// ```
 /// assert_eq!(
 ///     riff::text::wave_build_unread("issue-12", "worktree-issue-12", "HTTP 502"),
 ///     "issue-12: the session of the wave ended, and riff could not read the pull request of \
-///      the branch worktree-issue-12: HTTP 502. The wave reads it again at its next look."
+///      the branch worktree-issue-12: HTTP 502. The wave will read it again at its next look."
 /// );
 /// ```
 pub fn wave_build_unread(item: &str, branch: &str, error: &str) -> String {
     format!(
         "{item}: the session of the wave ended, and riff could not read the pull request of the \
-         branch {branch}: {error}. The wave reads it again at its next look."
+         branch {branch}: {error}. The wave will read it again at its next look."
     )
 }
 

@@ -3643,28 +3643,60 @@ async fn post_end(api: &Api, record: &Record, ended: Ended, found: Found) {
 }
 
 /// What the steps found of the verify `session` whose report failed with
-/// `error`, and the end that it posted. When riff refused its PASS for a
-/// member of the council with no line
-/// ([`crate::council::result::NoLine`]), they found a result with no
-/// verdict ([`Found::NoVerdict`], 01M7G3DR4R4KF5RSD94F6ZN80H). That end
-/// goes to the thread `ends`, as `me`, with the [`Found`] that it gives:
-/// so the record and the reason that the daemon keeps agree
-/// (01M7G6H601C6NYC7ACSF6GVW50). This comes before the folder of the
-/// session goes. After each other error, the steps found nothing
-/// ([`Found::Unread`]): it posts nothing, and gives no end. The end step
-/// (`after_verify`) and the report of a kept result after the reset
+/// `error`. When riff refused its PASS for a member of the council with
+/// no line ([`crate::council::result::NoLine`]), the end of the session
+/// goes to the thread `ends`, as `me`, with the [`Found`] of the refusal
+/// ([`ReportFailed::found`]): so the record and the reason that the daemon
+/// keeps agree (01M7G6H601C6NYC7ACSF6GVW50). This comes before the folder
+/// of the session goes. After each other error, it posts nothing. The end
+/// step (`after_verify`) and the report of a kept result after the reset
 /// ([`kept`]) both use it.
 pub async fn refused_pass(
     api: &Api,
     me: &SessionUri,
     session: crate::ends::Session<'_>,
     error: &anyhow::Error,
-) -> (Found, Option<crate::ends::End>) {
+) -> ReportFailed {
     if !error.is::<crate::council::result::NoLine>() {
-        return (Found::Unread, None);
+        return ReportFailed::Other;
     }
-    let found = Found::NoVerdict;
-    (found, Some(session.post_end(api, me, found).await))
+    ReportFailed::RefusedPass(session.post_end(api, me, ReportFailed::REFUSED).await)
+}
+
+/// What [`refused_pass`] found of a verify whose report failed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReportFailed {
+    /// riff refused its PASS for a member of the council with no line: the
+    /// end that the session posted in the thread `ends`.
+    RefusedPass(crate::ends::End),
+    /// Another error: the steps posted no end.
+    Other,
+}
+
+impl ReportFailed {
+    /// What the steps found of a refused PASS, and what its end says.
+    const REFUSED: Found = Found::NoVerdict;
+
+    /// What the steps found: a result with no verdict for a refused PASS
+    /// (01M7G3DR4R4KF5RSD94F6ZN80H), and nothing after another error.
+    ///
+    /// ```
+    /// use riff::daemon::Ended;
+    /// use riff::ends::{End, Found};
+    /// use riff::run::Scrub;
+    /// use riff::wave::ReportFailed;
+    ///
+    /// let clean = Ended { code: Some(0), failed: false };
+    /// let end = End::from_events("verify-issue-7", "1a2b3c4d", clean, "", &Scrub::new([]));
+    /// assert_eq!(ReportFailed::RefusedPass(end).found(), Found::NoVerdict);
+    /// assert_eq!(ReportFailed::Other.found(), Found::Unread);
+    /// ```
+    pub fn found(&self) -> Found {
+        match self {
+            ReportFailed::RefusedPass(_) => ReportFailed::REFUSED,
+            ReportFailed::Other => Found::Unread,
+        }
+    }
 }
 
 /// Waits until the steps after the end of the session of `record` can read
@@ -4130,7 +4162,7 @@ async fn after_verify(
         Err(e) => {
             let error = format!("{e:#}");
             let session = crate::ends::Session::of(record, ended);
-            let (found, _) = refused_pass(api, me, session, &e).await;
+            let found = refused_pass(api, me, session, &e).await.found();
             let result = kept::Kept {
                 repo: wave.repo.clone(),
                 item: item.clone(),
@@ -9697,6 +9729,33 @@ esac
         }
         let end = "exit code 0, and no PASS or FAIL, 1 denied tool calls (Bash)";
         let spent = text::wave_spent("verify-issue-1", Some((41, "c1")), STARTS, end);
+        here.until(3, |h| h.forge().told == [spent.clone()]).await;
+        here.idle(3).await;
+        assert_eq!(here.forge().told, [spent], "one notice");
+    }
+
+    /// #2170, 01M7G3DR4R4KF5RSD94F6ZN80H: three verifies of one head end
+    /// with exit code 0 and no PASS or FAIL, and a fault stops the steps
+    /// after each end before they read the result. The message "started 3
+    /// times" names only the exit, and nothing of a result.
+    #[tokio::test]
+    async fn a_spent_verify_whose_steps_failed_says_nothing_of_a_result() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 3, free).await;
+        {
+            let mut forge = here.forge();
+            forge.pulls.insert(1, Pr::Asked);
+            forge.no_result = true;
+            forge.finish_fails = true;
+        }
+        here.run();
+        for n in 1..=STARTS as usize {
+            here.until(3, |h| h.running("verify-issue-1").is_some())
+                .await;
+            here.exit("verify-issue-1", 0).await;
+            here.until(3, |h| h.forge().finished.len() == n).await;
+        }
+        let spent = text::wave_spent("verify-issue-1", Some((41, "c1")), STARTS, "exit code 0");
         here.until(3, |h| h.forge().told == [spent.clone()]).await;
         here.idle(3).await;
         assert_eq!(here.forge().told, [spent], "one notice");
