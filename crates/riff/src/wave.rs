@@ -782,19 +782,21 @@
 //!
 //! # The clones
 //!
-//! The clone of a build stays until the work of its branch is over
-//! (01M4Z81ARSTAK8HR96S084SDFD). Before each look, the sweep of the
-//! daemon removes the folder of each session of the repository that does
-//! not run, when the pull request of its branch merged or closed, or its
-//! issue is closed, or when the folder had no change for 30 days. It
-//! looks into no clone ([`crate::daemon::sweep`],
-//! 01M53NJ5V27BCHDNHK2THQQZZQ, 01M7DZ4E02PX5Y0WMHFCJ9KS14). For a merged
+//! The clone of a session goes with its container: only the work that it
+//! pushed stays ([`crate::session_clone`]). The folder of a session stays
+//! until the work of its branch is over (01M4Z81ARSTAK8HR96S084SDFD).
+//! Before each look, the sweep of the daemon removes the folder of each
+//! session of the repository that does not run, when the pull request of
+//! its branch merged or closed, or its issue is closed, or when the folder
+//! had no change for 30 days. It looks into no clone
+//! ([`crate::daemon::sweep`], 01M53NJ5V27BCHDNHK2THQQZZQ,
+//! 01M7DZ4E02PX5Y0WMHFCJ9KS14). For a merged
 //! pull request with `Refs #N`, it first adds the comment `Merged in #PR
 //! (COMMIT)` to the issue, when the issue does not have it (see "A merge
 //! that leaves the issue open"). The folder of a verify that did not
 //! pass goes at its end. The daemon also sweeps with no wave.
 //!
-//! A job holds `Daemon::in_job` of its item from before the clone of
+//! A job holds `Daemon::in_job` of its item from before the start of
 //! its session to the end of `finish`, so the sweep keeps its folder
 //! while a step after the end reads it (01M53S7WDPQ2GWHJWJ6SZXZ5PN). Each
 //! `gh` call of the sweep has a time limit, so a `gh` that never ends
@@ -4284,23 +4286,9 @@ impl Live {
                 text::wave_verify_start(&wave.repo, base, *issue, *pull, commit, &checks)
             }
         };
-        let existing = |p: PathBuf| p.exists().then_some(p);
-        let facts = Facts {
-            session: session.to_owned(),
-            item: item.clone(),
-            image: pinned.image.clone(),
-            home: host.home.clone(),
-            user: host.user.clone(),
-            clone,
-            repo: wave.repo.clone(),
-            base: base.to_owned(),
-            checkout: work.checkout(earlier),
-            main: common,
-            claude,
-            sign_in: host.claude.sign_in(),
-            gitconfig: existing(host.home.join(".gitconfig")),
-            setup: pinned.setup.clone(),
-        };
+        let facts = facts_of(
+            wave, work, pinned, host, base, earlier, session, &folder, common,
+        );
         let secrets = host.secrets();
         Ok(Start {
             session: session.to_owned(),
@@ -4316,6 +4304,42 @@ impl Live {
             no_github: false,
             cause: None,
         })
+    }
+}
+
+/// The facts of the session `session` of `work` of `wave`, with its folder
+/// `folder`: the spec of its container, with the plan of its clone
+/// ([`crate::session_clone`]). `common` is the git dir of the main clone,
+/// `base` the default branch, and `earlier` the look of a build for its
+/// branch on `origin` ([`Work::checkout`]).
+#[allow(clippy::too_many_arguments)]
+fn facts_of(
+    wave: &Wave,
+    work: &Work,
+    pinned: &Pinned,
+    host: &run::Host,
+    base: &str,
+    earlier: bool,
+    session: &str,
+    folder: &Path,
+    common: PathBuf,
+) -> Facts {
+    let existing = |p: PathBuf| p.exists().then_some(p);
+    Facts {
+        session: session.to_owned(),
+        item: work.item(),
+        image: pinned.image.clone(),
+        home: host.home.clone(),
+        user: host.user.clone(),
+        clone: folder.join("clone"),
+        repo: wave.repo.clone(),
+        base: base.to_owned(),
+        checkout: work.checkout(earlier),
+        main: common,
+        claude: folder.join("claude"),
+        sign_in: host.claude.sign_in(),
+        gitconfig: existing(host.home.join(".gitconfig")),
+        setup: pinned.setup.clone(),
     }
 }
 
@@ -11811,6 +11835,85 @@ esac
         git_in(dir, &["add", "a"]);
         git_in(dir, &["commit", "-q", "-m", words]);
         git_in(dir, &["rev-parse", "HEAD"])
+    }
+
+    /// #2139, 01M7EY3P0Q8TQF5QRTRDWCYCTQ, 01M5QVARWYFHTQV5THNRB09SZA: the
+    /// start of a verify in a wave gives its container the plan of its
+    /// clone: the head commit of the look, detached, from the git dir of
+    /// the main clone of the wave. A build gets the branch of its item, as
+    /// the look of the host found it on `origin`.
+    #[test]
+    fn the_start_of_a_verify_gives_the_plan_of_the_head_commit_of_the_look() {
+        use crate::runtime::Env;
+        use crate::session_clone::{Checkout, Plan, VAR};
+
+        let wave = Wave {
+            repo: "o/r".into(),
+            main: "/src/r".into(),
+            server: "http://127.0.0.1:1".into(),
+            host: "h".into(),
+        };
+        let host = run::Host {
+            home: "/home/mike".into(),
+            user: "mike".into(),
+            claude: run::Claude::Token("t".into()),
+        };
+        let pinned = Pinned {
+            image: "img".into(),
+            setup: Setup::default(),
+        };
+        let folder = Path::new("/d/riff/sessions/verify-issue-12-1a2b3c4d");
+        let session = "1a2b3c4d-0000-4000-8000-000000000000";
+        let plan = |work: &Work, earlier| {
+            let facts = facts_of(
+                &wave,
+                work,
+                &pinned,
+                &host,
+                "main",
+                earlier,
+                session,
+                folder,
+                "/src/r/.git".into(),
+            );
+            run::spec(&facts)
+                .env
+                .iter()
+                .find_map(|e| match e {
+                    Env::Value(name, plan) if name == VAR => Plan::of_var(plan).ok(),
+                    _ => None,
+                })
+                .unwrap()
+        };
+        let verify = Work::Verify {
+            issue: 12,
+            pull: 40,
+            commit: "0123abcd".into(),
+        };
+        assert_eq!(
+            plan(&verify, true),
+            Plan {
+                path: folder.join("clone"),
+                origin: "https://github.com/o/r.git".into(),
+                main: "/src/r/.git".into(),
+                base: "main".into(),
+                checkout: Checkout::Pull {
+                    pull: 40,
+                    commit: "0123abcd".into(),
+                },
+            }
+        );
+        let build = Work::Build { issue: 12 };
+        for earlier in [true, false] {
+            assert_eq!(
+                plan(&build, earlier).checkout,
+                Checkout::Branch {
+                    name: "worktree-issue-12".into(),
+                    earlier,
+                    bundle: None,
+                }
+            );
+        }
     }
 
     /// The git of a test of the council of a verify: a bare `origin` that

@@ -398,7 +398,7 @@ const NO_LOOK: [(&str, &str); 7] = [
     ("git_credential.rs", "pub fn urls("),
     // The clone of a session: the relay runs it in the container, with the
     // token of the session from `gh`, and no keyring (#2139).
-    ("session_clone.rs", "pub fn make("),
+    ("session_clone.rs", "fn steps("),
 ];
 
 /// True when the line `line` starts a function.

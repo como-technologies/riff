@@ -6050,9 +6050,6 @@ of this part when they merge.
   session reads the objects of the main clone through the alternates,
   and pushes from its own clone. No session writes the git dir of the
   main clone or of another session.
-- **01M4Z60B7PQ07HRJBXS1TA73PX** The container sees the objects of the
-  main clone (`MAIN/.git/objects`) at the same path, with no write. So
-  git reads the alternates of the clone of the session.
 - **01M4Z60B7QDWEFQ96H448RE9N2** Each session is a rootless podman
   container (`podman run --rm --userns=keep-id`) from the image of its
   repository. riff binds with write: its Claude folder, the folder of
@@ -6644,7 +6641,7 @@ of this part when they merge.
   with `git ls-remote`.
 - **01M7DZ42EVHAT8N5MZEV97G3DW** The host writes the repository
   `OWNER/REPO` of a session in the file `repo` of the folder of the
-  session, before the clone. The container does not see that file.
+  session. The container does not see that file.
 - **01M7DZ4E02PX5Y0WMHFCJ9KS14** The sweep of 01M53NJ5V27BCHDNHK2THQQZZQ
   looks into no clone. It reads the repository of a folder from its file
   `repo` (01M7DZ42EVHAT8N5MZEV97G3DW), and asks the forge for the pull
@@ -6845,26 +6842,37 @@ of this part when they merge.
   exits with 0. The Claude folder of an earlier start gets the new
   command in the place of the hook of the older riff.
 - **01M7EY3P0Q8TQF5QRTRDWCYCTQ** Each session clones in its container,
-  and pushes from there with its own token. The host makes no clone of a
-  session, and binds no git tree with write into a container. The spec
-  of a session has an empty volume of its container at the path of its
-  clone, on the disk and not in the tmpfs of the home: podman run --rm
-  removes it with the container. The spec gives the plan of the clone to
-  the relay in the variable RIFF_CLONE, and claude does not get it.
-  Before claude starts, also with a terminal, the relay runs git clone
-  --reference MAIN from the repository on GitHub into that folder. Then
-  it checks out the branch of the item for a build, a rebase and a fix
-  of the checks: the branch of origin when origin has it, else a new
-  branch. For a verify, it fetches refs/pull/N/head and checks out the
-  head commit of the look, detached. The lead gets the default branch. A
-  clone that is there stays. When a step of the clone fails, claude does
-  not start, and the error names the step. This supersedes
-  01M7E7A8QM8SRPQN3G1BXVJW1R in full, and in part
-  01M4Z60B7PTJMB37578K8FV22Q, 01M4Z60B7QDWEFQ96H448RE9N2,
-  01M7DZ42C8SY2GV5ZQJZHM2VTV, 01M5QVARWYFHTQV5THNRB09SZA,
-  01M4ZKX0NXN7E33VC3PSFGSPDT, 01M4ZV3B6Q0Y6AX0KSKC55S31R,
-  01M501P9Q51AYN9GBPWKVHA229 and 01M4Z81ARSTAK8HR96S084SDFD: the clone
-  of the host.
+  and pushes from there with its own token. The host makes no clone of
+  a session, and binds no git tree with write into a container. The
+  spec of a session has an empty volume of its container at the path
+  of its clone, on the disk and not in the tmpfs of the home: podman
+  run --rm removes it with the container. The container sees the git
+  dir of the main clone, MAIN/.git, at the same path with no write:
+  its objects, its refs and its config. The spec gives the plan
+  of the clone to the relay in the variable RIFF_CLONE, and claude
+  does not get it. Before claude starts, also with a terminal, the
+  relay makes the clone in that folder: git init, MAIN/.git/objects
+  in its alternates, origin on the repository on GitHub, and the
+  branches of origin as the main clone has them, with no object
+  copied. With the token of the session, it then fetches origin,
+  and gets only the objects that the main clone does not have. With
+  no token, a lead with no token of an App or a session of riff run
+  --no-github, it fetches nothing from GitHub, and starts from the
+  main clone. Then it checks out the branch of the item for a build,
+  a rebase and a fix of the checks: the branch of origin when the one
+  look of the host found it there, else a new branch from the default
+  branch. For a verify, with the token it fetches refs/pull/N/head,
+  and checks out the head commit of the look, detached. The lead
+  gets the default branch. Each start point is explicit, so no git
+  config of the person changes the branch. A clone that is there
+  stays. When a step of the clone fails, claude does not start, the
+  error names the step, and the folder is empty again. This supersedes
+  01M7E7A8QM8SRPQN3G1BXVJW1R and 01M4Z60B7PQ07HRJBXS1TA73PX in full,
+  and in part 01M4Z60B7PTJMB37578K8FV22Q, 01M4Z60B7QDWEFQ96H448RE9N2,
+  01M7DZ42C8SY2GV5ZQJZHM2VTV, 01M7DZ42EVHAT8N5MZEV97G3DW,
+  01M5QVARWYFHTQV5THNRB09SZA, 01M4ZKX0NXN7E33VC3PSFGSPDT,
+  01M4ZV3B6Q0Y6AX0KSKC55S31R, 01M501P9Q51AYN9GBPWKVHA229 and
+  01M4Z81ARSTAK8HR96S084SDFD: the clone of the host.
 
 ### The waves of the daemon
 
@@ -8691,15 +8699,23 @@ of this part when they merge.
   "No space left on device".
 - **01M7EY3WHQQP9330CZ736HK0FJ** A session of riff run --no-github
   pushes nothing. When claude ends, before the relay gives the daemon
-  the exit, the relay writes the commits of the branch that origin/HEAD
-  does not have in the git bundle out/BRANCH.bundle of the folder of the
-  session, with no git tree of the host. riff binds that folder out/
-  with write for such a session only. With no such commit, it writes no
-  bundle. With no pull request of the branch, riff run names the bundle
-  and the commands that push the branch from a clone of the person, or
-  says that the session made no commit. This supersedes
-  01M6Z87JY83V3KR72E2AG8V8KG and 01M4Z60B7QDWEFQ96H448RE9N2 in part: the
-  clone and the command to push the branch, and the binds with write.
+  the exit, the relay writes the commits of the branch that the default
+  branch of origin does not have in the git bundle out/BRANCH.bundle
+  of the folder of the session, with no git tree of the host. riff
+  binds that folder out/ with write for such a session only. With
+  no such commit, or with no branch, it writes no bundle. When the
+  bundle fails, the exit is 1. With no pull request of the branch,
+  riff run takes the bundle: it opens the file with no link, copies
+  it to BRANCH.bundle in the folder of the session, which no session
+  sees, checks that the first line of the copy is that of a git bundle
+  of version 2 or 3, and runs git bundle verify on the copy in the
+  main clone. It runs no git on the file in out/. Then it names the
+  copy and the commands that push the branch from a clone of the
+  person, or says that the session made no commit. When the file is
+  no git bundle, riff run says why, and ends with 1. This supersedes
+  01M6Z87JY83V3KR72E2AG8V8KG and 01M4Z60B7QDWEFQ96H448RE9N2 in part:
+  the clone and the command to push the branch, and the binds with
+  write.
 - **01M7EY3WM6XYQR3CXNMM6MFA5C** riff run names the default branch in
   the start text from origin/HEAD of the main clone. This supersedes
   01M5QYBWPAJ219BE8QKVKG1TWW in part: the clone.
@@ -9601,13 +9617,15 @@ of this part when they merge.
   same path in the home of HOST. riff refuses an empty path and a path
   with a space. `just real-session` gives its arguments to the test as
   they are: no shell reads them.
-- **01M7EY51P291VZ9YM414Z2Z1MR** Step 8 of the real-session test fetches
-  the branch of the item from the bundle of its session
-  (01M7EY3WHQQP9330CZ736HK0FJ) into the clone of the test, after a fetch
-  of origin, with the git of the person on the host, and pushes it to
-  origin. It runs no git in a folder of the session. With no bundle, the
-  step fails. This supersedes 01M6Z87SDSYDTFHMPKGNX74SMC in part: the
-  push from the clone of the session.
+- **01M7EY51P291VZ9YM414Z2Z1MR** Step 8 of the real-session test
+  fetches the branch of the item from the copy of the bundle of
+  its session that riff run checked (01M7EY3WHQQP9330CZ736HK0FJ)
+  into the clone of the test, after a fetch of origin, with the
+  git of the person on the host, and pushes it to origin. It runs
+  no git in a folder of the session, and no git on a file that the
+  session can write. With no copy, the step fails. This supersedes
+  01M6Z87SDSYDTFHMPKGNX74SMC in part: the push from the clone of the
+  session.
 
 ## The UIs
 

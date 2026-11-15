@@ -522,7 +522,10 @@ mod tests {
         assert_eq!(plan.make(true).unwrap(), Made::New);
         let alternates =
             std::fs::read_to_string(plan.path.join(".git/objects/info/alternates")).unwrap();
-        assert_eq!(Path::new(alternates.trim()), origin.main.join(".git/objects"));
+        assert_eq!(
+            Path::new(alternates.trim()),
+            origin.main.join(".git/objects")
+        );
         assert_eq!(own_objects(&plan.path), 0, "the clone copied objects");
         assert_eq!(
             git_in(&plan.path, &["branch", "--show-current"]),
@@ -553,7 +556,10 @@ mod tests {
     #[test]
     fn a_clone_with_a_token_fetches_only_what_the_main_clone_does_not_have() {
         let origin = Origin::new();
-        git_in(&origin.main, &["push", "-q", "origin", "HEAD:refs/heads/gone"]);
+        git_in(
+            &origin.main,
+            &["push", "-q", "origin", "HEAD:refs/heads/gone"],
+        );
         let bare = origin.dir.path().join("origin.git");
         git_in(&bare, &["update-ref", "-d", "refs/heads/gone"]);
         let other = origin.plan("other", Checkout::Default);
@@ -590,13 +596,19 @@ mod tests {
         let mut fails = origin.plan("fails", Checkout::Default);
         fails.origin = format!("file://{}", origin.dir.path().join("none.git").display());
         let error = fails.make(true).unwrap_err();
-        assert!(error.to_string().contains("fetch -q --prune origin"), "{error}");
+        assert!(
+            error.to_string().contains("fetch -q --prune origin"),
+            "{error}"
+        );
         assert_eq!(std::fs::read_dir(&fails.path).unwrap().count(), 0);
         // A folder with files and no clone gets no clone, and its files
         // stay.
         std::fs::write(fails.path.join("mine"), "").unwrap();
         let error = fails.make(false).unwrap_err();
-        assert!(error.to_string().contains("has files and no clone"), "{error}");
+        assert!(
+            error.to_string().contains("has files and no clone"),
+            "{error}"
+        );
         assert!(fails.path.join("mine").exists());
     }
 
@@ -624,7 +636,10 @@ mod tests {
         );
         let bad = origin.plan("bad", branch("bad..name", false));
         let error = bad.make(true).unwrap_err();
-        assert!(error.to_string().contains("switch -q -c bad..name"), "{error}");
+        assert!(
+            error.to_string().contains("switch -q -c bad..name"),
+            "{error}"
+        );
     }
 
     /// The lead gets the default branch of `origin`, with its upstream.

@@ -22,7 +22,7 @@
 //! | `home` | `--mount type=tmpfs,destination=HOME,tmpfs-mode=0700,tmpfs-size=1g,U=true`: at most [`HOME_TMPFS_GIB`] GiB of memory (01M7DYR99QK609NF61GGCN75QQ) |
 //! | Each folder of [`SessionSpec::home_folders`] | `--mount type=tmpfs,destination=FOLDER,tmpfs-mode=0755,tmpfs-size=1g,U=true`: a folder of the session user, not of root (01M748WY71EFVZR6SG5CCEQYE0) |
 //! | A [`Bind`] | `-v SOURCE:TARGET`, with `:ro` when it has no write |
-//! | A [`Bind`] of [`Source::Empty`] | `--mount type=volume,destination=TARGET,U=true`: a new volume of the session user, on the disk, that `--rm` removes with the container. The clone of the session goes there ([`crate::session_clone`]) |
+//! | A [`Bind`] of [`Source::Empty`] | `--mount type=volume,destination=TARGET,U=true`, with `,ro=true` when it has no write: a new volume of the session user, on the disk, that `--rm` removes with the container. The clone of the session goes there ([`crate::session_clone`]) |
 //! | An [`Env::Value`] | `-e NAME=VALUE` |
 //! | An [`Env::Host`] | `-e NAME`: podman takes the value from its own environment |
 //! | `workdir` | `-w WORKDIR` |
@@ -173,7 +173,7 @@ pub struct Podman;
 ///     workdir: "/data/clone".into(),
 ///     binds: vec![
 ///         Bind { source: Source::Empty, target: "/data/clone".into(), write: true },
-///         Bind { source: Source::Path("/src/r/.git/objects".into()), target: "/src/r/.git/objects".into(), write: false },
+///         Bind { source: Source::Path("/src/r/.git".into()), target: "/src/r/.git".into(), write: false },
 ///         Bind { source: Source::Volume("riff-cargo".into()), target: "/home/mike/.cargo".into(), write: true },
 ///         Bind { source: Source::Path("/home/mike/.gitconfig".into()), target: "/home/mike/.gitconfig".into(), write: false },
 ///     ],
@@ -197,7 +197,7 @@ pub struct Podman;
 ///      --mount type=tmpfs,destination=/home/mike/.local/share,tmpfs-mode=0755,tmpfs-size=1g,U=true \
 ///      --mount type=tmpfs,destination=/home/mike/.local/state,tmpfs-mode=0755,tmpfs-size=1g,U=true \
 ///      --mount type=volume,destination=/data/clone,U=true \
-///      -v /src/r/.git/objects:/src/r/.git/objects:ro -v riff-cargo:/home/mike/.cargo \
+///      -v /src/r/.git:/src/r/.git:ro -v riff-cargo:/home/mike/.cargo \
 ///      -v /home/mike/.gitconfig:/home/mike/.gitconfig:ro \
 ///      -e USER=mike -e GH_TOKEN -w /data/clone localhost/riff-session:latest claude -p"
 /// );
@@ -371,16 +371,43 @@ fn tmpfs(path: &Path, mode: &str) -> Result<String> {
 /// The option of `podman run` for `bind`, and its value: `-v
 /// SOURCE:TARGET`, with `:ro` when it has no write, and for
 /// [`Source::Empty`] `--mount` of a new volume of the session user, on
-/// the disk, that `podman run --rm` removes with the container.
+/// the disk, that `podman run --rm` removes with the container, with
+/// `ro=true` when it has no write.
+///
+/// ```
+/// use riff::runtime::{Bind, SessionSpec, Source};
+///
+/// let empty = |write| Bind { source: Source::Empty, target: "/data/clone".into(), write };
+/// let spec = |binds| SessionSpec {
+///     name: "riff-x".into(),
+///     image: "img".into(),
+///     home: "/home/mike".into(),
+///     workdir: "/data/clone".into(),
+///     binds,
+///     env: vec![],
+///     memory: String::new(),
+///     cpus: 0,
+///     command: vec![],
+/// };
+/// let args = |write| -> Vec<String> {
+///     let args = riff::podman::run_args(&spec(vec![empty(write)])).unwrap();
+///     args.into_iter().map(|a| a.into_string().unwrap()).collect()
+/// };
+/// let volume = "type=volume,destination=/data/clone,U=true";
+/// assert!(args(true).windows(2).any(|w| w == ["--mount", volume]));
+/// let read_only = format!("{volume},ro=true");
+/// assert!(args(false).windows(2).any(|w| w[0] == "--mount" && w[1] == read_only));
+/// ```
 fn mount(bind: &Bind) -> Result<(&'static str, String)> {
     let target = plain(&bind.target)?;
     let source = match &bind.source {
         Source::Path(path) => plain(path)?,
         Source::Volume(name) => name.as_str(),
         Source::Empty => {
+            let mode = if bind.write { "" } else { ",ro=true" };
             return Ok((
                 "--mount",
-                format!("type=volume,destination={target},U=true"),
+                format!("type=volume,destination={target},U=true{mode}"),
             ));
         }
     };
@@ -1200,7 +1227,7 @@ mod tests {
         let spec = SessionSpec {
             binds: vec![
                 path(format!("{folder}/clone"), true),
-                path(format!("{h}/src/o/r/.git/objects"), false),
+                path(format!("{h}/src/o/r/.git"), false),
                 path(format!("{h}/.gitconfig"), false),
                 path(format!("{h}/.claude"), true),
                 path(format!("{h}/.claude/.credentials.json"), false),
@@ -1241,7 +1268,6 @@ mod tests {
                 "src",
                 "src/o",
                 "src/o/r",
-                "src/o/r/.git",
             ]
             .map(|f| mine(&format!("{h}/{f}"))),
         );

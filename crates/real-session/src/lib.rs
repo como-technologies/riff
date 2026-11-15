@@ -48,7 +48,7 @@
 //! | 5. start the daemon | no daemon of the test answers before, and `riff daemon` of the tree answers in [`DAEMON_WAIT`] (see below) |
 //! | 6. run the item | `riff run issue-N --image IMAGE --no-github` ends with 0, and its line `start: model ...` names the model of step 1 ([`check_model`], 01M6VAQWQ1D95TPKYE360KC3QR) |
 //! | 7. check the home | the home has no new path and no changed file that riff must not write (see below) |
-//! | 8. push the branch | the session made a commit on `worktree-issue-N`, the relay wrote it in a bundle, and `git fetch`, `git push` and `gh pr create` in the clone of the test pass (see below) |
+//! | 8. push the branch | the session made a commit on `worktree-issue-N`, the relay wrote it in a bundle, `riff run` took a copy with its checks, and `git fetch`, `git push` and `gh pr create` in the clone of the test pass (see below) |
 //! | 9. find the pull request | the branch `worktree-issue-N` has an open pull request |
 //! | 10. check the change | its diff adds the line of the item to [`BOOK_FILE`] |
 //! | 11. wait for the Gate | the head commit has a check run [`GATE`] in [`GATE_WAIT`] |
@@ -101,8 +101,9 @@
 //! issue, and the session commits on its branch and pushes nothing. Its
 //! container gets no `GH_TOKEN` and no `hosts.yml`. Its clone goes with
 //! its container (#2139): when `claude` ends, the relay writes the commits
-//! of the branch in a bundle in `out/` of the folder of the session. Step
-//! 8 then fetches the branch from the bundle into the clone of the test,
+//! of the branch in a bundle in `out/` of the folder of the session, and
+//! `riff run` copies it with its checks into the folder of the session.
+//! Step 8 then fetches the branch from the copy into the clone of the test,
 //! with the git of the person on the host, pushes it, and opens the pull
 //! request with `gh pr create` ([`pull_body`]). It runs no git in a folder
 //! of the session. The test is a program of the person on the host, not
@@ -112,7 +113,8 @@
 //! flowchart LR
 //!     R["riff run issue-N --no-github"] --> S["the session: no GitHub<br/>it commits on worktree-issue-N"]
 //!     S --> B["the relay: out/worktree-issue-N.bundle"]
-//!     B --> P["step 8, in the clone of the test:<br/>git fetch BUNDLE, git push, gh pr create"]
+//!     B --> T["riff run: the copy worktree-issue-N.bundle, with its checks"]
+//!     T --> P["step 8, in the clone of the test:<br/>git fetch COPY, git push, gh pr create"]
 //!     P --> G["steps 9 to 11: the pull request, its change, the Gate"]
 //! ```
 //!
@@ -2433,12 +2435,14 @@ pub fn pull_body(issue: u64) -> String {
 /// Step 8: the session had no GitHub, so it committed and pushed nothing
 /// (01M6Z87SDSYDTFHMPKGNX74SMC). Its clone went with its container: the
 /// relay wrote the commits of the branch in a bundle in `out/` of the
-/// folder of the session in `sessions` (01M7EY51P291VZ9YM414Z2Z1MR). The test fetches the
-/// branch from the bundle into its own clone, with the git of the person
-/// on the host, pushes it, and opens its pull request with `gh pr
-/// create`. It runs no git in a folder of the session: a bundle is a file
-/// of data. The step fails when the session made no commit on the
-/// branch.
+/// folder of the session in `sessions`, and `riff run` copied it into the
+/// folder of the session with its checks: no link, the first line of a
+/// git bundle, and `git bundle verify` (01M7EY51P291VZ9YM414Z2Z1MR). The
+/// test fetches the branch from that copy into its own clone, with the
+/// git of the person on the host, pushes it, and opens its pull request
+/// with `gh pr create`. It runs no git on a file that the session can
+/// write: the session never sees the copy. The step fails with no copy:
+/// the session made no commit on the branch, or riff refused its bundle.
 fn push_branch(sessions: &Path, issue: u64, stamp: u64, stop: &AtomicBool) -> Result<(), String> {
     let branch = branch(issue);
     let folders = session_folders(sessions, issue);
@@ -2449,13 +2453,11 @@ fn push_branch(sessions: &Path, issue: u64, stamp: u64, stop: &AtomicBool) -> Re
             folders.len()
         ));
     };
-    let bundle = folder.join("out").join(format!("{branch}.bundle"));
-    // The session wrote the folder: only a plain file counts, no link
-    // and no folder.
-    let plain = std::fs::symlink_metadata(&bundle).is_ok_and(|m| m.file_type().is_file());
-    if !plain {
+    let bundle = folder.join(format!("{branch}.bundle"));
+    if !bundle.is_file() {
         return Err(format!(
-            "the session made no commit on {branch}: it has no bundle {}",
+            "riff run took no bundle of {branch}: the session made no commit on it, or riff \
+             refused its bundle. {} is not there",
             bundle.display()
         ));
     }

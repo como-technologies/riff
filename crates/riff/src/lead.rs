@@ -32,10 +32,10 @@
 //! | Part | Value | Requirement |
 //! |---|---|---|
 //! | The container | `riff-lead-OWNER-REPO` ([`name_of`]): one lead for each repository | 01M4Z60B81RTZT71PN5HV0GZHX, 01M501P9MXNAP5QXNVBVF5JJFN |
-//! | The folder | `leads/OWNER-REPO` in the data folder of riff ([`folder_of`]): `clone/` and `claude/` | 01M501P9Q51AYN9GBPWKVHA229 |
+//! | The folder | `leads/OWNER-REPO` in the data folder of riff ([`folder_of`]): `claude/`. The clone of the lead is at `clone/` in its container only | 01M501P9Q51AYN9GBPWKVHA229, 01M7EY51EMJ6ZEGNW7H852PEGR |
 //! | The start | one start of the lead at a time on the host: each start holds the lock `start.lock` in the folder of the lead ([`start_lock`]), and under the lock a start that finds the lead running starts nothing ([`one_start`]) | 01M77Y2BG12SEVF4ZEZ673QBFZ |
 //! | The cause | each start gives the daemon its cause ([`LeadCause`], #2099): the lead loop ([`claim_start`]), `riff lead move` and who ran it ([`take`]), and in the daemon the start of the daemon, a fault and an update (`Daemon::lead_back`, `Daemon::leads_again`). The daemon writes the cause in the line of the start in its log ([`text::lead_starts`]), and keeps it in the record of the lead for `riff daemon status` | 01M7BNP4ZYJCCEK7ZHCJ3EX3SJ |
-//! | The clone | in the container, as for each session ([`crate::session_clone`], 01M7EY3P0Q8TQF5QRTRDWCYCTQ): a new clone on the default branch of `origin` at each start of the container, also at a start again, and no clone of the host. At each start of a new lead, the clone that an older riff made on the host, `clone/` in the folder of the lead, goes with no git ([`remove_host_clone`]): the guard of the host refuses git in the folder of the leads ([`crate::host_git`]). Each old clone goes as the person, then with `podman unshare` ([`crate::compile_cache::remove`]); an old clone that stays stops no start: one line in the log, and the sweep of the daemon removes it later ([`sweep_old_clones`]) | 01M501P9Q51AYN9GBPWKVHA229, 01M7EY51EMJ6ZEGNW7H852PEGR, 01M7E7ACTYP4RX8TCJ9XSYMMPM, 01M7EBBVE6WYKT5JDVASFCYPQQ |
+//! | The clone | in the container, as for each session ([`crate::session_clone`], 01M7EY3P0Q8TQF5QRTRDWCYCTQ): a new clone of the git dir of the main clone, on the default branch of `origin`, at each start of the container, also at a start again, and no clone of the host. With no token of an App, the clone fetches nothing from GitHub, and the lead starts from the main clone. At each start of a new lead, the clone that an older riff made on the host, `clone/` in the folder of the lead, goes with no git ([`remove_host_clone`]): the guard of the host refuses git in the folder of the leads ([`crate::host_git`]). Each old clone goes as the person, then with `podman unshare` ([`crate::compile_cache::remove`]); an old clone that stays stops no start: one line in the log, and the sweep of the daemon removes it later ([`sweep_old_clones`]) | 01M501P9Q51AYN9GBPWKVHA229, 01M7EY51EMJ6ZEGNW7H852PEGR, 01M7E7ACTYP4RX8TCJ9XSYMMPM, 01M7EBBVE6WYKT5JDVASFCYPQQ |
 //! | The Claude folder | the first-run answers of `claude`, as for each session ([`run::claude_folder`]), and `"tui": "default"`, so `claude` turns on no mouse reports ([`run::TUI`]) | 01M501P9SDGVWG3MTVCW5BDRQQ, 01M51JACH6TQP318ZFG6NQ9GRM, 01M6XVBRT2T838TX53SSXR6HRH |
 //! | The command | `claude --model MODEL --session-id ID --dangerously-skip-permissions START` ([`spec`]), with the model of the merged `riff.toml` ([`crate::session_setup::Setup::claude`]); the daemon runs it as `riff relay --terminal -- ...` | 01M501P9VN47QAKZ6B8P39ZSW4, 01M5GG2X5F1HXCQJ2JJWV6305K, 01M6VAQWECJ6N6VJF66KCMNYD1 |
 //! | The riff tools | [`crate::tools::LEAD_TOOLS`], on riff-server as the session of the lead | 01M501P9XWXWDBSXP4QRTHTZ4P |
@@ -1117,7 +1117,7 @@ struct Parts<'a> {
     host: &'a run::Host,
     /// The image and the setup of the merged `riff.toml`.
     merged: &'a session_image::Merged,
-    /// The folder of the lead: `clone/` and `claude/`.
+    /// The folder of the lead: `claude/`. Its clone is in its container.
     folder: &'a Path,
     /// The git dir of the main clone.
     common: &'a Path,
@@ -2262,6 +2262,26 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    /// 01M7EY51EMJ6ZEGNW7H852PEGR: when the clone of an older riff cannot
+    /// move aside, the error names the move, and the clone stays as it is.
+    /// The start of the lead prints the error and goes on.
+    #[test]
+    fn a_clone_of_an_older_riff_that_cannot_move_gives_an_error() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let folder = root.path().join("leads/o-r");
+        let clone = folder.join("clone");
+        std::fs::create_dir_all(&clone).unwrap();
+        std::fs::write(clone.join("old"), "").unwrap();
+        std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let moved = remove_host_clone(&folder, crate::compile_cache::remove);
+        std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let error = format!("{:#}", moved.unwrap_err());
+        assert!(error.contains("cannot move"), "{error}");
+        assert!(clone.join("old").exists());
     }
 
     /// Makes the folder `dir` and a read-only folder `dir/ro` with a file:

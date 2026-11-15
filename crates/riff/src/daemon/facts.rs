@@ -68,7 +68,7 @@
 //!         opt the sign-in of claude goes under 2 hours, or comes back
 //!             D->>S: one note to the lead
 //!         end
-//!         opt a sweep kept a folder with work that is not on origin
+//!         opt a sweep deleted an old branch riff-kept of origin
 //!             D->>S: one note to the lead
 //!         end
 //!     end

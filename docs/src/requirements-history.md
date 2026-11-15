@@ -2043,6 +2043,10 @@ page [Requirements](requirements.md) holds the rules of today.
   daemon gives the size to each new session in `SCCACHE_CACHE_SIZE`. A
   session that runs keeps the size of its start. Superseded by
   01M5SMW28KT5D5HPRH7KAZ8TVC.
+- **01M4Z60B7PQ07HRJBXS1TA73PX** The container sees the objects of the
+  main clone (`MAIN/.git/objects`) at the same path, with no write. So
+  git reads the alternates of the clone of the session. Superseded by
+  01M7EY3P0Q8TQF5QRTRDWCYCTQ.
 
 ### The riff daemon
 

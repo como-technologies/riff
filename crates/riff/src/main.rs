@@ -603,13 +603,14 @@ enum Command {
     /// Run one work item in a rootless podman container
     ///
     /// It needs the riff daemon of this machine: see riff daemon. It
-    /// claims ITEM as a new worker session, makes a clone of its own in
-    /// the folder of riff, and asks the daemon to run claude -p in a
-    /// container of the session image. The daemon pulls the image when
-    /// this machine does not have it. riff run shows the events of the
-    /// session. At the end, it sends a verify request for the pull
-    /// request of the branch, releases ITEM, and keeps the clone until
-    /// the merge. Ctrl-C stops the container.
+    /// claims ITEM as a new worker session, and asks the daemon to run
+    /// claude -p in a container of the session image. The daemon pulls
+    /// the image when this machine does not have it. The session clones
+    /// the repository in its container, and its clone goes with the
+    /// container: only the commits that it pushes stay. riff run shows the
+    /// events of the session. At the end, it sends a verify request for
+    /// the pull request of the branch, and releases ITEM. Ctrl-C stops the
+    /// container.
     ///
     /// The session acts on GitHub with a token of a GitHub App of the
     /// riff, never with your token. With no such token, it does not
@@ -627,8 +628,10 @@ enum Command {
         #[arg(long)]
         image: Option<String>,
         /// Run a session with no GitHub: no token, no push and no pull
-        /// request. The start text holds the issue, the session commits on
-        /// its branch, and riff run names the command that pushes it.
+        /// request. The start text holds the issue, and the session commits
+        /// on its branch. riff run checks the bundle of its commits, copies
+        /// it into the folder of the session, and names the commands that
+        /// push the branch from your clone.
         #[arg(long)]
         no_github: bool,
     },
@@ -1698,20 +1701,23 @@ enum DaemonCommand {
     /// It removes the folder of each session that does not run, when the
     /// pull request of its branch merged or closed, when its issue is
     /// closed and its branch has no pull request, or when the folder had
-    /// no change for 30 days. It runs no git in the clone: the work of the
-    /// clone that is not on origin goes with the folder. It also removes
-    /// each old clone of a lead that a start of the lead could not remove.
+    /// no change for 30 days. The clone of a session is in its container,
+    /// and goes with it. riff runs no git in a folder of a session: when
+    /// the folder of an older riff holds a clone, its work that is not on
+    /// origin goes with the folder. It also removes each old clone of a
+    /// lead that a start of the lead could not remove.
     /// It prints each folder that it removed, and each folder that stays
     /// for a fault, with the reason.
     Sweep {
         /// Remove the folder NAME of one ended session, for example
         /// issue-12-1a2b3c4d. riff removes it when the pull request of its
-        /// work merged, with the work of its clone. It never removes the
-        /// folder of a session that runs.
+        /// work merged, with each file in it. It never removes the folder
+        /// of a session that runs.
         #[arg(long, value_name = "NAME")]
         remove: Option<String>,
         /// With --remove, remove the folder also when its work is not on a
-        /// merged branch. The work in the clone is lost.
+        /// merged branch. A clone of an older riff in the folder goes, with
+        /// its work.
         #[arg(long, requires = "remove")]
         force: bool,
         /// Ask the riff daemon of HOST, through riff-server. riff waits
@@ -1935,7 +1941,8 @@ enum LeadCommand {
     ///
     /// The riff daemon of a host that joined the project starts the lead:
     /// claude with a terminal in a container of the session image, with a
-    /// clone and a Claude folder of its own that stay between starts.
+    /// Claude folder of its own that stays between starts. The lead clones
+    /// the repository in its container at each start.
     /// When the lead runs on this host, riff attaches to it. Ctrl-P Ctrl-Q
     /// detaches: the lead runs on. The Sessions tab of riff shows it and
     /// attaches to it too.

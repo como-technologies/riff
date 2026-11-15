@@ -8928,6 +8928,44 @@ mod tests {
         assert!(!mark.exists(), "the program of a git config ran");
     }
 
+    /// #2139, 01M7EAZ9JS8K3TBWG8ZXKV00J9: the clone of a session is an
+    /// empty volume of its container ([`Source::Empty`]), in the folder of
+    /// the volumes of the runtime, and the spec has no other volume.
+    /// Before the start of its container, the daemon gives that folder to
+    /// the guard: the host runs no git in the clone, and the program of
+    /// its git config does not run.
+    #[tokio::test]
+    async fn the_host_runs_no_git_in_the_volume_of_the_clone_of_a_session() {
+        let root = tempfile::tempdir().unwrap();
+        let store = root.path().join("volumes");
+        let fake = Fake::default().with_image(IMAGE).with_volume_folder(&store);
+        let here = Here::new(fake).await;
+        let mark = root.path().join("mark");
+        let clone = store.join("0a1b2c3d/_data");
+        crate::host_git::hostile_clone(&clone, &mark);
+        assert!(crate::host_git::guard(&clone).is_ok());
+
+        let mut start = here.start("riff-issue-3-cccccccc", "issue-3");
+        start
+            .spec
+            .binds
+            .retain(|b| !matches!(b.source, Source::Volume(_)));
+        start.spec.binds.push(Bind {
+            source: Source::Empty,
+            target: "/data/clone".into(),
+            write: true,
+        });
+        let (_client, _) = here.started(start).await;
+        let error = crate::host_git::output(&clone, &["status"])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("a folder that a session can write"),
+            "{error}"
+        );
+        assert!(!mark.exists(), "the program of a git config ran");
+    }
+
     /// 01M7EAZ9JS8K3TBWG8ZXKV00J9: a session that ran before wrote a
     /// volume. At its start, the daemon gives the folders of the volumes
     /// to the guard, before the start of any container.

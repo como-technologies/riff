@@ -338,7 +338,12 @@ pub async fn end_served(dir: PathBuf, served: Served) {
 /// std::fs::create_dir_all(mine.join(".git"))?;
 /// assert!(remove_clone(dir.path(), &wave(&mine)).is_empty());
 /// assert!(mine.exists());
-/// // The clone that the daemon made goes.
+/// // The clone that the daemon made goes, also when a folder of a session
+/// // of an older riff holds a clone that links to it: riff reads no file
+/// // that a session wrote.
+/// let info = dir.path().join("data/sessions/issue-1-1a2b3c4d/clone/.git/objects/info");
+/// std::fs::create_dir_all(&info)?;
+/// std::fs::write(info.join("alternates"), format!("{}\n", made.join(".git/objects").display()))?;
 /// assert_eq!(remove_clone(dir.path(), &wave(&made)).len(), 1);
 /// assert!(!made.exists());
 /// # Ok::<(), anyhow::Error>(())

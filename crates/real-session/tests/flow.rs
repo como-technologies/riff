@@ -14,8 +14,9 @@
 //! makes its session folder in `RIFF_DATA`, commits on the branch of the
 //! item in a clone of the bare repository `origin.git` of the control
 //! folder, out of the home, as a container does, and writes the commit in
-//! the bundle `out/BRANCH.bundle` of the session folder. Then the clone
-//! goes, as with its container. It says that the session started on
+//! the bundle `out/BRANCH.bundle` of the session folder, and its copy
+//! `BRANCH.bundle`, as `riff run` takes it. Then the clone goes, as with
+//! its container. It says that the session started on
 //! `claude-opus-5-5`. The clone of the test has a `riff.toml` with no
 //! `model`, and `origin.git` as its `origin`. A file in the control
 //! folder changes what a fake does:
@@ -169,6 +170,8 @@ run)
     git -C "$w" -c user.name=W -c user.email=w@example.com commit -q -m work
     mkdir -p "$d/out"
     git -C "$w" bundle create -q "$d/out/worktree-$2.bundle" "origin/HEAD..worktree-$2"
+    # riff run copies the bundle with its checks into the session folder.
+    cp "$d/out/worktree-$2.bundle" "$d/worktree-$2.bundle"
   fi
   rm -rf "$c/container"
   if [ -f "$c/sonnet" ]; then model=claude-sonnet-5-5; else model=claude-opus-5-5; fi
@@ -549,9 +552,10 @@ fn a_pass_runs_each_step_in_order_and_cleans_up() {
 /// 01M6Z87SDSYDTFHMPKGNX74SMC, 01M7EY51P291VZ9YM414Z2Z1MR: the session of
 /// the test has no GitHub, never the token of the person: `riff run
 /// --no-github`. Its clone goes with its container, and its commits are in
-/// a bundle in the folder of the session. Step 8 fetches the branch from
-/// the bundle into the clone of the test, with the git of the person on the
-/// host, pushes it, and opens its pull request with `gh pr create`.
+/// a bundle in the folder of the session, and `riff run` copies it with its
+/// checks. Step 8 fetches the branch from the copy into the clone of the
+/// test, with the git of the person on the host, pushes it, and opens its
+/// pull request with `gh pr create`.
 #[test]
 fn the_session_has_no_github_and_the_test_pushes_its_branch() {
     let fake = Fake::new();
@@ -598,8 +602,8 @@ fn a_session_with_no_commit_fails_step_8_and_opens_no_pull_request() {
     let stderr = text(&out.stderr);
     assert!(
         stderr.contains(
-            "real-session: FAIL at step 8 of 11, push the branch: the session made no commit on \
-             worktree-issue-801: it has no bundle "
+            "real-session: FAIL at step 8 of 11, push the branch: riff run took no bundle of \
+             worktree-issue-801: the session made no commit on it, or riff refused its bundle. "
         ),
         "{stderr}"
     );

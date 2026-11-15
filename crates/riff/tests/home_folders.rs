@@ -109,7 +109,8 @@ async fn a_write_over_the_size_of_a_tmpfs_of_the_home_fails_with_no_space() {
 /// #2139 (01M7EY3P0Q8TQF5QRTRDWCYCTQ): the clone of a session is an empty
 /// volume of its container at the path of the clone, the working folder.
 /// It belongs to the session user, it is no tmpfs of the home, and git
-/// makes a repository there.
+/// makes a repository there. `podman run --rm` removes the volume with
+/// the container.
 #[tokio::test]
 async fn the_clone_of_a_session_is_an_empty_volume_of_the_session_user() {
     if let Err(why) = ready() {
@@ -131,7 +132,10 @@ async fn the_clone_of_a_session_is_an_empty_volume_of_the_session_user() {
         }],
         ..spec(script)
     };
+    let before = volumes();
     let (out, errors) = output(&spec).await;
+    let left: Vec<String> = volumes().difference(&before).cloned().collect();
+    assert!(left.is_empty(), "the volume of the clone stays: {left:?}");
 
     let uid = nix::unistd::getuid().as_raw();
     let got: Vec<&str> = out.lines().collect();
@@ -140,6 +144,19 @@ async fn the_clone_of_a_session_is_an_empty_volume_of_the_session_user() {
     assert_eq!(got[1], "0", "the volume is not empty: {out}{errors}");
     assert_ne!(got[2], "tmpfs", "{out}{errors}");
     assert_eq!(got[3], "made", "{out}{errors}");
+}
+
+/// The names of the volumes of podman.
+fn volumes() -> std::collections::BTreeSet<String> {
+    let out = Command::new("podman")
+        .args(["volume", "ls", "--quiet"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::to_owned)
+        .collect()
 }
 
 /// A spec of the test that runs `script` in the session image.

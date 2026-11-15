@@ -69,7 +69,7 @@
 //!   daemon took up (01M7GCESN7RY3GW6ZPP9PBM87D). The folder of an older
 //!   session of the item, which ended, does not run;
 //! - the `riff run` that made the folder runs. It holds the lock
-//!   `ITEM-ID8.lock` beside the folder from before the clone to its own
+//!   `ITEM-ID8.lock` beside the folder from before the start to its own
 //!   end ([`hold`]): its start can wait long for room, and the daemon has
 //!   no record of the session in that time.
 //!
@@ -428,8 +428,8 @@ pub fn held(folder: &Path) -> bool {
 
 /// The file in the folder of a session that names its repository
 /// `OWNER/REPO` (01M7DZ42EVHAT8N5MZEV97G3DW). The host writes it before
-/// the clone. The container sees only `clone/` and `claude/` of the
-/// folder, so no session writes it.
+/// the start. The container sees only `claude/` of the folder, and `out/`
+/// with no GitHub, so no session writes it.
 pub const REPO: &str = "repo";
 
 /// Writes the repository `repo` (`OWNER/REPO`) of the session of the
@@ -785,7 +785,7 @@ impl<R: Runtime + 'static> Daemon<R> {
     }
 
     /// Keeps the folder of the session of a job of `item` while the job
-    /// runs: from before the clone of its session to its last step after
+    /// runs: from before the start of its session to its last step after
     /// the end, which reads the folder (01M53S7WDPQ2GWHJWJ6SZXZ5PN). Take
     /// it before the job starts, and keep it to the end of
     /// [`crate::wave::finish`]. `own` is the folder of the session that a

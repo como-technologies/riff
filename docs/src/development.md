@@ -2008,21 +2008,22 @@ in the data folder of riff.
 `riff run ITEM` does one work item in a rootless podman container. It
 claims the item, wakes the lead and releases the item. The riff
 daemon runs the container. The container does the work: `claude -p` in a
-clone of its own, with your sign-in of `claude`. For git and `gh`, the
-session gets a token of a GitHub App of the riff, never your token: see
+clone of its own in the container, with your sign-in of `claude`: see
+[Where the clone of a session lives](how-it-works.md#where-the-clone-of-a-session-lives).
+For git and `gh`, the session gets a token of a GitHub App of the riff,
+never your token: see
 [Who acts on GitHub for each role](how-it-works.md#who-acts-on-github-for-each-role).
 
 ```mermaid
 flowchart LR
     subgraph M["your machine"]
-        R["riff run issue-12"] -- "git clone --reference" --> L[("the clone<br/>in the folder of riff")]
-        R -- "run the session" --> D["riff daemon"]
+        R["riff run issue-12"] -- "run the session" --> D["riff daemon"]
         D -- "podman run" --> C
+        L[("the main clone: .git, no write")] --- C
         subgraph C["container riff-issue-12-ID8"]
-            Y["riff relay"] --> K["claude -p"]
+            Y["riff relay: the clone, a volume"] --> K["claude -p"]
         end
         Y -- "the events, the riff tools" --> D
-        L --- C
     end
     R -- "claim, verify request, release" --> S["riff-server"]
     K -- "push, pull request" --> G["GitHub"]
@@ -2158,31 +2159,41 @@ riff run issue-12 --no-github
 
 The daemon asks riff-server for no token. The container gets no
 `GH_TOKEN` and no `hosts.yml`, so `gh`, `git fetch` and `git push` do
-not work there. The start text holds the body of the issue. The
+not work there. The clone of the session fetches nothing from GitHub:
+it starts from your clone. So `--no-github` works on a private
+repository too. The start text holds the body of the issue. The
 session commits on its branch, and pushes nothing. `riff whoami` in
 the session shows `github   none`. Its clone goes with its container,
 so when `claude` ends, `riff relay` writes the commits of the branch in
 a bundle: `out/worktree-issue-12.bundle` in the folder of the session.
-At the end, `riff run` does its steps as for each session. With no
-pull request, it names the bundle and the commands that push the
-branch. Run them in your clone. A bundle is a file of data, so your
-git runs no program of the session:
+
+The session can write the folder `out/`, so `riff run` trusts no file
+there. With no pull request, it opens the bundle with no link, copies
+it to `worktree-issue-12.bundle` in the folder of the session, where
+no session writes, checks that the first line of the copy is that of a
+git bundle, and runs `git bundle verify` on the copy in your clone.
+Then it names the copy and the commands that push the branch. Run them
+in your clone:
 
 ```sh
 git fetch origin
-git fetch ~/.local/share/riff/sessions/issue-12-ID8/out/worktree-issue-12.bundle worktree-issue-12
+git fetch ~/.local/share/riff/sessions/issue-12-ID8/worktree-issue-12.bundle worktree-issue-12
 git push origin FETCH_HEAD:refs/heads/worktree-issue-12
 ```
 
 With no bundle, the session made no commit that `origin` does not
-have, and `riff run` says so.
+have, and `riff run` says so. When the relay cannot write the bundle,
+the session ends with 1. When the file in `out/` is no git bundle, for
+example a link or a `gitdir:` file, `riff run` runs no git on it, says
+why, and ends with 1.
 
 ```mermaid
 flowchart LR
     R["riff run issue-12 --no-github"] --> D["the daemon: no token, no GH_TOKEN"]
     D --> C["the session commits on worktree-issue-12"]
     C --> B["riff relay: out/worktree-issue-12.bundle"]
-    B --> P["you, in your clone: git fetch, git push"]
+    B --> T["riff run: the copy worktree-issue-12.bundle, with its checks"]
+    T --> P["you, in your clone: git fetch COPY, git push"]
 ```
 
 In the container of the lead, `riff run` takes no `--no-github`.
@@ -2272,8 +2283,10 @@ riff run stopped at a signal. It did not send the verify request, the release, t
 The folder of the session is
 `~/.local/share/riff/sessions/ITEM-ID8`. It holds the Claude folder of
 the session and its `events.jsonl`, with each event and no secret: the
-daemon writes it. The clone of the session is not there: it goes with
-the container. The folder stays until the work of the branch is over.
+daemon writes it. With `--no-github`, it also holds `out/` and the copy
+of the bundle. The clone of the session is in its container only: see
+[Where the clone of a session lives](how-it-works.md#where-the-clone-of-a-session-lives).
+The folder stays until the work of the branch is over.
 Then the daemon removes the folder: see
 [Remove the folders of old sessions](#remove-the-folders-of-old-sessions).
 
@@ -2418,12 +2431,12 @@ riff removed the folder /home/mike/.local/share/riff/sessions/issue-735-7788e301
 
 ### Where the work of a removed folder goes
 
-The clone of a session goes with its container, not with the folder:
-a commit that the session did not push, or a file that it did not
-commit, goes at the end of the session. riff pushes nothing from a
-session. Each session pushes its own work, as WIP commits when it must
-stop. A session with no GitHub gives its commits in a bundle in its
-folder, until the folder goes: see
+A folder holds no work of its session: the clone is in the container
+(see
+[Where the clone of a session lives](how-it-works.md#where-the-clone-of-a-session-lives)).
+riff pushes nothing from a session. Each session pushes its own work,
+as WIP commits when it must stop. A session with no GitHub gives its
+commits in a bundle in its folder, until the folder goes: see
 [Run an item with no GitHub](#run-an-item-with-no-github).
 
 The daemon deletes each old branch `riff-kept/*` of `origin` after 30
@@ -2470,10 +2483,10 @@ To remove one folder of an ended session now, give its name:
 riff daemon sweep --remove issue-1136-5fcf04cb
 ```
 
-riff removes the folder when the pull request of its work merged. The
-work of the clone that is not on `origin` goes with it. When the work
-is not on a merged branch, riff keeps the folder and says so. To lose
-that work on purpose:
+riff removes the folder when the pull request of its work merged. A
+clone of an older riff in the folder goes with it, with its work that
+is not on `origin`. When the work is not on a merged branch, riff keeps
+the folder and says so. To lose that work on purpose:
 
 ```sh
 riff daemon sweep --remove issue-1136-5fcf04cb --force
@@ -2496,8 +2509,10 @@ For a folder on another host, add `--host thelio`.
 
 - An empty volume for the clone of the session, on the disk: the
   session clones there, and the volume goes with the container. No
-  folder of your machine with a git tree has write. The objects of your
-  main clone, with no write.
+  folder of your machine with a git tree has write.
+- The git dir of your main clone, `.git`, at the same path with no
+  write: its objects, its refs and its config. The session clones from
+  it, and copies no object.
 - For a session with no GitHub, the folder `out/` of the folder of the
   session, with write: the bundle of its branch goes there.
 - Your `~/.gitconfig`, with no write. No `~/.config/gh`.
@@ -3893,7 +3908,7 @@ flowchart LR
     Q -- "no" --> S
     G -- "no" --> S["the daemon stops the container, the item is free"]
     S --> P{"an open pull request?"}
-    P -- "no" --> W["one note to your lead: the work is in the clone"]
+    P -- "no" --> W["one note to your lead: only the pushed work stays"]
     P -- "yes" --> N["the usual steps"]
 ```
 
@@ -3907,9 +3922,7 @@ flowchart LR
   ends, the 60 seconds start. A task that never ends costs the 30
   minutes, and the session then has no push.
 - When the branch of the item has no open pull request, the daemon
-  commits nothing and pushes nothing. It tells your lead the branch.
-  The clone went with the container: only the work that the session
-  pushed stays.
+  commits nothing and pushes nothing. It tells your lead the branch:
 
 ```text
 issue-12: the session of the wave ended, and no open pull request has the branch worktree-issue-12. Its clone went with its container: only the work that it pushed stays. riff commits and pushes nothing. The item is free.
@@ -4353,8 +4366,8 @@ the daemon and over an update. To give the workers again, run
 
 When the host has no other part in the repository, for example a lead,
 its daemon also stops serving it. It removes the main clone that it made
-for it, when no clone links to that main clone. It never removes a clone
-of yours.
+for it: no session of the repository runs, and each session clones in
+its container. It never removes a clone of yours.
 
 #### See when the host is empty
 
@@ -5040,9 +5053,9 @@ first free work:
    [When the sign-in of claude ends soon](#when-the-sign-in-of-claude-ends-soon)).
 
 For each item, the daemon does the steps of `riff run` itself: a
-worker session, the claim, the clone and the start. After the end of
-a build, it sends the verify request for the pull request of the
-branch to your lead, and releases the item.
+worker session, the claim and the start. The session clones in its
+container. After the end of a build, it sends the verify request for
+the pull request of the branch to your lead, and releases the item.
 
 When riff-server refuses the claim, the daemon ends the new worker
 session at once. A pause can come after the look, before the claim.
@@ -5236,14 +5249,15 @@ the answer. The lead does not count in the limit of the host.
 The lead clones in its container, as each session does: see
 [Where the clone of a session lives](how-it-works.md#where-the-clone-of-a-session-lives).
 At each start of its container, the lead gets a new clone on the
-default branch of `origin`, at its last commit: at a new lead, and at a
-start again after `riff update` or after `/exit`. A change that the
-lead did not push goes with its container. So tell the lead to push
-each change that you want to keep.
+default branch of `origin`: at a new lead, and at a start again after
+`riff update` or after `/exit`. With no token of an App, the clone
+starts from the main clone, and fetches nothing from GitHub. A change
+that the lead did not push goes with its container: tell the lead to
+push each change that you want to keep.
 
 ```mermaid
 flowchart TD
-    S["the container of the lead starts"] --> C["riff relay: git clone --reference MAIN<br/>on the default branch of origin"]
+    S["the container of the lead starts"] --> C["riff relay: a clone of MAIN/.git, git fetch origin<br/>on the default branch of origin"]
     C --> L["claude, or claude --resume, in the new clone"]
     L -- "the container ends" --> X["the clone goes:<br/>only what the lead pushed stays"]
     O["leads/OWNER-REPO/clone of an older riff"] -- "the start of a new lead" --> R["it goes, with no git"]

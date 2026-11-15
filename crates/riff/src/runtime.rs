@@ -100,6 +100,7 @@ pub enum Source {
     /// An empty folder on the disk of the container, which goes with the
     /// container: the clone of the session ([`crate::session_clone`]). On
     /// podman, a volume of the container that `podman run --rm` removes.
+    /// With no write, the volume is read-only.
     Empty,
 }
 

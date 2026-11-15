@@ -2780,6 +2780,57 @@ mod tests {
         String::from_utf8_lossy(&out.stdout).trim().to_owned()
     }
 
+    /// #2169, 01M7EY3WHQQP9330CZ736HK0FJ: a session writes a `gitdir:` file
+    /// in the place of its bundle. It names a git dir whose config names a
+    /// program. `riff run` refuses it, runs no git on it, and the program
+    /// does not run. A link is no plain file. A real bundle gives its copy,
+    /// with its checks, and a clone fetches the branch from the copy.
+    #[test]
+    fn riff_run_refuses_a_gitdir_file_in_the_place_of_the_bundle() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path();
+        git(root, &["init", "-q", "--bare", "-b", "main", "origin.git"]);
+        git(root, &["clone", "-q", "origin.git", "main"]);
+        let main = root.join("main");
+        git(&main, &["commit", "-q", "--allow-empty", "-m", "start"]);
+        git(&main, &["push", "-q", "origin", "HEAD:main"]);
+        let mark = root.join("mark");
+        let hostile = root.join("hostile");
+        crate::host_git::hostile_clone(&hostile, &mark);
+        let out = root.join("out/worktree-issue-12.bundle");
+        std::fs::create_dir_all(out.parent().unwrap()).unwrap();
+        let gitdir = format!("gitdir: {}\n", hostile.join(".git").display());
+        std::fs::write(&out, gitdir).unwrap();
+        let copy = root.join("worktree-issue-12.bundle");
+
+        let error = take_bundle(&out, &copy, &main).unwrap_err();
+        assert!(error.to_string().contains("no git bundle"), "{error}");
+        assert!(!copy.exists());
+        assert!(!mark.exists(), "the program of the git dir ran");
+
+        let link = root.join("out/link.bundle");
+        std::os::unix::fs::symlink(&out, &link).unwrap();
+        let error = take_bundle(&link, &copy, &main).unwrap_err();
+        assert!(error.to_string().contains("a link"), "{error}");
+
+        git(&main, &["switch", "-q", "-c", "worktree-issue-12"]);
+        git(&main, &["commit", "-q", "--allow-empty", "-m", "work"]);
+        let at = out.to_string_lossy();
+        let range = "origin/main..worktree-issue-12";
+        git(&main, &["bundle", "create", "-q", &at, range]);
+        assert_eq!(take_bundle(&out, &copy, &main).unwrap(), Some(copy.clone()));
+        let other = root.join("other");
+        git(root, &["clone", "-q", "origin.git", "other"]);
+        git(
+            &other,
+            &["fetch", "-q", &copy.to_string_lossy(), "worktree-issue-12"],
+        );
+        assert_eq!(
+            git(&other, &["log", "-1", "--format=%s", "FETCH_HEAD"]),
+            "work"
+        );
+    }
+
     /// 01M7DZ42C8SY2GV5ZQJZHM2VTV: the host looks for the branch of the
     /// item on `origin` from the main clone, with `git ls-remote`. It
     /// makes no clone: the session clones in its container
