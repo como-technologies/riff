@@ -506,14 +506,18 @@ enum Command {
     /// gives the squash message to the auto-merge: the title with (#N), and
     /// the body with its trailers as the last paragraph. This turns
     /// auto-merge on, also when it was off: to keep a pull request from the
-    /// merge, hold its verify-issue-N before the verify starts.
+    /// merge, hold its verify-issue-N before the verify starts. The verify
+    /// of a fix head, a head after a FAIL, files each line of the part
+    /// "## New findings" as an issue in the Backlog, up to 10 lines.
     Verify {
         /// pass sets the status success, fail sets failure.
         verdict: VerdictArg,
         /// The number of the pull request.
         number: u64,
         /// The result: each criterion, what you did to check it, and for a
-        /// pass the part "## The council".
+        /// pass the part "## The council". For each line of the part "##
+        /// New findings" that riff files as an issue, riff writes the
+        /// number of the issue into this file.
         #[arg(long)]
         file: std::path::PathBuf,
         /// The commit that you tested. The default is HEAD of this
@@ -2806,7 +2810,7 @@ async fn cli() -> Result<()> {
             file,
             commit,
         } => {
-            let mut result = std::fs::read_to_string(&file)
+            let read = std::fs::read_to_string(&file)
                 .with_context(|| format!("cannot read {}", file.display()))?;
             let dir = identity::working_dir()?;
             let tested = match commit {
@@ -2815,6 +2819,7 @@ async fn cli() -> Result<()> {
             };
             let thread = thread_or_default(None, &here)?;
             let verdict = verdict.into();
+            let mut result = read.clone();
             let reported = pr::report(
                 &pr::Gh::here("verify"),
                 &thread.to_string(),
@@ -2823,7 +2828,16 @@ async fn cli() -> Result<()> {
                 &tested,
                 verdict,
                 &mut result,
-            )?;
+            );
+            // The issue of each new finding stays in the file, also after
+            // a fault, so a second run files it no second time
+            // (01M7GKK1F8FTWX2C2NEGW8JAX1).
+            if result != read
+                && let Err(e) = std::fs::write(&file, &result)
+            {
+                eprintln!("{}", text::verify_file_not_written(&file, &e));
+            }
+            let reported = reported?;
             println!("{}", text::verify_reported(verdict, number, &reported));
             let state = match verdict {
                 pr::Verdict::Pass => PullState::Passed,

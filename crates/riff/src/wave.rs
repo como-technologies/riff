@@ -3942,19 +3942,7 @@ async fn after_verify(
             .await?;
         return Ok(vec![body].into());
     };
-    let (repo, tested, mut shown) = (wave.repo.clone(), commit.to_owned(), result.clone());
-    let (reporter, main) = (gh.clone(), wave.main.clone());
-    // The report writes the issue of each new finding in the result
-    // (01M7GDQWK92WWTTE361JGWDVGY): a kept result keeps them.
-    let reported = blocking(move || {
-        let reported = pr::report(&reporter, &repo, &main, pull, &tested, verdict, &mut shown);
-        Ok((reported, shown))
-    })
-    .await;
-    let (reported, result) = match reported {
-        Ok(pair) => pair,
-        Err(e) => (Err(e), result),
-    };
+    let (reported, result) = report(&gh, wave, (pull, commit), verdict, result).await;
     let reported = match reported {
         Ok(reported) => reported,
         Err(e) => {
@@ -3999,6 +3987,28 @@ async fn after_verify(
         lines: vec![line],
         verdict: Some(verdict),
     })
+}
+
+/// [`pr::report`] of the verify of `commit`, the head of the pull request
+/// `pull` of `wave`, on a thread of its own, with the main clone of the
+/// wave. It gives `result` with the issue of each new finding that the
+/// report filed, also when the report fails
+/// (01M7GDQWK92WWTTE361JGWDVGY): a kept result keeps them ([`kept`]).
+pub(crate) async fn report(
+    gh: &pr::Gh,
+    wave: &Wave,
+    (pull, commit): (u64, &str),
+    verdict: Verdict,
+    result: String,
+) -> (Result<pr::Reported>, String) {
+    let (gh, repo, main) = (gh.clone(), wave.repo.clone(), wave.main.clone());
+    let (tested, mut shown) = (commit.to_owned(), result.clone());
+    let reported = blocking(move || {
+        let reported = pr::report(&gh, &repo, &main, pull, &tested, verdict, &mut shown);
+        Ok((reported, shown))
+    })
+    .await;
+    reported.unwrap_or_else(|e| (Err(e), result))
 }
 
 /// The post to the lead after the report of the verify `item` of the pull
@@ -4243,18 +4253,14 @@ impl Live {
                 let (at, commit_at) = (clone.clone(), commit.clone());
                 let (main_at, pull_at) = (main.clone(), *pull);
                 blocking(move || clone_at(&main_at, &at, pull_at, &commit_at)).await?;
-                let repo = wave.repo.clone();
-                let checks = blocking(move || repo_setup::full_check(&forge(&repo), &repo)).await?;
-                let last = last_failed(&wave.repo, *pull, commit).await;
-                text::wave_verify_start(
-                    &wave.repo,
-                    base,
-                    *issue,
-                    *pull,
-                    commit,
-                    &checks,
-                    last.as_deref(),
-                )
+                let (repo, base, commit) = (wave.repo.clone(), base.to_owned(), commit.clone());
+                let at = (*issue, *pull);
+                blocking(move || {
+                    let gh = forge(&repo);
+                    let checks = repo_setup::full_check(&gh, &repo)?;
+                    Ok(verify_start(&gh, &repo, &base, at, &commit, &checks))
+                })
+                .await?
             }
         };
         let existing = |p: PathBuf| p.exists().then_some(p);
@@ -4303,18 +4309,26 @@ fn failed_verify(pulls: &[rollout::Pull], issue: u64) -> Option<String> {
     })
 }
 
-/// The head of the last verify of the pull request `pull` of `repo` when
-/// `commit`, its head now, is a fix head ([`pr::last_failed`],
-/// 01M7GDQWGCBVJE6S4MJDEJ6P8T). A fault of `gh` shows on stderr, and
-/// gives `None`: a first verify, which fails on each shown finding.
-async fn last_failed(repo: &str, pull: u64, commit: &str) -> Option<String> {
-    let (at, head) = (repo.to_owned(), commit.to_owned());
-    blocking(move || pr::last_failed(&forge(&at), &at, pull, &head))
-        .await
-        .unwrap_or_else(|e| {
-            eprintln!("riff daemon: {repo}: {e:#}");
-            None
-        })
+/// The start text of the verify of `commit`, the head of the pull request
+/// `pull` of the issue `issue` in `repo`, with the base branch `base` and
+/// the full check `checks` ([`text::wave_verify_start`]). It reads with
+/// `gh` whether `commit` is a fix head ([`pr::last_failed`],
+/// 01M7GDQWGCBVJE6S4MJDEJ6P8T): then the text gives the head of the last
+/// verify and the rule of a fix head. A fault of `gh` shows on stderr, and
+/// gives the text of a first verify, which fails on each shown finding.
+fn verify_start(
+    gh: &pr::Gh,
+    repo: &str,
+    base: &str,
+    (issue, pull): (u64, u64),
+    commit: &str,
+    checks: &[String],
+) -> String {
+    let last = pr::last_failed(gh, repo, pull, commit).unwrap_or_else(|e| {
+        eprintln!("riff daemon: {repo}: {e:#}");
+        None
+    });
+    text::wave_verify_start(repo, base, issue, pull, commit, checks, last.as_deref())
 }
 
 /// Makes the clone of a verify at `commit`, detached: the head commit of
@@ -13655,6 +13669,140 @@ esac
         assert!(!record.folder.exists(), "the folder of a FAIL goes");
         assert!(kept::find(sessions.path(), "o/r").is_empty());
         assert!(report().await.is_empty(), "reported one time");
+    }
+
+    /// The fake `gh` of a verify of the fix head `1a2b3c4d5e` of pull
+    /// request 40: the last verify failed at `9f8e7d6c`, and the Backlog
+    /// has the number 5. Each new issue gets the next number from 77, but
+    /// the second and the fourth try to file one fail on the limit. It
+    /// logs each call to `found.log`, and keeps the comment in `comment`.
+    fn found_gh(dir: &Path) -> pr::Gh {
+        let script = r#"#!/bin/sh
+dir=$(dirname "$0")
+printf '%s\n' "$*" >> "$dir/found.log"
+case "$*" in
+  *'pr view 40 --json number,url,headRefOid,state'*) echo '{"number":40,"url":"https://github.com/o/r/pull/40","headRefOid":"1a2b3c4d5e","state":"OPEN"}' ;;
+  *'pr view 40'*) printf '%s\n' '{"headRefOid":"1a2b3c4d5e","body":"Closes #12\n\nIssue: #12\nMilestone: Wave 1\n"}' ;;
+  *issues/40/comments*) printf '7\tverify result: FAIL for issue-12, commit 9f8e7d6c.\n' ;;
+  *commits/9f8e7d6c/status*) printf 'failure\thttps://github.com/o/r/pull/40#issuecomment-7\n' ;;
+  *milestones*) echo '[{"number":5,"title":"Backlog","open_issues":0,"closed_issues":0}]' ;;
+  *'-X POST repos/o/r/issues '*)
+    c=$(cat "$dir/c" 2>/dev/null || echo 0); c=$((c + 1)); echo $c > "$dir/c"
+    if [ $c = 2 ] || [ $c = 4 ]; then echo 'gh: API rate limit exceeded for user ID 1. (HTTP 403)' >&2; exit 1; fi
+    n=$(cat "$dir/n" 2>/dev/null || echo 76); n=$((n + 1)); echo $n > "$dir/n"
+    printf 'HTTP/2.0 201 Created\r\n\r\n{"number":%s}\n' $n ;;
+  *'pr comment 40'*) cat > "$dir/comment"; echo https://github.com/o/r/pull/40#issuecomment-8 ;;
+  *) echo '{}' ;;
+esac
+"#;
+        pr::Gh::at(isolated::write_program(dir.join("gh"), script))
+    }
+
+    /// 01M7GDQWK92WWTTE361JGWDVGY, 01M6H1N332TZ17CQQ8A5CQKG7B: a report of
+    /// a fix head that fails on the limit while it files the new findings
+    /// keeps the result with the number of each issue that it filed: the
+    /// end step, and the report of the kept result. The next report files
+    /// only the rest, and the comment names each issue.
+    #[tokio::test]
+    async fn a_kept_result_keeps_the_issues_of_its_new_findings() {
+        let built = Built::new().await;
+        let sessions = tempfile::tempdir().unwrap();
+        let mut record = built.record.clone();
+        record.live.name = "riff-verify-issue-12".into();
+        record.live.item = "verify-issue-12".into();
+        record.folder = sessions.path().join("verify-issue-12-9f8e7d6c");
+        std::fs::create_dir_all(&record.folder).unwrap();
+        std::fs::write(
+            record.folder.join(crate::daemon::EVENTS),
+            "{\"type\":\"result\",\"result\":\"FAIL\\n\\n1. It does not work.\\n\\n\
+             ## New findings\\n\\n- a.rs:1: one.\\n- a.rs:2: two.\\n- a.rs:3: three.\\n\"}\n",
+        )
+        .unwrap();
+        let gh = found_gh(built.dir.path());
+        let ended = Ended {
+            code: Some(0),
+            failed: false,
+        };
+        let kept_result = || kept::Kept::read(&record.folder).unwrap().result;
+
+        // The end step files one, and keeps the result on the limit.
+        after_verify(
+            gh.clone(),
+            &built.api,
+            &record,
+            &built.wave,
+            (40, "1a2b3c4"),
+            ended,
+        )
+        .await
+        .unwrap();
+        assert!(
+            kept_result().ends_with("- #77: a.rs:1: one.\n- a.rs:2: two.\n- a.rs:3: three."),
+            "{}",
+            kept_result()
+        );
+
+        // The report of the kept result files one more, and keeps it.
+        let report =
+            || kept::report_all(&gh, &built.api, &built.lead, &built.wave, sessions.path());
+        assert!(report().await.is_empty());
+        assert!(
+            kept_result().ends_with("- #77: a.rs:1: one.\n- #78: a.rs:2: two.\n- a.rs:3: three."),
+            "{}",
+            kept_result()
+        );
+
+        // Then the rest, the comment and the status.
+        let lines = report().await;
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        let calls = std::fs::read_to_string(built.dir.path().join("found.log")).unwrap();
+        assert_eq!(
+            calls.matches("-X POST repos/o/r/issues ").count(),
+            5,
+            "{calls}"
+        );
+        let comment = std::fs::read_to_string(built.dir.path().join("comment")).unwrap();
+        assert!(
+            comment.contains("- #77: a.rs:1: one.\n- #78: a.rs:2: two.\n- #79: a.rs:3: three."),
+            "{comment}"
+        );
+        assert!(!record.folder.exists(), "the folder of a FAIL goes");
+    }
+
+    /// 01M7GDQWGCBVJE6S4MJDEJ6P8T: the daemon gives the start text of the
+    /// verify of a fix head the head of the last verify and the rule of a
+    /// fix head. A fault of `gh` gives the start text of a first verify.
+    #[test]
+    fn the_start_text_of_a_verify_of_the_daemon_names_the_last_head() {
+        let dir = tempfile::tempdir().unwrap();
+        let checks = ["CI".to_owned()];
+        let fix = verify_start(
+            &found_gh(dir.path()),
+            "o/r",
+            "main",
+            (12, 40),
+            "1a2b3c4d5e",
+            &checks,
+        );
+        assert_eq!(
+            fix,
+            text::wave_verify_start(
+                "o/r",
+                "main",
+                12,
+                40,
+                "1a2b3c4d5e",
+                &checks,
+                Some("9f8e7d6c")
+            )
+        );
+        let script = "#!/bin/sh\necho 'gh: Bad credentials (HTTP 401)' >&2\nexit 1\n";
+        let broken = pr::Gh::at(isolated::write_program(dir.path().join("broken"), script));
+        let first = verify_start(&broken, "o/r", "main", (12, 40), "1a2b3c4d5e", &checks);
+        assert_eq!(
+            first,
+            text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4d5e", &checks, None)
+        );
     }
 
     /// 01M6H1N332TZ17CQQ8A5CQKG7B (#1557): a kept result of a pull request

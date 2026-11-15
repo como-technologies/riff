@@ -154,11 +154,31 @@ pub const BACKLOG: &str = "Backlog";
 /// The open milestones of the repository, in the order of
 /// [`in_order`] (01M509TJRBE2J7HYKKHRJ1ZFR0).
 pub fn open(gh: &Gh) -> Result<Vec<Milestone>> {
-    let open: Vec<Forge> = gh.json(&[
-        "api",
-        "repos/{owner}/{repo}/milestones?state=open&per_page=100",
-    ])?;
+    open_in(gh, "{owner}/{repo}")
+}
+
+/// [`open()`] for the repository `repo` (`OWNER/REPO`), with no repository
+/// from the folder: the report of a verify names its repository
+/// ([`crate::pr::report`]).
+pub fn open_in(gh: &Gh, repo: &str) -> Result<Vec<Milestone>> {
+    let path = format!("repos/{repo}/milestones?state=open&per_page=100");
+    let open: Vec<Forge> = gh.json(&["api", &path])?;
     Ok(in_order(open.into_iter().map(Milestone::from).collect()))
+}
+
+/// The milestone [`BACKLOG`] of the open milestones `open`. `None` when
+/// none of them has that title.
+///
+/// ```
+/// use riff::waves::backlog;
+/// use riff_client::waves::Milestone;
+///
+/// let m = |number: u64, title: &str| Milestone { number, title: title.into(), open_issues: 0, closed_issues: 0 };
+/// assert_eq!(backlog(&[m(4, "Wave 6"), m(5, "Backlog")]).map(|m| m.number), Some(5));
+/// assert!(backlog(&[m(4, "Wave 6"), m(6, "backlog")]).is_none());
+/// ```
+pub fn backlog(open: &[Milestone]) -> Option<&Milestone> {
+    open.iter().find(|m| m.title == BACKLOG)
 }
 
 /// What `riff wave make` made.
@@ -188,7 +208,8 @@ pub fn make(gh: &Gh, title: &str) -> Result<Made> {
     }
     make_tracker_label(gh);
     let wave = new_milestone(gh, title)?;
-    let backlog = (!open.iter().any(|m| m.title == BACKLOG))
+    let backlog = backlog(&open)
+        .is_none()
         .then(|| new_milestone(gh, BACKLOG).map_err(|e| format!("{e:#}")));
     Ok(Made { wave, backlog })
 }
@@ -342,7 +363,7 @@ pub fn end(gh: &Gh, number: u64) -> Result<Milestone> {
 pub fn target(open: &[Milestone], to: &str) -> Result<String> {
     let to = to.trim();
     if to.eq_ignore_ascii_case("backlog") {
-        return match open.iter().find(|m| m.title == BACKLOG) {
+        return match backlog(open) {
             Some(m) => Ok(m.title.clone()),
             None => bail!(text::waves_no_backlog()),
         };

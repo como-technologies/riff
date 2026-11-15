@@ -1,9 +1,10 @@
 //! The Markdown that riff reads in a text of a person or of a session: a
 //! heading, a code block and a list mark. The "Done when" part of an
 //! issue ([`crate::rollout`]), a member file of the council
-//! ([`crate::council`]) and the part `## The council` of the result of a
-//! verify ([`crate::council::result`]) read their lines with these rules
-//! (01M7D11KGEJ8ACFJK6Y10WENJZ).
+//! ([`crate::council`]), and the parts `## The council` and `## New
+//! findings` of the result of a verify ([`crate::council::result`],
+//! [`crate::council::found`]) read their lines with these rules
+//! (01M7D11KGEJ8ACFJK6Y10WENJZ, 01M7GDQWK92WWTTE361JGWDVGY).
 //!
 //! ```
 //! use riff::markdown::{heading, headings, item};
@@ -56,13 +57,82 @@ pub fn heading(line: &str) -> Option<(usize, &str)> {
 pub fn headings<'a>(
     lines: impl IntoIterator<Item = &'a str>,
 ) -> impl Iterator<Item = (&'a str, Option<(usize, &'a str)>)> {
+    blocks(lines).map(|(line, found, _)| (line, found))
+}
+
+/// Each line of `lines`, with its heading ([`heading`]), and `true` for a
+/// line of a code block: a line that starts with ```` ``` ````, the next
+/// such line, and each line between them. A line of a code block is no
+/// heading.
+fn blocks<'a>(
+    lines: impl IntoIterator<Item = &'a str>,
+) -> impl Iterator<Item = (&'a str, Option<(usize, &'a str)>, bool)> {
     let mut fenced = false;
     lines.into_iter().map(move |line| {
-        let found = heading(line).filter(|_| !fenced);
-        if line.trim_start().starts_with("```") {
+        let fence = line.trim_start().starts_with("```");
+        let code = fenced || fence;
+        if fence {
             fenced = !fenced;
         }
-        (line, found)
+        (line, heading(line).filter(|_| !code), code)
+    })
+}
+
+/// Where a line of a text is, as [`parts`] gives it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Place {
+    /// Out of each part, or the heading of a part.
+    Out,
+    /// In a part, out of a code block.
+    Text,
+    /// In a part, in a code block.
+    Code,
+}
+
+/// Each line of `lines`, with its [`Place`] in the parts `start` of the
+/// text, for example `## The council`. A part runs from the line after a
+/// heading `start`, of that level and text, to the next heading of that
+/// level or fewer `#`. A line in a code block is no heading
+/// ([`headings`]), and each such part counts. A `start` that is no
+/// heading has no part.
+///
+/// ```
+/// use riff::markdown::{Place, parts};
+///
+/// let text = "## B\n- one\n```\n## C\n```\n### D\n## E\n- two\n## B\n- three";
+/// let places: Vec<_> = parts(text.lines(), "## B").collect();
+/// assert_eq!(
+///     places,
+///     [
+///         ("## B", Place::Out), ("- one", Place::Text), ("```", Place::Code),
+///         ("## C", Place::Code), ("```", Place::Code), ("### D", Place::Text),
+///         ("## E", Place::Out), ("- two", Place::Out), ("## B", Place::Out),
+///         ("- three", Place::Text),
+///     ]
+/// );
+/// assert!(parts(text.lines(), "B").all(|(_, place)| place == Place::Out));
+/// ```
+pub fn parts<'a>(
+    lines: impl IntoIterator<Item = &'a str>,
+    start: &str,
+) -> impl Iterator<Item = (&'a str, Place)> {
+    let start = heading(start);
+    let mut inside = false;
+    blocks(lines).map(move |(line, found, code)| {
+        let place = match (found, start) {
+            (Some(found), Some(start)) if found == start => {
+                inside = true;
+                Place::Out
+            }
+            (Some((level, _)), Some((top, _))) if level <= top => {
+                inside = false;
+                Place::Out
+            }
+            _ if !inside => Place::Out,
+            _ if code => Place::Code,
+            _ => Place::Text,
+        };
+        (line, place)
     })
 }
 
@@ -82,15 +152,42 @@ pub fn headings<'a>(
 /// ```
 pub fn item(line: &str) -> &str {
     let line = line.trim_start();
+    after_mark(line).unwrap_or(line).trim_start()
+}
+
+/// The text of the list item `line`, as [`item`] gives it, when a space,
+/// a tab or the end of the line comes after its list mark. `None` for
+/// each other line: a line with no list mark, and a line such as
+/// `**Bold.**` or `---`.
+///
+/// ```
+/// use riff::markdown::list_item;
+///
+/// assert_eq!(list_item("  - docs\n"), Some("docs\n"));
+/// assert_eq!(list_item("10)\tdocs"), Some("docs"));
+/// assert_eq!(list_item("-"), Some(""));
+/// assert_eq!(list_item("**None.**"), None);
+/// assert_eq!(list_item("---"), None);
+/// assert_eq!(list_item("1.5 docs"), None);
+/// assert_eq!(list_item("docs"), None);
+/// ```
+pub fn list_item(line: &str) -> Option<&str> {
+    let rest = after_mark(line.trim_start())?;
+    (rest.is_empty() || rest.starts_with(char::is_whitespace)).then(|| rest.trim_start())
+}
+
+/// The text of `line` right after its list mark, with the spaces after
+/// the mark. `line` has no spaces before the mark. `None` for a line with
+/// no list mark.
+fn after_mark(line: &str) -> Option<&str> {
+    if let Some(rest) = line.strip_prefix(['-', '*', '+']) {
+        return Some(rest);
+    }
     let unnumbered = line.trim_start_matches(|c: char| c.is_ascii_digit());
-    let rest = match line.strip_prefix(['-', '*', '+']) {
-        Some(rest) => rest,
-        None if unnumbered.len() < line.len() => {
-            unnumbered.strip_prefix(['.', ')']).unwrap_or(line)
-        }
-        None => line,
-    };
-    rest.trim_start()
+    match unnumbered.len() < line.len() {
+        true => unnumbered.strip_prefix(['.', ')']),
+        false => None,
+    }
 }
 
 #[cfg(test)]

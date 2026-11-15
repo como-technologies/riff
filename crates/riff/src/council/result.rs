@@ -28,7 +28,7 @@
 //! around it. The part runs from the heading [`HEADING`], of that level
 //! and case, to the next heading of one or two `#`, and each such part
 //! counts. A line in a code block is no heading
-//! ([`crate::markdown::headings`]).
+//! ([`crate::markdown::parts`]).
 //!
 //! ```
 //! use riff::council::default_set;
@@ -123,23 +123,14 @@ pub fn check(council: &Council, result: &str) -> Result<(), NoLine> {
 }
 
 /// The lines of each part [`HEADING`] of `result`, each from the line
-/// after its heading up to the next heading of one or two `#`. A line in
-/// a code block is no heading. No line when the result has no such part.
+/// after its heading up to the next heading of one or two `#`
+/// ([`markdown::parts`]). A line in a code block is no heading. No line
+/// when the result has no such part.
 fn part(result: &str) -> Vec<&str> {
-    let Some(start) = markdown::heading(HEADING) else {
-        return Vec::new();
-    };
-    let mut inside = false;
-    let mut lines = Vec::new();
-    for (line, heading) in markdown::headings(result.lines()) {
-        match heading {
-            Some(found) if found == start => inside = true,
-            Some((level, _)) if level <= start.0 => inside = false,
-            _ if inside => lines.push(line),
-            _ => {}
-        }
-    }
-    lines
+    markdown::parts(result.lines(), HEADING)
+        .filter(|(_, place)| *place != markdown::Place::Out)
+        .map(|(line, _)| line)
+        .collect()
 }
 
 /// The first word of a line of the part, with no list mark before it

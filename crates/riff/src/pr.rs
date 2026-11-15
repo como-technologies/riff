@@ -12,7 +12,7 @@
 //! |---|---|
 //! | `riff pr open` | `issue view`, `pr create`, `pr merge --auto --squash` |
 //! | `riff pr wait N` | `pr view`, `pr checks --required`, again at the [`pace`] of `--every`. After the merge: the total of the tokens of the issue ([`crate::usage`]) |
-//! | `riff verify pass\|fail N` | `pr view`, `issue view` (a pass of a body with `Closes #N`), `api …/rules/branches/BRANCH`, `api …/commits/COMMIT/check-runs`, `api …/pulls/N/files`, the reads of `riff council show` and `pr merge --auto --squash` with the squash message (a pass), `pr comment`, `api …/statuses/COMMIT` |
+//! | `riff verify pass\|fail N` | `pr view`, `issue view` (a pass of a body with `Closes #N`), `api …/rules/branches/BRANCH`, `api …/commits/COMMIT/check-runs`, `api …/pulls/N/files`, the reads of `riff council show` and `pr merge --auto --squash` with the squash message (a pass), `api …/issues/N/comments` and `api …/commits/LAST/status` (a result with a new finding, [`last_failed`]), `api …/milestones` and `api -X POST …/issues` (each new finding of the verify of a fix head, [`crate::council::found`]), `pr comment`, `api …/statuses/COMMIT` |
 //!
 //! `riff pr open` takes the issue from the claim of the session, and
 //! writes the body in the form of the hygiene check: the link line and
@@ -2795,30 +2795,36 @@ pub fn comment(verdict: Verdict, issue: u64, commit: &str, result: &str) -> Stri
 const VERIFY_COMMENT: &str = "verify result: ";
 
 /// The verdict and the commit of the first line of a comment of a verify
-/// ([`comment`]). `None` for each other line.
+/// ([`comment`]): the commit is a hash of 7 to 40 hex digits, so it names
+/// no branch and no tag. `None` for each other line.
 ///
 /// ```
 /// use riff::pr::{Verdict, comment, comment_head};
 ///
 /// let text = comment(Verdict::Fail, 12, "1a2b3c4d", "1. fails.\n");
-/// assert_eq!(comment_head(text.lines().next().unwrap()), Some((Verdict::Fail, "1a2b3c4d".into())));
-/// assert_eq!(comment_head("verify result: PASS for issue-12, commit 9f8e7d6."), Some((Verdict::Pass, "9f8e7d6".into())));
+/// assert_eq!(comment_head(text.lines().next().unwrap()), Some((Verdict::Fail, "1a2b3c4d")));
+/// assert_eq!(comment_head("verify result: PASS for issue-12, commit 9f8e7d6.\r"), Some((Verdict::Pass, "9f8e7d6")));
 /// assert_eq!(comment_head("verify result: MAYBE for issue-12, commit 9f8e7d6."), None);
 /// assert_eq!(comment_head("verify result: FAIL for issue-12."), None);
+/// assert_eq!(comment_head("verify result: FAIL for issue-12, commit main."), None);
+/// assert_eq!(comment_head("verify result: FAIL for issue-12, commit 9f8e7d."), None);
+/// assert_eq!(comment_head(&format!("verify result: FAIL for issue-12, commit {}.", "a".repeat(41))), None);
 /// assert_eq!(comment_head("A plain comment."), None);
 /// ```
-pub fn comment_head(line: &str) -> Option<(Verdict, String)> {
+pub fn comment_head(line: &str) -> Option<(Verdict, &str)> {
     let (word, rest) = line.strip_prefix(VERIFY_COMMENT)?.split_once(" for ")?;
     let verdict = [Verdict::Pass, Verdict::Fail]
         .into_iter()
         .find(|v| v.word() == word)?;
-    let commit: String = rest
-        .split_once("commit ")?
+    let commit = rest
+        .split_once(", commit ")?
         .1
-        .chars()
-        .take_while(char::is_ascii_alphanumeric)
-        .collect();
-    (!commit.is_empty()).then_some((verdict, commit))
+        .trim_end()
+        .strip_suffix('.')?;
+    let hash = commit
+        .bytes()
+        .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+    ((7..=40).contains(&commit.len()) && hash).then_some((verdict, commit))
 }
 
 /// The head of the last verify of the pull request `number` in `repo`,
@@ -2826,84 +2832,93 @@ pub fn comment_head(line: &str) -> Option<(Verdict, String)> {
 /// verify failed at a commit that is not `head`, the head now. riff reads
 /// the comments of the pull request with REST, so it costs no GraphQL
 /// point, and takes the newest comment of a verify ([`comment_head`]).
-/// Each account that can comment can write such a comment, so the commit
-/// counts only with a `riff/verify` failure ([`verify_state`]): only the
-/// daemon and a person set that status. `None` for each other head: a
-/// first verify.
+/// Each account that can comment can write such a comment. So the comment
+/// counts only when the status `riff/verify` of its commit is a FAIL
+/// ([`Verdict::of_state`]) and names that comment by its URL
+/// ([`verify_status`]): only an account that can push sets a status, and
+/// the report of a verify sets it with the URL of its comment
+/// ([`report`]). `None` for each other head: a first verify.
 ///
 /// ```
+/// use riff::pr::last_failed;
+///
 /// let dir = tempfile::tempdir()?;
 /// let gh = riff::pr::Gh::at(isolated::write_program(
 ///     dir.path().join("gh"),
 ///     "#!/bin/sh\n\
 ///      case \"$*\" in\n\
-///        *issues/40/comments*) printf 'verify result: FAIL for issue-12, commit 9f8e7d6c.\\n' ;;\n\
-///        *issues/41/comments*) printf 'verify result: FAIL for issue-13, commit 5e6f7a8b.\\n' ;;\n\
-///        *commits/9f8e7d6c/status*) echo failure ;;\n\
-///        *commits/5e6f7a8b/status*) echo success ;;\n\
+///        *issues/40/comments*) printf '7\\tverify result: FAIL for issue-12, commit 9f8e7d6c.\\n' ;;\n\
+///        *issues/41/comments*) printf '9\\tverify result: FAIL for issue-12, commit 9f8e7d6c.\\n' ;;\n\
+///        *commits/9f8e7d6c/status*) printf 'failure\\thttps://github.com/o/r/pull/40#issuecomment-7\\n' ;;\n\
 ///        *) exit 1 ;;\n\
 ///      esac\n",
 /// ));
-/// assert_eq!(riff::pr::last_failed(&gh, "o/r", 40, "1a2b3c4d")?.as_deref(), Some("9f8e7d6c"));
+/// assert_eq!(last_failed(&gh, "o/r", 40, "1a2b3c4d")?.as_deref(), Some("9f8e7d6c"));
 /// // The same head: no fix head.
-/// assert_eq!(riff::pr::last_failed(&gh, "o/r", 40, "9f8e7d6c")?, None);
-/// // A comment whose commit has no riff/verify failure does not count.
-/// assert_eq!(riff::pr::last_failed(&gh, "o/r", 41, "1a2b3c4d")?, None);
-/// assert!(riff::pr::last_failed(&gh, "o/r", 42, "1a2b3c4d").is_err());
+/// assert_eq!(last_failed(&gh, "o/r", 40, "9f8e7d6c")?, None);
+/// // A comment that the status of its commit does not name counts for
+/// // nothing: here the status names a comment of another pull request.
+/// assert_eq!(last_failed(&gh, "o/r", 41, "1a2b3c4d")?, None);
+/// assert!(last_failed(&gh, "o/r", 42, "1a2b3c4d").is_err());
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn last_failed(gh: &Gh, repo: &str, number: u64, head: &str) -> Result<Option<String>> {
     let path = format!("repos/{repo}/issues/{number}/comments?per_page=100");
-    let jq = format!(".[].body | select(startswith(\"{VERIFY_COMMENT}\")) | split(\"\\n\")[0]");
+    let jq = format!(
+        ".[] | select(.body | startswith(\"{VERIFY_COMMENT}\")) \
+         | [(.id | tostring), (.body | split(\"\\n\")[0] | rtrimstr(\"\\r\"))] | @tsv"
+    );
     let out = gh.run(&["api", "--paginate", &path, "--jq", &jq], None)?;
-    let last = out.lines().rev().find_map(|line| comment_head(line.trim()));
-    let Some((Verdict::Fail, commit)) = last else {
+    let Some((id, line)) = out.lines().rev().find_map(|line| line.split_once('\t')) else {
         return Ok(None);
     };
-    if same_commit(head, &commit).is_ok() || commit.starts_with(head) {
+    let Some((Verdict::Fail, commit)) = comment_head(line) else {
+        return Ok(None);
+    };
+    if same_commit(head, commit).is_ok() || commit.starts_with(head) {
         return Ok(None);
     }
-    let failed = verify_state(gh, repo, &commit)?.as_deref() == Some(Verdict::Fail.state());
-    Ok(failed.then_some(commit))
-}
-
-/// The number of the open milestone [`crate::waves::BACKLOG`] of `repo`,
-/// with REST. `None` when `repo` has none open.
-fn backlog(gh: &Gh, repo: &str) -> Result<Option<u64>> {
-    let path = format!("repos/{repo}/milestones?state=open&per_page=100");
-    let jq = format!(
-        ".[] | select(.title == \"{}\") | .number",
-        crate::waves::BACKLOG
-    );
-    let out = gh.run(&["api", &path, "--jq", &jq], None)?;
-    Ok(out.lines().find_map(|line| line.trim().parse().ok()))
+    let named = verify_status(gh, repo, commit)?.is_some_and(|status| {
+        Verdict::of_state(&status.state) == Some(Verdict::Fail)
+            && status.url.rsplit_once("#issuecomment-").map(|(_, n)| n) == Some(id.trim())
+    });
+    Ok(named.then(|| commit.to_owned()))
 }
 
 /// Files each new finding of `result` ([`crate::council::found`]) as an
-/// issue of its own in `repo`, with REST (01M7GDQWK92WWTTE361JGWDVGY):
-/// in the open milestone [`crate::waves::BACKLOG`], or in no milestone
-/// when `repo` has none, with the line `Found by: #NUMBER`
-/// ([`text::found_body`]). `commit` is the tested head of the pull request
-/// `number`. Each issue writes its number in `result` at once, so a report
-/// that fails later files no finding twice.
+/// issue of its own in `repo`, with REST (01M7GDQWK92WWTTE361JGWDVGY): in
+/// the open milestone [`crate::waves::BACKLOG`], or in no milestone when
+/// `repo` has none, with the line `Found by: #NUMBER`
+/// ([`text::found_body`]). It files only for the verify of a fix head
+/// ([`last_failed`]), and at most [`crate::council::found::MOST`] issues
+/// for a result. `commit` is the tested head of the pull request `number`.
+/// Each issue writes its number in `result` at once, so a report that
+/// fails later files no finding twice. The body goes in a file
+/// ([`Gh::send`]), and no error names the finding
+/// (01M7GKK1J8PWKH0GQPD490KR6D), so a finding that names a limit of
+/// GitHub makes no fault a limit ([`ghcalls::is_limit_error`]).
 fn file_found(gh: &Gh, repo: &str, number: u64, commit: &str, result: &mut String) -> Result<()> {
-    if crate::council::found::unfiled(result).is_empty() {
+    if crate::council::found::unfiled(result).is_empty()
+        || last_failed(gh, repo, number, commit)?.is_none()
+    {
         return Ok(());
     }
-    let milestone = backlog(gh, repo)?.map(|n| format!("milestone={n}"));
+    let open = crate::waves::open_in(gh, repo)?;
+    let backlog = crate::waves::backlog(&open).map(|m| m.number);
     let path = format!("repos/{repo}/issues");
     crate::council::found::file(result, |finding| {
-        let title = format!("title={}", text::found_title(finding));
-        let body = format!("body={}", text::found_body(number, commit, finding));
-        let mut args = vec!["api", "-X", "POST", &path, "-f", &title, "-f", &body];
-        if let Some(milestone) = &milestone {
-            args.extend(["-F", milestone]);
+        let mut issue = serde_json::json!({
+            "title": text::found_title(finding),
+            "body": text::found_body(number, commit, finding, backlog.is_some()),
+        });
+        if let Some(milestone) = backlog {
+            issue["milestone"] = milestone.into();
         }
-        args.extend(["--jq", ".number"]);
-        let out = gh.run(&args, None)?;
-        out.trim()
-            .parse()
-            .with_context(|| format!("gh api -X POST {path} gave no issue number: {out}"))
+        let reply = gh.send("POST", &path, &issue)?;
+        serde_json::from_str::<serde_json::Value>(body_of(&reply))
+            .ok()
+            .and_then(|filed| filed["number"].as_u64())
+            .with_context(|| text::found_no_number(&path))
     })
 }
 
@@ -3537,14 +3552,61 @@ fn council_named(gh: &Gh, dir: &Path, number: u64, result: &str) -> Result<()> {
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn verify_state(gh: &Gh, repo: &str, commit: &str) -> Result<Option<String>> {
+    Ok(verify_status(gh, repo, commit)?.map(|status| status.state))
+}
+
+/// The status `riff/verify` of a commit, as [`verify_status`] reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifyStatus {
+    /// The state, for example `failure` ([`Verdict::of_state`]).
+    pub state: String,
+    /// The URL of the status: the comment of the verify ([`report`]).
+    /// Empty when the status has none.
+    pub url: String,
+}
+
+/// The status `riff/verify` ([`VERIFY_CONTEXT`]) of `commit` in `repo`
+/// on GitHub now, as [`verify_state`] reads it, with its URL. `None` when
+/// the commit has none.
+///
+/// ```
+/// use riff::pr::{VerifyStatus, verify_status};
+///
+/// let dir = tempfile::tempdir()?;
+/// let gh = riff::pr::Gh::at(isolated::write_program(
+///     dir.path().join("gh"),
+///     "#!/bin/sh\n\
+///      case \"$2\" in\n\
+///        repos/o/r/commits/1a2b/status) printf 'failure\\thttps://github.com/o/r/pull/40#issuecomment-7\\n' ;;\n\
+///        repos/o/r/commits/5e6f/status) printf 'success\\t\\n' ;;\n\
+///        *) echo ;;\n\
+///      esac\n",
+/// ));
+/// let url = "https://github.com/o/r/pull/40#issuecomment-7".to_owned();
+/// assert_eq!(verify_status(&gh, "o/r", "1a2b")?, Some(VerifyStatus { state: "failure".into(), url }));
+/// let none = VerifyStatus { state: "success".into(), url: String::new() };
+/// assert_eq!(verify_status(&gh, "o/r", "5e6f")?, Some(none));
+/// assert_eq!(verify_status(&gh, "o/r", "9c0d")?, None);
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn verify_status(gh: &Gh, repo: &str, commit: &str) -> Result<Option<VerifyStatus>> {
     let path = format!("repos/{repo}/commits/{commit}/status");
-    let jq = format!(".statuses[] | select(.context == \"{VERIFY_CONTEXT}\") | .state");
+    let jq = format!(
+        ".statuses[] | select(.context == \"{VERIFY_CONTEXT}\") | [.state, .target_url // \"\"] \
+         | @tsv"
+    );
     let out = gh.run(&["api", &path, "--jq", &jq], None)?;
     Ok(out
         .lines()
         .map(str::trim)
-        .find(|state| !state.is_empty())
-        .map(str::to_owned))
+        .find(|line| !line.is_empty())
+        .map(|line| {
+            let (state, url) = line.split_once('\t').unwrap_or((line, ""));
+            VerifyStatus {
+                state: state.trim().to_owned(),
+                url: text::forge(url.trim()),
+            }
+        }))
 }
 
 /// Puts the result on pull request `number` as a comment, and sets the
@@ -3564,10 +3626,11 @@ pub fn verify_state(gh: &Gh, repo: &str, commit: &str) -> Result<Option<String>>
 /// session (01M7DZ4E5BZAD38E3K9A3N277E). Before the comment of a pass, it
 /// gives the squash message to the auto-merge ([`squash`],
 /// 01M748RKC7BYP8FC6W2E20SQA7). After the checks of a pass and before the
-/// comment, it files each new finding of `result` as an issue, and writes
-/// the number of its issue in `result` ([`crate::council::found::file`],
-/// 01M7GDQWK92WWTTE361JGWDVGY). The caller posts `result` to the holder
-/// of the issue, and keeps it when the report fails.
+/// comment, the verify of a fix head files each new finding of `result`
+/// as an issue, and writes the number of its issue in `result`
+/// ([`crate::council::found::file`], 01M7GDQWK92WWTTE361JGWDVGY). The
+/// caller posts `result` to the holder of the issue, and keeps it when
+/// the report fails.
 pub fn report(
     gh: &Gh,
     repo: &str,
@@ -4506,5 +4569,224 @@ mod tests {
              none auth token\ngho_new issue view 2\n\
              ghs_revoked issue comment 3 --body x\ngho_new issue view 4\n"
         );
+    }
+}
+
+#[cfg(test)]
+mod fix_head_tests {
+    use std::path::Path;
+
+    use serde_json::json;
+
+    use super::{Gh, file_found, last_failed};
+    use crate::text;
+
+    /// The last verify of pull request 40: a FAIL at `9f8e7d6c` in its
+    /// comment 7, and the status of that commit names the comment.
+    const LAST_FAIL: &str = "*issues/40/comments*) printf '7\\tverify result: FAIL for issue-12, \
+         commit 9f8e7d6c.\\n' ;;\n\
+         *commits/9f8e7d6c/status*) printf 'failure\\thttps://github.com/o/r/pull/40#issuecomment-7\\n' ;;";
+
+    /// The open milestones: the Backlog has the number 5.
+    const BACKLOG: &str = "*milestones*) echo '[{\"number\":5,\"title\":\"Backlog\",\
+         \"open_issues\":0,\"closed_issues\":0}]' ;;";
+
+    /// Each new issue gets the next number from 77, and its body goes to
+    /// the file `issue-N.json`.
+    const ISSUES: &str = "*'-X POST repos/o/r/issues '*) n=$(cat \"$dir/n\" 2>/dev/null || echo 76); \
+         n=$((n + 1)); echo $n > \"$dir/n\"; cp \"$7\" \"$dir/issue-$n.json\"; \
+         printf 'HTTP/2.0 201 Created\\r\\n\\r\\n{\"number\":%s}\\n' $n ;;";
+
+    /// A result of a fix head: two new findings, and one that a report
+    /// filed already.
+    const NEW: &str = "FAIL\n\n## New findings\n\n- src/a.rs:1: one.\n- #70: src/a.rs:2: two.\n\
+                       - src/a.rs:3: three.\n";
+
+    /// A fake `gh` in `dir`: it logs each call to `dir/log`, answers with
+    /// the arms `cases` of a `case "$*"`, and fails each other call.
+    fn found_gh(dir: &Path, cases: &str) -> Gh {
+        let script = format!(
+            "#!/bin/sh\ndir=$(dirname \"$0\")\necho \"$*\" >> \"$dir/log\"\ncase \"$*\" in\n\
+             {cases}\n*) echo 'gh: Not Found (HTTP 404)' >&2; exit 1 ;;\nesac\n"
+        );
+        Gh::at(isolated::write_program(dir.join("gh"), &script))
+    }
+
+    fn log(dir: &Path) -> String {
+        std::fs::read_to_string(dir.join("log")).unwrap_or_default()
+    }
+
+    /// The body of each new issue that the fake filed, from 77 on.
+    fn issues(dir: &Path) -> Vec<serde_json::Value> {
+        (77..)
+            .map(|n| dir.join(format!("issue-{n}.json")))
+            .take_while(|path| path.exists())
+            .map(|path| serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap())
+            .collect()
+    }
+
+    /// 01M7GDQWGCBVJE6S4MJDEJ6P8T: the newest comment of a verify counts,
+    /// and only when the status of its commit is a FAIL that names it. A
+    /// PASS after a FAIL, a forged comment after the comment of riff, a
+    /// comment with no hash, and no comment of a verify give a first
+    /// verify. A status `error` is a FAIL too.
+    #[test]
+    fn only_the_newest_comment_that_its_status_names_makes_a_fix_head() {
+        let dir = tempfile::tempdir().unwrap();
+        let comments = |pull: u64, lines: &[(u64, String)]| {
+            let text: String = lines
+                .iter()
+                .map(|(id, line)| format!("{id}\\t{line}\\n"))
+                .collect();
+            format!("*issues/{pull}/comments*) printf '{text}' ;;")
+        };
+        let said = |word: &str, commit: &str| {
+            format!("verify result: {word} for issue-12, commit {commit}.")
+        };
+        let status = |commit: &str, state: &str, id: u64| {
+            format!(
+                "*commits/{commit}/status*) printf \
+                 '{state}\\thttps://github.com/o/r/pull/40#issuecomment-{id}\\n' ;;"
+            )
+        };
+        let cases = [
+            comments(
+                40,
+                &[(1, said("FAIL", "aaaaaaa1")), (2, said("FAIL", "bbbbbbb2"))],
+            ),
+            comments(
+                41,
+                &[(3, said("FAIL", "fffffff6")), (4, said("PASS", "ccccccc3"))],
+            ),
+            comments(
+                42,
+                &[(5, said("FAIL", "ddddddd4")), (6, said("FAIL", "aaaaaaa1"))],
+            ),
+            comments(43, &[(7, said("FAIL", "main"))]),
+            "*issues/44/comments*) ;;".to_owned(),
+            comments(45, &[(8, said("FAIL", "eeeeeee5"))]),
+            status("aaaaaaa1", "failure", 1),
+            status("bbbbbbb2", "failure", 2),
+            status("fffffff6", "failure", 3),
+            status("ccccccc3", "success", 4),
+            status("ddddddd4", "failure", 5),
+            status("eeeeeee5", "error", 8),
+        ]
+        .join("\n");
+        let gh = found_gh(dir.path(), &cases);
+        let last = |pull| last_failed(&gh, "o/r", pull, "1a2b3c4d").unwrap();
+        assert_eq!(last(40).as_deref(), Some("bbbbbbb2"), "the newest");
+        assert_eq!(last(41), None, "a PASS after a FAIL");
+        assert_eq!(last(42), None, "a forged comment");
+        assert_eq!(last(43), None, "no hash");
+        assert_eq!(last(44), None, "no comment");
+        assert_eq!(last(45).as_deref(), Some("eeeeeee5"), "a status error");
+        let calls = log(dir.path());
+        assert!(!calls.contains("commits/main/"), "{calls}");
+        assert!(
+            !calls.contains("commits/ccccccc3/"),
+            "a PASS reads no status: {calls}"
+        );
+    }
+
+    /// 01M7GDQWK92WWTTE361JGWDVGY: the verify of a fix head files each new
+    /// finding with no number as an issue in the Backlog, with the line
+    /// `Found by: #40`, and writes its number in the result.
+    #[test]
+    fn a_fix_head_files_each_new_finding_in_the_backlog() {
+        let dir = tempfile::tempdir().unwrap();
+        let gh = found_gh(dir.path(), &format!("{LAST_FAIL}\n{BACKLOG}\n{ISSUES}"));
+        let mut result = NEW.to_owned();
+        file_found(&gh, "o/r", 40, "1a2b3c4d", &mut result).unwrap();
+        assert_eq!(
+            result,
+            "FAIL\n\n## New findings\n\n- #77: src/a.rs:1: one.\n- #70: src/a.rs:2: two.\n\
+             - #78: src/a.rs:3: three.\n"
+        );
+        let issue = |finding: &str| {
+            json!({
+                "title": finding,
+                "body": text::found_body(40, "1a2b3c4d", finding, true),
+                "milestone": 5,
+            })
+        };
+        assert_eq!(
+            issues(dir.path()),
+            [issue("src/a.rs:1: one."), issue("src/a.rs:3: three.")]
+        );
+    }
+
+    /// 01M7GDQWK92WWTTE361JGWDVGY: with no open Backlog, the issue of a new
+    /// finding gets no milestone, and its body says so.
+    #[test]
+    fn with_no_open_backlog_a_new_finding_gets_no_milestone() {
+        let dir = tempfile::tempdir().unwrap();
+        let wave = "*milestones*) echo '[{\"number\":4,\"title\":\"Wave 6\",\"open_issues\":0,\
+                    \"closed_issues\":0}]' ;;";
+        let gh = found_gh(dir.path(), &format!("{LAST_FAIL}\n{wave}\n{ISSUES}"));
+        let mut result = "## New findings\n\n- src/a.rs:1: one.\n".to_owned();
+        file_found(&gh, "o/r", 40, "1a2b3c4d", &mut result).unwrap();
+        let body = text::found_body(40, "1a2b3c4d", "src/a.rs:1: one.", false);
+        assert_eq!(
+            issues(dir.path()),
+            [json!({ "title": "src/a.rs:1: one.", "body": body })]
+        );
+    }
+
+    /// 01M7GDQWK92WWTTE361JGWDVGY: a verify that is no verify of a fix head
+    /// files nothing, also with the part `## New findings`, and the result
+    /// stays. A result with no new finding makes no call.
+    #[test]
+    fn a_first_verify_files_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let passed = "*issues/40/comments*) printf '7\\tverify result: PASS for issue-12, commit \
+                      9f8e7d6c.\\n' ;;";
+        let gh = found_gh(dir.path(), &format!("{passed}\n{BACKLOG}\n{ISSUES}"));
+        let mut result = NEW.to_owned();
+        file_found(&gh, "o/r", 40, "1a2b3c4d", &mut result).unwrap();
+        assert_eq!(result, NEW);
+        let calls = log(dir.path());
+        assert!(!calls.contains("milestones"), "{calls}");
+        assert!(!calls.contains("POST"), "{calls}");
+
+        let none = tempfile::tempdir().unwrap();
+        let gh = found_gh(none.path(), "");
+        let mut plain = "PASS\n\n- It works.\n".to_owned();
+        file_found(&gh, "o/r", 40, "1a2b3c4d", &mut plain).unwrap();
+        assert_eq!(log(none.path()), "");
+    }
+
+    /// 01M7GKK1J8PWKH0GQPD490KR6D: a failed read of the milestones files
+    /// nothing. A reply with no number stops the filing, and the line
+    /// before it keeps its number. No error names the finding, so a
+    /// finding that names a limit makes no fault a limit.
+    #[test]
+    fn a_fault_of_the_filing_names_no_finding() {
+        let dir = tempfile::tempdir().unwrap();
+        let gh = found_gh(dir.path(), &format!("{LAST_FAIL}\n{ISSUES}"));
+        let mut result = NEW.to_owned();
+        assert!(file_found(&gh, "o/r", 40, "1a2b3c4d", &mut result).is_err());
+        assert_eq!(result, NEW);
+        assert!(!log(dir.path()).contains("POST"));
+
+        let dir = tempfile::tempdir().unwrap();
+        let once = "*'-X POST repos/o/r/issues '*) if [ -e \"$dir/one\" ]; then \
+                    printf 'HTTP/2.0 201 Created\\r\\n\\r\\n{}\\n'; else touch \"$dir/one\"; \
+                    printf 'HTTP/2.0 201 Created\\r\\n\\r\\n{\"number\":77}\\n'; fi ;;";
+        let gh = found_gh(dir.path(), &format!("{LAST_FAIL}\n{BACKLOG}\n{once}"));
+        let mut result = NEW.to_owned();
+        let fault = file_found(&gh, "o/r", 40, "1a2b3c4d", &mut result).unwrap_err();
+        assert_eq!(fault.to_string(), text::found_no_number("repos/o/r/issues"));
+        assert!(result.contains("- #77: src/a.rs:1: one.\n"), "{result}");
+        assert!(result.contains("- src/a.rs:3: three.\n"), "{result}");
+
+        let dir = tempfile::tempdir().unwrap();
+        let refused = "*'-X POST repos/o/r/issues '*) printf 'HTTP/2.0 422 Unprocessable \
+                       Entity\\r\\n\\r\\n{}\\n'; echo 'gh: Validation Failed (HTTP 422)' >&2; exit 1 ;;";
+        let gh = found_gh(dir.path(), &format!("{LAST_FAIL}\n{BACKLOG}\n{refused}"));
+        let mut result = "## New findings\n\n- src/a.rs:1: the API rate limit is out.\n".to_owned();
+        let fault = file_found(&gh, "o/r", 40, "1a2b3c4d", &mut result).unwrap_err();
+        assert!(!crate::ghcalls::is_limit_error(&fault), "{fault:#}");
+        assert!(!format!("{fault:#}").contains("src/a.rs"), "{fault:#}");
     }
 }

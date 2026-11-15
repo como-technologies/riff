@@ -9,24 +9,35 @@
 //! in the diff since the head of the last verify. The verifier puts each
 //! other finding that it shows in the part [`HEADING`] of its result,
 //! one list item each ([`crate::text::wave_verify_start`]). The report
-//! of the verify ([`crate::pr::report`]) files each such finding as an
-//! issue of its own ([`file()`]), and writes the number of its issue before
-//! it: `- #77: src/a.rs:12: ...`. A finding that starts so is filed
-//! already, so a second report of the same result files nothing twice.
+//! of the verify of a fix head ([`crate::pr::report`]) files each such
+//! finding as an issue of its own ([`file()`]), and writes the number of
+//! its issue before it: `- #77: src/a.rs:12: ...`. A finding that starts
+//! so is filed already. The daemon keeps the result with the numbers
+//! when the report fails on a limit ([`crate::kept`]), and `riff verify`
+//! writes them into the file of `--file`, so a second report of the same
+//! result files nothing twice.
+//!
+//! Only the first [`MOST`] list items of the parts count, filed or not
+//! (01M7GKK1C6SG8NKFEDV5XRYX17): a result can file no more issues than
+//! that, also over more than one report. A list item after them stays as
+//! it is, with no issue.
 //!
 //! ```mermaid
 //! flowchart TD
 //!     R["the result of a verify of a fix head"] --> P["the part ## New findings:<br/>up to the next # or ## heading"]
-//!     P --> L{"a list item with no #N: ?"}
+//!     P --> M{"one of the first 10 list items?"}
+//!     M -- "no" --> K["the line stays"]
+//!     M -- "yes" --> L{"no #N: before it?"}
 //!     L -- "yes" --> F["file it: an issue in the Backlog,<br/>Found by: #PR"]
 //!     F --> W["the line gets #N: before the finding"]
-//!     L -- "no" --> K["the line stays"]
+//!     L -- "no" --> K
 //! ```
 //!
 //! The part runs from the heading [`HEADING`], of that level and case, to
 //! the next heading of one or two `#`, and each such part counts, as the
-//! part of the council does ([`super::result`]). A line in a code block
-//! is no finding.
+//! part of the council does ([`crate::markdown::parts`]). A line in a code
+//! block is no finding. A list item is a list mark and a space, then the
+//! finding ([`crate::markdown::list_item`]).
 //!
 //! ```
 //! use riff::council::found::{file, unfiled};
@@ -42,12 +53,16 @@
 
 use anyhow::Result;
 
-use crate::markdown;
+use crate::markdown::{self, Place};
 
 /// The heading of the part of the new findings in a result, as the start
 /// text of a verify of a fix head gives it
 /// ([`crate::text::wave_verify_start`]).
 pub const HEADING: &str = "## New findings";
+
+/// The most list items of the parts [`HEADING`] of one result that riff
+/// files: the first ones, filed or not (01M7GKK1C6SG8NKFEDV5XRYX17).
+pub const MOST: usize = 10;
 
 /// Each finding of the parts [`HEADING`] of `result` that riff has not
 /// filed yet, in the order of the result.
@@ -99,56 +114,40 @@ pub fn file(result: &mut String, mut issue: impl FnMut(&str) -> Result<u64>) -> 
     fault.map_or(Ok(()), Err)
 }
 
-/// Each line of `result`, with its end, and the finding in it: the text of
-/// a list item of a part [`HEADING`], out of a code block, that has no
-/// number of an issue before it ([`filed`]). `None` for each other line.
+/// Each line of `result`, with its end, and the finding to file in it:
+/// the text of one of the first [`MOST`] list items of the parts
+/// [`HEADING`], out of a code block ([`finding`]), with no number of an
+/// issue before it ([`filed`]). `None` for each other line.
 fn lines(result: &str) -> Vec<(&str, Option<&str>)> {
-    let Some(start) = markdown::heading(HEADING) else {
-        return Vec::new();
-    };
-    let (mut inside, mut fenced) = (false, false);
-    markdown::headings(result.split_inclusive('\n'))
-        .map(|(line, heading)| {
-            let fence = line.trim_start().starts_with("```");
-            let found = match heading {
-                Some(found) if found == start => {
-                    inside = true;
-                    None
-                }
-                Some((level, _)) if level <= start.0 => {
-                    inside = false;
-                    None
-                }
-                _ if inside && !fenced && !fence => finding(line),
-                _ => None,
-            };
-            if fence {
-                fenced = !fenced;
-            }
-            (line, found)
+    let mut items = 0;
+    markdown::parts(result.split_inclusive('\n'), HEADING)
+        .map(|(line, place)| {
+            let text = (place == Place::Text).then(|| finding(line)).flatten();
+            items += usize::from(text.is_some());
+            (line, text.filter(|text| items <= MOST && !filed(text)))
         })
         .collect()
 }
 
 /// The finding of the line `line` of the part: the text of a list item
-/// ([`markdown::item`]) with no number of an issue before it. `None` for
-/// a line with no list mark, an empty item, and a filed item.
+/// ([`markdown::list_item`]), with no spaces around it, filed or not.
+/// `None` for a line with no list mark and for an empty item.
 ///
 /// ```
 /// use riff::council::found::finding;
 ///
 /// assert_eq!(finding("- src/a.rs:12: a gap.\n"), Some("src/a.rs:12: a gap."));
 /// assert_eq!(finding("  1. a gap."), Some("a gap."));
-/// assert_eq!(finding("- #77: a gap."), None);
-/// assert_eq!(finding("- #rust: a gap."), Some("#rust: a gap."));
+/// assert_eq!(finding("- #77: a gap."), Some("#77: a gap."));
 /// assert_eq!(finding("A line of text."), None);
+/// assert_eq!(finding("**None.**"), None);
+/// assert_eq!(finding("---"), None);
 /// assert_eq!(finding("- "), None);
 /// ```
 pub fn finding(line: &str) -> Option<&str> {
-    let bare = line.trim();
-    let text = markdown::item(bare);
-    let marked = text.len() < bare.len();
-    (marked && !text.is_empty() && !filed(text)).then_some(text)
+    markdown::list_item(line)
+        .map(str::trim_end)
+        .filter(|text| !text.is_empty())
 }
 
 /// True when the finding `text` starts with the number of its issue:
@@ -178,6 +177,14 @@ mod tests {
             assert!(unfiled(&result).is_empty(), "{other}");
         }
         assert!(unfiled("PASS\n\n- It works.\n").is_empty());
+    }
+
+    /// 01M7GKK1C6SG8NKFEDV5XRYX17: a line of bold text or a rule is no
+    /// list item, so riff files no issue for it.
+    #[test]
+    fn bold_text_and_a_rule_are_no_findings() {
+        let result = "## New findings\n\n**None.**\n\n---\n\n*Note:* none.\n\n- one.\n";
+        assert_eq!(unfiled(result), ["one."]);
     }
 
     /// 01M7GDQWK92WWTTE361JGWDVGY: [`file()`] keeps the list mark, the
@@ -216,5 +223,27 @@ mod tests {
         .unwrap();
         assert_eq!(asked, ["two."]);
         assert_eq!(result, "## New findings\n\n- #77: one.\n- #78: two.\n");
+    }
+
+    /// 01M7GKK1C6SG8NKFEDV5XRYX17: riff files only the first [`MOST`] list
+    /// items of a result. A filed item counts too, so a second report
+    /// files no item after them.
+    #[test]
+    fn a_result_files_at_most_ten_findings() {
+        let items: String = (1..=500).map(|n| format!("- x{n}.\n")).collect();
+        let result = format!("## New findings\n\n- #70: x0.\n{items}");
+        let found = unfiled(&result);
+        assert_eq!(found.len(), MOST - 1);
+        assert_eq!((found[0], found[MOST - 2]), ("x1.", "x9."));
+        let mut result = result.clone();
+        let mut next = 76;
+        file(&mut result, |_| {
+            next += 1;
+            Ok(next)
+        })
+        .unwrap();
+        assert_eq!(next, 76 + 9);
+        assert!(result.contains("- #85: x9.\n- x10.\n"), "{result}");
+        assert!(unfiled(&result).is_empty());
     }
 }

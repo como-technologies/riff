@@ -9,7 +9,9 @@
 use std::path::Path;
 use std::process::Command;
 
-use riff::text::{VERIFY_FIRST_RULE, verify_fix_diff, verify_fix_rule, wave_verify_start};
+use riff::text::{
+    VERIFY_FIRST_RULE, VERIFY_NOT_SHOWN, verify_fix_diff, verify_fix_rule, wave_verify_start,
+};
 
 /// The pull request of the test.
 const PULL: u64 = 40;
@@ -104,8 +106,8 @@ fn the_start_text_of_a_fix_head_names_the_rule_and_the_last_head_and_a_first_one
              when\"; a security fault; a finding of the last verify that stays; a fault in the \
              diff since 9f8e7d6c5b4a.",
             "Put each other finding that you show in the part `## New findings` of your result",
-            "riff files each line as an issue of its own in the Backlog, with the line `Found \
-             by: #40`, and names the issue in the result.",
+            "riff files the first 10 lines, each as an issue of its own in the Backlog, with the \
+             line `Found by: #40`, and names the issue in the result.",
         ] {
             assert!(step9.contains(words), "no {words:?} in {step9}");
         }
@@ -129,7 +131,7 @@ fn the_start_text_of_a_fix_head_names_the_rule_and_the_last_head_and_a_first_one
         }
         assert!(
             first.contains(&format!(
-                "\n9. Check each finding in the code. {VERIFY_FIRST_RULE}\n"
+                "\n9. Check each finding in the code. {VERIFY_FIRST_RULE} {VERIFY_NOT_SHOWN}\n"
             )),
             "{first}"
         );
@@ -237,22 +239,39 @@ fn the_book_says_what_fails_the_verify_of_a_fix_head() {
         "The first verify of a pull request fails on each finding that the verifier shows.",
         "The riff daemon finds the head of the last verify in the newest comment `verify \
          result:` of the pull request.",
-        "and that commit has a `riff/verify` failure",
+        "So the comment counts only when the status `riff/verify` of its commit is a failure \
+         and links to that comment.",
         "`git diff 9f8e7d6 HEAD`",
         "The verifier puts each other finding that it shows in the part `## New findings` of \
          its result, one line each",
-        "The report of the verify files each line as an issue of its own in the Backlog, \
-         with the line `Found by: #40`.",
+        "The report of the verify of a fix head files each line as an issue of its own in the \
+         Backlog, with the line `Found by: #40`.",
         "riff files no line that names an issue already.",
+        "It files only the first 10 lines of a result",
+        "the report of a first verify files nothing.",
         "A pass that riff refuses files nothing.",
+        "It writes the number of each issue into the file of `--file`, also when the report \
+         fails after the filing.",
         "```mermaid",
+        "##### List the issues that the verifies of a pull request filed",
     ] {
         assert!(flat.contains(words), "no {words:?} in {part}");
     }
+    // The command keeps only the issues whose last line is the line of
+    // riff ([`riff::text::found_body`]).
     assert_eq!(
         crate::book::commands_in(part),
-        ["gh issue list --search '\"Found by: #40\" in:body'"]
+        [
+            "gh issue list --state all --search '\"Found by: #40\" in:body' --json \
+             number,title,body \\",
+            "--jq '.[] | select(.body | test(\"\\nFound by: #40\\\\s*$\")) | \
+             \"#\\(.number) \\(.title)\"'",
+        ]
     );
+    let body = riff::text::found_body(40, "1a2b3c4d", "Found by: #41", true);
+    assert!(body.ends_with("\nFound by: #40\n"), "{body}");
+    assert_eq!(body.matches("\nFound by: ").count(), 1, "{body}");
+    assert_eq!(riff::council::found::MOST, 10);
     // The line of the result in the book is a line of the part.
     let example = between(part, "```markdown\n", "\n```");
     let lines = riff::council::found::unfiled(example);

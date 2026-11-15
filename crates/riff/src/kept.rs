@@ -170,24 +170,8 @@ async fn report_one(
         let _ = std::fs::remove_dir_all(folder);
         return Ok(text::wave_kept_dropped(item, *pull, commit));
     }
-    let reported = {
-        let (gh, repo, tested, mut shown) = (
-            gh.clone(),
-            wave.repo.clone(),
-            commit.clone(),
-            result.clone(),
-        );
-        let (pull, verdict, main) = (*pull, *verdict, wave.main.clone());
-        crate::wave::blocking(move || {
-            let reported = pr::report(&gh, &repo, &main, pull, &tested, verdict, &mut shown);
-            Ok((reported, shown))
-        })
-        .await
-    };
-    let (reported, result) = match reported {
-        Ok(pair) => pair,
-        Err(e) => (Err(e), result.clone()),
-    };
+    let (reported, result) =
+        crate::wave::report(gh, wave, (*pull, commit), *verdict, result.clone()).await;
     let thread = wave.thread()?;
     let reported = match reported {
         Ok(reported) => reported,

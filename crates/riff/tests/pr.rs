@@ -1006,10 +1006,15 @@ async fn verify_pass_refuses_a_result_with_no_line_for_a_member_of_the_council()
 }
 
 /// The fake forge of the issues of new findings
-/// (01M7GDQWK92WWTTE361JGWDVGY): the open milestone Backlog has the
-/// number 5, and each new issue gets the next number from 77.
-const FOUND: &str = r#"*'/milestones?state=open&per_page=100'*) echo 5 ;;
-*'-X POST repos/como-technologies/riff/issues '*) n=$(cat "$dir/issue" 2>/dev/null || echo 76); n=$((n + 1)); echo $n > "$dir/issue"; echo $n ;;"#;
+/// (01M7GDQWK92WWTTE361JGWDVGY): the last verify of pull request 40
+/// failed at `9f8e7d6c`, and the status of that commit names its
+/// comment, so the head is a fix head (01M7GDQWGCBVJE6S4MJDEJ6P8T). The
+/// open milestone Backlog has the number 5. Each new issue gets the next
+/// number from 77, and its body goes to `issue-N.json`.
+const FOUND: &str = r#"*'issues/40/comments'*) printf '7\tverify result: FAIL for issue-12, commit 9f8e7d6c.\n' ;;
+*'commits/9f8e7d6c/status'*) printf 'failure\thttps://github.com/como-technologies/riff/pull/40#issuecomment-7\n' ;;
+*'/milestones?state=open&per_page=100'*) echo '[{"number":5,"title":"Backlog","open_issues":0,"closed_issues":0}]' ;;
+*'-X POST repos/como-technologies/riff/issues '*) n=$(cat "$dir/issue" 2>/dev/null || echo 76); n=$((n + 1)); echo $n > "$dir/issue"; cp "$7" "$dir/issue-$n.json"; printf 'HTTP/2.0 201 Created\r\n\r\n{"number":%s}\n' $n ;;"#;
 
 /// [`RESULT`] with the part `## New findings`: two findings to file, and
 /// one that a report filed already.
@@ -1022,14 +1027,36 @@ fn with_new_findings() -> String {
     )
 }
 
+/// The two findings of [`with_new_findings`] to file.
+const TO_FILE: [&str; 2] = [
+    "src/lib.rs:3: .riff/council/docs.md \"No stale text\": an old flag.",
+    "src/lib.rs:12: .riff/council/testing.md \"A test for each criterion\": no test.",
+];
+
+/// The part `## New findings` of [`with_new_findings`] after the filing.
+const FILED: &str = "## New findings\n\n- #77: src/lib.rs:3: .riff/council/docs.md \"No stale \
+                     text\": an old flag.\n- #70: src/lib.rs:9: a gap that a report filed.\n- #78: \
+                     src/lib.rs:12: .riff/council/testing.md \"A test for each criterion\": no test.\n";
+
 /// The start of the call that files an issue.
 const FILE_ISSUE: &str = "gh api -X POST repos/como-technologies/riff/issues ";
 
-/// 01M7GDQWK92WWTTE361JGWDVGY: `riff verify` files each line of the part
-/// `## New findings` as an issue of its own, in the milestone Backlog,
-/// with the line `Found by: #40`, before its comment. The comment and the
-/// post name each issue. A line that names an issue is filed already. A
-/// pass that riff refuses files nothing.
+/// The body of each issue that the fake of [`FOUND`] in `bin` filed, from
+/// 77 on.
+fn filed_issues(bin: &Path) -> Vec<serde_json::Value> {
+    (77..)
+        .map(|n| bin.join(format!("issue-{n}.json")))
+        .take_while(|path| path.exists())
+        .map(|path| serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap())
+        .collect()
+}
+
+/// 01M7GDQWK92WWTTE361JGWDVGY: `riff verify` of a fix head files each line
+/// of the part `## New findings` as an issue of its own, in the milestone
+/// Backlog, with the line `Found by: #40`, before its comment. The
+/// comment, the post and the file of the result name each issue. A line
+/// that names an issue is filed already. A pass that riff refuses files
+/// nothing.
 #[tokio::test]
 async fn verify_files_each_new_finding_as_an_issue_in_the_backlog_and_names_it() {
     let machine = Machine::new(&format!("{FOUND}\n{VERIFY}")).await;
@@ -1053,30 +1080,23 @@ async fn verify_files_each_new_finding_as_an_issue_in_the_backlog_and_names_it()
     machine.ok("verifier", &fail).await;
     let log = log(machine.bin.path());
     assert_eq!(log.matches(FILE_ISSUE).count(), 2, "{log}");
-    for finding in [
-        "src/lib.rs:3: .riff/council/docs.md \"No stale text\": an old flag.",
-        "src/lib.rs:12: .riff/council/testing.md \"A test for each criterion\": no test.",
-    ] {
-        let call = format!(
-            "{FILE_ISSUE}-f title={finding} -f body={}",
-            riff::text::found_body(40, "1a2b3c4d", finding)
-        );
-        assert!(
-            log.contains(&format!("{call} -F milestone=5 --jq .number")),
-            "{call}\n{log}"
-        );
-    }
-    assert!(log.contains("\n\nFound by: #40\n -F milestone=5"), "{log}");
-    assert!(!log.contains("title=#70"), "{log}");
-    assert!(!log.contains("title=src/lib.rs:9"), "{log}");
+    let issue = |finding: &str| {
+        serde_json::json!({
+            "title": finding,
+            "body": riff::text::found_body(40, "1a2b3c4d", finding, true),
+            "milestone": 5,
+        })
+    };
+    assert_eq!(
+        filed_issues(machine.bin.path()),
+        TO_FILE.map(issue),
+        "{log}"
+    );
     let filed = log.find(FILE_ISSUE).unwrap();
     assert!(filed < log.find("gh pr comment").unwrap(), "{log}");
 
     let comment = stdin_of(&log, "gh pr comment");
-    let part = "## New findings\n\n- #77: src/lib.rs:3: .riff/council/docs.md \"No stale text\": \
-                an old flag.\n- #70: src/lib.rs:9: a gap that a report filed.\n- #78: \
-                src/lib.rs:12: .riff/council/testing.md \"A test for each criterion\": no test.\n";
-    assert!(comment.contains(part), "{comment}");
+    assert!(comment.contains(FILED), "{comment}");
     let inbox = machine.ok("author", &["read"]).await;
     assert!(
         inbox.contains("- #77: src/lib.rs:3: .riff/council/docs.md"),
@@ -1086,13 +1106,19 @@ async fn verify_files_each_new_finding_as_an_issue_in_the_backlog_and_names_it()
         inbox.contains("- #78: src/lib.rs:12: .riff/council/testing.md"),
         "{inbox}"
     );
+    let file = std::fs::read_to_string(&result).unwrap();
+    assert!(file.ends_with(FILED), "{file}");
 }
 
 /// 01M7GDQWK92WWTTE361JGWDVGY: with no open milestone Backlog, the issue
-/// of a new finding gets no milestone, and the report goes on.
+/// of a new finding gets no milestone, its body says so, and the report
+/// goes on.
 #[tokio::test]
 async fn a_new_finding_gets_no_milestone_with_no_open_backlog() {
-    let none = FOUND.replace("echo 5 ;;", ";;");
+    let none = FOUND.replace(
+        r#"echo '[{"number":5,"title":"Backlog","open_issues":0,"closed_issues":0}]' ;;"#,
+        "echo '[]' ;;",
+    );
     let machine = Machine::new(&format!("{none}\n{VERIFY}")).await;
     machine.claim("author", "issue-12").await;
     let result = machine.write("result.md", &with_new_findings());
@@ -1101,10 +1127,63 @@ async fn a_new_finding_gets_no_milestone_with_no_open_backlog() {
     ];
     machine.ok("verifier", &fail).await;
     let log = log(machine.bin.path());
-    assert_eq!(log.matches(FILE_ISSUE).count(), 2, "{log}");
-    assert!(!log.contains("milestone="), "{log}");
-    assert!(log.contains("\n\nFound by: #40\n --jq .number"), "{log}");
+    let issue = |finding: &str| {
+        serde_json::json!({
+            "title": finding,
+            "body": riff::text::found_body(40, "1a2b3c4d", finding, false),
+        })
+    };
+    assert_eq!(
+        filed_issues(machine.bin.path()),
+        TO_FILE.map(issue),
+        "{log}"
+    );
     assert!(log.contains("-f state=failure"), "{log}");
+}
+
+/// 01M7GKK1F8FTWX2C2NEGW8JAX1: `riff verify` writes the issue of each new
+/// finding into the file of the result, also when the report fails after
+/// the filing. A second run with the same file files no finding twice.
+#[tokio::test]
+async fn a_second_run_of_verify_after_a_fault_files_no_finding_twice() {
+    let fails_once = r#"*'pr comment 40'*) if [ ! -e "$dir/commented" ]; then touch "$dir/commented"; echo 'gh: Internal Server Error (HTTP 500)' >&2; exit 1; fi; echo 'https://github.com/como-technologies/riff/pull/40#issuecomment-8' ;;"#;
+    let machine = Machine::new(&format!("{fails_once}\n{FOUND}\n{VERIFY}")).await;
+    machine.claim("author", "issue-12").await;
+    let result = machine.write("result.md", &with_new_findings());
+    let fail = [
+        "verify", "fail", "40", "--file", &result, "--commit", "1a2b3c4d",
+    ];
+    let out = machine.run("verifier", &fail).await;
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
+    assert_eq!(log(machine.bin.path()).matches(FILE_ISSUE).count(), 2);
+    let file = std::fs::read_to_string(&result).unwrap();
+    assert!(file.ends_with(FILED), "{file}");
+
+    machine.ok("verifier", &fail).await;
+    let log = log(machine.bin.path());
+    assert_eq!(log.matches(FILE_ISSUE).count(), 2, "{log}");
+    assert_eq!(log.matches("gh pr comment").count(), 2, "{log}");
+    assert!(log.contains("-f state=failure"), "{log}");
+}
+
+/// 01M7GDQWK92WWTTE361JGWDVGY: `riff verify` of a head that is no fix
+/// head files nothing, also with the part `## New findings`. The file of
+/// the result stays as it was.
+#[tokio::test]
+async fn verify_of_a_first_head_files_no_new_finding() {
+    let first = FOUND.replace("FAIL for issue-12", "PASS for issue-12");
+    let machine = Machine::new(&format!("{first}\n{VERIFY}")).await;
+    machine.claim("author", "issue-12").await;
+    let found = with_new_findings();
+    let result = machine.write("result.md", &found);
+    let fail = [
+        "verify", "fail", "40", "--file", &result, "--commit", "1a2b3c4d",
+    ];
+    machine.ok("verifier", &fail).await;
+    let log = log(machine.bin.path());
+    assert!(!log.contains(FILE_ISSUE), "{log}");
+    assert!(!log.contains("/milestones"), "{log}");
+    assert_eq!(std::fs::read_to_string(&result).unwrap(), found);
 }
 
 /// The fake forge of a pull request that changes `riff.toml` from the

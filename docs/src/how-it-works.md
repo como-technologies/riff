@@ -3579,9 +3579,13 @@ flowchart TD
     O --> F
     R --> F
     F --> K{"4. the verifier shows<br/>the finding in the code?"}
-    K -- "yes" --> X["shown: the verify fails"]
+    K -- "yes, and no fix head" --> X["shown: the verify fails"]
+    K -- "yes, a fix head" --> H{"a criterion, a security fault,<br/>a finding that stays,<br/>or in the diff since the last head?"}
+    H -- "yes" --> X
+    H -- "no" --> W["shown, in the part<br/>## New findings"]
     K -- "no" --> L["not shown"]
     X --> P["5. the result, with the part<br/>## The council"]
+    W --> P
     L --> P
     F -- "a live security fault" --> E["tell: to the lead,<br/>not into the result"]
 ```
@@ -3708,12 +3712,15 @@ verifies of a pull request come to an end. The first verify of a pull
 request fails on each finding that the verifier shows.
 
 The riff daemon finds the head of the last verify in the newest
-comment `verify result:` of the pull request. When that verify failed
-at another commit, and that commit has a `riff/verify` failure, the
-head now is a fix head. Then the start text of the verify gives the
-rule, the head of the last verify, and the diff since it, for example
-`git diff 9f8e7d6 HEAD`. When riff cannot read the comments or the
-status, the verify is a first verify.
+comment `verify result:` of the pull request. Each account can write a
+comment. So the comment counts only when the status `riff/verify` of
+its commit is a failure and links to that comment. Only an account
+that can push sets a status, and the report of a verify sets it with
+the link to its comment. When that verify failed at another commit,
+the head now is a fix head. Then the start text of the verify gives
+the rule, the head of the last verify, and the diff since it, for
+example `git diff 9f8e7d6 HEAD`. When riff cannot read the comments or
+the status, the verify is a first verify.
 
 The verifier puts each other finding that it shows in the part
 `## New findings` of its result, one line each, in the form of a
@@ -3725,30 +3732,43 @@ finding of the council:
 - crates/riff/src/text.rs:120: .riff/council/docs.md "No stale text": the rustdoc names an old flag.
 ```
 
-The report of the verify files each line as an issue of its own in the
-Backlog, with the line `Found by: #40`. Then the line in the result
-names its issue: `- #77: crates/riff/src/text.rs:120: ...`. riff files
-no line that names an issue already. When the repository has no open
-Backlog, the issue is in no wave and not in the Backlog. A pass that
-riff refuses files nothing. `riff verify` by hand files the lines in the
-same way.
+The report of the verify of a fix head files each line as an issue of
+its own in the Backlog, with the line `Found by: #40`. Then the line in
+the result names its issue: `- #77: crates/riff/src/text.rs:120: ...`.
+riff files no line that names an issue already. It files only the
+first 10 lines of a result: each line after them stays in the result
+with no issue. The report checks again that the head is a fix head, so
+the report of a first verify files nothing. When the repository has no
+open Backlog, the issue is in no wave and not in the Backlog. A pass
+that riff refuses files nothing.
 
-To see the issues that the verifies of pull request 40 filed:
-
-```sh
-gh issue list --search '"Found by: #40" in:body'
-```
+`riff verify` by hand files the lines in the same way. It writes the
+number of each issue into the file of `--file`, also when the report
+fails after the filing. So a second run with the same file files no
+line twice.
 
 ```mermaid
 flowchart TD
-    H["a new head of PR #40"] --> L{"the newest comment verify result:<br/>a FAIL of another commit,<br/>with a riff/verify failure?"}
+    H["a new head of PR #40"] --> L{"the newest comment verify result:<br/>a FAIL of another commit,<br/>whose riff/verify failure<br/>links to that comment?"}
     L -- "no" --> F["a first verify: each shown finding fails it"]
     L -- "yes" --> X["the verify of a fix head:<br/>the start text gives the rule<br/>and git diff LAST HEAD"]
     X --> K{"a shown finding is a criterion,<br/>a security fault, a finding that stays,<br/>or in the diff since LAST?"}
     K -- "yes" --> T["it fails the verify"]
     K -- "no" --> N["the part ## New findings"]
-    N --> I["the report files an issue in the Backlog:<br/>Found by: #40"]
-    I --> R["the result names the issue: #77"]
+    N --> I["the report files the first 10 lines:<br/>issues in the Backlog, Found by: #40"]
+    I --> R["the result names each issue: #77"]
+```
+
+##### List the issues that the verifies of a pull request filed
+
+The line `Found by: #40` is the last line of the body of each issue that
+the verifies of pull request 40 filed. A finding can name another pull
+request, so the command keeps only the issues whose last line names
+pull request 40:
+
+```sh
+gh issue list --state all --search '"Found by: #40" in:body' --json number,title,body \
+  --jq '.[] | select(.body | test("\nFound by: #40\\s*$")) | "#\(.number) \(.title)"'
 ```
 
 #### The build items of the council
