@@ -2477,8 +2477,17 @@ mod tests {
         assert!(old.exists());
         drop(start);
 
-        let swept = sweep_old_clones(leads.path());
-        assert_eq!(swept.len(), 1);
+        // A fork of another test can hold the lock until its `exec`. So a
+        // later sweep can be the one that removes the old clone.
+        let mut swept = sweep_old_clones(leads.path());
+        for _ in 0..500 {
+            if !swept.is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            swept = sweep_old_clones(leads.path());
+        }
+        assert_eq!(swept.len(), 1, "{swept:?}");
         assert_eq!(swept[0].0, old);
         assert!(swept[0].1.is_ok() && !old.exists());
     }
