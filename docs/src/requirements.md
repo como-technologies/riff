@@ -4691,6 +4691,11 @@
   the token again at the next call. Each refusal gives at most one new
   read. riff does not run the refused call again. Supersedes
   01M54510SFK1Z9VPFYBYYSV10F in part.
+- **01M7G1J1F1QWT4S45CDMMXP6J5** When a git call of riff on the host
+  with a URL in its words fails, its error text shows each URL with no
+  user info: riff takes `USER:TOKEN@` out of each URL of the command and
+  of the output of git. This holds for the terminal and for the log of
+  the daemon.
 
 ## Terminal
 

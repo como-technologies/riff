@@ -177,6 +177,29 @@ fn when_the_new_clone_fails_the_old_clone_stays_as_it_is() {
     assert!(!none.exists());
 }
 
+/// 01M7G1J1F1QWT4S45CDMMXP6J5: the origin of the main clone has a token
+/// in its URL, and git cannot reach it. The note of the old clone, and the
+/// error with no old clone, name the URL with no token.
+#[test]
+fn a_failed_clone_of_the_lead_shows_no_token_of_the_origin() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_, main) = origin_and_main(dir.path());
+    let clone = lead_clone(dir.path());
+    fresh_clone(&main, &clone).unwrap();
+    let url = "https://USER:TOKEN@127.0.0.1:1/o/r.git";
+    git(&main, &["remote", "set-url", "origin", url]);
+
+    let Fresh::Kept(why) = fresh_clone(&main, &clone).unwrap() else {
+        panic!("the old clone did not stay");
+    };
+    let none = dir.path().join("leads/o-other/clone");
+    let error = format!("{:#}", fresh_clone(&main, &none).unwrap_err());
+    for text in [riff::text::lead_clone_kept(&clone, &why), error] {
+        assert!(text.contains(" https://127.0.0.1:1/o/r.git "), "{text}");
+        assert!(!text.contains("TOKEN"), "{text}");
+    }
+}
+
 /// 01M6QB89JJEM9Z1V3RVZYHKYT0: a host that runs no wave of the repository
 /// still finds the main clone of the lead: the clone links to it.
 #[test]

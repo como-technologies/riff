@@ -237,7 +237,7 @@ pub fn git(dir: &Path) -> Result<Command> {
 
 /// Runs `git ARGS` in `dir` after the [`guard`], and gives its stdout
 /// with no space at the ends. An error names the command and its
-/// stderr.
+/// stderr, and shows no user info of a URL ([`no_user_info`]).
 pub fn output(dir: &Path, args: &[&str]) -> Result<String> {
     let out = git(dir)?
         .args(args)
@@ -246,22 +246,66 @@ pub fn output(dir: &Path, args: &[&str]) -> Result<String> {
         .with_context(|| text::no_program("git"))?;
     if !out.status.success() {
         bail!(
-            "git {}: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&out.stderr).trim()
+            "{}",
+            no_user_info(&format!(
+                "git {}: {}",
+                args.join(" "),
+                String::from_utf8_lossy(&out.stderr).trim()
+            ))
         );
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
 }
 
 /// [`output`] with no prompt for a credential and the time limit `limit`
-/// (`run::output_within`).
+/// (`run::output_within`). An error shows no user info of a URL
+/// ([`no_user_info`]).
 pub fn within(dir: &Path, args: &[&str], limit: Duration) -> Result<String> {
     guard(dir)?;
     let dir_text = dir.to_string_lossy();
     let program = ["GIT_TERMINAL_PROMPT=0", "git", "-C", &dir_text];
     let all = [&program[..], args].concat();
     crate::run::output_within("env", dir, &all, limit)
+}
+
+/// `text` with no user info in a URL: `SCHEME://USER:TOKEN@HOST/PATH`
+/// is `SCHEME://HOST/PATH` (01M7G1J1F1QWT4S45CDMMXP6J5). The user info
+/// ends at the last `@` before the end of the host: a `/`, `?`, `#`, a
+/// space, a quote or the end of the text. Each git call of riff on the
+/// host with a URL in its words runs through [`output`] and
+/// [`crate::git_credential::keyring_open`]. The error texts of these two
+/// and of [`within`] go through it. So a token in the URL of the origin
+/// of a clone shows on no terminal and in no log of the daemon.
+///
+/// ```
+/// use riff::host_git::no_user_info;
+///
+/// assert_eq!(
+///     no_user_info("git clone -q -- https://USER:TOKEN@github.com/o/r.git /c: fatal"),
+///     "git clone -q -- https://github.com/o/r.git /c: fatal"
+/// );
+/// assert_eq!(
+///     no_user_info("'http://a@b@127.0.0.1:8080' and ssh://git@github.com/o/r.git"),
+///     "'http://127.0.0.1:8080' and ssh://github.com/o/r.git"
+/// );
+/// // No user info: the text stays as it is.
+/// let plain = "git@github.com:o/r.git, https://github.com/o/r@v1, file:///tmp/a@b";
+/// assert_eq!(no_user_info(plain), plain);
+/// ```
+pub fn no_user_info(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find("://") {
+        let (head, after) = rest.split_at(at + "://".len());
+        out.push_str(head);
+        let host_end = after
+            .find(|c: char| matches!(c, '/' | '?' | '#' | '\'' | '"') || c.is_whitespace())
+            .unwrap_or(after.len());
+        let host = after[..host_end].rfind('@').map_or(0, |user| user + 1);
+        rest = &after[host..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// The name of the check of the git of the host in the checks of the
@@ -545,6 +589,30 @@ pub(crate) mod tests {
             );
         }
         assert!(!mark.exists(), "the program of the config ran");
+    }
+
+    /// 01M7G1J1F1QWT4S45CDMMXP6J5: a git call with a URL with user info
+    /// fails. The error of [`output`] and of [`within`] names the URL with
+    /// no user info.
+    #[test]
+    fn an_error_of_git_shows_no_user_info_of_a_url() {
+        let root = tempfile::tempdir().unwrap();
+        let url = "https://USER:TOKEN@127.0.0.1:1/o/r.git";
+        let args = ["ls-remote", "--", url, "refs/heads/main"];
+        for error in [
+            output(root.path(), &args).unwrap_err(),
+            within(root.path(), &args, Duration::from_secs(30)).unwrap_err(),
+        ] {
+            let error = format!("{error:#}");
+            assert!(
+                error.contains("ls-remote -- https://127.0.0.1:1/o/r.git refs/heads/main: "),
+                "{error}"
+            );
+            assert!(
+                !error.contains("TOKEN") && !error.contains("USER"),
+                "{error}"
+            );
+        }
     }
 
     /// 01M7E7ACTYP4RX8TCJ9XSYMMPM: the clone of a lead is in the folder of

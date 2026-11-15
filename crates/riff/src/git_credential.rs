@@ -72,7 +72,8 @@ pub fn run(dir: &Path, remote: &str, args: &[&str]) -> Result<String> {
 /// a process that asks for no prompt: the riff daemon
 /// (01M78TSH2VNHA75RR1HXC5Z27G). The environment gives `gh` no token
 /// ([`pr::token_given`]). A process that can ask for a prompt reads no
-/// config of git here.
+/// config of git here. The error names the call with no user info of a
+/// URL ([`crate::host_git::no_user_info`]).
 ///
 /// ```standalone_crate
 /// # keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
@@ -99,6 +100,12 @@ pub fn run(dir: &Path, remote: &str, args: &[&str]) -> Result<String> {
 /// assert!(riff_client::secrets::is_locked(&error), "{error:#}");
 /// assert!(format!("{error:#}").starts_with("riff did not run git fetch -q origin: the OS keyring of "));
 /// assert!(format!("{error:#}").contains("unlock it at the desktop"));
+/// // The error shows no user info of a URL.
+/// cred.set_error(Error::NoStorageAccess(Box::new(std::io::Error::other("locked"))));
+/// let url = "https://USER:TOKEN@github.example/o/r.git";
+/// let error = format!("{:#}", keyring_open(dir.path(), url, &["ls-remote", "--", url]).unwrap_err());
+/// assert!(error.starts_with("riff did not run git ls-remote -- https://github.example/o/r.git: "), "{error}");
+/// assert!(!error.contains("TOKEN"), "{error}");
 /// // A remote over SSH uses no helper: its git runs.
 /// keyring_open(dir.path(), "ssh", &["fetch", "-q", "ssh"])?;
 /// // The keyring is open again: the git runs.
@@ -117,7 +124,8 @@ pub fn keyring_open(dir: &Path, remote: &str, args: &[&str]) -> Result<()> {
     if !asks_gh || !secrets::holds_locked(pr::GH_KEYRING, "") {
         return Ok(());
     }
-    Err(anyhow::Error::msg(secrets::Locked::here()).context(text::git_not_run(&args.join(" "))))
+    let args = crate::host_git::no_user_info(&args.join(" "));
+    Err(anyhow::Error::msg(secrets::Locked::here()).context(text::git_not_run(&args)))
 }
 
 /// The subcommand of `git ARGS`: the first word that is no option and

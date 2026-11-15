@@ -1523,6 +1523,51 @@ async fn the_daemon_runs_the_test_and_the_build_with_the_release_table_that_orig
     );
 }
 
+/// 01M7G1J1F1QWT4S45CDMMXP6J5: the origin of the main clone has a token
+/// in its URL, and the clone of `riff build` on the daemon cannot reach
+/// it. The reply, as the terminal of the lead shows it, and the log of the
+/// daemon hold no token. The git of the daemon fetches from a bare clone
+/// in place of that URL, so the build gets to its clone.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_clone_of_the_daemon_shows_no_token_of_the_origin() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (log, code) = (tmp.path().join("gh.log"), tmp.path().join("code"));
+    let extra = fake_build(tmp.path(), &log, &code);
+    let url = "https://USER:TOKEN@127.0.0.1:1/local/riff.git";
+    let bare = tmp.path().join("origin.git");
+    let real = Command::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .unwrap();
+    isolated::write_program(
+        tmp.path().join("bin/git"),
+        format!(
+            "#!/bin/sh\ncase \" $* \" in *\" fetch \"*) exec {real} -c 'url.{bare}.insteadOf={url}' \"$@\" ;; esac\n\
+             exec {real} \"$@\"\n",
+            real = text(&real.stdout).trim(),
+            bare = bare.display()
+        ),
+    );
+    let r = riff_env(300, 300, &extra).await;
+    assert_eq!(add_origin(&r.main, tmp.path()), bare);
+    git(&r.main, &["remote", "set-url", "origin", url]);
+
+    let wait = Duration::from_secs(30);
+    let err = remote::ask(&r.api(&r.lead), &r.lead, "a", &remote::Request::Build, wait)
+        .await
+        .unwrap_err();
+    let err = format!("{err:#}");
+    assert!(
+        err.contains("git clone -q -- https://127.0.0.1:1/local/riff.git "),
+        "{err}"
+    );
+    assert!(!err.contains("TOKEN"), "{err}");
+    let logged = r.a.output();
+    assert!(logged.contains("failed"), "{logged}");
+    assert!(!logged.contains("TOKEN"), "{logged}");
+    assert!(!tmp.path().join("check").exists(), "the build ran");
+}
+
 /// #1262: a daemon that runs the wave of a repository serves `--host` for
 /// it at its start, with no `riff host join`: it writes `served.json`
 /// from `waves.json`.

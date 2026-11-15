@@ -1263,8 +1263,9 @@ pub fn issue_of(item: &str) -> Result<u64> {
 const WITHIN_POLL: Duration = Duration::from_millis(20);
 
 /// Runs `program ARGS` in `dir`, and gives its stdout, with the time
-/// limit `limit` (#1858). An error names the program and its stderr.
-/// At the end of the limit, riff stops the program and each process that
+/// limit `limit` (#1858). An error names the program and its stderr,
+/// with no user info of a URL ([`crate::host_git::no_user_info`]). At
+/// the end of the limit, riff stops the program and each process that
 /// it started, and the error says so. A step of the host that hangs, for
 /// example a `podman` that waits for a lock, holds up no loop of the
 /// daemon.
@@ -1314,7 +1315,8 @@ pub(crate) fn output_within(
                 );
             }
             let _ = child.wait();
-            bail!(text::no_answer(program, &args.join(" "), limit));
+            let args = crate::host_git::no_user_info(&args.join(" "));
+            bail!(text::no_answer(program, &args, limit));
         }
         std::thread::sleep(WITHIN_POLL);
     };
@@ -1327,7 +1329,8 @@ pub(crate) fn output_within(
     };
     let (out, err) = (text(stdout), text(stderr));
     if !status.success() {
-        bail!("{program} {}: {err}", args.join(" "));
+        let failed = format!("{program} {}: {err}", args.join(" "));
+        bail!("{}", crate::host_git::no_user_info(&failed));
     }
     Ok(out)
 }
@@ -2596,6 +2599,47 @@ mod tests {
         assert!(make_clone(&main, &bad, "bad..name").is_err());
         assert!(!bad.exists() && !new.join("issue-13-3c4d5e6f").exists());
     }
+
+    /// 01M7G1J1F1QWT4S45CDMMXP6J5: the origin of the main clone has a
+    /// token in its URL, and git cannot reach it. The error of the clone of
+    /// a session, as `riff run` shows it and the daemon logs it for a
+    /// wave, names the URL with no token.
+    #[test]
+    fn a_failed_clone_of_a_session_shows_no_token_of_the_origin() {
+        let root = tempfile::tempdir().unwrap();
+        let main = root.path().join("main");
+        git(root.path(), &["init", "-q", "-b", "main", "main"]);
+        let url = "https://USER:TOKEN@127.0.0.1:1/o/r.git";
+        git(&main, &["remote", "add", "origin", url]);
+        let clone = root.path().join("sessions/issue-12-1a2b3c4d/clone");
+        let error = make_clone(&main, &clone, "worktree-issue-12").unwrap_err();
+        let error = format!("{error:#}");
+        assert!(error.contains(" https://127.0.0.1:1/o/r.git "), "{error}");
+        assert!(!error.contains("TOKEN"), "{error}");
+    }
+
+    /// 01M7G1J1F1QWT4S45CDMMXP6J5: a step of the host with a URL with
+    /// user info in its words or in its stderr: the error of a fail and of
+    /// the end of the limit names the URL with no user info.
+    #[test]
+    fn an_error_of_a_step_of_the_host_shows_no_user_info_of_a_url() {
+        let dir = Path::new("/");
+        let url = "https://USER:TOKEN@127.0.0.1:1/o/r.git";
+        let say = ["-c", "echo \"no $0\" >&2; exit 1", url];
+        let failed = output_within("sh", dir, &say, Duration::from_secs(5)).unwrap_err();
+        assert_eq!(
+            failed.to_string(),
+            "sh -c echo \"no $0\" >&2; exit 1 https://127.0.0.1:1/o/r.git: \
+             no https://127.0.0.1:1/o/r.git"
+        );
+        let short = Duration::from_millis(300);
+        let hung = output_within("sh", dir, &["-c", "sleep 30", url], short).unwrap_err();
+        assert_eq!(
+            hung.to_string(),
+            text::no_answer("sh", "-c sleep 30 https://127.0.0.1:1/o/r.git", short)
+        );
+    }
+
     /// #1858, 01M749XKWD72JYB3QD8RYNHKTV: a step of the host with a time
     /// limit gives its output, its error, or, at the end of the limit, an
     /// error that names it. riff stops it, and each process that it

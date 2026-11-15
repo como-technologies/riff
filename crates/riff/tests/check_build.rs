@@ -120,6 +120,30 @@ fn riff_build_fails_when_just_static_fails() {
     assert!(out.stdout.is_empty(), "{out:?}");
 }
 
+/// 01M7G1J1F1QWT4S45CDMMXP6J5: the origin has a token in its URL, and git
+/// cannot reach it. The error of `riff build` on the terminal names the
+/// URL with no token.
+#[test]
+fn a_failed_clone_of_riff_build_shows_no_token_of_the_origin() {
+    let env = Isolated::new();
+    let root = isolated::outside_git();
+    let (_origin, here) = repo(root.path());
+    let url = "https://USER:TOKEN@127.0.0.1:1/o/r.git";
+    git(&here, &["remote", "set-url", "origin", url]);
+    let fake = isolated::outside_git();
+    let just = isolated::write_program(fake.path().join("just"), FAKE_JUST);
+
+    let out = build(&env, &here, &just);
+    assert!(!out.status.success(), "{out:?}");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("git clone -q -- https://127.0.0.1:1/o/r.git "),
+        "{err}"
+    );
+    assert!(!err.contains("TOKEN"), "{err}");
+    assert!(!fake.path().join("just.log").exists());
+}
+
 /// 01M5SMPX8NM75P8E38DGQ17W7B: a repository with no `[release]` in its
 /// `riff.toml` has no `riff build`. The command refuses with one line, and
 /// it makes no check clone and runs no `just`.
