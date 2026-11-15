@@ -1213,8 +1213,8 @@ fn matches(chars: &[(char, bool)], pattern: &str, found: &mut Vec<std::ops::Rang
     };
     // Each part of a match so far: the count of characters of the pattern
     // that it has, and its earliest start. The counts go up.
-    let (mut parts, mut next): (Vec<(usize, usize)>, Vec<(usize, usize)>) =
-        (Vec::new(), Vec::new());
+    let mut parts: Vec<(usize, usize)> = Vec::new();
+    let mut next: Vec<(usize, usize)> = Vec::new();
     for (at, &(c, kept)) in chars.iter().enumerate() {
         next.clear();
         // The parts come in the order of their counts, so a part with the
@@ -3448,14 +3448,14 @@ mod tests {
     /// minutes on it.
     #[test]
     fn the_scrub_of_a_long_line_ends_in_a_short_time() {
-        let secret = "sk-ant-oat01-secret1";
-        let scrub = Scrub::new([secret.to_owned()]);
+        let token = "sk-ant-oat01-secret1";
+        let scrub = Scrub::new([token.to_owned()]);
         let k = 256 * 1024;
         for (raw, shown) in [
             ("gho_\x07".repeat(k / 5), HIDDEN.to_owned()),
             (format!("\x1b]{}\x07", "gho_;".repeat(k / 5)), String::new()),
             (
-                format!("\x1b]{}\x07", secret.repeat(k / secret.len())),
+                format!("\x1b]{}\x07", token.repeat(k / token.len())),
                 HIDDEN.to_owned(),
             ),
             (
