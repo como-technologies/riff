@@ -526,10 +526,11 @@ clone to it. So when you rename the default branch on GitHub, your
 clone needs no step. When riff cannot ask `origin`, it says so in one
 line, and uses `origin/HEAD` as your clone has it. `riff run` says the
 line also with `--image`. When the daemon starts the lead again, the
-line is in the log of the daemon:
+line is in the log of the daemon (see also
+[Read the log of the daemon](development.md#read-the-log-of-the-daemon)):
 
 ```sh
-journalctl --user -u riff | grep 'riff cannot fetch origin'
+riff daemon log --grep 'riff cannot fetch origin'
 ```
 
 A branch of an item is on `origin` only when `git ls-remote` lists
@@ -580,7 +581,7 @@ shows it, and `riff daemon events` shows it for 5 minutes after the
 end. The lead also shows it in its terminal.
 
 ```sh
-journalctl --user -u riff | grep 'the clone failed'
+riff daemon log --grep 'the clone failed'
 riff daemon events riff-issue-12-1a2b3c4d
 ```
 
