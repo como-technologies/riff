@@ -428,7 +428,7 @@ pub fn remove_host_clone(
     folder: &Path,
     remove: impl Fn(&Path) -> Result<()>,
 ) -> Result<Vec<String>> {
-    let clone = folder.join("clone");
+    let clone = run::clone_in(folder);
     if clone.symlink_metadata().is_ok() {
         let aside = aside_of(&clone);
         std::fs::rename(&clone, &aside)
@@ -590,7 +590,7 @@ fn started(record: &daemon::Record) -> std::time::SystemTime {
 /// The last write to the transcript of the lead of `record`, if it has
 /// one.
 fn written(record: &daemon::Record) -> Option<std::time::SystemTime> {
-    crate::usage::written_in(&record.folder.join("claude"), &record.live.session)
+    crate::usage::written_in(&run::claude_in(&record.folder), &record.live.session)
 }
 
 /// The file of the end of the last turn of a lead, in the folder of the
@@ -1048,8 +1048,8 @@ async fn launch_new(
     let image = merged.image.to_string();
     daemon::image(dir, &image, |line| println!("{line}")).await?;
     let folder = folder_of(&run::data_dir()?, &repo);
-    let clone = folder.join("clone");
-    let claude = folder.join("claude");
+    let clone = run::clone_in(&folder);
+    let claude = run::claude_in(&folder);
     // The lead clones in its container (#2139). A clone of an older riff
     // on the host goes, and stops no start.
     match remove_host_clone(&folder, crate::compile_cache::remove) {
@@ -1141,12 +1141,12 @@ impl Parts<'_> {
             image: self.merged.image.to_string(),
             home: host.home.clone(),
             user: host.user.clone(),
-            clone: self.folder.join("clone"),
+            clone: run::clone_in(self.folder),
             repo: self.repo.to_owned(),
             base: crate::permissions::Project::of(self.common).branch,
             checkout: crate::session_clone::Checkout::Default,
             main: self.common.to_owned(),
-            claude: self.folder.join("claude"),
+            claude: run::claude_in(self.folder),
             sign_in: host.claude.sign_in(),
             gitconfig: existing(host.home.join(".gitconfig")),
             setup: self.merged.setup.clone(),
@@ -1254,8 +1254,8 @@ pub fn again(main: Option<&Path>, record: &daemon::Record) -> Result<daemon::Sta
     let merged = session_image::merged_config(&main, |_| {})?;
     let sources = session_image::merged_sources(&main)?;
     run::claude_folder(
-        &folder.join("claude"),
-        &folder.join("clone"),
+        &run::claude_in(&folder),
+        &run::clone_in(&folder),
         &host.home.join(".claude.json"),
         &crate::permissions::Trust::of(here.repo(), &record.server, &sources),
         crate::permissions::Role::Lead,

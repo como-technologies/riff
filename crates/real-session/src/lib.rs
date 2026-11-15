@@ -2432,6 +2432,23 @@ pub fn pull_body(issue: u64) -> String {
     )
 }
 
+/// The copy of the bundle of the branch `branch` that `riff run` checked,
+/// in the folder `folder` of the session: `BRANCH.bundle`, as
+/// `riff::run::bundle_copy` names it. The test
+/// `flow::the_test_fetches_from_the_copy_that_riff_run_names` checks that
+/// both agree.
+///
+/// ```
+/// let folder = std::path::Path::new("/d/riff/sessions/issue-801-1a2b3c4d");
+/// assert_eq!(
+///     real_session::bundle_copy(folder, "worktree-issue-801"),
+///     folder.join("worktree-issue-801.bundle")
+/// );
+/// ```
+pub fn bundle_copy(folder: &Path, branch: &str) -> PathBuf {
+    folder.join(format!("{branch}.bundle"))
+}
+
 /// Step 8: the session had no GitHub, so it committed and pushed nothing
 /// (01M6Z87SDSYDTFHMPKGNX74SMC). Its clone went with its container: the
 /// relay wrote the commits of the branch in a bundle in `out/` of the
@@ -2453,7 +2470,7 @@ fn push_branch(sessions: &Path, issue: u64, stamp: u64, stop: &AtomicBool) -> Re
             folders.len()
         ));
     };
-    let bundle = folder.join(format!("{branch}.bundle"));
+    let bundle = bundle_copy(folder, &branch);
     if !bundle.is_file() {
         return Err(format!(
             "riff run took no bundle of {branch}: the session made no commit on it, or riff \

@@ -6018,7 +6018,8 @@ impl<R: Runtime + 'static> Daemon<R> {
             return;
         };
         let live = record.live.clone();
-        let transcripts = usage::transcripts_in(&record.folder.join("claude"), &live.session);
+        let transcripts =
+            usage::transcripts_in(&crate::run::claude_in(&record.folder), &live.session);
         let claim = (thread.as_str(), live.item.as_str());
         let from_ms = u64::try_from(live.since_ms).unwrap_or(0);
         let Some(ended) =

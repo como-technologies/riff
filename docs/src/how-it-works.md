@@ -116,8 +116,8 @@ sequenceDiagram
     W->>G: the free items and the pull requests that wait for a verify
     W->>D: room for one more session?
     D->>S: a new worker session, and its claim of issue-12
-    D->>C: podman run --init, an empty volume for the clone, MAIN/.git with no write: riff relay -- claude
-    C->>G: a clone of MAIN/.git, git fetch origin with the token of the session, the branch of the item
+    D->>C: podman run --init, an empty volume for the clone, the objects and refs of MAIN/.git with no write: riff relay -- claude
+    C->>G: a clone from the objects and refs of MAIN/.git, git fetch origin with the token of the session, the branch of the item
     C->>D: the riff tools, on the socket of the session
     D->>S: read, post, tell and status, as the worker session
     C->>G: push the branch, open the pull request
@@ -365,7 +365,7 @@ hold each decision of the design.
 | What sessions share | How riff keeps them apart | What a session can still do to another |
 |---|---|---|
 | The files of your machine | Each session is a rootless podman container (`--userns=keep-id`). It writes only its binds: its own Claude folder, the folder of its socket and the volumes that `riff.toml` names, its clone, a volume of its own container, and with `--no-github` the folder `out/` of its bundle. Each other write goes to the copy-on-write layer of the container, and goes when the session ends. riff on your machine follows no link in a folder that a session can write: its Claude folder, the folder of its socket and `out/`. A link there gives an error, and riff reads and writes no file of yours through it: see [When a session puts a link in its folder](#when-a-session-puts-a-link-in-its-folder). | Nothing outside its binds. See the rows of git and of the caches. |
-| git: the clone and its alternates | Each session clones in its container, and pushes from there with its own token on GitHub. Its clone is an empty volume of its container, at the path of `clone/` in the folder of the session: on the disk, not in the tmpfs of the home. The host has no folder there. The clone goes with the container: `podman run --rm` removes the volume. So the work of a session is the commits that it pushed. The container sees the git dir of the main clone at the same path, with no write: the clone reads its objects, and copies none. No session writes the git dir of the main clone or of another session. The host binds no git tree with write into a container, and runs no git in a folder that a session can write: the session writes the git config there, and a git config can name a program that git runs. One guard of riff refuses each git call on your machine in the folder of the sessions, in the folder of the leads, in each bind of a session with write, and in the folders of the podman volumes. When podman cannot list its volumes, no session starts: see [When podman cannot list its volumes](#when-podman-cannot-list-its-volumes). The daemon knows the main clone of a lead from its own records: the main clone of the wave of the repository, else the main clone that it serves for the repository. The sweep reads only GitHub and the file `repo` of the folder, and the council of a verify reads the main clone. See [Where the clone of a session lives](#where-the-clone-of-a-session-lives). | Nothing in the clone of another session. It reads the git dir of the main clone, with its config. A `git gc` of the main clone can remove an object that a session clone reads. |
+| git: the clone and its alternates | Each session clones in its container, and pushes from there with its own token on GitHub. Its clone is an empty volume of its container, at the path of `clone/` in the folder of the session: on the disk, not in the tmpfs of the home. The host has no folder there. The clone goes with the container: `podman run --rm` removes the volume. So the work of a session is the commits that it pushed. No session writes the git dir of the main clone or of another session. The host binds no git tree with write into a container, and runs no git in a folder that a session can write: the session writes the git config there, and a git config can name a program that git runs. One guard of riff refuses each git call on your machine in the folder of the sessions, in the folder of the leads, in each bind of a session with write, and in the folders of the podman volumes. When podman cannot list its volumes, no session starts: see [When podman cannot list its volumes](#when-podman-cannot-list-its-volumes). The daemon knows the main clone of a lead from its own records: the main clone of the wave of the repository, else the main clone that it serves for the repository. The sweep reads only GitHub and the file `repo` of the folder, and the council of a verify reads the main clone. See [Where the clone of a session lives](#where-the-clone-of-a-session-lives). | Nothing in the clone of another session. It reads the objects and the refs of the main clone, not its config. A `git gc` of the main clone can remove an object that a session clone reads. |
 | git: the config | `~/.gitconfig` is bound with no write, or as an overlay whose changes go when the session ends. riff writes no git config of yours. A session writes only the config of its own clone. | Nothing. |
 | git: the commit | A commit has the bot of the GitHub App of the session as its author, for example `riff-como-technologies[bot]`, with the noreply email of the bot, and a `Riff-Session:` trailer that names the session. Where the Apps are not on the repository, it has your git identity. A session commits with no signature: riff sets `commit.gpgsign=false` in the environment of the container, so it applies to each git call of the session. The squash merge on GitHub makes the commit on `main` from the message that `riff verify pass` gives: the body of the pull request, which ends with `Riff-Session:` and `Co-authored-by:` you. No gpg agent goes into a container. See [Find the commits of a session](development.md#find-the-commits-of-a-session). | Nothing. The trailer `Riff-Session:` tells the commits of two sessions apart. |
 | git: the repository on GitHub | Each session pushes its own branch from its own clone. The daemon makes the claims, not the session: see the next row. | With your sign-in, a session can push to the branch of another session, or delete it. |
@@ -490,18 +490,25 @@ once, see
 
 Each session clones in its container: riff makes no clone of a session
 on your machine. The container has an empty volume at the path of its
-clone, and the git dir of the main clone, `.git`, at the same path with
-no write. Before `claude` starts, `riff relay` clones there:
+clone. Of the git dir of the main clone, it has the objects and the
+refs only, at the same path with no write: `.git/objects`, `.git/refs`
+and `.git/packed-refs`. It has no config, no hook and no log of the
+main clone, because the config of your clone can hold a token. Before
+`claude` starts, `riff relay` clones there:
 
-1. It makes a clone of the git dir of the main clone. The clone reads
-   the objects of the main clone, and copies none.
+1. It makes a clone that reads the objects of the main clone, and
+   copies none.
 2. It sets `origin` to the repository on GitHub.
-3. With the token of the session, it fetches `origin`: only the objects
+3. It reads the branches of `origin` as the main clone has them. For
+   this, it makes a git dir `.git/riff-main` in the clone, with its own
+   `HEAD` and a link to the objects and the refs of the main clone.
+   Then that git dir goes.
+4. With the token of the session, it fetches `origin`: only the objects
    that the main clone does not have. With no token, a lead with no
    token of an App or a session of `riff run --no-github`, it fetches
    nothing, and starts from the main clone. So such a session starts on
    a private repository too.
-4. It checks out the work of the session. A work session gets the branch
+5. It checks out the work of the session. A work session gets the branch
    of its item: the branch on `origin` when an earlier session pushed
    it, else a new branch from the default branch. A verify gets the head
    commit of its pull request. The lead gets the default branch.
@@ -514,8 +521,8 @@ The volume is on the disk, and goes with the container.
 
 ```mermaid
 flowchart LR
-    D["the riff daemon"] -- "podman run: an empty volume at clone/, MAIN/.git with no write" --> R["riff relay in the container"]
-    R -- "a clone of MAIN/.git, git fetch origin, the branch of the item" --> C["the clone: a volume of the container"]
+    D["the riff daemon"] -- "podman run: an empty volume at clone/, the objects and refs of MAIN/.git with no write" --> R["riff relay in the container"]
+    R -- "a clone from the objects and refs, git fetch origin, the branch of the item" --> C["the clone: a volume of the container"]
     C -- "git push, with the token of the session" --> G["the branch on GitHub"]
     C -- "the container ends" --> X["the volume goes"]
     G -- "the next session of the item" --> R
@@ -2800,9 +2807,9 @@ when its transcript got no write for 5 minutes. A tool call that runs
 for more than 5 minutes with no output counts as idle too.
 
 The new container has the same session and the same Claude folder, and
-a new clone on the default branch of `origin`: a change that the lead
-did not push goes with the old container. So the lead goes on with its
-conversation and its notes.
+a new clone: see
+[The clone of the lead at each start](development.md#the-clone-of-the-lead-at-each-start).
+So the lead goes on with its conversation and its notes.
 It starts its Monitor again. Its session on riff-server stays, and it
 stays your lead.
 

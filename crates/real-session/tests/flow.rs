@@ -1356,3 +1356,15 @@ fn no_riff_binary_is_a_usage_error() {
     assert_eq!(out.status.code(), Some(2));
     assert!(text(&out.stderr).contains("usage: real-session --riff PATH"));
 }
+
+/// 01M7EY51P291VZ9YM414Z2Z1MR: step 8 fetches from the copy of the bundle
+/// that `riff run` writes and names: both name the same path.
+#[test]
+fn the_test_fetches_from_the_copy_that_riff_run_names() {
+    let folder = Path::new("/d/riff/sessions/issue-801-1a2b3c4d");
+    let branch = "worktree-issue-801";
+    assert_eq!(
+        real_session::bundle_copy(folder, branch),
+        riff::run::bundle_copy(folder, branch)
+    );
+}

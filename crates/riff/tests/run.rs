@@ -130,7 +130,8 @@ esac
 /// the bind at `/run/riff`. With `bin/clone`, it also makes the folder of
 /// the volume of the clone, runs the relay in the working folder, and
 /// gives it `RIFF_CLONE` and `GH_CONFIG_DIR` of its `-e` values, so the
-/// relay clones as in a container. With `-d` (a terminal), it runs it in
+/// relay clones as in a container. With `bin/clone-fails` too, the volume
+/// has a file, so the clone fails. With `-d` (a terminal), it runs it in
 /// the background, and `wait` waits for its end. `stop` logs, and ends the
 /// `run`. `container inspect` says `true` while the `run` runs, and gives the text of
 /// `bin/digest` as the image digest, or fails with no such file. `attach`
@@ -279,6 +280,7 @@ while [ $# -gt 0 ]; do
 done
 if [ -f "$dir/clone" ] && [ -n "$plan" ]; then
   mkdir -p "$volume" && cd "$workdir" || exit 125
+  [ -f "$dir/clone-fails" ] && touch "$volume/mine"
   export RIFF_CLONE="$plan" GH_CONFIG_DIR="$ghdir"
 fi
 # The image, then the entrypoint /opt/riff/riff.
@@ -293,7 +295,8 @@ exec env RIFF_SOCKET="$socket" "$relay" "$@"
     script(&bin.join("podman"), body);
 }
 
-/// A fake `claude` in the container. It logs its arguments and its `PATH`,
+/// A fake `claude` in the container. It logs its arguments, its `PATH` and
+/// its `RIFF_CLONE` (to `bin/claude.clone`),
 /// takes the start text, waits while `bin/hold` is there, commits a file
 /// in its working folder when `bin/commit` is there, and prints
 /// `bin/events`. When `bin/tools` is there, it first sends its lines to
@@ -309,6 +312,7 @@ fn fake_claude(bin: &Path) {
 dir=$(dirname "$0")
 printf '%s\n' "$PATH" > "$dir/claude.path"
 printf '%s\n' "$@" > "$dir/claude.args"
+printf '%s' "${RIFF_CLONE-}" > "$dir/claude.clone"
 IFS= read -r line
 printf '%s\n' "$line" > "$dir/run.stdin"
 while [ -f "$dir/hold" ]; do sleep 0.05; done
@@ -1165,7 +1169,7 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         checkout: riff::session_clone::Checkout::Branch {
             name: "worktree-issue-12".into(),
             earlier: false,
-            bundle: None,
+            no_github: false,
         },
     }
     .to_var();
@@ -1214,8 +1218,14 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         // folder of the host. The relay clones there.
         "--mount",
         &format!("type=volume,destination={c},U=true"),
+        // 01M7FDN1Y2EQC56748V6P366NT: the objects and the refs of the main
+        // clone, with no write: no config, no hook, no log.
         "-v",
-        &format!("{o}:{o}:ro"),
+        &format!("{o}/objects:{o}/objects:ro"),
+        "-v",
+        &format!("{o}/refs:{o}/refs:ro"),
+        "-v",
+        &format!("{o}/packed-refs:{o}/packed-refs:ro"),
         "-v",
         &format!("{h}/.gitconfig:{h}/.gitconfig:ro"),
         "-v",
@@ -1809,6 +1819,9 @@ async fn a_session_with_no_github_clones_in_its_container_and_riff_run_takes_its
     let push = riff::text::run_pushed_nothing(Some(&copy), "worktree-issue-12");
     assert!(stdout.contains(&push), "{stdout}");
     let clone = folder.join("clone");
+    // The relay of a work session keeps the plan from `claude`.
+    assert_eq!(machine.read("claude.clone"), "");
+    assert!(!machine.read("claude.args").is_empty());
     assert_eq!(
         git(&clone, &["remote", "get-url", "origin"]),
         format!("https://github.com/{REPO}.git")
@@ -1845,6 +1858,88 @@ async fn a_session_with_no_github_clones_in_its_container_and_riff_run_takes_its
         text(&refused.stderr).contains("riff runs no git on the host"),
         "{}",
         text(&refused.stderr)
+    );
+}
+
+/// 01M7FDN99KZE54CX17DDEP787V, 01M7FDN9C91TDYPQSFBRHVHRAC: an earlier
+/// session pushed the branch of the item from another clone, and opened
+/// its pull request. The main clone does not have the branch. `riff run
+/// --no-github` fetches it into the main clone before the start, so the
+/// clone of the session, which fetches nothing, goes on from it. At the
+/// end, `riff run` takes the bundle also with the open pull request, and
+/// names the copy. It sends the verify request, as for each session.
+#[tokio::test]
+async fn a_session_with_no_github_goes_on_from_the_branch_of_origin_and_gives_its_bundle() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    for file in ["clone", "commit"] {
+        std::fs::write(machine.bin.path().join(file), "").unwrap();
+    }
+    // The main clone fetches only `main`, as a clone of one branch does:
+    // only the fetch of `riff run` gets the branch of the item.
+    let only_main = "+refs/heads/main:refs/remotes/origin/main";
+    git(&machine.main, &["config", "remote.origin.fetch", only_main]);
+    let url = git(&machine.main, &["remote", "get-url", "origin"]);
+    let other = machine.env.path().join("other");
+    git(
+        machine.env.path(),
+        &["clone", "-q", &url, other.to_str().unwrap()],
+    );
+    git(&other, &["switch", "-q", "-c", "worktree-issue-12"]);
+    std::fs::write(other.join("work.md"), "earlier\n").unwrap();
+    git(&other, &["add", "work.md"]);
+    git(&other, &["commit", "-q", "-m", "WIP: earlier"]);
+    git(&other, &["push", "-q", "origin", "worktree-issue-12"]);
+    let remotes = git(&machine.main, &["branch", "-r"]);
+    assert!(!remotes.contains("worktree-issue-12"), "{remotes}");
+
+    let out = machine
+        .run(None, &["run", "issue-12", "--image", IMAGE, "--no-github"])
+        .await;
+    let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
+    assert!(out.status.success(), "{stdout}\n{stderr}");
+    let folder = machine.folder("issue-12");
+    let clone = folder.join("clone");
+    assert_eq!(
+        git(&clone, &["log", "-2", "--format=%s"]),
+        "WIP: work\nWIP: earlier"
+    );
+    assert!(
+        machine
+            .read("run.stdin")
+            .contains("work of an earlier session")
+    );
+    let copy = folder.join("worktree-issue-12.bundle");
+    let push = riff::text::run_pushed_nothing(Some(&copy), "worktree-issue-12");
+    assert!(stdout.contains(&push), "{stdout}");
+    assert!(stdout.contains("The pull request #40"), "{stdout}");
+    let thread = machine.ok(Some("lead1"), &["read", "--all"]).await;
+    assert!(
+        thread.contains("verify request: issue-12, PR #40"),
+        "{thread}"
+    );
+}
+
+/// #2139: a clone that fails in the container of a work session starts
+/// no `claude`, and `riff run` ends with 1.
+#[tokio::test]
+async fn a_work_session_whose_clone_fails_starts_no_claude() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    for file in ["no-pr", "clone", "clone-fails"] {
+        std::fs::write(machine.bin.path().join(file), "").unwrap();
+    }
+    let out = machine
+        .run(None, &["run", "issue-12", "--image", IMAGE, "--no-github"])
+        .await;
+    let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
+    assert!(!out.status.success(), "{stdout}\n{stderr}");
+    assert_eq!(machine.read("claude.args"), "", "claude started");
+    let events = std::fs::read_to_string(machine.folder("issue-12").join("events.jsonl"))
+        .unwrap_or_default();
+    assert!(
+        format!("{stdout}{stderr}{events}").contains("has files and no clone"),
+        "{stdout}\n{stderr}\n{events}"
     );
 }
 
@@ -1901,7 +1996,7 @@ async fn riff_run_goes_on_from_the_branch_of_an_earlier_session() {
     let branch = riff::session_clone::Checkout::Branch {
         name: "worktree-issue-12".into(),
         earlier: true,
-        bundle: None,
+        no_github: false,
     };
     assert_eq!(plan.checkout, branch);
     assert!(
@@ -3416,17 +3511,23 @@ async fn the_daemon_starts_the_lead_from_the_main_clone_of_its_wave_with_the_mer
     assert!(args.iter().any(|a| a == PINNED), "{args:?}");
     assert!(!args.contains(&local), "{args:?}");
     // The lead clones in its container from the git dir of the main clone
-    // of the wave, and the container binds it, with no write (#2139).
+    // of the wave, and the container binds its objects and its refs, with
+    // no write (#2139, 01M7FDN1Y2EQC56748V6P366NT): the same rule as for
+    // each session.
     let git_dir = PathBuf::from(git(
         &machine.main,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
     ));
     let o = git_dir.display().to_string();
-    let bind = format!("{o}:{o}:ro");
-    assert!(
-        args.windows(2).any(|w| w[0] == "-v" && w[1] == bind),
-        "{args:?}"
-    );
+    for part in riff::session_clone::MAIN_PARTS {
+        let bind = format!("{o}/{part}:{o}/{part}:ro");
+        assert!(
+            args.windows(2).any(|w| w[0] == "-v" && w[1] == bind),
+            "{bind}: {args:?}"
+        );
+    }
+    let whole = format!("{o}:{o}:ro");
+    assert!(!args.contains(&whole), "{args:?}");
     let plan = lead_plan(&args);
     assert_eq!(plan.main, git_dir);
     assert_eq!(plan.checkout, riff::session_clone::Checkout::Default);
@@ -4825,11 +4926,14 @@ async fn a_lead_starts_again_from_the_main_clone_of_the_daemon_not_from_its_alte
     ));
     let o = main.display().to_string();
     let args: Vec<String> = machine.read("run.args").lines().map(String::from).collect();
-    let bind = format!("{o}:{o}:ro");
-    assert!(
-        args.windows(2).any(|w| w[0] == "-v" && w[1] == bind),
-        "{args:?}"
-    );
+    // The objects and the refs of the main clone (01M7FDN1Y2EQC56748V6P366NT).
+    for part in riff::session_clone::MAIN_PARTS {
+        let bind = format!("{o}/{part}:{o}/{part}:ro");
+        assert!(
+            args.windows(2).any(|w| w[0] == "-v" && w[1] == bind),
+            "{bind}: {args:?}"
+        );
+    }
     let shown = other.display().to_string();
     assert!(!args.iter().any(|a| a.contains(&shown)), "{args:?}");
     assert!(

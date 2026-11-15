@@ -1390,7 +1390,7 @@ mod tests {
         let main = root.join("main");
         git(&main, &["commit", "-q", "--allow-empty", "-m", "one"]);
         git(&main, &["push", "-q", "origin", "HEAD:main"]);
-        let plan = |name: &str, bundle: PathBuf| crate::session_clone::Plan {
+        let plan = |name: &str| crate::session_clone::Plan {
             path: root.join(name).join("clone"),
             origin: url.clone(),
             main: main.join(".git"),
@@ -1398,26 +1398,61 @@ mod tests {
             checkout: crate::session_clone::Checkout::Branch {
                 name: "worktree-issue-12".into(),
                 earlier: false,
-                bundle: Some(bundle),
+                no_github: true,
             },
         };
-        let end = |plan: &crate::session_clone::Plan| {
+        let end = |plan: &crate::session_clone::Plan, code: i32| {
             plan.make(false).unwrap();
             let script = format!(
-                "cd {} && git -c user.name=w -c user.email=w@w commit -q --allow-empty -m two",
+                "cd {} && git -c user.name=w -c user.email=w@w commit -q --allow-empty -m two \
+                 && exit {code}",
                 plan.path.display()
             );
             let command: Vec<String> = ["sh", "-c", &script].map(String::from).into();
             let pid = Arc::new(AtomicU32::new(0));
             spawn_claude(&command, &pid, Some(plan)).unwrap().end
         };
-        let bundle = root.join("out/worktree-issue-12.bundle");
-        assert_eq!(end(&plan("s", bundle.clone())).await, Some(0));
+        let done = plan("s");
+        assert_eq!(end(&done, 0).await, Some(0));
+        let bundle = root.join("s/out/worktree-issue-12.bundle");
+        assert_eq!(done.bundle_file(), Some(bundle.clone()));
         assert!(bundle.is_file(), "no bundle at the end of claude");
-        // The folder of the bundle is a file: the bundle fails.
-        std::fs::write(root.join("file"), "").unwrap();
-        let fails = plan("t", root.join("file/out/worktree-issue-12.bundle"));
-        assert_eq!(end(&fails).await, Some(1));
+        // The folder of the bundle is a file: the bundle fails. The end
+        // is 1 after a `claude` that ended with 0, and the code of a
+        // `claude` that failed stays.
+        for (name, code, ended) in [("t", 0, 1), ("u", 3, 3)] {
+            let fails = plan(name);
+            std::fs::create_dir_all(root.join(name)).unwrap();
+            std::fs::write(root.join(name).join("out"), "").unwrap();
+            assert_eq!(end(&fails, code).await, Some(ended), "{name}");
+        }
+    }
+
+    /// 01M7EY3WHQQP9330CZ736HK0FJ: the end of a `claude` that ended with no
+    /// code (a signal) and a bundle that fails is 1. With no bundle to
+    /// write, the end is the code of `claude`.
+    #[test]
+    fn a_bundle_that_fails_after_a_signal_ends_with_1() {
+        let dir = tempfile::tempdir().unwrap();
+        let plan = crate::session_clone::Plan {
+            path: dir.path().join("s/clone"),
+            origin: "https://github.com/o/r.git".into(),
+            main: dir.path().join("main/.git"),
+            base: "main".into(),
+            checkout: crate::session_clone::Checkout::Branch {
+                name: "worktree-issue-12".into(),
+                earlier: false,
+                no_github: true,
+            },
+        };
+        // No clone at the path: git fails in the bundle step.
+        std::fs::create_dir_all(dir.path().join("s/out/worktree-issue-12.bundle")).unwrap();
+        assert_eq!(bundle_after(&plan, None), Some(1));
+        let with_github = crate::session_clone::Plan {
+            checkout: crate::session_clone::Checkout::Default,
+            ..plan
+        };
+        assert_eq!(bundle_after(&with_github, Some(5)), Some(5));
     }
 
     /// A fake daemon on a socket in a temp folder.

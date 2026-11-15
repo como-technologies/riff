@@ -62,7 +62,7 @@ fn facts(root: &Path, main: &Path, work: &Work) -> Facts {
         clone: folder.join("clone"),
         repo: "o/r".into(),
         base: "main".into(),
-        checkout: work.checkout(false),
+        checkout: work.checkout(|_| Ok(false)).unwrap(),
         main: main.join(".git"),
         claude: folder.join("claude"),
         sign_in: ClaudeSignIn::Token,
@@ -73,9 +73,11 @@ fn facts(root: &Path, main: &Path, work: &Work) -> Facts {
 
 /// #2139, 01M7EY3P0Q8TQF5QRTRDWCYCTQ: the arguments of `podman` for a
 /// work session and a verify bind no git tree with write. The clone is a
-/// new volume of the container, the git dir of the main clone has no
-/// write, and the plan of the clone names what the relay checks out: the
-/// branch of the item, or the head commit of the pull request.
+/// new volume of the container, and the plan of the clone names what the
+/// relay checks out: the branch of the item, or the head commit of the
+/// pull request. 01M7FDN1Y2EQC56748V6P366NT: of the git dir of the main
+/// clone, they bind its objects, its refs and its packed refs, with no
+/// write, and no `config`, `logs`, `hooks` or `worktrees`.
 #[test]
 fn the_podman_arguments_of_a_work_session_and_a_verify_have_no_writable_bind_of_a_git_tree() {
     let root = tempfile::tempdir().unwrap();
@@ -103,9 +105,29 @@ fn the_podman_arguments_of_a_work_session_and_a_verify_have_no_writable_bind_of_
             "{args:?}"
         );
         let git_dir = facts.main.display().to_string();
-        let ro = format!("{git_dir}:{git_dir}:ro");
+        for part in riff::session_clone::MAIN_PARTS {
+            let ro = format!("{git_dir}/{part}:{git_dir}/{part}:ro");
+            assert!(
+                args.windows(2).any(|w| w[0] == "-v" && w[1] == ro),
+                "{ro}: {args:?}"
+            );
+        }
+        let sources: Vec<&str> = args
+            .windows(2)
+            .filter(|w| w[0] == "-v")
+            .filter_map(|w| w[1].split(':').next())
+            .collect();
+        for part in ["", "/config", "/logs", "/hooks", "/worktrees"] {
+            let shown = format!("{git_dir}{part}");
+            assert!(!sources.contains(&shown.as_str()), "{shown}: {args:?}");
+        }
         assert!(
-            args.windows(2).any(|w| w[0] == "-v" && w[1] == ro),
+            sources
+                .iter()
+                .all(|s| !s.starts_with(&format!("{git_dir}/"))
+                    || riff::session_clone::MAIN_PARTS
+                        .iter()
+                        .any(|p| *s == format!("{git_dir}/{p}"))),
             "{args:?}"
         );
         for bind in args.windows(2).filter(|w| w[0] == "-v").map(|w| &w[1]) {
@@ -126,7 +148,7 @@ fn the_podman_arguments_of_a_work_session_and_a_verify_have_no_writable_bind_of_
         assert_eq!(plan.path, facts.clone);
         assert_eq!(plan.origin, "https://github.com/o/r.git");
         assert_eq!(plan.main, main.join(".git"));
-        assert_eq!(plan.checkout, work.checkout(false));
+        assert_eq!(plan.checkout, work.checkout(|_| Ok(false)).unwrap());
     }
 }
 
@@ -169,12 +191,27 @@ impl Session {
     }
 }
 
-/// The plan of a clone of `main` at `path`, with `origin` at `url`.
+/// The git dir of the main clone `main` as the container sees it
+/// (01M7FDN1Y2EQC56748V6P366NT): `seen/.git` beside it, with a link to
+/// each part that the spec binds, and no config, hook or log.
+fn seen(main: &Path) -> PathBuf {
+    let seen = main.with_file_name("seen").join(".git");
+    if !seen.exists() {
+        std::fs::create_dir_all(&seen).unwrap();
+        for part in riff::session_clone::main_binds(&main.join(".git")) {
+            std::os::unix::fs::symlink(&part, seen.join(part.file_name().unwrap())).unwrap();
+        }
+    }
+    seen
+}
+
+/// The plan of a clone of `main` at `path`, with `origin` at `url`. The
+/// relay reads the main clone as the container sees it ([`seen`]).
 fn plan_at(path: PathBuf, url: &str, main: &Path, checkout: Checkout) -> Plan {
     Plan {
         path,
         origin: url.to_owned(),
-        main: main.join(".git"),
+        main: seen(main),
         base: "main".into(),
         checkout,
     }
@@ -185,7 +222,7 @@ fn branch(earlier: bool) -> Checkout {
     Checkout::Branch {
         name: "worktree-issue-12".into(),
         earlier,
-        bundle: None,
+        no_github: false,
     }
 }
 
@@ -234,7 +271,7 @@ fn a_session_clones_and_pushes_in_its_container_and_the_next_goes_on_from_the_br
     );
     let alternates =
         std::fs::read_to_string(first.path.join(".git/objects/info/alternates")).unwrap();
-    assert_eq!(Path::new(alternates.trim()), main.join(".git/objects"));
+    assert_eq!(Path::new(alternates.trim()), seen(&main).join("objects"));
     let pushed = git(
         &main,
         &["ls-remote", "origin", "refs/heads/worktree-issue-12"],

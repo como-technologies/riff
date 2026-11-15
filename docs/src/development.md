@@ -2161,19 +2161,24 @@ The daemon asks riff-server for no token. The container gets no
 `GH_TOKEN` and no `hosts.yml`, so `gh`, `git fetch` and `git push` do
 not work there. The clone of the session fetches nothing from GitHub:
 it starts from your clone. So `--no-github` works on a private
-repository too. The start text holds the body of the issue. The
-session commits on its branch, and pushes nothing. `riff whoami` in
-the session shows `github   none`. Its clone goes with its container,
-so when `claude` ends, `riff relay` writes the commits of the branch in
-a bundle: `out/worktree-issue-12.bundle` in the folder of the session.
+repository too. Before the start, `riff run` fetches the default
+branch from `origin` into your clone, with your git. When an earlier
+session pushed the branch of the item, it fetches that branch too, and
+the session goes on from it. The start text holds the body of the
+issue. The session commits on its branch, and pushes nothing. `riff
+whoami` in the session shows `github   none`. Its clone goes with its
+container, so when `claude` ends, `riff relay` writes the commits of
+the branch in a bundle: `out/worktree-issue-12.bundle` in the folder
+of the session.
 
 The session can write the folder `out/`, so `riff run` trusts no file
-there. With no pull request, it opens the bundle with no link, copies
-it to `worktree-issue-12.bundle` in the folder of the session, where
-no session writes, checks that the first line of the copy is that of a
-git bundle, and runs `git bundle verify` on the copy in your clone.
-Then it names the copy and the commands that push the branch. Run them
-in your clone:
+there. It opens the bundle with no link, and reads its first line: that
+of a git bundle. It copies at most 1 GiB to `worktree-issue-12.bundle`
+in the folder of the session, where no session writes. Then it runs
+`git bundle verify` on the copy in your clone. It takes the bundle also
+when the branch has an open pull request, and then it sends the verify
+request too, as for each session. Then it names the copy and the
+commands that push the branch. Run them in your clone:
 
 ```sh
 git fetch origin
@@ -2184,12 +2189,13 @@ git push origin FETCH_HEAD:refs/heads/worktree-issue-12
 With no bundle, the session made no commit that `origin` does not
 have, and `riff run` says so. When the relay cannot write the bundle,
 the session ends with 1. When the file in `out/` is no git bundle, for
-example a link or a `gitdir:` file, `riff run` runs no git on it, says
-why, and ends with 1.
+example a link or a `gitdir:` file, or has more than 1 GiB, `riff run`
+runs no git on it, says why, and ends with 1.
 
 ```mermaid
 flowchart LR
-    R["riff run issue-12 --no-github"] --> D["the daemon: no token, no GH_TOKEN"]
+    R["riff run issue-12 --no-github"] --> F["your clone: git fetch origin main worktree-issue-12"]
+    F --> D["the daemon: no token, no GH_TOKEN"]
     D --> C["the session commits on worktree-issue-12"]
     C --> B["riff relay: out/worktree-issue-12.bundle"]
     B --> T["riff run: the copy worktree-issue-12.bundle, with its checks"]
@@ -2245,8 +2251,8 @@ steps:
 1. It starts a worker session, and claims the item.
 2. It looks for the branch `worktree-ITEM` on `origin` from your
    clone, and makes no clone: the session clones in its container
-   from GitHub, on that branch. When `origin` has the branch, the
-   session goes on from it. See
+   from your clone, and fetches `origin` with its token. When `origin`
+   has the branch, the session goes on from it. See
    [Where the clone of a session lives](how-it-works.md#where-the-clone-of-a-session-lives).
 3. It asks the daemon to run the session. When the host has no room,
    the start waits: see
@@ -2510,9 +2516,10 @@ For a folder on another host, add `--host thelio`.
 - An empty volume for the clone of the session, on the disk: the
   session clones there, and the volume goes with the container. No
   folder of your machine with a git tree has write.
-- The git dir of your main clone, `.git`, at the same path with no
-  write: its objects, its refs and its config. The session clones from
-  it, and copies no object.
+- The objects and the refs of your main clone, `.git/objects`,
+  `.git/refs` and `.git/packed-refs`, at the same path with no write.
+  The container sees no config, no hook and no log of your clone: its
+  config can hold a token.
 - For a session with no GitHub, the folder `out/` of the folder of the
   session, with write: the bundle of its branch goes there.
 - Your `~/.gitconfig`, with no write. No `~/.config/gh`.
@@ -5257,7 +5264,7 @@ push each change that you want to keep.
 
 ```mermaid
 flowchart TD
-    S["the container of the lead starts"] --> C["riff relay: a clone of MAIN/.git, git fetch origin<br/>on the default branch of origin"]
+    S["the container of the lead starts"] --> C["riff relay: a clone from the objects and refs of MAIN/.git,<br/>git fetch origin, on the default branch of origin"]
     C --> L["claude, or claude --resume, in the new clone"]
     L -- "the container ends" --> X["the clone goes:<br/>only what the lead pushed stays"]
     O["leads/OWNER-REPO/clone of an older riff"] -- "the start of a new lead" --> R["it goes, with no git"]
@@ -5641,10 +5648,12 @@ The test does these steps. The messages name them:
    [What the home check compares](#what-the-home-check-compares).
 8. Push the branch: the clone of the session went with its container,
    and its commits are in the bundle `out/BRANCH.bundle` of its folder.
-   The test fetches the branch from the bundle into the clone of the
-   test, with your git on the host, pushes it, and opens the pull
-   request with your `gh`. It runs no git in the folder of the session.
-   The step fails when the session made no commit.
+   `riff run` checked that bundle, and copied it to `BRANCH.bundle` in
+   the folder of the session. The test fetches the branch from that
+   copy into the clone of the test, with your git on the host, pushes
+   it, and opens the pull request with your `gh`. It runs no git on a
+   file that the session can write. The step fails when the session
+   made no commit.
 9. Find the pull request: the branch of the session has an open pull
    request.
 10. Check the change: the pull request adds the line to the book.

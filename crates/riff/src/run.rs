@@ -29,7 +29,7 @@
 //!     H->>D: start SPEC, with no token of the person
 //!     D->>S: the token of the session on GitHub: no token of an App, no start
 //!     D->>C: start riff relay, with the socket of the session and an empty volume
-//!     C->>C: clone MAIN/.git with no write: no object copied
+//!     C->>C: clone from the objects and refs of MAIN/.git, no write: no object copied
 //!     C->>G: git fetch origin, then the branch worktree-ITEM
 //!     D->>C: the start text, one stream-json line on the socket
 //!     C-->>D: the events, one line each, with their numbers
@@ -72,23 +72,28 @@
 //! ([`crate::daemon::gh_token::ActsAs::NoGitHub`]). The start text holds
 //! the body of the issue ([`Frame::issue`],
 //! [`text::run_start_no_github`]): the session commits, and pushes
-//! nothing. With no token, its clone fetches nothing from GitHub: it
-//! starts from the main clone ([`crate::session_clone`]). Its clone goes
-//! with its container, so when `claude` ends the relay writes the
-//! commits of the branch in a bundle in the folder [`OUT`] of the folder
-//! of the session, the one bind of the session for it
-//! ([`crate::session_clone::Plan::bundle`]). At the end, `riff run` does
-//! its steps as for each session. With no pull request of the branch, it
-//! takes the bundle with its checks ([`take_bundle`]): a copy in the
-//! folder of the session. It names the copy and the commands that push
-//! the branch from a clone of the person ([`text::run_pushed_nothing`]),
-//! and exits with 0 when `claude` ended with 0. A file that is no bundle
-//! gets no git: riff says why ([`text::run_bundle_refused`]), and exits
-//! with 1.
+//! nothing. Its clone fetches nothing from GitHub: it starts from the
+//! main clone ([`crate::session_clone`]). So before the start, `riff
+//! run` fetches the default branch, and the branch of the item when
+//! `origin` has it, into the main clone ([`fetch_for_no_github`],
+//! 01M7FDN99KZE54CX17DDEP787V). Its clone goes with its container, so
+//! when `claude` ends the relay writes the commits of the branch in a
+//! bundle in the folder [`OUT`] of the folder of the session, the one
+//! bind of the session for it ([`crate::session_clone::Plan::bundle`]).
+//! At the end, `riff run` takes the bundle with its checks
+//! ([`take_bundle`]), also when the branch has an open pull request: a
+//! copy in the folder of the session ([`bundle_copy`]). It names the copy
+//! and the commands that push the branch from a clone of the person
+//! ([`text::run_pushed_nothing`]), and exits with 0 when `claude` ended
+//! with 0. With an open pull request, it also sends the verify request,
+//! as for each session (01M7FDN9C91TDYPQSFBRHVHRAC). A file that is no
+//! bundle gets no git: riff says why ([`text::run_bundle_refused`]), and
+//! exits with 1.
 //!
 //! ```mermaid
 //! flowchart LR
-//!     R["riff run ITEM --no-github"] --> D["the daemon: no token, no GH_TOKEN"]
+//!     R["riff run ITEM --no-github"] --> F["the main clone: git fetch origin BASE BRANCH"]
+//!     F --> D["the daemon: no token, no GH_TOKEN"]
 //!     D --> C["the session commits on its branch"]
 //!     C --> B["the relay: out/BRANCH.bundle"]
 //!     B --> T["riff run: a copy, BRANCH.bundle, with its checks"]
@@ -197,8 +202,8 @@
 //! |---|---|
 //! | `repo` | The repository `OWNER/REPO` of the session. The host writes it before the start, and the sweep reads it ([`crate::daemon::sweep::note_repo`], 01M7DZ42EVHAT8N5MZEV97G3DW). |
 //! | `clone/` | No folder of the host: the clone of the session is at this path in its container only, an empty volume of the container where the relay clones ([`crate::session_clone`], 01M7EY3P0Q8TQF5QRTRDWCYCTQ). It goes with the container. The host runs no git in the folder of a session ([`crate::host_git`]). |
-//! | `out/` | With no GitHub only: the bundle of the branch of the session, which the relay writes when `claude` ends ([`OUT`], 01M7EY3WHQQP9330CZ736HK0FJ). The session can write it. |
-//! | `BRANCH.bundle` | With no GitHub only: the copy of the bundle that `riff run` checked ([`take_bundle`]). No session sees it, and the person fetches from it. |
+//! | `out/` | With no GitHub only: the bundle of the branch of the session, which the relay writes when `claude` ends ([`bundle_out`], 01M7EY3WHQQP9330CZ736HK0FJ). The session can write it. |
+//! | `BRANCH.bundle` | With no GitHub only: the copy of the bundle that `riff run` checked ([`bundle_copy`], [`take_bundle`]). No session sees it, and the person fetches from it. |
 //! | `claude/` | The own Claude folder of the session ([`claude_folder`]): the first-run answers of `claude` with the trust of the clone, no attribution line of `claude`, and the auto mode settings ([`settings`]). |
 //! | `events.jsonl` | Each event of `claude`, with no secret ([`Scrub`]). The daemon writes it. |
 //!
@@ -217,7 +222,7 @@
 //! | The folders of the home | a tmpfs of the session user at each folder above a bind, and at `~/.cache`, `~/.local`, `~/.local/share` and `~/.local/state` ([`SessionSpec::home_folders`]) | 01M748WY71EFVZR6SG5CCEQYE0 |
 //! | The size of each tmpfs of the home | `tmpfs-size=1g` ([`crate::runtime::HOME_TMPFS_GIB`]): a larger write fails with no space left, and does not fill the memory | 01M7DYR99QK609NF61GGCN75QQ |
 //! | The clone | an empty volume of the container at the path of the clone, the working folder ([`crate::runtime::Source::Empty`]), and the plan of the clone in `RIFF_CLONE` ([`crate::session_clone::Plan`]): the relay clones there. No git tree of the host has write | 01M4Z60B7PTJMB37578K8FV22Q, 01M7EY3P0Q8TQF5QRTRDWCYCTQ |
-//! | The git dir of the main clone | `MAIN/.git`: no write, at the same path. The relay clones from it ([`crate::session_clone`]) | 01M7EY3P0Q8TQF5QRTRDWCYCTQ |
+//! | The git dir of the main clone | its `objects/`, its `refs/` and its `packed-refs` only ([`crate::session_clone::main_binds`]): no write, at the same path. No config, no hook, no log, no worktree. The relay clones from them ([`crate::session_clone`]) | 01M7EY3P0Q8TQF5QRTRDWCYCTQ, 01M7FDN1Y2EQC56748V6P366NT |
 //! | `~/.gitconfig` | no write, when it exists. No `~/.config/gh` | 01M4Z60B7QDWEFQ96H448RE9N2, 01M6WPMP035A93SM6SAJGS6MTC |
 //! | The sign-in of `gh` | no `GH_TOKEN`, never the token of the person: the daemon adds the folder of the token of the session and `GH_CONFIG_DIR` ([`crate::daemon::gh_token`]) | 01M6Z87A04EXTT1FFJSJ1EM6TB, 01M6WPMNXN1BSBEH74TG5DDRTF |
 //! | No signature | `commit.gpgsign=false` by `GIT_CONFIG_*` ([`git_config`]) | 01M4Z60B89G8YNVMTEPGX7FQCV |
@@ -295,12 +300,13 @@ pub struct Facts {
     /// The default branch of `origin`, from `origin/HEAD` of the main
     /// clone ([`crate::permissions::Project::of`]).
     pub base: String,
-    /// What the clone of the session checks out. With no GitHub, it names
-    /// the file of the bundle of the branch, in the folder [`OUT`] of the
-    /// folder of the session.
+    /// What the clone of the session checks out. With no GitHub, the
+    /// relay writes the bundle of the branch in the folder [`OUT`] of the
+    /// folder of the session ([`bundle_out`]).
     pub checkout: Checkout,
     /// The git dir of the main clone, `MAIN/.git`: the session clones from
-    /// it, and the container sees it at the same path with no write.
+    /// it, and the container sees its objects and its refs at the same
+    /// path with no write ([`crate::session_clone::main_binds`]).
     pub main: PathBuf,
     /// The own Claude folder of the session.
     pub claude: PathBuf,
@@ -341,7 +347,7 @@ pub enum ClaudeSignIn {
 ///     clone: "/data/riff/sessions/issue-12-1a2b3c4d/clone".into(),
 ///     repo: "o/r".into(),
 ///     base: "main".into(),
-///     checkout: Checkout::Branch { name: "worktree-issue-12".into(), earlier: false, bundle: None },
+///     checkout: Checkout::Branch { name: "worktree-issue-12".into(), earlier: false, no_github: false },
 ///     main: "/src/riff/.git".into(),
 ///     claude: "/data/riff/sessions/issue-12-1a2b3c4d/claude".into(),
 ///     sign_in: ClaudeSignIn::File("/home/mike/.claude/.credentials.json".into()),
@@ -366,14 +372,20 @@ pub enum ClaudeSignIn {
 ///     base: "main".into(),
 ///     checkout: facts.checkout.clone(),
 /// }));
-/// // The git dir of the main clone: at the same path, with no write.
-/// let main = spec.binds.iter().find(|b| b.target == facts.main).unwrap();
-/// assert_eq!((&main.source, main.write), (&Source::Path(facts.main.clone()), false));
+/// // The objects and the refs of the main clone: at the same path, with
+/// // no write. No config, no hook, no log, no worktree, and no
+/// // `packed-refs` that the host does not have.
+/// for part in ["objects", "refs"] {
+///     let at = facts.main.join(part);
+///     let bind = spec.binds.iter().find(|b| b.target == at).unwrap();
+///     assert_eq!((&bind.source, bind.write), (&Source::Path(at.clone()), false));
+/// }
+/// assert!(!spec.binds.iter().any(|b| b.target == facts.main || b.target.ends_with("packed-refs")));
 /// // With no GitHub, the folder of the bundle has write.
-/// let bundle = "/data/riff/sessions/issue-12-1a2b3c4d/out/worktree-issue-12.bundle";
-/// let checkout = Checkout::Branch { name: "worktree-issue-12".into(), earlier: false, bundle: Some(bundle.into()) };
+/// let checkout = Checkout::Branch { name: "worktree-issue-12".into(), earlier: false, no_github: true };
 /// let offline = riff::run::spec(&Facts { checkout, ..facts.clone() });
 /// let out = offline.binds.iter().find(|b| b.target.ends_with("out")).unwrap();
+/// assert_eq!(out.target, std::path::Path::new("/data/riff/sessions/issue-12-1a2b3c4d/out"));
 /// assert_eq!((out.source == Source::Path(out.target.clone()), out.write), (true, true));
 /// // No token of the person (01M6Z87A04EXTT1FFJSJ1EM6TB): the daemon adds
 /// // the folder of the token of the session.
@@ -426,9 +438,17 @@ pub fn spec(facts: &Facts) -> SessionSpec {
         write: true,
     };
     let plan = plan(facts);
-    let mut binds = vec![clone, path(&facts.main, false)];
+    let mut binds = vec![clone];
+    // The objects and the refs of the main clone only: its config can
+    // hold a token of the person (01M7FDN1Y2EQC56748V6P366NT).
+    binds.extend(
+        crate::session_clone::main_binds(&facts.main)
+            .iter()
+            .map(|part| path(part, false)),
+    );
     binds.extend(
         plan.bundle_file()
+            .as_deref()
             .and_then(Path::parent)
             .map(|out| path(out, true)),
     );
@@ -531,6 +551,52 @@ fn plan(facts: &Facts) -> crate::session_clone::Plan {
 /// The folder of the bundle of a session with no GitHub, in the folder
 /// of the session ([`crate::session_clone::Plan::bundle`]).
 pub const OUT: &str = "out";
+
+/// The path of the clone of a session in its container, in the folder
+/// `folder` of the session or of the lead: `clone/`. The host has no
+/// folder there ([`crate::session_clone`]).
+///
+/// ```
+/// let folder = std::path::Path::new("/d/riff/sessions/issue-12-1a2b3c4d");
+/// assert_eq!(riff::run::clone_in(folder), folder.join("clone"));
+/// assert_eq!(riff::run::claude_in(folder), folder.join("claude"));
+/// ```
+pub fn clone_in(folder: &Path) -> PathBuf {
+    folder.join("clone")
+}
+
+/// The own Claude folder of a session in the folder `folder` of the
+/// session or of the lead: `claude/` ([`claude_folder`]).
+pub fn claude_in(folder: &Path) -> PathBuf {
+    folder.join("claude")
+}
+
+/// The bundle of the branch `branch` that the relay of a session with no
+/// GitHub writes, in the folder `folder` of the session:
+/// `out/BRANCH.bundle` ([`OUT`], [`crate::session_clone::Plan::bundle`]).
+/// The session can write it.
+///
+/// ```
+/// let folder = std::path::Path::new("/d/riff/sessions/issue-12-1a2b3c4d");
+/// assert_eq!(
+///     riff::run::bundle_out(folder, "worktree-issue-12"),
+///     folder.join("out/worktree-issue-12.bundle")
+/// );
+/// assert_eq!(
+///     riff::run::bundle_copy(folder, "worktree-issue-12"),
+///     folder.join("worktree-issue-12.bundle")
+/// );
+/// ```
+pub fn bundle_out(folder: &Path, branch: &str) -> PathBuf {
+    folder.join(OUT).join(format!("{branch}.bundle"))
+}
+
+/// The copy of the bundle of [`bundle_out`] that `riff run` checked
+/// ([`take_bundle`]), in the folder `folder` of the session:
+/// `BRANCH.bundle`. No session sees it, and the person fetches from it.
+pub fn bundle_copy(folder: &Path, branch: &str) -> PathBuf {
+    folder.join(format!("{branch}.bundle"))
+}
 
 /// The key of the credential helper of git for GitHub.
 pub const GIT_HELPER: &str = "credential.https://github.com.helper";
@@ -2068,6 +2134,30 @@ pub fn earlier(main: &Path, branch: &str) -> Result<bool> {
     )
 }
 
+/// Before the start of a session of `riff run --no-github`: fetches the
+/// default branch `base`, and the branch `branch` of the item when the
+/// look on `origin` found it (`earlier`, [`earlier`]), from `origin` into
+/// `refs/remotes/origin` of the main clone `main`, with the git of the
+/// person (01M7FDN99KZE54CX17DDEP787V). The clone of such a session
+/// fetches nothing from GitHub, and starts from the view of the main
+/// clone ([`crate::session_clone`]): so it goes on from the branch on
+/// `origin` too.
+pub fn fetch_for_no_github(main: &Path, base: &str, branch: &str, earlier: bool) -> Result<()> {
+    let remote = crate::host_git::output(main, &["remote", "get-url", "origin"])?;
+    let spec = |name: &str| format!("+refs/heads/{name}:refs/remotes/origin/{name}");
+    let mut args = vec![
+        "fetch".to_owned(),
+        "-q".into(),
+        "--no-tags".into(),
+        "--".into(),
+        remote.clone(),
+        spec(base),
+    ];
+    args.extend(earlier.then(|| spec(branch)));
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    git_credential::run(main, &remote, &args).map(drop)
+}
+
 /// What the terminal shows of the events of one session: the lines of
 /// each event ([`event_lines`]), and a line when `claude` waits for its
 /// background tasks after the `result` of a turn
@@ -2509,8 +2599,8 @@ async fn work(
     // The sweep reads the repository here, not in the clone
     // (01M7DZ42EVHAT8N5MZEV97G3DW).
     daemon::sweep::note_repo(&folder, &me.place().repo_text())?;
-    let clone = folder.join("clone");
-    let claude = folder.join("claude");
+    let clone = clone_in(&folder);
+    let claude = claude_in(&folder);
     let sources = session_image::merged_sources(main)?;
     let auto = crate::permissions::Trust::of(me.place().repo(), server, &sources);
     let home = &checked.host.home;
@@ -2523,18 +2613,23 @@ async fn work(
     )?;
     let branch = branch(item);
     let earlier = earlier(main, &branch)?;
-    // With no GitHub, the relay gives the branch in a bundle
-    // (01M7EY3WHQQP9330CZ736HK0FJ).
-    let bundle = no_github.then(|| folder.join(OUT).join(format!("{branch}.bundle")));
-    let copy = folder.join(format!("{branch}.bundle"));
-    if let Some(out) = bundle.as_deref().and_then(Path::parent) {
-        std::fs::create_dir_all(out).with_context(|| format!("cannot make {}", out.display()))?;
-    }
-    let existing = |p: PathBuf| p.exists().then_some(p);
-    let repo = me.place().repo_text();
     // The main clone has the `origin/HEAD` of the forge: its branch is
     // the default branch (01M7EY3WM6XYQR3CXNMM6MFA5C).
     let base = crate::permissions::Project::of(main).branch;
+    // With no GitHub, the clone of the session fetches nothing: the main
+    // clone gets the branches first (01M7FDN99KZE54CX17DDEP787V). The
+    // relay gives the branch in a bundle, and `riff run` takes a copy
+    // (01M7EY3WHQQP9330CZ736HK0FJ).
+    let bundle = no_github.then(|| (bundle_out(&folder, &branch), bundle_copy(&folder, &branch)));
+    if let Some((out, _)) = &bundle {
+        fetch_for_no_github(main, &base, &branch, earlier)?;
+        if let Some(out) = out.parent() {
+            std::fs::create_dir_all(out)
+                .with_context(|| format!("cannot make {}", out.display()))?;
+        }
+    }
+    let existing = |p: PathBuf| p.exists().then_some(p);
+    let repo = me.place().repo_text();
     let facts = Facts {
         session: session.to_owned(),
         item: item.to_owned(),
@@ -2547,7 +2642,7 @@ async fn work(
         checkout: Checkout::Branch {
             name: branch.clone(),
             earlier,
-            bundle: bundle.clone(),
+            no_github,
         },
         main: common.to_owned(),
         claude,
@@ -2614,53 +2709,52 @@ async fn work(
         ])
         .ok()
         .filter(|p| p.state == "OPEN");
-    let delivered = match &pull {
-        Some(pull) => {
-            println!("{}", text::run_pull(pull.number, &pull.url));
-            let body = text::run_verify_request(
-                item,
-                pull.number,
-                &branch,
-                &pull.head_ref_oid,
-                short(session),
-            );
-            let to = [Selector::lead(&repo)];
-            let ending = api.with_budget(END_BUDGET);
-            let ask = async {
-                let gh = pr::Gh::here("run");
-                if let Some(why) = no_verify_now(&ending, me, thread, gh, item, issue).await? {
-                    println!("{}", text::run_no_verify(item, &why));
-                    return Ok(());
-                }
-                ending
-                    .post(me, Some(thread), &to, &body, Kind::Message)
-                    .await
-                    .map(drop)
-            };
-            if let Some(Err(e)) = steps.send(text::RUN_VERIFY_REQUEST, ask).await {
-                eprintln!("riff: {e:#}");
+    if let Some(pull) = &pull {
+        println!("{}", text::run_pull(pull.number, &pull.url));
+        let body = text::run_verify_request(
+            item,
+            pull.number,
+            &branch,
+            &pull.head_ref_oid,
+            short(session),
+        );
+        let to = [Selector::lead(&repo)];
+        let ending = api.with_budget(END_BUDGET);
+        let ask = async {
+            let gh = pr::Gh::here("run");
+            if let Some(why) = no_verify_now(&ending, me, thread, gh, item, issue).await? {
+                println!("{}", text::run_no_verify(item, &why));
+                return Ok(());
             }
-            true
+            ending
+                .post(me, Some(thread), &to, &body, Kind::Message)
+                .await
+                .map(drop)
+        };
+        if let Some(Err(e)) = steps.send(text::RUN_VERIFY_REQUEST, ask).await {
+            eprintln!("riff: {e:#}");
         }
+    }
+    let delivered = match &bundle {
         // A session with no GitHub pushed nothing: the person pushes the
-        // branch from the copy of its bundle that riff checked
-        // (01M7EY3WHQQP9330CZ736HK0FJ).
-        None => match &bundle {
-            Some(out) => match take_bundle(out, &copy, main) {
-                Ok(taken) => {
-                    println!("{}", text::run_pushed_nothing(taken.as_deref(), &branch));
-                    true
-                }
-                Err(e) => {
-                    println!("{}", text::run_bundle_refused(out, &format!("{e:#}")));
-                    false
-                }
-            },
-            None => {
-                println!("{}", text::run_no_pull(&branch));
+        // branch from the copy of its bundle that riff checked, also with
+        // an open pull request (01M7EY3WHQQP9330CZ736HK0FJ,
+        // 01M7FDN9C91TDYPQSFBRHVHRAC).
+        Some((out, copy)) => match take_bundle(out, copy, main) {
+            Ok(taken) => {
+                println!("{}", text::run_pushed_nothing(taken.as_deref(), &branch));
+                true
+            }
+            Err(e) => {
+                println!("{}", text::run_bundle_refused(out, &format!("{e:#}")));
                 false
             }
         },
+        None if pull.is_some() => true,
+        None => {
+            println!("{}", text::run_no_pull(&branch));
+            false
+        }
     };
     Ok(i32::from(
         !(ended.code == Some(0) && !ended.failed && delivered),
@@ -2668,8 +2762,12 @@ async fn work(
 }
 
 /// The first lines of a git bundle that riff takes: of version 2 and of
-/// version 3 ([`take_bundle`]).
+/// version 3 ([`take_bundle`]). Each has 16 bytes.
 pub const BUNDLE_HEADS: [&str; 2] = ["# v2 git bundle\n", "# v3 git bundle\n"];
+
+/// The most bytes of a bundle that `riff run` copies ([`take_bundle`]):
+/// 1 GiB (01M7FDN9EWZ28AQS4CKJQD3A3B).
+pub const BUNDLE_LIMIT: u64 = 1 << 30;
 
 /// Takes the bundle `out` that a session with no GitHub wrote
 /// ([`crate::session_clone::Plan::bundle`], 01M7EY3WHQQP9330CZ736HK0FJ).
@@ -2678,12 +2776,15 @@ pub const BUNDLE_HEADS: [&str; 2] = ["# v2 git bundle\n", "# v3 git bundle\n"];
 ///
 /// 1. It opens `out` with no link (`O_NOFOLLOW`), and only a plain file
 ///    counts: no link, no folder, no pipe.
-/// 2. It copies that open file to `copy`, in the folder of the session,
-///    which no session sees. A change of `out` after the open does not
-///    change the copy.
-/// 3. The first line of the copy is one of [`BUNDLE_HEADS`]: a `gitdir:`
-///    file is no bundle, and git never reads it as a repository.
-/// 4. `git bundle verify` of the copy, in the main clone `main`: the
+/// 2. The file has at most [`BUNDLE_LIMIT`] bytes.
+/// 3. Its first line, from the first bytes of the open file, is one of
+///    [`BUNDLE_HEADS`]: a `gitdir:` file is no bundle, riff copies no
+///    more of it, and git never reads it as a repository.
+/// 4. It copies the rest of that open file to `copy`, in the folder of
+///    the session, which no session sees, up to the limit: a file that
+///    grows over the limit during the copy is refused. A new file in the
+///    place of `out` after the open does not change the copy.
+/// 5. `git bundle verify` of the copy, in the main clone `main`: the
 ///    bundle is whole, and the main clone has each commit that it needs.
 ///
 /// It gives the copy, or `None` with no file at `out`: no commit to
@@ -2705,7 +2806,7 @@ pub const BUNDLE_HEADS: [&str; 2] = ["# v2 git bundle\n", "# v3 git bundle\n"];
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn take_bundle(out: &Path, copy: &Path, main: &Path) -> Result<Option<PathBuf>> {
-    use std::io::Read;
+    use std::io::{Read, Write};
     use std::os::unix::fs::OpenOptionsExt;
     let opened = std::fs::OpenOptions::new()
         .read(true)
@@ -2717,12 +2818,22 @@ pub fn take_bundle(out: &Path, copy: &Path, main: &Path) -> Result<Option<PathBu
         Err(e) => return Err(e).with_context(|| format!("cannot open {}", out.display())),
         Ok(file) => file,
     };
-    if !file
+    let meta = file
         .metadata()
-        .with_context(|| format!("cannot read {}", out.display()))?
-        .is_file()
-    {
+        .with_context(|| format!("cannot read {}", out.display()))?;
+    if !meta.is_file() {
         bail!("it is no plain file");
+    }
+    if meta.len() > BUNDLE_LIMIT {
+        bail!("{}", text::run_bundle_too_large(BUNDLE_LIMIT));
+    }
+    let mut head = Vec::new();
+    (&mut file)
+        .take(16)
+        .read_to_end(&mut head)
+        .with_context(|| format!("cannot read {}", out.display()))?;
+    if !BUNDLE_HEADS.iter().any(|h| head == h.as_bytes()) {
+        bail!("it is no git bundle");
     }
     match std::fs::remove_file(copy) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
@@ -2736,14 +2847,14 @@ pub fn take_bundle(out: &Path, copy: &Path, main: &Path) -> Result<Option<PathBu
             .create_new(true)
             .open(copy)
             .with_context(|| format!("cannot make {}", copy.display()))?;
-        std::io::copy(&mut file, &mut to)
+        to.write_all(&head)
+            .with_context(|| format!("cannot write {}", copy.display()))?;
+        // One byte over the limit is enough to refuse the file.
+        let rest = BUNDLE_LIMIT + 1 - head.len() as u64;
+        let copied = std::io::copy(&mut (&mut file).take(rest), &mut to)
             .with_context(|| format!("cannot copy {} to {}", out.display(), copy.display()))?;
-        let mut head = Vec::new();
-        std::fs::File::open(copy)
-            .and_then(|f| f.take(16).read_to_end(&mut head))
-            .with_context(|| format!("cannot read {}", copy.display()))?;
-        if !BUNDLE_HEADS.iter().any(|h| head == h.as_bytes()) {
-            bail!("it is no git bundle");
+        if copied + head.len() as u64 > BUNDLE_LIMIT {
+            bail!("{}", text::run_bundle_too_large(BUNDLE_LIMIT));
         }
         let at = copy.to_string_lossy();
         crate::host_git::output(main, &["bundle", "verify", "-q", &at])?;
@@ -2829,6 +2940,103 @@ mod tests {
             git(&other, &["log", "-1", "--format=%s", "FETCH_HEAD"]),
             "work"
         );
+    }
+
+    /// 01M7FDN9EWZ28AQS4CKJQD3A3B: `riff run` refuses a file of more than
+    /// [`BUNDLE_LIMIT`] with the first line of a bundle, and a file whose
+    /// first line is no bundle, before the copy: no copy is there. Here
+    /// the large file is sparse, so the test writes no 1 GiB.
+    #[test]
+    fn riff_run_refuses_a_bundle_over_the_limit_and_a_bad_first_line() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path();
+        let (out, copy) = (root.join("out.bundle"), root.join("copy.bundle"));
+        let large = std::fs::File::create(&out).unwrap();
+        std::io::Write::write_all(&mut &large, BUNDLE_HEADS[0].as_bytes()).unwrap();
+        large.set_len(BUNDLE_LIMIT + 1).unwrap();
+        let error = take_bundle(&out, &copy, root).unwrap_err();
+        assert_eq!(error.to_string(), text::run_bundle_too_large(BUNDLE_LIMIT));
+        assert!(!copy.exists());
+        drop(large);
+        std::fs::write(&out, "# v4 git bundle\nmore bytes of no bundle\n").unwrap();
+        let error = take_bundle(&out, &copy, root).unwrap_err();
+        assert!(error.to_string().contains("no git bundle"), "{error}");
+        assert!(!copy.exists());
+        std::fs::write(&out, "# v2").unwrap();
+        assert!(take_bundle(&out, &copy, root).is_err());
+    }
+
+    /// 01M7EY3WHQQP9330CZ736HK0FJ: a folder and a pipe in the place of the
+    /// bundle are no plain file, and a bundle that `git bundle verify`
+    /// refuses gives no copy: here one whose commit the main clone does
+    /// not have.
+    #[test]
+    fn riff_run_refuses_a_folder_a_pipe_and_a_bundle_that_does_not_verify() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path();
+        let copy = root.join("copy.bundle");
+        let folder = root.join("folder.bundle");
+        std::fs::create_dir(&folder).unwrap();
+        let error = take_bundle(&folder, &copy, root).unwrap_err();
+        assert!(error.to_string().contains("no plain file"), "{error}");
+        let pipe = root.join("pipe.bundle");
+        nix::unistd::mkfifo(&pipe, nix::sys::stat::Mode::S_IRWXU).unwrap();
+        let error = take_bundle(&pipe, &copy, root).unwrap_err();
+        assert!(error.to_string().contains("no plain file"), "{error}");
+
+        git(root, &["init", "-q", "-b", "main", "main"]);
+        git(root, &["init", "-q", "-b", "main", "other"]);
+        let (main, other) = (root.join("main"), root.join("other"));
+        git(&main, &["commit", "-q", "--allow-empty", "-m", "start"]);
+        git(&other, &["commit", "-q", "--allow-empty", "-m", "one"]);
+        git(&other, &["commit", "-q", "--allow-empty", "-m", "two"]);
+        let out = root.join("out.bundle");
+        let at = out.to_string_lossy();
+        git(&other, &["bundle", "create", "-q", &at, "HEAD~1..HEAD"]);
+        let error = take_bundle(&out, &copy, &main).unwrap_err();
+        assert!(format!("{error:#}").contains("bundle verify"), "{error:#}");
+        assert!(!copy.exists());
+    }
+
+    /// 01M7FDN99KZE54CX17DDEP787V: before a session of `riff run
+    /// --no-github`, the main clone gets the default branch and the branch
+    /// of the item from `origin`, which another clone pushed. With no
+    /// branch on `origin`, it gets the default branch only.
+    #[test]
+    fn with_no_github_the_main_clone_gets_the_branches_of_origin_first() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path();
+        git(root, &["init", "-q", "--bare", "-b", "main", "origin.git"]);
+        git(root, &["clone", "-q", "origin.git", "main"]);
+        git(root, &["clone", "-q", "origin.git", "other"]);
+        let (main, other) = (root.join("main"), root.join("other"));
+        git(&main, &["commit", "-q", "--allow-empty", "-m", "start"]);
+        git(&main, &["push", "-q", "origin", "HEAD:main"]);
+        git(&other, &["pull", "-q", "origin", "main"]);
+        git(&other, &["commit", "-q", "--allow-empty", "-m", "newer"]);
+        git(&other, &["push", "-q", "origin", "HEAD:main"]);
+        let seen = |name: &str| {
+            git(
+                &main,
+                &[
+                    "for-each-ref",
+                    "--format=%(subject)",
+                    &format!("refs/remotes/origin/{name}"),
+                ],
+            )
+        };
+        fetch_for_no_github(&main, "main", "worktree-issue-12", false).unwrap();
+        assert_eq!(seen("main"), "newer");
+        assert_eq!(seen("worktree-issue-12"), "");
+        git(
+            &other,
+            &["commit", "-q", "--allow-empty", "-m", "WIP: earlier"],
+        );
+        git(&other, &["push", "-q", "origin", "HEAD:worktree-issue-12"]);
+        let earlier = earlier(&main, "worktree-issue-12").unwrap();
+        assert!(earlier);
+        fetch_for_no_github(&main, "main", "worktree-issue-12", earlier).unwrap();
+        assert_eq!(seen("worktree-issue-12"), "WIP: earlier");
     }
 
     /// 01M7DZ42C8SY2GV5ZQJZHM2VTV: the host looks for the branch of the
@@ -3039,7 +3247,7 @@ mod tests {
             checkout: Checkout::Branch {
                 name: "worktree-issue-12".into(),
                 earlier: false,
-                bundle: None,
+                no_github: false,
             },
             main: "/src/riff/.git".into(),
             claude: "/r/sessions/issue-12-1a2b3c4d/claude".into(),
@@ -3125,7 +3333,8 @@ mod tests {
             binds,
             [
                 "an empty volume -> /r/sessions/issue-12-1a2b3c4d/clone",
-                "/src/riff/.git -> /src/riff/.git (no write)",
+                "/src/riff/.git/objects -> /src/riff/.git/objects (no write)",
+                "/src/riff/.git/refs -> /src/riff/.git/refs (no write)",
                 "/home/mike/.gitconfig -> /home/mike/.gitconfig (no write)",
                 "/r/sessions/issue-12-1a2b3c4d/claude -> /home/mike/.claude",
                 "/home/mike/.claude/.credentials.json -> /home/mike/.claude/.credentials.json \
@@ -3237,7 +3446,7 @@ mod tests {
                 "RIFF_CLONE={\"path\":\"/r/sessions/issue-12-1a2b3c4d/clone\",\
                  \"origin\":\"https://github.com/o/r.git\",\"main\":\"/src/riff/.git\",\
                  \"base\":\"main\",\"checkout\":{\"branch\":{\"name\":\"worktree-issue-12\",\
-                 \"earlier\":false,\"bundle\":null}}}",
+                 \"earlier\":false,\"no_github\":false}}}",
             ]
         );
         assert_eq!(

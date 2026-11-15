@@ -6846,9 +6846,7 @@ of this part when they merge.
   a session, and binds no git tree with write into a container. The
   spec of a session has an empty volume of its container at the path
   of its clone, on the disk and not in the tmpfs of the home: podman
-  run --rm removes it with the container. The container sees the git
-  dir of the main clone, MAIN/.git, at the same path with no write:
-  its objects, its refs and its config. The spec gives the plan
+  run --rm removes it with the container. The spec gives the plan
   of the clone to the relay in the variable RIFF_CLONE, and claude
   does not get it. Before claude starts, also with a terminal, the
   relay makes the clone in that folder: git init, MAIN/.git/objects
@@ -6873,6 +6871,16 @@ of this part when they merge.
   01M5QVARWYFHTQV5THNRB09SZA, 01M4ZKX0NXN7E33VC3PSFGSPDT,
   01M4ZV3B6Q0Y6AX0KSKC55S31R, 01M501P9Q51AYN9GBPWKVHA229 and
   01M4Z81ARSTAK8HR96S084SDFD: the clone of the host.
+- **01M7FDN1Y2EQC56748V6P366NT** The container of a session sees three
+  parts of the git dir of the main clone, at the same path with no
+  write: objects/, refs/, and packed-refs when the main clone has it. It
+  sees no config, no hook, no log and no worktree of the main clone. The
+  same rule holds for riff run, a wave and the lead. Before its fetch
+  from the main clone, the relay makes the git dir riff-main in the .git
+  of the new clone, with its own HEAD and a link to each of those parts,
+  and fetches the branches of origin from it. Then that git dir goes.
+  This supersedes 01M7EY3P0Q8TQF5QRTRDWCYCTQ in part: the bind of the
+  whole git dir of the main clone.
 
 ### The waves of the daemon
 
@@ -8709,24 +8717,41 @@ of this part when they merge.
   of the folder of the session, with no git tree of the host. riff
   binds that folder out/ with write for such a session only. With
   no such commit, or with no branch, it writes no bundle. When the
-  bundle fails, the exit is 1. With no pull request of the branch,
-  riff run takes the bundle: it opens the file with no link, copies
-  it to BRANCH.bundle in the folder of the session, which no session
-  sees, checks that the first line of the copy is that of a git bundle
-  of version 2 or 3, and runs git bundle verify on the copy in the
-  main clone. It runs no git on the file in out/. Then it names the
-  copy and the commands that push the branch from a clone of the
-  person, or says that the session made no commit. When the file is
-  no git bundle, riff run says why, and ends with 1. This supersedes
-  01M6Z87JY83V3KR72E2AG8V8KG and 01M4Z60B7QDWEFQ96H448RE9N2 in part:
-  the clone and the command to push the branch, and the binds with
-  write.
+  bundle fails, the exit is 1. riff run takes the bundle: it opens
+  the file with no link, copies it to BRANCH.bundle in the folder of
+  the session, which no session sees, and runs git bundle verify on
+  the copy in the main clone. It runs no git on the file in out/. Then
+  it names the copy and the commands that push the branch from a clone
+  of the person, or says that the session made no commit. When the
+  file is no git bundle, riff run says why, and ends with 1. This
+  supersedes 01M6Z87JY83V3KR72E2AG8V8KG and 01M4Z60B7QDWEFQ96H448RE9N2
+  in part: the clone and the command to push the branch, and the binds
+  with write.
 - **01M7EY3WM6XYQR3CXNMM6MFA5C** riff run names the default branch in
   the start text from origin/HEAD of the main clone. This supersedes
   01M5QYBWPAJ219BE8QKVKG1TWW in part: the clone.
 - **01M7EY3WPK3D9HXVM3DHYH5EF0** The start text of a build says that the
   clone of the session goes with its container, and that only the
   commits that it pushes stay.
+- **01M7FDN99KZE54CX17DDEP787V** Before the start of a session of riff
+  run --no-github, riff run fetches the default branch, and the branch
+  of the item when the look on origin found it, from origin into
+  refs/remotes/origin of the main clone, with the git of the person. The
+  clone of the session fetches nothing from GitHub, so it goes on from
+  the branch on origin too.
+- **01M7FDN9C91TDYPQSFBRHVHRAC** riff run --no-github takes the bundle
+  of the session also when the branch has an open pull request, and
+  names the copy. With an open pull request, it also sends the verify
+  request, as for each session. When riff run refuses the bundle, it
+  ends with 1. This supersedes 01M7EY3WHQQP9330CZ736HK0FJ in part: the
+  case of no pull request.
+- **01M7FDN9EWZ28AQS4CKJQD3A3B** riff run takes at most 1 GiB of the
+  bundle of a session with no GitHub. It reads the first line from the
+  first bytes of the open file, and refuses a file whose first line is
+  not that of a git bundle of version 2 or 3 before it copies the rest.
+  It refuses a larger file, also one that grows during the copy, and the
+  copy goes. This supersedes 01M7EY3WHQQP9330CZ736HK0FJ in part: the
+  check of the first line of the copy.
 - **01M7GCESN7RY3GW6ZPP9PBM87D** A job of the daemon keeps only the
   folder of its own session: each folder of its item that was not there
   at the start of the job, and the folder of the session that a new

@@ -7958,6 +7958,22 @@ pub fn run_bundle_refused(file: &Path, why: &str) -> String {
     )
 }
 
+/// The reason of [`run_bundle_refused`] for a file of more than `limit`
+/// bytes ([`crate::run::BUNDLE_LIMIT`], 01M7FDN9EWZ28AQS4CKJQD3A3B).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::run_bundle_too_large(1 << 30),
+///     "it has more than 1 GiB, the most that riff copies of a bundle"
+/// );
+/// ```
+pub fn run_bundle_too_large(limit: u64) -> String {
+    format!(
+        "it has more than {} GiB, the most that riff copies of a bundle",
+        limit >> 30
+    )
+}
+
 /// `riff run --no-github` in a container (01M6Z87JY83V3KR72E2AG8V8KG):
 /// there the daemon runs the item as a job of the wave.
 pub const RUN_NO_GITHUB_ON_HOST: &str = "riff run --no-github works only on the host. In a \
@@ -8624,8 +8640,8 @@ pub const RELAY_NO_COMMAND: &str =
     "riff relay needs the command of the session: riff relay -- claude -p ...";
 
 /// `riff relay` made the clone of its session in the container
-/// ([`crate::session_clone`]): from the main clone, and with `token`
-/// also from `origin`.
+/// ([`crate::session_clone`]): from the main clone, and with `fetched`
+/// also from `origin` ([`crate::session_clone::Plan::fetches`]).
 ///
 /// ```
 /// use riff::session_clone::{Checkout, Plan};
@@ -8637,7 +8653,7 @@ pub const RELAY_NO_COMMAND: &str =
 ///     base: "main".into(),
 ///     checkout,
 /// };
-/// let branch = |earlier| Checkout::Branch { name: "worktree-issue-12".into(), earlier, bundle: None };
+/// let branch = |earlier| Checkout::Branch { name: "worktree-issue-12".into(), earlier, no_github: false };
 /// assert_eq!(
 ///     riff::text::relay_cloned(&plan(branch(true)), true),
 ///     "riff relay: cloned /src/r/.git and fetched https://github.com/o/r.git into /s/clone, \
@@ -8645,34 +8661,34 @@ pub const RELAY_NO_COMMAND: &str =
 /// );
 /// assert_eq!(
 ///     riff::text::relay_cloned(&plan(branch(false)), false),
-///     "riff relay: cloned /src/r/.git into /s/clone, with no token for \
+///     "riff relay: cloned /src/r/.git into /s/clone, with no fetch of \
 ///      https://github.com/o/r.git, on the new branch worktree-issue-12."
 /// );
 /// let pull = plan(Checkout::Pull { pull: 7, commit: "0123abcd".into() });
 /// assert!(riff::text::relay_cloned(&pull, true).ends_with("at 0123abcd, the head of pull request #7."));
 /// assert!(riff::text::relay_cloned(&plan(Checkout::Default), true).ends_with("on the default branch main."));
 /// ```
-pub fn relay_cloned(plan: &crate::session_clone::Plan, token: bool) -> String {
+pub fn relay_cloned(plan: &crate::session_clone::Plan, fetched: bool) -> String {
     use crate::session_clone::Checkout;
     let on = match &plan.checkout {
         Checkout::Default => format!("on the default branch {}", plan.base),
         Checkout::Branch {
             name,
             earlier: true,
-            bundle: _,
+            no_github: _,
         } => format!("on the branch {name} of origin"),
         Checkout::Branch {
             name,
             earlier: false,
-            bundle: _,
+            no_github: _,
         } => format!("on the new branch {name}"),
         Checkout::Pull { pull, commit } => format!("at {commit}, the head of pull request #{pull}"),
     };
     let (main, origin, path) = (plan.main.display(), &plan.origin, plan.path.display());
-    if token {
+    if fetched {
         format!("riff relay: cloned {main} and fetched {origin} into {path}, {on}.")
     } else {
-        format!("riff relay: cloned {main} into {path}, with no token for {origin}, {on}.")
+        format!("riff relay: cloned {main} into {path}, with no fetch of {origin}, {on}.")
     }
 }
 

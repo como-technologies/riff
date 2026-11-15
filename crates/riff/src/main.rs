@@ -628,10 +628,13 @@ enum Command {
         #[arg(long)]
         image: Option<String>,
         /// Run a session with no GitHub: no token, no push and no pull
-        /// request. The start text holds the issue, and the session commits
-        /// on its branch. riff run checks the bundle of its commits, copies
-        /// it into the folder of the session, and names the commands that
-        /// push the branch from your clone.
+        /// request. Before the start, riff run fetches the default branch,
+        /// and the branch of ITEM when origin has it, into your clone. The
+        /// start text holds the issue, and the session commits on its
+        /// branch. riff run checks the bundle of its commits, copies at most
+        /// 1 GiB of it into the folder of the session, and names the
+        /// commands that push the branch from your clone, also when the
+        /// branch has an open pull request.
         #[arg(long)]
         no_github: bool,
     },
@@ -1881,8 +1884,9 @@ enum HostCommand {
     /// host has room: see riff daemon limit. Each session does one item
     /// in its own container, and ends. The daemon claims each item, sends
     /// the verify request, reports the result of each verify, and removes
-    /// the clone of each item after its merge. It needs the sign-in of
-    /// riff, of gh and of claude on this machine. The host keeps the part
+    /// the folder of each session after its merge. The clone of a session
+    /// goes with its container. It needs the sign-in of riff, of gh and of
+    /// claude on this machine. The host keeps the part
     /// workers until riff host leave, also over a restart of the daemon
     /// and over an update. The host can also run the lead of the project:
     /// when no lead runs, the daemon of a host that joined claims the lead

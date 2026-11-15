@@ -95,6 +95,43 @@ fn the_lead_clones_in_its_container_on_the_default_branch() {
     }
 }
 
+/// 01M7EY51EMJ6ZEGNW7H852PEGR: the default branch of the repository is
+/// `master`. The base of the lead is the branch of `origin/HEAD` of the
+/// git dir of the main clone, as the start of the lead reads it, and the
+/// clone of the lead is on `master`, with its upstream.
+#[test]
+fn the_lead_of_a_repository_on_master_clones_on_master() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    git(
+        root,
+        &["init", "-q", "--bare", "-b", "master", "origin.git"],
+    );
+    let seed = root.join("seed");
+    std::fs::create_dir(&seed).unwrap();
+    git(&seed, &["init", "-q", "-b", "master"]);
+    git(&seed, &["commit", "-q", "--allow-empty", "-m", "one"]);
+    let url = format!("file://{}", root.join("origin.git").display());
+    git(&seed, &["push", "-q", &url, "master"]);
+    git(root, &["clone", "-q", "--", &url, "main"]);
+    let common = root.join("main/.git");
+    let base = riff::permissions::Project::of(&common).branch;
+    assert_eq!(base, "master");
+    let plan = Plan {
+        path: root.join("leads/o-r/clone"),
+        origin: url,
+        main: common,
+        base,
+        checkout: Checkout::Default,
+    };
+    plan.make(true).unwrap();
+    assert_eq!(git(&plan.path, &["branch", "--show-current"]), "master");
+    assert_eq!(
+        git(&plan.path, &["rev-parse", "--abbrev-ref", "@{upstream}"]),
+        "origin/master"
+    );
+}
+
 /// #2140, 01M7EBBVE6WYKT5JDVASFCYPQQ: an older riff left the clone of the
 /// lead on the host, with a change and a git config that names a program
 /// for `core.fsmonitor`, `credential.helper` and `core.sshCommand`. The

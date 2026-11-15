@@ -10,11 +10,14 @@
 //! The spec of a session has an empty folder at the path of its clone
 //! ([`crate::runtime::Source::Empty`]): on podman, a volume of the
 //! container, on the disk and not in the tmpfs of the home. `podman run
-//! --rm` removes it with the container. The container sees the git dir
-//! of the main clone, `MAIN/.git`, at the same path with no write: its
-//! objects, its refs and its config. Only the daemon or the person
-//! writes the main clone, never a session. The spec gives the plan of
-//! the clone to the relay in the variable [`VAR`], as plain data
+//! --rm` removes it with the container. The container sees three parts
+//! of the git dir of the main clone `MAIN/.git`, at the same path with no
+//! write ([`MAIN_PARTS`], [`main_binds`]): its objects, its refs, and its
+//! packed refs when it has them. It sees no config, no hook, no log and
+//! no worktree of it: the main clone of `riff run` is the clone of the
+//! person, and its config can hold a token. Only the daemon or the
+//! person writes the main clone, never a session. The spec gives the
+//! plan of the clone to the relay in the variable [`VAR`], as plain data
 //! ([`Plan`], [`crate::run::spec`]). Before it starts `claude`, the relay
 //! makes the clone there ([`Plan::make`]), with no object from GitHub
 //! that the main clone has:
@@ -23,7 +26,7 @@
 //! |---|---|
 //! | The clone | `git init`, and `MAIN/.git/objects` in the alternates of the clone: the clone reads each object of the main clone, and copies none |
 //! | `origin` | `git remote add origin https://github.com/OWNER/REPO.git` ([`origin`]) |
-//! | The view of the main clone | `git fetch MAIN 'refs/remotes/origin/*:refs/remotes/origin/*'`: the branches of `origin` as the main clone has them |
+//! | The view of the main clone | the relay makes the git dir `.git/riff-main` in the clone ([`VIEW`]): its own `HEAD`, and a link to each part of the main clone that the container sees. Then `git fetch VIEW 'refs/remotes/origin/*:refs/remotes/origin/*'`: the branches of `origin` as the main clone has them. Then the view goes |
 //! | With a token | `git fetch --prune origin`: the branches of GitHub, with only the objects that the main clone does not have. git takes the token of the session from `gh` |
 //! | The default branch | `git remote set-head origin BASE`: the default branch of [`Plan::base`], from the main clone on the host |
 //! | The lead | `git switch -c BASE --track origin/BASE` ([`Checkout::Default`]) |
@@ -42,6 +45,11 @@
 //! lead with no token of an App or a session of `riff run --no-github`,
 //! the clone fetches nothing from GitHub: it starts from the view of the
 //! main clone. So such a session also starts on a private repository.
+//! A session of `riff run --no-github` fetches nothing also with a
+//! token. Before its start, `riff run` fetches the default branch, and
+//! the branch of the item when `origin` has it, into the main clone
+//! ([`crate::run::fetch_for_no_github`]): so its clone goes on from the
+//! branch on `origin` too.
 //!
 //! A clone that is there stays: a takeover runs the relay again in the
 //! same container. The folder of a new clone is empty, and after a fault
@@ -57,10 +65,10 @@
 //! sequenceDiagram
 //!     participant D as riff daemon (host)
 //!     participant R as riff relay (container)
-//!     participant M as MAIN/.git (no write)
+//!     participant M as MAIN/.git: objects, refs (no write)
 //!     participant G as GitHub
-//!     D->>R: podman run: an empty volume at CLONE, MAIN/.git, RIFF_CLONE
-//!     R->>M: git init, the alternates, git fetch MAIN: no object copied
+//!     D->>R: podman run: an empty volume at CLONE, the objects and refs of MAIN, RIFF_CLONE
+//!     R->>M: git init, the alternates, git fetch of the view: no object copied
 //!     R->>G: with a token: git fetch origin, only the new objects
 //!     R->>R: git switch -c BRANCH --track origin/BRANCH, or a new branch
 //!     R->>R: start claude in CLONE
@@ -75,21 +83,22 @@
 //! A session of `riff run --no-github` pushes nothing. So when `claude`
 //! ends, the relay writes the commits of the branch that `origin/BASE`
 //! does not have in a git bundle, in the folder `out/` of the folder of
-//! the session ([`Plan::bundle`], [`crate::run::OUT`]). The session can
-//! write that folder, so the host trusts no file there. `riff run` opens
-//! the file with no link, copies it into the folder of the session,
-//! which no session sees, and checks the first line of the copy: a git
-//! bundle. Then it runs `git bundle verify` on the copy, in the main
-//! clone ([`crate::run::take_bundle`]). The person fetches from the
-//! copy. A file in the place of the bundle that is no bundle, for
-//! example a `gitdir:` file, gets no git.
+//! the session ([`Plan::bundle`], [`crate::run::bundle_out`]). The
+//! session can write that folder, so the host trusts no file there.
+//! `riff run` opens the file with no link, reads its first line, and
+//! copies at most [`crate::run::BUNDLE_LIMIT`] into the folder of the
+//! session, which no session sees ([`crate::run::bundle_copy`]). Then
+//! it runs `git bundle verify` on the copy, in the main clone
+//! ([`crate::run::take_bundle`]). The person fetches from the copy. A
+//! file in the place of the bundle that is no bundle, for example a
+//! `gitdir:` file, gets no git.
 //!
 //! ```mermaid
 //! flowchart LR
 //!     C["claude ends"] --> B{"commits that origin/BASE does not have?"}
 //!     B -- yes --> W["the relay: git bundle create out/BRANCH.bundle"]
 //!     B -- no --> N["no bundle"]
-//!     W --> T["riff run: a copy with no link, the first line, git bundle verify"]
+//!     W --> T["riff run: no link, the first line, at most 1 GiB, git bundle verify"]
 //!     T --> P["the person: git fetch COPY BRANCH, git push"]
 //! ```
 
@@ -117,6 +126,40 @@ pub fn origin(repo: &str) -> String {
     format!("https://github.com/{repo}.git")
 }
 
+/// The parts of the git dir of the main clone that the container of a
+/// session sees, at the same path, with no write: its objects, its refs
+/// and its packed refs. No config, no hook, no log and no worktree.
+pub const MAIN_PARTS: [&str; 3] = ["objects", "refs", "packed-refs"];
+
+/// The paths of [`MAIN_PARTS`] in the git dir `main` of the main clone
+/// that the spec of a session binds ([`crate::run::spec`]): the objects
+/// and the refs, and `packed-refs` when the main clone has it. A main
+/// clone with each ref loose has none.
+///
+/// ```
+/// let main = tempfile::tempdir()?;
+/// for part in ["objects", "refs", "hooks", "logs", "worktrees"] {
+///     std::fs::create_dir(main.path().join(part))?;
+/// }
+/// std::fs::write(main.path().join("config"), "")?;
+/// let binds = riff::session_clone::main_binds(main.path());
+/// assert_eq!(binds, [main.path().join("objects"), main.path().join("refs")]);
+/// std::fs::write(main.path().join("packed-refs"), "")?;
+/// assert_eq!(riff::session_clone::main_binds(main.path()).len(), 3);
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn main_binds(main: &Path) -> Vec<PathBuf> {
+    let [objects, refs, packed] = MAIN_PARTS.map(|part| main.join(part));
+    let packed = packed.exists().then_some(packed);
+    [objects, refs].into_iter().chain(packed).collect()
+}
+
+/// The git dir in the `.git` of a new clone where the relay reads the
+/// branches of `origin` of the main clone ([`Plan::make`]): its own
+/// `HEAD`, and a link to each part of [`MAIN_PARTS`]. It goes after the
+/// fetch.
+pub const VIEW: &str = "riff-main";
+
 /// True when this session has a token on GitHub: the folder of its `gh`
 /// ([`crate::daemon::gh_token::CONFIG_VAR`]) has the file
 /// [`crate::daemon::gh_token::HOSTS`]. The daemon writes none for a lead
@@ -143,10 +186,11 @@ pub enum Checkout {
         /// ([`crate::run::earlier`]): the session goes on from it. Else
         /// the branch is new, from the default branch.
         earlier: bool,
-        /// For a session with no GitHub: the file of the bundle of the
-        /// branch, which the relay writes when `claude` ends
-        /// ([`Plan::bundle`]).
-        bundle: Option<PathBuf>,
+        /// A session of `riff run --no-github`: the clone fetches
+        /// nothing from GitHub, also with a token, and the relay writes
+        /// the bundle of the branch when `claude` ends
+        /// ([`Plan::bundle_file`]).
+        no_github: bool,
     },
     /// The head commit `commit` of the pull request `pull`, detached: a
     /// verify.
@@ -156,6 +200,30 @@ pub enum Checkout {
         /// The head commit of the look.
         commit: String,
     },
+}
+
+impl Checkout {
+    /// True when the clone goes on from the branch of the item on
+    /// `origin`: the start text of a build says so.
+    ///
+    /// ```
+    /// use riff::session_clone::Checkout;
+    ///
+    /// let branch = |earlier| Checkout::Branch { name: "worktree-issue-12".into(), earlier, no_github: false };
+    /// assert!(branch(true).earlier());
+    /// assert!(!branch(false).earlier());
+    /// assert!(!Checkout::Default.earlier());
+    /// ```
+    pub fn earlier(&self) -> bool {
+        match self {
+            Checkout::Branch {
+                name: _,
+                earlier,
+                no_github: _,
+            } => *earlier,
+            Checkout::Default | Checkout::Pull { pull: _, commit: _ } => false,
+        }
+    }
 }
 
 /// The plan of the clone of a session: plain data, in [`VAR`].
@@ -168,7 +236,7 @@ pub enum Checkout {
 ///     origin: riff::session_clone::origin("o/r"),
 ///     main: "/src/r/.git".into(),
 ///     base: "main".into(),
-///     checkout: Checkout::Branch { name: "worktree-issue-12".into(), earlier: false, bundle: None },
+///     checkout: Checkout::Branch { name: "worktree-issue-12".into(), earlier: false, no_github: false },
 /// };
 /// assert_eq!(Plan::of_var(&plan.to_var())?, plan);
 /// assert!(Plan::of_var("{").is_err());
@@ -181,8 +249,8 @@ pub struct Plan {
     pub path: PathBuf,
     /// The `origin` of the clone ([`origin`]).
     pub origin: String,
-    /// The git dir of the main clone, `MAIN/.git`: the container sees it
-    /// at the same path, with no write.
+    /// The git dir of the main clone, `MAIN/.git`: the container sees its
+    /// parts [`MAIN_PARTS`] at the same path, with no write.
     pub main: PathBuf,
     /// The default branch of `origin`, from `origin/HEAD` of the main
     /// clone on the host ([`crate::permissions::Project::of`]).
@@ -222,9 +290,10 @@ impl Plan {
 
     /// Makes the clone at [`Plan::path`], with the git of this process:
     /// the steps of the module docs. With `token`, the session has a
-    /// token on GitHub ([`token_here`]): the clone fetches `origin`. A
-    /// folder with a `.git` keeps its clone. A folder with other files
-    /// gets no clone. After a fault, the folder is empty again.
+    /// token on GitHub ([`token_here`]): the clone fetches `origin`, but
+    /// not for a session with no GitHub ([`Plan::fetches`]). A folder
+    /// with a `.git` keeps its clone. A folder with other files gets no
+    /// clone. After a fault, the folder is empty again.
     pub fn make(&self, token: bool) -> Result<Made> {
         if self.path.join(".git").symlink_metadata().is_ok() {
             return Ok(Made::There);
@@ -239,15 +308,44 @@ impl Plan {
                 self.path.display()
             );
         }
-        let made = self.steps(token);
+        let made = self.steps(self.fetches(token));
         if made.is_err() {
             empty(&self.path);
         }
         made.map(|()| Made::New)
     }
 
+    /// True when the clone fetches `origin`: the session has a token
+    /// (`token`), and it is no session of `riff run --no-github`.
+    ///
+    /// ```
+    /// use riff::session_clone::{Checkout, Plan};
+    ///
+    /// let plan = |no_github| Plan {
+    ///     path: "/s/clone".into(),
+    ///     origin: "https://github.com/o/r.git".into(),
+    ///     main: "/src/r/.git".into(),
+    ///     base: "main".into(),
+    ///     checkout: Checkout::Branch { name: "worktree-issue-12".into(), earlier: false, no_github },
+    /// };
+    /// assert!(plan(false).fetches(true));
+    /// assert!(!plan(false).fetches(false));
+    /// assert!(!plan(true).fetches(true));
+    /// ```
+    pub fn fetches(&self, token: bool) -> bool {
+        let no_github = matches!(
+            self.checkout,
+            Checkout::Branch {
+                no_github: true,
+                ..
+            }
+        );
+        token && !no_github
+    }
+
     /// The git steps of [`Plan::make`] in the empty folder of the clone.
-    fn steps(&self, token: bool) -> Result<()> {
+    /// With `fetch`, the clone fetches `origin` ([`Plan::fetches`]).
+    fn steps(&self, fetch: bool) -> Result<()> {
         let dir = &self.path;
         git(dir, &["init", "-q"])?;
         let alternates = dir.join(".git/objects/info/alternates");
@@ -257,19 +355,23 @@ impl Plan {
         )
         .with_context(|| format!("cannot write {}", alternates.display()))?;
         git(dir, &["remote", "add", "origin", &self.origin])?;
-        let main = self.main.to_string_lossy();
-        git(
+        let view = self.view()?;
+        let fetched = git(
             dir,
             &[
                 "fetch",
                 "-q",
                 "--no-tags",
-                &main,
+                &view.to_string_lossy(),
                 "+refs/remotes/origin/*:refs/remotes/origin/*",
                 "^refs/remotes/origin/HEAD",
             ],
-        )?;
-        if token {
+        );
+        let removed = std::fs::remove_dir_all(&view)
+            .with_context(|| format!("cannot remove {}", view.display()));
+        fetched?;
+        removed?;
+        if fetch {
             git(dir, &["fetch", "-q", "--prune", "origin"])?;
         }
         git(dir, &["remote", "set-head", "origin", &self.base])?;
@@ -281,7 +383,7 @@ impl Plan {
             Checkout::Branch {
                 name,
                 earlier: true,
-                bundle: _,
+                no_github: _,
             } => {
                 let from = format!("origin/{name}");
                 git(dir, &["switch", "-q", "-c", name, "--track", &from])?;
@@ -289,12 +391,12 @@ impl Plan {
             Checkout::Branch {
                 name,
                 earlier: false,
-                bundle: _,
+                no_github: _,
             } => {
                 git(dir, &["switch", "-q", "-c", name, "--no-track", &base])?;
             }
             Checkout::Pull { pull, commit } => {
-                if token {
+                if fetch {
                     let head = format!("refs/pull/{pull}/head");
                     git(dir, &["fetch", "-q", "origin", &head])?;
                 }
@@ -314,6 +416,24 @@ impl Plan {
         Ok(())
     }
 
+    /// Makes the git dir [`VIEW`] in the `.git` of the new clone: its own
+    /// `HEAD`, and a link to each part of [`MAIN_PARTS`] of the main clone
+    /// that the container sees. git reads no config, no hook and no log
+    /// of the main clone there.
+    fn view(&self) -> Result<PathBuf> {
+        let view = self.path.join(".git").join(VIEW);
+        std::fs::create_dir(&view).with_context(|| format!("cannot make {}", view.display()))?;
+        let head = view.join("HEAD");
+        std::fs::write(&head, format!("ref: refs/heads/{}\n", self.base))
+            .with_context(|| format!("cannot write {}", head.display()))?;
+        for part in main_binds(&self.main) {
+            let link = view.join(part.file_name().unwrap_or_default());
+            std::os::unix::fs::symlink(&part, &link)
+                .with_context(|| format!("cannot link {} to {}", link.display(), part.display()))?;
+        }
+        Ok(view)
+    }
+
     /// [`Plan::make`] with the token of this process ([`token_here`]),
     /// and the line for the log of the session
     /// ([`crate::text::relay_cloned`]): none when the clone was there.
@@ -321,12 +441,14 @@ impl Plan {
         let token = token_here();
         Ok(match self.make(token)? {
             Made::There => None,
-            Made::New => Some(crate::text::relay_cloned(self, token)),
+            Made::New => Some(crate::text::relay_cloned(self, self.fetches(token))),
         })
     }
 
-    /// The file of the bundle of a session with no GitHub: the file
-    /// `bundle` of [`Checkout::Branch`]. `None` for each other session.
+    /// The file of the bundle of a session with no GitHub, which the
+    /// relay writes when `claude` ends: `out/BRANCH.bundle` in the folder
+    /// of the clone ([`crate::run::bundle_out`]). `None` for each other
+    /// session.
     ///
     /// ```
     /// use riff::session_clone::{Checkout, Plan};
@@ -338,19 +460,26 @@ impl Plan {
     ///     base: "main".into(),
     ///     checkout,
     /// };
-    /// let file = std::path::Path::new("/s/out/worktree-issue-12.bundle");
-    /// let offline = Checkout::Branch { name: "worktree-issue-12".into(), earlier: false, bundle: Some(file.into()) };
-    /// assert_eq!(plan(offline).bundle_file(), Some(file));
+    /// let branch = |no_github| Checkout::Branch { name: "worktree-issue-12".into(), earlier: false, no_github };
+    /// let file = std::path::PathBuf::from("/s/out/worktree-issue-12.bundle");
+    /// assert_eq!(plan(branch(true)).bundle_file(), Some(file));
+    /// assert_eq!(plan(branch(false)).bundle_file(), None);
     /// assert_eq!(plan(Checkout::Default).bundle_file(), None);
     /// ```
-    pub fn bundle_file(&self) -> Option<&Path> {
+    pub fn bundle_file(&self) -> Option<PathBuf> {
         match &self.checkout {
+            Checkout::Branch {
+                name,
+                earlier: _,
+                no_github: true,
+            } => Some(crate::run::bundle_out(self.path.parent()?, name)),
             Checkout::Branch {
                 name: _,
                 earlier: _,
-                bundle,
-            } => bundle.as_deref(),
-            Checkout::Default | Checkout::Pull { pull: _, commit: _ } => None,
+                no_github: false,
+            }
+            | Checkout::Default
+            | Checkout::Pull { pull: _, commit: _ } => None,
         }
     }
 
@@ -360,7 +489,7 @@ impl Plan {
             Checkout::Branch {
                 name,
                 earlier: _,
-                bundle: _,
+                no_github: _,
             } => Some(name),
             Checkout::Default | Checkout::Pull { pull: _, commit: _ } => None,
         }
@@ -369,13 +498,13 @@ impl Plan {
     /// Writes the bundle of a session with no GitHub ([`Plan::bundle_file`]):
     /// the commits of the branch that `origin/BASE` does not have. An
     /// older bundle goes first. It gives the file, or `None` with no
-    /// bundle to write: no file in the plan, no branch in the clone, or no
-    /// such commit.
+    /// bundle to write: a session with GitHub, no branch in the clone, or
+    /// no such commit.
     pub fn bundle(&self) -> Result<Option<PathBuf>> {
         let (Some(file), Some(name)) = (self.bundle_file(), self.branch()) else {
             return Ok(None);
         };
-        match std::fs::remove_file(file) {
+        match std::fs::remove_file(&file) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
                 return Err(e).with_context(|| format!("cannot remove {}", file.display()));
             }
@@ -397,7 +526,7 @@ impl Plan {
             &self.path,
             &["bundle", "create", "-q", &file.to_string_lossy(), &range],
         )?;
-        Ok(Some(file.to_owned()))
+        Ok(Some(file))
     }
 }
 
@@ -459,11 +588,14 @@ mod tests {
     }
 
     /// A bare `origin` that a `file://` URL names, as a URL of GitHub
-    /// does, with one commit on `main`, and a main clone of it.
+    /// does, with one commit on `main`, and a main clone of it. The plans
+    /// read the main clone as the container sees it: `seen/.git`, with a
+    /// link to each part of [`MAIN_PARTS`] of the main clone only.
     struct Origin {
         dir: tempfile::TempDir,
         url: String,
         main: PathBuf,
+        seen: PathBuf,
     }
 
     impl Origin {
@@ -481,7 +613,17 @@ mod tests {
             git_in(&seed, &["push", "-q", &url, "main"]);
             git_in(root, &["clone", "-q", "--", &url, "main"]);
             let main = root.join("main");
-            Origin { dir, url, main }
+            let seen = root.join("seen/.git");
+            std::fs::create_dir_all(&seen).unwrap();
+            for part in main_binds(&main.join(".git")) {
+                std::os::unix::fs::symlink(&part, seen.join(part.file_name().unwrap())).unwrap();
+            }
+            Origin {
+                dir,
+                url,
+                main,
+                seen,
+            }
         }
 
         /// The plan of a clone at `name` with `checkout`.
@@ -489,7 +631,7 @@ mod tests {
             Plan {
                 path: self.dir.path().join(name).join("clone"),
                 origin: self.url.clone(),
-                main: self.main.join(".git"),
+                main: self.seen.clone(),
                 base: "main".into(),
                 checkout,
             }
@@ -503,18 +645,19 @@ mod tests {
         }
     }
 
-    /// The branch `name` of the item, with no bundle.
+    /// The branch `name` of the item of a session with GitHub.
     fn branch(name: &str, earlier: bool) -> Checkout {
         Checkout::Branch {
             name: name.into(),
             earlier,
-            bundle: None,
+            no_github: false,
         }
     }
 
     /// 01M7EY3P0Q8TQF5QRTRDWCYCTQ: the clone reads the objects of the main
     /// clone through its alternates, and copies none of them. The branch
-    /// of the item is new, from the default branch, with no upstream.
+    /// of the item is new, from the default branch, with no upstream. The
+    /// view of the main clone goes after the fetch.
     #[test]
     fn a_clone_links_to_the_main_clone_and_makes_the_branch() {
         let origin = Origin::new();
@@ -522,11 +665,9 @@ mod tests {
         assert_eq!(plan.make(true).unwrap(), Made::New);
         let alternates =
             std::fs::read_to_string(plan.path.join(".git/objects/info/alternates")).unwrap();
-        assert_eq!(
-            Path::new(alternates.trim()),
-            origin.main.join(".git/objects")
-        );
+        assert_eq!(Path::new(alternates.trim()), origin.seen.join("objects"));
         assert_eq!(own_objects(&plan.path), 0, "the clone copied objects");
+        assert!(!plan.path.join(".git").join(VIEW).exists());
         assert_eq!(
             git_in(&plan.path, &["branch", "--show-current"]),
             "worktree-issue-12"
@@ -693,7 +834,9 @@ mod tests {
         assert!(error.to_string().contains("refs/pull/8/head"), "{error}");
     }
 
-    /// 01M7EY3WHQQP9330CZ736HK0FJ: a session with no GitHub. The bundle
+    /// 01M7EY3WHQQP9330CZ736HK0FJ: a session with no GitHub. Its clone
+    /// fetches nothing from GitHub, also with a token: here an `origin`
+    /// that is not there. The bundle `out/BRANCH.bundle` beside the clone
     /// holds the commits of the branch, and a clone of the person fetches
     /// them from it. With no commit, there is no bundle. Each bundle takes
     /// the place of the older one. With no branch in the clone, the older
@@ -701,16 +844,22 @@ mod tests {
     #[test]
     fn a_session_with_no_github_gives_its_commits_in_a_bundle() {
         let origin = Origin::new();
-        let file = origin.dir.path().join("out/worktree-issue-12.bundle");
-        let plan = origin.plan(
+        let file = origin
+            .dir
+            .path()
+            .join("offline/out/worktree-issue-12.bundle");
+        let mut plan = origin.plan(
             "offline",
             Checkout::Branch {
                 name: "worktree-issue-12".into(),
                 earlier: false,
-                bundle: Some(file.clone()),
+                no_github: true,
             },
         );
-        plan.make(false).unwrap();
+        plan.origin = format!("file://{}", origin.dir.path().join("none.git").display());
+        assert_eq!(plan.bundle_file(), Some(file.clone()));
+        assert!(!plan.fetches(true));
+        assert_eq!(plan.make(true).unwrap(), Made::New);
         assert_eq!(plan.bundle().unwrap(), None);
         Origin::commit(&plan.path, "two");
         assert_eq!(plan.bundle().unwrap(), Some(file.clone()));
@@ -724,8 +873,33 @@ mod tests {
         git_in(&plan.path, &["branch", "-q", "-D", "worktree-issue-12"]);
         assert_eq!(plan.bundle().unwrap(), None);
         assert!(!file.exists(), "the older bundle stays");
-        // No file in the plan, no bundle.
+        // A session with GitHub writes no bundle.
         let none = origin.plan("none", branch("worktree-issue-12", false));
         assert_eq!(none.bundle().unwrap(), None);
+    }
+
+    /// 01M7EY3P0Q8TQF5QRTRDWCYCTQ: a main clone with each ref loose has no
+    /// `packed-refs`, so the container sees only its objects and its refs.
+    /// The clone reads the branches of `origin` there too.
+    #[test]
+    fn a_main_clone_with_no_packed_refs_gives_its_branches_too() {
+        let origin = Origin::new();
+        let root = origin.dir.path();
+        let loose = root.join("loose");
+        std::fs::create_dir(&loose).unwrap();
+        git_in(&loose, &["init", "-q", "-b", "main"]);
+        git_in(&loose, &["remote", "add", "origin", &origin.url]);
+        git_in(&loose, &["fetch", "-q", "origin"]);
+        let git_dir = loose.join(".git");
+        assert!(!git_dir.join("packed-refs").exists());
+        assert_eq!(main_binds(&git_dir).len(), 2);
+        let mut plan = origin.plan("from-loose", Checkout::Default);
+        plan.main = git_dir;
+        assert_eq!(plan.make(false).unwrap(), Made::New);
+        assert_eq!(
+            git_in(&plan.path, &["rev-parse", "HEAD"]),
+            git_in(&origin.main, &["rev-parse", "origin/main"])
+        );
+        assert_eq!(own_objects(&plan.path), 0);
     }
 }
