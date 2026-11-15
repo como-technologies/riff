@@ -267,7 +267,7 @@ fn the_book_says_what_to_do_with_a_large_file_in_the_folder_of_the_lead() {
         ]
     );
     let left = "find ~/.local/share/riff/leads/OWNER-REPO/claude/projects -mindepth 1 -maxdepth 1 \
-                ! -name '*-clone' -exec mv -t ~/riff-projects-left {} +";
+                ! -name '*-clone' -exec sh -c 'mv \"$@\" ~/riff-projects-left' sh {} +";
     assert_eq!(
         crate::book::commands_in(unseen),
         [
@@ -288,7 +288,8 @@ fn the_book_says_what_to_do_with_a_large_file_in_the_folder_of_the_lead() {
 /// The move of the how-to "When riff sees no turn of the lead": it moves
 /// each entry of `projects` that the session made, and keeps the folder
 /// of the clone of the lead, which holds its conversation. Then riff
-/// sees the turns of the lead again (01M7FX6YQKTN9EVPTZJ9XB8PM4).
+/// sees the turns of the lead again (01M7FX6YQKTN9EVPTZJ9XB8PM4). The
+/// commands use no `mv -t`: the `mv` of macOS has no `-t`.
 #[test]
 fn the_move_of_the_book_keeps_the_conversation_of_the_lead() {
     let unseen = &crate::book::how_to(
@@ -307,6 +308,7 @@ fn the_move_of_the_book_keeps_the_conversation_of_the_lead() {
     let claude = lead.join("claude");
     assert!(riff::usage::written_in(&claude, "s1").is_err());
     for command in crate::book::commands_in(unseen) {
+        assert!(!command.contains("mv -t"), "{command}");
         let out = std::process::Command::new("sh")
             .args(["-c", &command])
             .env("HOME", home.path())

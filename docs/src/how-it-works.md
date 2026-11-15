@@ -562,7 +562,7 @@ other entries. Count them, then move them out of `projects`:
 ```sh
 ls ~/.local/share/riff/leads/OWNER-REPO/claude/projects | grep -cv -- '-clone$'
 mkdir -p ~/riff-projects-left
-find ~/.local/share/riff/leads/OWNER-REPO/claude/projects -mindepth 1 -maxdepth 1 ! -name '*-clone' -exec mv -t ~/riff-projects-left {} +
+find ~/.local/share/riff/leads/OWNER-REPO/claude/projects -mindepth 1 -maxdepth 1 ! -name '*-clone' -exec sh -c 'mv "$@" ~/riff-projects-left' sh {} +
 ```
 
 At the next look, riff will see the turns of the lead again.
