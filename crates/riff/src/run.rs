@@ -1125,7 +1125,10 @@ fn matches<'a>(text: &'a str, secret: &'a str) -> impl Iterator<Item = Range<usi
 
 /// The range of each token in `text` that starts with `start`: `start`
 /// and each character after it that `part` takes. A `start` with no such
-/// character after it is no token.
+/// character after it is no token. A `start` that ends in the last token
+/// gives no range: its token is in the last token. So `part` looks at
+/// each character of `text` at most once, and the time grows with the
+/// length of `text` (01M7G3CSVWSV6RTGJY1WMFGV7V).
 ///
 /// ```
 /// use riff::run::tokens;
@@ -1133,16 +1136,24 @@ fn matches<'a>(text: &'a str, secret: &'a str) -> impl Iterator<Item = Range<usi
 /// let part = |c: char| c.is_ascii_alphanumeric() || c == '-';
 /// let found: Vec<_> = tokens("a=ghs_A-9,ghs_ end", "ghs_", part).collect();
 /// assert_eq!(found, [2..9]);
+/// let part = |c: char| c.is_ascii_alphanumeric() || c == '_';
+/// let found: Vec<_> = tokens("ghs_ghs_ghs_a1", "ghs_", part).collect();
+/// assert_eq!(found, [0..14]);
 /// ```
 pub fn tokens<'a>(
     text: &'a str,
     start: &'a str,
     part: fn(char) -> bool,
 ) -> impl Iterator<Item = Range<usize>> + 'a {
+    let mut end = 0;
     text.match_indices(start).filter_map(move |(at, _)| {
-        let after = &text[at + start.len()..];
-        let len = after.find(|c: char| !part(c)).unwrap_or(after.len());
-        (len > 0).then(|| at..at + start.len() + len)
+        let from = at + start.len();
+        if from <= end {
+            return None;
+        }
+        let after = &text[from..];
+        end = from + after.find(|c: char| !part(c)).unwrap_or(after.len());
+        (end > from).then_some(at..end)
     })
 }
 
@@ -3255,6 +3266,30 @@ mod tests {
         let scrub = Scrub::new(["éaéa".to_owned()]);
         assert_eq!(scrub.found("éaéaéa"), [0..6, 3..9]);
         assert_eq!(scrub.clean("x éaéaéa y"), "x [secret] y");
+    }
+
+    /// #2156, 01M7G3CSVWSV6RTGJY1WMFGV7V: in a long run of token starts,
+    /// `part` looks at each character at most once, so a long line of a
+    /// session holds the daemon for no long time. A start that only
+    /// touches the end of the last token gives its own token.
+    #[test]
+    fn tokens_looks_at_each_character_at_most_once() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static LOOKS: AtomicUsize = AtomicUsize::new(0);
+        fn part(c: char) -> bool {
+            LOOKS.fetch_add(1, Ordering::Relaxed);
+            c.is_ascii_alphanumeric() || c == '_'
+        }
+        let text = "ghs_".repeat(2_000);
+        let found: Vec<_> = tokens(&text, "ghs_", part).collect();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0], 0..text.len());
+        assert!(LOOKS.load(Ordering::Relaxed) <= text.len());
+        assert_eq!(Scrub::default().clean(&text), HIDDEN);
+        let alnum = |c: char| c.is_ascii_alphanumeric();
+        let found: Vec<_> = tokens("sk-absk-cd", "sk-", alnum).collect();
+        assert_eq!(found, [0..7, 5..10]);
     }
 
     #[test]

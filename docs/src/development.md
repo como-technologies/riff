@@ -1716,8 +1716,8 @@ riff daemon log --since 02:12 --grep issue-12
 | `--lines N` | At most N lines, the newest ones. See [See more lines of the log of the daemon](#see-more-lines-of-the-log-of-the-daemon). |
 
 riff reads the files itself, so it works also while the daemon is down.
-It takes these secrets out of each line first, as from the events of a
-session. So `--grep` finds no part of them:
+It takes these secrets out of each line first. So `--grep` finds no
+part of them:
 
 - a token of GitHub and a key of Anthropic;
 - after the word `Bearer` and the white space after it, each character

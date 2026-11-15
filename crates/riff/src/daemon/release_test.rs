@@ -408,6 +408,9 @@ pub fn redacted(text: &str) -> Vec<Range<usize>> {
 ///
 /// assert_eq!(secret_in("ghp_abc123"), Some(0..10));
 /// assert_eq!(secret_in(",DB_PASSWORD=hunter2"), Some(13..20));
+/// assert_eq!(secret_in("OPENAI_API_KEY=abc1"), Some(15..19));
+/// assert_eq!(secret_in("--password=x3"), Some(11..13));
+/// assert_eq!(secret_in("GH_TOKEN="), None);
 /// assert_eq!(secret_in("task-2"), None);
 /// ```
 pub fn secret_in(word: &str) -> Option<Range<usize>> {
@@ -592,6 +595,31 @@ mod tests {
             assert_eq!(redact(&line), "a key [secret] here", "{line}");
         }
         assert_eq!(redact("a disk-1 and task-2"), "a disk-1 and task-2");
+    }
+
+    /// #2156, 01M7EX1Q1F468NWGPJJS0W0ZG9: the value of `NAME=value` goes
+    /// when NAME names a token, a key, a secret or a password, in any
+    /// case. A `NAME=` with no value hides nothing, and the next word
+    /// stays.
+    #[test]
+    fn the_value_of_each_secret_name_goes_in_any_case() {
+        for name in ["GH_TOKEN", "OPENAI_API_KEY", "CLIENT_SECRET", "DB_PASSWORD"] {
+            for name in [
+                name.to_owned(),
+                name.to_lowercase(),
+                format!("--{}", name.to_lowercase()),
+            ] {
+                let word = format!("{name}=abc1");
+                assert_eq!(secret_in(&word), Some(name.len() + 1..word.len()), "{word}");
+                assert_eq!(
+                    redact(&format!("-e {word} ok")),
+                    format!("-e {name}=[secret] ok")
+                );
+            }
+        }
+        assert_eq!(secret_in("GH_TOKEN="), None);
+        assert_eq!(redact("-e GH_TOKEN= x"), "-e GH_TOKEN= x");
+        assert_eq!(redact("RIFF_ITEM=issue-12"), "RIFF_ITEM=issue-12");
     }
 
     /// #2156, 01M7FFA3GN7F2GW3NGYJPTMKN3, 01M7FN5SSWJRDXWTAYAERBAAFB,

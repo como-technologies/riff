@@ -8888,6 +8888,11 @@ of this part when they merge.
   `[secret]` in place of each run of the union of these ranges: two
   ranges that overlap or touch make one run. So no secret cuts another
   secret that holds it, in each order of the list.
+- **01M7G3CSVWSV6RTGJY1WMFGV7V** The scrub of the events of a session,
+  and the filter of `riff daemon log`, skip each start of a token that
+  ends in the last token that they found. So the time to scrub a line
+  grows with its length, not with its square, and a long line from a
+  session holds the daemon for no long time.
 
 ### Process
 

@@ -316,6 +316,61 @@ fn a_secret_at_the_cut_of_a_long_line_goes_whole() {
     assert_eq!(text(&out.stdout), format!("{head} [secret] …\n"));
 }
 
+/// #2156, 01M7EX1Q1F468NWGPJJS0W0ZG9: the value of `NAME=value` goes
+/// when NAME names a key, a secret or a password, in any case, and
+/// `--grep` finds no part of it. A `NAME=` with no value hides nothing.
+#[test]
+fn the_value_of_each_secret_name_goes_in_any_case() {
+    let env = Isolated::new();
+    let at = Utc::now() - Duration::minutes(5);
+    let names = "-e OPENAI_API_KEY=abc1 -e CLIENT_SECRET=abc2 --password=abc3 -e GH_TOKEN= x";
+    write_log(
+        &env,
+        &[],
+        &[line(at, &format!("riff daemon: podman run {names}"))],
+    );
+    let out = daemon_log(&env, &[]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let stamp = at.format("%Y-%m-%dT%H:%M:%SZ");
+    assert_eq!(
+        text(&out.stdout),
+        format!(
+            "{stamp} riff daemon: podman run -e OPENAI_API_KEY=[secret] \
+             -e CLIENT_SECRET=[secret] --password=[secret] -e GH_TOKEN= x\n"
+        )
+    );
+    let out = daemon_log(&env, &["--grep", "abc"]);
+    assert_eq!(
+        text(&out.stdout),
+        "riff daemon log: no line of the log of the riff daemon matches.\n"
+    );
+}
+
+/// #2156, 01M7G3CSVWSV6RTGJY1WMFGV7V: a line of 256 KiB of starts of
+/// tokens of GitHub, and a line of 256 KiB of starts of keys of
+/// Anthropic, each show as one `[secret]`, in a short time.
+#[test]
+fn a_long_line_of_starts_of_tokens_goes_in_a_short_time() {
+    let env = Isolated::new();
+    let at = Utc::now() - Duration::minutes(5);
+    let long = |start: &str| start.repeat(256 * 1024 / start.len());
+    let lines = [
+        line(at, &format!("riff daemon: {}", long("ghs_"))),
+        line(at, &format!("riff daemon: {}", long("sk-ant-"))),
+    ];
+    write_log(&env, &[], &lines);
+    let begin = std::time::Instant::now();
+    let out = daemon_log(&env, &[]);
+    let took = begin.elapsed();
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let stamp = at.format("%Y-%m-%dT%H:%M:%SZ");
+    assert_eq!(
+        text(&out.stdout),
+        format!("{stamp} riff daemon: [secret]\n{stamp} riff daemon: [secret]\n")
+    );
+    assert!(took < std::time::Duration::from_secs(20), "{took:?}");
+}
+
 /// #2156, 01M7EX1Q1F468NWGPJJS0W0ZG9, 01M7FFA3GN7F2GW3NGYJPTMKN3,
 /// 01M7FN5SSWJRDXWTAYAERBAAFB, 01M7FS2HFPJ18E102RWWK3XZ75: the rest of
 /// the word after `Bearer` goes in each form of a header, with each
