@@ -78,41 +78,42 @@
 //! of the riff file of this process ([`crate::binary::OnDisk`],
 //! 01M748V7Y8DQPCQJ9D2Q7HKB76).
 //!
-//! While the Sessions tab is open (01M6VGHCDTDJ69B7C02B5K61PW), the TUI
-//! asks the riff daemon of this machine for its status each
-//! [`DAEMON_EVERY`]: its container sessions
-//! join the sessions model. It reads the titles of the open issues of
-//! each repository with a live session from `gh` each
-//! [`crate::top::ISSUES_TTL`], with the conditional read of the Waves
+//! The TUI asks the riff daemon of this machine for its status each
+//! [`DAEMON_EVERY`], whichever tab shows (01M7GFY7EBGFJJY27VZ6544B7W):
+//! its container sessions join the sessions model. Each look also reads
+//! the holds of each board of the Waves tab. The tab of a read of `gh`
+//! reads it each minute while it shows, and each 5 minutes while
+//! another tab shows ([`reads`]). The Sessions tab reads the titles of
+//! the open issues of each repository with a live session
+//! (01M6VGHCDTDJ69B7C02B5K61PW), with the conditional read of the Waves
 //! tab and no read of the pull requests ([`forge::titles`]). A read of
 //! `gh` that fails names the error in the note line once, and keeps the
 //! last titles.
 //!
-//! While the Waves tab shows, each look also reads the holds of its
-//! boards (01M6VFGK79JGRF919BM8SJ6E08), and the TUI reads the forge of
-//! its boards each [`forge::READ_EVERY`] ([`forge::read_each`],
+//! The Waves tab reads the forge of its boards ([`forge::read_each`],
 //! 01M6VFGK4P2FWMFQHBZKR3JXSZ). Each call of `gh` of the TUI counts as
-//! the caller `tui`. While the Chat tab shows, the TUI reads the open
-//! issues for its list of `#` each [`forge::READ_EVERY`]
-//! ([`forge::open_issues_each`], 01M74CX9KVGQG4Y7ATT6268NMY). The three
-//! tabs share the `ETag` of each read ([`forge::Kept`]).
+//! the caller `tui`. The Chat tab reads the open issues for its list of
+//! `#` ([`forge::open_issues_each`], 01M74CX9KVGQG4Y7ATT6268NMY). The
+//! three tabs share the `ETag` of each read ([`forge::Kept`]).
 //!
 //! The TUI follows the wakes of the GitHub App of the repository of the
 //! folder (`GET /v1/github/watch`, 01M74N357CC7DN6B8QX8GDR0ZM). A wake of
 //! an issue or a pull request makes the next read of the forge, of the
-//! titles and of the list of `#` come at once, at most one each
-//! [`crate::hooks::SHOW_GAP`] ([`crate::hooks::Shows`]). So a change on
-//! GitHub shows within seconds. A wake of a check waits for the next read.
+//! titles and of the list of `#` come at once while its tab shows, at
+//! most one each [`crate::hooks::SHOW_GAP`] ([`crate::hooks::Shows`]).
+//! So a change on GitHub shows within seconds. A tab that does not show
+//! reads at its time, or at once when it opens ([`reads::Reads::again`]).
+//! A wake of a check waits for the next read.
 //!
 //! | What | Source | When |
 //! |---|---|---|
 //! | The sessions, the state of the riff | riff-server: `riff`, `who` | each 3 s, each 15 s when idle, and after a message of the thread |
-//! | The holds of the boards | riff-server: `plan show` | at each look while the Waves tab shows |
+//! | The holds of the boards | riff-server: `plan show` | at each look |
 //! | The build of the riff on disk | the riff file of this process: `--version` | at each look, once for each new file |
-//! | The container sessions of this machine | the socket of the daemon: `status` | each second while the Sessions tab is open |
-//! | The titles of the issues | `gh api`: the conditional read of the open issues | each 60 s while the Sessions tab is open, and soon after a wake of GitHub |
-//! | The items of the boards | `gh api`, and `gh pr list` with an open pull request | each 60 s while the Waves tab shows, at once on `r`, and soon after a wake of GitHub |
-//! | The open issues of the list of `#` | `gh api`: the conditional read of the open issues | each 60 s while the Chat tab shows, and soon after a wake of GitHub |
+//! | The container sessions of this machine | the socket of the daemon: `status` | each second |
+//! | The titles of the issues | `gh api`: the conditional read of the open issues | at the start, each 60 s while the Sessions tab is open, each 5 minutes while another tab shows, and soon after a wake of GitHub |
+//! | The items of the boards | `gh api`, and `gh pr list` with an open pull request | at the start, each 60 s while the Waves tab shows, each 5 minutes while another tab shows, at once on `r`, and soon after a wake of GitHub |
+//! | The open issues of the list of `#` | `gh api`: the conditional read of the open issues | at the start, each 60 s while the Chat tab shows, each 5 minutes while another tab shows, and soon after a wake of GitHub |
 //! | The usage of a wave | `gh`: the milestones, the issues and their comments | when the Usage report shows with no read yet, and on `r` |
 //! | The audit of a wave | riff-server: the log; `gh`: the forge | on `Enter` and `r` in the Audit report |
 //! | The events of a session | the socket of the daemon, or riff-server for another host | while the Session log shows |
@@ -222,6 +223,7 @@
 pub mod chat;
 pub mod forge;
 pub mod machines;
+pub mod reads;
 pub mod reports;
 pub mod sessions;
 pub mod view;
@@ -258,7 +260,7 @@ pub const IDLE_AFTER: Duration = Duration::from_secs(120);
 pub const THREAD_LOOK_EVERY: Duration = Duration::from_secs(1);
 
 /// The time between two asks of the status of the riff daemon of this
-/// machine, while the Sessions tab is open.
+/// machine (01M7GFY7EBGFJJY27VZ6544B7W).
 pub const DAEMON_EVERY: Duration = Duration::from_secs(1);
 
 /// The longest time between the two clicks of a double click.
@@ -809,9 +811,9 @@ pub struct Look {
     /// This host and the status of its riff daemon
     /// (01M6VFD09QN71SWMPP8YXCRAEK). `None` when the look did not ask.
     pub here: Option<machines::Here>,
-    /// The holds of each board, by `OWNER/REPO` and item, while the Waves
-    /// tab shows (01M6VFGK79JGRF919BM8SJ6E08). A read that fails keeps
-    /// the last holds of its repository ([`State::looked`]).
+    /// The holds of each board, by `OWNER/REPO` and item, whichever tab
+    /// shows (01M7GFY7EBGFJJY27VZ6544B7W). A read that fails keeps the
+    /// last holds of its repository ([`State::looked`]).
     pub holds: BTreeMap<String, BTreeMap<String, HoldInfo>>,
     /// The build of the riff file at the path of this process
     /// ([`crate::binary::OnDisk`], 01M748V7Y8DQPCQJ9D2Q7HKB76). `None`
@@ -843,7 +845,7 @@ impl Default for Look {
 /// Looks at riff-server as `me`: the calls `riff` and `who` of
 /// `riff top` ([`crate::top::look`], 01M6VAZK7N636Q0JFSV553A9ES), and
 /// `plan show` for each repository of `boards`
-/// (01M6VFGK79JGRF919BM8SJ6E08). Each call has the budget of a short
+/// (01M7GFY7EBGFJJY27VZ6544B7W). Each call has the budget of a short
 /// command, as in `riff top`. Then it asks the riff daemon of this host
 /// for its status ([`machines::here`], 01M6VFD09QN71SWMPP8YXCRAEK), and
 /// reads the build of the riff file of this process
@@ -931,6 +933,8 @@ pub struct State {
     drawn_ms: i64,
     /// The filter of the Machines tab (01M6VJQPJXKHKJ8WT1CAQMN1YR).
     host_filter: machines::Filter,
+    /// When each read of `gh` of a tab starts (01M7GFY7EBGFJJY27VZ6544B7W).
+    reads: reads::Reads,
 }
 
 impl State {
@@ -963,6 +967,7 @@ impl State {
             page: 20,
             drawn_ms: 0,
             host_filter: machines::Filter::default(),
+            reads: reads::Reads::default(),
         }
     }
 
@@ -1071,12 +1076,13 @@ impl State {
         }
     }
 
-    /// The repositories of the boards of the Waves tab, while it shows:
-    /// the look reads their holds, and the forge reads their items.
+    /// The repositories of the boards of the Waves tab, whichever tab
+    /// shows (01M7GFY7EBGFJJY27VZ6544B7W): the look reads their holds,
+    /// and the forge reads their items.
     pub fn boards(&self) -> Vec<String> {
-        match (self.tab, self.last_look()) {
-            (Tab::Waves, Some((look, _))) => self.waves.repos(look),
-            _ => Vec::new(),
+        match self.last_look() {
+            Some((look, _)) => self.waves.repos(look),
+            None => Vec::new(),
         }
     }
 
@@ -1400,7 +1406,8 @@ impl State {
     /// the filter of the Sessions tab. Then the frame takes its keys, and
     /// the tab the others: `k` `j` `g` `G` are `↑` `↓` `Home` `End`
     /// (01M6VFGKCJ02G33TXR01GY6M0G). Opening the Waves tab looks again at
-    /// once, for the holds of its boards.
+    /// once, for the holds of its boards. `r` in the Waves tab reads the
+    /// forge again at once ([`State::read_again`]).
     ///
     /// ```
     /// use riff::tui::{Action, Key, State, Tab};
@@ -1492,8 +1499,10 @@ impl State {
                 None
             }
             Key::Again => {
-                if self.tab == Tab::Reports {
-                    self.reports_again();
+                match self.tab {
+                    Tab::Reports => self.reports_again(),
+                    Tab::Waves => self.read_again(reads::Read::Forge),
+                    _ => {}
                 }
                 Some(Action::Look)
             }
@@ -1959,21 +1968,16 @@ struct Tasks {
     /// time of the next one.
     asking: Option<tokio::task::JoinHandle<Result<Status, String>>>,
     next_ask: tokio::time::Instant,
-    /// The read of the titles from `gh` that runs, and the time of the
-    /// last one.
+    /// The read of the titles from `gh` that runs. The state knows when
+    /// the next one starts ([`State::starts`]), as for each read of `gh`.
     reading: Option<Reading<Titles>>,
-    read_at: Option<tokio::time::Instant>,
     /// The read of the forge for the Waves tab that runs.
     forge: Option<Reading<Boards>>,
-    /// The read of the open issues for the Chat tab that runs, and the
-    /// time of the last one.
+    /// The read of the open issues for the Chat tab that runs.
     opening: Option<Reading<Opened>>,
-    opened_at: Option<tokio::time::Instant>,
     /// The kept replies of the conditional reads of `gh`: the Sessions
     /// tab, the Waves tab and the Chat tab share them.
     kept: forge::Kept,
-    /// `r` while the Waves tab shows: read the forge again.
-    forge_again: bool,
     /// The action that runs in a task of its own: its result is the
     /// next note.
     acting: Option<tokio::task::JoinHandle<String>>,
@@ -2027,10 +2031,10 @@ impl Tasks {
 
 /// The loop of [`run`]: it draws the state, takes the input of the
 /// person, does the actions, and looks at riff-server each [`every`].
-/// While the Sessions tab is open, it asks the daemon of this machine and
-/// reads the titles from `gh`. While the Waves tab shows, it reads the
-/// forge each [`forge::READ_EVERY`]. The [`chat::Link`] of `person`
-/// follows the thread `chat` and posts its lines.
+/// It asks the daemon of this machine each [`DAEMON_EVERY`]. It reads
+/// the titles, the forge and the open issues of the list of `#` from
+/// `gh` when [`State::starts`] says so ([`reads`]). The [`chat::Link`]
+/// of `person` follows the thread `chat` and posts its lines.
 async fn frames(
     terminal: &mut ratatui::DefaultTerminal,
     state: &mut State,
@@ -2057,12 +2061,9 @@ async fn frames(
         asking: None,
         next_ask: Instant::now(),
         reading: None,
-        read_at: None,
         forge: None,
         opening: None,
-        opened_at: None,
         kept: forge::Kept::default(),
-        forge_again: false,
         acting: None,
         usage: None,
         audit: None,
@@ -2131,31 +2132,28 @@ async fn frames(
         while let Ok(wake) = wakes.try_recv() {
             shows.wake(&wake);
         }
+        // A wake reads each tab again at once while it shows, or when it
+        // opens (01M7GFY7EBGFJJY27VZ6544B7W).
         if shows.due(std::time::Instant::now()) {
             shows.read(std::time::Instant::now());
-            tasks.forge_again = true;
-            tasks.read_at = None;
-            tasks.opened_at = None;
+            for read in reads::Read::ALL {
+                state.read_again(read);
+            }
         }
         if tasks.forge.as_ref().is_some_and(Reading::is_finished)
             && let Some(done) = tasks.forge.take()
         {
             state.read_forge(done.result()?, crate::run::now_ms());
         }
-        // While the Chat tab shows, the open issues of the list of `#`
-        // (01M74CX9KVGQG4Y7ATT6268NMY).
+        // The open issues of the list of `#` (01M74CX9KVGQG4Y7ATT6268NMY).
         if tasks.opening.as_ref().is_some_and(Reading::is_finished)
             && let Some(done) = tasks.opening.take()
         {
             state.chat_issues(done.result()?);
         }
-        let due = tasks
-            .opened_at
-            .is_none_or(|at| at.elapsed() >= forge::READ_EVERY);
-        if state.tab() == Tab::Chat && tasks.opening.is_none() && due {
+        if tasks.opening.is_none() && state.starts(reads::Read::OpenIssues, crate::run::now_ms()) {
             let repos = state.chat_repos();
             let (gh, kept) = (gh.clone(), tasks.kept.clone());
-            tasks.opened_at = Some(Instant::now());
             tasks.opening = Some(Reading::start(move || {
                 forge::open_issues_each(&gh, &repos, &kept)
             }));
@@ -2168,8 +2166,8 @@ async fn frames(
         {
             state.note(done.await?);
             // The action changed something: look again, and read the
-            // forge again while the Waves tab shows.
-            tasks.forge_again = true;
+            // forge again while the Waves tab shows, or when it opens.
+            state.read_again(reads::Read::Forge);
             if tasks.looking.is_some() {
                 tasks.again = true;
             } else {
@@ -2177,11 +2175,7 @@ async fn frames(
             }
         }
         reports_tasks(&mut tasks, state, api, me, reach, &gh).await?;
-        if tasks.forge.is_none()
-            && state.tab() == Tab::Waves
-            && (tasks.forge_again || state.waves().due(crate::run::now_ms()))
-        {
-            tasks.forge_again = false;
+        if tasks.forge.is_none() && state.starts(reads::Read::Forge, crate::run::now_ms()) {
             let repos = state.boards();
             let (gh, kept) = (gh.clone(), tasks.kept.clone());
             tasks.forge = Some(Reading::start(move || forge::read_each(&gh, &repos, &kept)));
@@ -2233,8 +2227,9 @@ async fn frames(
             state.daemon_looked(done.await?);
             tasks.next_ask = Instant::now() + DAEMON_EVERY;
         }
-        let sessions = state.tab() == Tab::Sessions;
-        if sessions && tasks.asking.is_none() && Instant::now() >= tasks.next_ask {
+        // Whichever tab shows: the socket costs no point of GitHub
+        // (01M7GFY7EBGFJJY27VZ6544B7W).
+        if tasks.asking.is_none() && Instant::now() >= tasks.next_ask {
             let (dir, reach) = (dir.clone(), reach.clone());
             tasks.asking = Some(tokio::spawn(async move {
                 // In a container, the daemon on the socket of the session
@@ -2257,10 +2252,7 @@ async fn frames(
         {
             state.titled(done.result()?);
         }
-        let due = tasks
-            .read_at
-            .is_none_or(|at| at.elapsed() >= crate::top::ISSUES_TTL);
-        if sessions && tasks.reading.is_none() && due {
+        if tasks.reading.is_none() && state.starts(reads::Read::Titles, crate::run::now_ms()) {
             let repo = me.default_thread().map(|t| t.to_string());
             let repos = riff_client::waves::board_repos(
                 state.model(),
@@ -2268,7 +2260,6 @@ async fn frames(
                 repo.as_deref(),
             );
             let (gh, kept) = (gh.clone(), tasks.kept.clone());
-            tasks.read_at = Some(Instant::now());
             tasks.reading = Some(Reading::start(move || {
                 repos
                     .into_iter()
@@ -2332,7 +2323,6 @@ async fn frames(
                 break Ok(());
             }
             Action::Look => {
-                tasks.forge_again = state.tab() == Tab::Waves;
                 if tasks.looking.is_some() {
                     tasks.again = true;
                 } else {

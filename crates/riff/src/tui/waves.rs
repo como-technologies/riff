@@ -11,8 +11,9 @@
 //! project gets no board. A board is the model of `riff top`
 //! ([`Board`]): the items of the current wave, from the facts of the
 //! forge ([`super::forge`]), the claims of `who` and the holds of
-//! riff-server. The look of the TUI reads the holds of each board while
-//! the tab shows ([`super::look`], 01M6VFGK79JGRF919BM8SJ6E08).
+//! riff-server. Each look of the TUI reads the holds of each board, and
+//! the TUI reads the forge also while another tab shows ([`super::look`],
+//! [`super::reads`], 01M7GFY7EBGFJJY27VZ6544B7W).
 //!
 //! ```text
 //!  1 Sessions  2 Chat•2  [3 Waves]  4 Machines  5 Devices  6 Reports
@@ -499,23 +500,6 @@ impl Waves {
         crate::questions::repos(&look.who, self.here.as_deref())
             .into_iter()
             .collect()
-    }
-
-    /// True when a read of the forge is due at `now_ms`: none yet, or the
-    /// last one is [`super::forge::READ_EVERY`] old.
-    ///
-    /// ```
-    /// use riff::tui::waves::Waves;
-    ///
-    /// let mut waves = Waves::new(None);
-    /// assert!(waves.due(0));
-    /// waves.read(Vec::new(), 1_000);
-    /// assert!(!waves.due(60_999));
-    /// assert!(waves.due(61_000));
-    /// ```
-    pub fn due(&self, now_ms: i64) -> bool {
-        let every = i64::try_from(super::forge::READ_EVERY.as_millis()).unwrap_or(i64::MAX);
-        self.read_ms.is_none_or(|at| now_ms - at >= every)
     }
 
     /// Takes the read `read` of the forge of each repository at `at_ms`.

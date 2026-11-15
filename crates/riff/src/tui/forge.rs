@@ -5,9 +5,11 @@
 //! # Design
 //!
 //! The Waves tab reads `gh` each [`READ_EVERY`] while the person sees
-//! it, and at once on `r`. A read of a repository is one run of blocking
-//! calls ([`read`]). Its calls go to the tally of the daemon as the
-//! caller `tui` ([`crate::pr::Gh::here`]). The calls:
+//! it, and at once on `r`. While another tab shows, it reads `gh` each
+//! [`super::reads::AWAY_EVERY`] ([`super::reads`]). A read of a
+//! repository is one run of blocking calls ([`read`]). Its calls go to
+//! the tally of the daemon as the caller `tui` ([`crate::pr::Gh::here`]).
+//! The calls:
 //!
 //! | What | Call | Cost |
 //! |---|---|---|
@@ -83,7 +85,8 @@ use crate::pr::{Gate, Gh, Reply};
 use crate::rollout::{Comment, Label, Merge, MergedPull, Pull, Verify};
 use crate::typeahead::OpenIssue;
 
-/// The time between two reads of the forge while the Waves tab shows.
+/// The time between two reads of `gh` of the tab that shows
+/// ([`super::reads::Read::every`]).
 pub const READ_EVERY: Duration = Duration::from_secs(60);
 
 /// The entries of one page of a REST list.

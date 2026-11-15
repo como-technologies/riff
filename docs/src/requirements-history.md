@@ -3360,6 +3360,9 @@ Backlog (01M53NGWN190T2MYB1EZAD36VB).
   and attaches. On another host, the note says to run `riff lead start`
   in a clone of the repository.
   Superseded by 01M77XYN04KX35QZ06NDPSXHRP.
+- **01M6VFGK79JGRF919BM8SJ6E08** While the Waves tab shows, each look of
+  the TUI also reads the holds of each board from riff-server.
+  Superseded by 01M7GFY7EBGFJJY27VZ6544B7W.
 
 ## The notes of the lead
 

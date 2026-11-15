@@ -103,11 +103,12 @@
 //!   digits after it, the newest first, in the place of the list of the
 //!   names, with the same keys. Each row is cut to the width of the tab.
 //!   The pick puts `#N` for an issue of the repository of the working
-//!   folder, and `OWNER/REPO#N` for an issue of another repository. While
-//!   the tab shows, the loop of the TUI reads the open issues each
-//!   [`super::forge::READ_EVERY`] ([`super::forge::open_issues`],
-//!   01M74CX9KVGQG4Y7ATT6268NMY), and gives them to
-//!   [`State::chat_issues`].
+//!   folder, and `OWNER/REPO#N` for an issue of another repository. The
+//!   loop of the TUI reads the open issues ([`super::forge::open_issues`],
+//!   01M74CX9KVGQG4Y7ATT6268NMY): at its start, each
+//!   [`super::forge::READ_EVERY`] while the tab shows, and each
+//!   [`super::reads::AWAY_EVERY`] while another tab shows
+//!   ([`super::reads`]). It gives them to [`State::chat_issues`].
 //!
 //!   ```text
 //!    13:12 <riff> #1608 merged
