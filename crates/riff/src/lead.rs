@@ -297,7 +297,7 @@ pub enum Fresh {
 /// clone stays as it is (01M51JYDHAQDJ3GH2J8DT3AZQS).
 pub fn fresh_clone(main: &Path, clone: &Path) -> Result<Fresh> {
     if !clone.join(".git").exists() {
-        let remote = run::output("git", main, &["remote", "get-url", "origin"])?;
+        let remote = crate::host_git::output(main, &["remote", "get-url", "origin"])?;
         let top = main.to_string_lossy();
         let path = clone.to_string_lossy();
         git_credential::run(
@@ -307,7 +307,7 @@ pub fn fresh_clone(main: &Path, clone: &Path) -> Result<Fresh> {
         )?;
         return Ok(Fresh::Made);
     }
-    let git = |args: &[&str]| run::output("git", clone, args);
+    let git = |args: &[&str]| crate::host_git::output(clone, args);
     if !git(&["status", "--porcelain", "--untracked-files=no"])?.is_empty() {
         return Ok(Fresh::Kept(text::LEAD_CLONE_CHANGED.into()));
     }

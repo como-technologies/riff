@@ -48,14 +48,17 @@
 //!   opens it again with `Enter`, `←`, `→` or `Space`
 //!   (01M6VFG882T794B1CTHK5AKPDG).
 //! - **The rows** ([`ItemRow`], 01M6VFGJWVB3WEEYBCNSZ2FJT0): stuck, free,
-//!   held, needs, asked, work, verify and tracker. A needs row names the
-//!   open issues of its `Needs:` line, as `waits for #1522`
+//!   held, needs, asked, work, verify, tracker and merged. A needs row
+//!   names the open issues of its `Needs:` line, as `waits for #1522`
 //!   (01M78TW2TPG6JM99RN73NV5GB9). A work row shows the session that holds
 //!   the claim with its state and mark ([`super::Mark`]), a verify or
 //!   stuck row its pull request. A verify or a rebase that waits for its
 //!   turn is a verify row that names the pull request before it, as
-//!   `PR #42 after #41` (01M6YPYTW6CVCDBZ9631CFXQBJ). The closed items of
-//!   the wave are one line, and `Enter` shows them.
+//!   `PR #42 after #41` (01M6YPYTW6CVCDBZ9631CFXQBJ). A merged row is an
+//!   item of the group `merged` or `live check` of `riff wave list`, with
+//!   the pull request that merged, as `PR #882 merged` or `PR #1866 live
+//!   check` (01M7E25WB42HQQ34CRNXPZFHHR). The closed items of the wave
+//!   are one line, and `Enter` shows them.
 //! - **The questions of each wave** (01M6Y0ZQWDYVC23WA5CVN0QSH8): the
 //!   asked rows have the issues with the label `question` of the later
 //!   waves too ([`later_questions`]), in number order, as `riff
@@ -160,6 +163,9 @@ pub enum ItemState {
     Verify,
     /// A tracker issue: no session does it.
     Tracker,
+    /// A merged pull request keeps it out of the free work: the wave
+    /// starts no build of it (01M7E25WB42HQQ34CRNXPZFHHR).
+    Merged,
     /// It closed as completed.
     Done,
     /// It closed as not planned or as a duplicate.
@@ -174,6 +180,7 @@ impl ItemState {
     ///
     /// assert_eq!(ItemState::Stuck.word(), "stuck");
     /// assert_eq!(ItemState::Asked.word(), "asked");
+    /// assert_eq!(ItemState::Merged.word(), "merged");
     /// assert_eq!(ItemState::Done.word(), "done");
     /// ```
     pub fn word(self) -> &'static str {
@@ -186,6 +193,7 @@ impl ItemState {
             ItemState::Work => "work",
             ItemState::Verify => "verify",
             ItemState::Tracker => "tracker",
+            ItemState::Merged => "merged",
             ItemState::Done => "done",
             ItemState::Closed => "closed",
         }
@@ -203,6 +211,7 @@ impl ItemState {
             ItemState::Work => ("●", Style::new().fg(Color::Green)),
             ItemState::Verify => ("◐", CYAN),
             ItemState::Tracker => ("·", DIM),
+            ItemState::Merged => ("✓", DIM),
             ItemState::Done => ("✓", CYAN),
             ItemState::Closed => ("×", DIM),
         }
@@ -224,7 +233,8 @@ pub struct ItemRow {
     pub since_ms: Option<i64>,
     /// The mark: its symbol and its style.
     pub mark: (&'static str, Style),
-    /// The number of its open pull request.
+    /// The number of its pull request: the open one, or the merged one of
+    /// a merged row.
     pub pull: Option<u64>,
     /// The wave of a question of a later wave, as `Wave N`. `None` for an
     /// item of the current wave.
@@ -911,6 +921,21 @@ fn items(
     }
     for n in &board.tracker {
         rows.push(row(*n, ItemState::Tracker, "-".into(), None));
+    }
+    // The items that a merged pull request keeps out of the free work, as
+    // `riff wave list` groups them in `merged` and `live check`, in number
+    // order (01M7E25WB42HQQ34CRNXPZFHHR).
+    let mut merged: Vec<(u64, u64, &str)> = board
+        .merged
+        .iter()
+        .map(|(n, pull)| (*n, *pull, "merged"))
+        .chain(board.live.iter().map(|(n, pull)| (*n, *pull, "live check")))
+        .collect();
+    merged.sort_unstable();
+    for (n, pull, word) in merged {
+        let mut item = row(n, ItemState::Merged, format!("PR #{pull} {word}"), None);
+        item.pull = Some(pull);
+        rows.push(item);
     }
     rows
 }
@@ -2534,6 +2559,104 @@ mod tests {
                 " > ○   free    #1620  Add the flag --format           -                    -",
                 "   ◌   held    #1631  Design: the web UI              waits for mike       3d",
                 "   ◌   needs   #1622  The book names the flag         waits for #1631      -",
+            ]
+        );
+    }
+
+    /// The facts of the forge of riff with three open items of Wave 48,
+    /// from the entries of the REST list ([`Forge::of`], #2145): #1620 with
+    /// no merge, #1622 whose pull request #1630 merged with `Refs #1622`,
+    /// and #1640 whose pull request #1650 merged with `Refs #1640` and
+    /// whose "Done when" has a `Live:` line. With `more`, #1622 has the
+    /// comment of `riff wave next 1622`.
+    fn merged_forge(more: bool) -> Forge {
+        use crate::rollout::{Comment, Merge};
+        use crate::tui::forge::Entry;
+
+        let wave = r#"{"number":54,"title":"Wave 48: what 4.9.0 left, and the design of the TUI"}"#;
+        let item = |n: u64, title: &str, done: &str| {
+            format!(
+                r#"{{"number":{n},"title":"{title}","milestone":{wave},"body":"Done when:\n- {done}"}}"#
+            )
+        };
+        let list = [
+            item(1620, "Add the flag --format", "A test."),
+            item(1622, "The book names the flag", "A test."),
+            item(1640, "Run it on pangolin", "Live: it runs."),
+        ];
+        let mut open: Vec<Entry> = serde_json::from_str(&format!("[{}]", list.join(","))).unwrap();
+        let merge = |pull| {
+            Some(Merge {
+                pull,
+                commit: "abc".into(),
+                closes: false,
+            })
+        };
+        open[1].merge = merge(1630);
+        open[2].merge = merge(1650);
+        if more {
+            open[1].said = vec![Comment {
+                body: text::wave_more_work(1630),
+            }];
+        }
+        Forge::of(open, &[])
+    }
+
+    /// 01M7E25WB42HQQ34CRNXPZFHHR (#2145): an open item whose pull request
+    /// merged with `Refs #N` is a merged row that names that pull request,
+    /// and with a `Live:` line it says `live check`: never a free row, as
+    /// in `riff wave list`. The board counts them, and `o` shows the URL
+    /// of the merged pull request. After the comment of `riff wave next`,
+    /// the item is a free row again.
+    #[test]
+    fn an_item_with_a_merged_pull_request_is_a_merged_row_and_never_free() {
+        let mut state = mock_up();
+        let read = |more| vec![(RIFF.to_owned(), Ok(merged_forge(more)))];
+        state.read_forge(read(false), NOW - 41_000);
+        // The line of the repository is the selected one: no item has `>`.
+        state.on_key(Key::Up);
+        let rows = drawn(&state, 80, 24);
+        assert!(
+            rows[2].starts_with(" ▼ como-technologies/riff · Wave 48")
+                && rows[2].ends_with(" 1 free 2 merged"),
+            "{rows:#?}"
+        );
+        assert_eq!(
+            rows[4..7],
+            [
+                "   ○   free    #1620  Add the flag --format           -                    -",
+                "   ✓   merged  #1622  The book names the flag         PR #1630 merged      -",
+                "   ✓   merged  #1640  Run it on pangolin              PR #1650 live check  -",
+            ]
+        );
+        // "See the merged items in the TUI" of the book shows these rows.
+        let book = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/src/how-it-works.md"
+        ))
+        .unwrap();
+        let book = crate::tui::text_block(&book, "### See the merged items in the TUI", "");
+        assert_eq!(book, rows[4..7]);
+        let narrow = drawn(&state, 40, 24);
+        assert_eq!(narrow[4], "  ✓ merged  #1622  The book names the f…");
+        state.on_key(Key::Down);
+        state.on_key(Key::Down);
+        state.on_key(Key::Char('o'));
+        assert_eq!(
+            state.shown_note(),
+            Some("https://github.com/como-technologies/riff/pull/1630")
+        );
+
+        // `riff wave next 1622`: its comment makes #1622 free work again.
+        state.read_forge(read(true), NOW - 41_000);
+        let rows = drawn(&state, 80, 24);
+        assert!(rows[2].ends_with(" 2 free 1 merged"), "{rows:#?}");
+        assert_eq!(
+            rows[4..7],
+            [
+                "   ○   free    #1620  Add the flag --format           -                    -",
+                " > ○   free    #1622  The book names the flag         -                    -",
+                "   ✓   merged  #1640  Run it on pangolin              PR #1650 live check  -",
             ]
         );
     }

@@ -112,7 +112,7 @@ sequenceDiagram
     W->>G: the free items and the pull requests that wait for a verify
     W->>D: room for one more session?
     D->>S: a new worker session, and its claim of issue-12
-    D->>D: a clone of the item, with --reference MAIN
+    D->>D: a clone of the item, with --reference MAIN, in new-clones, then moved into the folder of the session
     D->>C: podman run --init: riff relay -- claude
     C->>D: the riff tools, on the socket of the session
     D->>S: read, post, tell and status, as the worker session
@@ -361,7 +361,7 @@ hold each decision of the design.
 | What sessions share | How riff keeps them apart | What a session can still do to another |
 |---|---|---|
 | The files of your machine | Each session is a rootless podman container (`--userns=keep-id`). It writes only its binds: its own clone, its own Claude folder, the folder of its socket and the volumes that `riff.toml` names. Each other write goes to the copy-on-write layer of the container, and goes when the session ends. | Nothing outside its binds. See the rows of git and of the caches. |
-| git: the clone and its alternates | Each session has its own clone, made with `git clone --reference MAIN` in a folder of riff. The container sees the objects of the main clone at the same path, with no write. No session writes the git dir of the main clone or of another session. The clone goes when its item ends, after its push. | Nothing in the clone of another session. A `git gc` of the main clone can remove an object that a session clone reads. |
+| git: the clone and its alternates | Each session has its own clone, made with `git clone --reference MAIN` in a folder of riff, `new-clones/ITEM-ID8`, and then moved into the folder of the session. The container sees the objects of the main clone at the same path, with no write. No session writes the git dir of the main clone or of another session. The host runs no git in the clone of a session: the session writes the git config of its clone, and a git config can name a program that git runs. One guard of riff refuses each git call on your machine in the folder of the sessions. The sweep reads only GitHub and the file `repo` of the folder, and the council of a verify reads the main clone. The clone goes when its item ends. | Nothing in the clone of another session. A `git gc` of the main clone can remove an object that a session clone reads. |
 | git: the config | `~/.gitconfig` is bound with no write, or as an overlay whose changes go when the session ends. riff writes no git config of yours. A session writes only the config of its own clone. | Nothing. |
 | git: the commit | A commit has the bot of the GitHub App of the session as its author, for example `riff-como-technologies[bot]`, with the noreply email of the bot, and a `Riff-Session:` trailer that names the session. Where the Apps are not on the repository, it has your git identity. A session commits with no signature: riff sets `commit.gpgsign=false` in the environment of the container, so it applies to each git call of the session. The squash merge on GitHub makes the commit on `main` from the message that `riff verify pass` gives: the body of the pull request, which ends with `Riff-Session:` and `Co-authored-by:` you. No gpg agent goes into a container. See [Find the commits of a session](development.md#find-the-commits-of-a-session). | Nothing. The trailer `Riff-Session:` tells the commits of two sessions apart. |
 | git: the repository on GitHub | Each session pushes its own branch from its own clone. The daemon makes the claims, not the session: see the next row. | With your sign-in, a session can push to the branch of another session, or delete it. |
@@ -3789,8 +3789,10 @@ release](development.md#leave-the-issue-open-for-a-check-after-the-release).
 
 After a pull request with `Refs #12` merges, issue 12 stays open. The
 wave starts no session for it: `riff wave list` shows it in the group
-`merged`, for example `merged: #12 (in #40)`. When the issue has more
-work, the lead tells the wave:
+`merged`, for example `merged: #12 (in #40)`, and the Waves tab shows a
+`merged` row (see
+[See the merged items in the TUI](#see-the-merged-items-in-the-tui)).
+When the issue has more work, the lead tells the wave:
 
 ```sh
 riff wave next 12
@@ -5877,6 +5879,40 @@ flowchart LR
     L -- "Wave N · TITLE" --> A
     N --> Q["riff questions"]
 ```
+
+### See the merged items in the TUI
+
+An open issue whose pull request merged with `Refs #N` is no free work:
+the wave starts no session for it (see
+[Start the next pull request of an issue](#start-the-next-pull-request-of-an-issue)).
+The Waves tab shows it as `riff wave list` does. Run riff with no
+command, and press `3` for the Waves tab:
+
+```sh
+riff
+```
+
+The board of the current wave has a `merged` row for each such item,
+with the pull request that merged:
+
+```text
+   ○   free    #1620  Add the flag --format           -                    -
+   ✓   merged  #1622  The book names the flag         PR #1630 merged      -
+   ✓   merged  #1640  Run it on pangolin              PR #1650 live check  -
+```
+
+- `PR #1630 merged`: the item is in the group `merged` of
+  `riff wave list`. When it has more work, run `riff wave next 1622`.
+  At the next read of the tab, it is a `free` row.
+- `PR #1650 live check`: the "Done when" of the item has a `Live:`
+  line. It waits for its check after the release, and is in the group
+  `live check` of `riff wave list`.
+- `o` on a `merged` row shows the URL of the pull request that merged.
+
+The tab reads the comments `Merged in #PR` and `More work after #PR`
+of the items of the current wave, and the last 100 merged pull
+requests, as the wave does. So the tab, `riff wave list` and the wave
+agree on each item.
 
 ## Pause the riff
 

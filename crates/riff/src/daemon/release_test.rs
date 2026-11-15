@@ -142,23 +142,6 @@ pub fn is_commit(text: &str) -> bool {
     (7..=40).contains(&text.len()) && text.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-fn run(dir: &Path, program: &str, args: &[&str]) -> Result<String> {
-    let out = Command::new(program)
-        .args(args)
-        .current_dir(dir)
-        .stdin(Stdio::null())
-        .output()
-        .with_context(|| format!("cannot run {program}"))?;
-    if !out.status.success() {
-        bail!(
-            "{program} {} failed: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
-}
-
 /// The `gh` of the test for the repository `repo`: it counts its calls as
 /// `release test` ([`crate::ghcalls::DAEMON`]).
 fn gh_of(repo: &str) -> Gh {
@@ -288,12 +271,12 @@ fn prepare(dir: &Path, served: &Served, gh: &Gh, commit: &str) -> Result<PathBuf
     if clone.exists() {
         std::fs::remove_dir_all(&clone)?;
     }
-    let origin = run(&served.wave.main, "git", &["remote", "get-url", "origin"])?;
+    let origin = crate::host_git::output(&served.wave.main, &["remote", "get-url", "origin"])?;
     let clone_text = clone.to_string_lossy().into_owned();
     let args = ["clone", "-q", "--no-checkout", &origin, &clone_text];
     crate::git_credential::keyring_open(&folder, &origin, &args)?;
-    run(&folder, "git", &args)?;
-    run(&clone, "git", &["checkout", "-q", "--detach", commit])?;
+    crate::host_git::output(&folder, &args)?;
+    crate::host_git::output(&clone, &["checkout", "-q", "--detach", commit])?;
     let host = &served.wave.host;
     set_status(
         gh,

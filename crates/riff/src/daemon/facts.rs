@@ -40,9 +40,8 @@
 //!   [`SHORT_MINUTES`](riff_client::daemons::SHORT_MINUTES) left, the step
 //!   for the person, and when it comes back ([`Short`],
 //!   01M57D3FC5PB5EQ6Y38Y5R2DBB);
-//! - when a sweep keeps a folder whose work is over, because its clone
-//!   holds work that is not on `origin` ([`News`],
-//!   01M57D3FEJPHD962GW0H82N8E6).
+//! - after a sweep that deleted an old branch `riff-kept` of `origin`
+//!   ([`News`], 01M5NVKNS35SC8P514GYDJSRQM).
 //!
 //! Each step of a look has a time limit (#1858,
 //! 01M749XKWD72JYB3QD8RYNHKTV): the status of the daemon [`DAEMON_WAIT`],
@@ -561,7 +560,7 @@ impl Short {
 
 /// The notes of the daemon for the lead of each repository, until the
 /// session of the daemon for that repository sends them
-/// (01M57D3FEJPHD962GW0H82N8E6). It keeps at most [`NEWS_MOST`] for each
+/// (01M5NVKNS35SC8P514GYDJSRQM). It keeps at most [`NEWS_MOST`] for each
 /// repository: the oldest go first.
 ///
 /// ```

@@ -35,7 +35,6 @@ use std::process::Stdio;
 
 use anyhow::{Context, Result, bail};
 
-use crate::run::output;
 use crate::{git_credential, text};
 
 /// The one clone of a check on the machine of `home`.
@@ -74,7 +73,7 @@ pub fn riff_of(check: &Path) -> PathBuf {
 /// riff of the build.
 pub fn build(here: &Path, check: &Path, just: &Path) -> Result<PathBuf> {
     if !check.exists() {
-        let remote = output("git", here, &["remote", "get-url", "origin"])?;
+        let remote = crate::host_git::output(here, &["remote", "get-url", "origin"])?;
         let parent = check.parent().context("the check clone has no parent")?;
         std::fs::create_dir_all(parent)
             .with_context(|| format!("cannot make {}", parent.display()))?;
@@ -82,7 +81,7 @@ pub fn build(here: &Path, check: &Path, just: &Path) -> Result<PathBuf> {
         git_credential::run(parent, &remote, &["clone", "-q", "--", &remote, &path])?;
     }
     git_credential::run(check, "origin", &["fetch", "-q", "origin"])?;
-    output("git", check, &["checkout", "-q", "--detach", "origin/HEAD"])?;
+    crate::host_git::output(check, &["checkout", "-q", "--detach", "origin/HEAD"])?;
     let status = std::process::Command::new(just)
         .arg("static")
         .current_dir(check)

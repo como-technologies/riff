@@ -7202,6 +7202,30 @@ pub fn no_program(program: &str) -> String {
     format!("riff cannot start {program}. Install it, or put it on PATH.")
 }
 
+/// The error of the guard of git on the host (01M7DZ429QFWTSEA6JH1DVZJM0):
+/// `dir` is under the folder of the sessions `folder`.
+///
+/// ```
+/// use std::path::Path;
+///
+/// let text = riff::text::host_git_refused(Path::new("/s/issue-12-1a2b3c4d/clone"), Path::new("/s"));
+/// assert_eq!(
+///     text,
+///     "riff runs no git on the host in /s/issue-12-1a2b3c4d/clone: it is in the folder of the \
+///      sessions /s, and a session can write the git config there. Run git in the container \
+///      of the session, or in a clone of your own."
+/// );
+/// ```
+pub fn host_git_refused(dir: &Path, folder: &Path) -> String {
+    format!(
+        "riff runs no git on the host in {}: it is in the folder of the sessions {}, and a \
+         session can write the git config there. Run git in the container of the session, or in \
+         a clone of your own.",
+        dir.display(),
+        folder.display()
+    )
+}
+
 /// `riff run` on a host that is not Linux (01M4ZBGK7SFEXE1AGH6Z0YQHJP).
 pub const RUN_LINUX_ONLY: &str = "riff run needs Linux: riff starts no session on this OS. The \
      sessions on a Mac come with #1649.";
@@ -8737,17 +8761,6 @@ pub fn daemon_claude_back(host: &str) -> String {
         "The sign-in of claude on {} is back: it has 2 hours or more left.",
         safe(host)
     )
-}
-
-/// The note to the lead: the sweep kept a folder whose clone holds work
-/// that is not on `origin`, with the `line` of the sweep
-/// (01M57D3FEJPHD962GW0H82N8E6).
-///
-/// ```
-/// assert_eq!(riff::text::daemon_kept_work("riff kept the folder /s/x."), "riff daemon: riff kept the folder /s/x.");
-/// ```
-pub fn daemon_kept_work(line: &str) -> String {
-    format!("riff daemon: {line}")
 }
 
 /// A sign-in in the facts of a host (01M57D3FGV57W96A7SWTEFRCGW).
@@ -12900,26 +12913,23 @@ pub fn wave_wip_head(item: &str, number: u64, branch: &str, commit: &str, sessio
     )
 }
 
-/// A build of a wave ended with no open pull request.
+/// A build of a wave ended with no open pull request. riff pushes
+/// nothing from its clone (01M7DZ4E2P5RJMQE0W9K1AAA4P).
+///
+/// ```
+/// let text = riff::text::wave_no_pull("issue-12", "worktree-issue-12", std::path::Path::new("/c"));
+/// assert_eq!(
+///     text,
+///     "issue-12: the session of the wave ended, and no open pull request has the branch \
+///      worktree-issue-12. Its work that is not on origin is only in the clone /c: riff \
+///      commits and pushes nothing there. The item is free."
+/// );
+/// ```
 pub fn wave_no_pull(item: &str, branch: &str, clone: &Path) -> String {
     format!(
         "{item}: the session of the wave ended, and no open pull request has the branch \
-         {branch}. The work is in the clone {}. The item is free.",
-        clone.display()
-    )
-}
-
-/// A build of a wave ended with no push, and riff saved its work.
-///
-/// ```
-/// let text = riff::text::wave_saved("issue-12", "worktree-issue-12", "1a2b3c4", std::path::Path::new("/c"));
-/// assert!(text.contains("branch worktree-issue-12"));
-/// assert!(text.contains("1a2b3c4"));
-/// ```
-pub fn wave_saved(item: &str, branch: &str, commit: &str, clone: &Path) -> String {
-    format!(
-        "{item}: the session of the wave ended and pushed nothing. riff saved the work of the \
-         clone {} on the branch {branch}, in a WIP commit {commit}. The item is free.",
+         {branch}. Its work that is not on origin is only in the clone {}: riff commits and \
+         pushes nothing there. The item is free.",
         clone.display()
     )
 }
@@ -13928,108 +13938,56 @@ pub fn swept(folder: &Path, why: &str) -> String {
     format!("riff removed the folder {}: {why}.", folder.display())
 }
 
-/// The sweep pushed the leftover work of the folder `folder` to the
-/// branches `branches` of `origin`, and removed the folder, for the
-/// reason `over`. `lost` counts the files that git does not track: they
-/// went with the folder.
-///
-/// ```
-/// use std::path::Path;
-///
-/// let folder = Path::new("/s/issue-12-1a2b3c4d");
-/// let one = ["riff-kept/issue-12-1a2b3c4d".to_owned()];
-/// assert_eq!(
-///     riff::text::swept_pushed(folder, "the pull request #40 merged", &one, 0),
-///     "riff removed the folder /s/issue-12-1a2b3c4d: the pull request #40 merged. Its work is on the branch riff-kept/issue-12-1a2b3c4d of origin."
-/// );
-/// assert!(riff::text::swept_pushed(folder, "x", &one, 2).ends_with("2 files that git do not track went with the folder."));
-/// let three = ["riff-kept/a".to_owned(), "riff-kept/a-b".to_owned(), "riff-kept/a-c/d".to_owned()];
-/// assert!(riff::text::swept_pushed(folder, "x", &three, 0).ends_with(
-///     "Its work is on the branches riff-kept/a, riff-kept/a-b and riff-kept/a-c/d of origin."
-/// ));
-/// ```
-pub fn swept_pushed(folder: &Path, over: &str, branches: &[String], lost: usize) -> String {
-    let names = match branches {
-        [] => "no branch".to_owned(),
-        [one] => format!("the branch {one}"),
-        [first @ .., last] => format!("the branches {} and {last}", first.join(", ")),
-    };
-    let mut line = format!(
-        "riff removed the folder {}: {over}. Its work is on {names} of origin.",
-        folder.display()
-    );
-    if lost > 0 {
-        let files = if lost == 1 { "file" } else { "files" };
-        let verb = if lost == 1 { "does" } else { "do" };
-        line.push_str(&format!(
-            " {lost} {files} that git {verb} not track went with the folder."
-        ));
-    }
-    line
-}
-
-/// The sweep removed the folder `folder`, for the reason `why`. Its
-/// clone had only `lost` files that git does not track: nothing went to
-/// `origin`.
-///
-/// ```
-/// use std::path::Path;
-///
-/// let folder = Path::new("/s/issue-12-1a2b3c4d");
-/// assert_eq!(
-///     riff::text::swept_untracked(folder, "the pull request #40 merged", 1),
-///     "riff removed the folder /s/issue-12-1a2b3c4d: the pull request #40 merged. 1 file that git does not track went with the folder."
-/// );
-/// ```
-pub fn swept_untracked(folder: &Path, over: &str, lost: usize) -> String {
-    let (files, verb) = if lost == 1 {
-        ("file", "does")
-    } else {
-        ("files", "do")
-    };
-    format!(
-        "riff removed the folder {}: {over}. {lost} {files} that git {verb} not track went with \
-         the folder.",
-        folder.display()
-    )
-}
-
-/// The sweep could not push the work of the folder `folder` for the
-/// reason `why`, so it kept the folder (`over` is why the work is over).
-///
-/// ```
-/// use std::path::Path;
-///
-/// let folder = Path::new("/s/issue-12-1a2b3c4d");
-/// assert_eq!(
-///     riff::text::swept_push_failed(folder, "the pull request #40 merged", "git push: denied"),
-///     "riff kept the folder /s/issue-12-1a2b3c4d: the pull request #40 merged, but riff could not push its work: git push: denied. The next sweep tries again."
-/// );
-/// ```
-pub fn swept_push_failed(folder: &Path, over: &str, why: &str) -> String {
-    let why = why.trim_end().trim_end_matches('.');
-    format!(
-        "riff kept the folder {}: {over}, but riff could not push its work: {why}. The next \
-         sweep tries again.",
-        folder.display()
-    )
-}
-
-/// The one note to the lead after a sweep: `lines` says what the sweep
-/// pushed, removed and deleted. `None` for no line.
+/// The one note to the lead after a sweep: `lines` says which old
+/// branches `riff-kept` the sweep deleted (01M5NVKNS35SC8P514GYDJSRQM).
+/// `None` for no line.
 ///
 /// ```
 /// let note = riff::text::daemon_kept_digest(&["a.".into(), "b.".into()]).unwrap();
-/// assert_eq!(note, "riff daemon: the sweep moved the leftover work of kept folders.\na.\nb.");
+/// assert_eq!(note, "riff daemon: the sweep deleted old branches riff-kept of origin.\na.\nb.");
 /// assert_eq!(riff::text::daemon_kept_digest(&[]), None);
 /// ```
 pub fn daemon_kept_digest(lines: &[String]) -> Option<String> {
     (!lines.is_empty()).then(|| {
         format!(
-            "riff daemon: the sweep moved the leftover work of kept folders.\n{}",
+            "riff daemon: the sweep deleted old branches riff-kept of origin.\n{}",
             lines.join("\n")
         )
     })
+}
+
+/// Why the sweep removed a folder that had no change for `days` days
+/// (01M7DZ4E02PX5Y0WMHFCJ9KS14).
+///
+/// ```
+/// assert_eq!(riff::text::swept_old(30), "it had no change for 30 days");
+/// ```
+pub fn swept_old(days: u64) -> String {
+    format!("it had no change for {days} days")
+}
+
+/// The sweep kept the folder `folder`: it has no file `repo`, so riff
+/// does not know its repository and asks the forge nothing. It goes after
+/// `days` days with no change (01M7DZ4E02PX5Y0WMHFCJ9KS14).
+///
+/// ```
+/// use std::path::Path;
+///
+/// assert_eq!(
+///     riff::text::swept_no_repo(Path::new("/s/issue-12-1a2b3c4d"), 30),
+///     "riff kept the folder /s/issue-12-1a2b3c4d: it has no file repo, so riff does not know its \
+///      repository. It goes after 30 days with no change, or remove it with riff daemon sweep \
+///      --remove issue-12-1a2b3c4d --force."
+/// );
+/// ```
+pub fn swept_no_repo(folder: &Path, days: u64) -> String {
+    let name = folder.file_name().unwrap_or_default().to_string_lossy();
+    format!(
+        "riff kept the folder {}: it has no file repo, so riff does not know its repository. It \
+         goes after {days} days with no change, or remove it with riff daemon sweep --remove \
+         {name} --force.",
+        folder.display()
+    )
 }
 
 /// The sweep deleted the branch `branch` of `origin`, older than
@@ -14070,27 +14028,6 @@ pub fn swept_why(issue: u64, fate: &crate::daemon::sweep::Fate) -> Option<String
             "the issue #{issue} is closed, and its branch has no pull request"
         )),
     }
-}
-
-/// The sweep kept the folder `folder` of a session whose work is over,
-/// for the reason `why` (01M53S7WAXD46YPN0DR96XSTMG): its clone holds
-/// work that is not on `origin` ([`crate::daemon::sweep::Local::why`]),
-/// or riff cannot read it.
-///
-/// ```
-/// use std::path::Path;
-///
-/// let folder = Path::new("/s/issue-12-1a2b3c4d");
-/// assert_eq!(
-///     riff::text::swept_kept(folder, "the pull request #40 merged", "its clone has 1 commit that is not pushed"),
-///     "riff kept the folder /s/issue-12-1a2b3c4d: the pull request #40 merged, but its clone has 1 commit that is not pushed. Push the work, or remove the folder."
-/// );
-/// ```
-pub fn swept_kept(folder: &Path, over: &str, why: &str) -> String {
-    format!(
-        "riff kept the folder {}: {over}, but {why}. Push the work, or remove the folder.",
-        folder.display()
-    )
 }
 
 /// The sweep kept the folder `folder`: a step on the forge failed, for

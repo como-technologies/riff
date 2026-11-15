@@ -1660,15 +1660,16 @@ enum DaemonCommand {
     ///
     /// The daemon does it by itself at its start and each 10 minutes.
     /// It removes the folder of each session that does not run, when the
-    /// pull request of its branch merged or closed, or when its issue is
-    /// closed and its branch has no pull request. A folder whose clone has
-    /// a file that is not committed, or a commit that is not pushed,
-    /// stays. It prints each folder that it removed, and each folder that
-    /// stays with work in its clone, with the reason.
+    /// pull request of its branch merged or closed, when its issue is
+    /// closed and its branch has no pull request, or when the folder had
+    /// no change for 30 days. It runs no git in the clone: the work of the
+    /// clone that is not on origin goes with the folder. It prints each
+    /// folder that it removed, and each folder that stays for a fault,
+    /// with the reason.
     Sweep {
         /// Remove the folder NAME of one ended session, for example
         /// issue-12-1a2b3c4d. riff removes it when the pull request of its
-        /// work merged, with its leftover work and all. It never removes the
+        /// work merged, with the work of its clone. It never removes the
         /// folder of a session that runs.
         #[arg(long, value_name = "NAME")]
         remove: Option<String>,
