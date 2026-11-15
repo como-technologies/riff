@@ -9159,7 +9159,9 @@ riff release cut 3.3.0
 
 - When the tag `v3.3.0` exists and has no GitHub release, riff makes
   the release and the pull request of the next version. It checks no
-  commit: the checks passed before the tag.
+  commit: the checks passed before the tag. riff reads the tag on
+  `origin` by its full name, `refs/tags/v3.3.0`. A tag whose name only
+  ends with it, for example `x/refs/tags/v3.3.0`, is not the tag.
 - When the release `v3.3.0` exists, its release issue is open, and
   `origin/main` still has 3.3.0, riff opens only the pull request of
   the next version. With no open release issue, it refuses: then a pull
