@@ -1872,25 +1872,38 @@ pub fn new_clone_of(clone: &Path) -> Result<PathBuf> {
 /// session ([`crate::host_git`]). After a fault, the new folder goes.
 pub(crate) fn clone_in_new(clone: &Path, steps: impl FnOnce(&Path) -> Result<()>) -> Result<()> {
     let new = new_clone_of(clone)?;
-    // A new clone of an earlier fault.
+    clone_in(&new, steps)?;
+    let moved = clone
+        .parent()
+        .map_or(Ok(()), |parent| {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("cannot make {}", parent.display()))
+        })
+        .and_then(|()| {
+            std::fs::rename(&new, clone)
+                .with_context(|| format!("cannot move {} to {}", new.display(), clone.display()))
+        });
+    if moved.is_err() {
+        let _ = std::fs::remove_dir_all(&new);
+    }
+    moved
+}
+
+/// Runs `steps`, each git step of a new clone, in the folder `new`: a
+/// folder of [`NEW_CLONES`], where no session wrote. A folder `new` of an
+/// earlier fault goes first, and after a fault of `steps` the folder
+/// goes. The caller moves the clone to its place.
+pub(crate) fn clone_in(new: &Path, steps: impl FnOnce(&Path) -> Result<()>) -> Result<()> {
     if new.exists() {
-        std::fs::remove_dir_all(&new)
-            .with_context(|| format!("cannot remove {}", new.display()))?;
+        std::fs::remove_dir_all(new).with_context(|| format!("cannot remove {}", new.display()))?;
     }
     if let Some(parent) = new.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("cannot make {}", parent.display()))?;
     }
-    let made = steps(&new).and_then(|()| {
-        if let Some(parent) = clone.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("cannot make {}", parent.display()))?;
-        }
-        std::fs::rename(&new, clone)
-            .with_context(|| format!("cannot move {} to {}", new.display(), clone.display()))
-    });
+    let made = steps(new);
     if made.is_err() {
-        let _ = std::fs::remove_dir_all(&new);
+        let _ = std::fs::remove_dir_all(new);
     }
     made
 }

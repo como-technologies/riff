@@ -35,7 +35,7 @@
 //! | The folder | `leads/OWNER-REPO` in the data folder of riff ([`folder_of`]): `clone/` and `claude/` | 01M501P9Q51AYN9GBPWKVHA229 |
 //! | The start | one start of the lead at a time on the host: each start holds the lock `start.lock` in the folder of the lead ([`start_lock`]), and under the lock a start that finds the lead running starts nothing ([`one_start`]) | 01M77Y2BG12SEVF4ZEZ673QBFZ |
 //! | The cause | each start gives the daemon its cause ([`LeadCause`], #2099): the lead loop ([`claim_start`]), `riff lead move` and who ran it ([`take`]), and in the daemon the start of the daemon, a fault and an update (`Daemon::lead_back`, `Daemon::leads_again`). The daemon writes the cause in the line of the start in its log ([`text::lead_starts`]), and keeps it in the record of the lead for `riff daemon status` | 01M7BNP4ZYJCCEK7ZHCJ3EX3SJ |
-//! | The clone | `git clone --reference MAIN`, on the default branch, at the first start; a fetch and a fast-forward at each later start, when it has no local change and git can fast-forward it ([`fresh_clone`]) | 01M501P9Q51AYN9GBPWKVHA229, 01M50RRQ9DT0JPSB358EAZRP8Z, 01M51JYDHAQDJ3GH2J8DT3AZQS |
+//! | The clone | a new clone at each start of a new lead: `git clone --reference MAIN`, on the default branch of `origin`, in `new-clones/lead-OWNER-REPO` ([`new_clone_of`]); then it takes the place of the old clone, which goes with each change in it. The host runs no git in the old clone, and the guard of the host refuses git in the folder of the leads ([`crate::host_git`]). When the new clone fails, the old clone stays with a note. A start again of the same session keeps the clone ([`fresh_clone`]) | 01M501P9Q51AYN9GBPWKVHA229, 01M7E7A8QM8SRPQN3G1BXVJW1R, 01M7E7ACTYP4RX8TCJ9XSYMMPM |
 //! | The Claude folder | the first-run answers of `claude`, as for each session ([`run::claude_folder`]), and `"tui": "default"`, so `claude` turns on no mouse reports ([`run::TUI`]) | 01M501P9SDGVWG3MTVCW5BDRQQ, 01M51JACH6TQP318ZFG6NQ9GRM, 01M6XVBRT2T838TX53SSXR6HRH |
 //! | The command | `claude --model MODEL --session-id ID --dangerously-skip-permissions START` ([`spec`]), with the model of the merged `riff.toml` ([`crate::session_setup::Setup::claude`]); the daemon runs it as `riff relay --terminal -- ...` | 01M501P9VN47QAKZ6B8P39ZSW4, 01M5GG2X5F1HXCQJ2JJWV6305K, 01M6VAQWECJ6N6VJF66KCMNYD1 |
 //! | The riff tools | [`crate::tools::LEAD_TOOLS`], on riff-server as the session of the lead | 01M501P9XWXWDBSXP4QRTHTZ4P |
@@ -51,12 +51,12 @@
 //! | The repository | the daemon serves it while the lead runs, so `riff who` and the commands with `--host` reach the host (`Daemon::serve_lead`) | 01M6QVSWQZE41BMQ6YN2963C4V |
 //! | The restart | `riff lead restart`: riff finds the lead of the project ([`to_restart`]), the lead writes its notes ([`restart_notes`]), then the daemon of its host ends its container ([`crate::daemon::Daemon::stop_lead`]); the host loses the part lead, an update starts the old lead no more, and a host that joined the project starts a new lead ([`crate::lead_host`]) | 01M77Y6ZEQ4A6C6E0XZ56WRE89, 01M6QVSWWM3EA4ZS47XCKV38D0 |
 //!
-//! The clone and the Claude folder stay between the starts of the lead:
-//! the lead keeps the history of its conversations, and a dialog of
-//! `claude` that the person answered once. Each start is a new session
-//! of riff-server and of `claude`, but a start again after `riff update`
-//! keeps the session and resumes the conversation. The other spec parts
-//! are those of a worker ([`crate::run::spec`]).
+//! The Claude folder stays between the starts of the lead: the lead
+//! keeps the history of its conversations, and a dialog of `claude` that
+//! the person answered once. Each start is a new session of riff-server
+//! and of `claude`, with a new clone. A start again after `riff update`
+//! keeps the session and its clone, and resumes the conversation. The
+//! other spec parts are those of a worker ([`crate::run::spec`]).
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -74,6 +74,10 @@ use riff_client::sessions::LeadCause;
 
 /// The work item of the lead in the daemon.
 pub const ITEM: &str = "lead";
+
+/// The folder of the leads in the data folder of riff: `leads`. The host
+/// runs no git under it ([`crate::host_git`], 01M7E7ACTYP4RX8TCJ9XSYMMPM).
+pub const LEADS: &str = "leads";
 
 /// The name of the container of the lead of the repository `repo`
 /// (`OWNER/REPO`): [`riff_core::name::lead_container`].
@@ -111,7 +115,7 @@ pub fn folder_of(data: &Path, repo: &str) -> PathBuf {
 /// assert_eq!(folder_of_name(data, &name_of(repo)), folder_of(data, repo));
 /// ```
 pub fn folder_of_name(data: &Path, name: &str) -> PathBuf {
-    data.join("leads")
+    data.join(LEADS)
         .join(name.strip_prefix("riff-lead-").unwrap_or(name))
 }
 
@@ -277,53 +281,111 @@ pub fn runs(status: &Status, name: &str) -> bool {
 /// What [`fresh_clone`] did with the clone of the lead.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Fresh {
-    /// It made the clone, on the default branch of `origin`.
+    /// It made the clone: the lead had none.
     Made,
-    /// It fetched `origin`, and fast-forwarded the branch to its
-    /// upstream.
-    Forward,
-    /// The clone has a local change, or the fetch or the fast-forward
-    /// failed: it stays as it is. The text says why.
+    /// It made a new clone, and put it in the place of the old clone,
+    /// which went.
+    New,
+    /// The new clone failed: the old clone stays as it is. The text says
+    /// why.
     Kept(String),
 }
 
-/// Brings the clone of the lead at `clone` up to date at each start of
-/// the lead (01M501P9Q51AYN9GBPWKVHA229, 01M50RRQ9DT0JPSB358EAZRP8Z).
-/// When it is not there, it makes it from the main clone `main`, on the
-/// default branch of `origin`. Else it fetches `origin`, and
-/// fast-forwards the branch to its upstream, when the clone has no
-/// local change. When git refuses the fast-forward, for example because
-/// of an untracked file with the path of a new file of `origin`, the
-/// clone stays as it is (01M51JYDHAQDJ3GH2J8DT3AZQS).
+/// The folder of the old clone in the folder of the lead, while the new
+/// clone takes its place ([`fresh_clone`]).
+pub const OLD_CLONE: &str = "old-clone";
+
+/// The folder where the host makes the new clone of the lead whose
+/// clone is `clone`, `leads/OWNER-REPO/clone`:
+/// `new-clones/lead-OWNER-REPO` in the data folder of riff
+/// (01M7E7A8QM8SRPQN3G1BXVJW1R).
+///
+/// ```
+/// use std::path::Path;
+///
+/// let clone = Path::new("/d/riff/leads/o-r/clone");
+/// let new = riff::lead::new_clone_of(clone)?;
+/// assert_eq!(new, Path::new("/d/riff/new-clones/lead-o-r"));
+/// assert!(riff::lead::new_clone_of(Path::new("clone")).is_err());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn new_clone_of(clone: &Path) -> Result<PathBuf> {
+    let folder = clone.parent().filter(|f| !f.as_os_str().is_empty());
+    let name = folder.and_then(Path::file_name);
+    let leads = folder.and_then(Path::parent);
+    match (leads, name) {
+        (Some(leads), Some(name)) => {
+            let mut lead = std::ffi::OsString::from("lead-");
+            lead.push(name);
+            Ok(leads.with_file_name(run::NEW_CLONES).join(lead))
+        }
+        _ => bail!("the clone {} is in no folder of a lead", clone.display()),
+    }
+}
+
+/// Gives the lead a new clone at `clone` at each start of a new lead
+/// (01M501P9Q51AYN9GBPWKVHA229, 01M7E7A8QM8SRPQN3G1BXVJW1R). The host
+/// makes it from the main clone `main` with `git clone --reference MAIN`,
+/// on the default branch of `origin`, in a folder of its own
+/// ([`new_clone_of`]). Then the new clone takes the place of the old
+/// one, and the old clone goes, with each change in it
+/// (`put_in_place`). The host runs no git in the old clone: the lead
+/// wrote it, and so its git config ([`crate::host_git`]). When the new
+/// clone fails, an old clone stays as it is. With no old clone, the
+/// error stays.
 pub fn fresh_clone(main: &Path, clone: &Path) -> Result<Fresh> {
-    if !clone.join(".git").exists() {
+    let new = new_clone_of(clone)?;
+    let made = run::clone_in(&new, |new| {
         let remote = crate::host_git::output(main, &["remote", "get-url", "origin"])?;
         let top = main.to_string_lossy();
-        let path = clone.to_string_lossy();
+        let path = new.to_string_lossy();
         git_credential::run(
             main,
             &remote,
             &["clone", "-q", "--reference", &top, "--", &remote, &path],
         )?;
-        return Ok(Fresh::Made);
+        Ok(())
+    });
+    let old = clone.symlink_metadata().is_ok();
+    match made {
+        Err(e) if old => return Ok(Fresh::Kept(format!("{e:#}"))),
+        Err(e) => return Err(e),
+        Ok(()) => {}
     }
-    let git = |args: &[&str]| crate::host_git::output(clone, args);
-    if !git(&["status", "--porcelain", "--untracked-files=no"])?.is_empty() {
-        return Ok(Fresh::Kept(text::LEAD_CLONE_CHANGED.into()));
+    put_in_place(&new, clone)?;
+    Ok(if old { Fresh::New } else { Fresh::Made })
+}
+
+/// Puts the new clone `new` in the place of the clone `clone` of the
+/// lead: the old clone moves to [`OLD_CLONE`] beside it, the new clone
+/// moves in, and the old clone goes. Each step moves or removes files,
+/// with no git. When the new clone cannot move in, the old clone moves
+/// back.
+fn put_in_place(new: &Path, clone: &Path) -> Result<()> {
+    let aside = clone.with_file_name(OLD_CLONE);
+    let remove = |dir: &Path| match dir.symlink_metadata() {
+        Ok(_) => {
+            std::fs::remove_dir_all(dir).with_context(|| format!("cannot remove {}", dir.display()))
+        }
+        Err(_) => Ok(()),
+    };
+    // An old clone of an earlier fault.
+    remove(&aside)?;
+    if clone.symlink_metadata().is_ok() {
+        std::fs::rename(clone, &aside)
+            .with_context(|| format!("cannot move {} to {}", clone.display(), aside.display()))?;
     }
-    if git(&["rev-parse", "-q", "--verify", "@{upstream}"]).is_err() {
-        return Ok(Fresh::Kept(text::LEAD_CLONE_NO_UPSTREAM.into()));
+    if let Some(parent) = clone.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("cannot make {}", parent.display()))?;
     }
-    if let Err(e) = git_credential::run(clone, "origin", &["fetch", "-q", "origin"]) {
-        return Ok(Fresh::Kept(format!("{e:#}")));
+    if let Err(e) = std::fs::rename(new, clone) {
+        let _ = std::fs::rename(&aside, clone);
+        let _ = std::fs::remove_dir_all(new);
+        return Err(e)
+            .with_context(|| format!("cannot move {} to {}", new.display(), clone.display()));
     }
-    if git(&["rev-list", "--count", "@{upstream}..HEAD"])? != "0" {
-        return Ok(Fresh::Kept(text::LEAD_CLONE_AHEAD.into()));
-    }
-    if let Err(e) = git(&["merge", "-q", "--ff-only", "@{upstream}"]) {
-        return Ok(Fresh::Kept(text::lead_clone_no_forward(&format!("{e:#}"))));
-    }
-    Ok(Fresh::Forward)
+    remove(&aside)
 }
 
 /// How an attach to the lead ended (01M51PD7Q24N252V66NFEHY49N).
@@ -2108,5 +2170,32 @@ mod tests {
         written_ago(&record, Duration::from_secs(600));
         assert!(!between_turns(&record));
         assert!(idle(&record, quiet));
+    }
+
+    /// 01M7E7A8QM8SRPQN3G1BXVJW1R: the new clone takes the place of the
+    /// old clone of the lead, and the old clone goes, with no git: the
+    /// program of its git config does not run. An old clone of an earlier
+    /// fault goes first. When the new clone cannot move in, the clone
+    /// stays.
+    #[test]
+    fn the_new_clone_takes_the_place_of_the_old_clone_with_no_git() {
+        let root = tempfile::tempdir().unwrap();
+        let clone = root.path().join("leads/o-r/clone");
+        let new = new_clone_of(&clone).unwrap();
+        let mark = root.path().join("mark");
+        crate::host_git::hostile_clone(&clone, &mark);
+        let aside = clone.with_file_name(OLD_CLONE);
+        std::fs::create_dir_all(aside.join("earlier")).unwrap();
+        std::fs::create_dir_all(&new).unwrap();
+        std::fs::write(new.join("new"), "").unwrap();
+
+        put_in_place(&new, &clone).unwrap();
+        assert!(clone.join("new").exists() && !clone.join(".git").exists());
+        assert!(!new.exists() && !aside.exists());
+        assert!(!mark.exists(), "the program of the old clone ran");
+
+        let error = put_in_place(&new, &clone).unwrap_err();
+        assert!(format!("{error:#}").contains("cannot move"), "{error:#}");
+        assert!(clone.join("new").exists() && !aside.exists());
     }
 }

@@ -2224,6 +2224,17 @@ page [Requirements](requirements.md) holds the rules of today.
   the lead (01M579Z9VRD12FRK6DSYVKDHQB), and its text names `riff lead
   stop`.
   Superseded by 01M77Y6ZMFZJGK2DM6RAM94C7Q.
+- **01M50RRQ9DT0JPSB358EAZRP8Z** Each later start of the lead fetches
+  `origin` into the clone of the lead, and fast-forwards its branch to
+  its upstream. A clone with a local change stays as it is, and riff
+  shows a note. A local change is a change that is not committed, a
+  commit that is not on the upstream, or a branch with no upstream.
+  Superseded by 01M7E7A8QM8SRPQN3G1BXVJW1R.
+- **01M51JYDHAQDJ3GH2J8DT3AZQS** When git cannot fast-forward the
+  clone of the lead, for example because of an untracked file with the
+  path of a new file of `origin`, the clone stays as it is. riff shows
+  the note with the error of git, and starts the lead.
+  Superseded by 01M7E7A8QM8SRPQN3G1BXVJW1R.
 
 ### The first run
 

@@ -3256,10 +3256,32 @@ async fn riff_lead_start_says_that_the_lead_ended_when_it_ends_in_the_attach() {
     machine.lead_ends().await;
 }
 
-/// 01M51JYDHAQDJ3GH2J8DT3AZQS: git cannot fast-forward the clone of the
-/// lead, so the clone stays as it is, and the next lead starts.
+/// Writes in the git config of the clone `clone` a program for
+/// `core.fsmonitor` (`git status`), `credential.helper` (a fetch over
+/// HTTPS) and `core.sshCommand` (a fetch over SSH), as a lead can leave
+/// it (#2140). The program writes the file `mark`.
+fn hostile_config(clone: &Path, mark: &Path) {
+    let program = isolated::write_program(
+        mark.with_extension("sh"),
+        format!("#!/bin/sh\necho \"$0 $*\" >> '{}'\n", mark.display()),
+    );
+    let program = program.display();
+    let config = clone.join(".git/config");
+    let mut text = std::fs::read_to_string(&config).unwrap();
+    text.push_str(&format!(
+        "[core]\n\tfsmonitor = {program}\n\tsshCommand = {program}\n\
+         [credential]\n\thelper = !{program}\n"
+    ));
+    std::fs::write(&config, text).unwrap();
+}
+
+/// 01M7E7A8QM8SRPQN3G1BXVJW1R, 01M7E7ACTYP4RX8TCJ9XSYMMPM (#2140): the
+/// old lead left a change, an untracked file, and a git config that names
+/// a program. The next lead starts with a new clone at the new commit of
+/// origin, the old clone goes, and the program never runs. riff on the
+/// host runs no git in the clone of the lead, and says why.
 #[tokio::test]
-async fn a_new_lead_keeps_a_clone_that_git_cannot_fast_forward_and_starts() {
+async fn a_new_lead_gets_a_new_clone_and_the_host_runs_no_git_in_the_old_clone() {
     let machine = Machine::new().await;
     machine.claude_token();
     let hold = machine.bin.path().join("hold");
@@ -3268,18 +3290,20 @@ async fn a_new_lead_keeps_a_clone_that_git_cannot_fast_forward_and_starts() {
     let first = machine.daemon_lead().await;
     std::fs::remove_file(&hold).unwrap();
     machine.lead_ends().await;
-    let clone = machine
-        .env
-        .riff_home()
-        .join("leads/como-technologies-riff/clone");
-    let old = git(&clone, &["rev-parse", "HEAD"]);
+    let leads = machine.env.riff_home().join("leads");
+    let clone = leads.join("como-technologies-riff/clone");
 
-    // origin gets the new file b, and the clone has an untracked file b.
+    // origin gets the new file b. The old lead changed README.md, made an
+    // untracked file b, and named a program in its git config.
     std::fs::write(machine.main.join("b"), "origin\n").unwrap();
     git(&machine.main, &["add", "b"]);
     git(&machine.main, &["commit", "-q", "-m", "two"]);
     git(&machine.main, &["push", "-q", "origin", "main"]);
+    let new = git(&machine.main, &["rev-parse", "HEAD"]);
+    std::fs::write(clone.join("README.md"), "mine\n").unwrap();
     std::fs::write(clone.join("b"), "mine\n").unwrap();
+    let mark = machine.bin.path().join("mark");
+    hostile_config(&clone, &mark);
 
     // The host joins again: its daemon starts the next lead.
     std::fs::write(&hold, "").unwrap();
@@ -3291,15 +3315,7 @@ async fn a_new_lead_keeps_a_clone_that_git_cannot_fast_forward_and_starts() {
     }
     machine.lead_starts().await;
     machine.ok(None, &["host", "leave"]).await;
-    // The note with the reason, and the error of git in it.
     let out = machine.read("daemon.out");
-    let kept = riff::text::lead_clone_kept(&clone, &riff::text::lead_clone_no_forward(""));
-    let (kept, _) = kept.split_once(')').unwrap();
-    assert!(out.contains(kept), "{out}");
-    assert!(
-        out.contains("git merge -q --ff-only @{upstream}: "),
-        "{out}"
-    );
     let second = lead_session_of(&machine);
     assert!(
         out.contains(&riff::text::lead_starts(
@@ -3310,8 +3326,44 @@ async fn a_new_lead_keeps_a_clone_that_git_cannot_fast_forward_and_starts() {
         )),
         "{out}"
     );
-    assert_eq!(git(&clone, &["rev-parse", "HEAD"]), old);
-    assert_eq!(std::fs::read_to_string(clone.join("b")).unwrap(), "mine\n");
+    assert!(!out.contains("riff did not make a new clone"), "{out}");
+    assert!(
+        !mark.exists(),
+        "the program of the old clone ran: {}",
+        std::fs::read_to_string(&mark).unwrap_or_default()
+    );
+    // The new clone: the new commit of origin, and no change of the old
+    // lead.
+    let config = std::fs::read_to_string(clone.join(".git/config")).unwrap();
+    assert!(!config.contains("fsmonitor"), "{config}");
+    assert_eq!(git(&clone, &["rev-parse", "HEAD"]), new);
+    assert_eq!(git(&clone, &["status", "--porcelain"]), "");
+    assert_eq!(
+        std::fs::read_to_string(clone.join("b")).unwrap(),
+        "origin\n"
+    );
+    assert!(!clone.with_file_name(riff::lead::OLD_CLONE).exists());
+    assert!(
+        riff::lead::linked_main(&clone).is_ok(),
+        "the new clone links to no main clone"
+    );
+
+    // The new lead names a program in its git config too. riff on the
+    // host refuses git in its clone, and the program does not run.
+    hostile_config(&clone, &mark);
+    let mut whoami = machine.command(None, &["whoami"]);
+    whoami.current_dir(&clone);
+    let refused = tokio::task::spawn_blocking(move || whoami.output().unwrap())
+        .await
+        .unwrap();
+    assert!(!refused.status.success(), "{refused:?}");
+    let said = text(&refused.stderr);
+    let real = |p: &Path| std::fs::canonicalize(p).unwrap();
+    assert!(
+        said.contains(&riff::text::host_git_refused(&real(&clone), &real(&leads))),
+        "{said}"
+    );
+    assert!(!mark.exists(), "the program of the clone of the lead ran");
     std::fs::remove_file(&hold).unwrap();
     machine.lead_ends().await;
 }

@@ -6619,6 +6619,10 @@ of this part when they merge.
   01M57D3FEJPHD962GW0H82N8E6 and 01M5NVKNVTVR722EA148V5127M in full,
   and 01M53NJ5V27BCHDNHK2THQQZZQ, 01M5NVKNS35SC8P514GYDJSRQM and
   01M5NVKNKN3PTCWB45BV03M1TW in part.
+- **01M7E7ACTYP4RX8TCJ9XSYMMPM** The guard of 01M7DZ429QFWTSEA6JH1DVZJM0
+  also refuses a git call of the host whose folder is under the folder
+  of the leads: `leads` in the data folder of riff. In a container
+  session it does not.
 
 ### riff relay
 
@@ -7444,20 +7448,10 @@ of this part when they merge.
   ended and how to start it again, and that the `claude --resume` line
   of `claude` works only in the container.
 - **01M501P9Q51AYN9GBPWKVHA229** The folder of the lead is
-  `leads/OWNER-REPO` in the data folder of riff. At the first start,
-  riff makes `clone/` with `git clone --reference MAIN`, on the default
-  branch of `origin`, and the Claude folder `claude/`. Both stay
-  between the starts of the lead. Each new lead is a new session of
-  riff-server and of `claude`.
-- **01M50RRQ9DT0JPSB358EAZRP8Z** Each later start of the lead fetches
-  `origin` into the clone of the lead, and fast-forwards its branch to
-  its upstream. A clone with a local change stays as it is, and riff
-  shows a note. A local change is a change that is not committed, a
-  commit that is not on the upstream, or a branch with no upstream.
-- **01M51JYDHAQDJ3GH2J8DT3AZQS** When git cannot fast-forward the
-  clone of the lead, for example because of an untracked file with the
-  path of a new file of `origin`, the clone stays as it is. riff shows
-  the note with the error of git, and starts the lead.
+  `leads/OWNER-REPO` in the data folder of riff, with the clone `clone/`
+  of 01M7E7A8QM8SRPQN3G1BXVJW1R. At the first start, riff makes the
+  Claude folder `claude/`. It stays between the starts of the lead. Each
+  new lead is a new session of riff-server and of `claude`.
 - **01M501P9SDGVWG3MTVCW5BDRQQ** The Claude folder of the lead gets the
   first-run answers of `claude`: `hasCompletedOnboarding`, the `theme`
   of the `.claude.json` of the person (else `auto`), and the trust of
@@ -7917,6 +7911,17 @@ of this part when they merge.
   person, with the command and who ran it. The daemon keeps the cause
   with the lead, and `riff daemon status` shows it on the line of the
   lead, also with `--host` (#2099).
+- **01M7E7A8QM8SRPQN3G1BXVJW1R** At each start of a new lead, the host
+  makes a new clone of the lead in a folder of its own,
+  `new-clones/lead-OWNER-REPO` in the data folder of riff, with `git
+  clone --reference MAIN` on the default branch of `origin`. Then it
+  puts the new clone in the place of the old clone `clone/`, and removes
+  the old clone, with each change in it. The host runs no git in the old
+  clone. When the new clone fails, the old clone stays as it is, riff
+  shows a note with the error, and the lead starts. A start again of the
+  same session of the lead keeps its clone. This supersedes
+  01M50RRQ9DT0JPSB358EAZRP8Z and 01M51JYDHAQDJ3GH2J8DT3AZQS in full, and
+  01M501P9Q51AYN9GBPWKVHA229 in part: the clone.
 
 ### The first run
 
