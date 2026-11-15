@@ -3937,6 +3937,45 @@ async fn a_claim_refused_for_a_pause_ends_the_session_of_the_job() {
     machine.ok(None, &["host", "leave"]).await;
 }
 
+/// 01M7G1J1F1QWT4S45CDMMXP6J5: the origin of the main clone has a token
+/// with a quote in its URL, and git cannot reach it. The clone of the
+/// session of a wave fails. The line of the log of the daemon and the
+/// message to the lead name the URL with no token.
+#[tokio::test]
+async fn a_failed_clone_of_a_wave_session_logs_no_token_of_the_origin() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    let url = "https://USER:TO'KEN@127.0.0.1:1/como-technologies/riff.git";
+    git(&machine.main, &["remote", "set-url", "origin", url]);
+    let bin = machine.bin.path();
+    std::fs::write(bin.join("wave-issue"), "").unwrap();
+    machine.ok(None, &["host", "join"]).await;
+
+    let log = bin.join("daemon.out");
+    wait_for(&log, "riff daemon: como-technologies/riff: issue-12: ").await;
+    machine.ok(None, &["host", "leave"]).await;
+    let log = machine.read("daemon.out");
+    let line = log
+        .lines()
+        .find(|l| l.starts_with("riff daemon: como-technologies/riff: issue-12: "))
+        .unwrap();
+    assert!(
+        line.contains(" -- https://127.0.0.1:1/como-technologies/riff.git "),
+        "{line}"
+    );
+    assert!(!log.contains("USER:") && !log.contains("KEN@"), "{log}");
+    let thread = machine.ok(Some("lead1"), &["read", "--all"]).await;
+    assert!(thread.contains("could not start issue-12"), "{thread}");
+    assert!(
+        thread.contains(" -- https://127.0.0.1:1/como-technologies/riff.git "),
+        "{thread}"
+    );
+    assert!(
+        !thread.contains("USER:") && !thread.contains("KEN@"),
+        "{thread}"
+    );
+}
+
 /// 01M5SNTPHHXP54YBTV09JNRY3F: before the first job of a wave, the daemon
 /// reads the version of claude and gh in the session image with podman.
 /// An image with an old claude makes one message to the lead, with the
