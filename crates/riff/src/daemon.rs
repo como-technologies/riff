@@ -1953,7 +1953,9 @@ pub enum Say {
         line: String,
     },
     /// One line of the output of the container, with no secret: the
-    /// notes of the relay and the stderr of `claude`.
+    /// notes of the relay and the stderr of `claude`. It has at most
+    /// [`crate::output_lines::LINE_MAX`] bytes of the line, and
+    /// [`text::LINE_CUT`] at the end of a longer one.
     Stderr {
         /// The line.
         line: String,
@@ -5799,13 +5801,14 @@ impl<R: Runtime + 'static> Daemon<R> {
             }
         };
         // The output of the container: the notes of the relay and the
-        // stderr of claude.
+        // stderr of claude, in lines of at most 64 KiB
+        // (01M7G7HJH5MHGRNYP2J9QG8SCQ).
         for output in [running.events, running.errors] {
             let (scrub, owned) = (scrub.clone(), owned.clone());
             tokio::spawn(async move {
-                let mut lines = BufReader::new(output).lines();
+                let mut lines = crate::output_lines::Lines::new(output);
                 while let Ok(Some(line)) = lines.next_line().await {
-                    let line = scrub.clean(&line).into_owned();
+                    let line = line.clean(&scrub);
                     Owned::tell(&mut owned.lock(), &Say::Stderr { line });
                 }
             });
@@ -8153,6 +8156,32 @@ mod tests {
         assert!(!socket.exists());
         assert!(!record_path(&here.dir, &name).exists());
         assert_eq!(here.fake.exit(&name), Some(Exit::SUCCESS));
+    }
+
+    #[tokio::test]
+    async fn a_long_line_of_the_output_of_a_container_comes_cut_with_no_start_of_a_secret() {
+        use crate::output_lines::LINE_MAX;
+        // The cut falls in the secret: after `gho_`.
+        let a = "a".repeat(LINE_MAX - 5);
+        let fake = Fake::default()
+            .with_image(IMAGE)
+            .with_events([format!("{a} gho_secret1 and more"), "next".into()]);
+        let here = Here::new(fake).await;
+        let (mut client, name) = here
+            .started(here.start("riff-issue-12-1a2b3c4d", "issue-12"))
+            .await;
+        let (mut relay, _) = Relay::connect(&session_dir(&here.dir, &name), 0, false).await;
+        assert!(matches!(relay.next().await, Say::Input { .. }));
+        let mut lines = Vec::new();
+        while lines.len() < 2 {
+            if let Some(Say::Stderr { line }) = client.next().await.unwrap() {
+                lines.push(line);
+            }
+        }
+        assert_eq!(lines, [format!("{a} {}", text::LINE_CUT), "next".into()]);
+        relay.exit(1, 0).await;
+        let (_, end) = to_the_end(&mut client).await;
+        assert!(matches!(end, Some(Say::Ended(_))), "{end:?}");
     }
 
     #[tokio::test]

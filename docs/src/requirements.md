@@ -6780,6 +6780,11 @@ of this part when they merge.
   word that starts like a token of GitHub or with `sk-` goes whole, also
   when it has a `NAME=` in it. So the filter can hide more than a
   secret, and never less.
+- **01M7G7HJH5MHGRNYP2J9QG8SCQ** The daemon reads the stdout and the
+  stderr of each container in lines of at most 64 KiB. Of a longer line,
+  it keeps the first 64 KiB, with no start of a secret at its end, and
+  adds the mark `[riff cut the rest of this line]`. The rest of the line
+  goes. Each byte that is not UTF-8 becomes U+FFFD.
 
 ### riff relay
 

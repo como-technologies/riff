@@ -1105,6 +1105,34 @@ impl Scrub {
             )
             .collect()
     }
+
+    /// `text` with no end that is the start of a secret: the kept part
+    /// of a line that riff cut ([`crate::output_lines`]). [`Scrub::clean`]
+    /// takes out each whole secret.
+    ///
+    /// ```
+    /// use riff::run::Scrub;
+    ///
+    /// let scrub = Scrub::new(["sk-ant-oat01-secret1".to_owned()]);
+    /// assert_eq!(scrub.cut_end("a note sk-ant-oat01-sec"), "a note ");
+    /// assert_eq!(scrub.cut_end("a note sk-ant-oat01-secret1"), "a note sk-ant-oat01-secret1");
+    /// assert_eq!(scrub.cut_end("a note"), "a note");
+    /// ```
+    pub fn cut_end<'a>(&self, text: &'a str) -> &'a str {
+        let mut end = text.len();
+        for secret in &self.secrets {
+            let (kept, secret) = (&text.as_bytes()[..end], secret.as_bytes());
+            // The first byte of a secret starts a character, so `end`
+            // stays at the start of one.
+            if let Some(n) = (1..secret.len())
+                .rev()
+                .find(|&n| kept.ends_with(&secret[..n]))
+            {
+                end -= n;
+            }
+        }
+        &text[..end]
+    }
 }
 
 /// The starts of the tokens of GitHub: of a GitHub App, of OAuth, of a

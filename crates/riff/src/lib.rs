@@ -118,6 +118,7 @@ pub mod look;
 pub mod machine;
 pub mod markdown;
 pub mod order;
+pub mod output_lines;
 pub mod permissions;
 pub mod platform;
 pub mod tools;
