@@ -2453,9 +2453,8 @@ pub fn bundle_copy(folder: &Path, branch: &str) -> PathBuf {
 /// (01M6Z87SDSYDTFHMPKGNX74SMC). Its clone went with its container: the
 /// relay wrote the commits of the branch in a bundle in `out/` of the
 /// folder of the session in `sessions`, and `riff run` copied it into the
-/// folder of the session with its checks: no link, the first line of a
-/// git bundle, and `git bundle unbundle` (01M7EY51P291VZ9YM414Z2Z1MR,
-/// 01M7FMJJDJN9Q5ZPA7ECTGK1MD). The test fetches the branch from that
+/// folder of the session with the checks of `riff::run::take_bundle`
+/// (01M7EY51P291VZ9YM414Z2Z1MR). The test fetches the branch from that
 /// copy into its own clone, with the git of the person on the host,
 /// pushes it, and opens its pull request with `gh pr create`. It runs
 /// no git on a file that the session can write: the session never sees

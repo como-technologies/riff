@@ -59,12 +59,14 @@ fn facts(root: &Path, main: &Path, work: &Work) -> Facts {
         image: "localhost/riff-session:latest".into(),
         home: "/home/mike".into(),
         user: "mike".into(),
-        clone: folder.join("clone"),
-        origin: Origin::github("o/r").unwrap(),
-        base: "main".parse().unwrap(),
-        checkout: work.checkout(|_| Ok(false)).unwrap(),
-        main: main.join(".git"),
-        refs: riff::run::refs_in(&folder),
+        plan: Plan {
+            path: folder.join("clone"),
+            origin: Origin::github("o/r").unwrap(),
+            main: main.join(".git"),
+            refs: riff::run::refs_in(&folder),
+            base: "main".parse().unwrap(),
+            checkout: work.checkout(|_| Ok(false)).unwrap(),
+        },
         claude: folder.join("claude"),
         sign_in: ClaudeSignIn::Token,
         gitconfig: None,
@@ -101,7 +103,7 @@ fn the_podman_arguments_of_a_work_session_and_a_verify_have_no_writable_bind_of_
             .into_iter()
             .map(|a| a.into_string().unwrap())
             .collect();
-        let clone = facts.clone.display().to_string();
+        let clone = facts.plan.path.display().to_string();
         let volume = format!("type=volume,destination={clone},U=true");
         assert!(
             args.windows(2).any(|w| w[0] == "--mount" && w[1] == volume),
@@ -112,8 +114,8 @@ fn the_podman_arguments_of_a_work_session_and_a_verify_have_no_writable_bind_of_
             .filter(|w| w[0] == "-v")
             .map(|w| w[1].as_str())
             .collect();
-        let git_dir = facts.main.display().to_string();
-        let refs = facts.refs.display().to_string();
+        let git_dir = facts.plan.main.display().to_string();
+        let refs = facts.plan.refs.display().to_string();
         for ro in [format!("{git_dir}/objects"), refs.clone()] {
             let bind = format!("{ro}:{ro}:ro");
             assert!(binds.contains(&bind.as_str()), "{bind}: {args:?}");
@@ -127,10 +129,10 @@ fn the_podman_arguments_of_a_work_session_and_a_verify_have_no_writable_bind_of_
             let source = Path::new(bind.split(':').next().unwrap());
             let git_tree = source.join(".git").exists()
                 || source.ancestors().any(|a| a.ends_with(".git"))
-                || source.starts_with(&facts.clone);
+                || source.starts_with(&facts.plan.path);
             assert!(!git_tree, "a git tree with write: {bind}");
             assert!(
-                !facts.refs.starts_with(source),
+                !facts.plan.refs.starts_with(source),
                 "the folder of the list of refs has write: {bind}"
             );
         }
@@ -139,11 +141,7 @@ fn the_podman_arguments_of_a_work_session_and_a_verify_have_no_writable_bind_of_
             .find_map(|a| a.strip_prefix(&format!("{VAR}=")))
             .map(|plan| Plan::of_var(plan).unwrap())
             .unwrap();
-        assert_eq!(plan.path, facts.clone);
-        assert_eq!(plan.origin.as_str(), "https://github.com/o/r.git");
-        assert_eq!(plan.main, main.join(".git"));
-        assert_eq!(plan.refs, facts.refs);
-        assert_eq!(plan.checkout, work.checkout(|_| Ok(false)).unwrap());
+        assert_eq!(plan, facts.plan);
     }
 }
 

@@ -656,15 +656,15 @@ mod scan {
         // The start of a session and of a lead: the Claude folder
         // ([`crate::run::claude_folder`]), and the paths of the spec. The
         // clone is a volume of the container: the host has no folder there.
-        ("lead.rs", "let clone = run::clone_in(&folder);"),
-        ("lead.rs", "let claude = run::claude_in(&folder);"),
+        ("lead.rs", "&run::claude_in(folder),"),
+        ("lead.rs", "&run::clone_in(folder),"),
         ("lead.rs", "&run::claude_in(&folder),"),
         ("lead.rs", "&run::clone_in(&folder),"),
-        ("lead.rs", "clone: run::clone_in(folder),"),
+        ("lead.rs", "path: run::clone_in(folder),"),
         ("lead.rs", "claude: run::claude_in(folder),"),
         ("run.rs", "let clone = clone_in(&folder);"),
         ("run.rs", "let claude = claude_in(&folder);"),
-        ("wave.rs", "clone: run::clone_in(folder),"),
+        ("wave.rs", "path: run::clone_in(folder),"),
         ("wave.rs", "claude: run::claude_in(folder),"),
     ];
 

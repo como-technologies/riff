@@ -35,7 +35,7 @@
 //! | The folder | `leads/OWNER-REPO` in the data folder of riff ([`folder_of`]): `claude/`. The clone of the lead is at `clone/` in its container only | 01M501P9Q51AYN9GBPWKVHA229, 01M7EY51EMJ6ZEGNW7H852PEGR |
 //! | The start | one start of the lead at a time on the host: each start holds the lock `start.lock` in the folder of the lead ([`start_lock`]), and under the lock a start that finds the lead running starts nothing ([`one_start`]) | 01M77Y2BG12SEVF4ZEZ673QBFZ |
 //! | The cause | each start gives the daemon its cause ([`LeadCause`], #2099): the lead loop ([`claim_start`]), `riff lead move` and who ran it ([`take`]), and in the daemon the start of the daemon, a fault and an update (`Daemon::lead_back`, `Daemon::leads_again`). The daemon writes the cause in the line of the start in its log ([`text::lead_starts`]), and keeps it in the record of the lead for `riff daemon status` | 01M7BNP4ZYJCCEK7ZHCJ3EX3SJ |
-//! | The clone | in the container, as for each session ([`crate::session_clone`], 01M7EY3P0Q8TQF5QRTRDWCYCTQ): a new clone of the git dir of the main clone, on the default branch of `origin`, at each start of the container, also at a start again, and no clone of the host. With no token of an App, the clone fetches nothing from GitHub, and the lead starts from the main clone. At each start of a new lead, the clone that an older riff made on the host, `clone/` in the folder of the lead, goes with no git ([`remove_host_clone`]): the guard of the host refuses git in the folder of the leads ([`crate::host_git`]). Each old clone goes as the person, then with `podman unshare` ([`crate::compile_cache::remove`]); an old clone that stays stops no start: one line in the log, and the sweep of the daemon removes it later ([`sweep_old_clones`]) | 01M501P9Q51AYN9GBPWKVHA229, 01M7EY51EMJ6ZEGNW7H852PEGR, 01M7E7ACTYP4RX8TCJ9XSYMMPM, 01M7EBBVE6WYKT5JDVASFCYPQQ |
+//! | The clone | in the container, as for each session ([`crate::session_clone`], 01M7EY3P0Q8TQF5QRTRDWCYCTQ): a new clone of the git dir of the main clone, on the default branch of `origin`, at each start of the container, also at a start again, and no clone of the host. With no token of an App, the clone fetches nothing from GitHub, and the lead starts from the main clone. At each start of a new lead, the clone that an older riff made on the host, `clone/` in the folder of the lead, goes with no git ([`remove_host_clone`]): the guard of the host refuses git in the folder of the leads ([`crate::host_git`]). When it cannot move aside, the new lead does not start. Each old clone goes as the person, then with `podman unshare` ([`crate::compile_cache::remove`]); an old clone that stays stops no start: one line in the log, and the sweep of the daemon removes it later ([`sweep_old_clones`]) | 01M501P9Q51AYN9GBPWKVHA229, 01M7EY51EMJ6ZEGNW7H852PEGR, 01M7E7ACTYP4RX8TCJ9XSYMMPM, 01M7EBBVE6WYKT5JDVASFCYPQQ, 01M7FTWWAJB8B09S89VY8XA8RQ |
 //! | The Claude folder | the first-run answers of `claude`, as for each session ([`run::claude_folder`]), and `"tui": "default"`, so `claude` turns on no mouse reports ([`run::TUI`]) | 01M501P9SDGVWG3MTVCW5BDRQQ, 01M51JACH6TQP318ZFG6NQ9GRM, 01M6XVBRT2T838TX53SSXR6HRH |
 //! | The command | `claude --model MODEL --session-id ID --dangerously-skip-permissions START` ([`spec`]), with the model of the merged `riff.toml` ([`crate::session_setup::Setup::claude`]); the daemon runs it as `riff relay --terminal -- ...` | 01M501P9VN47QAKZ6B8P39ZSW4, 01M5GG2X5F1HXCQJ2JJWV6305K, 01M6VAQWECJ6N6VJF66KCMNYD1 |
 //! | The riff tools | [`crate::tools::LEAD_TOOLS`], on riff-server as the session of the lead | 01M501P9XWXWDBSXP4QRTHTZ4P |
@@ -136,12 +136,14 @@ pub fn folder_of_name(data: &Path, name: &str) -> PathBuf {
 ///     image: "img".into(),
 ///     home: "/home/mike".into(),
 ///     user: "mike".into(),
-///     clone: "/d/riff/leads/o-r/clone".into(),
-///     origin: riff::session_clone::Origin::github("o/r").unwrap(),
-///     base: "main".parse().unwrap(),
-///     checkout: riff::session_clone::Checkout::Default,
-///     main: "/src/r/.git".into(),
-///     refs: "/d/riff/leads/o-r/origin-refs".into(),
+///     plan: riff::session_clone::Plan {
+///         path: "/d/riff/leads/o-r/clone".into(),
+///         origin: riff::session_clone::Origin::github("o/r").unwrap(),
+///         main: "/src/r/.git".into(),
+///         refs: "/d/riff/leads/o-r/origin-refs".into(),
+///         base: "main".parse().unwrap(),
+///         checkout: riff::session_clone::Checkout::Default,
+///     },
 ///     claude: "/d/riff/leads/o-r/claude".into(),
 ///     sign_in: riff::run::ClaudeSignIn::File("/home/mike/.claude/.credentials.json".into()),
 ///     gitconfig: None,
@@ -149,7 +151,7 @@ pub fn folder_of_name(data: &Path, name: &str) -> PathBuf {
 /// };
 /// let spec = riff::lead::spec(&facts, "o/r", &riff::text::lead_start("o/r"));
 /// assert_eq!(spec.name, "riff-lead-o-r");
-/// assert_eq!(spec.workdir, facts.clone);
+/// assert_eq!(spec.workdir, facts.plan.path);
 /// assert_eq!(
 ///     spec.command[..6],
 ///     ["claude", "--model", "opus", "--session-id", facts.session.as_str(), "--dangerously-skip-permissions"]
@@ -181,12 +183,14 @@ pub fn spec(facts: &Facts, repo: &str, start: &str) -> SessionSpec {
 ///     image: "img".into(),
 ///     home: "/home/mike".into(),
 ///     user: "mike".into(),
-///     clone: "/d/riff/leads/o-r/clone".into(),
-///     origin: riff::session_clone::Origin::github("o/r").unwrap(),
-///     base: "main".parse().unwrap(),
-///     checkout: riff::session_clone::Checkout::Default,
-///     main: "/src/r/.git".into(),
-///     refs: "/d/riff/leads/o-r/origin-refs".into(),
+///     plan: riff::session_clone::Plan {
+///         path: "/d/riff/leads/o-r/clone".into(),
+///         origin: riff::session_clone::Origin::github("o/r").unwrap(),
+///         main: "/src/r/.git".into(),
+///         refs: "/d/riff/leads/o-r/origin-refs".into(),
+///         base: "main".parse().unwrap(),
+///         checkout: riff::session_clone::Checkout::Default,
+///     },
 ///     claude: "/d/riff/leads/o-r/claude".into(),
 ///     sign_in: riff::run::ClaudeSignIn::Token,
 ///     gitconfig: None,
@@ -200,7 +204,7 @@ pub fn spec(facts: &Facts, repo: &str, start: &str) -> SessionSpec {
 /// );
 /// assert!(!spec.command.iter().any(|a| a == "--session-id"));
 /// // The same clone and the same Claude folder: `claude` finds the conversation.
-/// assert_eq!(spec.workdir, facts.clone);
+/// assert_eq!(spec.workdir, facts.plan.path);
 /// ```
 pub fn spec_again(facts: &Facts, repo: &str, start: &str) -> SessionSpec {
     spec_with(facts, repo, "--resume", start)
@@ -425,7 +429,8 @@ pub fn sweep_old_clones(leads: &Path) -> Vec<(PathBuf, Result<()>)> {
 /// that runs, and the sweep of the daemon removes an old clone that
 /// stays ([`sweep_old_clones`]). It gives a line for each old clone that
 /// stays ([`text::lead_old_clone_stays`]): it stops no start
-/// (01M7EBBVE6WYKT5JDVASFCYPQQ).
+/// (01M7EBBVE6WYKT5JDVASFCYPQQ). When the clone cannot move aside, the
+/// error names the move, and the new lead does not start (`new_folder`).
 pub fn remove_host_clone(
     folder: &Path,
     remove: impl Fn(&Path) -> Result<()>,
@@ -443,6 +448,30 @@ pub fn remove_host_clone(
             Some(text::lead_old_clone_stays(&old, &format!("{why:#}")))
         })
         .collect())
+}
+
+/// The steps of the host in the folder `folder` of a new lead before its
+/// session starts ([`launch`]): the clone of an older riff goes
+/// ([`remove_host_clone`]), then the Claude folder of the lead gets its
+/// answers and its settings ([`run::claude_folder`]) from the config
+/// `person` of `claude` of the person, with the trust `trust`. It gives
+/// the line of each old clone that stays. When the clone of an older riff
+/// cannot move aside, it stops with that error: the Claude folder gets
+/// nothing, and the new lead does not start (01M7FTWWAJB8B09S89VY8XA8RQ).
+fn new_folder(
+    folder: &Path,
+    person: &Path,
+    trust: &crate::permissions::Trust,
+) -> Result<Vec<String>> {
+    let stays = remove_host_clone(folder, crate::compile_cache::remove)?;
+    run::claude_folder(
+        &run::claude_in(folder),
+        &run::clone_in(folder),
+        person,
+        trust,
+        crate::permissions::Role::Lead,
+    )?;
+    Ok(stays)
 }
 
 /// How an attach to the lead ended (01M51PD7Q24N252V66NFEHY49N).
@@ -1050,22 +1079,10 @@ async fn launch_new(
     let image = merged.image.to_string();
     daemon::image(dir, &image, |line| println!("{line}")).await?;
     let folder = folder_of(&run::data_dir()?, &repo);
-    let clone = run::clone_in(&folder);
-    let claude = run::claude_in(&folder);
-    // The lead clones in its container (#2139). A clone of an older riff
-    // on the host goes, and stops no start.
-    match remove_host_clone(&folder, crate::compile_cache::remove) {
-        Ok(stays) => stays.iter().for_each(|line| println!("{line}")),
-        Err(e) => println!("riff: {e:#}"),
-    }
     let sources = session_image::merged_sources(main)?;
-    run::claude_folder(
-        &claude,
-        &clone,
-        &host.home.join(".claude.json"),
-        &crate::permissions::Trust::of(here.repo(), server, &sources),
-        crate::permissions::Role::Lead,
-    )?;
+    let trust = crate::permissions::Trust::of(here.repo(), server, &sources);
+    let lines = new_folder(&folder, &host.home.join(".claude.json"), &trust)?;
+    lines.iter().for_each(|line| println!("{line}"));
 
     let session = identity::new_session_id();
     let place = Place::new(here.host(), here.repo().clone(), None)?;
@@ -1182,7 +1199,6 @@ pub(crate) fn facts(
     common: &Path,
     session: &str,
 ) -> Result<Facts> {
-    let refs = run::refs_in(folder);
     crate::session_clone::write_refs(common, folder)?;
     let existing = |p: PathBuf| p.exists().then_some(p);
     Ok(Facts {
@@ -1191,12 +1207,14 @@ pub(crate) fn facts(
         image: merged.image.to_string(),
         home: host.home.clone(),
         user: host.user.clone(),
-        clone: run::clone_in(folder),
-        origin: crate::session_clone::Origin::github(repo)?,
-        base: crate::permissions::Project::of(common).branch.parse()?,
-        checkout: crate::session_clone::Checkout::Default,
-        main: common.to_owned(),
-        refs,
+        plan: crate::session_clone::Plan {
+            path: run::clone_in(folder),
+            origin: crate::session_clone::Origin::github(repo)?,
+            main: common.to_owned(),
+            refs: run::refs_in(folder),
+            base: crate::permissions::Project::of(common).branch.parse()?,
+            checkout: crate::session_clone::Checkout::Default,
+        },
         claude: run::claude_in(folder),
         sign_in: host.claude.sign_in(),
         gitconfig: existing(host.home.join(".gitconfig")),
@@ -1877,12 +1895,14 @@ mod tests {
             image: "img".into(),
             home: home.to_owned(),
             user: "mike".into(),
-            clone: home.join("clone"),
-            origin: crate::session_clone::Origin::github("o/r").unwrap(),
-            base: "main".parse().unwrap(),
-            checkout: crate::session_clone::Checkout::Default,
-            main: home.join("main.git"),
-            refs: home.join("origin-refs"),
+            plan: crate::session_clone::Plan {
+                path: home.join("clone"),
+                origin: crate::session_clone::Origin::github("o/r").unwrap(),
+                main: home.join("main.git"),
+                refs: home.join("origin-refs"),
+                base: "main".parse().unwrap(),
+                checkout: crate::session_clone::Checkout::Default,
+            },
             claude: home.join("lead-claude"),
             sign_in: run::ClaudeSignIn::File(file.clone()),
             gitconfig: None,
@@ -2028,12 +2048,14 @@ mod tests {
             image: "img".into(),
             home: "/home/mike".into(),
             user: "mike".into(),
-            clone: "/d/riff/leads/o-r/clone".into(),
-            origin: crate::session_clone::Origin::github("o/r").unwrap(),
-            base: "main".parse().unwrap(),
-            checkout: crate::session_clone::Checkout::Default,
-            main: "/src/r/.git".into(),
-            refs: "/d/riff/leads/o-r/origin-refs".into(),
+            plan: crate::session_clone::Plan {
+                path: "/d/riff/leads/o-r/clone".into(),
+                origin: crate::session_clone::Origin::github("o/r").unwrap(),
+                main: "/src/r/.git".into(),
+                refs: "/d/riff/leads/o-r/origin-refs".into(),
+                base: "main".parse().unwrap(),
+                checkout: crate::session_clone::Checkout::Default,
+            },
             claude: "/d/riff/leads/o-r/claude".into(),
             sign_in: run::ClaudeSignIn::Token,
             gitconfig: None,
@@ -2302,24 +2324,41 @@ mod tests {
         );
     }
 
-    /// 01M7EY51EMJ6ZEGNW7H852PEGR: when the clone of an older riff cannot
-    /// move aside, the error names the move, and the clone stays as it is.
-    /// The start of the lead prints the error and goes on.
+    /// 01M7EY51EMJ6ZEGNW7H852PEGR, 01M7FTWWAJB8B09S89VY8XA8RQ: when the
+    /// clone of an older riff cannot move aside, the steps of the host
+    /// before the session of a new lead stop with an error that names the
+    /// move. The clone stays as it is, and the Claude folder gets nothing:
+    /// here it is there, and riff could write it. With the clone gone, the
+    /// same steps write the Claude folder.
     #[test]
-    fn a_clone_of_an_older_riff_that_cannot_move_gives_an_error() {
+    fn a_clone_of_an_older_riff_that_cannot_move_stops_the_start_of_the_lead() {
         use std::os::unix::fs::PermissionsExt;
 
         let root = tempfile::tempdir().unwrap();
         let folder = root.path().join("leads/o-r");
         let clone = folder.join("clone");
+        let claude = folder.join("claude");
         std::fs::create_dir_all(&clone).unwrap();
+        std::fs::create_dir_all(&claude).unwrap();
         std::fs::write(clone.join("old"), "").unwrap();
+        let person = root.path().join("person.json");
+        std::fs::write(&person, "{}").unwrap();
+        let trust = crate::permissions::Trust {
+            owner: Some("o"),
+            server: None,
+            sources: &[],
+        };
         std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o555)).unwrap();
-        let moved = remove_host_clone(&folder, crate::compile_cache::remove);
+        let moved = new_folder(&folder, &person, &trust);
         std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o700)).unwrap();
         let error = format!("{:#}", moved.unwrap_err());
         assert!(error.contains("cannot move"), "{error}");
         assert!(clone.join("old").exists());
+        assert_eq!(std::fs::read_dir(&claude).unwrap().count(), 0);
+
+        std::fs::remove_dir_all(&clone).unwrap();
+        assert!(new_folder(&folder, &person, &trust).unwrap().is_empty());
+        assert!(claude.join("settings.json").exists());
     }
 
     /// Makes the folder `dir` and a read-only folder `dir/ro` with a file:

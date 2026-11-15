@@ -1365,6 +1365,6 @@ fn the_test_fetches_from_the_copy_that_riff_run_names() {
     let branch = "worktree-issue-801";
     assert_eq!(
         real_session::bundle_copy(folder, branch),
-        riff::run::bundle_copy(folder, branch)
+        riff::run::bundle_copy(folder, &branch.parse().unwrap())
     );
 }

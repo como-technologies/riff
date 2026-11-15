@@ -1822,7 +1822,7 @@ esac
         );
         // The next session goes on from the branch on origin: the host
         // looks for it from the main clone, and makes no clone.
-        assert!(run::earlier(&main, "worktree-issue-12").unwrap());
+        assert!(run::earlier(&main, &"worktree-issue-12".parse().unwrap()).unwrap());
 
         // The council of a verify reads the member files of `origin/main`
         // in the main clone.

@@ -37,12 +37,14 @@ fn facts(data: &Path) -> riff::run::Facts {
         image: "img".into(),
         home: "/home/mike".into(),
         user: "mike".into(),
-        clone: data.join("leads/o-r/clone"),
-        origin: Origin::github("o/r").unwrap(),
-        base: "main".parse().unwrap(),
-        checkout: Checkout::Default,
-        main: "/src/r/.git".into(),
-        refs: data.join("leads/o-r/origin-refs"),
+        plan: Plan {
+            path: data.join("leads/o-r/clone"),
+            origin: Origin::github("o/r").unwrap(),
+            main: "/src/r/.git".into(),
+            refs: data.join("leads/o-r/origin-refs"),
+            base: "main".parse().unwrap(),
+            checkout: Checkout::Default,
+        },
         claude: data.join("leads/o-r/claude"),
         sign_in: riff::run::ClaudeSignIn::Token,
         gitconfig: None,
@@ -62,7 +64,11 @@ fn the_lead_clones_in_its_container_on_the_default_branch() {
         riff::lead::spec(&facts, "o/r", "Start."),
         riff::lead::spec_again(&facts, "o/r", "Again."),
     ] {
-        let clone = spec.binds.iter().find(|b| b.target == facts.clone).unwrap();
+        let clone = spec
+            .binds
+            .iter()
+            .find(|b| b.target == facts.plan.path)
+            .unwrap();
         assert_eq!((&clone.source, clone.write), (&Source::Empty, true));
         let writes: Vec<_> = spec
             .binds
@@ -73,19 +79,16 @@ fn the_lead_clones_in_its_container_on_the_default_branch() {
             })
             .collect();
         assert_eq!(writes, std::slice::from_ref(&facts.claude));
-        let plan = Plan::of_spec(&spec).unwrap();
-        assert_eq!(plan.path, facts.clone);
-        assert_eq!(plan.origin.as_str(), "https://github.com/o/r.git");
-        assert_eq!(plan.main, Path::new("/src/r/.git"));
-        assert_eq!(plan.refs, facts.refs);
-        assert_eq!(plan.base.as_str(), "main");
-        assert_eq!(plan.checkout, Checkout::Default);
+        assert_eq!(Plan::of_spec(&spec).as_ref(), Some(&facts.plan));
         let args: Vec<String> = riff::podman::terminal_args(&spec)
             .unwrap()
             .into_iter()
             .map(|a| a.into_string().unwrap())
             .collect();
-        let volume = format!("type=volume,destination={},U=true", facts.clone.display());
+        let volume = format!(
+            "type=volume,destination={},U=true",
+            facts.plan.path.display()
+        );
         assert!(args.contains(&volume), "{args:?}");
     }
 }

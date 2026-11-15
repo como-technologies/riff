@@ -95,7 +95,7 @@
 //! A session of `riff run --no-github` pushes nothing. So when `claude`
 //! ends, the relay writes the commits of the branch that `origin/BASE`
 //! does not have in a git bundle, in the folder `out/` of the folder of
-//! the session ([`Plan::bundle`], [`crate::run::bundle_out`]). The
+//! the session ([`Plan::bundle`], [`Plan::bundle_file`]). The
 //! session can write that folder, so the host trusts no file there:
 //! `riff run` takes the bundle with the checks of
 //! [`crate::run::take_bundle`], and the person fetches from its copy.
@@ -164,7 +164,7 @@ macro_rules! parsed_name {
 /// it: no empty part between the `/`, no part that starts with `.` or
 /// ends with `.lock`, no `..`, no `@{`, no space, no control character,
 /// none of `~^:?*[\`, no `-` at the start, no `.` at the end, and not
-/// `@`. So no branch is an option of git.
+/// `@` or `HEAD`. So no branch is an option of git.
 ///
 /// ```
 /// use riff::session_clone::Branch;
@@ -173,7 +173,7 @@ macro_rules! parsed_name {
 /// assert_eq!("feature/a.b".parse::<Branch>()?.to_string(), "feature/a.b");
 /// let bad = [
 ///     "", "-x", "a..b", "a b", "a~1", "a^", "a:b", "a?", "a*", "a[", "a\\b", "/a", "a/",
-///     "a//b", ".a", "a/.b", "a.", "a.lock", "a@{1}", "@", "a\u{7f}",
+///     "a//b", ".a", "a/.b", "a.", "a.lock", "a@{1}", "@", "HEAD", "a\u{7f}",
 /// ];
 /// for name in bad {
 ///     assert!(name.parse::<Branch>().is_err(), "{name:?}");
@@ -195,6 +195,7 @@ impl FromStr for Branch {
         let bad_part =
             |part: &str| part.is_empty() || part.starts_with('.') || part.ends_with(".lock");
         if name == "@"
+            || name == "HEAD"
             || name.starts_with('-')
             || name.ends_with('.')
             || name.contains("..")
@@ -697,8 +698,10 @@ impl Plan {
 
     /// The file of the bundle of a session with no GitHub, which the
     /// relay writes when `claude` ends: `out/BRANCH.bundle` in the folder
-    /// of the clone ([`crate::run::bundle_out`]). `None` for each other
-    /// session.
+    /// of the session, the parent of the clone ([`crate::run::OUT`]): the
+    /// one place of its path. The spec binds its folder with write, and
+    /// `riff run` takes it from there ([`crate::run::take_bundle`]). `None`
+    /// for each other session.
     ///
     /// ```
     /// use riff::session_clone::{Checkout, Origin, Plan};
@@ -723,7 +726,10 @@ impl Plan {
                 name,
                 earlier: _,
                 no_github: true,
-            } => Some(crate::run::bundle_out(self.path.parent()?, name.as_str())),
+            } => {
+                let out = self.path.parent()?.join(crate::run::OUT);
+                Some(out.join(format!("{name}.bundle")))
+            }
             Checkout::Branch {
                 name: _,
                 earlier: _,
@@ -844,6 +850,39 @@ mod tests {
     /// The name `name` of a branch.
     fn name(name: &str) -> Branch {
         name.parse().unwrap()
+    }
+
+    /// A [`Branch`] takes no name that `git check-ref-format --branch`
+    /// refuses: here `HEAD` is no branch, and the relay never gets a plan
+    /// that fails late at `git switch -c`. It refuses more than git: `@`,
+    /// which git reads as the branch of `HEAD`.
+    #[test]
+    fn a_branch_takes_no_name_that_git_check_ref_format_refuses() {
+        let names = [
+            "worktree-issue-12",
+            "feature/a.b",
+            "HEAD",
+            "@",
+            "-x",
+            "a..b",
+            "a.lock",
+            "a@{1}",
+            "a/",
+            ".a",
+            "a b",
+            "a~1",
+        ];
+        for text in names {
+            let git = std::process::Command::new("git")
+                .args(["check-ref-format", "--branch", text])
+                .output()
+                .unwrap();
+            let parsed = text.parse::<Branch>().is_ok();
+            assert!(!parsed || git.status.success(), "{text:?}");
+            if text == "HEAD" {
+                assert!(!parsed && !git.status.success());
+            }
+        }
     }
 
     /// A bare `origin` that a `file://` URL names, as a URL of GitHub

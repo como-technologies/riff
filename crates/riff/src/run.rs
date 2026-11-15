@@ -201,7 +201,7 @@
 //! |---|---|
 //! | `repo` | The repository `OWNER/REPO` of the session. The host writes it before the start, and the sweep reads it ([`crate::daemon::sweep::note_repo`], 01M7DZ42EVHAT8N5MZEV97G3DW). |
 //! | `clone/` | No folder of the host: the clone of the session is at this path in its container only, an empty volume of the container where the relay clones ([`crate::session_clone`], 01M7EY3P0Q8TQF5QRTRDWCYCTQ). It goes with the container. The host runs no git in the folder of a session ([`crate::host_git`]). |
-//! | `out/` | With no GitHub only: the bundle of the branch of the session, which the relay writes when `claude` ends ([`bundle_out`], 01M7EY3WHQQP9330CZ736HK0FJ). The session can write it. |
+//! | `out/` | With no GitHub only: the bundle of the branch of the session, which the relay writes when `claude` ends ([`crate::session_clone::Plan::bundle_file`], 01M7EY3WHQQP9330CZ736HK0FJ). The session can write it. |
 //! | `BRANCH.bundle` | With no GitHub only: the copy of the bundle that `riff run` checked ([`bundle_copy`], [`take_bundle`]). No session sees it, and the person fetches from it. |
 //! | `claude/` | The own Claude folder of the session ([`claude_folder`]): the first-run answers of `claude` with the trust of the clone, no attribution line of `claude`, and the auto mode settings ([`settings`]). |
 //! | `events.jsonl` | Each event of `claude`, with no secret ([`Scrub`]). The daemon writes it. |
@@ -253,7 +253,7 @@ use tokio::signal::unix::{SignalKind, signal};
 
 use crate::daemon::{self, Ask, Ended, Say};
 use crate::runtime::{Bind, Env, SessionSpec, Source};
-use crate::session_clone::{Branch, Checkout, Origin};
+use crate::session_clone::{Branch, Checkout, Origin, Plan};
 use crate::session_setup::Setup;
 use crate::{dropped, git_credential, home, identity, pr, rollout, session_image, text};
 use riff_client::api::{self, Api};
@@ -290,29 +290,12 @@ pub struct Facts {
     pub home: PathBuf,
     /// The user name of the person.
     pub user: String,
-    /// The clone of the session: its path in the container, where the
-    /// relay clones ([`crate::session_clone`]). The host has no folder
-    /// there.
-    pub clone: PathBuf,
-    /// The `origin` of the clone: the repository on GitHub
-    /// ([`crate::session_clone::Origin::github`]).
-    pub origin: Origin,
-    /// The default branch of `origin`, as the host gives it
-    /// ([`crate::session_clone::Plan::base`]).
-    pub base: Branch,
-    /// What the clone of the session checks out. With no GitHub, the
-    /// relay writes the bundle of the branch in the folder [`OUT`] of the
-    /// folder of the session ([`bundle_out`]).
-    pub checkout: Checkout,
-    /// The git dir of the main clone, `MAIN/.git`: the session clones from
-    /// it, and the container sees its objects at the same path with no
-    /// write ([`crate::session_clone::OBJECTS`]).
-    pub main: PathBuf,
-    /// The file of the branches of `origin` of the main clone that the
-    /// host wrote in the folder of the session ([`refs_in`],
-    /// [`crate::session_clone::write_refs`]): the container sees it at the
-    /// same path with no write.
-    pub refs: PathBuf,
+    /// The plan of the clone of the session, which the relay makes in the
+    /// container ([`crate::session_clone`]): the host has no folder at its
+    /// path. The spec binds the objects of its main clone and its file of
+    /// refs with no write, and with no GitHub the folder of its bundle
+    /// ([`Plan::bundle_file`]).
+    pub plan: Plan,
     /// The own Claude folder of the session.
     pub claude: PathBuf,
     /// How `claude` signs in.
@@ -350,43 +333,40 @@ pub enum ClaudeSignIn {
 ///     image: "localhost/riff-session:latest".into(),
 ///     home: "/home/mike".into(),
 ///     user: "mike".into(),
-///     clone: "/data/riff/sessions/issue-12-1a2b3c4d/clone".into(),
-///     origin: Origin::github("o/r")?,
-///     base: "main".parse()?,
-///     checkout: branch(false),
-///     main: "/src/riff/.git".into(),
-///     refs: "/data/riff/sessions/issue-12-1a2b3c4d/origin-refs".into(),
+///     plan: Plan {
+///         path: "/data/riff/sessions/issue-12-1a2b3c4d/clone".into(),
+///         origin: Origin::github("o/r")?,
+///         main: "/src/riff/.git".into(),
+///         refs: "/data/riff/sessions/issue-12-1a2b3c4d/origin-refs".into(),
+///         base: "main".parse()?,
+///         checkout: branch(false),
+///     },
 ///     claude: "/data/riff/sessions/issue-12-1a2b3c4d/claude".into(),
 ///     sign_in: ClaudeSignIn::File("/home/mike/.claude/.credentials.json".into()),
 ///     gitconfig: Some("/home/mike/.gitconfig".into()),
 ///     setup: Default::default(),
 /// };
 /// let spec = spec(&facts);
+/// let plan = &facts.plan;
 /// assert_eq!(spec.name, "riff-issue-12-1a2b3c4d");
-/// assert_eq!(spec.workdir, facts.clone);
+/// assert_eq!(spec.workdir, plan.path);
 /// // The clone: an empty folder of the container, and no folder of the
 /// // host. The relay clones there from the plan.
-/// let clone = spec.binds.iter().find(|b| b.target == facts.clone).unwrap();
+/// let clone = spec.binds.iter().find(|b| b.target == plan.path).unwrap();
 /// assert_eq!((&clone.source, clone.write), (&Source::Empty, true));
-/// assert_eq!(Plan::of_spec(&spec), Some(Plan {
-///     path: facts.clone.clone(),
-///     origin: facts.origin.clone(),
-///     main: facts.main.clone(),
-///     refs: facts.refs.clone(),
-///     base: facts.base.clone(),
-///     checkout: facts.checkout.clone(),
-/// }));
+/// assert_eq!(Plan::of_spec(&spec).as_ref(), Some(plan));
 /// // The objects of the main clone and the list of its refs: at the same
 /// // path, with no write. No other part of the main clone: no config, no
 /// // ref, no hook, no log and no worktree.
-/// for at in [facts.main.join("objects"), facts.refs.clone()] {
+/// for at in [plan.main.join("objects"), plan.refs.clone()] {
 ///     let bind = spec.binds.iter().find(|b| b.target == at).unwrap();
 ///     assert_eq!((&bind.source, bind.write), (&Source::Path(at.clone()), false));
 /// }
-/// let of_main = spec.binds.iter().filter(|b| b.target.starts_with(&facts.main)).count();
+/// let of_main = spec.binds.iter().filter(|b| b.target.starts_with(&plan.main)).count();
 /// assert_eq!(of_main, 1);
 /// // With no GitHub, the folder of the bundle has write.
-/// let offline = riff::run::spec(&Facts { checkout: branch(true), ..facts.clone() });
+/// let offline = Plan { checkout: branch(true), ..plan.clone() };
+/// let offline = riff::run::spec(&Facts { plan: offline, ..facts.clone() });
 /// let out = offline.binds.iter().find(|b| b.target.ends_with("out")).unwrap();
 /// assert_eq!(out.target, std::path::Path::new("/data/riff/sessions/issue-12-1a2b3c4d/out"));
 /// assert_eq!((out.source == Source::Path(out.target.clone()), out.write), (true, true));
@@ -435,17 +415,17 @@ pub fn spec(facts: &Facts) -> SessionSpec {
     let claude_dir = home.join(".claude");
     // The session clones in its container: no git tree of the host has
     // write (#2139).
+    let plan = &facts.plan;
     let clone = Bind {
         source: Source::Empty,
-        target: facts.clone.clone(),
+        target: plan.path.clone(),
         write: true,
     };
-    let plan = plan(facts);
     // Of the main clone, only its objects: its config can hold a token of
     // the person. The list of its refs is a file that the host wrote
     // (01M7FMJJB0TZM8875T7GQZAJEA).
-    let objects = facts.main.join(crate::session_clone::OBJECTS);
-    let mut binds = vec![clone, path(&objects, false), path(&facts.refs, false)];
+    let objects = plan.main.join(crate::session_clone::OBJECTS);
+    let mut binds = vec![clone, path(&objects, false), path(&plan.refs, false)];
     binds.extend(
         plan.bundle_file()
             .as_deref()
@@ -508,7 +488,7 @@ pub fn spec(facts: &Facts) -> SessionSpec {
         name: format!("riff-{}-{}", facts.item, short(&facts.session)),
         image: facts.image.clone(),
         home: home.clone(),
-        workdir: facts.clone.clone(),
+        workdir: plan.path.clone(),
         binds,
         env,
         memory: String::new(),
@@ -519,39 +499,9 @@ pub fn spec(facts: &Facts) -> SessionSpec {
     spec
 }
 
-/// The plan of the clone of the session of `facts`
-/// ([`crate::session_clone`]): the relay clones the main clone at the
-/// path of the clone, with `origin` on GitHub.
-fn plan(facts: &Facts) -> crate::session_clone::Plan {
-    let Facts {
-        session: _,
-        item: _,
-        image: _,
-        home: _,
-        user: _,
-        clone,
-        origin,
-        base,
-        checkout,
-        main,
-        refs,
-        claude: _,
-        sign_in: _,
-        gitconfig: _,
-        setup: _,
-    } = facts;
-    crate::session_clone::Plan {
-        path: clone.clone(),
-        origin: origin.clone(),
-        main: main.clone(),
-        refs: refs.clone(),
-        base: base.clone(),
-        checkout: checkout.clone(),
-    }
-}
-
 /// The folder of the bundle of a session with no GitHub, in the folder
-/// of the session ([`crate::session_clone::Plan::bundle`]).
+/// of the session ([`crate::session_clone::Plan::bundle_file`]). The
+/// session can write it.
 pub const OUT: &str = "out";
 
 /// The path of the clone of a session in its container, in the folder
@@ -583,30 +533,20 @@ pub fn refs_in(folder: &Path) -> PathBuf {
     folder.join(crate::session_clone::REFS)
 }
 
-/// The bundle of the branch `branch` that the relay of a session with no
-/// GitHub writes, in the folder `folder` of the session:
-/// `out/BRANCH.bundle` ([`OUT`], [`crate::session_clone::Plan::bundle`]).
-/// The session can write it.
+/// The copy of the bundle of the branch `branch` that `riff run` checked
+/// ([`take_bundle`] of [`crate::session_clone::Plan::bundle_file`]), in
+/// the folder `folder` of the session: `BRANCH.bundle`. No session sees
+/// it, and the person fetches from it.
 ///
 /// ```
 /// let folder = std::path::Path::new("/d/riff/sessions/issue-12-1a2b3c4d");
 /// assert_eq!(
-///     riff::run::bundle_out(folder, "worktree-issue-12"),
-///     folder.join("out/worktree-issue-12.bundle")
-/// );
-/// assert_eq!(
-///     riff::run::bundle_copy(folder, "worktree-issue-12"),
+///     riff::run::bundle_copy(folder, &"worktree-issue-12".parse()?),
 ///     folder.join("worktree-issue-12.bundle")
 /// );
+/// # Ok::<(), anyhow::Error>(())
 /// ```
-pub fn bundle_out(folder: &Path, branch: &str) -> PathBuf {
-    folder.join(OUT).join(format!("{branch}.bundle"))
-}
-
-/// The copy of the bundle of [`bundle_out`] that `riff run` checked
-/// ([`take_bundle`]), in the folder `folder` of the session:
-/// `BRANCH.bundle`. No session sees it, and the person fetches from it.
-pub fn bundle_copy(folder: &Path, branch: &str) -> PathBuf {
+pub fn bundle_copy(folder: &Path, branch: &Branch) -> PathBuf {
     folder.join(format!("{branch}.bundle"))
 }
 
@@ -2136,7 +2076,7 @@ pub fn main_clone(dir: &Path) -> Result<(PathBuf, PathBuf)> {
 /// from the main clone `main`, with `git ls-remote`, and makes no clone:
 /// the session clones in its container ([`crate::session_clone`],
 /// 01M7DZ42C8SY2GV5ZQJZHM2VTV).
-pub fn earlier(main: &Path, branch: &str) -> Result<bool> {
+pub fn earlier(main: &Path, branch: &Branch) -> Result<bool> {
     let remote = crate::host_git::output(main, &["remote", "get-url", "origin"])?;
     let head = format!("refs/heads/{branch}");
     Ok(
@@ -2154,9 +2094,14 @@ pub fn earlier(main: &Path, branch: &str) -> Result<bool> {
 /// fetches nothing from GitHub, and starts from the view of the main
 /// clone ([`crate::session_clone`]): so it goes on from the branch on
 /// `origin` too.
-pub fn fetch_for_no_github(main: &Path, base: &str, branch: &str, earlier: bool) -> Result<()> {
+pub fn fetch_for_no_github(
+    main: &Path,
+    base: &Branch,
+    branch: &Branch,
+    earlier: bool,
+) -> Result<()> {
     let remote = crate::host_git::output(main, &["remote", "get-url", "origin"])?;
-    let spec = |name: &str| format!("+refs/heads/{name}:refs/remotes/origin/{name}");
+    let spec = |name: &Branch| format!("+refs/heads/{name}:refs/remotes/origin/{name}");
     let mut args = vec![
         "fetch".to_owned(),
         "-q".into(),
@@ -2623,19 +2568,32 @@ async fn work(
         &auto,
         crate::permissions::Role::Worker,
     )?;
-    let branch = branch(item);
-    let name: Branch = branch.parse()?;
+    let branch: Branch = branch(item).parse()?;
     let earlier = earlier(main, &branch)?;
-    // The main clone has the `origin/HEAD` of the forge: its branch is
-    // the default branch (01M7EY3WM6XYQR3CXNMM6MFA5C).
-    let base: Branch = crate::permissions::Project::of(main).branch.parse()?;
+    let repo = me.place().repo_text();
+    let plan = Plan {
+        path: clone,
+        origin: Origin::github(&repo)?,
+        main: common.to_owned(),
+        refs: refs_in(&folder),
+        // The main clone has the `origin/HEAD` of the forge: its branch is
+        // the default branch (01M7EY3WM6XYQR3CXNMM6MFA5C).
+        base: crate::permissions::Project::of(main).branch.parse()?,
+        checkout: Checkout::Branch {
+            name: branch.clone(),
+            earlier,
+            no_github,
+        },
+    };
     // With no GitHub, the clone of the session fetches nothing: the main
     // clone gets the branches first (01M7FDN99KZE54CX17DDEP787V). The
     // relay gives the branch in a bundle, and `riff run` takes a copy
     // (01M7EY3WHQQP9330CZ736HK0FJ).
-    let bundle = no_github.then(|| (bundle_out(&folder, &branch), bundle_copy(&folder, &branch)));
+    let bundle = plan
+        .bundle_file()
+        .map(|out| (out, bundle_copy(&folder, &branch)));
     if let Some((out, _)) = &bundle {
-        fetch_for_no_github(main, base.as_str(), &branch, earlier)?;
+        fetch_for_no_github(main, &plan.base, &branch, earlier)?;
         if let Some(out) = out.parent() {
             std::fs::create_dir_all(out)
                 .with_context(|| format!("cannot make {}", out.display()))?;
@@ -2643,41 +2601,32 @@ async fn work(
     }
     // The list of the branches of `origin`, after the fetch: the clone of
     // the session starts from it (01M7FMJJB0TZM8875T7GQZAJEA).
-    let refs = refs_in(&folder);
     crate::session_clone::write_refs(common, &folder)?;
     let existing = |p: PathBuf| p.exists().then_some(p);
-    let repo = me.place().repo_text();
     let facts = Facts {
         session: session.to_owned(),
         item: item.to_owned(),
         image: image.to_owned(),
         home: home.clone(),
         user: checked.host.user.clone(),
-        clone: clone.clone(),
-        origin: Origin::github(&repo)?,
-        base: base.clone(),
-        checkout: Checkout::Branch {
-            name,
-            earlier,
-            no_github,
-        },
-        main: common.to_owned(),
-        refs,
+        plan,
         claude,
         sign_in: checked.host.claude.sign_in(),
         gitconfig: existing(home.join(".gitconfig")),
         setup: setup.clone(),
     };
     let spec = spec(&facts);
+    let base = &facts.plan.base;
     println!(
         "{}",
-        text::run_started(item, session, &clone, image, &spec.name)
+        text::run_started(item, session, &facts.plan.path, image, &spec.name)
     );
+    let branch = branch.as_str();
     let start = if no_github {
         // The session has no GitHub: the start text holds the issue
         // (01M6Z87JY83V3KR72E2AG8V8KG).
         let body = &checked.frame.issue;
-        text::run_start_no_github(&repo, issue, &branch, session, body, earlier)
+        text::run_start_no_github(&repo, issue, branch, session, body, earlier)
     } else {
         let frame = checked.frame.body()?;
         let frame = pr::with_session(&frame, &made_by(&pr::Gh::here("run"), session))?;
@@ -2685,7 +2634,7 @@ async fn work(
             &repo,
             base.as_str(),
             issue,
-            &branch,
+            branch,
             session,
             &frame,
             &checked.frame.milestone,
@@ -2720,7 +2669,7 @@ async fn work(
         .json::<Pull>(&[
             "pr",
             "view",
-            &branch,
+            branch,
             "--json",
             "number,url,headRefOid,state",
         ])
@@ -2731,7 +2680,7 @@ async fn work(
         let body = text::run_verify_request(
             item,
             pull.number,
-            &branch,
+            branch,
             &pull.head_ref_oid,
             short(session),
         );
@@ -2759,7 +2708,7 @@ async fn work(
         // 01M7FDN9C91TDYPQSFBRHVHRAC).
         Some((out, copy)) => match take_bundle(out, copy, common) {
             Ok(taken) => {
-                println!("{}", text::run_pushed_nothing(taken.as_deref(), &branch));
+                println!("{}", text::run_pushed_nothing(taken.as_deref(), branch));
                 true
             }
             Err(e) => {
@@ -2769,7 +2718,7 @@ async fn work(
         },
         None if pull.is_some() => true,
         None => {
-            println!("{}", text::run_no_pull(&branch));
+            println!("{}", text::run_no_pull(branch));
             false
         }
     };
@@ -2959,6 +2908,11 @@ fn unbundle(copy: &Path, main: &Path) -> Result<()> {
 mod tests {
     use super::*;
 
+    /// The branch `text`.
+    fn name(text: &str) -> Branch {
+        text.parse().unwrap()
+    }
+
     /// Runs git in `dir` with no config of the person.
     fn git(dir: &Path, args: &[&str]) -> String {
         let out = std::process::Command::new("git")
@@ -3070,9 +3024,10 @@ mod tests {
     }
 
     /// 01M7FDN9EWZ28AQS4CKJQD3A3B: the session writes more in its bundle
-    /// after riff opened it, over the limit. The copy stops one byte over
-    /// the limit, riff refuses the file, and the copy goes. Here the limit
-    /// is 64 bytes.
+    /// after riff opened it, far over the limit. The copy stops one byte
+    /// over the limit: the copy has `limit + 1` bytes, not the whole file.
+    /// riff refuses the file, and the copy goes. Here the limit is 64
+    /// bytes, and the file grows to 4 KiB.
     #[test]
     fn riff_run_refuses_a_bundle_that_grows_over_the_limit_during_the_copy() {
         use std::io::Write;
@@ -3081,14 +3036,92 @@ mod tests {
         let (out, copy) = (root.join("out.bundle"), root.join("copy.bundle"));
         let limit = 64;
         std::fs::write(&out, [&BUNDLE_HEADS[0][..], &[b'x'; 32]].concat()).unwrap();
-        let opened = Opened::of(&out, limit).unwrap().unwrap();
+        let copied = Opened::of(&out, limit).unwrap().unwrap();
+        let taken = Opened::of(&out, limit).unwrap().unwrap();
         let mut more = std::fs::OpenOptions::new().append(true).open(&out).unwrap();
-        more.write_all(&[b'x'; 64]).unwrap();
-        let error = opened.take(&copy, root, limit).unwrap_err();
+        more.write_all(&[b'x'; 4096]).unwrap();
+
+        let error = copied.copy_to(&copy, limit).unwrap_err();
+        assert_eq!(error.to_string(), text::run_bundle_too_large(limit));
+        assert_eq!(std::fs::metadata(&copy).unwrap().len(), limit + 1);
+
+        let error = taken.take(&copy, root, limit).unwrap_err();
         assert_eq!(error.to_string(), text::run_bundle_too_large(limit));
         assert!(!copy.exists());
         // At the open, the larger file is refused.
         assert!(Opened::of(&out, limit).is_err());
+    }
+
+    /// 01M7EY3WHQQP9330CZ736HK0FJ: after riff opened the bundle, the
+    /// session puts a new file in its place, then a link to a file that
+    /// the session must not give. The copy is the bundle that riff opened
+    /// each time, and it unbundles.
+    #[test]
+    fn a_new_file_or_a_link_in_the_place_of_the_bundle_after_the_open_does_not_change_the_copy() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path();
+        git(root, &["init", "-q", "--bare", "-b", "main", "origin.git"]);
+        git(root, &["clone", "-q", "origin.git", "main"]);
+        git(root, &["clone", "-q", "origin.git", "other"]);
+        let (main, other) = (root.join("main"), root.join("other"));
+        let git_dir = main.join(".git");
+        git(&main, &["commit", "-q", "--allow-empty", "-m", "start"]);
+        git(&main, &["push", "-q", "origin", "HEAD:main"]);
+        git(&other, &["pull", "-q", "origin", "main"]);
+        git(&other, &["switch", "-q", "-c", "worktree-issue-12"]);
+        git(&other, &["commit", "-q", "--allow-empty", "-m", "work"]);
+        let out = root.join("out.bundle");
+        let at = out.to_string_lossy();
+        let range = "origin/main..worktree-issue-12";
+        git(&other, &["bundle", "create", "-q", &at, range]);
+        let bundle = std::fs::read(&out).unwrap();
+        let secret = root.join("secret");
+        std::fs::write(&secret, [&BUNDLE_HEADS[0][..], b"a secret\n"].concat()).unwrap();
+        let copy = root.join("copy.bundle");
+
+        let new_file = |out: &Path| {
+            std::fs::remove_file(out).unwrap();
+            std::fs::write(out, [&BUNDLE_HEADS[0][..], b"other bytes\n"].concat()).unwrap();
+        };
+        let link = |out: &Path| {
+            std::fs::remove_file(out).unwrap();
+            std::os::unix::fs::symlink(&secret, out).unwrap();
+        };
+        let swaps: [&dyn Fn(&Path); 2] = [&new_file, &link];
+        for swap in swaps {
+            std::fs::write(&out, &bundle).unwrap();
+            let opened = Opened::of(&out, BUNDLE_LIMIT).unwrap().unwrap();
+            swap(&out);
+            assert_eq!(
+                opened.take(&copy, &git_dir, BUNDLE_LIMIT).unwrap(),
+                copy.clone()
+            );
+            assert_eq!(std::fs::read(&copy).unwrap(), bundle);
+            std::fs::remove_file(&out).unwrap();
+        }
+    }
+
+    /// The attacker of #2139: a session writes a bundle whose second line
+    /// holds the C1 control U+009B and an escape sequence. `git bundle
+    /// unbundle` refuses it, and its error quotes the line. The text that
+    /// `riff run` prints holds no control character of the line.
+    #[test]
+    fn the_text_of_a_refused_bundle_holds_no_control_character_of_the_session() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path();
+        git(root, &["init", "-q", "-b", "main", "main"]);
+        let git_dir = root.join("main/.git");
+        let (out, copy) = (root.join("out.bundle"), root.join("copy.bundle"));
+        let line = "\u{9b}2J\x1b]0;title\x07\x1b[31mred";
+        std::fs::write(&out, format!("# v2 git bundle\n{line}\n\n")).unwrap();
+
+        let error = format!("{:#}", take_bundle(&out, &copy, &git_dir).unwrap_err());
+        assert!(error.contains('\u{9b}'), "git quotes the line: {error:?}");
+        let shown = text::run_bundle_refused(&out, &error);
+        assert!(shown.contains("bundle unbundle"), "{shown}");
+        let control = |c: char| c.is_control() && c != '\n';
+        assert!(!shown.chars().any(control), "{shown:?}");
+        assert!(!copy.exists());
     }
 
     /// 01M7EY3WHQQP9330CZ736HK0FJ: a folder and a pipe in the place of the
@@ -3162,7 +3195,8 @@ mod tests {
         let main = root.join("main");
         git(&main, &["commit", "-q", "--allow-empty", "-m", "start"]);
         git(&main, &["push", "-q", "origin", "HEAD:main"]);
-        let error = fetch_for_no_github(&main, "gone", "worktree-issue-12", false).unwrap_err();
+        let error = fetch_for_no_github(&main, &name("gone"), &name("worktree-issue-12"), false)
+            .unwrap_err();
         assert!(format!("{error:#}").contains("fetch"), "{error:#}");
         assert!(format!("{error:#}").contains("gone"), "{error:#}");
     }
@@ -3194,7 +3228,7 @@ mod tests {
                 ],
             )
         };
-        fetch_for_no_github(&main, "main", "worktree-issue-12", false).unwrap();
+        fetch_for_no_github(&main, &name("main"), &name("worktree-issue-12"), false).unwrap();
         assert_eq!(seen("main"), "newer");
         assert_eq!(seen("worktree-issue-12"), "");
         git(
@@ -3202,9 +3236,9 @@ mod tests {
             &["commit", "-q", "--allow-empty", "-m", "WIP: earlier"],
         );
         git(&other, &["push", "-q", "origin", "HEAD:worktree-issue-12"]);
-        let earlier = earlier(&main, "worktree-issue-12").unwrap();
+        let earlier = earlier(&main, &name("worktree-issue-12")).unwrap();
         assert!(earlier);
-        fetch_for_no_github(&main, "main", "worktree-issue-12", earlier).unwrap();
+        fetch_for_no_github(&main, &name("main"), &name("worktree-issue-12"), earlier).unwrap();
         assert_eq!(seen("worktree-issue-12"), "WIP: earlier");
     }
 
@@ -3221,9 +3255,9 @@ mod tests {
         let main = root.join("main");
         git(&main, &["commit", "-q", "--allow-empty", "-m", "start"]);
         git(&main, &["push", "-q", "origin", "HEAD:main"]);
-        assert!(!earlier(&main, "worktree-issue-12").unwrap());
+        assert!(!earlier(&main, &name("worktree-issue-12")).unwrap());
         git(&main, &["push", "-q", "origin", "HEAD:worktree-issue-12"]);
-        assert!(earlier(&main, "worktree-issue-12").unwrap());
+        assert!(earlier(&main, &name("worktree-issue-12")).unwrap());
         assert_eq!(std::fs::read_dir(root).unwrap().count(), 2);
     }
 
@@ -3410,16 +3444,18 @@ mod tests {
             image: "localhost/riff-session:latest".into(),
             home: "/home/mike".into(),
             user: "mike".into(),
-            clone: "/r/sessions/issue-12-1a2b3c4d/clone".into(),
-            origin: Origin::github("o/r").unwrap(),
-            base: "main".parse().unwrap(),
-            checkout: Checkout::Branch {
-                name: "worktree-issue-12".parse().unwrap(),
-                earlier: false,
-                no_github: false,
+            plan: Plan {
+                path: "/r/sessions/issue-12-1a2b3c4d/clone".into(),
+                origin: Origin::github("o/r").unwrap(),
+                main: "/src/riff/.git".into(),
+                refs: "/r/sessions/issue-12-1a2b3c4d/origin-refs".into(),
+                base: "main".parse().unwrap(),
+                checkout: Checkout::Branch {
+                    name: name("worktree-issue-12"),
+                    earlier: false,
+                    no_github: false,
+                },
             },
-            main: "/src/riff/.git".into(),
-            refs: "/r/sessions/issue-12-1a2b3c4d/origin-refs".into(),
             claude: "/r/sessions/issue-12-1a2b3c4d/claude".into(),
             sign_in: ClaudeSignIn::File("/home/mike/.claude/.credentials.json".into()),
             gitconfig: Some("/home/mike/.gitconfig".into()),
@@ -3527,7 +3563,10 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let facts = Facts {
             claude: root.path().join("claude"),
-            clone: root.path().join("clone"),
+            plan: Plan {
+                path: root.path().join("clone"),
+                ..facts().plan
+            },
             ..facts()
         };
         let auto = crate::permissions::Trust {
@@ -3542,7 +3581,7 @@ mod tests {
         std::fs::write(&person, config).unwrap();
         claude_folder(
             &facts.claude,
-            &facts.clone,
+            &facts.plan.path,
             &person,
             &auto,
             crate::permissions::Role::Worker,
@@ -3582,7 +3621,7 @@ mod tests {
         let json = read(".claude.json");
         assert_eq!(json["hasCompletedOnboarding"], true);
         assert_eq!(json["theme"], "light-daltonized");
-        let clone = facts.clone.display().to_string();
+        let clone = facts.plan.path.display().to_string();
         assert_eq!(json["projects"][&clone]["hasTrustDialogAccepted"], true);
         assert_eq!(json.get("numStartups"), None);
         // The config of the person does not change.

@@ -8147,6 +8147,10 @@ of this part when they merge.
   of an old clone of 01M7EBBVE6WYKT5JDVASFCYPQQ, and goes as an old
   clone goes. This supersedes 01M5TC2919TB9XPF42YFNJBP79 and
   01M7EBBVE6WYKT5JDVASFCYPQQ in part: the clone of the host.
+- **01M7FTWWAJB8B09S89VY8XA8RQ** When the clone clone/ that an older
+  riff made in the folder of the lead cannot move to the name of an old
+  clone (01M7EY51EMJ6ZEGNW7H852PEGR), the new lead does not start. riff
+  says why, and the error names the move.
 
 ### The first run
 

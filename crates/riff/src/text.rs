@@ -7941,7 +7941,9 @@ pub fn run_pushed_nothing(bundle: Option<&Path>, branch: &str) -> String {
 /// `riff run` refused the file `file` in the place of the bundle of a
 /// session with no GitHub, for the reason `why`
 /// ([`crate::run::take_bundle`]). The session can write that file, so
-/// riff ran no git on it.
+/// riff ran no git on it. The session wrote the bytes that the error of
+/// git quotes, so `why` goes through [`safe`]: no escape sequence and no
+/// control character.
 ///
 /// ```
 /// assert_eq!(
@@ -7949,12 +7951,18 @@ pub fn run_pushed_nothing(bundle: Option<&Path>, branch: &str) -> String {
 ///     "The session had no GitHub, so it pushed nothing. riff refused the file \
 ///      /s/out/b.bundle: it is no git bundle. riff ran no git on it."
 /// );
+/// let why = "unrecognized header: \u{9b}2J\x1b]0;title\x07x";
+/// let shown = riff::text::run_bundle_refused("/s/out/b.bundle".as_ref(), why);
+/// assert!(shown.contains("unrecognized header: "), "{shown}");
+/// assert!(shown.ends_with("x. riff ran no git on it."), "{shown}");
+/// assert!(!shown.chars().any(char::is_control), "{shown:?}");
 /// ```
 pub fn run_bundle_refused(file: &Path, why: &str) -> String {
     format!(
-        "The session had no GitHub, so it pushed nothing. riff refused the file {}: {why}. riff \
+        "The session had no GitHub, so it pushed nothing. riff refused the file {}: {}. riff \
          ran no git on it.",
-        file.display()
+        file.display(),
+        safe(why)
     )
 }
 

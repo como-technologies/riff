@@ -837,7 +837,7 @@ use crate::pr::Verdict;
 use crate::room::Slot;
 use crate::run::{self, Facts};
 use crate::runtime::Runtime;
-use crate::session_clone::{Branch, Checkout, Origin};
+use crate::session_clone::{Branch, Checkout, Origin, Plan};
 use crate::session_setup::Setup;
 use crate::{
     changes, ghcalls, hooks, identity, kept, look, order, pr, project, repo_setup, rollout,
@@ -1193,15 +1193,15 @@ impl Work {
     /// A pull number 0 or a commit that is no hash is an error.
     ///
     /// ```
-    /// use riff::session_clone::Checkout;
+    /// use riff::session_clone::{Branch, Checkout};
     /// use riff::wave::Work;
     ///
     /// let branch = |earlier| Checkout::Branch { name: "worktree-issue-12".parse().unwrap(), earlier, no_github: false };
     /// let build = Work::Build { issue: 12 };
     /// assert_eq!(build.checkout(|_| Ok(false))?, branch(false));
-    /// assert_eq!(build.checkout(|b| Ok(b == "worktree-issue-12"))?, branch(true));
+    /// assert_eq!(build.checkout(|b| Ok(b.as_str() == "worktree-issue-12"))?, branch(true));
     /// assert!(build.checkout(|_| anyhow::bail!("no origin")).is_err());
-    /// let no_look = |_: &str| -> anyhow::Result<bool> { panic!("a look") };
+    /// let no_look = |_: &Branch| -> anyhow::Result<bool> { panic!("a look") };
     /// let rebase = Work::Rebase { issue: 12, pull: 40, commit: "1a2b".into() };
     /// assert_eq!(rebase.checkout(no_look)?, branch(true));
     /// let verify = |pull, commit: &str| Work::Verify { issue: 12, pull, commit: commit.into() };
@@ -1211,13 +1211,12 @@ impl Work {
     /// assert!(verify(40, "--x").checkout(no_look).is_err());
     /// # Ok::<(), anyhow::Error>(())
     /// ```
-    pub fn checkout(&self, look: impl FnOnce(&str) -> Result<bool>) -> Result<Checkout> {
-        let branch = |issue: u64, earlier| -> Result<Checkout> {
-            Ok(Checkout::Branch {
-                name: branch_of(issue).parse()?,
-                earlier,
-                no_github: false,
-            })
+    pub fn checkout(&self, look: impl FnOnce(&Branch) -> Result<bool>) -> Result<Checkout> {
+        let name = |issue: u64| branch_of(issue).parse::<Branch>();
+        let branch = |name, earlier| Checkout::Branch {
+            name,
+            earlier,
+            no_github: false,
         };
         match self {
             Work::Verify {
@@ -1228,7 +1227,11 @@ impl Work {
                 pull: (*pull).try_into()?,
                 commit: commit.parse()?,
             }),
-            Work::Build { issue } => branch(*issue, look(&branch_of(*issue))?),
+            Work::Build { issue } => {
+                let name = name(*issue)?;
+                let earlier = look(&name)?;
+                Ok(branch(name, earlier))
+            }
             Work::Rebase {
                 issue,
                 pull: _,
@@ -1239,7 +1242,7 @@ impl Work {
                 pull: _,
                 commit: _,
                 checks: _,
-            } => branch(*issue, true),
+            } => Ok(branch(name(*issue)?, true)),
         }
     }
 
@@ -4252,7 +4255,7 @@ impl Live {
         let auto = crate::permissions::Trust::of(me.place().repo(), &wave.server, &sources);
         run::claude_folder(
             &facts.claude,
-            &facts.clone,
+            &facts.plan.path,
             &host.home.join(".claude.json"),
             &auto,
             work.role(),
@@ -4355,12 +4358,14 @@ fn facts_of(
         image: pinned.image.clone(),
         home: host.home.clone(),
         user: host.user.clone(),
-        clone: run::clone_in(folder),
-        origin: Origin::github(&wave.repo)?,
-        base,
-        checkout,
-        main: common,
-        refs: run::refs_in(folder),
+        plan: Plan {
+            path: run::clone_in(folder),
+            origin: Origin::github(&wave.repo)?,
+            main: common,
+            refs: run::refs_in(folder),
+            base,
+            checkout,
+        },
         claude: run::claude_in(folder),
         sign_in: host.claude.sign_in(),
         gitconfig: existing(host.home.join(".gitconfig")),
@@ -11918,11 +11923,11 @@ esac
             let spec = run::spec(&facts);
             for bind in &spec.binds {
                 match &bind.source {
-                    crate::runtime::Source::Empty => assert_eq!(bind.target, facts.clone),
+                    crate::runtime::Source::Empty => assert_eq!(bind.target, facts.plan.path),
                     crate::runtime::Source::Path(path) if path.starts_with("/src/r") => {
                         assert!(!bind.write, "{bind:?}");
                     }
-                    _ => assert!(!bind.target.starts_with(&facts.clone), "{bind:?}"),
+                    _ => assert!(!bind.target.starts_with(&facts.plan.path), "{bind:?}"),
                 }
             }
             Plan::of_spec(&spec).unwrap()

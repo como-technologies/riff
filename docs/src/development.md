@@ -2441,12 +2441,12 @@ riff removed the folder /home/mike/.local/share/riff/sessions/issue-735-7788e301
 
 ### Where the work of a removed folder goes
 
-A folder holds no work of its session: the clone is in the container
+A folder holds no clone of its session: the clone is in the container
 (see
 [Where the clone of a session lives](how-it-works.md#where-the-clone-of-a-session-lives)).
 riff pushes nothing from a session. Each session pushes its own work,
-as WIP commits when it must stop. A session with no GitHub gives its
-commits in a bundle in its folder, until the folder goes: see
+as WIP commits when it must stop. Only the folder of a session with no
+GitHub holds work: the copy of its bundle, until the folder goes. See
 [Run an item with no GitHub](#run-an-item-with-no-github).
 
 The daemon deletes each old branch `riff-kept/*` of `origin` after 30
