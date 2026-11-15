@@ -8975,6 +8975,13 @@ of this part when they merge.
   request. `riff release test` or `riff release cut` files it.
   Supersedes 01M593FVJRTCGD1RPWXYJP5BNH and 01M7641T9XH5NAXHE8YKBR4JJY
   in full.
+- **01M7GHMMWCPR6XDNCCY1281PPF** riff finds a release tag vX.Y.Z on
+  `origin` by its full name: only a line of `git ls-remote` that names
+  `refs/tags/vX.Y.Z`, or `refs/tags/vX.Y.Z^{}` of an annotated tag,
+  counts. A tag whose name only ends with `refs/tags/vX.Y.Z` is not the
+  tag: with only such a tag, `riff release status` does not read the
+  release as published, and `riff release cut` does not take the tag as
+  made.
 
 ### The release cycle
 

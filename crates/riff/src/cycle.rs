@@ -256,6 +256,33 @@ pub fn tag(version: Semver) -> String {
     format!("v{version}")
 }
 
+/// True when `listed`, the output of `git ls-remote --tags origin
+/// refs/tags/TAG`, has the tag `tag` itself: a line that names
+/// `refs/tags/TAG`, or `refs/tags/TAG^{}` of an annotated tag
+/// (01M7GHMMWCPR6XDNCCY1281PPF). `git ls-remote` also lists each ref
+/// whose name only ends with `refs/tags/TAG`, so a person with a push
+/// could make such a decoy tag.
+///
+/// ```
+/// use riff::cycle::lists_tag;
+///
+/// assert!(lists_tag("1a2b\trefs/tags/v3.3.0\n", "v3.3.0"));
+/// assert!(lists_tag("1a2b\trefs/tags/v3.3.0\n3c4d\trefs/tags/v3.3.0^{}\n", "v3.3.0"));
+/// assert!(!lists_tag("", "v3.3.0"));
+/// // A decoy tag whose name only ends with the name of the tag.
+/// assert!(!lists_tag("1a2b\trefs/tags/x/refs/tags/v3.3.0\n", "v3.3.0"));
+/// assert!(!lists_tag("1a2b\trefs/tags/x/refs/tags/v3.3.0^{}\n", "v3.3.0"));
+/// assert!(!lists_tag("1a2b\trefs/tags/v3.3.0.1\n", "v3.3.0"));
+/// ```
+pub fn lists_tag(listed: &str, tag: &str) -> bool {
+    let name = format!("refs/tags/{tag}");
+    let peeled = format!("{name}^{{}}");
+    listed.lines().any(|line| {
+        line.split_once('\t')
+            .is_some_and(|(_, listed)| listed == name || listed == peeled)
+    })
+}
+
 /// The title of the release issue.
 pub fn title(version: Semver) -> String {
     format!("Release {}", tag(version))
@@ -690,7 +717,8 @@ pub trait Forge {
     fn gate(&self, checks: &[String], commit: &str) -> Result<pr::Gate>;
     /// Sets the status `riff/verify` of `commit` to a success.
     fn pass_verify(&self, commit: &str, description: &str) -> Result<()>;
-    /// True when the forge has the tag `tag`.
+    /// True when the forge has the tag `tag`, by its full name
+    /// ([`lists_tag`]).
     fn tag_exists(&self, tag: &str) -> Result<bool>;
     /// Makes the annotated tag `tag` on `commit`, and pushes only it. The
     /// ruleset `releases` of the forge decides the push.
@@ -3531,10 +3559,8 @@ impl Forge for GitHub {
 
     fn tag_exists(&self, tag: &str) -> Result<bool> {
         let name = format!("refs/tags/{tag}");
-        Ok(!self
-            .remote_git(&self.dir, &["ls-remote", "--tags", "origin", &name])?
-            .trim()
-            .is_empty())
+        let listed = self.remote_git(&self.dir, &["ls-remote", "--tags", "origin", &name])?;
+        Ok(lists_tag(&listed, tag))
     }
 
     fn push_tag(&self, tag: &str, commit: &str) -> Result<()> {
@@ -5949,5 +5975,47 @@ pub(crate) mod tests {
             };
             assert_eq!(person.person_step(), None, "{person:?}");
         }
+    }
+
+    /// The real forge finds a tag of `origin` by its full name: a decoy
+    /// tag whose name only ends with `refs/tags/TAG` is not the tag
+    /// (01M7GHMMWCPR6XDNCCY1281PPF).
+    #[test]
+    fn the_real_forge_finds_a_tag_by_its_full_name() {
+        let root = tempfile::tempdir().unwrap();
+        let at = |dir: &Path, args: &[&str]| {
+            let out = Command::new("git")
+                .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+                .args(["-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"])
+                .args(args)
+                .current_dir(dir)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}: {out:?}");
+        };
+        let clone = root.path().join("clone");
+        at(
+            root.path(),
+            &["init", "-q", "--bare", "-b", "main", "origin.git"],
+        );
+        at(root.path(), &["clone", "-q", "origin.git", "clone"]);
+        at(&clone, &["commit", "-q", "--allow-empty", "-m", "first"]);
+        at(&clone, &["push", "-q", "origin", "HEAD:refs/heads/main"]);
+        let forge = GitHub::at(Gh::at("gh"), &clone);
+
+        // Only decoys: a plain one and an annotated one.
+        at(&clone, &["tag", "x/refs/tags/v1.2.3"]);
+        at(&clone, &["tag", "-a", "y/refs/tags/v1.2.3", "-m", "decoy"]);
+        at(&clone, &["push", "-q", "origin", "--tags"]);
+        assert!(!forge.tag_exists("v1.2.3").unwrap());
+
+        at(&clone, &["tag", "v1.2.3"]);
+        at(&clone, &["push", "-q", "origin", "refs/tags/v1.2.3"]);
+        assert!(forge.tag_exists("v1.2.3").unwrap());
+
+        at(&clone, &["tag", "-a", "v1.2.4", "-m", "Release v1.2.4"]);
+        at(&clone, &["push", "-q", "origin", "refs/tags/v1.2.4"]);
+        assert!(forge.tag_exists("v1.2.4").unwrap());
+        assert!(!forge.tag_exists("v1.2").unwrap());
     }
 }

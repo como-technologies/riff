@@ -1201,6 +1201,39 @@ async fn a_second_cut_makes_the_release_of_a_tag_that_is_there() {
     );
 }
 
+/// 01M7GHMMWCPR6XDNCCY1281PPF: origin has only a decoy tag, whose name
+/// ends with `refs/tags/v3.3.0`. The status does not read the release as
+/// published, and the cut does not take the decoy as the tag of a cut
+/// that stopped: it checks the commit and pushes the tag v3.3.0.
+#[tokio::test]
+async fn a_decoy_tag_is_not_the_tag_of_the_release() {
+    let (machine, commit) = ready_release().await;
+    let clone = machine.clone();
+    git(&clone, &["tag", "-a", "x/refs/tags/v3.3.0", "-m", "decoy"]);
+    git(&clone, &["push", "-q", "origin", "x/refs/tags/v3.3.0"]);
+    // The check of the release 3.2.0 passed: the status shows 3.3.0.
+    machine.fake_gh(&format!(
+        "{}\n'issue list --state all'*) printf '%s\\n' '[{{\"number\":6,\"title\":\"Release v3.2.0\",\"state\":\"CLOSED\",\"comments\":[]}}]' ;;",
+        machine.ready(TESTED)
+    ));
+    machine.name_lead(&LEAD).await;
+    let status = machine.ok(&LEAD, &["release", "status"]).await;
+    assert!(status.contains("release: v3.3.0 "), "{status}");
+    assert!(!status.contains("published"), "{status}");
+    let out = machine.ok(&LEAD, &["release", "cut", "3.3.0"]).await;
+    assert!(
+        out.starts_with(&format!(
+            "riff tagged {commit} as v3.3.0, and made the release: "
+        )),
+        "{out}"
+    );
+    let log = machine.log();
+    assert!(log.contains("actions/artifacts"), "{log}");
+    let origin = machine.origin();
+    assert_eq!(git(&origin, &["tag"]), "v3.2.0\nv3.3.0\nx/refs/tags/v3.3.0");
+    assert_eq!(git(&origin, &["rev-parse", "v3.3.0^{commit}"]), commit);
+}
+
 /// The tag of the build of this riff-server: the checks after a deploy
 /// compare it with the release.
 fn this_tag() -> String {
