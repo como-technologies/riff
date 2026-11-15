@@ -15,7 +15,7 @@
 //!
 //! > @riff what is next?
 //!
-//!  Enter send  Esc log  PgUp older  Alt-1..6 tab  Ctrl-C quit
+//!  Enter send  Esc log  Ctrl-U/K/L clear  PgUp older  Alt-1..6 tab  Ctrl-C quit
 //! ```
 //!
 //! - **The summary row** names the people who are online and away, from
@@ -60,7 +60,10 @@
 //!   and `↓` move the cursor one row ([`Prompt::edit`]). On the first
 //!   row and the last row of a typed text, they go to its start and its
 //!   end. Only on an empty line does `↑` bring back the lines that you
-//!   sent ([`Sent`], 01M6Y8N8W5RE5H6MW3TNDH5BSY).
+//!   sent ([`Sent`], 01M6Y8N8W5RE5H6MW3TNDH5BSY). `Ctrl-U` deletes the
+//!   text before the cursor, `Ctrl-K` the text after it, and `Ctrl-L`
+//!   the whole line, each on all the rows of the line
+//!   (01M7FZAW2DT0KE72HB2VQ3SQBG).
 //!
 //!   ```text
 //!   > @riff please look at the plan of wave 52, and tell me which item goes first:
@@ -228,7 +231,11 @@ pub enum Key {
     /// show the newest line of the log, as [`Scroll::Newest`] does.
     End,
     /// Delete the text before the cursor: `Ctrl-U`.
-    Clear,
+    ClearBefore,
+    /// Delete the text from the cursor to the end of the line: `Ctrl-K`.
+    ClearAfter,
+    /// Delete the whole line, with the cursor at its start: `Ctrl-L`.
+    ClearLine,
     /// Move the cursor one row up, or on the first row to the start of
     /// the line. On an empty line, show the last line that you sent, and
     /// on a sent line, the one before it: `↑`.
@@ -298,6 +305,13 @@ pub enum Scroll {
 /// assert_eq!(prompt(KeyCode::Esc), Some(Key::Log));
 /// assert_eq!(prompt(KeyCode::Up), Some(Key::Up));
 /// assert_eq!(prompt(KeyCode::PageUp), Some(Key::Scroll(Scroll::PageUp)));
+/// // Ctrl-U, Ctrl-K and Ctrl-L delete text in the line, and do nothing
+/// // in the log.
+/// let ctrl = KeyModifiers::CONTROL;
+/// for (c, clear) in [('u', Key::ClearBefore), ('k', Key::ClearAfter), ('l', Key::ClearLine)] {
+///     assert_eq!(key(KeyCode::Char(c), ctrl, Focus::Prompt), Some(clear));
+///     assert_eq!(key(KeyCode::Char(c), ctrl, Focus::Log), None);
+/// }
 /// // Alt-2, Tab and Ctrl-C go to the frame.
 /// assert_eq!(key(KeyCode::Char('2'), KeyModifiers::ALT, Focus::Prompt), None);
 /// assert_eq!(prompt(KeyCode::Tab), None);
@@ -337,7 +351,9 @@ pub fn key_of(event: &Event, focus: Focus, listed: bool) -> Option<Key> {
                 (Focus::Prompt, KeyCode::Esc) if listed => Key::Close,
                 (Focus::Prompt, KeyCode::Char('a')) if ctrl && !alt => Key::Home,
                 (Focus::Prompt, KeyCode::Char('e')) if ctrl && !alt => Key::End,
-                (Focus::Prompt, KeyCode::Char('u')) if ctrl && !alt => Key::Clear,
+                (Focus::Prompt, KeyCode::Char('u')) if ctrl && !alt => Key::ClearBefore,
+                (Focus::Prompt, KeyCode::Char('k')) if ctrl && !alt => Key::ClearAfter,
+                (Focus::Prompt, KeyCode::Char('l')) if ctrl && !alt => Key::ClearLine,
                 (Focus::Prompt, KeyCode::Char(c)) if plain && !c.is_control() => Key::Type(c),
                 (Focus::Prompt, KeyCode::Backspace) => Key::Backspace,
                 (Focus::Prompt, KeyCode::Delete) => Key::Delete,
@@ -405,10 +421,17 @@ pub fn key_of(event: &Event, focus: Focus, listed: bool) -> Option<Key> {
 /// prompt.edit(Key::Type('x'), 40);
 /// prompt.edit(Key::Up, 40);
 /// assert_eq!((prompt.text(), prompt.cursor()), ("x", 0));
-/// // Ctrl-U deletes the text before the cursor.
-/// prompt.edit(Key::End, 40);
-/// prompt.edit(Key::Clear, 40);
-/// assert_eq!(prompt.text(), "");
+/// // Ctrl-L deletes the whole line, Ctrl-K the text after the cursor,
+/// // and Ctrl-U the text before it.
+/// prompt.edit(Key::ClearLine, 40);
+/// assert_eq!((prompt.text(), prompt.cursor()), ("", 0));
+/// prompt.paste("ab cd");
+/// prompt.edit(Key::Left, 40);
+/// prompt.edit(Key::ClearAfter, 40);
+/// assert_eq!((prompt.text(), prompt.cursor()), ("ab c", 4));
+/// prompt.edit(Key::Left, 40);
+/// prompt.edit(Key::ClearBefore, 40);
+/// assert_eq!((prompt.text(), prompt.cursor()), ("c", 0));
 /// ```
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Prompt {
@@ -447,8 +470,9 @@ impl Prompt {
     /// goes to the start of the line, and on the last row, `↓` to its
     /// end. Only on an empty line, or on a sent line that came back, they
     /// show the lines that you sent ([`Sent`],
-    /// 01M6Y8N8W5RE5H6MW3TNDH5BSY). A key that scrolls or moves the
-    /// focus does nothing here.
+    /// 01M6Y8N8W5RE5H6MW3TNDH5BSY). `Ctrl-U`, `Ctrl-K` and `Ctrl-L` work
+    /// on the whole text, not on one row (01M7FZAW2DT0KE72HB2VQ3SQBG). A
+    /// key that scrolls or moves the focus does nothing here.
     ///
     /// ```
     /// use riff::tui::chat::{Key, Prompt};
@@ -483,6 +507,12 @@ impl Prompt {
     /// prompt.edit(Key::Right, 10);
     /// prompt.edit(Key::Up, 10);
     /// assert_eq!(prompt.cursor(), 0);
+    /// // Ctrl-K on the first row deletes the next row too.
+    /// for _ in 0..6 {
+    ///     prompt.edit(Key::Right, 10);
+    /// }
+    /// prompt.edit(Key::ClearAfter, 10);
+    /// assert_eq!((prompt.text(), prompt.cursor()), ("hello ", 6));
     /// ```
     pub fn edit(&mut self, key: Key, columns: usize) {
         let length = self.text.chars().count();
@@ -505,9 +535,13 @@ impl Prompt {
             Key::Right => self.cursor = (self.cursor + 1).min(length),
             Key::Home => self.cursor = 0,
             Key::End => self.cursor = length,
-            Key::Clear => {
-                let at = self.byte(self.cursor);
-                self.text.replace_range(..at, "");
+            Key::ClearBefore => {
+                self.text.replace_range(..self.at(), "");
+                self.cursor = 0;
+            }
+            Key::ClearAfter => self.text.truncate(self.at()),
+            Key::ClearLine => {
+                self.text.clear();
                 self.cursor = 0;
             }
             Key::Up => match self.row_to(true, columns) {
@@ -1251,7 +1285,7 @@ impl State {
     /// assert_eq!(state.on_key(Frame::Chat(Key::Send)), Some(Action::Quit));
     /// // Enter checks no name: a line with a name that no one has goes
     /// // too, and riff-server resolves it.
-    /// state.on_key(Frame::Chat(Key::Clear));
+    /// state.on_key(Frame::Chat(Key::ClearLine));
     /// for c in "@lead:strata hi".chars() {
     ///     state.on_key(Frame::Chat(Key::Type(c)));
     /// }
@@ -1279,7 +1313,7 @@ impl State {
     /// assert_eq!(state.chat().focus(), Focus::Prompt);
     /// // A character that makes the line longer than 64 KiB stays out,
     /// // and the note line says the limit.
-    /// state.on_key(Frame::Chat(Key::Clear));
+    /// state.on_key(Frame::Chat(Key::ClearLine));
     /// state.on_paste(&"x".repeat(POST_MAX));
     /// state.on_key(Frame::Chat(Key::Type('y')));
     /// assert_eq!(state.chat().prompt().text().len(), POST_MAX);
@@ -1485,7 +1519,9 @@ pub(super) fn note(state: &State) -> Option<Row<'static>> {
 
 /// The keys of the key line of the Chat tab, with the key that a click
 /// on each presses (01M6VAZKG8FS4HEA9VSA4Z4YF1). While the list of the
-/// names shows, the keys of the list come first.
+/// names shows, the keys of the list come first. In a wide tab with no
+/// list, the prompt names the keys that delete text, and a click on them
+/// presses `Ctrl-L` (01M7FZAW2DT0KE72HB2VQ3SQBG).
 pub(super) fn keys(
     state: &Chat,
     layout: Layout,
@@ -1503,6 +1539,7 @@ pub(super) fn keys(
             keys.push(("Enter", "send", chat(Key::Send)));
             keys.push(("Esc", "log", chat(Key::Log)));
             if wide {
+                keys.push(("Ctrl-U/K/L", "clear", chat(Key::ClearLine)));
                 keys.push(("PgUp", "older", chat(Key::Scroll(Scroll::PageUp))));
                 keys.push(("Alt-1..6", "tab", None));
             }
@@ -1525,7 +1562,7 @@ pub(super) fn keys(
 }
 
 /// The keys of the Chat tab in the help popup, before the keys of the
-/// frame (01M6VAZKDEQ6951KGPGAMF1SNJ).
+/// frame (01M6VAZKDEQ6951KGPGAMF1SNJ, 01M7FZAW2DT0KE72HB2VQ3SQBG).
 pub const HELP: [(&str, &str); 12] = [
     ("Enter", "send the line, or go back to the prompt"),
     ("Esc", "leave the prompt: the keys of the tab work"),
@@ -1535,14 +1572,17 @@ pub const HELP: [(&str, &str); 12] = [
         "Home, End",
         "the start or the end of the line; End again: the newest line",
     ),
+    (
+        "Ctrl-U/K/L",
+        "delete before the cursor, after it, or the whole line",
+    ),
     ("PgUp, PgDn", "older or newer lines"),
     ("g, G", "the oldest or the newest line, in the log"),
     ("Alt-1 to 6", "open a tab, also from the prompt"),
     ("/me TEXT", "send an action"),
-    ("@", "a list of the names: Tab or Enter picks, Esc closes"),
     (
-        "#",
-        "a list of the open issues: Tab or Enter picks, Esc closes",
+        "@, #",
+        "a list of names or issues: Tab or Enter picks, Esc closes",
     ),
     ("a paste", "goes into the line, with its new lines"),
 ];
@@ -2194,7 +2234,7 @@ mod tests {
                 "",
                 "> @riff what is next?",
                 "",
-                " Enter send  Esc log  PgUp older  Alt-1..6 tab  Ctrl-C quit",
+                " Enter send  Esc log  Ctrl-U/K/L clear  PgUp older  Alt-1..6 tab  Ctrl-C quit",
             ]
             .map(str::to_owned),
         );
@@ -2400,7 +2440,8 @@ mod tests {
             assert_eq!(rows[21], "> half a line", "{events:?}");
             assert_eq!(view.cursor, Some(Position::new(13, 21)), "{events:?}");
             assert_eq!(
-                rows[23], " Enter send  Esc log  PgUp older  Alt-1..6 tab  Ctrl-C quit",
+                rows[23],
+                " Enter send  Esc log  Ctrl-U/K/L clear  PgUp older  Alt-1..6 tab  Ctrl-C quit",
                 "{events:?}"
             );
         }
@@ -2423,7 +2464,7 @@ mod tests {
         assert_eq!(note.style, WARNING);
         // The next key ends the warning: the failure is the result of the
         // last action.
-        for key in [Key::End, Key::Clear] {
+        for key in [Key::End, Key::ClearBefore] {
             state.on_key(FrameKey::Chat(key));
             let (rows, view) = drawn(&mut state, 80, 24);
             assert_eq!(rows[22], format!(" {failed}"), "{key:?}");
@@ -2451,7 +2492,7 @@ mod tests {
         assert_eq!(state.shown_note(), None);
 
         // With an empty prompt, the row under it is empty.
-        state.on_key(FrameKey::Chat(Key::Clear));
+        state.on_key(FrameKey::Chat(Key::ClearLine));
         let (rows, _) = drawn(&mut state, 80, 24);
         assert_eq!(rows[21], ">");
         assert_eq!(rows[22], "");
@@ -2908,7 +2949,7 @@ mod tests {
                 "  scroll off the screen to the left. Now the line wraps at the width of the",
                 "  tab, and the prompt grows up to five rows high now.",
                 "",
-                " Enter send  Esc log  PgUp older  Alt-1..6 tab  Ctrl-C quit",
+                " Enter send  Esc log  Ctrl-U/K/L clear  PgUp older  Alt-1..6 tab  Ctrl-C quit",
             ]
         );
         let end = "  tab, and the prompt grows up to five rows high now.".len();
@@ -3023,13 +3064,174 @@ mod tests {
         assert_eq!(cursor, Some((24, 21)));
         // On an empty line, ↑ shows the line that you sent, and ↓ empties
         // the line again.
-        press(Key::Clear);
+        press(Key::ClearLine);
         let (rows, cursor) = press(Key::Up);
         assert_eq!(rows[21], "> ok");
         assert_eq!(cursor, Some((4, 21)));
         let (rows, cursor) = press(Key::Down);
         assert_eq!(rows[21], ">");
         assert_eq!(cursor, Some((2, 21)));
+    }
+
+    /// `Ctrl-U` deletes the text before the cursor, `Ctrl-K` the text
+    /// after it, and `Ctrl-L` the whole line, with the cursor at the
+    /// start, in the middle and at the end of the line
+    /// (01M7FZAW2DT0KE72HB2VQ3SQBG). A wide character goes as one, and a
+    /// new line too. On an empty line, each key leaves the line empty.
+    #[test]
+    fn ctrl_u_k_and_l_delete_at_the_start_in_the_middle_and_at_the_end() {
+        let text = "hello big world";
+        for (line, key, at, want, cursor) in [
+            ("", Key::ClearBefore, 0, "", 0),
+            ("", Key::ClearAfter, 0, "", 0),
+            ("", Key::ClearLine, 0, "", 0),
+            ("one\ntwo", Key::ClearBefore, 4, "two", 0),
+            ("one\ntwo", Key::ClearAfter, 3, "one", 3),
+            (text, Key::ClearBefore, 0, text, 0),
+            (text, Key::ClearBefore, 6, "big world", 0),
+            (text, Key::ClearBefore, 15, "", 0),
+            (text, Key::ClearAfter, 0, "", 0),
+            (text, Key::ClearAfter, 6, "hello ", 6),
+            (text, Key::ClearAfter, 15, text, 15),
+            (text, Key::ClearLine, 0, "", 0),
+            (text, Key::ClearLine, 6, "", 0),
+            (text, Key::ClearLine, 15, "", 0),
+            ("日本語", Key::ClearBefore, 1, "本語", 0),
+            ("日本語", Key::ClearAfter, 1, "日", 1),
+        ] {
+            let mut prompt = Prompt::default();
+            prompt.paste(line);
+            prompt.edit(Key::Home, 40);
+            for _ in 0..at {
+                prompt.edit(Key::Right, 40);
+            }
+            prompt.edit(key, 40);
+            assert_eq!(
+                (prompt.text(), prompt.cursor()),
+                (want, cursor),
+                "{key:?} at {at} of {line}"
+            );
+        }
+    }
+
+    /// On a line of two rows, each key works on the whole text, not on
+    /// the row of the cursor (01M7FZAW2DT0KE72HB2VQ3SQBG): `Ctrl-U` on
+    /// the second row deletes the first row too, `Ctrl-K` on the first
+    /// row deletes the second row too, and `Ctrl-L` deletes both. Then
+    /// the prompt has one row, and the log has its row back. The keys
+    /// come as events of the terminal, as the loop of the TUI gives them.
+    #[test]
+    fn ctrl_u_k_and_l_work_on_both_rows_of_a_line_of_two_rows() {
+        let line = "hello big world, this line has two rows at forty columns";
+        let ctrl = |c| press(KeyCode::Char(c), KeyModifiers::CONTROL);
+        // The key, the row of the cursor and its characters from the
+        // start of that row, then the text, the prompt and the column of
+        // the cursor after the key.
+        for (c, down, right, text, prompt, x) in [
+            ('u', true, 5, "at forty columns", "> at forty columns", 2),
+            ('k', false, 6, "hello ", "> hello", 8),
+            ('l', true, 5, "", ">", 2),
+        ] {
+            let mut state = mock_up();
+            type_in(&mut state, line);
+            let (rows, view) = drawn(&mut state, 40, 24);
+            assert_eq!(
+                rows[20..22],
+                [
+                    "> hello big world, this line has two",
+                    "  rows at forty columns"
+                ]
+            );
+            assert_eq!(view.chat.map(|w| w.rows), Some(17));
+            state.on_key(FrameKey::Chat(Key::Home));
+            if down {
+                state.on_key(FrameKey::Chat(Key::Down));
+            }
+            for _ in 0..right {
+                state.on_key(FrameKey::Chat(Key::Right));
+            }
+            send(&mut state, &view, &ctrl(c));
+            assert_eq!(state.chat().prompt().text(), text, "Ctrl-{c}");
+            let (rows, view) = drawn(&mut state, 40, 24);
+            assert_eq!(rows[21], prompt, "Ctrl-{c}");
+            assert_eq!(view.cursor, Some(Position::new(x, 21)), "Ctrl-{c}");
+            assert_eq!(view.chat.map(|w| w.rows), Some(18), "Ctrl-{c}");
+        }
+    }
+
+    /// Each key works on all the new lines of a paste, as on the rows of
+    /// a long line (01M7FZAW2DT0KE72HB2VQ3SQBG): `Ctrl-U` on the second
+    /// line deletes the first line too, `Ctrl-K` on the first line
+    /// deletes the second line too, and `Ctrl-L` deletes both.
+    #[test]
+    fn ctrl_u_k_and_l_work_on_the_new_lines_of_a_paste() {
+        let ctrl = |c| press(KeyCode::Char(c), KeyModifiers::CONTROL);
+        // The key, the line of the cursor and its characters from the
+        // start of that line, then the text and the prompt after the key.
+        for (c, down, right, text, prompt) in [
+            ('u', true, 3, "ond line", "> ond line"),
+            ('k', false, 5, "first", "> first"),
+            ('l', true, 3, "", ">"),
+        ] {
+            let mut state = mock_up();
+            let (_, view) = drawn(&mut state, 80, 24);
+            let paste = Event::Paste("first line\nsecond line".into());
+            send(&mut state, &view, &paste);
+            let (rows, view) = drawn(&mut state, 80, 24);
+            assert_eq!(rows[20..22], ["> first line↵", "  second line"]);
+            state.on_key(FrameKey::Chat(Key::Home));
+            if down {
+                state.on_key(FrameKey::Chat(Key::Down));
+            }
+            for _ in 0..right {
+                state.on_key(FrameKey::Chat(Key::Right));
+            }
+            send(&mut state, &view, &ctrl(c));
+            assert_eq!(state.chat().prompt().text(), text, "Ctrl-{c}");
+            let (rows, _) = drawn(&mut state, 80, 24);
+            assert_eq!(rows[21], prompt, "Ctrl-{c}");
+            assert!(!rows[20].starts_with('>'), "Ctrl-{c}: {rows:#?}");
+        }
+    }
+
+    /// The key line of the prompt in a wide tab names the keys that
+    /// delete text, and a click on them presses `Ctrl-L`: the line is
+    /// empty, with the cursor at its start (01M7FZAW2DT0KE72HB2VQ3SQBG,
+    /// 01M6VAZKG8FS4HEA9VSA4Z4YF1). A narrow tab has no room for them.
+    /// While the list of the names shows, the key line has the keys of
+    /// the list, and the keys still delete.
+    #[test]
+    fn the_wide_key_line_of_the_prompt_names_ctrl_u_k_and_l() {
+        let mut state = mock_up();
+        type_in(&mut state, "hello world");
+        let (rows, view) = drawn(&mut state, 80, 24);
+        assert_eq!(rows[23], PROMPT_KEYS);
+        let at = u16::try_from(PROMPT_KEYS.find("Ctrl-U/K/L clear").unwrap()).unwrap();
+        for column in [at, at + 15] {
+            assert_eq!(view.hit(column, 23), Some(FrameKey::Chat(Key::ClearLine)));
+        }
+        send(&mut state, &view, &click(at + 3, 23));
+        let prompt = state.chat().prompt();
+        assert_eq!((prompt.text(), prompt.cursor()), ("", 0));
+        let (rows, view) = drawn(&mut state, 80, 24);
+        assert_eq!(rows[21], ">");
+        assert_eq!(view.cursor, Some(Position::new(2, 21)));
+        let (rows, _) = drawn(&mut state, 40, 24);
+        assert_eq!(rows[23], "Enter send  Esc log  Ctrl-C quit");
+
+        state.chat_came(names());
+        type_in(&mut state, "ask @r");
+        let (rows, view) = drawn(&mut state, 80, 24);
+        assert_eq!(rows[23], " Tab pick  Esc close  Ctrl-C quit");
+        send(
+            &mut state,
+            &view,
+            &press(KeyCode::Char('u'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(state.chat().prompt().text(), "");
+        assert_eq!(state.chat().list(), None);
+        let (rows, _) = drawn(&mut state, 80, 24);
+        assert_eq!(rows[23], PROMPT_KEYS);
     }
 
     /// `↑` never puts a sent line in place of a typed text
@@ -3150,7 +3352,8 @@ mod tests {
     }
 
     /// The keys of the prompt with no list.
-    const PROMPT_KEYS: &str = " Enter send  Esc log  PgUp older  Alt-1..6 tab  Ctrl-C quit";
+    const PROMPT_KEYS: &str =
+        " Enter send  Esc log  Ctrl-U/K/L clear  PgUp older  Alt-1..6 tab  Ctrl-C quit";
 
     /// `@r` shows the list of the names over the prompt, under the text
     /// of the line: `riff` first, in reverse video, and the note line
