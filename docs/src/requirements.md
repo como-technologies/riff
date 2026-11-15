@@ -8593,13 +8593,21 @@ of this part when they merge.
   "No space left on device".
 - **01M7FTC1DFAYKQAB6EPDCJ18ZA** Each text of a session that riff prints
   on the terminal of a person goes through one filter (`text::safe`):
-  each line of an event, each line of the output that is not JSON, and
-  each line of the stderr of the container. The filter removes each
-  escape sequence and each control character, also the C1 control
-  U+009B, and keeps the tab and the line break. This holds for `riff
-  run`, `riff daemon events` with and without `--host`, the Session log
-  of the TUI, and the last lines of output in `riff session why`. A
-  session cannot change the terminal of the person.
+  each line of an event, each line of the output that is not JSON, each
+  line of the stderr of the container, and each tag, reason and line of
+  a record of the thread `ends`, where riff prints it. The filter
+  removes each escape sequence and each control character, also the C1
+  control U+009B, and keeps the tab and the line break. This holds for
+  `riff run`, `riff daemon events` with and without `--host`, the
+  Session log of the TUI, and `riff session why`. A session cannot
+  change the terminal of the person.
+- **01M7FYCX6HRGHM2NR4RT8GS46P** riff takes the secrets out of each line
+  of the stderr of the container, and out of each denied tool and each
+  last line of a record of the thread `ends`, in three steps
+  (`Scrub::safe`): it takes the secrets out of the raw text, filters the
+  text (01M7FTC1DFAYKQAB6EPDCJ18ZA), then takes the secrets out again.
+  So no part of a secret shows when an escape sequence comes just before
+  it.
 
 ### How the relay drives claude
 

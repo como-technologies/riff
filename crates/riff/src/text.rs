@@ -13034,7 +13034,10 @@ pub fn session_why_none(item: &str) -> String {
 
 /// `riff session why` for `item`: each of its records `mine`, oldest
 /// first, one line for each session with its head commit (#1651), then the
-/// last lines of the output of the last session.
+/// last lines of the output of the last session. A session can post a
+/// record in the thread [`crate::ends::THREAD`], so each tag, each reason
+/// and each line of a record shows with no control character ([`safe`],
+/// 01M7FTC1DFAYKQAB6EPDCJ18ZA).
 ///
 /// ```
 /// use riff::ends::Record;
@@ -13056,6 +13059,15 @@ pub fn session_why_none(item: &str) -> String {
 ///      - 9c0d1e2f, for the head 3dfbec5, ended: exit code 0, and no PASS or FAIL.\n\
 ///      The last one is 9c0d1e2f. Its last 2 lines of output:\none\ntwo"
 /// );
+///
+/// // A record that a session posted: it sets the title and clears the screen.
+/// let posted = Record::parse("ended item=issue-1 session=a\x1b[2Jb head=\u{9b}2K- code=1 failed=yes denied=0: exit\x1b]0;owned\x07 code 1\n\x1b[1Alast\r", 0).unwrap();
+/// assert_eq!(
+///     riff::text::session_why("issue-1", &[&posted]),
+///     "issue-1: 1 session ended with no pull request.\n\
+///      - ab, for the head 2K-, ended: exit code 1.\n\
+///      The last one is ab. Its last 1 line of output:\nlast"
+/// );
 /// ```
 pub fn session_why(item: &str, mine: &[&crate::ends::Record]) -> String {
     let count = mine.len();
@@ -13067,12 +13079,12 @@ pub fn session_why(item: &str, mine: &[&crate::ends::Record]) -> String {
     for record in mine {
         let head = match record.tag("head") {
             "-" => String::new(),
-            head => format!(", for the head {head},"),
+            head => format!(", for the head {},", safe(head)),
         };
         text.push_str(&format!(
             "\n- {}{head} ended: {}.",
-            record.tag("session"),
-            record.reason
+            safe(record.tag("session")),
+            safe(&record.reason)
         ));
     }
     if let Some(last) = mine.last() {
@@ -13080,11 +13092,11 @@ pub fn session_why(item: &str, mine: &[&crate::ends::Record]) -> String {
         let noun = if lines == 1 { "line" } else { "lines" };
         text.push_str(&format!(
             "\nThe last one is {}. Its last {lines} {noun} of output:",
-            last.tag("session")
+            safe(last.tag("session"))
         ));
         for line in &last.tail {
             text.push('\n');
-            text.push_str(line);
+            text.push_str(&safe(line));
         }
     }
     text

@@ -1078,6 +1078,29 @@ impl Scrub {
         }
         out
     }
+
+    /// `text` with no secret and no control character, safe to print
+    /// (01M7FTC1DFAYKQAB6EPDCJ18ZA). It takes the secrets out of the raw
+    /// text, then filters it ([`text::safe`]), then takes the secrets out
+    /// again (01M7FYCX6HRGHM2NR4RT8GS46P). The filter removes an escape
+    /// sequence with the bytes that follow it, so a secret just after one
+    /// loses its start. And an escape sequence in a secret of the list
+    /// splits it until the filter joins it.
+    ///
+    /// ```
+    /// use riff::run::Scrub;
+    ///
+    /// let scrub = Scrub::new(["sk-ant-oat01-secret1".to_owned()]);
+    /// for raw in ["\x1bsk-ant-oat01-secret1", "\x1b[gho_abcdef123", "sk-ant-\x1b[0moat01-secret1", "g\u{9b}ho_abc"] {
+    ///     let shown = scrub.safe(raw);
+    ///     assert!(!shown.contains("secret1") && !shown.contains("ho_a"), "{shown}");
+    ///     assert!(!shown.chars().any(char::is_control), "{shown}");
+    /// }
+    /// assert_eq!(scrub.safe("a\x1b]0;owned\x07b\tc"), "ab\tc");
+    /// ```
+    pub fn safe(&self, text: &str) -> String {
+        self.clean(&text::safe(&self.clean(text))).into_owned()
+    }
 }
 
 /// The starts of the tokens of GitHub: of a GitHub App, of OAuth, of a
@@ -2057,12 +2080,15 @@ impl View {
     /// The lines that the terminal shows for one line of the output of
     /// the session: the lines of its event, or the line itself when it
     /// is not JSON. No line has a control character of the session
-    /// ([`text::safe`], 01M7FTC1DFAYKQAB6EPDCJ18ZA).
+    /// ([`text::safe`], 01M7FTC1DFAYKQAB6EPDCJ18ZA). Each line that is not
+    /// JSON stays one line: a line of control characters alone shows as
+    /// an empty line.
     ///
     /// ```
     /// let mut view = riff::run::View::default();
     /// assert_eq!(view.shown("not json"), ["not json"]);
     /// assert_eq!(view.shown("\x1b[1Anot\x1b[2K json\u{9b}\r"), ["not json"]);
+    /// assert_eq!(view.shown("\x1b[2J\x1b[1;1H\u{9b}\x07"), [""]);
     /// assert!(view.shown(r#"{"type":"system","subtype":"background_tasks_changed","tasks":[]}"#).is_empty());
     /// ```
     pub fn shown(&mut self, line: &str) -> Vec<String> {
@@ -3183,6 +3209,7 @@ mod tests {
     fn a_line_of_a_session_shows_no_control_character() {
         let mut view = View::default();
         assert_eq!(view.shown(HOSTILE), ["abcde"]);
+        assert_eq!(view.shown("\x1b]0;owned\x07\x1b[2J\u{9b}\r"), [""]);
         let events = [
             json!({"type":"system","subtype":"init","model":HOSTILE,"permissionMode":HOSTILE}),
             json!({"type":"assistant","message":{"content":[
@@ -3223,6 +3250,30 @@ mod tests {
             {"type":"text","text":text},
             {"type":"text","text":"\x1b[2J\u{9b}"}]}});
         assert_eq!(event_lines(&event), ["done"]);
+    }
+
+    /// 01M7FYCX6HRGHM2NR4RT8GS46P: the filter removes ESC with the byte
+    /// after it, and `ESC [` with its final byte. So the scrub runs on the
+    /// raw text too: a secret just after an escape sequence keeps no part,
+    /// and only a part of the mark goes. An escape sequence in a secret of
+    /// the list splits it, and the scrub after the filter hides it.
+    #[test]
+    fn the_safe_scrub_hides_a_secret_before_and_after_the_filter() {
+        let scrub = Scrub::new(["sk-ant-oat01-secret1".to_owned()]);
+        for (raw, shown) in [
+            ("\x1bsk-ant-oat01-secret1", "ecret]"),
+            ("\x1b[gho_abcdef123", "secret]"),
+            ("a \x1b[1Ask-ant-oat01-secret1 b", "a [secret] b"),
+            ("a \x1b]0;sk-ant-oat01-secret1\x07b", "a b"),
+            ("sk-ant-\x1b[0moat01-secret1", "[secret]"),
+            ("gh\x1b[0mo_abcdef123 \u{9b}", "[secret] "),
+        ] {
+            assert_eq!(scrub.safe(raw), shown, "{raw:?}");
+        }
+        // With the filter first and the scrub after it, a part shows.
+        let late = |raw: &str| scrub.clean(&text::safe(raw)).into_owned();
+        assert_eq!(late("\x1bsk-ant-oat01-secret1"), "k-ant-oat01-secret1");
+        assert_eq!(late("\x1b[gho_abcdef123"), "ho_abcdef123");
     }
 
     #[test]

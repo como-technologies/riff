@@ -1935,8 +1935,9 @@ pub enum Say {
         /// The line.
         line: String,
     },
-    /// One line of the output of the container, with no secret: the
-    /// notes of the relay and the stderr of `claude`.
+    /// One line of the output of the container, with no secret and no
+    /// control character ([`Scrub::safe`]): the notes of the relay and the
+    /// stderr of `claude`.
     Stderr {
         /// The line.
         line: String,
@@ -5783,14 +5784,13 @@ impl<R: Runtime + 'static> Daemon<R> {
         };
         // The output of the container: the notes of the relay and the
         // stderr of claude, with no secret and no control character
-        // (01M7FTC1DFAYKQAB6EPDCJ18ZA). The filter comes first: so an
-        // escape sequence in a secret hides no part of it.
+        // (01M7FTC1DFAYKQAB6EPDCJ18ZA, 01M7FYCX6HRGHM2NR4RT8GS46P).
         for output in [running.events, running.errors] {
             let (scrub, owned) = (scrub.clone(), owned.clone());
             tokio::spawn(async move {
                 let mut lines = BufReader::new(output).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
-                    let line = scrub.clean(&text::safe(&line)).into_owned();
+                    let line = scrub.safe(&line);
                     Owned::tell(&mut owned.lock(), &Say::Stderr { line });
                 }
             });
@@ -8134,13 +8134,15 @@ mod tests {
         assert_eq!(here.fake.exit(&name), Some(Exit::SUCCESS));
     }
 
-    /// 01M7FTC1DFAYKQAB6EPDCJ18ZA: each line of the output of the
-    /// container goes to riff with no control character. An escape
-    /// sequence in a secret hides no part of it.
+    /// 01M7FTC1DFAYKQAB6EPDCJ18ZA, 01M7FYCX6HRGHM2NR4RT8GS46P: each line
+    /// of the output of the container goes to riff with no control
+    /// character. An escape sequence just before a secret, or in a secret
+    /// of the list, hides no part of it.
     #[tokio::test]
     async fn the_output_of_the_container_has_no_control_character_and_no_secret() {
-        let hostile = "a\x1b]0;owned\x07b\x1b[2J\x1b[1;1Hc\u{9b}d\re gho_sec\x1b[0mret1";
-        let here = Here::new(Fake::default().with_image(IMAGE).with_events([hostile])).await;
+        let hostile = "a\x1b]0;owned\x07b\x1b[2J\x1b[1;1Hc\u{9b}d\re gh\x1b[0mo_secret1";
+        let lines = [hostile, "\x1bgho_secret1", "\x1b[gho_abcdef123"];
+        let here = Here::new(Fake::default().with_image(IMAGE).with_events(lines)).await;
         let (mut client, name) = here
             .started(here.start("riff-issue-12-1a2b3c4d", "issue-12"))
             .await;
@@ -8150,10 +8152,17 @@ mod tests {
         relay.event(1, TURN[0]).await;
         relay.exit(2, 0).await;
         let (said, _) = to_the_end(&mut client).await;
-        let stderr = Say::Stderr {
-            line: format!("abcde {HIDDEN}"),
-        };
-        assert!(said.contains(&stderr), "{said:?}");
+        let stderr: Vec<&str> = said
+            .iter()
+            .filter_map(|say| match say {
+                Say::Stderr { line } => Some(line.as_str()),
+                _ => None,
+            })
+            .collect();
+        // The filter removes ESC with the byte after it, and ESC [ with its
+        // final byte: here only a part of the mark goes.
+        let first = format!("abcde {HIDDEN}");
+        assert_eq!(stderr, [first.as_str(), "ecret]", "secret]"], "{said:?}");
     }
 
     #[tokio::test]

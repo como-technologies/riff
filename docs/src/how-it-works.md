@@ -486,33 +486,30 @@ once, see
 
 `riff run` prints the output of its session on your terminal: the lines
 of each event, each line that is not JSON, and the stderr of the
-container. `riff daemon events` prints the same lines, also with
-`--host`, and so does the Session log of the TUI. `riff session why`
-prints the last lines of the output of a session.
+container. `riff daemon events` and the Session log of the TUI print
+the lines of each event and each line that is not JSON, also with
+`--host`. `riff session why` prints the records of the thread `ends`:
+why a session ended, and the last lines of its output.
 
-A session can write an escape sequence in its output, for example
-because a prompt injection told it to. Such a sequence can move the
-cursor, hide or rewrite a line, or set the title of your terminal. riff
-prints no control character of a session. It removes each escape
-sequence and each control character, also the C1 control U+009B. It
-keeps the tab and the line break. So a session cannot change your
-terminal.
+A session can write an escape sequence in its output, or in a post to
+the thread `ends`, for example because a prompt injection told it to.
+Such a sequence can move the cursor, hide or rewrite a line, or set the
+title of your terminal. riff prints no control character of a session.
+It removes each escape sequence and each control character, also the C1
+control U+009B. It keeps the tab and the line break. So a session
+cannot change your terminal.
 
 ```mermaid
 flowchart LR
-    S["the session: a line with<br/>ESC [2J, ESC ]0;title or U+009B"] --> D["the riff daemon"]
+    S["the session: a line with<br/>ESC [2J, ESC ]0;title or U+009B"] --> D["riff run, riff daemon events<br/>or riff session why"]
     D --> R["riff removes each escape sequence<br/>and each control character"]
     R --> T["your terminal: the text only"]
 ```
 
-The file `events.jsonl` in the folder of the session keeps each event
-as the session gave it, with no secret. To see the control characters
-of a session, show the file with `cat -v`. It shows each control
-character as a mark, for example ESC as `^[`:
-
-```sh
-cat -v ~/.local/share/riff/sessions/issue-12-1a2b3c4d/events.jsonl
-```
+To see the output of a session from another terminal, see
+[See the events of a session](development.md#see-the-events-of-a-session).
+To see why a session ended, see
+[See why a session ended with no pull request](development.md#see-why-a-session-ended-with-no-pull-request).
 
 ### The home of a session is in memory
 

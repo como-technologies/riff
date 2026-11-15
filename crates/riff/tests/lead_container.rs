@@ -462,6 +462,32 @@ async fn session_why_of_a_verify_names_the_missing_pass_or_fail() {
     assert_eq!(common::call_names(&asked), ["ends", "ends"]);
 }
 
+/// 01M7FTC1DFAYKQAB6EPDCJ18ZA: a session can post a record in the thread
+/// `ends`. `riff session why` prints its tags, its reason and its last
+/// lines with no ESC, no CSI sequence and no U+009B.
+#[tokio::test(flavor = "multi_thread")]
+async fn session_why_prints_no_control_character_of_a_record() {
+    let container = Container::new();
+    let reply = json!([{
+        "at_ms": 9,
+        "tags": {"item": "issue-12", "session": "1a2b\u{1b}[2J3c4d", "head": "988\u{9b}1Acb7b"},
+        "reason": "exit code 1\u{1b}]0;owned\u{7}",
+        "tail": ["\u{1b}[1A\u{1b}[2Kthe \u{9b}last line\r"],
+    }]);
+    let (_dir, socket, _) = common::session_socket(move |_| Ok(reply.clone()));
+
+    let out = container
+        .riff(&socket, &["session", "why", "issue-12"])
+        .await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(
+        text(&out.stdout),
+        "issue-12: 1 session ended with no pull request.\n\
+         - 1a2b3c4d, for the head 9881Acb7b, ended: exit code 1.\n\
+         The last one is 1a2b3c4d. Its last 1 line of output:\nthe last line\n"
+    );
+}
+
 const SESSION: &str = "riff-issue-12-1a2b3c4d";
 
 /// The fake daemon of a session: the text of the page that follows the

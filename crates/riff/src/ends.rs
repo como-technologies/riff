@@ -119,8 +119,7 @@ pub struct End {
     pub failed: bool,
     /// The tool of each call that auto mode denied in the last turn.
     pub denied: Vec<String>,
-    /// The last [`TAIL`] lines of its output, with no control character
-    /// (01M7FTC1DFAYKQAB6EPDCJ18ZA).
+    /// The last [`TAIL`] lines of its output.
     pub tail: Vec<String>,
 }
 
@@ -146,7 +145,9 @@ impl End {
         }
     }
 
-    /// [`End::of`] for the text `events` of the events file.
+    /// [`End::of`] for the text `events` of the events file. Each denied
+    /// tool and each line of the tail has no secret and no control
+    /// character ([`Scrub::safe`], 01M7FYCX6HRGHM2NR4RT8GS46P).
     pub fn from_events(
         item: &str,
         session: &str,
@@ -162,8 +163,13 @@ impl End {
             .find(|event| event["type"] == "result")
             .and_then(|event| {
                 event["permission_denials"].as_array().map(|all| {
+                    // Each tool in one line: the reason is on the first
+                    // line of the record.
                     all.iter()
-                        .map(|d| d["tool_name"].as_str().unwrap_or("?").to_owned())
+                        .map(|d| {
+                            let tool = d["tool_name"].as_str().unwrap_or("?");
+                            scrub.safe(tool).replace('\n', " ")
+                        })
                         .collect()
                 })
             })
@@ -171,7 +177,7 @@ impl End {
         let tail = lines[lines.len().saturating_sub(TAIL)..]
             .iter()
             .map(|line| {
-                let line = scrub.clean(&crate::text::safe(line)).into_owned();
+                let line = scrub.safe(line);
                 match line.char_indices().nth(LINE_MAX) {
                     Some((at, _)) => format!("{}...", &line[..at]),
                     None => line,
@@ -324,13 +330,22 @@ mod tests {
         Ended { code, failed }
     }
 
-    /// 01M7FTC1DFAYKQAB6EPDCJ18ZA: `riff session why` prints the last
-    /// lines with no control character, and an escape sequence in a
-    /// secret hides no part of it.
+    /// True when `text` has a control character other than the line
+    /// break.
+    fn has_control(text: &str) -> bool {
+        text.chars().any(|c| c.is_control() && c != '\n')
+    }
+
+    /// 01M7FTC1DFAYKQAB6EPDCJ18ZA, 01M7FYCX6HRGHM2NR4RT8GS46P: `riff
+    /// session why` prints the last lines and the denied tools with no
+    /// control character. An escape sequence just before a secret, or in a
+    /// secret of the list, hides no part of it.
     #[test]
     fn the_record_has_no_control_character_of_the_session() {
         let events = "a\x1b]0;owned\x07b\x1b[2J\x1b[1;1Hc\u{9b}d\re secret-\x1b[0mtoken-1\n\
-                      {\"type\":\"assistant\",\"text\":\"\u{9b}2Kdone\"}\n";
+                      \x1bsecret-token-1 \x1b[gho_abcdef123\n\
+                      {\"type\":\"assistant\",\"text\":\"\u{9b}2Kdone\"}\n\
+                      {\"type\":\"result\",\"permission_denials\":[{\"tool_name\":\"Ba\\u001b[2Jsh\\nnext\\u009b\"}]}\n";
         let scrub = Scrub::new(["secret-token-1".to_owned()]);
         let end = End::from_events(
             "issue-9",
@@ -340,13 +355,60 @@ mod tests {
             &scrub,
         );
         assert_eq!(
-            end.tail,
-            ["abcde [secret]", r#"{"type":"assistant","text":"2Kdone"}"#]
+            end.tail[..3],
+            [
+                "abcde [secret]",
+                "ecret] secret]",
+                r#"{"type":"assistant","text":"2Kdone"}"#
+            ]
         );
+        assert!(
+            !end.tail
+                .iter()
+                .any(|line| line.contains("token-1") || line.contains("abcdef"))
+        );
+        assert_eq!(end.denied, ["Bash next"]);
         let record = Record::parse(&end.body(), 0).unwrap();
+        assert_eq!(
+            record.reason,
+            "exit code 1, 1 denied tool calls (Bash next)"
+        );
         let why = why("issue-9", &[record]);
-        assert!(why.ends_with("\nabcde [secret]\n{\"type\":\"assistant\",\"text\":\"2Kdone\"}"));
-        assert!(!why.chars().any(|c| c.is_control() && c != '\n'), "{why:?}");
+        assert!(why.contains(
+            "\nabcde [secret]\necret] secret]\n{\"type\":\"assistant\",\"text\":\"2Kdone\"}\n"
+        ));
+        assert!(!has_control(&why), "{why:?}");
+    }
+
+    /// 01M7FTC1DFAYKQAB6EPDCJ18ZA: a session can post a record in the
+    /// thread [`THREAD`]. `riff session why` shows its tags, its reason
+    /// and its last lines with no control character.
+    #[test]
+    fn session_why_shows_no_control_character_of_a_posted_record() {
+        let body = "ended item=issue-9 session=1a2b\x1b[2J3c4d head=\u{9b}1A- code=1 failed=yes denied=0: \
+                    exit\x1b]0;owned\x07 code 1\u{9b}\n\
+                    \x1b[1A\x1b[2Klast\x1b[0m line\r\n\
+                    \u{9b}2Jmore\x07";
+        let record = Record::parse(body, 0).unwrap();
+        let why = why("issue-9", &[record]);
+        assert_eq!(
+            why,
+            "issue-9: 1 session ended with no pull request.\n\
+             - 1a2b3c4d, for the head 1A-, ended: exit code 1.\n\
+             The last one is 1a2b3c4d. Its last 2 lines of output:\n\
+             last line\n\
+             2Jmore"
+        );
+        assert!(!has_control(&why), "{why:?}");
+    }
+
+    /// 01M7FTC1DFAYKQAB6EPDCJ18ZA: the cut at [`LINE_MAX`] counts only the
+    /// characters that show.
+    #[test]
+    fn the_cut_of_a_line_of_the_record_counts_no_control_character() {
+        let line = format!("{}{}b\n", "\x1b[2K".repeat(LINE_MAX), "a".repeat(LINE_MAX));
+        let end = End::from_events("issue-9", "s", ended(Some(1), true), &line, &Scrub::new([]));
+        assert_eq!(end.tail, [format!("{}...", "a".repeat(LINE_MAX))]);
     }
 
     /// 01M5A5HXKZTDP5M5HY2FHCEBZA.
