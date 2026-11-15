@@ -45,10 +45,10 @@
 //! | The attach | [`crate::runtime::Runtime::redraw`], then [`crate::runtime::Runtime::attach`] ([`attach`]): `claude` draws its screen at each attach | 01M51PD7M04HZR2PVVJA4WCBK5 |
 //! | After the attach | [`Left`]: a detach, or the end of the lead when its container does not run; the line says which. First riff writes the reset of the modes of the terminal ([`crate::runtime::reset_terminal`]) | 01M51PD7Q24N252V66NFEHY49N, 01M6XVBRQMBMK68K8GCDRZ5GJ5 |
 //! | The sign-in of `claude` | the token of `riff claude-token` only ([`needs_token`]); a lead from an older riff with the sign-in file of the host gets a word when the host replaced that file ([`stale`], [`crate::daemon::Daemon::stale_leads`]) | 01M77Y6ZQ76DTX470STN8ATTA9, 01M5NJ87YEHHGJBANM7CRYV56Z |
-//! | A new riff | after `riff update`, the daemon stops an old lead (the bind of its riff has no link: [`old`]) when it is idle ([`idle`]: the `Stop` hook ended its turn, and its transcript got no write after the tail of the turn, [`between_turns`]; or its transcript got no write for 5 minutes, [`quiet`]) and the daemon itself runs the riff on disk, and starts it again with `claude --resume ID` ([`spec_again`], [`again`]): the same session, clone and Claude folder, no new session on riff-server; the main clone is that of the wave, and with no wave the one that the clone of the lead links to ([`linked_main`]); the person gets one line in riff chat ([`crate::daemon::Daemon::leads_again`]), and an attached terminal one line, then the attach to the new container ([`attach`], [`Again`]) | 01M5TC24PB3YC2CC8BA275WSEN, 01M6XTS7V47RFX1G37FRGRBWCY, 01M6WBX2FQEHW92Y1A5HM4H8BM, 01M6WBX2FT7Y9FV9VGGPDBKAHM, 01M5TC2919TB9XPF42YFNJBP79, 01M5TC29A4Q94NJP7HFC75XCF3, 01M6QB89JJEM9Z1V3RVZYHKYT0 |
+//! | A new riff | after `riff update`, the daemon stops an old lead (the bind of its riff has no link: [`old`]) when it is idle ([`idle`]: the `Stop` hook ended its turn, and its transcript got no write after the tail of the turn, [`between_turns`]; or its transcript got no write for 5 minutes, [`quiet`]) and the daemon itself runs the riff on disk, and starts it again with `claude --resume ID` ([`spec_again`], [`again`]): the same session, clone and Claude folder, no new session on riff-server; the main clone is the one in the records of the daemon: that of the wave, and with no wave the one that the daemon serves for the repository, never one that a file of the clone names ([`main_of`]); the person gets one line in riff chat ([`crate::daemon::Daemon::leads_again`]), and an attached terminal one line, then the attach to the new container ([`attach`], [`Again`]) | 01M5TC24PB3YC2CC8BA275WSEN, 01M6XTS7V47RFX1G37FRGRBWCY, 01M6WBX2FQEHW92Y1A5HM4H8BM, 01M6WBX2FT7Y9FV9VGGPDBKAHM, 01M5TC2919TB9XPF42YFNJBP79, 01M5TC29A4Q94NJP7HFC75XCF3, 01M6QB89JJEM9Z1V3RVZYHKYT0, 01M7EAZ9N9DY7JPXZP1V8JY01E |
 //! | The project | `riff lead move` and the daemon start a lead only for a project of the riff ([`crate::project::lead_refused`], #1863): else riff names the fix, `riff project init`, and starts no session and no container | 01M77FHTT8BZ2YN1SV7H1X3NG8, 01M77FHTXBCWA4FG793TEB5XCY |
 //! | The start | `riff lead start` starts no lead (#1793): it attaches to the lead of the project when its container runs on this host. Else it names the host of the lead and the step there, or says that the daemon of a host that joined the project starts the lead ([`start`], [`text::lead_not_here`]) | 01M77Y6ZBV7C8Z332SAFKQCZ5A |
-//! | The repository | the daemon serves it while the lead runs, so `riff who` and the commands with `--host` reach the host (`Daemon::serve_lead`) | 01M6QVSWQZE41BMQ6YN2963C4V |
+//! | The repository | the daemon serves it while the lead runs, so `riff who` and the commands with `--host` reach the host, with the main clone of the wave ([`main_of`], `Daemon::serve_lead`) | 01M6QVSWQZE41BMQ6YN2963C4V, 01M7EAZ9N9DY7JPXZP1V8JY01E |
 //! | The restart | `riff lead restart`: riff finds the lead of the project ([`to_restart`]), the lead writes its notes ([`restart_notes`]), then the daemon of its host ends its container ([`crate::daemon::Daemon::stop_lead`]); the host loses the part lead, an update starts the old lead no more, and a host that joined the project starts a new lead ([`crate::lead_host`]) | 01M77Y6ZEQ4A6C6E0XZ56WRE89, 01M6QVSWWM3EA4ZS47XCKV38D0 |
 //!
 //! The Claude folder stays between the starts of the lead: the lead
@@ -1254,11 +1254,49 @@ impl Parts<'_> {
     }
 }
 
-/// The main clone that the clone of the lead at `clone` links to
-/// (01M6QB89JJEM9Z1V3RVZYHKYT0): `git clone --reference MAIN`
-/// ([`fresh_clone`]) writes `MAIN/.git/objects` in the file
-/// `.git/objects/info/alternates` of the clone, and the container of the
-/// lead binds that folder at the same path ([`run::spec`]).
+/// The main clone of the lead of `repo` in the records of the daemon in
+/// the folder `dir` (01M7EAZ9N9DY7JPXZP1V8JY01E): the main clone of the
+/// wave of the repository ([`crate::wave::WAVES_FILE`]), else the main
+/// clone that the daemon serves for it
+/// ([`daemon::remote::SERVED_FILE`]). `None` when the daemon has neither.
+/// It reads no file of the clone of the lead: the lead writes that clone,
+/// and a git config there can name a program for the host.
+///
+/// ```
+/// use riff::daemon::remote::serve_in_file;
+/// use riff::lead::main_of;
+/// use riff::wave::{Wave, write_waves};
+///
+/// let dir = tempfile::tempdir()?;
+/// let wave = |main: &str| Wave {
+///     repo: "o/r".into(),
+///     main: main.into(),
+///     server: "http://127.0.0.1:1".into(),
+///     host: "thelio".into(),
+/// };
+/// assert_eq!(main_of(dir.path(), "o/r")?, None);
+/// serve_in_file(dir.path(), &wave("/src/served"))?;
+/// assert_eq!(main_of(dir.path(), "o/r")?, Some("/src/served".into()));
+/// write_waves(dir.path(), &[("o/r".to_owned(), wave("/src/wave"))].into())?;
+/// assert_eq!(main_of(dir.path(), "o/r")?, Some("/src/wave".into()));
+/// assert_eq!(main_of(dir.path(), "o/other")?, None);
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn main_of(dir: &Path, repo: &str) -> Result<Option<PathBuf>> {
+    if let Some(wave) = crate::wave::read_waves(dir)?.remove(repo) {
+        return Ok(Some(wave.main));
+    }
+    let served = daemon::remote::read_served(dir)?.remove(repo);
+    Ok(served.map(|served| served.wave.main))
+}
+
+/// The main clone that the clone at `clone` links to: `git clone
+/// --reference MAIN` ([`fresh_clone`]) writes `MAIN/.git/objects` in the
+/// file `.git/objects/info/alternates` of the clone. The session writes
+/// that file. So the daemon only counts with it the clones that need a
+/// main clone ([`daemon::remote::linked_clones`]), and runs no git in
+/// the folder that it names: the main clone of a lead comes from
+/// [`main_of`] (01M7EAZ9N9DY7JPXZP1V8JY01E).
 ///
 /// ```
 /// let dir = tempfile::tempdir()?;
@@ -1290,9 +1328,9 @@ pub fn linked_main(clone: &Path) -> Result<PathBuf> {
         .ok_or_else(|| anyhow::anyhow!("{} has no main clone", linked.display()))
 }
 
-/// The daemon runs no wave of the repository of the lead, and the clone of
-/// the lead links to no main clone: no step gives the main clone
-/// (01M6QB89JJEM9Z1V3RVZYHKYT0). The text names the clone and the step
+/// The daemon runs no wave of the repository of the lead, and serves no
+/// main clone of it: no step gives the main clone
+/// (01M7EAZ9N9DY7JPXZP1V8JY01E, [`main_of`]). The text names the step
 /// there is. The daemon tells riff-server the fact
 /// [`riff_core::wire::BotFact::LeadNoMain`] for it.
 ///
@@ -1320,25 +1358,18 @@ impl std::error::Error for NoMain {}
 /// lead. It makes no clone and no new session on riff-server. It reads
 /// the host, so call it off the async threads.
 ///
-/// `wave` is the wave of the repository of the lead, when the daemon runs
-/// one: its main clone is the main clone of the start. With no wave, the
-/// main clone is the one that the clone of the lead links to
-/// ([`linked_main`]). So a host that must not run the wave of a
-/// repository starts its lead again all the same (#1606, 01M6QB89JJEM9Z1V3RVZYHKYT0).
-/// With neither, the error is [`NoMain`].
-pub fn again(wave: Option<&crate::wave::Wave>, record: &daemon::Record) -> Result<daemon::Start> {
+/// `main` is the main clone of the repository of the lead in the records
+/// of the daemon ([`main_of`], 01M7EAZ9N9DY7JPXZP1V8JY01E): that of its
+/// wave, else the one that the daemon serves. So a host that must not run
+/// the wave of a repository starts its lead again all the same (#1606,
+/// 01M6QB89JJEM9Z1V3RVZYHKYT0). With none, the error is [`NoMain`]. It
+/// reads no file of the clone of the lead for it.
+pub fn again(main: Option<&Path>, record: &daemon::Record) -> Result<daemon::Start> {
     let here = record.me.place();
     let repo = here.repo_text();
     let folder = record.folder.clone();
-    let main = match wave {
-        Some(wave) => wave.main.clone(),
-        None => {
-            let clone = folder.join("clone");
-            linked_main(&clone)
-                .map_err(|_| anyhow::Error::new(NoMain(text::lead_again_no_main(&repo, &clone))))?
-        }
-    };
-    let (main, common) = run::main_clone(&main)?;
+    let main = main.ok_or_else(|| anyhow::Error::new(NoMain(text::lead_again_no_main(&repo))))?;
+    let (main, common) = run::main_clone(main)?;
     let host = run::host_facts().map_err(|fault| match fault {
         run::HostFault::SignInEnds(_) => anyhow::anyhow!("{}", text::LEAD_NEEDS_TOKEN),
         fault => fault.into(),
@@ -2446,8 +2477,17 @@ mod tests {
         assert!(old.exists());
         drop(start);
 
-        let swept = sweep_old_clones(leads.path());
-        assert_eq!(swept.len(), 1);
+        // A fork of another test can hold the lock until its `exec`. So a
+        // later sweep can be the one that removes the old clone.
+        let mut swept = sweep_old_clones(leads.path());
+        for _ in 0..500 {
+            if !swept.is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            swept = sweep_old_clones(leads.path());
+        }
+        assert_eq!(swept.len(), 1, "{swept:?}");
         assert_eq!(swept[0].0, old);
         assert!(swept[0].1.is_ok() && !old.exists());
     }

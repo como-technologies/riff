@@ -2301,11 +2301,12 @@ pub trait World: Send + Sync {
 
     /// The [`Start`] of the lead of `record` for a start again on the riff of
     /// this daemon: the same session and folder, `claude --resume`
-    /// (`wave` is the wave of the repository, when the daemon runs one: it gives
-    /// the main clone, [`crate::lead::again`], 01M5TC2919TB9XPF42YFNJBP79).
+    /// ([`crate::lead::again`], 01M5TC2919TB9XPF42YFNJBP79). `main` is the
+    /// main clone of the repository in the records of the daemon
+    /// ([`crate::lead::main_of`], 01M7EAZ9N9DY7JPXZP1V8JY01E).
     fn lead_again<'a>(
         &'a self,
-        wave: Option<&'a Wave>,
+        main: Option<&'a Path>,
         record: &'a Record,
     ) -> BoxFuture<'a, Result<Start>>;
 
@@ -5453,11 +5454,13 @@ impl World for Live {
 
     fn lead_again<'a>(
         &'a self,
-        wave: Option<&'a Wave>,
+        main: Option<&'a Path>,
         record: &'a Record,
     ) -> BoxFuture<'a, Result<Start>> {
-        let (wave, record) = (wave.cloned(), record.clone());
-        Box::pin(blocking(move || crate::lead::again(wave.as_ref(), &record)))
+        let (main, record) = (main.map(Path::to_owned), record.clone());
+        Box::pin(blocking(move || {
+            crate::lead::again(main.as_deref(), &record)
+        }))
     }
 
     fn free<'a>(&'a self, record: &'a Record) -> BoxFuture<'a, Result<()>> {
@@ -6675,7 +6678,7 @@ mod tests {
 
         fn lead_again<'a>(
             &'a self,
-            _: Option<&'a Wave>,
+            _: Option<&'a Path>,
             _: &'a Record,
         ) -> BoxFuture<'a, Result<Start>> {
             Box::pin(async { bail!("no lead in this test") })

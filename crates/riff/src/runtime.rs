@@ -508,6 +508,14 @@ pub trait Runtime: Send + Sync {
     /// that they have in the container (#1610). Fails when the runtime
     /// cannot say.
     fn processes(&self, name: &str) -> impl Future<Output = Result<Vec<Proc>>> + Send;
+
+    /// The folders of the host where a session writes the files of a
+    /// named volume: the folder of the volumes of the runtime, the folder
+    /// of each volume, and the folder of the host that a volume binds. A
+    /// `riff.toml` can name each volume, so the host runs no git in them
+    /// ([`crate::host_git`], 01M7EAZ9JS8K3TBWG8ZXKV00J9). Fails when the
+    /// runtime cannot say.
+    fn volume_folders(&self) -> impl Future<Output = Result<Vec<PathBuf>>> + Send;
 }
 
 /// The host that [`Runtime::reaches`] looks up: the API of `claude`.
@@ -623,6 +631,11 @@ impl Runtime for NoSessions {
 
     async fn processes(&self, _name: &str) -> Result<Vec<Proc>> {
         no_session()
+    }
+
+    /// No session runs here, so no session writes a volume.
+    async fn volume_folders(&self) -> Result<Vec<PathBuf>> {
+        Ok(Vec::new())
     }
 }
 
@@ -754,6 +767,8 @@ struct Book {
     /// The terminal of this process: each byte of riff
     /// ([`Fake::terminal`]) and of each attach and exec, in order.
     screen: Vec<u8>,
+    /// The folders of the volumes ([`Fake::with_volume_folder`]).
+    volumes: Vec<PathBuf>,
 }
 
 /// The terminal of this process for a [`Fake`] ([`Fake::terminal`]): it
@@ -963,6 +978,25 @@ impl Fake {
     /// ```
     pub fn with_processes(self, name: &str, procs: Vec<Proc>) -> Self {
         self.lock().processes.insert(name.to_owned(), procs);
+        self
+    }
+
+    /// The runtime keeps the files of a volume in `folder`:
+    /// [`Runtime::volume_folders`] says it.
+    ///
+    /// ```
+    /// use riff::runtime::{Fake, Runtime};
+    ///
+    /// let fake = Fake::default().with_volume_folder("/v/riff-cargo/_data");
+    /// tokio::runtime::Builder::new_current_thread().build()?.block_on(async {
+    ///     assert_eq!(fake.volume_folders().await?, [std::path::Path::new("/v/riff-cargo/_data")]);
+    ///     assert!(Fake::default().volume_folders().await?.is_empty());
+    ///     Ok::<(), anyhow::Error>(())
+    /// })?;
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn with_volume_folder(self, folder: impl Into<PathBuf>) -> Self {
+        self.lock().volumes.push(folder.into());
         self
     }
 
@@ -1282,6 +1316,10 @@ impl Runtime for Fake {
                 ..Proc::default()
             }]
         }))
+    }
+
+    async fn volume_folders(&self) -> Result<Vec<PathBuf>> {
+        Ok(self.lock().volumes.clone())
     }
 }
 

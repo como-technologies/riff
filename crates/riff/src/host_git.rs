@@ -21,6 +21,17 @@
 //!   there ([`crate::lead::LEADS`]), and each folder that a daemon gave
 //!   with [`guard_also`]. A link counts as the folder that it names
 //!   ([`real`]). The error names the folder ([`text::host_git_refused`]).
+//! - A session writes more than its clone: each bind with write and each
+//!   volume of `riff.toml`. A `riff.toml` can name each volume of podman.
+//!   So the daemon gives the guard the source of each bind with write
+//!   before the start of each container, and the folders of the volumes
+//!   of podman at its start and before the start of each container with
+//!   a volume (`Daemon::guard_writes`,
+//!   [`crate::runtime::Runtime::volume_folders`],
+//!   01M7EAZ9JS8K3TBWG8ZXKV00J9).
+//! - The daemon takes no folder for git from a file that a session
+//!   wrote: the main clone of a lead comes from the records of the daemon
+//!   ([`crate::lead::main_of`], 01M7EAZ9N9DY7JPXZP1V8JY01E).
 //! - A container session sees its clone at the path of the host, under
 //!   the folder of the sessions or of the leads. Its git runs in the
 //!   container. So in a container session (`RIFF_SOCKET`,
@@ -96,8 +107,26 @@ use crate::text;
 static ALSO: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 
 /// Adds `folder` to the folders where the host runs no git: the folder
-/// of the sessions of a daemon. It stays for the life of the process.
+/// of the sessions of a daemon, and each folder that a session can write
+/// by a bind or a volume (01M7EAZ9JS8K3TBWG8ZXKV00J9). It stays for the
+/// life of the process. A folder under a folder of [`guarded`] adds
+/// nothing, so the clone of each new session adds nothing.
+///
+/// ```
+/// let root = tempfile::tempdir()?;
+/// let volume = root.path().join("volumes/riff-cargo/_data");
+/// riff::host_git::guard_also(&root.path().join("volumes"));
+/// riff::host_git::guard_also(&volume);
+/// let held = |f: &std::path::Path| riff::host_git::guarded().iter().filter(|g| g.as_path() == f).count();
+/// assert_eq!(held(&root.path().join("volumes")), 1);
+/// assert_eq!(held(&volume), 0);
+/// assert!(riff::host_git::guard(&volume).is_err());
+/// # Ok::<(), std::io::Error>(())
+/// ```
 pub fn guard_also(folder: &Path) {
+    if refused(&guarded(), folder).is_some() {
+        return;
+    }
     let mut also = ALSO.lock().unwrap_or_else(PoisonError::into_inner);
     if !also.iter().any(|f| f == folder) {
         also.push(folder.to_owned());

@@ -6675,6 +6675,14 @@ of this part when they merge.
   also refuses a git call of the host whose folder is under the folder
   of the leads: `leads` in the data folder of riff. In a container
   session it does not.
+- **01M7EAZ9JS8K3TBWG8ZXKV00J9** The guard of 01M7DZ429QFWTSEA6JH1DVZJM0
+  also refuses a git call of the daemon in each folder that a session
+  can write by a bind or a volume. Before the start of each container,
+  the daemon gives the guard the source of each bind with write. At its
+  start, and before the start of each container with a volume, it gives
+  the guard the folders of the volumes of the runtime: the folder of the
+  volumes of podman, the folder of each volume, and the folder of the
+  host that a volume binds.
 
 ### riff relay
 
@@ -7673,14 +7681,9 @@ of this part when they merge.
   daemon ends its session.
 - **01M6QB89JJEM9Z1V3RVZYHKYT0** The daemon starts a lead again on the
   new riff with no wave of its repository. With a wave, the main clone
-  of the start is the main clone of the wave. With no wave, it is the
-  main clone that the clone of the lead links to: the folder in
-  `.git/objects/info/alternates` of that clone. The restart starts no
+  of the start is the main clone of the wave. The restart starts no
   session for any item, and `riff host join` is no step of it. A host
   with no part `workers` updates its lead (01M6QRDB4WQ1WD3NTZ50XXXJPC).
-  When the clone links to no main clone, the line in riff chat says that
-  riff has no step that gives the main clone and starts no session, and
-  names `riff host join` (#1606).
 - **01M6QPQZ0FNEZFQ1F4Q9C7FEEQ** In a container, riff plan hold and riff
   plan free reach riff-server through the riff daemon on the socket of
   the session (RIFF_SOCKET), as riff who does. They need no RIFF_SERVER
@@ -7690,10 +7693,9 @@ of this part when they merge.
   (#1619).
 - **01M6QVSWQZE41BMQ6YN2963C4V** While a lead runs on a host, the daemon
   of the host serves the repository of the lead (`served.json`), also
-  when the host gave no workers. The main clone of the repository is the
-  main clone that the clone of the lead links to. A repository that the
-  daemon serves already keeps its main clone. So `riff who` shows the
-  host, and the commands with `--host` reach it.
+  when the host gave no workers. A repository that the daemon serves
+  already keeps its main clone. So `riff who` shows the host, and the
+  commands with `--host` reach it.
 - **01M6QVSWWM3EA4ZS47XCKV38D0** An update restarts the lead on each
   host with the part `lead`, with or without the part `workers`
   (01M6QB89JJEM9Z1V3RVZYHKYT0).
@@ -7983,6 +7985,17 @@ of this part when they merge.
   free name of old-clone-2, old-clone-3 and so on. The sweep of the riff
   daemon removes each old clone that stayed, but not while a start of
   the lead runs (#2153).
+- **01M7EAZ9N9DY7JPXZP1V8JY01E** The daemon knows the main clone of a
+  lead from its own records: the main clone of the wave of its
+  repository, else the main clone that the daemon serves for the
+  repository. It never reads it from a file of the clone of the lead, or
+  of another folder that a session can write. So a start again with no
+  wave takes the main clone that the daemon serves. When the daemon has
+  neither, the line in riff chat says that riff has no step that gives
+  the main clone and starts no session, and names `riff host join`
+  (#1606). When the daemon starts to serve the repository of a lead, the
+  main clone is the main clone of the wave. This supersedes
+  01M6QB89JJEM9Z1V3RVZYHKYT0 and 01M6QVSWQZE41BMQ6YN2963C4V in part.
 
 ### The first run
 

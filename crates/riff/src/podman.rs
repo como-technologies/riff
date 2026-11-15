@@ -120,7 +120,7 @@
 //! ```
 
 use std::ffi::OsString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
 use std::time::Duration;
 
@@ -477,6 +477,84 @@ pub fn digest_of(printed: &[u8]) -> Option<String> {
 /// ```
 pub fn top_args(name: &str) -> [&str; 6] {
     ["top", name, "pid", "ppid", "etime", "args"]
+}
+
+/// The arguments of `podman` for the folder of the volumes of podman
+/// ([`Runtime::volume_folders`]).
+pub const STORE_ARGS: [&str; 3] = ["info", "--format", "{{.Store.VolumePath}}"];
+
+/// The arguments of `podman` for each volume ([`Runtime::volume_folders`],
+/// [`volume_folders_of`]).
+pub const VOLUMES_ARGS: [&str; 3] = ["volume", "inspect", "--all"];
+
+/// The folders in the JSON of `podman volume inspect --all`: the
+/// `Mountpoint` of each volume, and the option `device` of a volume that
+/// binds a folder of the host. A path that is not absolute does not
+/// count, for example the device `tmpfs`. No output is no volume.
+///
+/// ```
+/// use riff::podman::volume_folders_of;
+/// use std::path::PathBuf;
+///
+/// let printed = br#"[
+///   {"Name": "riff-cargo", "Mountpoint": "/h/.local/share/containers/storage/volumes/riff-cargo/_data", "Options": {}},
+///   {"Name": "src", "Mountpoint": "/h/.local/share/containers/storage/volumes/src/_data",
+///    "Options": {"device": "/h/src", "o": "bind", "type": "none"}},
+///   {"Name": "t", "Mountpoint": "/h/.local/share/containers/storage/volumes/t/_data",
+///    "Options": {"device": "tmpfs", "type": "tmpfs"}}
+/// ]"#;
+/// let folders: Vec<PathBuf> = [
+///     "/h/.local/share/containers/storage/volumes/riff-cargo/_data",
+///     "/h/.local/share/containers/storage/volumes/src/_data",
+///     "/h/src",
+///     "/h/.local/share/containers/storage/volumes/t/_data",
+/// ]
+/// .map(PathBuf::from)
+/// .into();
+/// assert_eq!(volume_folders_of(printed)?, folders);
+/// assert!(volume_folders_of(b"[]")?.is_empty());
+/// assert!(volume_folders_of(b"\n")?.is_empty());
+/// assert!(volume_folders_of(b"Error: no such volume").is_err());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn volume_folders_of(printed: &[u8]) -> Result<Vec<PathBuf>> {
+    if printed.trim_ascii().is_empty() {
+        return Ok(Vec::new());
+    }
+    let volumes: Vec<serde_json::Value> =
+        serde_json::from_slice(printed).context("podman volume inspect prints no list")?;
+    let path = |value: Option<&serde_json::Value>| {
+        let path = PathBuf::from(value?.as_str()?);
+        path.is_absolute().then_some(path)
+    };
+    Ok(volumes
+        .iter()
+        .flat_map(|v| {
+            [
+                path(v.get("Mountpoint")),
+                path(v.pointer("/Options/device")),
+            ]
+        })
+        .flatten()
+        .collect())
+}
+
+/// What `podman ARGS` prints, or an error with its stderr.
+async fn printed(args: &[&str]) -> Result<Vec<u8>> {
+    let out = podman()
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .await
+        .with_context(|| text::no_program(PODMAN))?;
+    if !out.status.success() {
+        bail!(
+            "podman {}: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    Ok(out.stdout)
 }
 
 /// The arguments of `podman` for [`Runtime::output`]: `run` of the image
@@ -907,6 +985,18 @@ impl Runtime for Podman {
             );
         }
         Ok(crate::ps::parse_top(&String::from_utf8_lossy(&out.stdout)))
+    }
+
+    /// The folder of the volumes of podman ([`STORE_ARGS`]), then the
+    /// folders of each volume ([`VOLUMES_ARGS`], [`volume_folders_of`]).
+    async fn volume_folders(&self) -> Result<Vec<PathBuf>> {
+        let store = printed(&STORE_ARGS).await?;
+        let mut folders: Vec<PathBuf> =
+            crate::compile_cache::folder_of(&String::from_utf8_lossy(&store))
+                .into_iter()
+                .collect();
+        folders.extend(volume_folders_of(&printed(&VOLUMES_ARGS).await?)?);
+        Ok(folders)
     }
 }
 

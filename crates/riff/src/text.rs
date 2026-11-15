@@ -7240,8 +7240,9 @@ pub fn no_program(program: &str) -> String {
 }
 
 /// The error of the guard of git on the host (01M7DZ429QFWTSEA6JH1DVZJM0,
-/// 01M7E7ACTYP4RX8TCJ9XSYMMPM): `dir` is under `folder`, the folder of
-/// the sessions or of the leads.
+/// 01M7E7ACTYP4RX8TCJ9XSYMMPM, 01M7EAZ9JS8K3TBWG8ZXKV00J9): `dir` is
+/// under `folder`, a folder that a session can write: the folder of the
+/// sessions or of the leads, a bind with write, or a volume.
 ///
 /// ```
 /// use std::path::Path;
@@ -7249,16 +7250,16 @@ pub fn no_program(program: &str) -> String {
 /// let text = riff::text::host_git_refused(Path::new("/s/issue-12-1a2b3c4d/clone"), Path::new("/s"));
 /// assert_eq!(
 ///     text,
-///     "riff runs no git on the host in /s/issue-12-1a2b3c4d/clone: it is in /s, the folder of \
-///      the sessions or of the leads, and a session can write the git config there. Run git in \
-///      the container of the session, or in a clone of your own."
+///     "riff runs no git on the host in /s/issue-12-1a2b3c4d/clone: it is in /s, a folder that a \
+///      session can write, and a session can write the git config there. Run git in the \
+///      container of the session, or in a clone of your own."
 /// );
 /// ```
 pub fn host_git_refused(dir: &Path, folder: &Path) -> String {
     format!(
-        "riff runs no git on the host in {}: it is in {}, the folder of the sessions or of the \
-         leads, and a session can write the git config there. Run git in the container of the \
-         session, or in a clone of your own.",
+        "riff runs no git on the host in {}: it is in {}, a folder that a session can write, and \
+         a session can write the git config there. Run git in the container of the session, or in \
+         a clone of your own.",
         dir.display(),
         folder.display()
     )
@@ -15149,25 +15150,22 @@ pub fn daemon_stops_lead(name: &str) -> String {
     format!("The riff daemon stops the lead {name} to start it again on the new riff.")
 }
 
-/// The daemon runs no wave of the repository `repo`, and the clone of the
-/// lead at `clone` links to no main clone: it cannot start the lead again
-/// (01M6QB89JJEM9Z1V3RVZYHKYT0). With a wave, or with that link, it
-/// starts the lead again, so this is the case with neither. The
-/// text says that no step gives the main clone with no session, and
-/// names the step there is.
+/// The daemon runs no wave of the repository `repo`, and serves no main
+/// clone of it: it cannot start the lead again
+/// (01M7EAZ9N9DY7JPXZP1V8JY01E). With a wave, or with a main clone that
+/// it serves, it starts the lead again, so this is the case with
+/// neither. The text says that no step gives the main clone with no
+/// session, and names the step there is.
 ///
 /// ```
-/// let text = riff::text::lead_again_no_main("o/r", std::path::Path::new("/d/leads/o-r/clone"));
-/// assert!(text.starts_with("the daemon runs no wave of o/r"));
-/// assert!(text.contains("the clone of the lead at /d/leads/o-r/clone links to no main clone"));
+/// let text = riff::text::lead_again_no_main("o/r");
+/// assert!(text.starts_with("the daemon runs no wave of o/r, and serves no main clone of o/r."));
 /// assert!(text.ends_with("Run riff host join in a clone of o/r"));
 /// ```
-pub fn lead_again_no_main(repo: &str, clone: &std::path::Path) -> String {
+pub fn lead_again_no_main(repo: &str) -> String {
     format!(
-        "the daemon runs no wave of {repo}, and the clone of the lead at {} links to no main \
-         clone. riff has no step that gives the main clone and starts no session. Run riff host \
-         join in a clone of {repo}",
-        clone.display()
+        "the daemon runs no wave of {repo}, and serves no main clone of {repo}. riff has no step \
+         that gives the main clone and starts no session. Run riff host join in a clone of {repo}"
     )
 }
 
