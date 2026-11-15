@@ -365,7 +365,7 @@ pub fn redact(text: &str) -> String {
 /// use riff::daemon::release_test::redacted;
 ///
 /// assert_eq!(redacted("GH_TOKEN=abc ghp_a1"), [9..12, 13..19]);
-/// assert_eq!(redacted("Bearer xyz\nBearer\nabc"), [7..10]);
+/// assert_eq!(redacted("Bearer xyz\nBearer\nabc ghp_a1"), [7..10, 22..28]);
 /// ```
 pub fn redacted(text: &str) -> Vec<Range<usize>> {
     let mut found = Vec::new();
@@ -758,6 +758,23 @@ mod tests {
             assert_eq!(redact(line), shown, "{line:?}");
         }
         assert_eq!(redact("Bearer xyz \nnext "), "Bearer [secret] \nnext ");
+    }
+
+    /// #2156, 01M7FXE86QYC8D6P6WDK69ZSMA: the range of a secret on a later
+    /// line of the text counts each byte of the lines before it, also of
+    /// a wide character and of `\r\n`. A `Bearer` at the end of a line
+    /// hides nothing on the next line.
+    #[test]
+    fn a_secret_on_a_later_line_has_its_range_in_the_whole_text() {
+        let text = "é ok\r\nGH_TOKEN=abc\nBearer\nnext ghp_a1 Bearer x";
+        let found = redacted(text);
+        assert_eq!(found, [16..19, 32..38, 46..47]);
+        let parts: Vec<&str> = found.iter().map(|r| &text[r.clone()]).collect();
+        assert_eq!(parts, ["abc", "ghp_a1", "x"]);
+        assert_eq!(
+            hide(text, found),
+            "é ok\r\nGH_TOKEN=[secret]\nBearer\nnext [secret] Bearer [secret]"
+        );
     }
 
     /// #2156: a word whose cut for `Bearer` falls in a character of more

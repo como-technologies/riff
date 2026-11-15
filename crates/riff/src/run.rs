@@ -1035,8 +1035,9 @@ pub fn sign_in(file: &str, now_ms: i64) -> Result<SignIn> {
 /// holds that one either.
 ///
 /// The scrub finds the range of each match in the text first, then
-/// hides their union ([`Scrub::found`], [`hide`]). So a short secret in a
-/// long one does not cut the long one, in each order of the list.
+/// hides their union ([`Scrub::found`], [`hide`],
+/// 01M7G01XCJGVYZBHW20GVGWG6K). So a short secret in a long one does not
+/// cut the long one, in each order of the list.
 ///
 /// ```
 /// use riff::run::Scrub;
@@ -1089,6 +1090,8 @@ impl Scrub {
     ///
     /// let scrub = Scrub::new(["aaaa".to_owned()]);
     /// assert_eq!(scrub.found("x aaaaa ghs_b1"), [2..6, 3..7, 8..14]);
+    /// let scrub = Scrub::new(["é-secret-1".to_owned()]);
+    /// assert_eq!(scrub.found("a é-secret-1 b é-secret-1"), [2..13, 16..27]);
     /// ```
     pub fn found(&self, text: &str) -> Vec<Range<usize>> {
         let part = |c: char| c.is_ascii_alphanumeric() || c == '_';
@@ -3236,6 +3239,22 @@ mod tests {
             scrub.clean("gho_one sk-two gho_one ab"),
             "[secret] [secret] [secret] ab"
         );
+    }
+
+    /// #2156, 01M7G01XCJGVYZBHW20GVGWG6K: a secret that starts with a
+    /// character of two bytes goes each time: twice in one line, and in
+    /// two matches that overlap.
+    #[test]
+    fn a_secret_that_starts_with_a_wide_character_goes_each_time() {
+        let scrub = Scrub::new(["é-secret-1".to_owned()]);
+        assert_eq!(scrub.found("a é-secret-1 b é-secret-1"), [2..13, 16..27]);
+        assert_eq!(
+            scrub.clean("a é-secret-1 b é-secret-1"),
+            "a [secret] b [secret]"
+        );
+        let scrub = Scrub::new(["éaéa".to_owned()]);
+        assert_eq!(scrub.found("éaéaéa"), [0..6, 3..9]);
+        assert_eq!(scrub.clean("x éaéaéa y"), "x [secret] y");
     }
 
     #[test]

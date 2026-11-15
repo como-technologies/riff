@@ -485,6 +485,40 @@ fn a_secret_of_the_host_that_another_filter_finds_in_part_goes_whole() {
     }
 }
 
+/// #2156, 01M7FXE86QYC8D6P6WDK69ZSMA, 01M7G01XCJGVYZBHW20GVGWG6K: a
+/// secret of an MCP server of the host that starts with a character of
+/// two bytes goes each time in a line, and `--grep` finds no part of it.
+#[test]
+fn a_secret_of_the_host_that_starts_with_a_wide_character_goes_each_time() {
+    let env = Isolated::new();
+    let at = Utc::now() - Duration::minutes(5);
+    write_log(
+        &env,
+        &[],
+        &[line(at, "riff daemon: a é-secret-1 b é-secret-1 end")],
+    );
+    std::fs::write(
+        env.riff_home().join("daemon").join(riff::session_mcp::FILE),
+        r#"{"mcpServers":{"db":{"command":"db","env":{"DB_AUTH":"é-secret-1"}}}}"#,
+    )
+    .unwrap();
+    let out = daemon_log(&env, &[]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let stamp = at.format("%Y-%m-%dT%H:%M:%SZ");
+    assert_eq!(
+        text(&out.stdout),
+        format!("{stamp} riff daemon: a [secret] b [secret] end\n")
+    );
+    for probe in ["é-secret", "secret-1"] {
+        let out = daemon_log(&env, &["--grep", probe]);
+        assert_eq!(
+            text(&out.stdout),
+            "riff daemon log: no line of the log of the riff daemon matches.\n",
+            "{probe}"
+        );
+    }
+}
+
 /// #2156, 01M7EX1PVSG64G8EE5SNDRHM7G, 01M7F0HE514TQMGQJKH8CVYY52: with
 /// no log file, riff names the file and the command of the service
 /// manager that shows the log, and exits with 1. A bad flag says what it

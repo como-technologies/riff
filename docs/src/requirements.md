@@ -8881,6 +8881,13 @@ of this part when they merge.
   and each function that calls one of these. It checks that each
   function that it finds follows no link. This supersedes
   01M509TK01PW3RN2YPRJD38RSX in part.
+- **01M7G01XCJGVYZBHW20GVGWG6K** The scrub of the events of a session
+  finds the range of each match of each secret and of each token of
+  GitHub in the text, also of two matches that overlap, and also of a
+  secret that starts with a character of more than one byte. It puts one
+  `[secret]` in place of each run of the union of these ranges: two
+  ranges that overlap or touch make one run. So no secret cuts another
+  secret that holds it, in each order of the list.
 
 ### Process
 
