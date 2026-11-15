@@ -923,12 +923,15 @@ fn short_path<T>(dir: &Path, name: &str, with: impl FnOnce(&Path) -> T) -> Resul
     Ok(with(socket.path()))
 }
 
-/// Binds the socket `name` in the folder `dir`, with mode 0600.
+/// Binds the socket `name` in the folder `dir`, with mode 0600. The
+/// container of a session writes the folder of its socket, so the mode
+/// goes through [`crate::host_file::set_mode`]: a link that takes the
+/// place of the socket gives an error, and the mode of the file that it
+/// names stays (01M7FE5FYFAR92PM3EJJ211VM2).
 fn bind_in(dir: &Path, name: &str) -> Result<UnixListener> {
-    use std::os::unix::fs::PermissionsExt;
     let listener = short_path(dir, name, |path| UnixListener::bind(path))?
         .with_context(|| format!("cannot listen on {}", dir.join(name).display()))?;
-    std::fs::set_permissions(dir.join(name), std::fs::Permissions::from_mode(0o600))?;
+    crate::host_file::set_mode(dir, Path::new(name), 0o600)?;
     Ok(listener)
 }
 

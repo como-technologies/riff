@@ -1182,38 +1182,13 @@ pub fn remove(path: &Path, rules: &Rules) -> Result<Rules> {
     Ok(removed)
 }
 
-/// Adds the auto mode settings of `trust` that the settings file at
-/// `path` lacks ([`with_auto_mode`]). It makes the file when it is not
-/// there, and writes it only when it changes. True when it changed.
-///
-/// ```
-/// use riff::permissions::{Trust, add_auto_mode};
-///
-/// let dir = tempfile::tempdir()?;
-/// let path = dir.path().join("settings.json");
-/// assert!(add_auto_mode(&path, &Trust::default())?);
-/// assert!(!add_auto_mode(&path, &Trust::default())?);
-/// # Ok::<(), anyhow::Error>(())
-/// ```
-pub fn add_auto_mode(path: &Path, trust: &Trust) -> Result<bool> {
-    let text = match std::fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => "{}".to_owned(),
-        Err(e) => return Err(e).with_context(|| format!("read {}", path.display())),
-    };
-    let Some(new) = with_auto_mode(&text, trust).with_context(|| path.display().to_string())?
-    else {
-        return Ok(false);
-    };
-    write(path, &new)?;
-    Ok(true)
-}
-
 /// Writes `text` into the settings file at `path`. It writes a new file
 /// in the same folder and renames it, so a process that reads the file
 /// at the same time sees the old text or the new text, never a part. The
-/// file keeps its mode. A settings file that is a symbolic link stays a
-/// link: riff writes the file that it names (01M509TK01PW3RN2YPRJD38RSX).
+/// file keeps its mode. A settings file of the person that is a symbolic
+/// link stays a link: riff writes the file that it names
+/// (01M509TK01PW3RN2YPRJD38RSX). A settings file in a folder that a
+/// container writes goes through [`crate::host_file`] instead.
 pub(crate) fn write(path: &Path, text: &str) -> Result<()> {
     let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
     let dir = path.parent().unwrap_or(Path::new("."));

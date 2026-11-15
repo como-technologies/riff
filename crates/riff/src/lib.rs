@@ -96,6 +96,7 @@ pub mod highlight;
 pub mod hold;
 pub mod home;
 pub mod hooks;
+pub mod host_file;
 pub mod host_git;
 pub mod hygiene_rules;
 

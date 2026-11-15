@@ -8293,8 +8293,9 @@ of this part when they merge.
 - **01M509TK01PW3RN2YPRJD38RSX** riff writes a settings file of Claude
   Code to a new file in the same folder, then renames it. A process
   that reads the file at the same time sees the old text or the new
-  text, never a part. The file keeps its mode. A settings file that is
-  a symbolic link stays a link: riff writes the file that it names.
+  text, never a part. The file keeps its mode. A settings file of the
+  person that is a symbolic link stays a link: riff writes the file that
+  it names.
 - **01M51JCW04FAHZDQ144KDNCCPX** `riff init` and `riff init --check`
   name each wide allow rule, with its file: in the user settings of
   Claude Code, and in the project settings and the local settings of
@@ -8777,6 +8778,18 @@ of this part when they merge.
 - **01M4Z60B8KDXD190RWC7D184Q3** No secret goes into a log line, a
   message or a file of a clone. riff builds no shell string from input.
   CI keeps `clippy -D warnings` and `cargo audit`.
+- **01M7FE5FYFAR92PM3EJJ211VM2** The host follows no link in a folder
+  that a container writes: the clone, the Claude folder and the folder
+  of the socket of a session or a lead. Each read and write of the host
+  there opens each part of the path below that folder with no follow of
+  a link (`O_NOFOLLOW`), and makes each new file with `create_new`, then
+  renames it. A link there gives an error that names it, and the host
+  reads and writes no file through it. A read takes only a plain file: a
+  FIFO or a device gives an error at once. A transcript that is a link
+  counts as no transcript. A test reads the code of riff: it finds each
+  line that names such a folder, and checks that the function of that
+  line follows no link. This supersedes 01M509TK01PW3RN2YPRJD38RSX in
+  part.
 
 ### Process
 
