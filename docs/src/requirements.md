@@ -10195,6 +10195,13 @@ that builds it merges.
   line in its "Done when", the pull request says `live check` in place
   of `merged`: `PR #1866 live check`. Such an item is never a `free`
   row. Supersedes 01M6VFGK4P2FWMFQHBZKR3JXSZ in part.
+- **01M7FZAW2DT0KE72HB2VQ3SQBG** In the prompt of the Chat tab of the
+  TUI, `Ctrl-U` deletes the text before the cursor, `Ctrl-K` deletes the
+  text from the cursor to the end of the line, and `Ctrl-L` deletes the
+  whole line and puts the cursor at its start. Each of the three keys
+  works on the whole text of the line, also on a line of more rows. In a
+  wide tab, the key line of the prompt says `Ctrl-U/K/L clear`, and the
+  help of the Chat tab says what each of the three keys deletes.
 
 ## The notes of the lead
 
