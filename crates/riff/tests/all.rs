@@ -113,6 +113,7 @@ mod trusted_riff;
 mod tui;
 mod usage;
 mod verify_control;
+mod verify_fix_head;
 mod wakes;
 mod wave_branch;
 mod wave_checks;

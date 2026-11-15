@@ -552,7 +552,7 @@ fn the_book_says_each_step_of_the_council_of_a_verify() {
     });
     assert!(steps.is_sorted(), "{words}");
     // The steps of the start text, in the same order.
-    let text = riff::text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &[]);
+    let text = riff::text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &[], None);
     let order = [
         "/opt/riff/riff council show 40",
         "start one subagent for each member",
@@ -627,7 +627,7 @@ fn the_start_text_of_a_verify_picks_the_council_in_the_clone_of_the_verify() {
     git(&clone, &["fetch", "-q", "origin", "refs/pull/40/head"]);
     git(&clone, &["checkout", "-q", "--detach", "FETCH_HEAD"]);
 
-    let text = riff::text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &[]);
+    let text = riff::text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &[], None);
     let step = text
         .split("\n7. Pick the council of the pull request: ")
         .nth(1)

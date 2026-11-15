@@ -32,9 +32,10 @@
 //!   ([`crate::run::claude_folder`]), the transcripts
 //!   ([`crate::usage::transcripts_in`], [`crate::usage::written_in`],
 //!   [`crate::usage::Replies::read`]), the file `alternates` of a clone
-//!   ([`crate::lead::linked_main`]), and the mode of the socket of a
-//!   session. The host takes the path that the file `alternates` names
-//!   as it is, and follows no link in it
+//!   ([`crate::lead::linked_main`]), the file of `riff verify --file`,
+//!   which can be in the clone of a session ([`crate::pr::write_result`]),
+//!   and the mode of the socket of a session. The host takes the path
+//!   that the file `alternates` names as it is, and follows no link in it
 //!   ([`crate::daemon::remote::linked_clones`]). The host reads no file
 //!   in a volume: it only measures and clears the cache of sccache, with
 //!   no follow of a link ([`crate::compile_cache`]).
@@ -680,13 +681,14 @@ mod scan {
     /// function of riff that calls it. A function with one of them gets
     /// the path from a line of [`NAMED`] or from its caller, so it follows
     /// no link, as a function with a line of [`NAMED`].
-    const GUARDED: [&str; 6] = [
+    const GUARDED: [&str; 7] = [
         "host_file::",
         "claude_folder(",
         "transcripts_with_times(",
         "Replies::read(",
         "linked_main(",
         "bind_in(",
+        "write_result(",
     ];
 
     /// The calls that read or write a file, or look at it, with each link

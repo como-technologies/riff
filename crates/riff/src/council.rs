@@ -3,7 +3,8 @@
 //! (01M7CFBZ7839WHMFARR4T6W13W, 01M7CFBZ9TJ83FNHN0APY41175,
 //! 01M7CFBZMCE36ZRXD0GBCM4MFX). [`pick`] picks the council of a pull
 //! request, for `riff council show`. [`result`] checks that the result of
-//! a pass has a line for each member of that council.
+//! a pass has a line for each member of that council. [`found`] reads the
+//! new findings of a verify of a fix head, and the report files them.
 //!
 //! # Design
 //!
@@ -104,6 +105,7 @@ use anyhow::{Context, Result, anyhow};
 use crate::session_image::top;
 use crate::{markdown, text, view};
 
+pub mod found;
 pub mod pick;
 pub mod result;
 
