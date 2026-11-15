@@ -6683,6 +6683,18 @@ of this part when they merge.
   the guard the folders of the volumes of the runtime: the folder of the
   volumes of podman, the folder of each volume, and the folder of the
   host that a volume binds.
+- **01M7EW2106JGGTSZKMRG4N9SH0** When podman cannot say the folders of
+  its volumes, the daemon starts no container that binds a volume with
+  write. Each look-up of 01M7EAZ9JS8K3TBWG8ZXKV00J9 runs, also after one
+  that failed, and the guard gets each folder that podman said. The
+  daemon writes the cause to its log, and `riff daemon status` shows it
+  until a look gives each folder.
+- **01M7EZCTGNFJ4CWN0WYXKJKRYV** The error of a start that
+  01M7EW2106JGGTSZKMRG4N9SH0 stops gives the cause: `riff run` shows it.
+  The line of `riff daemon status` gives the time since the first look
+  that failed, and the cause of the last look. Each cause is one line.
+  The log of the daemon gets one line when a look reads each folder
+  again after a fault.
 
 ### riff relay
 
@@ -7489,6 +7501,16 @@ of this part when they merge.
   nothing: it runs no git in the clone. The lead gets one note with the
   branch and the clone. This supersedes 01M5P26VSA7AA99K1RYG83R8J9 and
   01M5TKETGZP9NTHBXFBP1RM1HP.
+- **01M7EZCTKYFPS4QDQ1N3K3BT23** Before the claim of an item of a wave
+  whose `riff.toml` names a volume, the job asks podman for the folders
+  of the volumes. When podman cannot say them
+  (01M7EW2106JGGTSZKMRG4N9SH0), the job claims nothing, and the start
+  does not count. The wave starts no item for one minute, then tries
+  again.
+- **01M7F29TEWNHPR79RB6BT8C8SS** While a wave waits for the folders of
+  the podman volumes (01M7EZCTKYFPS4QDQ1N3K3BT23), the line of the wave
+  in `riff daemon status` says that it waits for them, and names `riff
+  daemon status`. The lead gets no message.
 
 ### The lead, the view and the takeover
 

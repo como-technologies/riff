@@ -361,7 +361,7 @@ hold each decision of the design.
 | What sessions share | How riff keeps them apart | What a session can still do to another |
 |---|---|---|
 | The files of your machine | Each session is a rootless podman container (`--userns=keep-id`). It writes only its binds: its own clone, its own Claude folder, the folder of its socket and the volumes that `riff.toml` names. Each other write goes to the copy-on-write layer of the container, and goes when the session ends. | Nothing outside its binds. See the rows of git and of the caches. |
-| git: the clone and its alternates | Each session has its own clone, made with `git clone --reference MAIN` in a folder of riff, `new-clones/ITEM-ID8`, and then moved into the folder of the session. The lead gets a new clone in the same way at each start of a new lead, in `new-clones/lead-OWNER-REPO`, and its old clone goes (see [The clone of the lead at each start](development.md#the-clone-of-the-lead-at-each-start)). The container sees the objects of the main clone at the same path, with no write. No session writes the git dir of the main clone or of another session. The host runs no git in a folder that a session can write: the session writes the git config there, and a git config can name a program that git runs. One guard of riff refuses each git call on your machine in the folder of the sessions, in the folder of the leads, in each bind of a session with write, and in the folders of the podman volumes. The daemon knows the main clone of a lead from its own records: the main clone of the wave of the repository, else the main clone that it serves for the repository. It never takes it from the file `.git/objects/info/alternates` of the clone of the lead: the lead writes that file. The sweep reads only GitHub and the file `repo` of the folder, and the council of a verify reads the main clone. The clone goes when its item ends. | Nothing in the clone of another session. A `git gc` of the main clone can remove an object that a session clone reads. |
+| git: the clone and its alternates | Each session has its own clone, made with `git clone --reference MAIN` in a folder of riff, `new-clones/ITEM-ID8`, and then moved into the folder of the session. The lead gets a new clone in the same way at each start of a new lead, in `new-clones/lead-OWNER-REPO`, and its old clone goes (see [The clone of the lead at each start](development.md#the-clone-of-the-lead-at-each-start)). The container sees the objects of the main clone at the same path, with no write. No session writes the git dir of the main clone or of another session. The host runs no git in a folder that a session can write: the session writes the git config there, and a git config can name a program that git runs. One guard of riff refuses each git call on your machine in the folder of the sessions, in the folder of the leads, in each bind of a session with write, and in the folders of the podman volumes. When podman cannot list its volumes, no session with a volume starts: see [When podman cannot list its volumes](#when-podman-cannot-list-its-volumes). The daemon knows the main clone of a lead from its own records: the main clone of the wave of the repository, else the main clone that it serves for the repository. It never takes it from the file `.git/objects/info/alternates` of the clone of the lead: the lead writes that file. The sweep reads only GitHub and the file `repo` of the folder, and the council of a verify reads the main clone. The clone goes when its item ends. | Nothing in the clone of another session. A `git gc` of the main clone can remove an object that a session clone reads. |
 | git: the config | `~/.gitconfig` is bound with no write, or as an overlay whose changes go when the session ends. riff writes no git config of yours. A session writes only the config of its own clone. | Nothing. |
 | git: the commit | A commit has the bot of the GitHub App of the session as its author, for example `riff-como-technologies[bot]`, with the noreply email of the bot, and a `Riff-Session:` trailer that names the session. Where the Apps are not on the repository, it has your git identity. A session commits with no signature: riff sets `commit.gpgsign=false` in the environment of the container, so it applies to each git call of the session. The squash merge on GitHub makes the commit on `main` from the message that `riff verify pass` gives: the body of the pull request, which ends with `Riff-Session:` and `Co-authored-by:` you. No gpg agent goes into a container. See [Find the commits of a session](development.md#find-the-commits-of-a-session). | Nothing. The trailer `Riff-Session:` tells the commits of two sessions apart. |
 | git: the repository on GitHub | Each session pushes its own branch from its own clone. The daemon makes the claims, not the session: see the next row. | With your sign-in, a session can push to the branch of another session, or delete it. |
@@ -377,6 +377,58 @@ hold each decision of the design.
 | The sign-in of `gh` | The session acts on GitHub as a bot of a GitHub App of the riff, with a token for its one repository and the rights of its role: see [Who acts on GitHub for each role](#who-acts-on-github-for-each-role). The container never gets your token. Where the Apps are not on the repository, no worker and no verify starts, and the lead starts with no token on GitHub: see [Repair riff with claude on the host](#repair-riff-with-claude-on-the-host). The image has `gh` at `/usr/bin/gh`. The daemon binds the binary of riff at `/usr/local/bin/gh`: it counts each call for `riff daemon status` (see [See how the daemon uses the GitHub limit](development.md#see-how-the-daemon-uses-the-github-limit)), and runs the real `gh`. An image with its own `gh` at `/usr/local/bin/gh` gets no bind: its `gh` runs as it is, with no count. No secret goes into a log line, a message or a file of a clone. | A worker can change an issue or a comment of another session: the right `issues: write` has no smaller part. The guard puts the change back: see [Add to an issue](#add-to-an-issue). |
 | The sign-in of `claude` | Each session has its own Claude folder in a folder of riff. riff trusts the clone of the session there, as you trust the main clone. The daemon gives the session the long-lived token of `riff claude-token`, kept in the OS keyring, in `CLAUDE_CODE_OAUTH_TOKEN`. With no token, riff binds your `~/.claude/.credentials.json` with no write, and starts no session while its access token has less than 60 minutes left. riff never changes your own Claude config. | It uses the limits of your plan that another session needs. |
 | The daemon and the riff tools | Each relay talks to the daemon through its own Unix socket, in a folder that only that session sees. The socket tells the daemon which session asks. The daemon serves the riff tools of the session on riff-server, as its worker session. A session gets only the riff tools that talk: `whoami`, `who`, `threads`, `read`, `post`, `tell`, `status` and `blocked`. No riff tool of a session acts on a folder of your machine or on a claim. The admin steps need a person at the CLI. No riff tool does them. | It can send messages to other sessions through the riff tools. |
+
+#### When podman cannot list its volumes
+
+The daemon asks podman for the folders of its volumes at its start,
+before the claim of an item of a wave whose `riff.toml` names a volume,
+and before each start of a session with a volume. It runs two
+commands, and the second one runs also when the first one fails. The
+host runs no git in each folder that podman names.
+
+```mermaid
+flowchart LR
+    L["podman info<br/>podman volume inspect --all"] --> G["the host runs no git<br/>in each folder that podman named"]
+    G --> F{did one fail?}
+    F -- no --> S[the session starts]
+    F -- yes --> N["no session with a volume starts<br/>riff daemon status says why"]
+```
+
+When one of the commands fails, riff cannot know each folder that a
+session can write. So the daemon starts no session that binds a volume
+with write. `riff run` and the log of the daemon say why. A session with
+no volume starts, and a session that runs goes on. In that time, a wave
+whose `riff.toml` names a volume claims no item, and no start of an
+item counts. The wave tries again after one minute. riff sends the lead
+no message about these tries.
+
+`riff daemon status` shows the cause until a look reads each folder.
+The line of the wave says that it waits:
+
+```text
+Volumes: riff cannot read the folders of the podman volumes, for 4m. No session with a volume starts. The last cause: podman info --format {{.Store.VolumePath}}: Error: cannot read the store. riff reads them again at the next start of a session with a volume.
+...
+Waves:
+  acme/app  waits: riff cannot read the folders of the podman volumes. See riff daemon status
+```
+
+See the cause, and see whether podman lists its volumes:
+
+```sh
+riff daemon status
+podman info --format '{{.Store.VolumePath}}'
+podman volume inspect --all
+```
+
+Repair podman. The next start of a session with a volume reads the
+folders again. The log of the daemon then says `riff reads the folders
+of the podman volumes again`. On Linux, find the lines of the fault and
+of the new read in the log (see also
+[See the daemon](development.md#see-the-daemon)):
+
+```sh
+journalctl --user -u riff | grep 'folders of the podman volumes'
+```
 
 ### The home of a session is in memory
 

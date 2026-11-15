@@ -9472,6 +9472,7 @@ const LIMIT_GUESS: &str = " riff cannot read the reset: this time is the end of 
 ///     unserved: vec![],
 ///     sends: vec![],
 ///     events: vec![],
+///     volumes: None,
 /// };
 /// let text = riff::text::daemon_status(&status, 300_000);
 /// assert!(text.starts_with("The riff daemon runs: pid 42, build 1.3.1 06a0ae03be98, for 5m.\n"));
@@ -9628,6 +9629,14 @@ const LIMIT_GUESS: &str = " riff cannot read the reset: this time is the end of 
 /// let line = "riff-server: this daemon has no session for o/t. 2 starts failed in 5m. The last \
 ///             cause: the OS keyring of thelio is locked. riff tries again at each look.\n";
 /// assert!(text.contains(line), "{text}");
+/// // The daemon cannot read the folders of the volumes
+/// // (01M7EW2106JGGTSZKMRG4N9SH0).
+/// assert!(!text.contains("Volumes:"), "{text}");
+/// status.volumes = Some(riff::daemon::VolumesUnread { since_ms: 0, cause: "no store".into() });
+/// let text = riff::text::daemon_status(&status, 300_000);
+/// let line = "Volumes: riff cannot read the folders of the podman volumes, for 5m.";
+/// assert!(text.contains(line), "{text}");
+/// assert!(text.find(line) < text.find("Sessions:\n"), "{text}");
 /// ```
 pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
     let age = |since: i64| ago(u64::try_from((now_ms - since) / 1000).unwrap_or(0));
@@ -9665,6 +9674,9 @@ pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
     }
     for unserved in &status.unserved {
         let _ = writeln!(out, "{}", daemon_unserved(unserved, now_ms));
+    }
+    if let Some(unread) = &status.volumes {
+        let _ = writeln!(out, "{}", daemon_volumes_status(unread, now_ms));
     }
     for sent in &status.sends {
         if let Some(line) = daemon_facts_status(sent, now_ms) {
@@ -10098,6 +10110,60 @@ pub const PROJECT_CHECKS_AGAIN: &str = "riff checks the repository again:";
 /// space.
 fn flat(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// A text in one line: each run of white space is one space, also after
+/// a read from the wire. A cause in a line of `riff daemon status` is
+/// one (01M7EZCTGNFJ4CWN0WYXKJKRYV).
+///
+/// ```
+/// use riff::text::OneLine;
+///
+/// let line = OneLine::new("level=warning msg=\"old\"\nError: no store\n");
+/// assert_eq!(line.as_str(), "level=warning msg=\"old\" Error: no store");
+/// let read: OneLine = serde_json::from_str(r#""a\nb""#)?;
+/// assert_eq!(read.to_string(), "a b");
+/// assert_eq!(serde_json::to_string(&read)?, r#""a b""#);
+/// # Ok::<(), serde_json::Error>(())
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(from = "String", into = "String")]
+pub struct OneLine(String);
+
+impl OneLine {
+    /// `text` in one line: each run of white space is one space.
+    pub fn new(text: &str) -> Self {
+        Self(flat(text))
+    }
+
+    /// The line.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for OneLine {
+    fn from(text: String) -> Self {
+        Self::new(&text)
+    }
+}
+
+impl From<&str> for OneLine {
+    fn from(text: &str) -> Self {
+        Self::new(text)
+    }
+}
+
+impl From<OneLine> for String {
+    fn from(line: OneLine) -> Self {
+        line.0
+    }
+}
+
+impl std::fmt::Display for OneLine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
 }
 
 /// A check of `riff init` that passed.
@@ -11491,6 +11557,7 @@ pub const INIT_CONTAINER_DONE: &str =
 ///     unserved: vec![],
 ///     sends: vec![],
 ///     events: vec![],
+///     volumes: None,
 /// };
 /// let same = riff::text::init_daemon_kept(&status, "1.3.1 aaa");
 /// assert_eq!(same, "The riff daemon of this riff runs already: pid 42. riff init keeps it.");
@@ -12009,6 +12076,54 @@ pub fn daemon_unserved(unserved: &crate::daemon::remote::Unserved, now_ms: i64) 
         unserved.count,
         ago(secs),
         unserved.cause
+    )
+}
+
+/// The daemon cannot read the folders of the podman volumes, for the
+/// `cause` (01M7EW2106JGGTSZKMRG4N9SH0): the line of the log, and the
+/// error of a start with a volume.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::daemon_volumes_unread("podman info: Error: no store"),
+///     "riff cannot read the folders of the podman volumes, so it starts no container that \
+///      binds a volume with write: podman info: Error: no store"
+/// );
+/// ```
+pub fn daemon_volumes_unread(cause: &str) -> String {
+    format!(
+        "riff cannot read the folders of the podman volumes, so it starts no container that \
+         binds a volume with write: {cause}"
+    )
+}
+
+/// The log line of the first look that read each folder of the volumes
+/// after a fault (01M7EZCTGNFJ4CWN0WYXKJKRYV).
+pub const DAEMON_VOLUMES_READ: &str =
+    "riff reads the folders of the podman volumes again: the sessions with a volume start.";
+
+/// The line of `riff daemon status` while the daemon cannot read the
+/// folders of the podman volumes (01M7EW2106JGGTSZKMRG4N9SH0).
+///
+/// ```
+/// use riff::daemon::VolumesUnread;
+///
+/// let unread = VolumesUnread { since_ms: 60_000, cause: "podman info: Error: no store".into() };
+/// assert_eq!(
+///     riff::text::daemon_volumes_status(&unread, 300_000),
+///     "Volumes: riff cannot read the folders of the podman volumes, for 4m. No session with a \
+///      volume starts. The last cause: podman info: Error: no store. riff reads them again at \
+///      the next start of a session with a volume."
+/// );
+/// ```
+pub fn daemon_volumes_status(unread: &crate::daemon::VolumesUnread, now_ms: i64) -> String {
+    let secs = u64::try_from((now_ms - unread.since_ms) / 1000).unwrap_or(0);
+    format!(
+        "Volumes: riff cannot read the folders of the podman volumes, for {}. No session with a \
+         volume starts. The last cause: {}. riff reads them again at the next start of a \
+         session with a volume.",
+        ago(secs),
+        unread.cause
     )
 }
 
@@ -12755,6 +12870,12 @@ pub fn wave_host_word(why: &str) -> String {
 /// no token of a GitHub App (01M6Z87A04EXTT1FFJSJ1EM6TB).
 pub const WAVE_NO_TOKEN: &str =
     "waits: no token of a GitHub App for its sessions. See riff daemon status";
+
+/// The word of a wave that starts no item for one look: riff cannot read
+/// the folders of the podman volumes of its sessions
+/// (01M7EZCTKYFPS4QDQ1N3K3BT23, 01M7F29TEWNHPR79RB6BT8C8SS).
+pub const WAVE_VOLUMES_UNREAD: &str =
+    "waits: riff cannot read the folders of the podman volumes. See riff daemon status";
 
 /// The message to the lead when a worker or a verify of the wave of
 /// `repo` got no token of a GitHub App, for the reason `why` with its fix
