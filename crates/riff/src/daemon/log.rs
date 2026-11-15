@@ -45,8 +45,10 @@
 //! `claude`, the token of `riff claude-token` and the secrets of the MCP
 //! servers of the host), each key of Anthropic, and the filter of the
 //! log of the real-session test ([`redact`](super::release_test::redact)).
-//! So no line has a secret, and `--grep` finds no part of a secret. The
-//! lines of one answer fit in one post on riff-server ([`MOST_BYTES`]).
+//! So no line has a secret, and `--grep` finds no part of a secret.
+//! `--grep` looks in the whole line, and riff cuts the line to
+//! [`LINE_CHARS`] after that (01M7FBZ2C2SNJCXKESA6MGEQ5M). The lines of
+//! one answer fit in one post on riff-server ([`MOST_BYTES`]).
 //!
 //! Only the riff of the host reads the files, in the folder of the
 //! daemon: no session can write there (01M7EX1PYJ99BDSVJK7MAPDFD0). On
@@ -710,6 +712,7 @@ pub const KEY_START: &str = "sk-ant-";
 /// assert_eq!(clean("riff daemon: a-secret-of-the-host", &scrub), "riff daemon: [secret]");
 /// assert_eq!(clean("git push with ghs_16C7e42F292c6912E7710c838347Ae178B4a", &scrub), "git push with [secret]");
 /// assert_eq!(clean(r#"{"token":"sk-ant-oat01-Ab_c-9"}"#, &scrub), r#"{"token":"[secret]"}"#);
+/// assert_eq!(clean("a key sk-proj-Ab_c-9 here", &scrub), "a key [secret] here");
 /// assert_eq!(clean("podman run -e GH_TOKEN=abc", &scrub), "podman run -e GH_TOKEN=[secret]");
 /// assert_eq!(clean("Authorization: Bearer xyz", &scrub), "Authorization: Bearer [secret]");
 /// assert_eq!(clean("riff daemon: o/r: 2 sessions", &scrub), "riff daemon: o/r: 2 sessions");
@@ -781,7 +784,8 @@ impl Picker<'_> {
         {
             return;
         }
-        // The text is found after the clean: no part of a secret.
+        // The text is found after the clean, so in no part of a secret,
+        // and before the cut, so in the whole line.
         let line = clean(raw, self.scrub);
         let grep = self.query.grep();
         if !grep.is_empty() && !grep.iter().any(|g| line.contains(g.as_str())) {
@@ -1147,6 +1151,24 @@ mod tests {
         let cut_wide = cut(format!("x{wide}"));
         assert_eq!(cut_wide, format!("x{}…", "é".repeat(LINE_CHARS - 2)));
         assert_eq!(cut_wide.chars().count(), LINE_CHARS);
+    }
+
+    /// #2156, 01M7EX1Q1F468NWGPJJS0W0ZG9, 01M7FBZ2C2SNJCXKESA6MGEQ5M: a
+    /// secret that crosses the character [`LINE_CHARS`] goes whole, and
+    /// `--grep` finds a text after the cut: riff cleans the line, then
+    /// looks for the text, then cuts the line.
+    #[test]
+    fn a_line_is_cleaned_and_found_before_its_cut() {
+        let secret = isolated::fake_secret();
+        let head = format!("2026-11-14T07:12:00Z {}", "x".repeat(LINE_CHARS - 32));
+        let log = format!("{head} {secret} a-text-after-the-cut\n");
+        let start = log.find(&secret).unwrap();
+        assert!(start < LINE_CHARS && start + secret.len() > LINE_CHARS);
+        let scrub = Scrub::new([secret]);
+        let query = Query::new(None, None, vec!["after-the-cut".into()]).unwrap();
+        let found = pick([log.as_bytes()], &query, &scrub).unwrap();
+        assert_eq!(found.lines(), [format!("{head} [secret] …")]);
+        assert_eq!(found.lines()[0].chars().count(), LINE_CHARS);
     }
 
     /// #2156, 01M7F3YFHRQ54RKN9SBJGYWGYY, 01M7F7GWP88VC0QETN4GNTTJEV: when

@@ -6753,6 +6753,10 @@ of this part when they merge.
   byte cap drops lines, it names that limit, and asks for fewer lines
   with `--since` or `--grep`. Supersedes 01M7EX1PVSG64G8EE5SNDRHM7G in
   part.
+- **01M7FBZ2C2SNJCXKESA6MGEQ5M** `--grep` of `riff daemon log` looks for
+  its text in the whole line, with no secret. riff cuts the line to 1000
+  characters after that: a line with the text after its character 1000
+  shows too.
 
 ### riff relay
 

@@ -1743,10 +1743,11 @@ riff daemon log --lines 2000 --grep issue-12
 ```
 
 A line shows with at most 1000 characters: a longer line ends with `…`.
-The lines of one answer have at most 768 KiB as JSON text, so that the
-answer of another host fits in one post on riff-server: the oldest
-lines go first. In JSON, a `"`, a `\` or a control character has more
-bytes than in the log.
+`--grep` looks in the whole line, also after the cut. The lines of one
+answer have at most 768 KiB as JSON text. So the answer of another host
+fits in one post on riff-server. When the lines have more bytes, the
+oldest lines go first. In JSON, a `"`, a `\` or a control character
+has more bytes than in the log.
 
 ### Find an older line of the log of the daemon
 

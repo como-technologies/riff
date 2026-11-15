@@ -337,6 +337,7 @@ const TAIL_LINES: usize = 30;
 /// use riff::daemon::release_test::redact;
 ///
 /// assert_eq!(redact("push ghp_abc123 now"), "push [secret] now");
+/// assert_eq!(redact("a key sk-proj-abc1 here"), "a key [secret] here");
 /// assert_eq!(redact("GH_TOKEN=abc ok"), "GH_TOKEN=[secret] ok");
 /// assert_eq!(redact("Authorization: Bearer xyz"), "Authorization: Bearer [secret]");
 /// assert_eq!(redact("step 6 of 10"), "step 6 of 10");
@@ -502,6 +503,18 @@ fn run_test(clone: &Path, log: &Path, server: &str, skips: &[String]) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #2156, 01M7EX1Q1F468NWGPJJS0W0ZG9: a word that starts as a token of
+    /// GitHub or with `sk-`, also with no `sk-ant-`, goes. A word with
+    /// `sk-` in it, not at its start, stays.
+    #[test]
+    fn a_word_with_the_start_of_a_token_goes() {
+        for start in crate::run::TOKEN_STARTS.iter().chain(&["sk-ant-", "sk-"]) {
+            let line = format!("a key {start}Ab1_c-9 here");
+            assert_eq!(redact(&line), "a key [secret] here", "{line}");
+        }
+        assert_eq!(redact("a disk-1 and task-2"), "a disk-1 and task-2");
+    }
 
     /// 01M5QVBTXE8YRY44A1C1VP71QS: the status shows the tag, the commit
     /// and the seconds of the test.

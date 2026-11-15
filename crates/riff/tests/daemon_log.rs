@@ -197,12 +197,12 @@ fn a_time_of_the_day_is_in_the_local_time() {
 /// #2156, 01M7EX1Q1F468NWGPJJS0W0ZG9, 01M7F0HECNG3F2H1ZF4JB7WN0Y: a line
 /// with a token-like text shows with `[secret]` in its place, and
 /// `--grep` finds no part of a secret: a token of GitHub, a key of
-/// Anthropic, `NAME=value` of a token, a bearer token, the value of a
-/// secret variable of the host, each value of the `headers` and the
-/// `env` of an MCP server of the host, the token of `riff claude-token`
-/// in the keyring and the tokens of the sign-in file of claude, as in the
-/// events of a session. When riff cannot read the MCP servers, it shows
-/// no line, and exits with 1.
+/// Anthropic, `NAME=value` of a token, a bearer token, a word that
+/// starts with `sk-`, the value of a secret variable of the host, each
+/// value of the `headers` and the `env` of an MCP server of the host,
+/// the token of `riff claude-token` in the keyring and the tokens of the
+/// sign-in file of claude, as in the events of a session. When riff
+/// cannot read the MCP servers, it shows no line, and exits with 1.
 #[test]
 fn a_line_with_a_token_like_text_is_filtered() {
     let env = Isolated::new();
@@ -231,6 +231,7 @@ fn a_line_with_a_token_like_text_is_filtered() {
             "riff daemon: podman run -e GH_TOKEN=abc -e RIFF_ITEM=issue-12",
         ),
         line(at, "riff daemon: Authorization: Bearer xyz"),
+        line(at, "riff daemon: a key sk-proj-Ab_c-9 of another tool"),
         line(
             at,
             "riff daemon: the token a-token-of-the-host-1 of the host",
@@ -263,6 +264,7 @@ fn a_line_with_a_token_like_text_is_filtered() {
              {stamp} riff daemon: claude said {{\"token\":\"[secret]\"}}\n\
              {stamp} riff daemon: podman run -e GH_TOKEN=[secret] -e RIFF_ITEM=issue-12\n\
              {stamp} riff daemon: Authorization: Bearer [secret]\n\
+             {stamp} riff daemon: a key [secret] of another tool\n\
              {stamp} riff daemon: the token [secret] of the host\n\
              {stamp} riff daemon: docs refused [secret], db refused [secret]\n\
              {stamp} riff daemon: claude refused [secret] and [secret]\n"
@@ -273,6 +275,7 @@ fn a_line_with_a_token_like_text_is_filtered() {
         "sk-ant-oat01",
         "GH_TOKEN=abc",
         "Bearer xyz",
+        "sk-proj",
         "a-token-of",
         "docs-header",
         "db-env",
@@ -295,6 +298,22 @@ fn a_line_with_a_token_like_text_is_filtered() {
         "{}",
         text(&out.stderr)
     );
+}
+
+/// #2156, 01M7EX1Q1F468NWGPJJS0W0ZG9, 01M7FBZ2C2SNJCXKESA6MGEQ5M: a
+/// secret of the host that crosses the character 1000 of a line shows as
+/// `[secret]`, with no part of it, and `--grep` finds a text after the
+/// cut.
+#[test]
+fn a_secret_at_the_cut_of_a_long_line_goes_whole() {
+    let env = Isolated::new();
+    let at = Utc::now() - Duration::minutes(5);
+    let head = line(at, &"x".repeat(riff::daemon::log::LINE_CHARS - 32));
+    let long = format!("{head} a-token-of-the-host-1 a-text-after-the-cut");
+    write_log(&env, &[], &[long]);
+    let out = daemon_log(&env, &["--grep", "after-the-cut"]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(text(&out.stdout), format!("{head} [secret] …\n"));
 }
 
 /// #2156, 01M7EX1PVSG64G8EE5SNDRHM7G, 01M7F0HE514TQMGQJKH8CVYY52: with
