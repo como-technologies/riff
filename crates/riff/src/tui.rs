@@ -591,7 +591,8 @@ pub enum Key {
 impl Key {
     /// The row of `rows` that this key selects, from the selected row
     /// `from`, with `page` rows in a page, in the Waves tab and in the
-    /// Decisions tab (01M6VFGKCJ02G33TXR01GY6M0G): `↑`, `↓`, `PgUp`,
+    /// Decisions tab (01M6VFGKCJ02G33TXR01GY6M0G,
+    /// 01M7FYVHDJJ288RRV8EBRKSY49): `↑`, `↓`, `PgUp`,
     /// `PgDn`, `Home` and `End` move over the rows that `picks` can
     /// select, up to the first and the last one. `None` for another key,
     /// and with no row to select.
@@ -635,6 +636,63 @@ impl Key {
         let (_, row) = picks.get(to.min(picks.len().saturating_sub(1)))?;
         Some(row)
     }
+
+    /// What this key does on `rows` with the selected row `selected`, in
+    /// the Waves tab and in the Decisions tab: a move key selects a row
+    /// ([`Key::moves`]). A click on a row that `picks` can select selects
+    /// it, and a click on the selected row acts as `Enter`
+    /// (01M6VFGKCJ02G33TXR01GY6M0G, 01M7FYVHDJJ288RRV8EBRKSY49). Another
+    /// key acts on the selected row.
+    ///
+    /// ```
+    /// use riff::tui::{Key, OnRows};
+    ///
+    /// let rows = ["title", "a", "b"];
+    /// let item = |row: &&str| *row != "title";
+    /// let on = |key: Key| key.on_rows(&rows, Some(1), 2, item);
+    /// assert_eq!(on(Key::Down), OnRows::Select(&"b"));
+    /// assert_eq!(on(Key::Row(2)), OnRows::Select(&"b"));
+    /// assert_eq!(on(Key::Row(1)), OnRows::Act(Key::Enter, &"a"));
+    /// assert_eq!(on(Key::Row(0)), OnRows::Nothing);
+    /// assert_eq!(on(Key::Char('o')), OnRows::Act(Key::Char('o'), &"a"));
+    /// assert_eq!(Key::Char('o').on_rows(&["title"], None, 2, item), OnRows::Nothing);
+    /// ```
+    pub fn on_rows<'a, R>(
+        self,
+        rows: &'a [R],
+        selected: Option<usize>,
+        page: usize,
+        picks: impl Fn(&R) -> bool,
+    ) -> OnRows<'a, R> {
+        if let Some(row) = self.moves(rows, selected, page, &picks) {
+            return OnRows::Select(row);
+        }
+        let on = match self {
+            Key::Row(at) => {
+                rows.get(at)
+                    .filter(|row| picks(row))
+                    .map(|row| match selected == Some(at) {
+                        true => OnRows::Act(Key::Enter, row),
+                        false => OnRows::Select(row),
+                    })
+            }
+            key => selected
+                .and_then(|at| rows.get(at))
+                .map(|row| OnRows::Act(key, row)),
+        };
+        on.unwrap_or(OnRows::Nothing)
+    }
+}
+
+/// What a key does on the rows of a list ([`Key::on_rows`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OnRows<'a, R> {
+    /// Select this row.
+    Select(&'a R),
+    /// Do this key on the selected row.
+    Act(Key, &'a R),
+    /// Nothing: a click on a row to select none, or no row to act on.
+    Nothing,
 }
 
 /// What the loop of the TUI does for a key.
@@ -756,6 +814,30 @@ impl Effect {
             }
         };
         Question::new(text, Action::Do(self))
+    }
+
+    /// What `a` gives on the issue `item` of `repo`, in the Waves tab and
+    /// in the Decisions tab: when the issue has the label `question`
+    /// (`asked`), the question of [`Effect::Answered`]. Else the note that
+    /// nothing changed.
+    ///
+    /// ```
+    /// use riff::tui::Effect;
+    ///
+    /// let asked = Effect::answered("o/r", 12, true).unwrap();
+    /// assert_eq!(asked.text, "Mark the questions of #12 of o/r as answered?");
+    /// let not_asked = Effect::answered("o/r", 12, false).unwrap_err();
+    /// assert_eq!(not_asked, riff::text::questions_not_asked("o/r", 12));
+    /// ```
+    pub fn answered(repo: &str, item: u64, asked: bool) -> Result<Question, String> {
+        match asked {
+            true => Ok(Effect::Answered {
+                repo: repo.to_owned(),
+                item,
+            }
+            .question()),
+            false => Err(text::questions_not_asked(repo, item)),
+        }
     }
 
     /// The note line while the effect runs.

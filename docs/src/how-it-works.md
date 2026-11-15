@@ -6066,19 +6066,22 @@ other decisions come after them:
 ```
 
 - `FOR` names each person of the riff that a heading `Questions for
-  PERSON` in the body of the issue names (see
+  PERSON` in the body of the issue names, as `## Questions for mike`
+  (see
   [Ask the person a question](development.md#ask-the-person-a-question)).
-  PERSON is the riff name of the person, for example `mike`, in any
-  case: `Mike` and `mike` are the same name. More names come after
-  `and` or a comma: `Questions for mike and nate`. Other words name
-  nobody: `Questions for the discussion` shows `-`.
+  PERSON is the riff name of the person, for example `mike` or
+  `ada.lovelace`, in any case: `Mike` and `mike` are the same name.
+  More names come after `and` or a comma: `Questions for mike and
+  nate`. Other words name nobody: `Questions for the discussion` shows
+  `-`.
 - `?` marks an issue with the label `question`. `·` marks a design
   issue with no open question.
 - `WAVE` is `Wave N`, `Backlog`, or `-` for an issue in neither. In
   each part, the waves come first in the order of their number, then
   the Backlog, then the issues in neither.
 - With more than one project, the item names its repository, as
-  `riff#2173`.
+  `riff#2173`. When two of your projects have the same name, the item
+  names the owner too, as `como-technologies/riff#2173`.
 - Under 80 columns, a row shows the mark, the item, the wave and the
   title.
 
@@ -6090,18 +6093,20 @@ answered:
 |---|---|
 | `↑` `↓`, `j` `k` | Select an issue. |
 | `PgUp` `PgDn`, `g` `G` | Move a page, or go to the first or the last issue. |
-| a click | Select an issue. A click on the selected issue opens it. |
+| a click | Select an issue. A click on the selected issue, or a double click, opens it. |
 | `Enter` | Open the issue in your browser. The note line shows its URL too: in a terminal over SSH, click the URL. |
 | `o` | Show the URL of the issue in the note line. |
 | `a` | Mark the questions of the issue as answered, after `y`: the label `question` goes, and the lead wakes. See [Mark the questions of an issue as answered](development.md#mark-the-questions-of-an-issue-as-answered). |
 | `r` | Read GitHub again now. |
 
 The tab reads the open issues from GitHub when you open it, each 60
-seconds while it shows, at once on `r`, and soon after a change on
-GitHub. An issue leaves the tab at the next read after its labels
-`question` and `design` go. The note line shows the age of the last
-read. When a read fails, the tab keeps the last issues of the project,
-and the note line shows the error once.
+seconds while it shows, at once on `r` and after `a`, and soon after a
+change on GitHub in the repository of your folder. An issue leaves the
+tab at the next read after its labels `question` and `design` go. The
+note line shows the age of the last read. When a read fails, the tab
+keeps the last issues of the project, and the note line shows the
+error once. When no read of a project worked yet, the last line of the
+tab names the project: `No read of the decisions of o/r worked yet.`
 
 ```mermaid
 flowchart LR

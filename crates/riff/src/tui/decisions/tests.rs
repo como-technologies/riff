@@ -96,11 +96,11 @@ fn riff_decisions() -> Vec<Decision> {
     ]
 }
 
-/// The state of the mock-up of the Decisions tab: mike, in a clone of
-/// riff, a project of a riff with mike and nate, 2 seconds after a good
-/// look and 41 seconds after the read of the decisions.
-fn mock_up() -> State {
-    let me = "riff://mike@thelio".parse().unwrap();
+/// The state of the mock-up of the Decisions tab before the first read:
+/// the person `me`, in a clone of riff, a project of a riff with mike and
+/// nate, 2 seconds after a good look.
+fn opened(me: &str) -> State {
+    let me = me.parse().unwrap();
     let mut state = State::new(build("10df8a4c0ffe"), me).in_clone(Some(RIFF.to_owned()));
     let mut look = Look {
         server: Some(build("10df8a4c0ffe")),
@@ -116,19 +116,41 @@ fn mock_up() -> State {
     state.looked(look, NOW - 2_000);
     state.news(Tab::Chat, News::Lines(2));
     state.on_key(Key::Open(Tab::Decisions));
+    state
+}
+
+/// The state of the mock-up of the Decisions tab: mike, 41 seconds after
+/// the read of the decisions.
+fn mock_up() -> State {
+    let mut state = opened("riff://mike@thelio");
     state.read_decisions(vec![(thread(RIFF), Ok(riff_decisions()))], NOW - 41_000);
     state.drew(20, NOW);
     state
 }
 
-/// The mock-up with the project strata too.
-fn two_projects() -> State {
-    let mut state = mock_up();
+/// `state` with the project `repo` too.
+fn with_project(mut state: State, repo: &str) -> State {
     let mut look = state.last_look().unwrap().0.clone();
-    look.who.repos.push(thread(STRATA));
-    look.who.projects.push(thread(STRATA));
+    look.who.repos.push(thread(repo));
+    look.who.projects.push(thread(repo));
     state.looked(look, NOW);
     state
+}
+
+/// The mock-up with the project strata too.
+fn two_projects() -> State {
+    with_project(mock_up(), STRATA)
+}
+
+/// The open question `number` of riff in the Backlog, with the body
+/// `body`, as the read gives it.
+fn asked(number: u64, body: &str) -> Decision {
+    let entry: Entry = serde_json::from_value(serde_json::json!(
+        {"number": number, "title": "Which name?", "labels": [{"name": "question"}],
+         "milestone": {"number": 1, "title": "Backlog"}, "body": body}
+    ))
+    .unwrap();
+    Decision::of(&thread(RIFF), entry).unwrap()
 }
 
 /// The rows of `state` drawn into a `Buffer` of `width` x `height`, with
@@ -299,6 +321,169 @@ fn a_heading_names_only_the_persons_of_the_riff() {
     assert!(rows[5].ends_with("question          -"), "{rows:#?}");
     assert!(rows[6].starts_with("   ?   #15 "), "{rows:#?}");
     assert!(rows[6].ends_with("question          nate"), "{rows:#?}");
+}
+
+/// 01M7G7SCW5AR1P73R1CMA2QWF7, 01M7FYVHB1APFXPXA71PMD18EH: a USER with
+/// a `.` gets the questions for that USER first, also when the look does
+/// not list the person of the TUI. `ada` is another person. A list of
+/// persons wider than the column `FOR` ends with `…`.
+#[test]
+fn a_user_with_a_dot_sees_the_questions_for_that_user_first() {
+    let mut state = opened("riff://ada.lovelace@thelio");
+    let mut look = state.last_look().unwrap().0.clone();
+    look.who.people = serde_json::from_value(serde_json::json!([
+        {"user": "mike", "role": "admin", "live": true},
+        {"user": "ada", "role": "member", "live": false},
+    ]))
+    .unwrap();
+    state.looked(look, NOW);
+    state.read_decisions(
+        vec![(
+            thread(RIFF),
+            Ok(vec![
+                asked(12, "## Questions for ada"),
+                asked(13, "## Questions for Ada.Lovelace and ada"),
+            ]),
+        )],
+        NOW,
+    );
+    let rows = drawn(&state, 80, 24);
+    assert_eq!(rows[2], " QUESTIONS FOR ADA.LOVELACE · 1", "{rows:#?}");
+    assert!(
+        rows[4].starts_with(" > ?   #13    Backlog   Which name?"),
+        "{rows:#?}"
+    );
+    assert!(
+        rows[4].ends_with("question          ada.lovel…"),
+        "{rows:#?}"
+    );
+    assert_eq!(rows[6], " OTHER DECISIONS · 1", "{rows:#?}");
+    assert!(rows[8].ends_with("question          ada"), "{rows:#?}");
+}
+
+/// 01M7G7SCW5AR1P73R1CMA2QWF7: a comma with no space after it names the
+/// next person too. Labels wider than the column `LABELS` end with `…`.
+#[test]
+fn a_comma_with_no_space_names_the_next_person() {
+    let mut state = mock_up();
+    let labels = ["design", "question", "enhancement"];
+    let wide = decision(RIFF, 13, "Design: the board", Some("Backlog"), &labels, &[]);
+    state.read_decisions(
+        vec![(
+            thread(RIFF),
+            Ok(vec![asked(12, "## Questions for nate,mike"), wide]),
+        )],
+        NOW,
+    );
+    let rows = drawn(&state, 80, 24);
+    assert_eq!(rows[2], " QUESTIONS FOR MIKE · 1", "{rows:#?}");
+    assert!(
+        rows[4].ends_with("question          nate mike"),
+        "{rows:#?}"
+    );
+    assert!(rows[8].starts_with("   ?   #13 "), "{rows:#?}");
+    assert!(rows[8].ends_with("design question…  -"), "{rows:#?}");
+}
+
+/// 01M7GBGD8EH2B1DXZ8NADZ1A85: while the first read runs, the body has
+/// no line. After a first read that fails, the body names the project
+/// that no read gave, and the note line names the fault. With two
+/// projects, the decisions of the project that read well show, and the
+/// last line names the other one. When each project read well and has no
+/// decision, the body says so.
+#[test]
+fn a_first_read_that_fails_names_the_project_with_no_read() {
+    let mut state = opened("riff://mike@thelio");
+    assert_eq!(state.decision_rows(), []);
+    let failed = || Err("gh: HTTP 502".to_owned());
+    state.read_decisions(vec![(thread(RIFF), failed())], NOW);
+    let unread = |repo: &str| Row::Text(text::decisions_unread(&[repo.to_owned()]));
+    assert_eq!(state.decision_rows(), [unread(RIFF)]);
+    let rows = drawn(&state, 80, 24);
+    assert_eq!(
+        rows[2],
+        " No read of the decisions of como-technologies/riff worked yet."
+    );
+    assert_eq!(rows[22], " riff: gh: HTTP 502");
+    let mut state = with_project(state, STRATA);
+    state.read_decisions(
+        vec![
+            (thread(RIFF), Ok(riff_decisions())),
+            (thread(STRATA), failed()),
+        ],
+        NOW + 60_000,
+    );
+    assert_eq!(numbers(&state), [2173, 1489, 2189, 1739, 1532]);
+    let rows = state.decision_rows();
+    assert_eq!(rows[rows.len() - 2..], [Row::Blank, unread(STRATA)]);
+    state.read_decisions(
+        vec![(thread(RIFF), Ok(vec![])), (thread(STRATA), Ok(vec![]))],
+        NOW + 120_000,
+    );
+    assert_eq!(state.decision_rows(), [Row::Text(NONE_OPEN.to_owned())]);
+}
+
+/// 01M7FYVHB1APFXPXA71PMD18EH: in a part, the rows of one place go by
+/// the repository and then by the number, also when the read gives them
+/// in another order, as GitHub gives the newest first.
+#[test]
+fn the_rows_of_one_place_go_by_the_repository_and_the_number() {
+    let mut state = two_projects();
+    let backlog =
+        |repo, number| decision(repo, number, "Which?", Some("Backlog"), &["question"], &[]);
+    state.read_decisions(
+        vec![
+            (thread(RIFF), Ok(vec![backlog(RIFF, 30), backlog(RIFF, 10)])),
+            (thread(STRATA), Ok(vec![backlog(STRATA, 5)])),
+        ],
+        NOW,
+    );
+    assert_eq!(numbers(&state), [10, 30, 5]);
+}
+
+/// 01M7FYVHB1APFXPXA71PMD18EH: when two projects have the same name, an
+/// item names the owner too.
+#[test]
+fn two_projects_with_the_same_name_name_the_owner() {
+    let fork = "n8behavior/riff";
+    let mut state = with_project(mock_up(), fork);
+    let seven = decision(
+        fork,
+        7,
+        "Which store?",
+        Some("Wave 2"),
+        &["question"],
+        &["mike"],
+    );
+    state.read_decisions(
+        vec![
+            (thread(RIFF), Ok(riff_decisions())),
+            (thread(fork), Ok(vec![seven])),
+        ],
+        NOW,
+    );
+    let rows = drawn(&state, 80, 24);
+    assert!(
+        rows[4].starts_with(" > ?   n8behavior/riff#7 "),
+        "{rows:#?}"
+    );
+    assert!(
+        rows[5].starts_with("   ?   como-technologies/riff#2173  Wave 60"),
+        "{rows:#?}"
+    );
+}
+
+/// 01M77F7R7RERVQH7XS39GWJJKF: with no project of the person, the tab
+/// says so, as the Waves tab.
+#[test]
+fn with_no_project_the_tab_says_so() {
+    let mut state = State::new(build("10df8a4c0ffe"), "riff://mike@thelio".parse().unwrap());
+    state.looked(Look::default(), NOW);
+    state.on_key(Key::Open(Tab::Decisions));
+    assert_eq!(
+        drawn(&state, 80, 24)[2..4],
+        crate::tui::waves::NO_BOARD.map(|line| format!(" {line}"))
+    );
 }
 
 /// 01M7FYVHDJJ288RRV8EBRKSY49: Enter opens the issue of the selected row

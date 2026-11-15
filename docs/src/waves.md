@@ -407,6 +407,7 @@ the waves, and riff ignores them.
 | `Needs:` | the start of a line in the body of an issue | The issues that must be merged first. |
 | `tracker`, or the title start `Tracker:` | a label | A tracker has no code of its own: the wave starts no session for it. |
 | `question` | a label | A lead waits for the answer of a person: the wave starts no build of the issue (see [Ask the person a question](development.md#ask-the-person-a-question)). |
+| `design` | a label | A design issue: a decision of a person that is not asked yet, or a design in work. The Decisions tab of the TUI lists it with the questions (see [Work through the decisions in the TUI](how-it-works.md#work-through-the-decisions-in-the-tui)). |
 | `broken-main` | a label | A fix item for a broken `main`. It is free work before each other item. |
 | `no-verify` | a label | riff offers no verify for the pull request of the issue. |
 | `release` | a label | A release issue or pull request: the wave starts no session for it. |

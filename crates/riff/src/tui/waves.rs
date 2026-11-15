@@ -117,7 +117,7 @@ use riff_core::wire::{HoldInfo, RiffState, SessionInfo};
 
 use super::forge::{Closed, Forge, Main, Reads};
 use super::view::Layout;
-use super::{Action, Effect, Key, Look, Mark, NOTHING_CHANGED, Question, State};
+use super::{Action, Effect, Key, Look, Mark, NOTHING_CHANGED, OnRows, Question, State};
 use crate::text;
 
 /// The body of the tab when the person has no project, so no board: two
@@ -588,23 +588,13 @@ impl Waves {
         (look, now_ms): (&Look, i64),
         page: usize,
     ) -> Option<Answer> {
-        if let Some(row) = key.moves(rows, self.selected(rows), page, |row| row.pick().is_some()) {
-            self.pick = row.pick();
-            return None;
-        }
-        match key {
-            Key::Row(row) => {
-                let pick = rows.get(row).and_then(Row::pick)?;
-                if self.selected(rows) == Some(row) {
-                    return self.enter(rows.get(row)?, now_ms);
-                }
-                self.pick = Some(pick);
+        match key.on_rows(rows, self.selected(rows), page, |row| row.pick().is_some()) {
+            OnRows::Select(row) => {
+                self.pick = row.pick();
                 None
             }
-            key => {
-                let row = rows.get(self.selected(rows)?)?;
-                self.act(key, row, look, now_ms)
-            }
+            OnRows::Act(key, row) => self.act(key, row, look, now_ms),
+            OnRows::Nothing => None,
         }
     }
 
@@ -647,14 +637,10 @@ impl Waves {
                     .forge
                     .get(repo)
                     .is_some_and(|forge| forge.issues.questions.contains(&item.number));
-                if !asked {
-                    return Some(Answer::Note(text::questions_not_asked(repo, item.number)));
-                }
-                let answered = Effect::Answered {
-                    repo: repo.clone(),
-                    item: item.number,
-                };
-                Some(Answer::Ask(answered.question()))
+                Some(match Effect::answered(repo, item.number, asked) {
+                    Ok(question) => Answer::Ask(question),
+                    Err(note) => Answer::Note(note),
+                })
             }
             (Key::Char('a'), _) => Some(Answer::Note(
                 "Select an item with the label question to mark it as answered.".to_owned(),
@@ -729,16 +715,20 @@ fn paused(look: &Look, repo: &str) -> bool {
 /// assert_eq!(url(&Row::Text("x".into())), None);
 /// ```
 pub fn url(row: &Row) -> Option<String> {
-    let base = |repo: &str| format!("https://github.com/{}", text::safe(repo));
     match row {
         Row::Item { repo, item } => Some(match item.pull {
-            Some(pull) => format!("{}/pull/{pull}", base(repo)),
+            Some(pull) => format!("{}/pull/{pull}", repo_url(repo)),
             None => issue_url(repo, item.number),
         }),
-        Row::Repo(row) => Some(base(&row.repo)),
-        Row::Closed { repo, .. } => Some(format!("{}/issues?q=is%3Aclosed", base(repo))),
+        Row::Repo(row) => Some(repo_url(&row.repo)),
+        Row::Closed { repo, .. } => Some(format!("{}/issues?q=is%3Aclosed", repo_url(repo))),
         _ => None,
     }
+}
+
+/// The URL of the repository `repo` on GitHub.
+fn repo_url(repo: &str) -> String {
+    format!("https://github.com/{}", text::safe(repo))
 }
 
 /// The URL of the issue `number` of `repo`: the URL of an item of the
@@ -750,7 +740,7 @@ pub fn url(row: &Row) -> Option<String> {
 /// assert_eq!(issue_url("o/r", 12), "https://github.com/o/r/issues/12");
 /// ```
 pub fn issue_url(repo: &str, number: u64) -> String {
-    format!("https://github.com/{}/issues/{number}", text::safe(repo))
+    format!("{}/issues/{number}", repo_url(repo))
 }
 
 /// The whole row of `item` at `now_ms`, for the note line.
@@ -771,8 +761,9 @@ fn whole(item: &ItemRow, now_ms: i64) -> String {
     parts.join(" · ")
 }
 
-/// The age of a time `since_ms` at `now_ms`, as `2h`.
-fn age(since_ms: Option<i64>, now_ms: i64) -> Option<String> {
+/// The age of a time `since_ms` at `now_ms`, as `2h`: of an item, and
+/// of the last read of the Waves tab and of the Decisions tab.
+pub(super) fn age(since_ms: Option<i64>, now_ms: i64) -> Option<String> {
     let since = since_ms?;
     Some(text::ago(
         u64::try_from((now_ms - since) / 1000).unwrap_or(0),
@@ -1172,7 +1163,14 @@ pub fn cut(text: &str, columns: usize) -> String {
 /// `text` cut to `columns - 1` and padded to `columns`: a column with
 /// one space after it.
 fn column(text: &str, columns: usize) -> String {
-    let text = cut(text, columns.saturating_sub(1));
+    padded(text, columns, 1)
+}
+
+/// `text` cut to `columns - gap` and padded to `columns`: a column with
+/// at least `gap` spaces after it, in the Waves tab and in the Decisions
+/// tab.
+pub(super) fn padded(text: &str, columns: usize, gap: usize) -> String {
+    let text = cut(text, columns.saturating_sub(gap));
     let pad = columns.saturating_sub(width(&text));
     format!("{text}{}", " ".repeat(pad))
 }
@@ -1412,23 +1410,31 @@ pub fn keys_of(layout: Layout) -> Vec<(&'static str, &'static str, Option<Key>)>
     }
 }
 
+/// The move keys of the Waves tab and of the Decisions tab in the help
+/// popup (01M6VFGKCJ02G33TXR01GY6M0G, 01M7FYVHDJJ288RRV8EBRKSY49).
+pub(super) const MOVE_KEYS: [(&str, &str); 3] = [
+    ("↑ ↓, j k", "select a row"),
+    ("PgUp PgDn", "move a page"),
+    ("g G", "the first or last row"),
+];
+
 /// The keys of the Waves tab in the help popup, before the keys of the
 /// frame.
 pub fn help_keys() -> Vec<(&'static str, &'static str)> {
-    vec![
-        ("↑ ↓, j k", "select a row"),
-        ("PgUp PgDn", "move a page"),
-        ("g G", "the first or last row"),
-        ("Enter", "open the row"),
-        ("← → Space", "fold a board"),
-        ("h", "hold the item"),
-        ("f", "free the item"),
-        ("a", "mark as answered"),
-        ("p", "pause the repository"),
-        ("P", "pause the whole riff"),
-        ("o", "show the URL"),
-        ("y n", "answer the question"),
-    ]
+    MOVE_KEYS
+        .into_iter()
+        .chain([
+            ("Enter", "open the row"),
+            ("← → Space", "fold a board"),
+            ("h", "hold the item"),
+            ("f", "free the item"),
+            ("a", "mark as answered"),
+            ("p", "pause the repository"),
+            ("P", "pause the whole riff"),
+            ("o", "show the URL"),
+            ("y n", "answer the question"),
+        ])
+        .collect()
 }
 
 #[cfg(test)]

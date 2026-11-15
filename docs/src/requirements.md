@@ -10212,19 +10212,21 @@ that builds it merges.
   others after them, under `OTHER DECISIONS`. In each part, the rows go
   in the order of the waves by their number, then the Backlog, then the
   issues in neither, and then by the repository and the number. With
-  more than one project, an item names its repository, as `riff#2173`.
-  While the tab shows, the TUI reads the open issues with the
-  conditional REST read of the Waves tab, and no other call: when the
-  tab opens, each 60 seconds, at once on `r`, and soon after a wake of
-  GitHub. An issue whose labels `question` and `design` go leaves the
-  tab at the next read.
+  more than one project, an item names its repository, as `riff#2173`,
+  and its owner too when two projects have the same name. While the tab
+  shows, the TUI reads the open issues with the conditional REST read of
+  the Waves tab, and no other call: when the tab opens, each 60 seconds,
+  at once on `r` and at the end of an action, and soon after a wake of
+  the GitHub App of the repository of the folder. An issue whose labels
+  `question` and `design` go leaves the tab at the next read.
 - **01M7FYVHDJJ288RRV8EBRKSY49** In the Decisions tab of the TUI, `↑`
   and `↓`, `j` and `k`, `PgUp` and `PgDn`, and `g` and `G` select a row,
-  as in the Waves tab. `Enter`, or a click on the selected row, opens
-  the issue of the row in the browser, and puts its URL in the note
-  line. `o` puts the URL in the note line, as in the Waves tab. `a`
-  marks the questions of the issue as answered after `y`, with the code
-  of `riff questions --answered`.
+  as in the Waves tab. A click on a row selects it. `Enter`, a click on
+  the selected row, or a double click on a row opens the issue of the
+  row in the browser, and puts its URL in the note line. `o` puts the
+  URL in the note line, as in the Waves tab. `a` marks the questions of
+  the issue as answered after `y`, with the code of
+  `riff questions --answered`.
 - **01M7FZAW2DT0KE72HB2VQ3SQBG** In the prompt of the Chat tab of the
   TUI, `Ctrl-U` deletes the text before the cursor, `Ctrl-K` deletes the
   text from the cursor to the end of the line, and `Ctrl-L` deletes the
@@ -10235,11 +10237,14 @@ that builds it merges.
   of the Chat tab says what each of the three keys deletes.
 - **01M7G7SCW5AR1P73R1CMA2QWF7** In the Decisions tab of the TUI, the
   persons of a row are the persons of the riff that a heading `Questions
-  for PERSON` of the body of the issue names. PERSON is the USER of a
-  person of the riff, or of the person of the TUI, in any case, and the
-  row shows the USER. More names come after `and` or a comma: `Questions
-  for mike and nate`. The first other word, or a mark other than a
-  comma, ends the names, so `Questions for the discussion` names nobody.
+  for PERSON` of the body of the issue names. A heading is a line that
+  starts with `#` or `**`. PERSON is the USER of a person of the riff,
+  or of the person of the TUI, in any case, with an `@` before it or
+  not, and the row shows the USER. A USER can have a `.`, as
+  `ada.lovelace`. More names come after `and` or a comma, also a comma
+  with no space: `Questions for mike and nate`. The first other word, a
+  `.` at the end of a word, or a mark other than a comma, ends the
+  names, so `Questions for the discussion` names nobody.
 - **01M7G7SHRDEA6BCNSYQA8RGZ23** In the Decisions tab of the TUI, a read
   of a project that fails keeps the last decisions of that project, and
   the note line names the fault once. With no other note, the note line
@@ -10249,6 +10254,13 @@ that builds it merges.
   strip has two spaces between two tabs. When the news make the strip
   wider than the terminal, it has one space between two tabs, so the
   last tab shows whole.
+- **01M7GBGD8EH2B1DXZ8NADZ1A85** In the Decisions tab of the TUI, the
+  body has no line while the first read runs. When each project read
+  well and has no decision, the body says `No question and no design
+  issue is open.` When no read of a project worked yet, the body ends
+  with a line that names it: `No read of the decisions of o/r worked
+  yet.` A row whose questions name no person of the riff shows `-` under
+  `FOR`.
 
 ## The notes of the lead
 

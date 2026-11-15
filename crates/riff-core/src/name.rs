@@ -506,7 +506,16 @@ pub fn sanitize(part: &str) -> String {
         .collect()
 }
 
-fn allowed(c: char) -> bool {
+/// True when a URI part, as the USER of a person, can hold `c`: an ASCII
+/// letter or digit, `-`, `_`, `.` or `~`.
+///
+/// ```
+/// use riff_core::name::allowed;
+///
+/// assert!("ada.lovelace".chars().all(allowed));
+/// assert!(!allowed(',') && !allowed('@') && !allowed('é'));
+/// ```
+pub fn allowed(c: char) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '~')
 }
 
