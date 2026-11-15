@@ -134,7 +134,9 @@ esac
 /// and `exec` log, and end at once. An `exec` whose command does not
 /// start with `nice -n 19` fails with 127. `attach` and `exec -it` first turn
 /// on the mouse reports of the terminal ([`MOUSE_ON`]). `volume inspect`
-/// of `riff-sccache` gives the folder `bin/volume` when it is there. With `bin/no-network`, the
+/// of `riff-sccache` gives the folder `bin/volume` when it is there.
+/// `info` gives `bin/volumes` as the folder of the volumes, and `volume
+/// inspect --all` gives no volume. With `bin/no-network`, the
 /// look-up of `exec ... getent` fails: the container has no network. With
 /// `bin/exit-in-attach`, `attach`
 /// first ends the `run`, as `/exit` in the lead does. A zombie counts as
@@ -194,7 +196,11 @@ case "$1" in
       echo false
     fi
     exit 0 ;;
+  # The folder of the volumes, and no volume.
+  info) [ "$*" = "info --format {{.Store.VolumePath}}" ] || exit 2
+    echo "$dir/volumes"; exit 0 ;;
   volume)
+    if [ "$*" = "volume inspect --all" ]; then echo "[]"; exit 0; fi
     [ "$*" = "volume inspect --format {{.Mountpoint}} riff-sccache" ] || exit 2
     [ -d "$dir/volume" ] || exit 125
     echo "$dir/volume"; exit 0 ;;
@@ -4534,4 +4540,72 @@ async fn a_new_daemon_starts_the_lead_again_on_a_host_with_the_part_lead_and_no_
         assert!(started.elapsed() < isolated::HANG, "the lead did not end");
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+}
+
+/// 01M7EAZ9N9DY7JPXZP1V8JY01E (#2151): the lead names another folder in
+/// the alternates of its clone, and the git config of that folder names
+/// a program. The host runs no wave of the repository. The new daemon
+/// starts the lead again from the main clone that it serves: the
+/// container binds the objects of that main clone, not of the folder of
+/// the lead, and the program never runs.
+#[tokio::test]
+async fn a_lead_starts_again_from_the_main_clone_of_the_daemon_not_from_its_alternates() {
+    let mut machine = Machine::new().await;
+    machine.claude_token();
+    std::fs::write(machine.bin.path().join("hold"), "").unwrap();
+    let name = LEAD_NAME;
+    machine.daemon_lead().await;
+    wait_for(&machine.bin.path().join("claude.args"), "--mcp-config").await;
+    std::fs::remove_file(machine.bin.path().join("claude.args")).unwrap();
+    let dir = machine.env.riff_home().join("daemon");
+    assert!(riff::wave::read_waves(&dir).unwrap().is_empty());
+
+    // The lead writes a repository of its own, and names it in the
+    // alternates of its clone.
+    let other = machine.env.path().join("written-by-the-lead");
+    std::fs::create_dir_all(&other).unwrap();
+    git(&other, &["init", "-q", "-b", "main"]);
+    let mark = machine.env.path().join("mark");
+    hostile_config(&other, &mark);
+    let clone = machine
+        .env
+        .riff_home()
+        .join("leads/como-technologies-riff/clone");
+    let alternates = clone.join(".git/objects/info/alternates");
+    let objects = other.join(".git/objects");
+    std::fs::write(&alternates, format!("{}\n", objects.display())).unwrap();
+
+    // `riff update`: the new daemon starts the idle lead again.
+    let stopped = machine.stop_daemon().await;
+    assert!(stopped.success(), "{stopped}");
+    std::fs::write(machine.bin.path().join("links"), "0\n").unwrap();
+    machine.lead_idle = Some(Duration::from_millis(1));
+    machine.start_daemon().await;
+    let line = riff::text::lead_started_again(name);
+    wait_for(&machine.bin.path().join("daemon.out"), &line).await;
+
+    let main = PathBuf::from(git(
+        &machine.main,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    ))
+    .join("objects");
+    let o = main.display().to_string();
+    let args: Vec<String> = machine.read("run.args").lines().map(String::from).collect();
+    let bind = format!("{o}:{o}:ro");
+    assert!(
+        args.windows(2).any(|w| w[0] == "-v" && w[1] == bind),
+        "{args:?}"
+    );
+    let shown = other.display().to_string();
+    assert!(!args.iter().any(|a| a.contains(&shown)), "{args:?}");
+    assert!(
+        !mark.exists(),
+        "the program of the folder of the lead ran: {}",
+        std::fs::read_to_string(&mark).unwrap_or_default()
+    );
+
+    // The person ends the lead: the daemon ends its session.
+    isolated::write_whole(machine.bin.path().join("links"), "1\n");
+    std::fs::remove_file(machine.bin.path().join("hold")).unwrap();
+    machine.lead_ends().await;
 }

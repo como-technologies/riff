@@ -3653,14 +3653,16 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// The [`Start`] of the lead of `record` on the riff of this daemon,
     /// with all that can fail checked before the stop: the main clone, the
     /// facts of the host, the spec, the relay and the image. The main clone
-    /// is that of the wave of the repository. A host that runs no wave of
-    /// it keeps the lead going all the same: the main clone is the one that
-    /// the clone of the lead links to (01M6QB89JJEM9Z1V3RVZYHKYT0, [`crate::lead::linked_main`]).
-    /// `cause` is what starts the lead again (#2099).
+    /// comes from the records of the daemon: that of the wave of the
+    /// repository. A host that runs no wave of it keeps the lead going all
+    /// the same: the main clone is the one that the daemon serves for the
+    /// repository (01M6QB89JJEM9Z1V3RVZYHKYT0, 01M7EAZ9N9DY7JPXZP1V8JY01E,
+    /// [`crate::lead::main_of`]). `cause` is what starts the lead again
+    /// (#2099).
     async fn lead_start(&self, record: &Record, cause: LeadCause) -> Result<Start> {
         let repo = record.me.place().repo_text();
-        let wave = crate::wave::read_waves(&self.dir)?.remove(&repo);
-        let mut start = self.world.lead_again(wave.as_ref(), record).await?;
+        let main = crate::lead::main_of(&self.dir, &repo)?;
+        let mut start = self.world.lead_again(main.as_deref(), record).await?;
         start.cause = Some(cause);
         self.check(&start.spec)?;
         self.check_relay()?;
@@ -4910,19 +4912,23 @@ impl<R: Runtime + 'static> Daemon<R> {
 
     /// The lead of `record` runs on this host: the daemon serves its
     /// repository, so `riff who` shows the host and the commands with
-    /// `--host` reach it, also when the host gave no workers (#1644). The
-    /// main clone is the one that the clone of the lead links to
-    /// ([`crate::lead::linked_main`]). A repository that the daemon serves
-    /// already keeps its main clone. A lead whose clone links to no main
-    /// clone is not served. A fault shows in the log of the daemon.
+    /// `--host` reach it, also when the host gave no workers (#1644). A
+    /// repository that the daemon serves already keeps its main clone.
+    /// Else the main clone is the one in the records of the daemon: that
+    /// of the wave of the repository ([`crate::lead::main_of`],
+    /// 01M7EAZ9N9DY7JPXZP1V8JY01E), never one that a file of the clone of
+    /// the lead names. A lead with no wave is not served. A fault shows in
+    /// the log of the daemon.
     fn serve_lead(&self, record: &Record) {
         let place = record.me.place();
         let repo = place.repo_text();
         if remote::read_served(&self.dir).is_ok_and(|served| served.contains_key(&repo)) {
             return;
         }
-        let Ok(main) = crate::lead::linked_main(&record.folder.join("clone")) else {
-            return;
+        let main = match crate::lead::main_of(&self.dir, &repo) {
+            Ok(Some(main)) => main,
+            Ok(None) => return,
+            Err(e) => return eprintln!("riff daemon: {e:#}"),
         };
         let wave = Wave {
             repo,
@@ -5286,6 +5292,42 @@ impl<R: Runtime + 'static> Daemon<R> {
         Ok(())
     }
 
+    /// The host runs no git in a folder that the session of `spec` can
+    /// write (01M7EAZ9JS8K3TBWG8ZXKV00J9): the guard of the git of the
+    /// host ([`crate::host_git::guard_also`]) gets the source of each bind
+    /// with write, and with a volume, the folders of the volumes
+    /// ([`Daemon::guard_volumes`]). The daemon calls it before the start
+    /// of each container.
+    async fn guard_writes(&self, spec: &SessionSpec) {
+        let mut volume = false;
+        for bind in spec.binds.iter().filter(|b| b.write) {
+            match &bind.source {
+                Source::Path(path) => crate::host_git::guard_also(path),
+                Source::Volume(_) => volume = true,
+            }
+        }
+        if volume {
+            self.guard_volumes().await;
+        }
+    }
+
+    /// The guard of the git of the host gets the folders of the volumes of
+    /// the runtime ([`Runtime::volume_folders`],
+    /// 01M7EAZ9JS8K3TBWG8ZXKV00J9): a `riff.toml` can bind each volume
+    /// with write. The daemon calls it at its start ([`Daemon::recover`]),
+    /// and before the start of each container with a volume. A fault shows
+    /// in the log of the daemon.
+    async fn guard_volumes(&self) {
+        match self.runtime.volume_folders().await {
+            Ok(folders) => {
+                for folder in &folders {
+                    crate::host_git::guard_also(folder);
+                }
+            }
+            Err(e) => eprintln!("riff daemon: {e:#}"),
+        }
+    }
+
     /// Owns the session of `record`: its log, its record on disk, and
     /// its socket. With `again`, the daemon takes up a session that runs:
     /// it goes on with the log, and binds the socket again in the folder
@@ -5588,6 +5630,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             self.start_failed(&owned, out, format!("{e:#}"));
             return record;
         }
+        self.guard_writes(&spec).await;
         // The line of a lead names what started it (#2099). The lines of
         // the session keep it for a later follower, as `riff daemon
         // events`. The follower of the start gets no copy: in the daemon,
@@ -6471,7 +6514,10 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// other record
     /// (01M4ZHT01HH88KPA8628M7VBEY). Call it after [`listen`], before
     /// [`Daemon::serve`]. For each session that it took up, a task looks if
-    /// the container reaches the network (`lost_network`).
+    /// the container reaches the network (`lost_network`). First the guard
+    /// of the git of the host gets the folders of the volumes
+    /// (`Daemon::guard_volumes`, 01M7EAZ9JS8K3TBWG8ZXKV00J9): a session
+    /// that ran before wrote them.
     ///
     /// The job of a wave whose container does not run, for example after a
     /// restart of the host, gets its steps after the end
@@ -6496,6 +6542,7 @@ impl<R: Runtime + 'static> Daemon<R> {
     ///     W->>S: claim issue-12: granted, one new start
     /// ```
     pub async fn recover(self: &Arc<Self>) {
+        self.guard_volumes().await;
         let Ok(entries) = std::fs::read_dir(self.dir.join(LIVE)) else {
             return;
         };
@@ -8700,6 +8747,78 @@ mod tests {
         assert!(here.fake.calls().is_empty(), "{:?}", here.fake.calls());
     }
 
+    /// 01M7EAZ9JS8K3TBWG8ZXKV00J9 (#2151): a session writes a volume of
+    /// `riff.toml` and a bind with write out of the folders of riff. Before
+    /// the start of its container, the daemon gives both to the guard: the
+    /// host runs no git there, and the program of a git config there does
+    /// not run. A bind with no write stays open to git.
+    #[tokio::test]
+    async fn the_host_runs_no_git_in_a_volume_or_a_bind_that_a_session_can_write() {
+        let root = tempfile::tempdir().unwrap();
+        let volume = root.path().join("volumes/riff-cargo/_data");
+        let fake = Fake::default()
+            .with_image(IMAGE)
+            .with_volume_folder(&volume);
+        let here = Here::new(fake).await;
+        let mark = root.path().join("mark");
+        let in_volume = volume.join("clone");
+        let bound = root.path().join("bound");
+        crate::host_git::hostile_clone(&in_volume, &mark);
+        crate::host_git::hostile_clone(&bound, &mark);
+        let read_only = root.path().join("read-only");
+        std::fs::create_dir_all(&read_only).unwrap();
+        assert!(crate::host_git::guard(&in_volume).is_ok());
+        assert!(crate::host_git::guard(&bound).is_ok());
+
+        let mut start = here.start("riff-issue-2-bbbbbbbb", "issue-2");
+        let bind = |source: Source, target: &str, write: bool| Bind {
+            source,
+            target: target.into(),
+            write,
+        };
+        start.spec.binds.extend([
+            bind(
+                Source::Volume("riff-cargo".into()),
+                "/home/mike/.cargo",
+                true,
+            ),
+            bind(Source::Path(bound.clone()), "/bound", true),
+            bind(Source::Path(read_only.clone()), "/read-only", false),
+        ]);
+        let (_client, _) = here.started(start).await;
+        for folder in [&in_volume, &bound] {
+            let error = crate::host_git::output(folder, &["status"])
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains("a folder that a session can write"),
+                "{error}"
+            );
+        }
+        assert!(crate::host_git::guard(&read_only).is_ok());
+        assert!(!mark.exists(), "the program of a git config ran");
+    }
+
+    /// 01M7EAZ9JS8K3TBWG8ZXKV00J9: a session that ran before wrote a
+    /// volume. At its start, the daemon gives the folders of the volumes
+    /// to the guard, before the start of any container.
+    #[tokio::test]
+    async fn at_its_start_the_daemon_guards_the_folders_of_the_volumes() {
+        let root = tempfile::tempdir().unwrap();
+        let store = root.path().join("volumes");
+        let fake = Fake::default().with_image(IMAGE).with_volume_folder(&store);
+        let here = Here::new(fake).await;
+        let mark = root.path().join("mark");
+        let clone = store.join("riff-cargo/_data/clone");
+        crate::host_git::hostile_clone(&clone, &mark);
+        assert!(crate::host_git::guard(&clone).is_ok());
+
+        here.daemon.recover().await;
+        assert!(crate::host_git::output(&clone, &["status"]).is_err());
+        assert!(here.fake.calls().is_empty(), "{:?}", here.fake.calls());
+        assert!(!mark.exists(), "the program of a git config ran");
+    }
+
     /// A path through a link, also one that does not exist yet, resolves to
     /// the real folder, as `/var` on macOS does.
     #[test]
@@ -9753,6 +9872,8 @@ mod tests {
         /// Why [`World::lead_again`] fails, when it does: with `true`, as a
         /// clone with no main clone ([`crate::lead::NoMain`]).
         again_fault: Mutex<Option<(String, bool)>>,
+        /// The main clone of each [`World::lead_again`], in order.
+        again_mains: Mutex<Vec<Option<PathBuf>>>,
         /// The answer of [`World::github_token`] to each ask, by its
         /// number from 0. With none, the token of the person.
         github: Option<Arc<GiveToken>>,
@@ -10281,11 +10402,15 @@ mod tests {
         /// the spec of `claude --resume`, with a value for each variable of the host.
         fn lead_again<'a>(
             &'a self,
-            _: Option<&'a Wave>,
+            main: Option<&'a Path>,
             record: &'a Record,
         ) -> crate::wave::BoxFuture<'a, Result<Start>> {
             Box::pin(async move {
                 self.note(format!("start again {}", record.live.name));
+                self.again_mains
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .push(main.map(Path::to_owned));
                 if self.locked.load(std::sync::atomic::Ordering::SeqCst) {
                     return Err(gh_locked());
                 }
@@ -10873,8 +10998,7 @@ mod tests {
         let terminal = format!("terminal {LEAD}");
 
         // The daemon finds no main clone: the lead stays on the old riff.
-        let clone = record.folder.join("clone");
-        let no_main = text::lead_again_no_main("como-technologies/riff", &clone);
+        let no_main = text::lead_again_no_main("como-technologies/riff");
         *server.again_fault.lock().unwrap() = Some((no_main.clone(), true));
         let line = text::lead_again_waits(LEAD, &no_main);
         assert_eq!(here.daemon.leads_again().await, std::slice::from_ref(&line));
@@ -11778,30 +11902,48 @@ mod tests {
         assert!(remote::read_served(&here.dir).unwrap().contains_key(repo));
     }
 
-    /// #1644, 01M6QVSWQZE41BMQ6YN2963C4V: the daemon serves the repository
-    /// of a lead that starts, with the main clone that the clone of the
-    /// lead links to. It changes nothing for a repository that it serves.
-    /// A clone with no link gives no service.
+    /// #1644, 01M6QVSWQZE41BMQ6YN2963C4V, 01M7EAZ9N9DY7JPXZP1V8JY01E
+    /// (#2151): the daemon serves the repository of a lead that starts,
+    /// with the main clone of the wave of the repository. The alternates of
+    /// the clone of the lead name another folder, whose git config names a
+    /// program: the daemon takes no main clone from them, and runs no git
+    /// there. It changes nothing for a repository that it serves. A lead
+    /// with no wave gives no service.
     #[tokio::test]
-    async fn a_lead_makes_its_daemon_serve_the_repository_with_the_main_clone_of_its_clone() {
+    async fn a_lead_makes_its_daemon_serve_the_repository_with_the_main_clone_of_its_wave() {
         let here = Here::new(Fake::default().with_image(IMAGE)).await;
         let repo = "como-technologies/riff";
         let mut start = here.start(LEAD, "lead");
         start.terminal = true;
         let (_client, _) = here.started(start).await;
-        // The clone of the test links to no main clone.
+        // The daemon runs no wave of the repository.
         assert!(remote::read_served(&here.dir).unwrap().is_empty());
         assert_eq!(parts::of(&here.dir, repo).word(), "lead");
 
+        // The lead names a hostile folder in the alternates of its clone.
         let record = here.daemon.records().remove(0);
-        let main = here.root.path().join("main");
+        let hostile = here.root.path().join("hostile");
+        let mark = here.root.path().join("mark");
+        crate::host_git::hostile_clone(&hostile, &mark);
         let info = record.folder.join("clone/.git/objects/info");
         std::fs::create_dir_all(&info).unwrap();
         std::fs::write(
             info.join("alternates"),
-            format!("{}\n", main.join(".git/objects").display()),
+            format!("{}\n", hostile.join(".git/objects").display()),
         )
         .unwrap();
+        here.daemon.serve_lead(&record);
+        assert!(remote::read_served(&here.dir).unwrap().is_empty());
+
+        // With a wave, the daemon serves the main clone of the wave.
+        let main = here.root.path().join("main");
+        let wave = Wave {
+            repo: repo.into(),
+            main: main.clone(),
+            server: record.server.clone(),
+            host: record.me.place().host().to_owned(),
+        };
+        crate::wave::write_waves(&here.dir, &BTreeMap::from([(repo.to_owned(), wave)])).unwrap();
         here.daemon.serve_lead(&record);
         let served = remote::read_served(&here.dir).unwrap();
         assert_eq!(served[repo].wave.main, main);
@@ -11810,8 +11952,39 @@ mod tests {
         // A second call keeps the service as it is.
         here.daemon.serve_lead(&record);
         assert_eq!(remote::read_served(&here.dir).unwrap(), served);
-        // The daemon runs no wave for it.
-        assert!(crate::wave::read_waves(&here.dir).unwrap().is_empty());
+        assert!(!mark.exists(), "the program of the hostile folder ran");
+    }
+
+    /// 01M7EAZ9N9DY7JPXZP1V8JY01E (#2151): the host runs no wave of the
+    /// repository of a lead, and the alternates of the clone of the lead
+    /// name another folder. The start again takes the main clone that the
+    /// daemon serves for the repository.
+    #[tokio::test]
+    async fn a_lead_starts_again_from_the_main_clone_that_the_daemon_serves_not_from_its_clone() {
+        let server = Arc::new(Server::default());
+        let world: Arc<dyn World> = server.clone();
+        let here =
+            Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
+        let record = started_lead(&here).await;
+        transcript_of(&record, 600);
+        update_riff(&here);
+        let repo = "como-technologies/riff";
+        let info = record.folder.join("clone/.git/objects/info");
+        std::fs::create_dir_all(&info).unwrap();
+        let hostile = here.root.path().join("hostile");
+        let alternates = format!("{}\n", hostile.join(".git/objects").display());
+        std::fs::write(info.join("alternates"), alternates).unwrap();
+
+        // The daemon serves the repository from another main clone, and
+        // runs no wave of it.
+        let mut wave = remote::read_served(&here.dir).unwrap()[repo].wave.clone();
+        let served = here.root.path().join("served");
+        wave.main = served.clone();
+        remote::serve_in_file(&here.dir, &wave).unwrap();
+        assert!(here.daemon.stop_wave(repo).unwrap());
+        let line = text::lead_started_again(LEAD);
+        assert_eq!(here.daemon.leads_again().await, std::slice::from_ref(&line));
+        assert_eq!(*server.again_mains.lock().unwrap(), [Some(served)]);
     }
 
     /// #1643, 01M6QRDB4WQ1WD3NTZ50XXXJPC, 01M6QRDB7KVR8954B00RTETEK4,

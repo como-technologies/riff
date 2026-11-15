@@ -5261,10 +5261,10 @@ is gone: no update starts it again.
 flowchart TD
     A["the lead runs an old riff, and is idle"] --> W{"does the daemon run a wave<br/>of the repository?"}
     W -- yes --> M1["main clone: the one of the wave"]
-    W -- no --> M2["main clone: the one that the clone of the lead links to"]
+    W -- no --> M2["main clone: the one that the daemon serves<br/>for the repository"]
     M1 --> S["stop the container, start it again:<br/>claude --resume, no session for an item"]
     M2 --> S
-    M2 -. "no link" .-> F["one line in riff chat: the lead stays on the old riff"]
+    M2 -. "the daemon serves none" .-> F["one line in riff chat: the lead stays on the old riff"]
 ```
 
 The start again runs no wave and starts no session for an item. You do
@@ -5282,12 +5282,14 @@ repository:
 riff daemon status
 ```
 
-The clone of the lead links to its main clone: riff makes it with
-`git clone --reference`. Suppose a clone has no such link, and the
-daemon runs no wave of the repository. Then the line in riff chat says
-so, and the lead stays on the old riff. riff has no step that gives the
-main clone and starts no session. `riff host join` in a clone of the
-repository gives it, and starts a session for each free item:
+The daemon takes the main clone from its own records, not from the
+clone of the lead: see the row "git: the clone and its alternates" in
+[What sessions share](how-it-works.md#what-sessions-share). Suppose the
+daemon runs no wave of the repository and serves no main clone of it.
+Then the line in riff chat says so, and the lead stays on the old riff.
+riff has no step that gives the main clone and starts no session. `riff
+host join` in a clone of the repository gives it, and starts a session
+for each free item:
 
 ```sh
 riff host join
