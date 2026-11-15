@@ -2075,9 +2075,9 @@ impl Out {
 }
 
 /// The lines of one connection on the socket of a session: each of
-/// at most [`crate::socket_lines::LINE_MAX`] bytes
-/// (01M7GEMCQQQT6TN8ABFGWRQBWR).
-type SessionLines = Lines<BufReader<crate::socket_lines::Limited<OwnedReadHalf>>>;
+/// at most [`crate::socket_lines::LINE_MAX`] bytes, in a read of at most
+/// [`crate::socket_lines::HELD`] bytes (01M7GEMCQQQT6TN8ABFGWRQBWR).
+type SessionLines = crate::socket_lines::Lines<OwnedReadHalf>;
 
 /// The value of the read `read` of the socket of a session. A fault of
 /// the read, as a line of more than [`crate::socket_lines::LINE_MAX`]
@@ -2550,7 +2550,24 @@ impl Owned {
                 eprintln!("riff daemon: {e:#}");
             }
         }
-        while let Some(Some(line)) = ends_at_fault(&out, lines.next_line().await) {
+        loop {
+            let line = match lines.next_line().await {
+                Ok(Some(line)) => line,
+                Ok(None) => break,
+                Err(e) => {
+                    // A relay of the version before sends a long event
+                    // whole. Its place keeps CUT_EVENT, so that the relay
+                    // goes on after it at its next connection
+                    // (01M7GPV2HGN527YPAFYK8CNEQY).
+                    if let Some(seq) = lines.too_long().and_then(Up::long_event) {
+                        self.event(seq, crate::session_relay::CUT_EVENT);
+                    }
+                    out.say(Say::Failed {
+                        error: e.to_string(),
+                    });
+                    break;
+                }
+            };
             // A line of a newer relay that this daemon does not know:
             // skip it.
             match serde_json::from_str::<Up>(&line) {
@@ -6158,12 +6175,12 @@ impl<R: Runtime + 'static> Daemon<R> {
 
     /// Answers one connection on the socket of the session `owned`. It
     /// reads lines of at most [`crate::socket_lines::LINE_MAX`] bytes
-    /// (1 MiB): a longer line ends the connection with an error that
-    /// names the session (01M7GEMCQQQT6TN8ABFGWRQBWR).
+    /// (1 MiB), in a read of at most [`crate::socket_lines::HELD`] bytes:
+    /// a longer line ends the connection with an error that names the
+    /// session (01M7GEMCQQQT6TN8ABFGWRQBWR).
     async fn answer_session(self: Arc<Self>, conn: UnixStream, owned: Arc<Owned>) {
         let (read, write) = conn.into_split();
-        let mut lines =
-            BufReader::new(crate::socket_lines::Limited::new(read, &owned.name)).lines();
+        let mut lines = crate::socket_lines::Lines::new(read, &owned.name);
         let ask = match lines.next_line().await {
             Ok(Some(first)) => session_hello(&first),
             Ok(None) => return,
@@ -6631,7 +6648,9 @@ impl<R: Runtime + 'static> Daemon<R> {
                 return;
             }
         };
-        // The reader may hold the first lines of the client already.
+        // The reader may hold the first lines of the client already. rmcp
+        // reads through the limit of the socket: a longer line ends the
+        // service.
         let stream = tokio::io::join(lines.into_inner(), write);
         let client = client.and_then(|c| serde_json::from_value(c).ok());
         let served = match client {
@@ -8220,17 +8239,32 @@ mod tests {
         assert!(matches!(end, Some(Say::Ended(_))), "{end:?}");
     }
 
-    /// Sends a line of 100 MiB with no line break on the connection of
-    /// `relay`: the daemon says `failed`, and ends the connection before
-    /// the end of the line. It gives each line that the daemon said
-    /// before.
-    async fn too_long(relay: Relay, failed: &Say) -> Vec<Say> {
+    /// A connection to the socket of the session in the folder `dir`,
+    /// with no hello.
+    async fn raw(dir: &Path) -> Relay {
+        let conn = connect_in(dir, SOCKET).await.unwrap();
+        let (read, write) = conn.into_split();
+        Relay {
+            lines: BufReader::new(read).lines(),
+            write,
+        }
+    }
+
+    /// Sends `start` and then 100 MiB with no line break on the
+    /// connection of `relay`: the daemon says `failed`, and ends the
+    /// connection before the end of the line. It gives each line that the
+    /// daemon said before.
+    async fn too_long(relay: Relay, start: &[u8], failed: &Say) -> Vec<Say> {
         let Relay {
             mut lines,
             mut write,
         } = relay;
+        let start = start.to_vec();
         let sent = tokio::spawn(async move {
             let part = vec![b'a'; 1024 * 1024];
+            if write.write_all(&start).await.is_err() {
+                return false;
+            }
             for _ in 0..100 {
                 if write.write_all(&part).await.is_err() {
                     return false;
@@ -8251,6 +8285,13 @@ mod tests {
         said
     }
 
+    /// The error of a line of more than 1 MiB on the socket of `name`.
+    fn too_long_on(name: &str) -> Say {
+        Say::Failed {
+            error: text::socket_line_too_long(name, crate::socket_lines::LINE_MAX),
+        }
+    }
+
     #[tokio::test]
     async fn a_socket_line_of_100_mib_ends_the_connection_with_an_error_that_names_the_session() {
         let here = Here::new(Fake::default().with_image(IMAGE)).await;
@@ -8258,29 +8299,16 @@ mod tests {
             .started(here.start("riff-issue-12-1a2b3c4d", "issue-12"))
             .await;
         let dir = session_dir(&here.dir, &name);
-        let failed = Say::Failed {
-            error: text::socket_line_too_long(&name, crate::socket_lines::LINE_MAX),
-        };
+        let failed = too_long_on(&name);
         // As the first line, and after a hello.
-        let conn = connect_in(&dir, SOCKET).await.unwrap();
-        let (read, write) = conn.into_split();
-        let first = Relay {
-            lines: BufReader::new(read).lines(),
-            write,
-        };
-        assert_eq!(too_long(first, &failed).await, []);
-        let conn = connect_in(&dir, SOCKET).await.unwrap();
-        let (read, write) = conn.into_split();
-        let mut hello = Relay {
-            lines: BufReader::new(read).lines(),
-            write,
-        };
+        assert_eq!(too_long(raw(&dir).await, b"", &failed).await, []);
+        let mut hello = raw(&dir).await;
         hello.send(&SessionAsk::Hello { protocol: PROTOCOL }).await;
-        let said = too_long(hello, &failed).await;
+        let said = too_long(hello, b"", &failed).await;
         assert!(matches!(said[..], [Say::Session { .. }]), "{said:?}");
         // The relay: the session goes on, and the relay connects again.
         let (relay, _) = Relay::connect(&dir, 0, false).await;
-        let said = too_long(relay, &failed).await;
+        let said = too_long(relay, b"", &failed).await;
         assert!(matches!(said[..], [Say::Input { .. }]), "{said:?}");
         let (mut relay, events) = Relay::connect(&dir, 1, false).await;
         assert_eq!(events, 0);
@@ -8288,6 +8316,70 @@ mod tests {
         relay.exit(2, 0).await;
         let (_, end) = to_the_end(&mut client).await;
         assert!(matches!(end, Some(Say::Ended(_))), "{end:?}");
+    }
+
+    #[tokio::test]
+    async fn a_socket_line_of_100_mib_ends_a_watch_and_a_follow_with_an_error_that_names_the_session()
+     {
+        // The wake never comes, so only the long line ends each wait.
+        let server = Arc::new(Server::default().with_no_wake());
+        let world: Arc<dyn World> = server.clone();
+        let here =
+            Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
+        let (_client, name) = here
+            .started(here.start("riff-issue-12-1a2b3c4d", "issue-12"))
+            .await;
+        let dir = session_dir(&here.dir, &name);
+        let failed = too_long_on(&name);
+        let mut watch = raw(&dir).await;
+        watch.send(&SessionAsk::Watch { protocol: PROTOCOL }).await;
+        assert_eq!(too_long(watch, b"", &failed).await, []);
+        let mut follow = raw(&dir).await;
+        follow
+            .send(&SessionAsk::Follow { protocol: PROTOCOL })
+            .await;
+        until(|| server.watches() == 1).await;
+        assert_eq!(too_long(follow, b"", &failed).await, []);
+    }
+
+    /// 01M4Z60B800BH5BHX0H9JVDG6A, 01M7GPV2HGN527YPAFYK8CNEQY: a relay of
+    /// the version before sends an event of 100 MiB whole. The daemon keeps CUT_EVENT in its place, and
+    /// ends the connection with the error. At its next connection the
+    /// relay goes on after that event: the session does not stall.
+    #[tokio::test]
+    async fn a_long_event_of_a_relay_of_the_version_before_keeps_its_place_and_the_relay_goes_on() {
+        use crate::session_relay::CUT_EVENT;
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let start = here.start("riff-issue-12-1a2b3c4d", "issue-12");
+        let log = start.folder.join(EVENTS);
+        let (mut client, name) = here.started(start).await;
+        let dir = session_dir(&here.dir, &name);
+        let old = |inputs| SessionAsk::Relay {
+            protocol: PROTOCOL - 1,
+            inputs,
+            closed: false,
+            held: false,
+        };
+        let (relay, had) = Relay::connect_as(&dir, old(0)).await;
+        assert_eq!(had, 0);
+        let event = br#"{"relay":"event","seq":1,"line":"{\"type\":\"user\",\"data\":\""#;
+        let said = too_long(relay, event, &too_long_on(&name)).await;
+        assert!(matches!(said[..], [Say::Input { .. }]), "{said:?}");
+        let (mut relay, had) = Relay::connect_as(&dir, old(1)).await;
+        assert_eq!(had, 1);
+        relay.event(2, r#"{"type":"system"}"#).await;
+        relay.exit(3, 0).await;
+        let (said, end) = to_the_end(&mut client).await;
+        assert!(matches!(end, Some(Say::Ended(_))), "{end:?}");
+        let system = r#"{"type":"system"}"#;
+        assert_eq!(
+            events(&said),
+            [(1, CUT_EVENT.to_owned()), (2, system.to_owned())]
+        );
+        assert_eq!(
+            std::fs::read_to_string(&log).unwrap(),
+            format!("{CUT_EVENT}\n{system}\n")
+        );
     }
 
     #[tokio::test]
@@ -10274,6 +10366,9 @@ mod tests {
         gh: Option<crate::pr::Gh>,
         gate: Option<Arc<tokio::sync::Semaphore>>,
         watches: Mutex<Vec<mpsc::UnboundedSender<Wake>>>,
+        /// [`World::wake`] gives no wake: it waits for ever
+        /// ([`Server::with_no_wake`]).
+        no_wake: bool,
         /// The marks and the `gh` of [`World::meter`].
         meter: Option<(PathBuf, crate::pr::Gh)>,
         /// The leave marks of [`World::marks`].
@@ -10470,6 +10565,14 @@ mod tests {
         pub(super) fn with_meter(self, dir: &Path, gh: crate::pr::Gh) -> Server {
             Server {
                 meter: Some((dir.to_owned(), gh)),
+                ..self
+            }
+        }
+
+        /// The same forge, with no wake: [`World::wake`] waits for ever.
+        pub(super) fn with_no_wake(self) -> Server {
+            Server {
+                no_wake: true,
                 ..self
             }
         }
@@ -10882,6 +10985,9 @@ mod tests {
         }
 
         fn wake<'a>(&'a self, record: &'a Record) -> crate::wave::BoxFuture<'a, Result<String>> {
+            if self.no_wake {
+                return Box::pin(std::future::pending());
+            }
             Box::pin(async move { Ok(format!("a wake of {}", record.live.item)) })
         }
 

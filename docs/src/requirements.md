@@ -3581,6 +3581,10 @@
   01M5NG4Z0XS1B4QYXFJBW9CWGX, 01M5QVH3MAEPPJN9PPVDX6N2EY,
   01M6FYW8NG0E9HYPWTG2RV5EAM, 01M6XZ2T9TPZC1X36Y2ZXZ83C0 and
   01M7641T7FX9416CYY1XKHTJE6 in part.
+- **01M7GPV2Q8HKC5X2C73PE7S5CB** `riff relay denied --send` gives the
+  refusals to the riff daemon in parts, each in a line of at most 1 MiB
+  on the socket of the session. A refusal that is too long for such a
+  line alone goes.
 
 ## Threads
 
@@ -6787,10 +6791,17 @@ of this part when they merge.
   goes. Each sequence of bytes that is not UTF-8 becomes the
   replacement character `�`, and the line stays at most 64 KiB.
 - **01M7GEMCQQQT6TN8ABFGWRQBWR** The daemon reads each line on the
-  socket of a session with a limit of 1 MiB. A longer line ends the
-  connection with an error that names the session. The daemon writes the
-  error into its log, and sends it on the connection, apart from a
-  connection of the riff tools.
+  socket of a session with a limit of 1 MiB. A read of the daemon holds
+  at most 1 MiB and a buffer of 8 KiB. rmcp reads the lines of the riff
+  tools itself, with the same limit. A longer line ends the connection
+  with an error that names the session. The daemon writes the error
+  into its log, and sends it on the connection, apart from a connection
+  of the riff tools.
+- **01M7GPV2HGN527YPAFYK8CNEQY** A relay of the version before sends
+  each event whole. At an event of more than 1 MiB, the daemon keeps
+  `{"type":null}` in the place of that event, and then ends the
+  connection. So at its next connection, the relay goes on after that
+  event.
 
 ### riff relay
 
@@ -6861,8 +6872,12 @@ of this part when they merge.
   in a line of at most 1 MiB on the socket of the session. In a longer
   event, each string of more than 4 KiB keeps its first 4 KiB, with no
   start of a secret at its end, and the mark `[riff cut the rest of this
-  text]`. An event that is still too long, or that is no JSON, keeps
-  only its type.
+  text]`. An event that is still too long keeps only its type, when its
+  type is a string. Each other long event becomes `{"type":null}`.
+- **01M7GPV2MCPHTQRW6SGF1227ZD** `riff relay mcp` sends no call of a
+  riff tool of more than 1 MiB to the daemon. It answers such a call at
+  once with an error that says that the call is too long. A notification
+  of more than 1 MiB goes.
 
 ### The waves of the daemon
 

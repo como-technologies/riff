@@ -75,15 +75,16 @@ const KEEP: usize = LINE_MAX + 1;
 /// kept bytes of a line.
 pub const HELD: usize = BUF + KEEP;
 
-/// One line of the output of a container, with no line break.
+/// One line of the output of a container, with no line break. Only
+/// [`Lines`] makes one, so its text has at most [`LINE_MAX`] bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Line {
     /// The kept part of the line: at most [`LINE_MAX`] bytes. Each
     /// sequence of bytes that is not UTF-8 is the replacement character
     /// `�`.
-    pub text: String,
+    text: String,
     /// riff cut the line: the rest of it went.
-    pub cut: bool,
+    cut: bool,
 }
 
 impl Line {
@@ -92,14 +93,26 @@ impl Line {
     /// end ([`Scrub::clean_cut`]), and ends with [`text::LINE_CUT`].
     ///
     /// ```
-    /// use riff::output_lines::Line;
+    /// use riff::output_lines::{LINE_MAX, Lines};
     /// use riff::run::Scrub;
     /// use riff::text::LINE_CUT;
     ///
     /// let scrub = Scrub::new(["sk-ant-oat01-secret1".to_owned()]);
-    /// let line = |text: &str, cut| Line { text: text.into(), cut }.clean(&scrub);
-    /// assert_eq!(line("a sk-ant-oat01-secret1 b", false), "a [secret] b");
-    /// assert_eq!(line("a sk-ant-oat01-sec", true), format!("a {LINE_CUT}"));
+    /// // The cut falls before the last byte of the second secret.
+    /// let a = "a".repeat(LINE_MAX - 20);
+    /// let output = format!("a sk-ant-oat01-secret1 b\n{a} sk-ant-oat01-secret1 and more\n");
+    /// let shown = tokio::runtime::Builder::new_current_thread()
+    ///     .build()?
+    ///     .block_on(async {
+    ///         let mut lines = Lines::new(output.as_bytes());
+    ///         let mut shown = Vec::new();
+    ///         while let Some(line) = lines.next_line().await? {
+    ///             shown.push(line.clean(&scrub));
+    ///         }
+    ///         Ok::<_, std::io::Error>(shown)
+    ///     })?;
+    /// assert_eq!(shown, ["a [secret] b".to_owned(), format!("{a} {LINE_CUT}")]);
+    /// # Ok::<(), anyhow::Error>(())
     /// ```
     pub fn clean(self, scrub: &Scrub) -> String {
         let Line { mut text, cut } = self;
@@ -144,8 +157,8 @@ impl<R: AsyncRead + Unpin> Lines<R> {
     }
 
     /// The next line, or `None` at the end of the output. A line of more
-    /// than [`LINE_MAX`] bytes comes at once, as a [`Line::cut`]. The next
-    /// call drops the rest of that line first.
+    /// than [`LINE_MAX`] bytes comes at once, as a [`Line`] that riff cut.
+    /// The next call drops the rest of that line first.
     pub async fn next_line(&mut self) -> io::Result<Option<Line>> {
         while self.skip {
             let buf = self.from.fill_buf().await?;
@@ -171,12 +184,12 @@ impl<R: AsyncRead + Unpin> Lines<R> {
             }
             let room = KEEP - self.kept.len();
             if let Some(at) = buf.iter().position(|&b| b == b'\n') {
-                keep(&mut self.kept, &buf[..at.min(room)]);
+                keep(&mut self.kept, &buf[..at.min(room)], KEEP);
                 self.from.consume(at + 1);
                 return Ok(Some(self.line(at <= room)));
             }
             let n = buf.len();
-            keep(&mut self.kept, &buf[..n.min(room)]);
+            keep(&mut self.kept, &buf[..n.min(room)], KEEP);
             self.from.consume(n);
             if n > room {
                 self.skip = true;
@@ -221,12 +234,14 @@ fn whole_chars(bytes: &[u8]) -> &[u8] {
     &bytes[..bytes.len() - part]
 }
 
-/// Puts `bytes` at the end of `kept`, which grows to [`KEEP`] bytes at
-/// most. The caller gives no more than the room.
-fn keep(kept: &mut Vec<u8>, bytes: &[u8]) {
+/// Puts `bytes` at the end of `kept`, which grows to `max` bytes at
+/// most: it doubles its space, but never past `max`. The caller gives no
+/// more than the room. [`crate::socket_lines::Lines`] keeps its lines
+/// with it too.
+pub(crate) fn keep(kept: &mut Vec<u8>, bytes: &[u8], max: usize) {
     let need = kept.len() + bytes.len();
     if need > kept.capacity() {
-        let size = (kept.capacity() * 2).max(need).min(KEEP);
+        let size = (kept.capacity() * 2).max(need).min(max);
         kept.reserve_exact(size - kept.len());
     }
     kept.extend_from_slice(bytes);
@@ -376,10 +391,10 @@ mod tests {
     fn the_space_of_a_line_grows_to_the_limit_at_most() {
         let mut kept = Vec::new();
         for _ in 0..KEEP / 100 {
-            keep(&mut kept, &[b'a'; 100]);
+            keep(&mut kept, &[b'a'; 100], KEEP);
         }
         let rest = vec![b'a'; KEEP - kept.len()];
-        keep(&mut kept, &rest);
+        keep(&mut kept, &rest, KEEP);
         assert_eq!(kept.len(), KEEP);
         assert_eq!(kept.capacity(), KEEP);
     }

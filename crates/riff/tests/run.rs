@@ -1988,6 +1988,88 @@ async fn output_of(child: std::process::Child) -> Output {
         .unwrap()
 }
 
+/// Connects to the socket `riff.sock` in the folder `dir` of a session,
+/// sends `start` and then 100 MiB with no line break, and gives each line
+/// of the daemon until the end of the connection. The daemon ends the
+/// connection before the end of the line.
+async fn too_long(dir: &Path, start: String) -> Vec<Value> {
+    let dir = dir.to_owned();
+    tokio::task::spawn_blocking(move || {
+        use std::io::{BufRead, Write};
+        use std::os::fd::AsRawFd;
+        let folder = std::fs::File::open(dir).unwrap();
+        let path = format!("/proc/self/fd/{}/riff.sock", folder.as_raw_fd());
+        let conn = std::os::unix::net::UnixStream::connect(path).unwrap();
+        let mut write = conn.try_clone().unwrap();
+        let sent = std::thread::spawn(move || {
+            let part = vec![b'a'; 1024 * 1024];
+            write.write_all(start.as_bytes()).is_ok()
+                && (0..100).all(|_| write.write_all(&part).is_ok())
+        });
+        let said = std::io::BufReader::new(conn)
+            .lines()
+            .map_while(Result::ok)
+            .map(|line| serde_json::from_str(&line).unwrap())
+            .collect();
+        assert!(!sent.join().unwrap(), "the daemon took the whole line");
+        said
+    })
+    .await
+    .unwrap()
+}
+
+/// 01M7GEMCQQQT6TN8ABFGWRQBWR: a process in the container sends a line
+/// of 100 MiB with no line break on the socket of its session: as the
+/// first line, and on a connection of the riff tools. The daemon ends
+/// each connection. The first connection gets the error, which names the
+/// session. The riff tools speak MCP, and get no line. The log of the
+/// daemon gets the error one time for each connection, and the session
+/// runs on.
+#[tokio::test]
+async fn a_socket_line_of_100_mib_ends_its_connection_and_the_log_of_the_daemon_names_the_session()
+{
+    use riff::daemon::{PROTOCOL, Say, SessionAsk};
+    let machine = Machine::new().await;
+    machine.lead().await;
+    let (child, name, _) = hanging_run(&machine).await;
+    let dir = machine.socket_dir(&name);
+    let error = riff::text::socket_line_too_long(&name, riff::socket_lines::LINE_MAX);
+    let failed = serde_json::to_value(Say::Failed {
+        error: error.clone(),
+    })
+    .unwrap();
+    assert_eq!(too_long(&dir, String::new()).await, [failed]);
+    let mcp = SessionAsk::Mcp {
+        protocol: PROTOCOL,
+        client: None,
+    };
+    let mcp = serde_json::to_string(&mcp).unwrap() + "\n";
+    assert_eq!(too_long(&dir, mcp).await, Vec::<Value>::new());
+
+    let logged = format!("riff daemon: {error}");
+    let count = || {
+        let log = machine.read("daemon.out");
+        log.lines().filter(|line| *line == logged).count()
+    };
+    let started = Instant::now();
+    while count() < 2 {
+        assert!(
+            started.elapsed() < isolated::HANG,
+            "{}",
+            machine.read("daemon.out")
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(count(), 2, "{}", machine.read("daemon.out"));
+    // The session runs on.
+    assert_eq!(who_is(&dir)["name"], name.as_str());
+    let pid = nix::unistd::Pid::from_raw(child.id() as i32);
+    nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGTERM).unwrap();
+    let out = output_of(child).await;
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
+}
+
 #[tokio::test]
 async fn a_stop_of_riff_run_stops_the_container_and_releases_the_item() {
     let machine = Machine::new().await;

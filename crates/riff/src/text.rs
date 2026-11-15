@@ -8609,6 +8609,24 @@ pub fn relay_unknown_hook(args: &str, event: &str) -> String {
 pub const RELAY_CALL_LOST: &str =
     "The riff daemon went away before its answer. Call the riff tool again.";
 
+/// A call of a riff tool in a line of more than `max` bytes: the relay
+/// does not send it to the daemon (01M7GPV2MCPHTQRW6SGF1227ZD).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::relay_call_too_long(1024 * 1024),
+///     "This call of a riff tool has more than 1 MiB, and riff takes no call of more than \
+///      1 MiB. Make its input shorter."
+/// );
+/// ```
+pub fn relay_call_too_long(max: usize) -> String {
+    let max = max / (1024 * 1024);
+    format!(
+        "This call of a riff tool has more than {max} MiB, and riff takes no call of more than \
+         {max} MiB. Make its input shorter."
+    )
+}
+
 /// An ask of another version of the protocol
 /// (01M4ZDTVVV56X964S28GS6K2Z2).
 ///

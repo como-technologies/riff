@@ -60,7 +60,7 @@
 //!
 //! | From | Line | Means |
 //! |---|---|---|
-//! | relay | [`Up::Event`] | One line of the stdout of `claude`, with its sequence number, with no secret. |
+//! | relay | [`Up::Event`] | One line of the stdout of `claude`, with its sequence number, with no secret. The long strings of a long line are cut ([`Up::event`]). |
 //! | relay | [`Up::Exit`] | `claude` ended, with its exit code. It has the next sequence number. |
 //! | relay | [`Up::Held`] | `claude` ended for a takeover. The relay waits for [`Say::GoOn`]. |
 //! | daemon | [`Say::Input`] | One line for the stdin of `claude`: a wake. |
@@ -237,7 +237,9 @@ pub const INTERRUPT: &str =
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "relay", rename_all = "snake_case")]
 pub enum Up {
-    /// One line of the stdout of `claude`, with no secret.
+    /// One line of the stdout of `claude`, with no secret. A line that is
+    /// too long for the socket has its long strings cut, or only its type
+    /// ([`Up::event`]).
     Event {
         /// Its sequence number: its line in `events.jsonl`.
         seq: u64,
@@ -279,12 +281,13 @@ impl Up {
     /// (01M7GEMCTB9Y426AW3TDA1E9HX). In a longer event, each string of
     /// more than [`STRING_KEEP`] bytes keeps its first bytes, with no
     /// secret of `scrub` and no start of one at its end, and ends with
-    /// [`text::TEXT_CUT`]. An event that is still too long, or that is no
-    /// JSON, keeps only its type.
+    /// [`text::TEXT_CUT`]. An event that is still too long keeps only its
+    /// type, when the type is a string. Each other long event becomes
+    /// [`CUT_EVENT`].
     ///
     /// ```
     /// use riff::run::Scrub;
-    /// use riff::session_relay::{STRING_KEEP, Up};
+    /// use riff::session_relay::{CUT_EVENT, STRING_KEEP, Up};
     /// use riff::socket_lines::LINE_MAX;
     /// use riff::text::TEXT_CUT;
     /// use serde_json::{Value, json};
@@ -302,27 +305,72 @@ impl Up {
     /// let shown: Value = serde_json::from_str(&event(long.to_string())).unwrap();
     /// let cut = format!("{}{TEXT_CUT}", &data[..STRING_KEEP]);
     /// assert_eq!(shown, json!({"type": "user", "data": cut, "id": "t1"}));
-    /// // Many short strings, and no JSON: only the type stays.
-    /// let many = json!({"type": "user", "parts": vec!["a".repeat(100); LINE_MAX / 100]});
+    /// // Many short strings: only the type stays.
+    /// let parts = vec!["a".repeat(100); LINE_MAX / 100];
+    /// let many = json!({"type": "user", "parts": parts});
     /// assert_eq!(event(many.to_string()), r#"{"type":"user"}"#);
-    /// assert_eq!(event("x".repeat(LINE_MAX + 1)), r#"{"type":null}"#);
+    /// // A type that is no string, and no JSON.
+    /// let many = json!({"type": parts});
+    /// assert_eq!(event(many.to_string()), CUT_EVENT);
+    /// assert_eq!(event("x".repeat(LINE_MAX + 1)), CUT_EVENT);
     /// ```
     pub fn event(seq: u64, line: String, scrub: &Scrub) -> Self {
         if fits(seq, &line) {
             return Up::Event { seq, line };
         }
-        let mut event = serde_json::from_str(&line).unwrap_or(json!({ "type": null }));
+        let cut = |line: &str| Up::Event {
+            seq,
+            line: line.to_owned(),
+        };
+        let Ok(mut event) = serde_json::from_str::<Value>(&line) else {
+            return cut(CUT_EVENT);
+        };
         cut_strings(&mut event, scrub);
         // The read of the JSON takes out its escapes, so the scrub runs
         // again.
         let clean = |event: &Value| scrub.clean(&event.to_string()).into_owned();
-        let mut line = clean(&event);
-        if !fits(seq, &line) {
-            line = clean(&json!({ "type": event["type"] }));
+        let line = clean(&event);
+        if fits(seq, &line) {
+            return Up::Event { seq, line };
         }
-        Up::Event { seq, line }
+        // A string of the type has at most STRING_KEEP bytes now.
+        match event.get("type") {
+            Some(kind @ Value::String(_)) => cut(&clean(&json!({ "type": kind }))),
+            _ => cut(CUT_EVENT),
+        }
+    }
+
+    /// The sequence number of the event at the start `start` of a line of
+    /// a relay that is too long for the socket: a relay of the version
+    /// before sends each event whole (01M7GPV2HGN527YPAFYK8CNEQY). `None`
+    /// when `start` is no event, or its number may go on after `start`.
+    ///
+    /// ```
+    /// use riff::session_relay::Up;
+    ///
+    /// let event = Up::Event { seq: 42, line: "x".repeat(100) };
+    /// let line = serde_json::to_string(&event).unwrap();
+    /// assert_eq!(Up::long_event(&line.as_bytes()[..40]), Some(42));
+    /// assert_eq!(Up::long_event(br#"{"relay":"event","seq":4"#), None);
+    /// let exit = serde_json::to_string(&Up::Exit { seq: 3, code: Some(0) }).unwrap();
+    /// assert_eq!(Up::long_event(exit.as_bytes()), None);
+    /// assert_eq!(Up::long_event(b"aaaa"), None);
+    /// ```
+    pub fn long_event(start: &[u8]) -> Option<u64> {
+        let rest = start.strip_prefix(br#"{"relay":"event","seq":"#)?;
+        let digits = rest.iter().take_while(|b| b.is_ascii_digit()).count();
+        if rest.get(digits) != Some(&b',') {
+            return None;
+        }
+        std::str::from_utf8(&rest[..digits]).ok()?.parse().ok()
     }
 }
+
+/// The event in the place of an event of `claude` that cannot go on the
+/// socket whole, and keeps no type ([`Up::event`]). The daemon keeps it
+/// in the place of an event of more than [`socket_lines::LINE_MAX`] bytes
+/// from a relay of the version before (01M7GPV2HGN527YPAFYK8CNEQY).
+pub const CUT_EVENT: &str = r#"{"type":null}"#;
 
 /// The most bytes that the relay keeps of one string of an event that is
 /// too long for the socket ([`Up::event`]): 4 KiB.
@@ -1072,16 +1120,31 @@ pub async fn follow(socket: &Path, mut emit: impl FnMut(&str)) -> Result<()> {
 
 /// `riff relay denied --send` (01M57XY3Q6HEYQG27FE0CEQ7HB): takes each
 /// refusal of auto mode of `queue`, and gives them to the daemon on the
-/// socket at `socket` ([`SessionAsk::Denied`]). The daemon posts them as
-/// the session. Each refusal that the daemon did not post goes back to
-/// `queue` (01M57XY42CNR16M5G024PWKANV).
+/// socket at `socket` ([`SessionAsk::Denied`]), in parts that each go in
+/// one line of the socket ([`denial_parts`], 01M7GPV2Q8HKC5X2C73PE7S5CB).
+/// The daemon posts them as the session. Each refusal that the daemon did
+/// not post goes back to `queue` (01M57XY42CNR16M5G024PWKANV). A refusal
+/// that is too long for a line of the socket goes, as a line of the queue
+/// that is no refusal.
 pub async fn send_denials(socket: &Path, queue: &crate::denied::Queue) -> Result<()> {
-    let denials = queue.take();
+    let empty = denied_line(&[]);
+    let denials: Vec<_> = queue
+        .take()
+        .into_iter()
+        .filter(|d| empty + denial_len(d) <= socket_lines::LINE_MAX)
+        .collect();
     if denials.is_empty() {
         return Ok(());
     }
-    let posted = ask_denied(socket, &denials).await;
-    let posted = posted.as_ref().map_or(0, |n| (*n).min(denials.len()));
+    let mut posted = 0;
+    for part in denial_parts(&denials) {
+        let given = ask_denied(socket, part).await;
+        let given = given.as_ref().map_or(0, |n| (*n).min(part.len()));
+        posted += given;
+        if given < part.len() {
+            break;
+        }
+    }
     queue.keep(&denials[posted..])?;
     if posted < denials.len() {
         anyhow::bail!(
@@ -1090,6 +1153,61 @@ pub async fn send_denials(socket: &Path, queue: &crate::denied::Queue) -> Result
         );
     }
     Ok(())
+}
+
+/// `denials` in parts, in order. The line of [`SessionAsk::Denied`] of
+/// each part has at most [`socket_lines::LINE_MAX`] bytes, when each
+/// refusal fits in such a line alone.
+///
+/// ```
+/// use riff::denied::Denial;
+/// use riff::session_relay::{denial_parts, denied_line};
+/// use riff::socket_lines::LINE_MAX;
+///
+/// let denial = |at_ms| Denial {
+///     at_ms, reason: "no-verdict".into(), tool: "Bash".into(), head: "git push".into(),
+///     text: "a".repeat(300), worker: true, subagent: false,
+/// };
+/// let denials: Vec<Denial> = (0..4000).map(denial).collect();
+/// let parts = denial_parts(&denials);
+/// assert!(parts.len() > 1);
+/// assert!(parts.iter().all(|part| denied_line(part) <= LINE_MAX));
+/// assert_eq!(parts.concat(), denials);
+/// assert_eq!(denial_parts(&denials[..2]), [&denials[..2]]);
+/// assert!(denial_parts(&[]).is_empty());
+/// ```
+pub fn denial_parts(denials: &[crate::denied::Denial]) -> Vec<&[crate::denied::Denial]> {
+    let empty = denied_line(&[]);
+    let mut parts = Vec::new();
+    let (mut start, mut size) = (0, empty);
+    for (at, denial) in denials.iter().enumerate() {
+        // A comma before each refusal but the first of a part.
+        let len = denial_len(denial);
+        if at > start && size + 1 + len > socket_lines::LINE_MAX {
+            parts.push(&denials[start..at]);
+            (start, size) = (at, empty);
+        }
+        size += len + usize::from(at > start);
+    }
+    if start < denials.len() {
+        parts.push(&denials[start..]);
+    }
+    parts
+}
+
+/// The bytes of the line of [`SessionAsk::Denied`] with `denials`, with
+/// no line break.
+pub fn denied_line(denials: &[crate::denied::Denial]) -> usize {
+    let ask = SessionAsk::Denied {
+        protocol: PROTOCOL,
+        denials: denials.to_vec(),
+    };
+    serde_json::to_string(&ask).map_or(0, |line| line.len())
+}
+
+/// The bytes of `denial` in the line of [`SessionAsk::Denied`].
+fn denial_len(denial: &crate::denied::Denial) -> usize {
+    serde_json::to_string(denial).map_or(0, |line| line.len())
 }
 
 /// Gives `denials` to the daemon, and gives the number that it posted.
@@ -1244,6 +1362,24 @@ pub fn error_answer(id: &Value, message: &str) -> String {
     json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32603, "message": message}}).to_string()
 }
 
+/// True when the line `line` of `claude` is too long for the socket of
+/// the session: it has more than [`socket_lines::LINE_MAX`] bytes. Such a
+/// line does not go to the daemon, because the daemon would end the
+/// connection. A request gets its error answer on `output` at once
+/// ([`text::relay_call_too_long`], 01M7GPV2MCPHTQRW6SGF1227ZD).
+async fn too_long(line: &str, output: &mut (impl AsyncWrite + Unpin)) -> std::io::Result<bool> {
+    if line.len() <= socket_lines::LINE_MAX {
+        return Ok(false);
+    }
+    let message = serde_json::from_str::<Value>(line).unwrap_or_default();
+    if let (Some(_), Some(id)) = (message.get("method"), message.get("id")) {
+        let answer = error_answer(id, &text::relay_call_too_long(socket_lines::LINE_MAX));
+        output.write_all(format!("{answer}\n").as_bytes()).await?;
+        output.flush().await?;
+    }
+    Ok(true)
+}
+
 /// The calls of `claude` that the daemon did not answer, by their ID.
 #[derive(Debug, Default)]
 struct Calls(BTreeMap<String, Value>);
@@ -1280,8 +1416,9 @@ impl Calls {
 }
 
 /// `riff relay mcp`: the riff tools for `claude` on `input` and
-/// `output`, through the socket at `socket` ([`SessionAsk::Mcp`]). It
-/// ends when `claude` closes `input`.
+/// `output`, through the socket at `socket` ([`SessionAsk::Mcp`]). A call
+/// that is too long for the socket gets an error at once, and does not go
+/// ([`socket_lines::LINE_MAX`]). It ends when `claude` closes `input`.
 pub async fn mcp(
     socket: &Path,
     input: impl AsyncRead + Unpin,
@@ -1304,7 +1441,11 @@ pub async fn mcp(
                 tokio::select! {
                     () = &mut sleep => break,
                     line = from_claude.next_line() => match line? {
-                        Some(line) => waiting.push_back(line),
+                        Some(line) => {
+                            if !too_long(&line, &mut output).await? {
+                                waiting.push_back(line);
+                            }
+                        }
                         None => return Ok(()),
                     },
                 }
@@ -1329,8 +1470,10 @@ pub async fn mcp(
             tokio::select! {
                 line = from_claude.next_line() => match line? {
                     Some(line) => {
-                        client = calls.of_claude(&line).or(client);
-                        open = write.write_all(format!("{line}\n").as_bytes()).await.is_ok();
+                        if !too_long(&line, &mut output).await? {
+                            client = calls.of_claude(&line).or(client);
+                            open = write.write_all(format!("{line}\n").as_bytes()).await.is_ok();
+                        }
                     }
                     None => return Ok(()),
                 },
@@ -1924,6 +2067,165 @@ mod tests {
             .unwrap();
         assert_eq!(json(&mut from_mcp).await["id"], 2);
         drop(to_mcp);
+        shim.await.unwrap().unwrap();
+    }
+
+    /// The line of the event `line` on the socket, as [`Up::event`] gives
+    /// it.
+    fn sent(line: String, scrub: &Scrub) -> String {
+        serde_json::to_string(&Up::event(7, line, scrub)).unwrap()
+    }
+
+    #[test]
+    fn an_event_up_to_the_limit_goes_whole_and_one_byte_more_is_cut() {
+        let scrub = Scrub::default();
+        let event = |n| json!({"type": "user", "data": "a".repeat(n)}).to_string();
+        let whole = |line: String| serde_json::to_string(&Up::Event { seq: 7, line }).unwrap();
+        // Past the fast check of `fits`, and short of the limit.
+        let line = event(900 * 1024);
+        assert_eq!(sent(line.clone(), &scrub), whole(line));
+        // A line of the limit on the socket, and one byte more.
+        let empty = whole(event(0)).len();
+        let line = event(socket_lines::LINE_MAX - empty);
+        let at = sent(line.clone(), &scrub);
+        assert_eq!(at.len(), socket_lines::LINE_MAX);
+        assert_eq!(at, whole(line));
+        let over = sent(event(socket_lines::LINE_MAX - empty + 1), &scrub);
+        let Ok(Up::Event { line, .. }) = serde_json::from_str(&over) else {
+            panic!("{over}")
+        };
+        let cut = format!("{}{}", "a".repeat(STRING_KEEP), text::TEXT_CUT);
+        assert_eq!(
+            serde_json::from_str::<Value>(&line).unwrap(),
+            json!({"type": "user", "data": cut})
+        );
+    }
+
+    #[test]
+    fn the_second_scrub_takes_out_a_secret_that_the_json_of_a_long_event_escaped() {
+        let token = "sk-ant-oat01-secret1";
+        let scrub = Scrub::new([token.to_owned()]);
+        // `-` is `-`: the scrub of the line does not see the token.
+        let escaped = token.replace('-', "\\u002d");
+        let data = "a".repeat(socket_lines::LINE_MAX);
+        let line = format!(r#"{{"type":"user","note":"{escaped}","data":"{data}"}}"#);
+        assert_eq!(scrub.clean(&line), line);
+        let over = sent(line, &scrub);
+        assert!(!over.contains("sk-ant"), "{}", &over[..200]);
+        let Ok(Up::Event { line, .. }) = serde_json::from_str(&over) else {
+            panic!("{over}")
+        };
+        let event: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(event["note"], crate::run::HIDDEN);
+    }
+
+    /// A refusal at `at_ms`, with a text of 300 characters.
+    fn denial(at_ms: u64) -> crate::denied::Denial {
+        crate::denied::Denial {
+            at_ms,
+            reason: "no-verdict".into(),
+            tool: "Bash".into(),
+            head: "git push".into(),
+            text: "a".repeat(300),
+            worker: true,
+            subagent: false,
+        }
+    }
+
+    /// Takes the next ask of refusals on `daemon`, checks that its line
+    /// fits the socket, and posts `posted` of them. It gives the refusals.
+    async fn posts(
+        daemon: &Daemon,
+        posted: impl FnOnce(usize) -> usize,
+    ) -> Vec<crate::denied::Denial> {
+        let (conn, _) = daemon.listener.as_ref().unwrap().accept().await.unwrap();
+        let (read, mut write) = conn.into_split();
+        let line = BufReader::new(read).lines().next_line().await.unwrap();
+        let line = line.unwrap();
+        assert!(line.len() <= socket_lines::LINE_MAX, "{}", line.len());
+        let Ok(SessionAsk::Denied { denials, .. }) = serde_json::from_str(&line) else {
+            panic!("{}", &line[..100])
+        };
+        let count = posted(denials.len());
+        say(&mut write, &Say::Posted { count }).await;
+        denials
+    }
+
+    #[tokio::test]
+    async fn the_relay_sends_a_long_queue_of_refusals_in_parts_that_each_fit_a_line_of_the_socket()
+    {
+        use crate::denied::Queue;
+        let daemon = Daemon::new();
+        let dir = tempfile::tempdir().unwrap();
+        let queue = Queue::in_dir(dir.path());
+        let denials: Vec<_> = (0..4000).map(denial).collect();
+        // A refusal that fits no line goes.
+        let mut long = denial(4000);
+        long.text = "a".repeat(socket_lines::LINE_MAX);
+        queue.keep(&denials[..2000]).unwrap();
+        queue.keep(&[long]).unwrap();
+        queue.keep(&denials[2000..]).unwrap();
+        let socket = daemon.socket.clone();
+        let path = dir.path().to_owned();
+        let send = tokio::spawn(async move {
+            let queue = Queue::in_dir(&path);
+            send_denials(&socket, &queue).await.is_ok()
+        });
+        let mut got = Vec::new();
+        while got.len() < denials.len() {
+            got.extend(posts(&daemon, |n| n).await);
+        }
+        assert!(send.await.unwrap());
+        assert_eq!(got, denials);
+        assert!(queue.take().is_empty());
+
+        // The daemon posts the first part, and 10 of the second: the rest
+        // stays in the queue, in order.
+        queue.keep(&denials).unwrap();
+        let socket = daemon.socket.clone();
+        let path = dir.path().to_owned();
+        let send = tokio::spawn(async move {
+            let queue = Queue::in_dir(&path);
+            send_denials(&socket, &queue).await.is_ok()
+        });
+        let first = posts(&daemon, |n| n).await.len();
+        posts(&daemon, |_| 10).await;
+        assert!(!send.await.unwrap());
+        assert_eq!(queue.take(), denials[first + 10..]);
+    }
+
+    #[tokio::test]
+    async fn riff_relay_mcp_answers_a_call_of_more_than_the_limit_at_once_and_does_not_send_it() {
+        let daemon = Daemon::new();
+        let (mut to_mcp, mcp_in) = tokio::io::duplex(1 << 16);
+        let (mcp_out, from_mcp) = tokio::io::duplex(1 << 16);
+        let mut from_mcp = BufReader::new(from_mcp).lines();
+        let socket = daemon.socket.clone();
+        let shim = tokio::spawn(async move { mcp(&socket, mcp_in, mcp_out).await });
+        let (_, mut lines, _write) = daemon.accept().await;
+        // A call and a notification of 2 MiB, then a short call.
+        let body = "a".repeat(2 * socket_lines::LINE_MAX);
+        let long = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "post", "arguments": {"body": body}}});
+        let note = json!({"jsonrpc": "2.0", "method": "notifications/x", "params": {"body": body}});
+        let short = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"whoami"}}"#;
+        let claude = tokio::spawn(async move {
+            for line in [long.to_string(), note.to_string(), short.to_owned()] {
+                to_mcp
+                    .write_all(format!("{line}\n").as_bytes())
+                    .await
+                    .unwrap();
+            }
+            to_mcp
+        });
+        let error = text::relay_call_too_long(socket_lines::LINE_MAX);
+        assert_eq!(
+            json(&mut from_mcp).await,
+            json!({"jsonrpc": "2.0", "id": 1, "error": {"code": -32603, "message": error}})
+        );
+        // The daemon gets only the short call.
+        assert_eq!(lines.next_line().await.unwrap().unwrap(), short);
+        drop(claude.await.unwrap());
         shim.await.unwrap().unwrap();
     }
 }
