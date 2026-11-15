@@ -40,13 +40,13 @@
 //! ```
 //!
 //! ```
-//! use riff::ends::{Branch, End, Record};
+//! use riff::ends::{End, Found, Record};
 //!
 //! let end = End {
 //!     item: "issue-1202".into(),
 //!     session: "1a2b3c4d".into(),
 //!     head: None,
-//!     branch: Branch::NoPull,
+//!     found: Found::NoPull,
 //!     code: Some(1),
 //!     failed: true,
 //!     denied: vec!["Bash".into(), "Write".into(), "Bash".into()],
@@ -58,7 +58,7 @@
 //! assert_eq!(record.reason, end.reason());
 //! assert_eq!(record.tail, ["last line"]);
 //!
-//! let verify = End { item: "verify-issue-1202".into(), head: Some("988cb7b".into()), branch: Branch::Unread, code: Some(0), failed: false, denied: vec![], ..end };
+//! let verify = End { item: "verify-issue-1202".into(), head: Some("988cb7b".into()), found: Found::NoVerdict, code: Some(0), failed: false, denied: vec![], ..end };
 //! assert_eq!(verify.reason(), "exit code 0, and no PASS or FAIL");
 //! assert_eq!(Record::parse(&verify.body(), 9).unwrap().tag("head"), "988cb7b");
 //! ```
@@ -72,6 +72,7 @@ use riff_core::wire::Kind;
 use serde::{Deserialize, Serialize};
 
 use crate::daemon::{EVENTS, Ended};
+use crate::pr::Verdict;
 use crate::room::Role;
 use crate::run::Scrub;
 
@@ -90,32 +91,59 @@ pub fn thread() -> ThreadName {
 }
 
 /// What a session of `item` lacks when its record is in the thread
-/// [`THREAD`]: a verify has no PASS or FAIL, any other item has no pull
-/// request.
+/// [`THREAD`]: a verify has no PASS or FAIL ([`Found::NoVerdict`]), any
+/// other item has no pull request ([`Found::NoPull`]).
 ///
 /// ```
 /// assert_eq!(riff::ends::lacks("issue-7"), "pull request");
 /// assert_eq!(riff::ends::lacks("verify-issue-7"), "PASS or FAIL");
 /// ```
 pub fn lacks(item: &str) -> &'static str {
-    match Role::of(item) {
-        Role::Verify => "PASS or FAIL",
-        Role::Lead | Role::Work => "pull request",
-    }
+    let found = match Role::of(item) {
+        Role::Verify => Found::NoVerdict,
+        Role::Lead | Role::Work => Found::NoPull,
+    };
+    found.lacks().unwrap_or_default()
 }
 
-/// What the steps after the end of a build read of the pull request of
-/// its branch (#2170). The reason of the end says it ([`End::reason`]).
+/// What the steps after the end of a session found of its work
+/// ([`crate::wave::Finish::found`], #2170). The reason of the end says it
+/// ([`End::reason`]).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum Branch {
-    /// No step read it: a verify, a limit of GitHub, or a step that
-    /// failed.
+pub enum Found {
+    /// The steps found nothing that the reason names: a limit of GitHub
+    /// or a fault stopped them, or no step ran.
     #[default]
     Unread,
-    /// The branch has no open pull request.
+    /// The result of a verify has no PASS or FAIL.
+    NoVerdict,
+    /// riff put this PASS or FAIL of a verify on its pull request.
+    Reported(Verdict),
+    /// The branch of a build has no open pull request.
     NoPull,
-    /// The open pull request of the branch.
+    /// The open pull request of the branch of a build.
     Open(u64),
+}
+
+impl Found {
+    /// What the session lacks, in words, when the steps found that it
+    /// made no result: its PASS or FAIL, or its pull request.
+    ///
+    /// ```
+    /// use riff::ends::Found;
+    ///
+    /// assert_eq!(Found::NoVerdict.lacks(), Some("PASS or FAIL"));
+    /// assert_eq!(Found::NoPull.lacks(), Some("pull request"));
+    /// assert_eq!(Found::Open(41).lacks(), None);
+    /// assert_eq!(Found::Unread.lacks(), None);
+    /// ```
+    pub fn lacks(self) -> Option<&'static str> {
+        match self {
+            Found::NoVerdict => Some("PASS or FAIL"),
+            Found::NoPull => Some("pull request"),
+            Found::Unread | Found::Reported(_) | Found::Open(_) => None,
+        }
+    }
 }
 
 /// How a session ended.
@@ -128,10 +156,9 @@ pub struct End {
     /// The head commit (7 characters) of the work of a verify, a rebase, a
     /// fix of the checks or a fix after a FAIL: none for a build (#1651).
     pub head: Option<String>,
-    /// What the steps after the end read of the pull request of the
-    /// branch of a build ([`crate::wave::Finish::branch`], #2170,
-    /// 01M7FQECZY6RY5JE5QPY8NFRZR).
-    pub branch: Branch,
+    /// What the steps after the end found of the work of the session
+    /// (#2170, 01M7FQECZY6RY5JE5QPY8NFRZR).
+    pub found: Found,
     /// The exit code of `claude`, or none after a signal.
     pub code: Option<i32>,
     /// True when a turn ended with an error, or a stop ended it.
@@ -144,10 +171,9 @@ pub struct End {
 
 impl End {
     /// The end of the session of `record`, as it `ended`, with what the
-    /// steps after the end read of the pull request of its branch
-    /// (`branch`). It reads the events of the session, and replaces each
-    /// secret of `scrub`.
-    pub fn of(record: &crate::daemon::Record, ended: Ended, branch: Branch, scrub: &Scrub) -> End {
+    /// steps after the end `found`. It reads the events of the session,
+    /// and replaces each secret of `scrub`.
+    pub fn of(record: &crate::daemon::Record, ended: Ended, found: Found, scrub: &Scrub) -> End {
         let events = std::fs::read_to_string(record.folder.join(EVENTS)).unwrap_or_default();
         let head = record
             .job
@@ -156,7 +182,7 @@ impl End {
             .map(|commit| commit.get(..7).unwrap_or(commit).to_owned());
         End {
             head,
-            branch,
+            found,
             ..End::from_events(
                 &record.live.item,
                 &record.live.session,
@@ -167,8 +193,8 @@ impl End {
         }
     }
 
-    /// [`End::of`] for the text `events` of the events file, with no read
-    /// of the branch ([`Branch::Unread`]).
+    /// [`End::of`] for the text `events` of the events file, with no step
+    /// after the end ([`Found::Unread`]).
     pub fn from_events(
         item: &str,
         session: &str,
@@ -204,7 +230,7 @@ impl End {
             item: item.to_owned(),
             session: crate::run::short(session).to_owned(),
             head: None,
-            branch: Branch::Unread,
+            found: Found::Unread,
             code: ended.code,
             failed: ended.failed,
             denied,
@@ -213,22 +239,22 @@ impl End {
     }
 
     /// The reason in words: the exit code, or the signal, and the denied
-    /// tool calls. A clean exit of a verify, or of a build whose branch
-    /// has no pull request, says what the session lacks ([`lacks`]). The
-    /// reason names the open pull request of the branch ([`End::branch`],
-    /// #2170).
+    /// tool calls. Only [`End::found`] names a result: a clean exit with
+    /// no result says what the session lacks ([`Found::lacks`]), and the
+    /// reason names the open pull request of the branch of a build
+    /// (#2170).
     ///
     /// ```
     /// use riff::daemon::Ended;
-    /// use riff::ends::{Branch, End};
+    /// use riff::ends::{End, Found};
     /// use riff::run::Scrub;
     ///
     /// let clean = Ended { code: Some(0), failed: false };
     /// let end = End::from_events("issue-7", "1a2b3c4d", clean, "", &Scrub::new([]));
     /// assert_eq!(end.reason(), "exit code 0");
-    /// let none = End { branch: Branch::NoPull, ..end.clone() };
+    /// let none = End { found: Found::NoPull, ..end.clone() };
     /// assert_eq!(none.reason(), "exit code 0, and no pull request");
-    /// let open = End { branch: Branch::Open(41), ..end };
+    /// let open = End { found: Found::Open(41), ..end };
     /// assert_eq!(open.reason(), "exit code 0, and pull request #41 is open");
     /// let signal = End { code: None, failed: true, ..open };
     /// assert_eq!(
@@ -237,10 +263,11 @@ impl End {
     /// );
     /// ```
     pub fn reason(&self) -> String {
-        let lacks_it = Role::of(&self.item) == Role::Verify || self.branch == Branch::NoPull;
         let mut reason = match (self.code, self.failed) {
-            (Some(0), false) if lacks_it => format!("exit code 0, and no {}", lacks(&self.item)),
-            (Some(0), false) => "exit code 0".to_owned(),
+            (Some(0), false) => match self.found.lacks() {
+                Some(lacks) => format!("exit code 0, and no {lacks}"),
+                None => "exit code 0".to_owned(),
+            },
             (Some(0), true) => {
                 "exit code 0, but a turn ended with an error or a stop ended it".to_owned()
             }
@@ -259,7 +286,7 @@ impl End {
                 tools.join(", ")
             );
         }
-        if let Branch::Open(pull) = self.branch {
+        if let Found::Open(pull) = self.found {
             reason += &format!(", and pull request #{pull} is open");
         }
         reason
@@ -410,7 +437,7 @@ mod tests {
     #[test]
     fn the_reason_names_a_signal_and_a_clean_exit() {
         let of = |code, failed| End {
-            branch: Branch::NoPull,
+            found: Found::NoPull,
             ..End::from_events("i", "s", ended(code, failed), "", &Scrub::new([]))
         };
         assert!(of(None, true).reason().starts_with("no exit code"));
@@ -429,16 +456,18 @@ mod tests {
     /// #2170, 01M7FQECZY6RY5JE5QPY8NFRZR: the reason of the end of a build
     /// whose branch has an open pull request names it, after each exit,
     /// and a clean end does not say that it has none. A branch that no
-    /// step read gets no word on a pull request. A verify lacks its PASS
-    /// or FAIL.
+    /// step read gets no word on a pull request. Only what the steps
+    /// found names a result: a verify with no PASS or FAIL says so, and
+    /// a verify whose verdict riff reported, or could not report, says
+    /// only its exit.
     #[test]
     fn the_reason_names_the_open_pull_request_of_the_branch() {
-        let of = |item: &str, code, failed, branch| End {
-            branch,
+        let of = |item: &str, code, failed, found| End {
+            found,
             head: Some("988cb7b".into()),
             ..End::from_events(item, "s", ended(code, failed), "", &Scrub::new([]))
         };
-        let open = |code, failed| of("issue-7", code, failed, Branch::Open(41));
+        let open = |code, failed| of("issue-7", code, failed, Found::Open(41));
         let fix = open(Some(0), false);
         assert_eq!(fix.reason(), "exit code 0, and pull request #41 is open");
         let denied = End {
@@ -462,13 +491,15 @@ mod tests {
         assert_eq!(record.tag("head"), "988cb7b");
         assert_eq!(record.reason, fix.reason());
         // The pull request closed: the branch has none.
-        let closed = of("issue-7", Some(0), false, Branch::NoPull);
+        let closed = of("issue-7", Some(0), false, Found::NoPull);
         assert_eq!(closed.reason(), "exit code 0, and no pull request");
-        // A limit of GitHub hid the pull request.
-        let unread = of("issue-7", Some(0), false, Branch::Unread);
+        // A limit of GitHub or a fault stopped the read.
+        let unread = of("issue-7", Some(0), false, Found::Unread);
         assert_eq!(unread.reason(), "exit code 0");
-        let verify = of("verify-issue-7", Some(0), false, Branch::Unread);
-        assert_eq!(verify.reason(), "exit code 0, and no PASS or FAIL");
+        let verify = |found| of("verify-issue-7", Some(0), false, found).reason();
+        assert_eq!(verify(Found::NoVerdict), "exit code 0, and no PASS or FAIL");
+        assert_eq!(verify(Found::Reported(Verdict::Fail)), "exit code 0");
+        assert_eq!(verify(Found::Unread), "exit code 0");
     }
 
     #[test]

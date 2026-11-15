@@ -2656,7 +2656,7 @@ Then the wave does not start the rebase of that commit again. Your lead
 gets one message with the cause and the fix:
 
 ```text
-PR #40 of issue-12 has a conflict with main at commit 1a2b3c4, and the riff daemon of thelio will not start its rebase again: the rebase of this commit started in this run of the wave, and the conflict is still there. The last session ended: exit code 0. Start the rebase again with riff host join on thelio, or on another machine with riff host join --host thelio
+PR #40 of issue-12 has a conflict with main at commit 1a2b3c4, and the riff daemon of thelio will not start its rebase again: the rebase of this commit started in this run of the wave, and the conflict is still there. The last session ended: exit code 0, and pull request #40 is open. Start the rebase again with riff host join on thelio, or on another machine with riff host join --host thelio
 ```
 
 To start the rebase of the same commit again, see
@@ -3829,7 +3829,11 @@ request, and the last lines of the output of the last one. The message
 "started 3 times" to your lead names the same reason. A session that
 ends with an open pull request leaves no record. Then the reason in the
 message names that pull request, for example `exit code 0, and pull
-request #41 is open`.
+request #41 is open`. When riff cannot read the pull request of the
+branch, for a limit of GitHub or another fault, your lead gets a note
+with the cause. Then riff leaves no record, the reason says nothing of a
+pull request, and the wave reads the pull request again at its next
+look.
 
 A verify session can end with no PASS or FAIL. Your lead gets the
 message "ended with no PASS or FAIL", and the pull request waits for a
@@ -3956,11 +3960,19 @@ The riff daemon started issue-1 3 times to fix the head 988cb7b of its pull requ
 2. Fix the cause. When you push a new head to the pull request, the
    wave verifies the new head, with no `riff host join`. When its verify
    fails, the fix of the new head gets a new count of 3.
-3. To start the fix of the same head again, run this in your clone of
-   the repository:
+3. To start the fix of the same head again, run this on the host of
+   the wave, in your clone of the repository:
 
    ```sh
    riff host join
+   ```
+
+   On another machine, or in the container of your lead, name the host
+   of the wave. The line of the wave in `riff wave list` names it, for
+   example `runs on host-a`:
+
+   ```sh
+   riff host join --host host-a
    ```
 
 ### Add a Done when line to an issue

@@ -7525,12 +7525,21 @@ of this part when they merge.
   names its pull request and its head. Supersedes
   01M5A5HXRH4PFQDFA7XPFFRHWS in part.
 - **01M7FQECZY6RY5JE5QPY8NFRZR** The steps after the end of a build read
-  the pull request of its branch (`wave::Finish::branch`). The reason of
+  the pull request of its branch (`wave::Finish::found`). The reason of
   the end that the daemon keeps for the message "started N times" names
   the open pull request of the branch, after each exit. A clean end says
   "no pull request" only when the steps read that the branch has none.
   When a limit of GitHub or a fault stops the read, the reason says
   nothing of a pull request.
+- **01M7FVQP0N4ZEZ7SBP9WE9YWMS** After the end of a build, the steps
+  take its branch for one with no pull request only when `gh pr view`
+  says "no pull requests found for branch" (`pr::no_pull`), or gives a
+  pull request that is not open. Another fault of the read is like a
+  limit of GitHub: the lead gets a note with the error
+  (`text::wave_build_unread`), riff posts no record in the thread
+  `ends`, and the wave reads the pull request again at its next look. A
+  fault of a step after the read keeps what the read found for the
+  reason of the end (`wave::then`).
 
 ### The lead, the view and the takeover
 
