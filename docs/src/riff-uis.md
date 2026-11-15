@@ -3,9 +3,10 @@
 This page is the design of the UI architecture of riff (#982). It
 decides the core library, the list of UIs and their order. Each UI has
 a child design of its own. The CLI is built, and the frame, the
-Sessions tab, the Chat tab, the Waves tab and the Machines tab of the
-TUI: see [The TUI](#the-tui). The other tabs of the TUI and the other
-UIs come with their build items (see [The order](#the-order)).
+Sessions tab, the Chat tab, the Waves tab, the Machines tab, the Reports
+tab and the Decisions tab of the TUI: see [The TUI](#the-tui). The
+Devices tab of the TUI and the other UIs come with their build items
+(see [The order](#the-order)).
 `riff device` has only the kind `key` today: see
 [Add an authenticator](how-it-works.md#add-an-authenticator). The
 [requirements of the UIs](requirements.md#the-uis) hold each decision.

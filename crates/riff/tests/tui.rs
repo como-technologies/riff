@@ -1965,7 +1965,8 @@ esac
 /// 01M7FYVHDJJ288RRV8EBRKSY49 (#2188): in a clone of acme/app, `7` opens
 /// the Decisions tab. It lists the question of the Backlog for brett
 /// first, then the design issue of Wave 3, from the conditional read of
-/// the open issues and no other call of `gh`. On Linux, `Enter` opens the
+/// the open issues and no other call of `gh`, and `r` reads them again at
+/// once. On Linux, `Enter` opens the
 /// issue in the browser, here a fake `xdg-open`. On macOS, riff opens the
 /// browser with `/usr/bin/open`, which no fake on `PATH` replaces: there,
 /// the test does not press `Enter`. `o` shows the URL of the issue. `a`
@@ -2007,12 +2008,28 @@ async fn the_decisions_tab_lists_the_questions_and_the_designs_and_opens_one() {
     );
     assert!(rows[8].ends_with("design            mike"), "{rows:#?}");
     assert!(!rows.iter().any(|r| r.contains("#22")), "{rows:#?}");
-    let calls = std::fs::read_to_string(bin.path().join("calls")).unwrap();
-    assert!(
-        calls.contains("api -i repos/acme/app/issues?state=open"),
-        "{calls}"
-    );
-    assert!(!calls.contains("pr list"), "no other call: {calls}");
+    // Each call of `gh` is the conditional read of the open issues, but
+    // `gh auth token`, which reads only the token, for no point.
+    let calls = || std::fs::read_to_string(bin.path().join("calls")).unwrap();
+    let reads = |calls: &str| {
+        calls
+            .lines()
+            .filter(|call| call.contains("api -i repos/acme/app/issues?state=open"))
+            .count()
+    };
+    let before = calls();
+    assert!(reads(&before) > 0, "{before}");
+    let others = before.lines().filter(|call| *call != "auth token").count();
+    assert_eq!(reads(&before), others, "no other call: {before}");
+
+    // `r` reads them again at once, long before the next read of each
+    // 60 seconds.
+    tty.press("r").await;
+    let span = Span::start();
+    while reads(&calls()) == reads(&before) {
+        assert!(span.within(WAIT), "r reads again: {}", calls());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 
     // Enter opens the issue in the browser, and `o` shows its URL.
     let url = "https://github.com/acme/app/issues/20";
@@ -2024,7 +2041,7 @@ async fn the_decisions_tab_lists_the_questions_and_the_designs_and_opens_one() {
             format!("#!/bin/sh\nprintf '%s' \"$1\" > {}\n", opened.display()),
         );
         tty.press("\r").await;
-        tty.shows(|rows| rows[22] == format!(" {}", riff::text::tui_opens(url)))
+        tty.shows(|rows| rows[22] == format!(" {}", riff::text::questions_web(url)))
             .await;
         let span = Span::start();
         while std::fs::read_to_string(&opened).ok().as_deref() != Some(url) {
@@ -2046,7 +2063,7 @@ async fn the_decisions_tab_lists_the_questions_and_the_designs_and_opens_one() {
         })
         .await;
     assert!(rows[4].starts_with(" > ·   #21"), "{rows:#?}");
-    let calls = std::fs::read_to_string(bin.path().join("calls")).unwrap();
+    let calls = calls();
     assert!(
         calls.contains("issue edit 20 --repo acme/app --remove-label question"),
         "{calls}"

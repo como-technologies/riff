@@ -4369,8 +4369,7 @@ From then on, riff waits for the answer:
   [See the questions of each wave in the TUI](how-it-works.md#see-the-questions-of-each-wave-in-the-tui)).
 - riff posts no line in `riff chat` for the question. The Waves tab,
   the Decisions tab and `riff questions` show it (see
-  [See all your open questions](#see-all-your-open-questions)). The
-  Decisions tab puts the questions for PERSON first for that person.
+  [See all your open questions](#see-all-your-open-questions)).
 
 The person answers in the body or in a comment, and can then mark the
 questions as answered (see

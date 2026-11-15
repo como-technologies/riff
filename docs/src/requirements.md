@@ -10202,24 +10202,29 @@ that builds it merges.
 - **01M7FYVHB1APFXPXA71PMD18EH** The Decisions tab of the TUI lists each
   open issue with the label `question` or `design` of each project of
   the person, the projects of the Waves tab: in a wave, in the Backlog,
-  or in neither. Each row shows the number, the wave or `Backlog`, the
-  title, the labels, and each person that a heading `Questions for
-  PERSON` of the body names. The rows whose questions name the person
-  of the TUI come first, under `QUESTIONS FOR PERSON`, and the others
-  after them, under `OTHER DECISIONS`. In each part, the rows go in the
-  order of the waves, then the Backlog, then the others, and in number
-  order. With more than one project, an item names its repository, as
-  `riff#2173`. While the tab
-  shows, the TUI reads the open issues with the conditional REST read of
-  the Waves tab, and no other call: when the tab opens, each 60 seconds,
-  at once on `r`, and soon after a wake of GitHub. An issue whose labels
-  `question` and `design` go leaves the tab at the next read.
-- **01M7FYVHDJJ288RRV8EBRKSY49** In the Decisions tab of the TUI,
-  `Enter`, or a click on the selected row, opens the issue of the row in
-  the browser, and puts its URL in the note line. `o` puts the URL in
-  the note line, as in the Waves tab. `a` marks the questions of the
-  issue as answered after `y`, with the code of `riff questions
-  --answered`.
+  or in neither. In the wide layout, a row shows a mark, the number, the
+  wave, the title, the labels, and the persons of its questions
+  (01M7G7SCW5AR1P73R1CMA2QWF7). In the narrow layout, a row shows the
+  mark, the number, the wave and the title. The mark is `?` for an issue
+  with the label `question`, and `·` for the others. The wave is `Wave
+  N`, `Backlog`, or `-` in neither. The rows whose questions name the
+  person of the TUI come first, under `QUESTIONS FOR PERSON`, and the
+  others after them, under `OTHER DECISIONS`. In each part, the rows go
+  in the order of the waves by their number, then the Backlog, then the
+  issues in neither, and then by the repository and the number. With
+  more than one project, an item names its repository, as `riff#2173`.
+  While the tab shows, the TUI reads the open issues with the
+  conditional REST read of the Waves tab, and no other call: when the
+  tab opens, each 60 seconds, at once on `r`, and soon after a wake of
+  GitHub. An issue whose labels `question` and `design` go leaves the
+  tab at the next read.
+- **01M7FYVHDJJ288RRV8EBRKSY49** In the Decisions tab of the TUI, `↑`
+  and `↓`, `j` and `k`, `PgUp` and `PgDn`, and `g` and `G` select a row,
+  as in the Waves tab. `Enter`, or a click on the selected row, opens
+  the issue of the row in the browser, and puts its URL in the note
+  line. `o` puts the URL in the note line, as in the Waves tab. `a`
+  marks the questions of the issue as answered after `y`, with the code
+  of `riff questions --answered`.
 - **01M7FZAW2DT0KE72HB2VQ3SQBG** In the prompt of the Chat tab of the
   TUI, `Ctrl-U` deletes the text before the cursor, `Ctrl-K` deletes the
   text from the cursor to the end of the line, and `Ctrl-L` deletes the
@@ -10228,6 +10233,22 @@ that builds it merges.
   wide tab with no list of names or issues, the key line of the prompt
   says `Ctrl-U/K/L clear`, and a click on it presses `Ctrl-L`. The help
   of the Chat tab says what each of the three keys deletes.
+- **01M7G7SCW5AR1P73R1CMA2QWF7** In the Decisions tab of the TUI, the
+  persons of a row are the persons of the riff that a heading `Questions
+  for PERSON` of the body of the issue names. PERSON is the USER of a
+  person of the riff, or of the person of the TUI, in any case, and the
+  row shows the USER. More names come after `and` or a comma: `Questions
+  for mike and nate`. The first other word, or a mark other than a
+  comma, ends the names, so `Questions for the discussion` names nobody.
+- **01M7G7SHRDEA6BCNSYQA8RGZ23** In the Decisions tab of the TUI, a read
+  of a project that fails keeps the last decisions of that project, and
+  the note line names the fault once. With no other note, the note line
+  shows the age of the last read, as `The decisions come from gh, 41s
+  ago`.
+- **01M7G7SHTXPF9Z6SD4N981HFQH** In the wide layout of the TUI, the
+  strip has two spaces between two tabs. When the news make the strip
+  wider than the terminal, it has one space between two tabs, so the
+  last tab shows whole.
 
 ## The notes of the lead
 

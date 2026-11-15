@@ -31,7 +31,7 @@
 //!   prompt, else the result of the last action
 //!   (01M6VMACJGF4A0ZXC6YK13KNCH). With none of them, the Waves tab
 //!   and the Decisions tab show the age of their last read of `gh`
-//!   (01M6VFGYW0XVJ5JSX6R1NCR6W7).
+//!   (01M6VFGYW0XVJ5JSX6R1NCR6W7, 01M7G7SHRDEA6BCNSYQA8RGZ23).
 //!   The key line shows the keys of the tab, and `?` shows them all in a
 //!   popup (01M6VAZKDEQ6951KGPGAMF1SNJ).
 //! - The Sessions tab ([`sessions`], #1637) is the one view of the
@@ -92,15 +92,16 @@
 //!
 //! While the Waves tab shows, each look also reads the holds of its
 //! boards (01M6VFGK79JGRF919BM8SJ6E08), and the TUI reads the forge of
-//! its boards each [`forge::READ_EVERY`] ([`forge::read_each`],
+//! its boards each [`forge::READ_EVERY`] ([`forge::read`],
 //! 01M6VFGK4P2FWMFQHBZKR3JXSZ). Each call of `gh` of the TUI counts as
 //! the caller `tui`. While the Chat tab shows, the TUI reads the open
 //! issues for its list of `#` each [`forge::READ_EVERY`]
-//! ([`forge::open_issues_each`], 01M74CX9KVGQG4Y7ATT6268NMY). While the
+//! ([`forge::open_issues`], 01M74CX9KVGQG4Y7ATT6268NMY). While the
 //! Decisions tab shows, the TUI reads the open issues of its projects
-//! each [`forge::READ_EVERY`] ([`forge::decisions_each`],
-//! 01M7FYVHB1APFXPXA71PMD18EH). The four tabs share the `ETag` of each
-//! read ([`forge::Kept`]).
+//! each [`forge::READ_EVERY`] ([`forge::decisions`],
+//! 01M7FYVHB1APFXPXA71PMD18EH). Each read reads each repository in turn
+//! ([`forge::each`]). The four tabs share the `ETag` of each read
+//! ([`forge::Kept`]).
 //!
 //! The TUI follows the wakes of the GitHub App of the repository of the
 //! folder (`GET /v1/github/watch`, 01M74N357CC7DN6B8QX8GDR0ZM). A wake of
@@ -169,8 +170,8 @@
 //! while the note line asks for a text, it types into it
 //! (01M6VFGKCJ02G33TXR01GY6M0G). While the person types a filter of the
 //! Sessions tab or of the Machines tab ([`State::takes_text`]), each
-//! character is a letter of the filter, also `1` to `7` and `q`
-//! (01M6VJQPNJ4AX4RT877F1QAPPX).
+//! character is a letter of the filter, also `1` to `7`
+//! (01M7FYVA218ARDXTFPWSZV6N4P) and `q` (01M6VJQPNJ4AX4RT877F1QAPPX).
 //! Else the frame takes its keys, and gives each other key to the tab:
 //! the arrows, `Enter`, and a letter. The tab turns it into an
 //! [`Action`], for example [`machines::on_key`] and
@@ -572,8 +573,8 @@ pub enum Key {
     /// Delete the last character of a text: `Backspace`.
     Backspace,
     /// A click on the row of this index in the rows of the tab: the tree
-    /// of the Sessions tab, the rows of the Waves tab, or the hosts of
-    /// the Machines tab.
+    /// of the Sessions tab, the rows of the Waves tab and of the
+    /// Decisions tab, or the hosts of the Machines tab.
     Row(usize),
     /// A click on the fold mark of the row of this index in the tree of
     /// the Sessions tab.
@@ -585,6 +586,55 @@ pub enum Key {
     Char(char),
     /// A key of the Chat tab: the prompt and the log.
     Chat(chat::Key),
+}
+
+impl Key {
+    /// The row of `rows` that this key selects, from the selected row
+    /// `from`, with `page` rows in a page, in the Waves tab and in the
+    /// Decisions tab (01M6VFGKCJ02G33TXR01GY6M0G): `↑`, `↓`, `PgUp`,
+    /// `PgDn`, `Home` and `End` move over the rows that `picks` can
+    /// select, up to the first and the last one. `None` for another key,
+    /// and with no row to select.
+    ///
+    /// ```
+    /// use riff::tui::Key;
+    ///
+    /// let rows = ["title", "a", "b", "title", "c"];
+    /// let item = |row: &&str| *row != "title";
+    /// let moves = |key: Key, from| key.moves(&rows, from, 2, item).copied();
+    /// assert_eq!(moves(Key::Down, Some(1)), Some("b"));
+    /// assert_eq!(moves(Key::Down, Some(4)), Some("c"));
+    /// assert_eq!(moves(Key::Up, Some(1)), Some("a"));
+    /// assert_eq!(moves(Key::Down, None), Some("a"));
+    /// assert_eq!(moves(Key::PageDown, Some(1)), Some("c"));
+    /// assert_eq!(moves(Key::PageUp, Some(4)), Some("a"));
+    /// assert_eq!(moves(Key::Last, None), Some("c"));
+    /// assert_eq!(moves(Key::First, Some(4)), Some("a"));
+    /// assert_eq!(moves(Key::Enter, Some(1)), None);
+    /// assert_eq!(Key::Down.moves(&["title"], None, 2, item), None);
+    /// ```
+    pub fn moves<R>(
+        self,
+        rows: &[R],
+        from: Option<usize>,
+        page: usize,
+        picks: impl Fn(&R) -> bool,
+    ) -> Option<&R> {
+        let picks: Vec<(usize, &R)> = rows.iter().enumerate().filter(|(_, r)| picks(r)).collect();
+        let at = from.and_then(|from| picks.iter().position(|(i, _)| *i == from));
+        let at_or_0 = at.unwrap_or(0);
+        let to = match self {
+            Key::Up => at_or_0.saturating_sub(1),
+            Key::Down => at.map_or(0, |at| at + 1),
+            Key::PageUp => at_or_0.saturating_sub(page.max(1)),
+            Key::PageDown => at_or_0 + page.max(1),
+            Key::First => 0,
+            Key::Last => picks.len().saturating_sub(1),
+            _ => return None,
+        };
+        let (_, row) = picks.get(to.min(picks.len().saturating_sub(1)))?;
+        Some(row)
+    }
 }
 
 /// What the loop of the TUI does for a key.
@@ -618,9 +668,9 @@ pub enum Action {
     Post(String),
     /// Run the effect: the person said `y`.
     Do(Effect),
-    /// Open the URL in the browser, as `riff questions --web` does
+    /// Open the issue in the browser, as `riff questions --web` does
     /// (01M7FYVHDJJ288RRV8EBRKSY49).
-    Browse(String),
+    Browse(decisions::IssueRef),
 }
 
 /// A question in the note line (01M6VFD0S90SB8M8WV952NT4Y1): `y` gives
@@ -1422,8 +1472,9 @@ impl State {
     /// the filter of the Sessions tab. Then the frame takes its keys, and
     /// the tab the others: `k` `j` `g` `G` are `↑` `↓` `Home` `End`
     /// (01M6VFGKCJ02G33TXR01GY6M0G). Opening the Waves tab looks again at
-    /// once, for the holds of its boards, and so does opening the
-    /// Decisions tab, for its read of `gh` (01M7FYVHB1APFXPXA71PMD18EH).
+    /// once, for the holds of its boards. Opening the Decisions tab, and
+    /// `r` in it, read its decisions again at once
+    /// ([`State::decisions_due`], 01M7FYVHB1APFXPXA71PMD18EH).
     ///
     /// ```
     /// use riff::tui::{Action, Key, State, Tab};
@@ -1479,7 +1530,7 @@ impl State {
             return waves::typed(self, reason, key);
         }
         // A filter takes `1` to `7` and `q` too
-        // (01M6VJQPNJ4AX4RT877F1QAPPX).
+        // (01M7FYVA218ARDXTFPWSZV6N4P, 01M6VJQPNJ4AX4RT877F1QAPPX).
         if self.tab == Tab::Sessions && self.sessions.typing() && key != Key::Quit {
             return self.on_sessions_key(key);
         }
@@ -1515,8 +1566,10 @@ impl State {
                 None
             }
             Key::Again => {
-                if self.tab == Tab::Reports {
-                    self.reports_again();
+                match self.tab {
+                    Tab::Reports => self.reports_again(),
+                    Tab::Decisions => self.decisions.again(),
+                    _ => {}
                 }
                 Some(Action::Look)
             }
@@ -1535,12 +1588,22 @@ impl State {
         }
     }
 
-    /// Opens the tab `tab` ([`State::open`]). The Waves tab and the
-    /// Decisions tab look again at once.
+    /// Opens the tab `tab` ([`State::open`]). The Waves tab looks again
+    /// at once, and the Decisions tab reads its decisions again at once.
     fn go(&mut self, tab: Tab) -> Option<Action> {
         let was = self.tab;
         self.open(tab);
-        (matches!(tab, Tab::Waves | Tab::Decisions) && was != tab).then_some(Action::Look)
+        if was == tab {
+            return None;
+        }
+        match tab {
+            Tab::Waves => Some(Action::Look),
+            Tab::Decisions => {
+                self.decisions.again();
+                None
+            }
+            _ => None,
+        }
     }
 
     /// Takes a key of the Waves tab that the frame does not take.
@@ -1570,12 +1633,9 @@ impl State {
         double: bool,
     ) -> Option<Action> {
         let key = view.hit(column, row)?;
-        // In the Waves tab and in the Decisions tab, the second click is
-        // on the selected row: it acts as Enter already
-        // (01M6VFGKCJ02G33TXR01GY6M0G, 01M7FYVHDJJ288RRV8EBRKSY49).
-        let enter = double
-            && matches!(key, Key::Row(_))
-            && !matches!(self.tab, Tab::Waves | Tab::Decisions);
+        // In the Waves tab, the second click is on the selected row: it
+        // acts as Enter already (01M6VFGKCJ02G33TXR01GY6M0G).
+        let enter = double && matches!(key, Key::Row(_)) && self.tab != Tab::Waves;
         let action = self.on_key(key);
         if enter {
             return self.on_key(Key::Enter);
@@ -1951,7 +2011,7 @@ type Opened = Vec<(String, Result<Vec<crate::typeahead::OpenIssue>, String>)>;
 
 /// A read of the open issues of each project for the Decisions tab: the
 /// decisions, or the error of `gh`.
-type Decided = Vec<(String, Result<Vec<decisions::Decision>, String>)>;
+type Decided = Vec<(ThreadName, Result<Vec<decisions::Decision>, String>)>;
 
 /// A read of `gh` on a thread of its own: the end of the TUI waits for
 /// no read (#1707). A thread that nobody joins holds up no exit.
@@ -2001,12 +2061,10 @@ struct Tasks {
     /// time of the last one.
     opening: Option<Reading<Opened>>,
     opened_at: Option<tokio::time::Instant>,
-    /// The read of the decisions that runs, and `r` or a wake while the
-    /// Decisions tab shows: read them again at once.
+    /// The read of the decisions that runs.
     deciding: Option<Reading<Decided>>,
-    decisions_again: bool,
     /// The kept replies of the conditional reads of `gh`: the Sessions
-    /// tab, the Waves tab and the Chat tab share them.
+    /// tab, the Waves tab, the Chat tab and the Decisions tab share them.
     kept: forge::Kept,
     /// `r` while the Waves tab shows: read the forge again.
     forge_again: bool,
@@ -2098,7 +2156,6 @@ async fn frames(
         opening: None,
         opened_at: None,
         deciding: None,
-        decisions_again: false,
         kept: forge::Kept::default(),
         forge_again: false,
         acting: None,
@@ -2174,7 +2231,7 @@ async fn frames(
             tasks.forge_again = true;
             tasks.read_at = None;
             tasks.opened_at = None;
-            tasks.decisions_again = true;
+            state.decisions_again();
         }
         if tasks.forge.as_ref().is_some_and(Reading::is_finished)
             && let Some(done) = tasks.forge.take()
@@ -2196,7 +2253,7 @@ async fn frames(
             let (gh, kept) = (gh.clone(), tasks.kept.clone());
             tasks.opened_at = Some(Instant::now());
             tasks.opening = Some(Reading::start(move || {
-                forge::open_issues_each(&gh, &repos, &kept)
+                forge::each(&repos, |repo| forge::open_issues(&gh, repo, &kept))
             }));
         }
         if tasks
@@ -2209,7 +2266,7 @@ async fn frames(
             // The action changed something: look again, and read the
             // forge again while the Waves tab or the Decisions tab shows.
             tasks.forge_again = true;
-            tasks.decisions_again = true;
+            state.decisions_again();
             if tasks.looking.is_some() {
                 tasks.again = true;
             } else {
@@ -2225,7 +2282,9 @@ async fn frames(
             tasks.forge_again = false;
             let repos = state.boards();
             let (gh, kept) = (gh.clone(), tasks.kept.clone());
-            tasks.forge = Some(Reading::start(move || forge::read_each(&gh, &repos, &kept)));
+            tasks.forge = Some(Reading::start(move || {
+                forge::each(&repos, |repo| forge::read(&gh, repo, &kept))
+            }));
         }
         if tasks
             .looking
@@ -2374,7 +2433,6 @@ async fn frames(
             }
             Action::Look => {
                 tasks.forge_again = state.tab() == Tab::Waves;
-                tasks.decisions_again = state.tab() == Tab::Decisions;
                 if tasks.looking.is_some() {
                     tasks.again = true;
                 } else {
@@ -2433,12 +2491,10 @@ async fn frames(
                 }));
             }
             Action::Post(body) => link.send(body),
-            // The note already names the URL: a person over SSH clicks it
-            // (01M7FYVHDJJ288RRV8EBRKSY49).
-            Action::Browse(url) => {
-                if let Err(e) = open::that_detached(&url) {
-                    state.note(text::tui_not_opened(&url, &e.to_string()));
-                }
+            // As `riff questions --web`: the note names the URL already, so
+            // a person over SSH clicks it (01M7FYVHDJJ288RRV8EBRKSY49).
+            Action::Browse(issue) => {
+                let _ = open::that_detached(issue.url());
             }
             Action::Do(effect) => {
                 state.note(effect.doing());
@@ -2556,10 +2612,10 @@ async fn reports_tasks(
 }
 
 /// The read of the Decisions tab (01M7FYVHB1APFXPXA71PMD18EH): it takes
-/// the result of a read that ended. While the tab shows, it starts a
-/// read of the open issues of each project when one is due, or when the
-/// person or a wake of GitHub asked for one. The read runs on a thread of
-/// its own ([`Reading`]): a slow `gh` holds up no `q`.
+/// the result of a read that ended, and starts a read of the open issues
+/// of each project when one is due ([`State::decisions_due`]). The read
+/// runs on a thread of its own ([`Reading`]): a slow `gh` holds up no
+/// `q`.
 fn decisions_tasks(tasks: &mut Tasks, state: &mut State, gh: &crate::pr::Gh) -> Result<()> {
     if tasks.deciding.as_ref().is_some_and(Reading::is_finished)
         && let Some(done) = tasks.deciding.take()
@@ -2567,14 +2623,11 @@ fn decisions_tasks(tasks: &mut Tasks, state: &mut State, gh: &crate::pr::Gh) -> 
         state.read_decisions(done.result()?, crate::run::now_ms());
     }
     if tasks.deciding.is_none()
-        && state.tab() == Tab::Decisions
-        && (tasks.decisions_again || state.decisions().due(crate::run::now_ms()))
+        && let Some(repos) = state.decisions_due(crate::run::now_ms())
     {
-        tasks.decisions_again = false;
-        let repos = state.decision_repos();
         let (gh, kept) = (gh.clone(), tasks.kept.clone());
         tasks.deciding = Some(Reading::start(move || {
-            forge::decisions_each(&gh, &repos, &kept)
+            forge::each(&repos, |repo| forge::decisions(&gh, repo, &kept))
         }));
     }
     Ok(())

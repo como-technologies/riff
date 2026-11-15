@@ -47,9 +47,10 @@
 //!   ```
 //! - **The prompt** ([`Prompt`]) has the focus when you open the tab
 //!   ([`Focus`]). There each key types, also the digits, `q` and `?`.
-//!   `Alt-1` to `Alt-7`, `Tab` and `Ctrl-C` keep their work. `Esc` moves
-//!   the focus to the log, where the keys of the frame work, and `i` or
-//!   `Enter` gives it back (01M6VG1PA4PM47777ZT4PNGETF). A switch to
+//!   `Alt-1` to `Alt-7`, `Tab` and `Ctrl-C` keep their work
+//!   (01M7FYVA218ARDXTFPWSZV6N4P). `Esc` moves the focus to the log,
+//!   where the keys of the frame work, and `i` or `Enter` gives it back
+//!   (01M6VG1PA4PM47777ZT4PNGETF). A switch to
 //!   another window and back gives the focus to the prompt too
 //!   ([`State::focused`]), and a click on the log keeps it there
 //!   (01M6XT6MCZ38XEN7ZHWTRF50Z5).
@@ -280,7 +281,7 @@ pub enum Scroll {
 
 /// The key of the Chat tab in `event`, when the focus is `focus`, and
 /// `listed` while the list of the names shows (01M6VG1PA4PM47777ZT4PNGETF,
-/// 01M6Y1ES82XHFGANKZS7AF3CP2). `None`
+/// 01M6Y1ES82XHFGANKZS7AF3CP2, 01M7FYVA218ARDXTFPWSZV6N4P). `None`
 /// for a key that the frame takes ([`super::input_of`]): `Alt-1` to
 /// `Alt-7`, `Tab`, `Shift-Tab` and `Ctrl-C` in the prompt, and each key
 /// of the frame in the log. While the list shows, `Tab` and `Enter` pick
@@ -1117,7 +1118,7 @@ impl State {
     }
 
     /// Takes the read `read` of the open issues of each repository for
-    /// the list of `#` ([`super::forge::open_issues_each`],
+    /// the list of `#` ([`super::forge::open_issues`],
     /// 01M74CX9KVGQG4Y7ATT6268NMY). A read that failed keeps the issues
     /// of the last read of its repository, and gives no note.
     ///

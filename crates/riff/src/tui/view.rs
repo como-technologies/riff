@@ -191,6 +191,54 @@ impl View {
     }
 }
 
+/// The lines of `lines` that fit in `height` rows of a body, each with
+/// the index of its row: the first ones, or the ones that end at the
+/// line of the selected row `selected`. The Waves tab and the Decisions
+/// tab show their rows so.
+///
+/// ```
+/// use ratatui::text::Line;
+/// use riff::tui::view::window;
+///
+/// let lines = || (0..5).map(|i| (Line::raw(format!("row {i}")), i)).collect::<Vec<_>>();
+/// let indexes = |shown: Vec<(Line, usize)>| shown.into_iter().map(|(_, i)| i).collect::<Vec<_>>();
+/// assert_eq!(indexes(window(lines(), Some(1), 3)), [0, 1, 2]);
+/// assert_eq!(indexes(window(lines(), Some(4), 3)), [2, 3, 4]);
+/// assert_eq!(indexes(window(lines(), None, 3)), [0, 1, 2]);
+/// ```
+pub fn window(
+    lines: Vec<(Line<'static>, usize)>,
+    selected: Option<usize>,
+    height: u16,
+) -> Vec<(Line<'static>, usize)> {
+    let height = usize::from(height);
+    let at = selected
+        .and_then(|s| lines.iter().position(|(_, i)| *i == s))
+        .unwrap_or(0);
+    let start = (at + 1).saturating_sub(height);
+    lines.into_iter().skip(start).take(height).collect()
+}
+
+/// Places the lines `lines` of a body in the rows `places`, each with the
+/// index of its row. A click on a line whose row the person can select
+/// (`picks`) presses [`Key::Row`].
+fn place(
+    view: &mut View,
+    lines: Vec<(Line<'static>, usize)>,
+    picks: impl Fn(usize) -> bool,
+    places: impl Iterator<Item = Rect>,
+) {
+    for ((line, index), area) in lines.into_iter().zip(places) {
+        if picks(index) {
+            view.hits.push(Hit {
+                area,
+                key: Key::Row(index),
+            });
+        }
+        view.rows.push(Placed { area, line });
+    }
+}
+
 /// The style of a good word: `running`, `link ok`.
 pub(super) const GOOD: Style = Style::new().fg(Color::Green);
 
@@ -354,15 +402,8 @@ pub fn compute_view(state: &State, area: Rect, now_ms: i64) -> View {
                 body.height,
                 now_ms,
             );
-            for ((line, index), y) in lines.into_iter().zip(2..area.height - 2) {
-                if rows[index].pick().is_some() {
-                    view.hits.push(Hit {
-                        area: row(y),
-                        key: Key::Row(index),
-                    });
-                }
-                view.rows.push(Placed { area: row(y), line });
-            }
+            let picks = |index: usize| rows[index].pick().is_some();
+            place(&mut view, lines, picks, (2..area.height - 2).map(row));
         }
         Tab::Decisions => {
             let rows = state.decision_rows();
@@ -373,15 +414,8 @@ pub fn compute_view(state: &State, area: Rect, now_ms: i64) -> View {
                 area.width - margin,
                 body.height,
             );
-            for ((line, index), y) in lines.into_iter().zip(2..area.height - 2) {
-                if rows[index].pick().is_some() {
-                    view.hits.push(Hit {
-                        area: row(y),
-                        key: Key::Row(index),
-                    });
-                }
-                view.rows.push(Placed { area: row(y), line });
-            }
+            let picks = |index: usize| rows[index].pick().is_some();
+            place(&mut view, lines, picks, (2..area.height - 2).map(row));
         }
         Tab::Chat => chat::place(state, area, layout, &mut view),
         tab => {
@@ -467,7 +501,7 @@ fn warning_rows(line: &str, columns: u16) -> Vec<Line<'static>> {
 /// a post that failed after the last key or whom the line in the prompt
 /// will wake ([`chat::note`]), else the note of the last action, else in
 /// the Waves tab and the Decisions tab the age of their last read of `gh`
-/// (01M6VFGYW0XVJ5JSX6R1NCR6W7, [`super::decisions::note`]), and in the
+/// (01M6VFGYW0XVJ5JSX6R1NCR6W7, 01M7G7SHRDEA6BCNSYQA8RGZ23), and in the
 /// Reports tab the age of the read of its report ([`super::reports::note`],
 /// 01M6VT3JHVFQ27VJE8987WET34).
 fn note_line(state: &State, layout: Layout, now_ms: i64) -> Option<Line<'static>> {
@@ -507,7 +541,7 @@ fn note_line(state: &State, layout: Layout, now_ms: i64) -> Option<Line<'static>
 /// them, the active tab in `[ ]`, and the news of a tab after its name.
 /// The digit of the first tab stays in the second column. When the news
 /// make the strip wider than `area`, one space comes between two tabs
-/// (01M7FYVA218ARDXTFPWSZV6N4P).
+/// (01M7G7SHTXPF9Z6SD4N981HFQH).
 fn strip_wide(state: &State, area: Rect) -> (Line<'static>, Vec<Hit>) {
     let items: Vec<(Tab, Vec<Span<'static>>)> = Tab::ALL
         .into_iter()
@@ -946,7 +980,7 @@ mod tests {
         assert_eq!(drawn(&state, 40, 24)[0], "‹ 7/7 Decisions ›");
     }
 
-    /// 01M7FYVA218ARDXTFPWSZV6N4P: when the news make the strip wider
+    /// 01M7G7SHTXPF9Z6SD4N981HFQH: when the news make the strip wider
     /// than 80 columns, one space comes between two tabs, so the last tab
     /// stays whole, and a click on it still opens it.
     #[test]

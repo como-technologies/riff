@@ -115,7 +115,7 @@ use riff_client::waves::{Board, Issues, wave_number};
 use riff_core::name::ThreadName;
 use riff_core::wire::{HoldInfo, RiffState, SessionInfo};
 
-use super::forge::{Closed, Forge, Main};
+use super::forge::{Closed, Forge, Main, Reads};
 use super::view::Layout;
 use super::{Action, Effect, Key, Look, Mark, NOTHING_CHANGED, Question, State};
 use crate::text;
@@ -137,10 +137,10 @@ const CYAN: Style = Style::new().fg(Color::Cyan);
 const DIM: Style = Style::new().add_modifier(Modifier::DIM);
 
 /// The style of a title.
-const BOLD: Style = Style::new().add_modifier(Modifier::BOLD);
+pub(super) const BOLD: Style = Style::new().add_modifier(Modifier::BOLD);
 
 /// The style of the selected row.
-const SELECTED: Style = Style::new().add_modifier(Modifier::REVERSED);
+pub(super) const SELECTED: Style = Style::new().add_modifier(Modifier::REVERSED);
 
 /// The state of an item on a board (01M6VFGJWVB3WEEYBCNSZ2FJT0), in the
 /// order of the rows.
@@ -340,12 +340,7 @@ pub struct Waves {
     /// The repository of the working folder, `OWNER/REPO`, if any.
     here: Option<String>,
     /// The last good read of the forge of each repository.
-    forge: BTreeMap<String, Forge>,
-    /// The time of the last read of the forge, in milliseconds since the
-    /// epoch.
-    read_ms: Option<i64>,
-    /// The fault of the last read that failed, while it holds.
-    fault: Option<String>,
+    forge: Reads<String, Forge>,
     /// The selected row.
     pick: Option<Pick>,
     /// The folds that the person chose: `true` for an open board.
@@ -514,8 +509,7 @@ impl Waves {
     /// assert!(waves.due(61_000));
     /// ```
     pub fn due(&self, now_ms: i64) -> bool {
-        let every = i64::try_from(super::forge::READ_EVERY.as_millis()).unwrap_or(i64::MAX);
-        self.read_ms.is_none_or(|at| now_ms - at >= every)
+        self.forge.due(now_ms)
     }
 
     /// Takes the read `read` of the forge of each repository at `at_ms`.
@@ -545,24 +539,7 @@ impl Waves {
         at_ms: i64,
     ) -> (Option<String>, bool) {
         let stuck_before = self.stuck();
-        let mut last = std::mem::take(&mut self.forge);
-        let mut fault = None;
-        for (repo, read) in read {
-            match read {
-                Ok(forge) => {
-                    self.forge.insert(repo, forge);
-                }
-                Err(e) => {
-                    fault.get_or_insert(text::top_gh_fault(&e));
-                    if let Some(forge) = last.remove(&repo) {
-                        self.forge.insert(repo, forge);
-                    }
-                }
-            }
-        }
-        self.read_ms = Some(at_ms);
-        let new = fault.clone().filter(|f| self.fault.as_ref() != Some(f));
-        self.fault = fault;
+        let new = self.forge.take(read, at_ms);
         let turned = !self.stuck().is_subset(&stuck_before);
         (new, turned)
     }
@@ -582,7 +559,7 @@ impl Waves {
 
     /// The time of the last read of the forge.
     pub fn read_at(&self) -> Option<i64> {
-        self.read_ms
+        self.forge.at()
     }
 
     /// The selected row.
@@ -611,26 +588,11 @@ impl Waves {
         (look, now_ms): (&Look, i64),
         page: usize,
     ) -> Option<Answer> {
-        let picks: Vec<usize> = (0..rows.len())
-            .filter(|&i| rows[i].pick().is_some())
-            .collect();
-        let at = self
-            .selected(rows)
-            .and_then(|i| picks.iter().position(|&p| p == i));
-        let mut go = |to: usize| {
-            if let Some(&row) = picks.get(to.min(picks.len().saturating_sub(1))) {
-                self.pick = rows[row].pick();
-            }
-            None
-        };
-        let at_or_0 = at.unwrap_or(0);
+        if let Some(row) = key.moves(rows, self.selected(rows), page, |row| row.pick().is_some()) {
+            self.pick = row.pick();
+            return None;
+        }
         match key {
-            Key::Up => go(at_or_0.saturating_sub(1)),
-            Key::Down => go(at.map_or(0, |at| at + 1)),
-            Key::PageUp => go(at_or_0.saturating_sub(page.max(1))),
-            Key::PageDown => go(at_or_0 + page.max(1)),
-            Key::First => go(0),
-            Key::Last => go(picks.len().saturating_sub(1)),
             Key::Row(row) => {
                 let pick = rows.get(row).and_then(Row::pick)?;
                 if self.selected(rows) == Some(row) {
@@ -771,12 +733,24 @@ pub fn url(row: &Row) -> Option<String> {
     match row {
         Row::Item { repo, item } => Some(match item.pull {
             Some(pull) => format!("{}/pull/{pull}", base(repo)),
-            None => format!("{}/issues/{}", base(repo), item.number),
+            None => issue_url(repo, item.number),
         }),
         Row::Repo(row) => Some(base(&row.repo)),
         Row::Closed { repo, .. } => Some(format!("{}/issues?q=is%3Aclosed", base(repo))),
         _ => None,
     }
+}
+
+/// The URL of the issue `number` of `repo`: the URL of an item of the
+/// Waves tab, and of a row of the Decisions tab.
+///
+/// ```
+/// use riff::tui::waves::issue_url;
+///
+/// assert_eq!(issue_url("o/r", 12), "https://github.com/o/r/issues/12");
+/// ```
+pub fn issue_url(repo: &str, number: u64) -> String {
+    format!("https://github.com/{}/issues/{number}", text::safe(repo))
 }
 
 /// The whole row of `item` at `now_ms`, for the note line.
@@ -1077,7 +1051,7 @@ pub fn rows(waves: &Waves, look: &Look, look_ms: i64) -> Vec<Row> {
         .map(str::to_owned);
     let next = repo
         .into_iter()
-        .chain(waves.forge.keys().cloned())
+        .chain(waves.forge.iter().map(|(repo, _)| repo.clone()))
         .find_map(|repo| Some((next_waves(waves.forge.get(&repo)?)?, repo)));
     if let Some((next, repo)) = next {
         rows.extend([Row::Blank, Row::NextTitle(repo), Row::Next(next)]);
@@ -1226,12 +1200,7 @@ pub fn body(
             (line, i)
         })
         .collect();
-    let height = usize::from(rows);
-    let at = selected
-        .and_then(|s| lines.iter().position(|(_, i)| *i == s))
-        .unwrap_or(0);
-    let start = (at + 1).saturating_sub(height);
-    lines.into_iter().skip(start).take(height).collect()
+    super::view::window(lines, selected, rows)
 }
 
 /// The line of `row`, `selected` or not, in the wide layout or not, in
@@ -1414,7 +1383,7 @@ fn item_line(item: &ItemRow, sel: &str, wide: bool, columns: usize, now_ms: i64)
 /// assert_eq!(note(&waves, 42_000), "The boards come from gh, 41s ago.");
 /// ```
 pub fn note(waves: &Waves, now_ms: i64) -> String {
-    match age(waves.read_ms, now_ms) {
+    match age(waves.forge.at(), now_ms) {
         Some(age) => format!("The boards come from gh, {age} ago."),
         None => "The boards come from gh: the first read runs.".to_owned(),
     }
