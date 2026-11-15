@@ -40,12 +40,14 @@
 //! lines at or after a time (`--since`), with one of some texts
 //! (`--grep`), and of them the newest (`--lines`, at most
 //! [`MOST_LINES`]). Each line goes through [`clean`] first
-//! (01M7EX1Q1F468NWGPJJS0W0ZG9): the filter of the events of a session
-//! ([`secrets_of`]: the secrets of this process, of the sign-in file of
-//! `claude`, the token of `riff claude-token` and the secrets of the MCP
-//! servers of the host), each key of Anthropic, and the filter of the
-//! log of the real-session test ([`redact`](super::release_test::redact)).
-//! So no line has a secret, and `--grep` finds no part of a secret.
+//! (01M7EX1Q1F468NWGPJJS0W0ZG9, 01M7FS2HD407ZCTF60EX7XZ2FF): the filter
+//! of the log of the real-session test
+//! ([`redact`](super::release_test::redact)) on the line as the daemon
+//! wrote it, then the filter of the events of a session ([`secrets_of`]:
+//! the secrets of this process, of the sign-in file of `claude`, the
+//! token of `riff claude-token` and the secrets of the MCP servers of the
+//! host), then each key of Anthropic. So no line has a secret, and
+//! `--grep` finds no part of a secret.
 //! `--grep` looks in the whole line, and riff cuts the line to
 //! [`LINE_CHARS`] after that (01M7FBZ2C2SNJCXKESA6MGEQ5M). The lines of
 //! one answer fit in one post on riff-server ([`MOST_BYTES`]).
@@ -700,9 +702,11 @@ pub fn scrub_of(dir: &Path) -> Result<Scrub> {
 /// The start of a key of Anthropic.
 pub const KEY_START: &str = "sk-ant-";
 
-/// `line` with no secret: [`Scrub::clean`], then each key of Anthropic
-/// ([`KEY_START`] and the letters, digits, `-` and `_` after it), then
-/// [`redact`](super::release_test::redact).
+/// `line` with no secret: [`redact`](super::release_test::redact) of the
+/// line as the daemon wrote it, then [`Scrub::clean`], then each key of
+/// Anthropic ([`KEY_START`] and the letters, digits, `-` and `_` after
+/// it) (01M7FS2HD407ZCTF60EX7XZ2FF). So a secret of the host that is a
+/// part of the word `Bearer` keeps no token after it.
 ///
 /// ```
 /// use riff::daemon::log::clean;
@@ -717,12 +721,14 @@ pub const KEY_START: &str = "sk-ant-";
 /// assert_eq!(clean("Authorization: Bearer xyz", &scrub), "Authorization: Bearer [secret]");
 /// assert_eq!(clean(r#"{"auth":"Bearer xyz"}"#, &scrub), r#"{"auth":"Bearer [secret]"#);
 /// assert_eq!(clean("riff daemon: o/r: 2 sessions", &scrub), "riff daemon: o/r: 2 sessions");
+/// let scrub = Scrub::new(["Bearer".to_owned()]);
+/// assert_eq!(clean("Authorization: Bearer xyz", &scrub), "Authorization: [secret] [secret]");
 /// ```
 pub fn clean(line: &str, scrub: &Scrub) -> String {
-    let line = scrub.clean(line);
+    let line = super::release_test::redact(line);
+    let line = scrub.clean(&line);
     let key = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_';
-    let line = crate::run::tokens_out(&line, KEY_START, key);
-    super::release_test::redact(&line)
+    crate::run::tokens_out(&line, KEY_START, key)
 }
 
 /// The time at the start of a line of the log, as [`Capped`] writes it.
@@ -1405,5 +1411,19 @@ mod tests {
             clean("a task-ant and ask-ants", &scrub),
             "a task-ant and ask-ants"
         );
+    }
+
+    /// #2156, 01M7FS2HD407ZCTF60EX7XZ2FF: a secret of the host that is
+    /// the word `Bearer`, or a part of it, keeps no token after the word:
+    /// the filter of the real-session test reads the line first. The white
+    /// space at the end of the line stays.
+    #[test]
+    fn a_secret_in_the_word_bearer_keeps_no_token_after_it() {
+        for secret in ["Bearer", "Beare", "earer", "Bear", "eare", "arer"] {
+            let scrub = Scrub::new([secret.to_owned()]);
+            let line = clean("Authorization: Bearer xyz-token-1 \t", &scrub);
+            assert!(!line.contains("xyz"), "{secret}: {line}");
+            assert!(line.ends_with(" [secret] \t"), "{secret}: {line:?}");
+        }
     }
 }

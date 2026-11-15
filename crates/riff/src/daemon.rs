@@ -14769,9 +14769,11 @@ mod tests {
     const MCP: &str =
         r#"{"mcpServers": {"docs": {"url": "u", "headers": {"X-Docs": "docs-header-value-1"}}}}"#;
 
-    /// The lines of [`LOG`] of issue-12 since 07:12, with no secret.
+    /// The lines of [`LOG`] of issue-12 since 07:12, with no secret. A
+    /// word that starts like a token goes whole, with its comma
+    /// (01M7FS2HD407ZCTF60EX7XZ2FF).
     const LOG_SHOWN: &str = "2026-11-14T07:12:00Z riff daemon: o/r: claims issue-12 again\n\
-         2026-11-14T07:13:00Z riff daemon: issue-12 pushes with [secret], GH_TOKEN=[secret] and \
+         2026-11-14T07:13:00Z riff daemon: issue-12 pushes with [secret] GH_TOKEN=[secret] and \
          [secret]\n\
          2026-11-14T07:15:00Z riff daemon: issue-12: docs refused [secret]";
 

@@ -333,11 +333,12 @@ const TAIL_LINES: usize = 30;
 /// `text` with each secret cut out: a word that starts like a token of
 /// GitHub or Anthropic, and the value of `NAME=value` when NAME names a
 /// token, a key, a secret or a password ([`word_out`]). After the word
-/// `Bearer` ([`ends_with_bearer`], 01M7FFA3GN7F2GW3NGYJPTMKN3) and the
-/// white space after it, each character goes up to the next space or
-/// tab, or to the end of the line: the token, its quotes and the rest of
-/// the word, for example the rest of the JSON
-/// (01M7FN5SSWJRDXWTAYAERBAAFB).
+/// `Bearer` ([`ends_with_bearer`], 01M7FFA3GN7F2GW3NGYJPTMKN3,
+/// 01M7FS2HFPJ18E102RWWK3XZ75) and the white space after it, each
+/// character goes up to the next space or tab, or to the end of the
+/// line: the token, its quotes and the rest of the word, for example the
+/// rest of the JSON (01M7FN5SSWJRDXWTAYAERBAAFB). The white space stays,
+/// also at the end of the line.
 ///
 /// ```
 /// use riff::daemon::release_test::redact;
@@ -406,8 +407,8 @@ pub fn word_out(word: &str) -> String {
 }
 
 /// `word` ends with the word `Bearer`, in any case, before its quotes
-/// and its colons: `Bearer`, `"Bearer`, `{"Authorization":"Bearer` or
-/// `Authorization:Bearer`.
+/// and its colons (01M7FS2HFPJ18E102RWWK3XZ75): `Bearer`, `"Bearer"`,
+/// `Bearer:`, `{"Authorization":"Bearer` or `Authorization:Bearer`.
 ///
 /// ```
 /// use riff::daemon::release_test::ends_with_bearer;
@@ -573,11 +574,13 @@ mod tests {
         assert_eq!(redact("a disk-1 and task-2"), "a disk-1 and task-2");
     }
 
-    /// #2156, 01M7FFA3GN7F2GW3NGYJPTMKN3, 01M7FN5SSWJRDXWTAYAERBAAFB: the
-    /// rest of the word after `Bearer` goes in each form of a header: a
-    /// plain one, in JSON, in quotes, with no space after the colon, with
-    /// two spaces, with a tab, with a `"` or a `'` after `Bearer`, and in
-    /// single quotes. The other spaces of the line stay.
+    /// #2156, 01M7FFA3GN7F2GW3NGYJPTMKN3, 01M7FN5SSWJRDXWTAYAERBAAFB,
+    /// 01M7FS2HFPJ18E102RWWK3XZ75: the rest of the word after `Bearer`
+    /// goes in each form of a header: a plain one, in JSON, in quotes,
+    /// with no space after the colon, with two spaces, with a tab, with a
+    /// `"`, a `'` or a `:` after `Bearer`, and in single quotes. The
+    /// quotes and the colons after `Bearer` stay, and the other spaces of
+    /// the line too.
     #[test]
     fn the_rest_of_the_word_after_bearer_goes_in_each_form_of_a_header() {
         for (line, shown) in [
@@ -608,6 +611,11 @@ mod tests {
             (r#""Bearer" quoted-end-7"#, r#""Bearer" [secret]"#),
             ("'Bearer' single-end-8", "'Bearer' [secret]"),
             ("Bearer 'single-form-9'", "Bearer [secret]"),
+            (
+                "Authorization: Bearer: colon-end-10",
+                "Authorization: Bearer: [secret]",
+            ),
+            (r#"{"Bearer": "json-key-11"}"#, r#"{"Bearer": [secret]"#),
         ] {
             assert_eq!(redact(line), shown, "{line}");
         }
@@ -698,6 +706,38 @@ mod tests {
         ] {
             assert_eq!(redact(line), shown, "{line:?}");
         }
+    }
+
+    /// #2156, 01M7FFA3GN7F2GW3NGYJPTMKN3: with no white space after
+    /// `Bearer` and its quotes and colons, nothing goes, as the book says.
+    #[test]
+    fn a_bearer_with_no_white_space_after_it_hides_nothing() {
+        for line in [
+            "Authorization: Bearer:xyz",
+            r#"{"token_type":"Bearer","access_token":"xyz"}"#,
+        ] {
+            assert_eq!(redact(line), line);
+        }
+    }
+
+    /// #2156, 01M7FN5SSWJRDXWTAYAERBAAFB: the white space at the end of a
+    /// line stays, after a word, after the part after `Bearer`, and in a
+    /// line of white space only.
+    #[test]
+    fn the_white_space_at_the_end_of_a_line_stays() {
+        for (line, shown) in [
+            ("a word ", "a word "),
+            ("a word \t", "a word \t"),
+            ("Bearer xyz ", "Bearer [secret] "),
+            ("Bearer xyz\t \t", "Bearer [secret]\t \t"),
+            ("Bearer ", "Bearer "),
+            ("push ghp_abc123  ", "push [secret]  "),
+            ("   ", "   "),
+            ("\t", "\t"),
+        ] {
+            assert_eq!(redact(line), shown, "{line:?}");
+        }
+        assert_eq!(redact("Bearer xyz \nnext "), "Bearer [secret] \nnext ");
     }
 
     /// #2156: a word whose cut for `Bearer` falls in a character of more

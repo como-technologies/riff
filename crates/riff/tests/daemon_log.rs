@@ -317,9 +317,10 @@ fn a_secret_at_the_cut_of_a_long_line_goes_whole() {
 }
 
 /// #2156, 01M7EX1Q1F468NWGPJJS0W0ZG9, 01M7FFA3GN7F2GW3NGYJPTMKN3,
-/// 01M7FN5SSWJRDXWTAYAERBAAFB: the rest of the word after `Bearer` goes
-/// in each form of a header, with each secret in it, and `--grep` finds
-/// no part of them.
+/// 01M7FN5SSWJRDXWTAYAERBAAFB, 01M7FS2HFPJ18E102RWWK3XZ75: the rest of
+/// the word after `Bearer` goes in each form of a header, with each
+/// secret in it, and `--grep` finds no part of them. A quote or a colon
+/// after `Bearer` stays, and a space at the end of the line too.
 #[test]
 fn the_rest_of_the_word_after_bearer_goes_in_each_form_of_a_header() {
     let env = Isolated::new();
@@ -352,6 +353,14 @@ fn the_rest_of_the_word_after_bearer_goes_in_each_form_of_a_header() {
         (r#""Bearer" quoted-end-7"#, r#""Bearer" [secret]"#),
         ("'Bearer' single-end-8", "'Bearer' [secret]"),
         ("Bearer 'single-form-9'", "Bearer [secret]"),
+        (
+            "Authorization: Bearer: colon-end-10",
+            "Authorization: Bearer: [secret]",
+        ),
+        (
+            "Authorization: Bearer space-end-11 ",
+            "Authorization: Bearer [secret] ",
+        ),
         (
             "Authorization: Bearer xyz,DB_PASSWORD=hunter2",
             "Authorization: Bearer [secret]",
@@ -405,6 +414,34 @@ fn the_rest_of_the_word_after_bearer_goes_in_each_form_of_a_header() {
             "{probe}"
         );
     }
+}
+
+/// #2156, 01M7EX1Q1F468NWGPJJS0W0ZG9, 01M7FS2HD407ZCTF60EX7XZ2FF: an MCP
+/// server of the host with the value `Bearer` keeps no token after the
+/// word `Bearer`, and `--grep` finds no part of the token.
+#[test]
+fn a_secret_of_the_host_that_is_bearer_keeps_no_token_after_it() {
+    let env = Isolated::new();
+    let at = Utc::now() - Duration::minutes(5);
+    let raw = line(at, "riff daemon: Authorization: Bearer xyz-token-1");
+    write_log(&env, &[], &[raw]);
+    std::fs::write(
+        env.riff_home().join("daemon").join(riff::session_mcp::FILE),
+        r#"{"mcpServers":{"api":{"command":"x","env":{"AUTH_SCHEME":"Bearer"}}}}"#,
+    )
+    .unwrap();
+    let out = daemon_log(&env, &[]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let stamp = at.format("%Y-%m-%dT%H:%M:%SZ");
+    assert_eq!(
+        text(&out.stdout),
+        format!("{stamp} riff daemon: Authorization: [secret] [secret]\n")
+    );
+    let out = daemon_log(&env, &["--grep", "xyz-token"]);
+    assert_eq!(
+        text(&out.stdout),
+        "riff daemon log: no line of the log of the riff daemon matches.\n"
+    );
 }
 
 /// #2156, 01M7EX1PVSG64G8EE5SNDRHM7G, 01M7F0HE514TQMGQJKH8CVYY52: with

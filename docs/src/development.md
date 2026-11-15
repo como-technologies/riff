@@ -1716,12 +1716,14 @@ riff daemon log --since 02:12 --grep issue-12
 | `--lines N` | At most N lines, the newest ones. See [See more lines of the log of the daemon](#see-more-lines-of-the-log-of-the-daemon). |
 
 riff reads the files itself, so it works also while the daemon is down.
-It takes each secret out of each line first, as from the events of a
-session. So `--grep` finds no part of a secret. riff takes out:
+It takes these secrets out of each line first, as from the events of a
+session. So `--grep` finds no part of them:
 
 - a token of GitHub and a key of Anthropic;
-- each character after `Bearer` up to the next space or tab: the token,
-  its quotes and the rest of the word, also the rest of the JSON;
+- after the word `Bearer` and the white space after it, each character
+  up to the next space or tab: the token, its quotes and the rest of the
+  word, also the rest of the JSON. A quote or a colon just after
+  `Bearer` stays, as in `"Bearer" [secret]`;
 - the value of `NAME=value` when NAME names a token, a key, a secret or
   a password;
 - the secrets in the environment of riff, and in the sign-in file of
@@ -1729,6 +1731,10 @@ session. So `--grep` finds no part of a secret. riff takes out:
 - the token of `riff claude-token`;
 - each value of the `env` and the `headers` of the MCP servers of the
   host (`riff daemon mcp add`).
+
+With no white space after `Bearer` and its quotes and colons, nothing
+goes: `xyz` shows in `Bearer:xyz` and in
+`{"token_type":"Bearer","access_token":"xyz"}`.
 
 When riff cannot read the file of the MCP servers, it shows no line:
 fix the file, or remove it. When riff cannot read the OS keyring, it
