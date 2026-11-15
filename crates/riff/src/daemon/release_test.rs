@@ -428,13 +428,15 @@ pub fn rest_from(line: &str) -> Option<usize> {
 /// The end of the `=` of the first `NAME=` in `line` whose NAME names a
 /// secret: it has the text TOKEN, KEY, SECRET or PASSWORD, in any place
 /// and in any case (01M7GCP11AAPM078B2CXTDH03K). NAME is the run of
-/// letters, digits and `_` just before the `=`, at any place in the
-/// line: also after a quote, a `,`, a `&` or another `=`.
+/// letters, also of more than one byte, digits and `_` just before the
+/// `=`, at any place in the line: also after a quote, a `,`, a `&` or
+/// another `=`.
 ///
 /// ```
 /// use riff::daemon::release_test::after_a_secret_name;
 ///
 /// assert_eq!(after_a_secret_name("GH_TOKEN=abc"), Some(9));
+/// assert_eq!(after_a_secret_name("GH_TOKEN_ÉQUIPE=abc"), Some(17));
 /// assert_eq!(after_a_secret_name("--env=DB_PASSWORD=x"), Some(18));
 /// assert_eq!(after_a_secret_name(r#"{"env":"db_password=x"}"#), Some(20));
 /// assert_eq!(after_a_secret_name("?user=me&access_token=x"), Some(22));
@@ -458,9 +460,10 @@ pub fn after_a_secret_name(line: &str) -> Option<usize> {
 }
 
 /// The end of the first word `Bearer` in `line`, in any case, with no
-/// letter or digit just before or after it: after a space, a quote or a
-/// colon, and before a space, a quote or a colon, as in `Bearer xyz`,
-/// `{"auth":"Bearer xyz"}` or `Authorization:Bearer:xyz`.
+/// letter or digit just before or after it: after a space, a quote, a
+/// colon or a `_`, and before a space, a quote, a colon or a `_`, as in
+/// `Bearer xyz`, `{"auth":"Bearer xyz"}`, `Authorization:Bearer:xyz` or
+/// `Bearer_xyz`.
 ///
 /// ```
 /// use riff::daemon::release_test::after_bearer;
@@ -468,6 +471,7 @@ pub fn after_a_secret_name(line: &str) -> Option<usize> {
 /// assert_eq!(after_bearer("Authorization: Bearer xyz"), Some(21));
 /// assert_eq!(after_bearer(r#"{"auth":"bearer xyz"}"#), Some(15));
 /// assert_eq!(after_bearer("Authorization:BEARER:xyz"), Some(20));
+/// assert_eq!(after_bearer("my_Bearer_xyz"), Some(9));
 /// assert_eq!(after_bearer("a Bearers Bearer"), Some(16));
 /// for line in ["Bearers", "MyBearer", "Bear", "érBearer", "Bearer2"] {
 ///     assert_eq!(after_bearer(line), None, "{line}");
@@ -679,6 +683,23 @@ mod tests {
         }
     }
 
+    /// #2156, 01M7GGCT0Z0GXM3BCAAGX7CE6Q: a letter of more than one byte
+    /// is a letter of NAME: between the text of the secret and the `=`,
+    /// just before the `=`, and before the text.
+    #[test]
+    fn a_name_with_a_wide_letter_in_it_names_a_secret() {
+        for (line, shown) in [
+            (
+                "-e GH_TOKEN_ÉQUIPE=hunter2 x",
+                "-e GH_TOKEN_ÉQUIPE=[secret]",
+            ),
+            ("DB_PASSWORDé=hunter2", "DB_PASSWORDé=[secret]"),
+            ("a clé_KEY=hunter2 b", "a clé_KEY=[secret]"),
+        ] {
+            assert_eq!(redact(line), shown, "{line}");
+        }
+    }
+
     /// #2156, 01M7GGCT0Z0GXM3BCAAGX7CE6Q: NAME is at any place in the line:
     /// after a quote, a `,`, a `;`, a `&`, a `?`, a space, another `=`, or
     /// a character of more than one byte that is no letter, also when an
@@ -851,6 +872,21 @@ mod tests {
     fn a_bearer_next_to_a_wide_letter_hides_nothing() {
         for line in ["éBearer x", "Beareré x", "a Résumé here"] {
             assert_eq!(redact(line), line, "{line}");
+        }
+    }
+
+    /// #2156, 01M7GGCT0Z0GXM3BCAAGX7CE6Q: a `_` is no letter and no
+    /// digit. So `Bearer` with a `_` just before or after it is the word
+    /// `Bearer`, and the rest of the line after it goes, with the `_`.
+    #[test]
+    fn a_bearer_next_to_an_underscore_hides_the_rest_of_the_line() {
+        for (line, shown) in [
+            ("Authorization: Bearer_xyz", "Authorization: Bearer[secret]"),
+            ("auth=Bearer_tok-1", "auth=Bearer[secret]"),
+            ("my_bearer xyz b", "my_bearer [secret]"),
+            ("_BEARER_ xyz", "_BEARER[secret]"),
+        ] {
+            assert_eq!(redact(line), shown, "{line}");
         }
     }
 

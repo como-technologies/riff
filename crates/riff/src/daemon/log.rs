@@ -1416,11 +1416,10 @@ mod tests {
         );
     }
 
-    /// #2156, 01M7FS2HD407ZCTF60EX7XZ2FF, 01M7FXE86QYC8D6P6WDK69ZSMA: a
-    /// secret of the host that is the word `Bearer`, or a part of it,
-    /// keeps no token after the word: the filter of the real-session test
-    /// reads the line as the daemon wrote it. The white space at the end
-    /// of the line stays.
+    /// #2156, 01M7FXE86QYC8D6P6WDK69ZSMA: a secret of the host that is
+    /// the word `Bearer`, or a part of it, keeps no token after the word:
+    /// the filter of the real-session test reads the line as the daemon
+    /// wrote it. The white space at the end of the line stays.
     #[test]
     fn a_secret_in_the_word_bearer_keeps_no_token_after_it() {
         for part in ["Bearer", "Beare", "earer", "Bear", "eare", "arer"] {

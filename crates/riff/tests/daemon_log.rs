@@ -362,8 +362,10 @@ fn the_rest_of_the_line_after_each_secret_name_goes() {
 /// after `Bearer`, the rest of the line goes: also after a quote with a
 /// space in it, after another `=`, a `,`, a `&` or a `?`, with a
 /// no-break space, a space just after the `=` or two levels of escape in
-/// the value. A word that starts like a token goes whole, also with a
-/// `NAME=` in it. `--grep` finds no word after the `=` or after `Bearer`.
+/// the value. NAME can have a letter of more than one byte, and
+/// `Bearer` a `_` just after it. A word that starts like a token goes
+/// whole, also with a `NAME=` in it. `--grep` finds no word after the
+/// `=` or after `Bearer`.
 #[test]
 fn a_secret_name_or_bearer_hides_the_rest_of_the_line() {
     let env = Isolated::new();
@@ -397,6 +399,9 @@ fn a_secret_name_or_bearer_hides_the_rest_of_the_line() {
             r#""Authorization": "Bearer qb1", "x": 1"#,
             r#""Authorization": "Bearer [secret]"#,
         ),
+        ("-e GH_TOKEN_ÉQUIPE=qu1 x", "-e GH_TOKEN_ÉQUIPE=[secret]"),
+        ("DB_PASSWORDé=qv1", "DB_PASSWORDé=[secret]"),
+        ("Authorization: Bearer_qx1", "Authorization: Bearer[secret]"),
     ];
     let lines = pairs.map(|(l, _)| line(at, &format!("riff daemon: {l}")));
     write_log(&env, &[], &lines);
@@ -410,7 +415,7 @@ fn a_secret_name_or_bearer_hides_the_rest_of_the_line() {
     assert_eq!(text(&out.stdout), shown);
     for probe in [
         "qi1", "qi2", "qe1", "qd2", "qr1", "qt1", "qs2", "qg1", "qn2", "next", "qw1", " ok", "qb1",
-        "\"x\"",
+        "\"x\"", "qu1", "qv1", "qx1",
     ] {
         let out = daemon_log(&env, &["--grep", probe]);
         assert_eq!(
@@ -454,6 +459,32 @@ fn a_long_line_of_starts_of_tokens_goes_in_a_short_time() {
              {stamp} riff daemon: Bearer\u{a0}[secret]\u{a0}\n"
         )
     );
+    assert!(took < std::time::Duration::from_secs(20), "{took:?}");
+}
+
+/// #2156, 01M7GGCT0Z0GXM3BCAAGX7CE6Q, 01M7FBZ2C2SNJCXKESA6MGEQ5M: a line
+/// of 256 KiB of `NAME=` with no secret NAME, and a line of 256 KiB of
+/// `Bearer` with a letter just before each one, keep each character up
+/// to the cut. Each goes in a short time.
+#[test]
+fn a_long_line_of_names_and_bearers_with_no_secret_goes_in_a_short_time() {
+    let env = Isolated::new();
+    let at = Utc::now() - Duration::minutes(5);
+    let long = |start: &str| start.repeat(256 * 1024 / start.len());
+    let lines = [
+        line(at, &format!("riff daemon: {}", long("x=1 "))),
+        line(at, &format!("riff daemon: {}", long("aBearer "))),
+    ];
+    write_log(&env, &[], &lines);
+    let begin = std::time::Instant::now();
+    let out = daemon_log(&env, &[]);
+    let took = begin.elapsed();
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let shown: String = lines
+        .iter()
+        .map(|l| format!("{}…\n", &l[..riff::daemon::log::LINE_CHARS - 1]))
+        .collect();
+    assert_eq!(text(&out.stdout), shown);
     assert!(took < std::time::Duration::from_secs(20), "{took:?}");
 }
 
@@ -557,8 +588,7 @@ fn the_rest_of_the_line_after_bearer_goes_in_each_form_of_a_header() {
     }
 }
 
-/// #2156, 01M7EX1Q1F468NWGPJJS0W0ZG9, 01M7FS2HD407ZCTF60EX7XZ2FF,
-/// 01M7FXE86QYC8D6P6WDK69ZSMA: a
+/// #2156, 01M7EX1Q1F468NWGPJJS0W0ZG9, 01M7FXE86QYC8D6P6WDK69ZSMA: a
 /// secret of an MCP server of the host goes whole, also when the filter
 /// of the real-session test or the key of Anthropic finds a part of it,
 /// and `--grep` finds no part of it. The value `Bearer` keeps no token

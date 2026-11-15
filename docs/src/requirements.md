@@ -6757,9 +6757,6 @@ of this part when they merge.
   its text in the whole line, with no secret. riff cuts the line to 1000
   characters after that: a line with the text after its character 1000
   shows too.
-- **01M7FS2HD407ZCTF60EX7XZ2FF** The filter of the log of the
-  real-session test reads each line of `riff daemon log` as the daemon
-  wrote it.
 - **01M7FXE86QYC8D6P6WDK69ZSMA** `riff daemon log` finds the parts of a
   line to hide on the line as the daemon wrote it, with each filter on
   the same text: each match of each secret that the daemon takes out of
@@ -6767,7 +6764,6 @@ of this part when they merge.
   the filter of the log of the real-session test hides, and each key of
   Anthropic. Then it puts one `[secret]` in place of each run of the
   union of these parts: two parts that overlap or touch make one run.
-  Supersedes 01M7FS2HD407ZCTF60EX7XZ2FF in part.
 - **01M7GCP11AAPM078B2CXTDH03K** For the filter of the log of the
   real-session test, and so of `riff daemon log`, NAME of `NAME=value`
   names a secret when it has the text TOKEN, KEY, SECRET or PASSWORD in
