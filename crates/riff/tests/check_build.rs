@@ -120,27 +120,35 @@ fn riff_build_fails_when_just_static_fails() {
     assert!(out.stdout.is_empty(), "{out:?}");
 }
 
-/// 01M7G1J1F1QWT4S45CDMMXP6J5: the origin has a token with a `?` in its
-/// URL, and git cannot reach it. The error of `riff build` on the terminal
-/// names the URL with no token.
+/// 01M7G1J1F1QWT4S45CDMMXP6J5: the origin has a token in its URL, with a
+/// `?` in it or with a third `/` after the scheme, and git cannot reach
+/// it. The error of `riff build` on the terminal names the URL with no
+/// token.
 #[test]
 fn a_failed_clone_of_riff_build_shows_no_token_of_the_origin() {
     let env = Isolated::new();
     let root = isolated::outside_git();
     let (_origin, here) = repo(root.path());
-    let url = "https://USER:TO?KEN@127.0.0.1:1/o/r.git";
-    git(&here, &["remote", "set-url", "origin", url]);
     let fake = isolated::outside_git();
     let just = isolated::write_program(fake.path().join("just"), FAKE_JUST);
 
-    let out = build(&env, &here, &just);
-    assert!(!out.status.success(), "{out:?}");
-    let err = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        err.contains("git clone -q -- https://127.0.0.1:1/o/r.git "),
-        "{err}"
-    );
-    assert!(!err.contains("USER:") && !err.contains("KEN@"), "{err}");
+    for (url, clean) in [
+        (
+            "https://USER:TO?KEN@127.0.0.1:1/o/r.git",
+            "https://127.0.0.1:1/o/r.git",
+        ),
+        (
+            "https:///USER:TOKEN@127.0.0.1:1/o/r.git",
+            "https:///127.0.0.1:1/o/r.git",
+        ),
+    ] {
+        git(&here, &["remote", "set-url", "origin", url]);
+        let out = build(&env, &here, &just);
+        assert!(!out.status.success(), "{out:?}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains(&format!("git clone -q -- {clean} ")), "{err}");
+        assert!(!err.contains("USER:") && !err.contains("KEN@"), "{err}");
+    }
     assert!(!fake.path().join("just.log").exists());
 }
 

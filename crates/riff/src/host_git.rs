@@ -270,16 +270,16 @@ pub fn within(dir: &Path, args: &[&str], limit: Duration) -> Result<String> {
 
 /// `text` with no user info in a URL: `SCHEME://USER:TOKEN@HOST/PATH`
 /// is `SCHEME://HOST/PATH` (01M7G1J1F1QWT4S45CDMMXP6J5). The user info
-/// ends at the last `@` before the first `/` after the `://`, or before
-/// the end of the text. Each other sign is part of it: for example a
-/// quote, a space, a tab, a `?` or a `#`. Git hides the user info in its
-/// own texts up to the first `@` before that `/`, so riff takes out at
-/// least as much as git. After a URL with no path, the text up to that
-/// last `@` goes out too. Each git call of riff on the host with a URL in
-/// its words runs through [`output`] and
-/// [`crate::git_credential::keyring_open`]. The error texts of these two
-/// and of [`within`] go through it. So a token in the URL of the origin
-/// of a clone shows on no terminal and in no log of the daemon.
+/// starts after the `://` and each `/` that comes next: curl reads
+/// `SCHEME:///USER:TOKEN@HOST` as a URL with user info. It ends at the
+/// last `@` before the next `/`, or before the end of the text. Each
+/// other sign is part of it: for example a quote, a space, a tab, a `?`
+/// or a `#`. After a URL with no path, the text up to that last `@` goes
+/// out too. Each git call of riff on the host with a URL in its words
+/// runs through [`crate::git_credential::keyring_open`] and [`output`].
+/// Their error texts and the error text of [`within`] go through it, with
+/// the stderr of git. So these texts show no token of the URL of the
+/// origin.
 ///
 /// ```
 /// use riff::host_git::no_user_info;
@@ -288,6 +288,13 @@ pub fn within(dir: &Path, args: &[&str], limit: Duration) -> Result<String> {
 ///     no_user_info("git clone -q -- https://USER:TOKEN@github.com/o/r.git /c: fatal"),
 ///     "git clone -q -- https://github.com/o/r.git /c: fatal"
 /// );
+/// // More than two `/` after the scheme, in the command and in the
+/// // stderr of git.
+/// assert_eq!(
+///     no_user_info("git clone -- https:///U:T@h/o/r.git /c: unable to access 'https:///U:T@h/o/r.git/'"),
+///     "git clone -- https:///h/o/r.git /c: unable to access 'https:///h/o/r.git/'"
+/// );
+/// assert_eq!(no_user_info("http:////U:T@h"), "http:////h");
 /// assert_eq!(
 ///     no_user_info("'http://a@b@127.0.0.1:8080' and ssh://git@github.com/o/r.git"),
 ///     "'http://127.0.0.1:8080' and ssh://github.com/o/r.git"
@@ -316,6 +323,9 @@ pub fn no_user_info(text: &str) -> String {
     while let Some(at) = rest.find("://") {
         let (head, after) = rest.split_at(at + "://".len());
         out.push_str(head);
+        let slashes = after.len() - after.trim_start_matches('/').len();
+        let (slashes, after) = after.split_at(slashes);
+        out.push_str(slashes);
         let host_end = after.find('/').unwrap_or(after.len());
         let host = after[..host_end].rfind('@').map_or(0, |user| user + 1);
         rest = &after[host..];
@@ -608,25 +618,42 @@ pub(crate) mod tests {
     }
 
     /// 01M7G1J1F1QWT4S45CDMMXP6J5: a git call with a URL with user info
-    /// fails, with a quote, a space, a `?` and a `#` in the password. The
-    /// error of [`output`] and of [`within`] names the URL with no user
-    /// info.
+    /// fails, with a quote, a space, a `?` and a `#` in the password, or
+    /// with a third `/` after the scheme. The error of [`output`] and of
+    /// [`within`] names the URL with no user info, in the command and in
+    /// the stderr of git.
     #[test]
     fn an_error_of_git_shows_no_user_info_of_a_url() {
         let root = tempfile::tempdir().unwrap();
-        let url = "https://USER:TO'K E?N#@127.0.0.1:1/o/r.git";
-        let args = ["ls-remote", "--", url, "refs/heads/main"];
-        for error in [
-            output(root.path(), &args).unwrap_err(),
-            within(root.path(), &args, Duration::from_secs(30)).unwrap_err(),
+        for (url, clean) in [
+            (
+                "https://USER:TO'K E?N#@127.0.0.1:1/o/r.git",
+                "https://127.0.0.1:1/o/r.git",
+            ),
+            (
+                "https:///USER:TOKEN@127.0.0.1:1/o/r.git",
+                "https:///127.0.0.1:1/o/r.git",
+            ),
         ] {
-            let error = format!("{error:#}");
-            assert!(
-                error.contains("ls-remote -- https://127.0.0.1:1/o/r.git refs/heads/main: "),
-                "{error}"
-            );
-            assert!(!error.contains("N#@") && !error.contains("USER"), "{error}");
+            let args = ["ls-remote", "--", url, "refs/heads/main"];
+            for error in [
+                output(root.path(), &args).unwrap_err(),
+                within(root.path(), &args, Duration::from_secs(30)).unwrap_err(),
+            ] {
+                let error = format!("{error:#}");
+                let command = format!("ls-remote -- {clean} refs/heads/main: ");
+                assert!(error.contains(&command), "{error}");
+                assert!(!error.contains("N#@") && !error.contains("USER"), "{error}");
+            }
         }
+        // Only the stderr of git holds the token.
+        let say = "alias.say=!echo \"no https://USER:$(echo TO)KEN@h/o/r.git\" >&2; false";
+        let error = output(root.path(), &["-c", say, "say"]).unwrap_err();
+        assert!(
+            error.to_string().ends_with(": no https://h/o/r.git"),
+            "{error}"
+        );
+        assert!(!error.to_string().contains("KEN"), "{error}");
     }
 
     /// 01M7E7ACTYP4RX8TCJ9XSYMMPM: the clone of a lead is in the folder of
