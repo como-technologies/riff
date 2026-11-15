@@ -290,7 +290,7 @@ impl Space {
     /// assert!(!space(20).low(&limit));
     /// ```
     pub fn low(&self, limit: &Limit) -> bool {
-        self.disk.free_gb < limit.disk_gb
+        limit.disk_low(&self.disk)
     }
 }
 
@@ -387,30 +387,47 @@ impl Limit {
         }
     }
 
+    /// True when the free space of `disk` is below the floor of free disk:
+    /// the one rule of the floor (01M7G43090V1F263GYK3GQEXCZ).
+    ///
+    /// ```
+    /// use riff::room::Limit;
+    /// use riff_client::machines::Disk;
+    ///
+    /// let limit = Limit { disk_gb: 20, ..Limit::default() };
+    /// assert!(limit.disk_low(&Disk { free_gb: 19, total_gb: 915 }));
+    /// assert!(!limit.disk_low(&Disk { free_gb: 20, total_gb: 915 }));
+    /// ```
+    pub fn disk_low(&self, disk: &Disk) -> bool {
+        disk.free_gb < self.disk_gb
+    }
+
     /// Has the host room for one more session, with `live` sessions and
-    /// slots, `free` bytes of free memory, and `disk` GB of free disk?
-    /// With no number for the free memory or for the free disk, that one
-    /// does not count. The free disk counts first: the end of a session
-    /// does not make room on the disk.
+    /// slots, `free` bytes of free memory, and the free disk `disk`? With
+    /// no number for the free memory or no disk, that one does not count.
+    /// The free disk counts first: the end of a session does not make room
+    /// on the disk.
     ///
     /// ```
     /// use riff::room::{Full, Limit};
+    /// use riff_client::machines::Disk;
     ///
     /// let gb = 1u64 << 30;
+    /// let disk = |free_gb| Some(Disk { free_gb, total_gb: 915 });
     /// let limit = Limit { sessions: 2, floor_gb: 8, disk_gb: 20, ..Limit::default() };
-    /// assert_eq!(limit.room(1, Some(9 * gb), Some(20)), Ok(()));
-    /// assert_eq!(limit.room(2, Some(9 * gb), Some(50)), Err(Full::Sessions { live: 2, limit: 2 }));
-    /// assert_eq!(limit.room(0, Some(7 * gb), Some(50)), Err(Full::Memory { free_gb: 7, floor_gb: 8 }));
-    /// assert_eq!(limit.room(0, Some(8 * gb), Some(50)), Ok(()));
-    /// assert_eq!(limit.room(2, Some(9 * gb), Some(5)), Err(Full::Disk { free_gb: 5, floor_gb: 20 }));
+    /// assert_eq!(limit.room(1, Some(9 * gb), disk(20).as_ref()), Ok(()));
+    /// assert_eq!(limit.room(2, Some(9 * gb), disk(50).as_ref()), Err(Full::Sessions { live: 2, limit: 2 }));
+    /// assert_eq!(limit.room(0, Some(7 * gb), disk(50).as_ref()), Err(Full::Memory { free_gb: 7, floor_gb: 8 }));
+    /// assert_eq!(limit.room(0, Some(8 * gb), disk(50).as_ref()), Ok(()));
+    /// assert_eq!(limit.room(2, Some(9 * gb), disk(5).as_ref()), Err(Full::Disk { free_gb: 5, floor_gb: 20 }));
     /// assert_eq!(limit.room(0, None, None), Ok(()));
     /// let none = Limit { sessions: 0, floor_gb: 0, ..Limit::default() };
     /// assert_eq!(none.room(0, None, None), Err(Full::Sessions { live: 0, limit: 0 }));
     /// ```
-    pub fn room(&self, live: usize, free: Option<u64>, disk: Option<u64>) -> Result<(), Full> {
-        if let Some(free_gb) = disk.filter(|free| *free < self.disk_gb) {
+    pub fn room(&self, live: usize, free: Option<u64>, disk: Option<&Disk>) -> Result<(), Full> {
+        if let Some(disk) = disk.filter(|disk| self.disk_low(disk)) {
             return Err(Full::Disk {
-                free_gb,
+                free_gb: disk.free_gb,
                 floor_gb: self.disk_gb,
             });
         }
@@ -647,8 +664,10 @@ impl Room {
             .collect()
     }
 
-    /// Tells the starts that wait: a session ended.
-    pub fn ended(&self) {
+    /// Tells the starts that wait to look for room again: a session ended,
+    /// or the free disk is at or above its floor again
+    /// ([`crate::daemon::Daemon::look_disk`], 01M7G430FB68R1322AT8H94KYR).
+    pub fn wake(&self) {
         self.changed.notify_waiters();
     }
 
@@ -677,7 +696,8 @@ impl Room {
             tokio::pin!(changed);
             changed.as_mut().enable();
             let slots = usize::try_from(self.slots.load(Ordering::SeqCst)).unwrap_or(usize::MAX);
-            let disk = self.space().map(|space| space.disk.free_gb);
+            let space = self.space();
+            let disk = space.as_ref().map(|space| &space.disk);
             match self.limit().room(live() + slots, (self.memory)(), disk) {
                 Ok(()) => {
                     self.slots.fetch_add(1, Ordering::SeqCst);
@@ -744,19 +764,21 @@ mod tests {
             let (room, said) = (room.clone(), said.clone());
             tokio::spawn(async move { room.admit("b", || 0, |why| lock(&said).push(why)).await })
         };
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        until(|| lock(&said).len() == 1).await;
         free_disk.store(5, Ordering::SeqCst);
         drop(first);
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        until(|| lock(&said).len() == 2).await;
         assert!(!second.is_finished());
         let disk = Full::Disk {
             free_gb: 5,
             floor_gb: 20,
         };
         assert_eq!(*lock(&said), [Full::Sessions { live: 1, limit: 1 }, disk]);
+        // The look at the disk wakes the start: it does not wait for
+        // LOOK_EVERY.
         free_disk.store(20, Ordering::SeqCst);
-        room.ended();
-        let _slot = tokio::time::timeout(LOOK_EVERY * 2, second)
+        room.wake();
+        let _slot = tokio::time::timeout(LOOK_EVERY / 2, second)
             .await
             .unwrap()
             .unwrap();
@@ -765,6 +787,19 @@ mod tests {
 
     fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
         mutex.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Waits until `done`, and looks again each few milliseconds. A test
+    /// fails after 10 seconds.
+    async fn until(done: impl Fn() -> bool) {
+        let look = async {
+            while !done() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(10), look)
+            .await
+            .unwrap();
     }
 
     #[test]
@@ -833,7 +868,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert!(!waits.is_finished());
         free.store(9, Ordering::SeqCst);
-        room.ended();
+        room.wake();
         let _slot = tokio::time::timeout(LOOK_EVERY * 2, waits)
             .await
             .unwrap()

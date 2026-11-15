@@ -2265,8 +2265,9 @@ riff
 
 The folder of a session holds its clone with its `target`: often some
 GB. The daemon removes the folder of each session that does not run
-when the work of its branch is over. It does this at its start, then
-each 10 minutes, also when no wave runs. You do not have to do a step.
+when the work of its branch is over, or when its work is on `origin`.
+It does this at its start, then each 10 minutes, also when no wave
+runs. You do not have to do a step.
 
 The daemon runs no git in the clone of a session: a session can write
 the git config of its clone, and a git config can name a program that
@@ -2274,8 +2275,12 @@ git runs. So the sweep decides from facts that no session can write:
 
 - The file `repo` of the folder: the repository of the session. riff
   writes it before the clone. The container does not see it.
-- GitHub: the pull requests of the branch `worktree-ITEM`, and the
-  state of the issue.
+- The file `head` of the folder: the last commit of the clone. At the
+  end of `claude`, git reads it in the container, and the daemon
+  writes the file. When the clone has a change of a tracked file that
+  the session did not commit, there is no file `head`.
+- GitHub: the pull requests of the branch `worktree-ITEM`, the state of
+  the issue, and whether the branch holds the commit of `head`.
 - The age of the folder: the time since the last change of the folder
   and of its `events.jsonl`.
 
@@ -2286,10 +2291,12 @@ flowchart TD
     A -- "yes" --> R{"the file repo"}
     R -- "none" --> W["the folder stays, and riff says why"]
     R -- "OWNER/REPO" --> P{"the branch worktree-ITEM"}
-    P -- "an open pull request" --> K["the folder stays"]
+    P -- "an open pull request" --> H{"a work session, and the branch<br/>holds the commit of its file head?"}
+    H -- "yes" --> D
+    H -- "no" --> K["the folder stays"]
     P -- "a merged or a closed pull request" --> D
     P -- "no pull request" --> I{"the issue"}
-    I -- "open" --> K
+    I -- "open" --> H
     I -- "closed" --> D
 ```
 
@@ -2312,6 +2319,23 @@ It prints each folder that the daemon removed, with the reason:
 
 ```text
 riff removed the folder /home/mike/.local/share/riff/sessions/issue-735-7788e301: the pull request #738 closed with no merge.
+```
+
+### The folder of a session that pushed its work
+
+Each round of fixes and each rebase of a pull request is a new session
+with a folder of its own. The daemon removes such a folder soon after
+the end of its session: when the branch `worktree-issue-N` on `origin`
+is at the last commit of the clone, or after it. It does not wait for
+the merge. The folder of a verify pushes no work, so it stays until the
+pull request merges or closes. To run the sweep now:
+
+```sh
+riff daemon sweep
+```
+
+```text
+riff removed the folder /home/mike/.local/share/riff/sessions/issue-735-7788e301: its last commit 1a2b3c4 is on the branch worktree-issue-735 of origin.
 ```
 
 ### Where the work of a removed folder goes
@@ -4526,7 +4550,7 @@ To see the limit:
 riff daemon limit
 ```
 
-To set it, for example 2 sessions and a floor of 12 GB:
+To set it, for example 2 sessions and a floor of 12 GB of free memory:
 
 ```sh
 riff daemon limit --sessions 2 --floor 12
@@ -4541,9 +4565,18 @@ each container and its volumes. On a full disk, these writes fail with
 "No space left on device", and a verify can give a wrong result. So the
 daemon starts no session while the free disk is below a floor: 20 GB
 by default. The free disk is the free space of the disk of the folders
-of riff, `~/.local/share/riff`, and of the storage of podman. When they
-are on two disks, the disk with less free space counts. The lead waits
-for no room: it starts also on a full disk.
+of riff, `~/.local/share/riff`, and of the storage of podman: the
+folder of its images and of the layers of its containers. When they
+are on two disks, the disk with less free space counts. When podman
+does not say its storage, only the folders of riff count, and the log
+of the daemon says why. The lead waits for no room: it starts also on
+a full disk.
+
+To see the folder of the storage of podman:
+
+```sh
+podman info --format '{{.Store.GraphRoot}}'
+```
 
 To set the floor, for example 40 GB:
 
@@ -4561,15 +4594,17 @@ The line of each wave that waits says why, for example `waits for
 room: 5 GB of disk is free, and the floor is 20 GB`. The daemon looks
 at the disk each 30 seconds. When the free disk falls below the floor,
 the lead of each repository of the host gets one note: the size of the
-compile cache, and the folders of the sessions that do not run. To make
-room:
+compile cache, and the folders of the sessions that do not run, at
+most 20 of them. To make room:
 
 ```sh
 riff daemon cache --clear
 riff daemon sweep
 ```
 
-See [Show or empty the compile cache of the container
+The sweep removes each folder whose work is over or on `origin`: see
+[The folder of a session that pushed its work](#the-folder-of-a-session-that-pushed-its-work).
+See also [Show or empty the compile cache of the container
 sessions](#show-or-empty-the-compile-cache-of-the-container-sessions)
 and [Remove one folder on purpose](#remove-one-folder-on-purpose). For
 another host, add `--host HOST` to each command. When the free disk is

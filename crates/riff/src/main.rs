@@ -1560,10 +1560,10 @@ enum DaemonCommand {
     /// Show the riff daemon and its sessions
     ///
     /// It shows the process, the build and the folder of the daemon, the
-    /// limit of the host, each repository whose session on riff-server
-    /// does not run and why, each session, with what started each lead,
-    /// each start that waits for room, and each wave, with each follower
-    /// of the wave on riff-server
+    /// limit of the host, the free disk, each repository whose session on
+    /// riff-server does not run and why, each session, with what started
+    /// each lead, each start that waits for room, and each wave, with
+    /// each follower of the wave on riff-server
     /// that does not run and why. Last it shows the calls of gh of the
     /// last hour, with their GraphQL points, and the points that GitHub
     /// says are left. It exits with 1 when no daemon answers in 20
@@ -1673,8 +1673,10 @@ enum DaemonCommand {
     /// It removes the folder of each session that does not run, when the
     /// pull request of its branch merged or closed, when its issue is
     /// closed and its branch has no pull request, or when the folder had
-    /// no change for 30 days. It runs no git in the clone: the work of the
-    /// clone that is not on origin goes with the folder. It also removes
+    /// no change for 30 days. It removes the folder of a work session also
+    /// while its pull request is open, when the last commit of its clone
+    /// is on its branch on origin. It runs no git in the clone: the work of
+    /// the clone that is not on origin goes with the folder. It also removes
     /// each old clone of a lead that a start of the lead could not remove.
     /// It prints each folder that it removed, and each folder that stays
     /// for a fault, with the reason.

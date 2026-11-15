@@ -693,13 +693,23 @@ impl fmt::Display for Request {
         match self {
             Request::Status => write!(f, "daemon status"),
             Request::Limit(change) => {
+                let Change {
+                    sessions,
+                    floor_gb,
+                    disk_gb,
+                    cpus,
+                    memory_gb,
+                    effort,
+                    effort_lead,
+                    effort_verify,
+                } = change;
                 write!(f, "daemon limit")?;
                 let flags = [
-                    ("--sessions", change.sessions.map(u64::from)),
-                    ("--floor", change.floor_gb),
-                    ("--disk", change.disk_gb),
-                    ("--cpus", change.cpus.map(u64::from)),
-                    ("--memory", change.memory_gb),
+                    ("--sessions", sessions.map(u64::from)),
+                    ("--floor", *floor_gb),
+                    ("--disk", *disk_gb),
+                    ("--cpus", cpus.map(u64::from)),
+                    ("--memory", *memory_gb),
                 ];
                 for (flag, value) in flags {
                     if let Some(value) = value {
@@ -707,9 +717,9 @@ impl fmt::Display for Request {
                     }
                 }
                 let efforts = [
-                    ("--effort", change.effort),
-                    ("--effort-lead", change.effort_lead),
-                    ("--effort-verify", change.effort_verify),
+                    ("--effort", effort),
+                    ("--effort-lead", effort_lead),
+                    ("--effort-verify", effort_verify),
                 ];
                 for (flag, level) in efforts {
                     if let Some(level) = level {

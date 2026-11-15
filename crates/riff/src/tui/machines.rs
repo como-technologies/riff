@@ -222,13 +222,14 @@ pub struct Here {
     pub daemon: Option<crate::daemon::Status>,
     /// The numbers of this machine, read with the status.
     pub machine: Option<Machine>,
-    /// The disk of the folder of the daemon, read with the status.
+    /// The free disk of the daemon: the disk of its floor of free disk,
+    /// from its status (01M7G430CFEK4B0FDG1552G8VE).
     pub disk: Option<Disk>,
 }
 
 /// This host for `me` (01M6VFD09QN71SWMPP8YXCRAEK): the status of the
-/// daemon in [`crate::daemon::dir`], within [`DAEMON_WAIT`], and the
-/// numbers and the disk of this machine. With no socket of a daemon, it
+/// daemon in [`crate::daemon::dir`], within [`DAEMON_WAIT`], with its free
+/// disk, and the numbers of this machine. With no socket of a daemon, it
 /// asks nothing and reads no numbers. The reads of the machine run on a
 /// thread for blocking work.
 pub async fn here(me: &SessionUri) -> Here {
@@ -239,14 +240,16 @@ pub async fn here(me: &SessionUri) -> Here {
         Some(dir) => crate::daemon::status_within(dir, DAEMON_WAIT).await.ok(),
         None => None,
     };
-    let (machine, disk) = match (&daemon, dir) {
-        (Some(_), Some(dir)) => tokio::task::spawn_blocking(move || {
-            (Some(crate::machine::here()), crate::disk::here(&dir))
-        })
-        .await
-        .unwrap_or_default(),
-        _ => (None, None),
+    let machine = match &daemon {
+        Some(_) => tokio::task::spawn_blocking(|| Some(crate::machine::here()))
+            .await
+            .unwrap_or_default(),
+        None => None,
     };
+    let disk = daemon
+        .as_ref()
+        .and_then(|status| status.disk.as_ref())
+        .map(|space| space.disk);
     Here {
         user: me.who().user().to_owned(),
         host: me.place().host().to_owned(),

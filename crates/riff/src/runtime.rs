@@ -44,6 +44,7 @@
 //! | Find the image digest of a live session | [`Runtime::digest`] | `podman container inspect --format {{.ImageDigest}} NAME` |
 //! | List the processes of a live session | [`Runtime::processes`] | `podman top NAME pid ppid etime args` ([`crate::podman::top_args`]) |
 //! | Find the folders of the volumes | [`Runtime::volume_folders`] | `podman info --format {{.Store.VolumePath}}` and `podman volume inspect --all` ([`crate::podman::STORE_ARGS`], [`crate::podman::VOLUMES_ARGS`]) |
+//! | Find the folder of the images and of the layers of the containers | [`Runtime::storage`] | `podman info --format {{.Store.GraphRoot}}` ([`crate::podman::GRAPH_ARGS`]) |
 //!
 //! A session with a terminal is the lead (01M4Z60B81RTZT71PN5HV0GZHX).
 //! The runtime holds its terminal: conmon on podman. A person attaches to

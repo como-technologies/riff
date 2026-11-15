@@ -35,7 +35,7 @@
 //!
 //! ```mermaid
 //! flowchart TD
-//!     A["wait for room (crate::room)"] --> S["sweep: the clone of each item whose work is over goes"]
+//!     A["wait for room (crate::room)"] --> S["sweep: the clone of each item whose work is over or on origin goes"]
 //!     S --> L["look: the pause, the claims, the holds,<br/>the free work of gh, the full check of each waiting pull request"]
 //!     L --> P{"pick"}
 //!     P -- "an item, and a fact of the host fails" --> W
@@ -2179,6 +2179,19 @@ pub trait World: Send + Sync {
     /// The fate of the folder of a session of the issue `issue` of the
     /// repository `repo`, from the forge ([`Fate::of`]).
     fn fate<'a>(&'a self, repo: &'a str, issue: u64) -> BoxFuture<'a, Result<Fate>>;
+
+    /// True when the branch `branch` of `repo` on the forge holds the
+    /// commit `head` ([`crate::daemon::sweep::holds_on`],
+    /// 01M7GA9BC2DR4C87YSZZGKNY22). The default holds no commit: the
+    /// folder stays.
+    fn branch_holds<'a>(
+        &'a self,
+        _repo: &'a str,
+        _branch: &'a str,
+        _head: &'a str,
+    ) -> BoxFuture<'a, Result<bool>> {
+        Box::pin(async { Ok(false) })
+    }
 
     /// Deletes each branch `riff-kept/*` of `repo` that is older than 30
     /// days with `gh`, and gives their names
@@ -5435,6 +5448,19 @@ impl World for Live {
         Box::pin(blocking(move || sweep::fate_on(&gh, &repo, issue)))
     }
 
+    fn branch_holds<'a>(
+        &'a self,
+        repo: &'a str,
+        branch: &'a str,
+        head: &'a str,
+    ) -> BoxFuture<'a, Result<bool>> {
+        let gh = sweep::gh(repo);
+        let (repo, branch, head) = (repo.to_owned(), branch.to_owned(), head.to_owned());
+        Box::pin(blocking(move || {
+            sweep::holds_on(&gh, &repo, &branch, &head)
+        }))
+    }
+
     fn delete_old_kept<'a>(
         &'a self,
         gh: pr::Gh,
@@ -6785,6 +6811,18 @@ mod tests {
         }
     }
 
+    /// The free disk of each folder: `free_gb` GB of 500, so no test
+    /// depends on the disk of the host that runs it.
+    fn disk_of(free_gb: &Arc<AtomicU64>) -> crate::room::DiskOf {
+        let free_gb = free_gb.clone();
+        Arc::new(move |_: &std::path::Path| {
+            Some(riff_client::machines::Disk {
+                free_gb: free_gb.load(Ordering::SeqCst),
+                total_gb: 500,
+            })
+        })
+    }
+
     /// A daemon on the fake runtime with the fake world, in a temp
     /// folder.
     struct Here {
@@ -6855,15 +6893,7 @@ mod tests {
             let memory: crate::room::Memory =
                 Arc::new(move || Some(free.load(Ordering::SeqCst) * GB));
             let disk = Arc::new(AtomicU64::new(400));
-            let disk_of: crate::room::DiskOf = {
-                let disk = disk.clone();
-                Arc::new(move |_: &std::path::Path| {
-                    Some(riff_client::machines::Disk {
-                        free_gb: disk.load(Ordering::SeqCst),
-                        total_gb: 500,
-                    })
-                })
-            };
+            let disk_of = disk_of(&disk);
             let relay = root.path().join("static-riff");
             riff_client::secrets::mock_store();
             let daemon = Daemon::new(fake.clone(), dir.clone())
@@ -7003,7 +7033,6 @@ mod tests {
         // Over the floor again: the wave starts its item.
         here.disk.store(20, Ordering::SeqCst);
         here.daemon.look_disk().await;
-        here.daemon.room().ended();
         here.until(2, |h| h.forge().starts.len() == 1).await;
         let status = text::daemon_status(&here.daemon.status().await, crate::run::now_ms());
         assert!(
@@ -7447,6 +7476,7 @@ mod tests {
             let daemon = Daemon::new(self.fake.clone(), dir_in(self._root.path()))
                 .unwrap()
                 .with_memory(memory)
+                .with_disk(disk_of(&self.disk))
                 .with_world(self.world.clone());
             Arc::new(daemon)
         }

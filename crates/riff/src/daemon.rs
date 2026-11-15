@@ -1751,7 +1751,7 @@ pub struct Status {
     /// The free disk of the host ([`crate::room::Room::space`],
     /// 01M7G430CFEK4B0FDG1552G8VE). `None` when riff cannot measure it. An
     /// old daemon gives none.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub disk: Option<crate::room::Space>,
 }
 
@@ -2527,10 +2527,18 @@ impl Owned {
                     }
                     out.say(Say::Ack { seq: has });
                 }
-                Ok(Up::Exit { seq, code }) => {
+                Ok(Up::Exit { seq, code, head }) => {
                     // The exit counts only after each event before it.
                     if self.lock().seq + 1 < seq {
                         break;
+                    }
+                    // The sweep reads the head before the removal of the
+                    // folder (01M7GA96FQS4PR0X6RNPMCT2V5).
+                    if let Some(head) = head {
+                        let folder = self.lock().record.folder.clone();
+                        if let Err(e) = sweep::note_head(&folder, &head) {
+                            eprintln!("riff daemon: {e:#}");
+                        }
                     }
                     out.say(Say::Ack { seq });
                     let _ = self.notes.send(Note::Exit(code));
@@ -2801,10 +2809,21 @@ pub struct Daemon<R> {
 struct DiskLooks {
     /// The last look saw the free disk below its floor.
     low: bool,
-    /// The room watches the storage of the runtime.
-    storage: bool,
-    /// The log has the fault of the storage of the runtime.
-    told: bool,
+    /// The storage of the runtime.
+    storage: Storage,
+}
+
+/// The storage of the runtime for the floor of free disk
+/// ([`Daemon::look_disk`], 01M7G43090V1F263GYK3GQEXCZ).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum Storage {
+    /// No look found it yet, and the log has no fault of it.
+    #[default]
+    Unknown,
+    /// No look found it yet, and the log has the fault of the first look.
+    Told,
+    /// The room watches its disk.
+    Watched,
 }
 
 /// A pull of the session image that failed. [`Daemon::have_image`] gives
@@ -4032,7 +4051,7 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// ended.
     pub(crate) fn tell_changed(&self) {
         self.changed.notify_waiters();
-        self.room.ended();
+        self.room.wake();
     }
 
     /// Gives the session of `spec` the MCP servers of the host
@@ -5497,36 +5516,38 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// From the first look that the runtime says the folder of its
     /// storage, the room watches it ([`Runtime::storage`],
     /// 01M7G43090V1F263GYK3GQEXCZ). The first fault of the storage goes
-    /// to the log.
+    /// to the log, and each look asks the runtime again.
     ///
     /// When the free disk falls below its floor, the log gets a line, and
     /// the lead of each repository that the daemon serves gets one note
     /// ([`text::disk_low_note`]): the size of the compile cache, and the
-    /// folders that `riff daemon sweep` can remove. A look that sees the
-    /// free disk at or above the floor again writes a line to the log, and
-    /// the next fall posts a new note. The room refuses each start below
-    /// the floor ([`Room::admit`]): the look only tells.
+    /// folders of the sessions that do not run. A look that sees the free
+    /// disk at or above the floor again writes a line to the log and wakes
+    /// the starts that wait for room ([`Room::wake`]). The next fall posts
+    /// a new note. The room refuses each start below the floor
+    /// ([`Room::admit`]).
     ///
     /// ```mermaid
     /// flowchart LR
     ///     L["each DISK_EVERY: the free disk"] --> F{"below the floor?"}
     ///     F -- "yes, and the last look was not" --> N["one note to each lead,<br/>a line in the log"]
-    ///     F -- "no, and the last look was" --> A["a line in the log"]
+    ///     F -- "no, and the last look was" --> A["a line in the log,<br/>the starts that wait look for room"]
     ///     F -- "same as the last look" --> Q["nothing"]
     /// ```
     pub async fn look_disk(&self) {
-        if !self.disk_looks().storage {
+        let storage = self.disk_looks().storage;
+        if storage != Storage::Watched {
             match self.runtime.storage().await {
                 Ok(folder) => {
                     self.room.watch(folder);
-                    self.disk_looks().storage = true;
+                    self.disk_looks().storage = Storage::Watched;
                 }
-                Err(e) => {
-                    if !std::mem::replace(&mut self.disk_looks().told, true) {
-                        let line = text::daemon_no_storage(&format!("{e:#}"));
-                        eprintln!("riff daemon: {line}");
-                    }
+                Err(e) if storage == Storage::Unknown => {
+                    let line = text::daemon_no_storage(&format!("{e:#}"));
+                    eprintln!("riff daemon: {line}");
+                    self.disk_looks().storage = Storage::Told;
                 }
+                Err(_) => {}
             }
         }
         let limit = self.room.limit();
@@ -5539,6 +5560,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             (false, true) => {}
             (true, false) => {
                 println!("{}", text::disk_room_again(&space, &limit));
+                self.room.wake();
                 return;
             }
             _ => return,
@@ -7713,9 +7735,10 @@ mod tests {
             .with_keep_end(keep_end)
             .with_retry_every(RETRY)
             .with_relay(static_riff(dir))
-            // The free memory of the host that runs the test does not count:
-            // a Mac of the CI has less than the floor.
+            // The free memory and the free disk of the host that runs the
+            // test do not count: a Mac of the CI has less than the floor.
             .with_memory(Arc::new(|| None))
+            .with_disk(Arc::new(|_| None))
             .with_own_replaced(Arc::new(move || {
                 replaced.load(std::sync::atomic::Ordering::SeqCst)
             }));
@@ -7981,9 +8004,16 @@ mod tests {
 
         /// Sends the exit, and waits for its ack.
         async fn exit(&mut self, seq: u64, code: i32) {
+            self.exit_at(seq, code, None).await;
+        }
+
+        /// Sends the exit with the head `head` of the clone, and waits for
+        /// its ack.
+        async fn exit_at(&mut self, seq: u64, code: i32, head: Option<&str>) {
             self.send(&Up::Exit {
                 seq,
                 code: Some(code),
+                head: head.map(str::to_owned),
             })
             .await;
             loop {
@@ -8271,6 +8301,102 @@ mod tests {
         assert_eq!(here.fake.exit(&name), Some(Exit::SUCCESS));
     }
 
+    /// 01M7GA96FQS4PR0X6RNPMCT2V5: the daemon writes the head of the clone
+    /// that the exit of the relay gives in the file `head` of the folder of
+    /// the session. A head that is no commit gives no file.
+    #[tokio::test]
+    async fn the_daemon_writes_the_head_of_the_exit_in_the_folder_of_the_session() {
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let commit = "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b";
+        for (n, head, kept) in [(1, commit, Some(commit)), (2, "main", None)] {
+            let start = here.start(&format!("riff-issue-{n}-1a2b3c4d"), &format!("issue-{n}"));
+            let folder = start.folder.clone();
+            let (mut client, name) = here.started(start).await;
+            let socket = session_dir(&here.dir, &name);
+            let (mut relay, _) = Relay::connect(&socket, 0, false).await;
+            assert!(matches!(relay.next().await, Say::Input { .. }));
+            relay.exit_at(1, 0, Some(head)).await;
+            let (_, end) = to_the_end(&mut client).await;
+            assert!(matches!(end, Some(Say::Ended(_))), "{end:?}");
+            assert_eq!(sweep::head_of(&folder).as_deref(), kept);
+        }
+    }
+
+    /// A daemon on `fake` in a temp folder whose free disk is 400 GB, and 5
+    /// GB in the folder `low` (01M7G43090V1F263GYK3GQEXCZ). It serves `o/r`
+    /// on the host `thelio`.
+    fn on_disk(fake: &Fake, root: &Path, low: &Path) -> Arc<Daemon<Fake>> {
+        let low = low.to_owned();
+        let disk: crate::room::DiskOf = Arc::new(move |folder: &Path| {
+            let free_gb = if folder == low { 5 } else { 400 };
+            Some(riff_client::machines::Disk {
+                free_gb,
+                total_gb: 500,
+            })
+        });
+        let daemon = Daemon::new(fake.clone(), dir_in(root))
+            .unwrap()
+            .with_disk(disk)
+            .with_cache(Arc::new(|| text::daemon_cache(Some(Ok(40 << 30)))));
+        let wave = Wave {
+            repo: "o/r".into(),
+            main: root.into(),
+            server: "http://127.0.0.1:1".into(),
+            host: "thelio".into(),
+        };
+        remote::serve_in_file(daemon.dir(), &wave).unwrap();
+        Arc::new(daemon)
+    }
+
+    /// 01M7G43090V1F263GYK3GQEXCZ: the disk of the storage of the runtime
+    /// counts for the floor of free disk from the first look that the
+    /// runtime says it. Until then, only the folders of the daemon count,
+    /// and each look asks the runtime again.
+    #[tokio::test]
+    async fn the_disk_of_the_storage_of_podman_counts_for_the_floor() {
+        let root = tempfile::tempdir().unwrap();
+        let storage = root.path().join("containers/storage");
+        let fake = Fake::default().with_image(IMAGE);
+        let daemon = on_disk(&fake, root.path(), &storage);
+        daemon.look_disk().await;
+        let space = daemon.status().await.disk.unwrap();
+        assert_eq!(space.disk.free_gb, 400, "no storage yet");
+        assert!(daemon.news().take("o/r").is_empty());
+        let limit = daemon.room().limit();
+        assert_eq!(limit.room(0, None, Some(&space.disk)), Ok(()));
+
+        // The runtime says its storage: its disk has the least free space.
+        let _ = fake.with_storage(&storage);
+        daemon.look_disk().await;
+        let space = daemon.status().await.disk.unwrap();
+        assert_eq!((space.folder, space.disk.free_gb), (storage, 5));
+        let full = crate::room::Full::Disk {
+            free_gb: 5,
+            floor_gb: limit.disk_gb,
+        };
+        assert_eq!(limit.room(0, None, Some(&space.disk)), Err(full));
+        assert_eq!(daemon.news().take("o/r").len(), 1, "one note");
+    }
+
+    /// 01M7G430FB68R1322AT8H94KYR: the daemon looks at the free disk by
+    /// itself, at once: the lead gets the note of a low disk with no ask.
+    #[tokio::test]
+    async fn the_daemon_looks_at_the_free_disk_by_itself() {
+        let root = tempfile::tempdir().unwrap();
+        let daemon = on_disk(&Fake::default(), root.path(), &dir_in(root.path()));
+        daemon.disk_every();
+        let mut notes = Vec::new();
+        until(|| {
+            notes.extend(daemon.news().take("o/r"));
+            !notes.is_empty()
+        })
+        .await;
+        assert!(
+            notes[0].starts_with("The disk of thelio is almost full: 5 GB free of 500 GB"),
+            "{notes:?}"
+        );
+    }
+
     #[tokio::test]
     async fn a_relay_that_connects_again_gets_no_input_twice_and_resends_what_the_daemon_lacks() {
         let here = Here::new(Fake::default().with_image(IMAGE)).await;
@@ -8370,6 +8496,7 @@ mod tests {
             .send(&Up::Exit {
                 seq: 4,
                 code: Some(0),
+                head: None,
             })
             .await;
         assert_eq!(relay.lines.next_line().await.unwrap(), None);
@@ -10216,6 +10343,10 @@ mod tests {
         comments: Mutex<Vec<(String, u64, u64, String)>>,
         /// The branches `riff-kept/*` of the forge ([`World::delete_old_kept`]).
         kept: Mutex<Vec<sweep::KeptBranch>>,
+        /// Each branch of the forge with each commit that it holds
+        /// ([`World::branch_holds`]). The compare of a commit of `fault` fails.
+        held: Mutex<BTreeSet<(String, String)>>,
+        fault: Option<String>,
         gh: Option<crate::pr::Gh>,
         gate: Option<Arc<tokio::sync::Semaphore>>,
         watches: Mutex<Vec<mpsc::UnboundedSender<Wake>>>,
@@ -10334,6 +10465,28 @@ mod tests {
         pub(super) fn with_kept(self, kept: Vec<sweep::KeptBranch>) -> Server {
             Server {
                 kept: Mutex::new(kept),
+                ..self
+            }
+        }
+
+        /// The same forge, whose branch `branch` holds the commit `head`.
+        pub(super) fn with_held(self, branch: &str, head: &str) -> Server {
+            self.push(branch, head);
+            self
+        }
+
+        /// A push of the commit `head` to the branch `branch`.
+        pub(super) fn push(&self, branch: &str, head: &str) {
+            self.held
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert((branch.to_owned(), head.to_owned()));
+        }
+
+        /// The same forge, whose compare of the commit `head` fails.
+        pub(super) fn with_compare_fault(self, head: &str) -> Server {
+            Server {
+                fault: Some(head.to_owned()),
                 ..self
             }
         }
@@ -10590,6 +10743,21 @@ mod tests {
                 });
             }
             Box::pin(async { Ok(sweep::Fate::Stays) })
+        }
+
+        fn branch_holds<'a>(
+            &'a self,
+            _: &'a str,
+            branch: &'a str,
+            head: &'a str,
+        ) -> crate::wave::BoxFuture<'a, Result<bool>> {
+            Box::pin(async move {
+                if self.fault.as_deref() == Some(head) {
+                    bail!("gh api compare: HTTP 502");
+                }
+                let held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+                Ok(held.contains(&(branch.to_owned(), head.to_owned())))
+            })
         }
 
         fn delete_old_kept<'a>(

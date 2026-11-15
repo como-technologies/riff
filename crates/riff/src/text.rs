@@ -11740,9 +11740,9 @@ pub const DISK_NOTE_FOLDERS: usize = 20;
 
 /// The note to the lead when the free disk of the host `host` fell below
 /// the floor of `limit` (01M7G430FB68R1322AT8H94KYR): the free disk, the
-/// compile cache (`cache`, the text of [`daemon_cache`]), and the folders
-/// of the sessions that do not run, which `riff daemon sweep` can remove.
-/// It names at most [`DISK_NOTE_FOLDERS`] of them.
+/// compile cache (`cache`, the text of [`daemon_cache`]), the folders of
+/// the sessions that do not run, and the commands that remove them. It
+/// names at most [`DISK_NOTE_FOLDERS`] folders.
 ///
 /// ```
 /// use riff::room::{Limit, Space};
@@ -11759,8 +11759,8 @@ pub const DISK_NOTE_FOLDERS: usize = 20;
 ///      The compile cache of the container sessions: 40.0GB now, in the volume riff-sccache.\n\
 ///      Empty it with: riff daemon cache --clear\n\
 ///      The folders of 2 sessions that do not run: issue-12-1a2b3c4d, verify-issue-12-5e6f7a8b. \
-///      riff daemon sweep removes each one whose work is over, and riff daemon sweep --remove \
-///      NAME removes one.\n\
+///      riff daemon sweep removes each one whose work is over or on origin. riff daemon sweep \
+///      --remove NAME --force removes one, also with work that is not on origin.\n\
 ///      Add --host thelio to each command."
 /// );
 /// let many: Vec<String> = (0..25).map(|n| format!("issue-{n}-00000000")).collect();
@@ -11793,7 +11793,8 @@ pub fn disk_low_note(
     } else {
         format!(
             "The folders of {} sessions that do not run: {}{more}. riff daemon sweep removes \
-             each one whose work is over, and riff daemon sweep --remove NAME removes one.",
+             each one whose work is over or on origin. riff daemon sweep --remove NAME --force \
+             removes one, also with work that is not on origin.",
             folders.len(),
             shown.join(", ")
         )
@@ -14512,6 +14513,39 @@ pub fn swept_why(issue: u64, fate: &crate::daemon::sweep::Fate) -> Option<String
             "the issue #{issue} is closed, and its branch has no pull request"
         )),
     }
+}
+
+/// Why the sweep removes the folder of an ended work session: the branch
+/// `branch` of `origin` holds the head commit `head` of its clone
+/// (01M7GA9BC2DR4C87YSZZGKNY22).
+///
+/// ```
+/// let head = "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b";
+/// assert_eq!(
+///     riff::text::swept_pushed(head, "worktree-issue-12"),
+///     "its last commit 1a2b3c4 is on the branch worktree-issue-12 of origin"
+/// );
+/// ```
+pub fn swept_pushed(head: &str, branch: &str) -> String {
+    let short: String = head.chars().take(7).collect();
+    format!("its last commit {short} is on the branch {branch} of origin")
+}
+
+/// The relay of a session gave the head `head` of its clone, and it is
+/// no commit (01M7GA96FQS4PR0X6RNPMCT2V5): the daemon writes no file
+/// `head`. It shows at most 80 characters of it.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::head_no_commit("main\x1b[2J"),
+///     "the relay gave the head \"main\" of the clone, and it is no commit"
+/// );
+/// let long = riff::text::head_no_commit(&"x".repeat(500));
+/// assert!(long.len() < 200, "{long}");
+/// ```
+pub fn head_no_commit(head: &str) -> String {
+    let head: String = safe(head).chars().take(80).collect();
+    format!("the relay gave the head {head:?} of the clone, and it is no commit")
 }
 
 /// The sweep kept the folder `folder`: a step on the forge failed, for

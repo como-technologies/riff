@@ -129,7 +129,9 @@ pub const MACHINE: &str = "cpu 8x3000MHz, mem 32GB, 32GB available, load 0.00";
 
 /// The disk of each folder of each test that gives no disk of its own:
 /// 400 GB free of 500 GB, above the floor of free disk of the daemon
-/// (01M7G43090V1F263GYK3GQEXCZ).
+/// (01M7G43090V1F263GYK3GQEXCZ). It is for each riff process of a test: a
+/// daemon that a test runs in its own process gets a fake disk of its
+/// test (`Daemon::with_disk`).
 pub const DISK: &str = "disk 400GB free of 500GB";
 
 /// The other variables that the helper removes: the tokens of `gh`. With `HOME` in a temp dir, `gh` then has no
