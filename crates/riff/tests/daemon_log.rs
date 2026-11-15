@@ -318,12 +318,14 @@ fn a_secret_at_the_cut_of_a_long_line_goes_whole() {
 
 /// #2156, 01M7EX1Q1F468NWGPJJS0W0ZG9: the value of `NAME=value` goes
 /// when NAME names a key, a secret or a password, in any case, and
-/// `--grep` finds no part of it. A `NAME=` with no value hides nothing.
+/// `--grep` finds no part of it. A value with a `=` in it goes whole. A
+/// `NAME=` with no value hides nothing.
 #[test]
 fn the_value_of_each_secret_name_goes_in_any_case() {
     let env = Isolated::new();
     let at = Utc::now() - Duration::minutes(5);
-    let names = "-e OPENAI_API_KEY=abc1 -e CLIENT_SECRET=abc2 --password=abc3 -e GH_TOKEN= x";
+    let names = "-e OPENAI_API_KEY=abc1 -e CLIENT_SECRET=abc2 --password=abc3 \
+                 -e API_KEY=abc4== -e DB_PASSWORD=abc5=b -e GH_TOKEN= x";
     write_log(
         &env,
         &[],
@@ -336,7 +338,8 @@ fn the_value_of_each_secret_name_goes_in_any_case() {
         text(&out.stdout),
         format!(
             "{stamp} riff daemon: podman run -e OPENAI_API_KEY=[secret] \
-             -e CLIENT_SECRET=[secret] --password=[secret] -e GH_TOKEN= x\n"
+             -e CLIENT_SECRET=[secret] --password=[secret] -e API_KEY=[secret] \
+             -e DB_PASSWORD=[secret] -e GH_TOKEN= x\n"
         )
     );
     let out = daemon_log(&env, &["--grep", "abc"]);

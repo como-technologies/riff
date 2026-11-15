@@ -401,7 +401,8 @@ pub fn redacted(text: &str) -> Vec<Range<usize>> {
 
 /// The range of the secret in `word`: the whole word when it starts like
 /// a token of GitHub or Anthropic, and the value of `NAME=value` when
-/// NAME names a token, a key, a secret or a password.
+/// NAME names a token, a key, a secret or a password. The value is all
+/// the text after the first `=`, also each `=` in it.
 ///
 /// ```
 /// use riff::daemon::release_test::secret_in;
@@ -410,6 +411,7 @@ pub fn redacted(text: &str) -> Vec<Range<usize>> {
 /// assert_eq!(secret_in(",DB_PASSWORD=hunter2"), Some(13..20));
 /// assert_eq!(secret_in("OPENAI_API_KEY=abc1"), Some(15..19));
 /// assert_eq!(secret_in("--password=x3"), Some(11..13));
+/// assert_eq!(secret_in("API_KEY=c2VjcmV0=="), Some(8..18));
 /// assert_eq!(secret_in("GH_TOKEN="), None);
 /// assert_eq!(secret_in("task-2"), None);
 /// ```
@@ -599,8 +601,9 @@ mod tests {
 
     /// #2156, 01M7EX1Q1F468NWGPJJS0W0ZG9: the value of `NAME=value` goes
     /// when NAME names a token, a key, a secret or a password, in any
-    /// case. A `NAME=` with no value hides nothing, and the next word
-    /// stays.
+    /// case. A value with a `=` in it goes whole, for example a base64
+    /// value with its padding. A `NAME=` with no value hides nothing, and
+    /// the next word stays.
     #[test]
     fn the_value_of_each_secret_name_goes_in_any_case() {
         for name in ["GH_TOKEN", "OPENAI_API_KEY", "CLIENT_SECRET", "DB_PASSWORD"] {
@@ -617,6 +620,11 @@ mod tests {
                 );
             }
         }
+        assert_eq!(secret_in("API_KEY=c2VjcmV0=="), Some(8..18));
+        assert_eq!(
+            redact("-e DB_PASSWORD=a=b ok"),
+            "-e DB_PASSWORD=[secret] ok"
+        );
         assert_eq!(secret_in("GH_TOKEN="), None);
         assert_eq!(redact("-e GH_TOKEN= x"), "-e GH_TOKEN= x");
         assert_eq!(redact("RIFF_ITEM=issue-12"), "RIFF_ITEM=issue-12");

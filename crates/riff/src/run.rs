@@ -1126,9 +1126,10 @@ fn matches<'a>(text: &'a str, secret: &'a str) -> impl Iterator<Item = Range<usi
 /// The range of each token in `text` that starts with `start`: `start`
 /// and each character after it that `part` takes. A `start` with no such
 /// character after it is no token. A `start` that ends in the last token
-/// gives no range: its token is in the last token. So `part` looks at
-/// each character of `text` at most once, and the time grows with the
-/// length of `text` (01M7G3CSVWSV6RTGJY1WMFGV7V).
+/// that this scan found gives no range: its token is in the last token.
+/// So `part` looks at each character of `text` at most once, and the
+/// time grows with the length of `text` (01M7G3CSVWSV6RTGJY1WMFGV7V).
+/// An empty `start` gives each run of characters that `part` takes.
 ///
 /// ```
 /// use riff::run::tokens;
@@ -1139,20 +1140,23 @@ fn matches<'a>(text: &'a str, secret: &'a str) -> impl Iterator<Item = Range<usi
 /// let part = |c: char| c.is_ascii_alphanumeric() || c == '_';
 /// let found: Vec<_> = tokens("ghs_ghs_ghs_a1", "ghs_", part).collect();
 /// assert_eq!(found, [0..14]);
+/// let found: Vec<_> = tokens("ab c", "", part).collect();
+/// assert_eq!(found, [0..2, 3..4]);
 /// ```
 pub fn tokens<'a>(
     text: &'a str,
     start: &'a str,
     part: fn(char) -> bool,
 ) -> impl Iterator<Item = Range<usize>> + 'a {
-    let mut end = 0;
+    let mut last_end = None;
     text.match_indices(start).filter_map(move |(at, _)| {
         let from = at + start.len();
-        if from <= end {
+        if last_end.is_some_and(|end| from <= end) {
             return None;
         }
         let after = &text[from..];
-        end = from + after.find(|c: char| !part(c)).unwrap_or(after.len());
+        let end = from + after.find(|c: char| !part(c)).unwrap_or(after.len());
+        last_end = Some(end);
         (end > from).then_some(at..end)
     })
 }
@@ -3290,6 +3294,18 @@ mod tests {
         let alnum = |c: char| c.is_ascii_alphanumeric();
         let found: Vec<_> = tokens("sk-absk-cd", "sk-", alnum).collect();
         assert_eq!(found, [0..7, 5..10]);
+    }
+
+    /// #2156: an empty start gives each run of characters that `part`
+    /// takes, also the run at the start of the text, and no empty range.
+    #[test]
+    fn tokens_with_an_empty_start_gives_each_run_of_parts() {
+        let alnum = |c: char| c.is_ascii_alphanumeric();
+        let found: Vec<_> = tokens("ab c", "", alnum).collect();
+        assert_eq!(found, [0..2, 3..4]);
+        let found: Vec<_> = tokens(" é1 b", "", alnum).collect();
+        assert_eq!(found, [3..4, 5..6]);
+        assert_eq!(tokens("", "", alnum).count(), 0);
     }
 
     #[test]
