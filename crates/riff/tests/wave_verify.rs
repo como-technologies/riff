@@ -4,13 +4,15 @@
 //! read the old failure of a head while the thread already has its PASS.
 //! The fake `gh` gives the old failure: the PASS in the thread counts, and
 //! the wave starts no build and no verify of that head. A PASS counts
-//! only from its right sender (#2027).
+//! only from its right sender (#2027). The build of a head whose verify
+//! failed is the fix of that head, and its starts count for that head
+//! (#2170).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use riff::pr::{Gh, Reported, Verdict};
-use riff::wave::{self, Work};
+use riff::wave::{self, Fail, Work};
 use riff_core::wire::{Kind, Message};
 
 const REPO: &str = "o/r";
@@ -189,4 +191,62 @@ fn a_result_in_the_thread_counts_only_for_its_head_and_over_a_missing_status() {
     // A success counts over a FAIL in the thread.
     let success = forge(dir.path(), HEAD, Some("SUCCESS"));
     assert_eq!(free(&success, &[&asked, &failed]), ["issue-2"]);
+}
+
+/// The look of the wave from `gh`, with no thread, no claim and no hold.
+fn look(gh: &Gh) -> wave::Look {
+    wave::look_with(gh, REPO, BTreeSet::new(), BTreeSet::new(), &[]).unwrap()
+}
+
+/// #2170, 01M7FJWPJKBK2V4X73Z45PHE7V: the look of a head whose verify
+/// failed gives the fix of that head, and its starts count for that head.
+/// A work session opened the pull request, then two fixes pushed a new
+/// head each, and the verify of each head failed: the pick gives a third
+/// fix, for the third head. Three fixes of the same head: the pick gives
+/// no fix of it, and issue 2 gets the pick.
+#[test]
+fn the_fix_after_a_fail_counts_its_starts_for_each_head() {
+    let dir = tempfile::tempdir().unwrap();
+    let heads = [HEAD, "bbbb2223334445556667", "cccc3334445556667778"];
+    let fix = |head: &str| Work::Fix {
+        issue: 1,
+        pull: 41,
+        commit: head.into(),
+    };
+    let none = BTreeSet::new();
+
+    // The verify of the first head failed: the fix of that head.
+    let first = look(&forge(dir.path(), heads[0], Some("FAILURE")));
+    assert_eq!(first.free, ["issue-1", "issue-2"]);
+    let fail = |head: &str| Fail {
+        pull: 41,
+        commit: head.into(),
+    };
+    assert_eq!(first.fixes.fails, BTreeMap::from([(1, fail(heads[0]))]));
+    let build: BTreeMap<String, u32> = [(Work::Build { issue: 1 }.key(), 1)].into();
+    assert_eq!(wave::pick(&first, &none, &build), Some(fix(heads[0])));
+
+    // The build and a fix of each of the first two heads started.
+    let starts: BTreeMap<String, u32> = [
+        Work::Build { issue: 1 }.key(),
+        fix(heads[0]).key(),
+        fix(heads[1]).key(),
+    ]
+    .into_iter()
+    .map(|key| (key, 1))
+    .collect();
+    let third = look(&forge(dir.path(), heads[2], Some("FAILURE")));
+    assert_eq!(third.fixes.fails, BTreeMap::from([(1, fail(heads[2]))]));
+    assert_eq!(wave::pick(&third, &none, &starts), Some(fix(heads[2])));
+
+    // Three fixes of the third head: no more fix of it.
+    let spent: BTreeMap<String, u32> = [(fix(heads[2]).key(), wave::STARTS)].into();
+    assert_eq!(
+        wave::pick(&third, &none, &spent),
+        Some(Work::Build { issue: 2 })
+    );
+
+    // The head waits for its verify: no fix.
+    let waits = look(&forge(dir.path(), heads[2], None));
+    assert!(waits.fixes.fails.is_empty(), "{:?}", waits.fixes.fails);
 }
