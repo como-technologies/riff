@@ -12925,32 +12925,33 @@ pub fn wave_host_fault(repo: &str, item: &str, why: &str) -> String {
 
 /// An item of a wave started `starts` times, and the last session ended
 /// for `reason` (01M5A5HXRH4PFQDFA7XPFFRHWS). The starts of a verify are
-/// for one head commit `head` of its pull request: the text names it, and
-/// says that a new head starts a new count (#1651).
+/// for one head commit of its pull request (`at`: the pull request and
+/// the head): the text names both, and says that a new head starts a new
+/// count (#1651, #2170).
 ///
 /// ```
 /// let text = riff::text::wave_spent("issue-1", None, 3, "exit code 1");
 /// assert!(text.contains("The last session ended: exit code 1."));
 /// assert!(text.ends_with("Read why: riff session why issue-1"));
 ///
-/// let text = riff::text::wave_spent("verify-issue-1", Some("988cb7b1a2"), 3, "exit code 0, and no PASS or FAIL");
-/// assert!(text.starts_with("The riff daemon started verify-issue-1 3 times for the head 988cb7b of its pull request"));
+/// let text = riff::text::wave_spent("verify-issue-1", Some((41, "988cb7b1a2")), 3, "exit code 0, and no PASS or FAIL");
+/// assert!(text.starts_with("The riff daemon started verify-issue-1 3 times for the head 988cb7b of its pull request #41,"));
 /// assert!(text.contains("It starts no more session for this head until riff host join again."));
 /// assert!(text.contains("A new head starts a new count."));
 /// assert!(text.ends_with("Read why: riff session why verify-issue-1"));
 /// ```
-pub fn wave_spent(item: &str, head: Option<&str>, starts: u32, reason: &str) -> String {
-    match head {
+pub fn wave_spent(item: &str, at: Option<(u64, &str)>, starts: u32, reason: &str) -> String {
+    match at {
         None => format!(
             "The riff daemon started {item} {starts} times for the wave, and it is still free \
              work. The last session ended: {reason}. It starts no more session for it until riff host \
              join again. Read why: riff session why {item}"
         ),
-        Some(head) => format!(
-            "The riff daemon started {item} {starts} times for the head {} of its pull request, \
-             and it is still free work. The last session ended: {reason}. It starts no more \
-             session for this head until riff host join again. A new head starts a new count. \
-             Read why: riff session why {item}",
+        Some((pull, head)) => format!(
+            "The riff daemon started {item} {starts} times for the head {} of its pull request \
+             #{pull}, and it is still free work. The last session ended: {reason}. It starts no \
+             more session for this head until riff host join again. A new head starts a new \
+             count. Read why: riff session why {item}",
             head.get(..7).unwrap_or(head)
         ),
     }

@@ -7521,9 +7521,16 @@ of this part when they merge.
 - **01M7FJWPN3V3HS8DAM9B25JW9P** The message "started N times" for the
   fix of a pull request after a FAIL names the pull request and the
   head, says that a new head starts a new count, and sends the lead to
-  the FAIL with `gh pr view N --comments`. The reason of a clean end of
-  a session on an open pull request names the pull request, not "no pull
-  request". Supersedes 01M5A5HXRH4PFQDFA7XPFFRHWS in part.
+  the FAIL with `gh pr view N --comments`. The message for a verify
+  names its pull request and its head. Supersedes
+  01M5A5HXRH4PFQDFA7XPFFRHWS in part.
+- **01M7FQECZY6RY5JE5QPY8NFRZR** The steps after the end of a build read
+  the pull request of its branch (`wave::Finish::branch`). The reason of
+  the end that the daemon keeps for the message "started N times" names
+  the open pull request of the branch, after each exit. A clean end says
+  "no pull request" only when the steps read that the branch has none.
+  When a limit of GitHub or a fault stops the read, the reason says
+  nothing of a pull request.
 
 ### The lead, the view and the takeover
 
@@ -10278,12 +10285,11 @@ that builds it merges.
   through the socket (`ServerCall::Host`). Neither looks for the socket
   of the daemon on the host, and neither calls riff-server straight.
 - **01M6QQ7WCCGYN5X3XZNHEJYKGS** A record in the thread `ends` has the
-  tag `head`: the first 7 characters of the head commit of a verify, a
-  rebase or a fix of the checks, else `-`. `riff session why ITEM` shows
-  one line for each record of the item, with its session, its head
-  commit and its reason, then the last lines of the output of the last
-  record. So it names each verify session of an item that ended with no
-  PASS or FAIL. Supersedes 01M5A5HXP9X3AXTS6N3A57DMQM in part.
+  tag `head`. `riff session why ITEM` shows one line for each record of
+  the item, with its session, its head commit and its reason, then the
+  last lines of the output of the last record. So it names each verify
+  session of an item that ended with no PASS or FAIL. Supersedes
+  01M5A5HXP9X3AXTS6N3A57DMQM in part.
 - **01M77XMZBJ6DRGJTGEEE0EDECP** The notes of the lead are one text for
   each project. Each member reads them: each person and each session of
   the riff. The lead of the project and each admin write them; a worker
@@ -10294,6 +10300,10 @@ that builds it merges.
   `notes_set` record is the user of the writer. This supersedes
   01M59258NTXPMWV18TKRKWNTYN in full, and 01M59258K3TYR09HC4AWHWZPEX,
   01M59258VCNV9AMGMQTDH936SK and 01M77671TQ92487GSM24RJG82Z in part.
+- **01M7FQED2JSP2QVPTKBC4405T1** The tag `head` of a record in the
+  thread `ends` is the first 7 characters of the head commit of a
+  verify, a rebase, a fix of the checks or a fix after a FAIL, else `-`.
+  Supersedes 01M6QQ7WCCGYN5X3XZNHEJYKGS in part.
 
 ## Open
 

@@ -320,9 +320,11 @@
 //!   fix that pushes a new head is no failed start, and the FAIL of the
 //!   new head starts a new count. The message for a fix names the pull
 //!   request and the head, and sends the lead to the FAIL
-//!   ([`text::wave_spent_fix`], 01M7FJWPN3V3HS8DAM9B25JW9P). The end of a
-//!   session that worked on an open pull request names it
-//!   ([`crate::ends::End::reason`]);
+//!   ([`text::wave_spent_fix`], 01M7FJWPN3V3HS8DAM9B25JW9P). The message
+//!   for a verify names its pull request too. The reason of the end of a
+//!   build names the open pull request of its branch, as the steps after
+//!   the end read it ([`Finish::branch`], [`crate::ends::End::reason`],
+//!   01M7FQECZY6RY5JE5QPY8NFRZR);
 //! - the rebase of a head commit that started one time in this run of
 //!   the wave ([`REBASES`], 01M57FJ3WWMQSDBFRRHXN3SMFQ). The lead gets one
 //!   message for it, with the fix (see "A conflict with main");
@@ -1260,27 +1262,6 @@ impl Work {
         }
     }
 
-    /// The open pull request that a build works on: a rebase, a fix of
-    /// checks, or a fix after a FAIL (#2170). None for a build and for a
-    /// verify.
-    ///
-    /// ```
-    /// use riff::wave::Work;
-    ///
-    /// assert_eq!(Work::Build { issue: 12 }.fixes_pull(), None);
-    /// assert_eq!(Work::Verify { issue: 12, pull: 40, commit: "1a2b".into() }.fixes_pull(), None);
-    /// assert_eq!(Work::Fix { issue: 12, pull: 40, commit: "1a2b".into() }.fixes_pull(), Some(40));
-    /// assert_eq!(Work::Rebase { issue: 12, pull: 40, commit: "1a2b".into() }.fixes_pull(), Some(40));
-    /// ```
-    pub fn fixes_pull(&self) -> Option<u64> {
-        match self {
-            Work::Build { .. } | Work::Verify { .. } => None,
-            Work::Rebase { pull, .. } | Work::Checks { pull, .. } | Work::Fix { pull, .. } => {
-                Some(*pull)
-            }
-        }
-    }
-
     /// The most starts of this work in a run of the wave: [`STARTS`],
     /// [`REBASES`] for a rebase, or [`CHECKS`] for a fix of checks.
     pub fn most(&self) -> u32 {
@@ -1898,27 +1879,19 @@ fn fix_of(look: &Look, item: &str) -> bool {
         })
 }
 
-/// An item of the free work that reached [`STARTS`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Spent {
-    /// The item.
-    item: String,
-    /// The work of the item that reached [`STARTS`]: its key names its
-    /// starts ([`Work::key`]), and the starts of a verify and of a fix
-    /// after a FAIL are for a head of its pull request (#1651, #2170).
-    work: Work,
-}
-
-/// The items of the free work of `look` that reached [`STARTS`]. A
-/// rebase and a fix of checks are not ones: each starts one time for
-/// each head, and has its own message. The verify of a head counts for
-/// that head, so a verify is spent only for the head that the pull
-/// request has now. So is the fix after the FAIL of a head (#2170): a fix
-/// that pushed a new head is no failed start. An item that runs is not
-/// spent yet: the last session has not ended, so the reason of its end is
-/// not known, and the pull request may get a new head. A pull request that
-/// waits for no verify has no head, and no spent verify.
-fn spent(look: &Look, running: &BTreeSet<String>, starts: &BTreeMap<String, u32>) -> Vec<Spent> {
+/// The work of each item of the free work of `look` that reached
+/// [`STARTS`]: its key names its starts ([`Work::key`]), and the starts
+/// of a verify and of a fix after a FAIL are for a head of its pull
+/// request (#1651, #2170). A rebase and a fix of checks are not ones:
+/// each starts one time for each head, and has its own message. The
+/// verify of a head counts for that head, so a verify is spent only for
+/// the head that the pull request has now. So is the fix after the FAIL
+/// of a head (#2170): a fix that pushed a new head is no failed start. An
+/// item that runs is not spent yet: the last session has not ended, so
+/// the reason of its end is not known, and the pull request may get a new
+/// head. A pull request that waits for no verify has no head, and no
+/// spent verify.
+fn spent(look: &Look, running: &BTreeSet<String>, starts: &BTreeMap<String, u32>) -> Vec<Work> {
     look.free
         .iter()
         .filter(|item| !fix_of(look, item) && !running.contains(*item))
@@ -1935,10 +1908,7 @@ fn spent(look: &Look, running: &BTreeSet<String>, starts: &BTreeMap<String, u32>
                 None => build_of(look, item.strip_prefix("issue-")?.parse().ok()?),
             };
             let n = starts.get(&work.key()).copied().unwrap_or(0);
-            (n >= STARTS).then(|| Spent {
-                item: item.clone(),
-                work,
-            })
+            (n >= STARTS).then_some(work)
         })
         .collect()
 }
@@ -2957,8 +2927,9 @@ pub(crate) async fn run<R: Runtime + 'static>(
                 let spent = spent(&look, &running(&daemon, &wave, &taken), &lock(&starts));
                 // `riff host join` cleared the starts of these items.
                 told.retain(|key| lock(&starts).get(key).is_some_and(|n| *n >= STARTS));
-                for Spent { item, work } in spent {
+                for work in spent {
                     if told.insert(work.key()) {
+                        let item = work.item();
                         let reason = daemon
                             .last_end(&item)
                             .unwrap_or_else(|| text::WAVE_END_UNKNOWN.to_owned());
@@ -2966,7 +2937,10 @@ pub(crate) async fn run<R: Runtime + 'static>(
                             Work::Fix { pull, commit, .. } => {
                                 text::wave_spent_fix(&item, *pull, commit, STARTS, &reason)
                             }
-                            _ => text::wave_spent(&item, work.commit(), STARTS, &reason),
+                            Work::Verify { pull, commit, .. } => {
+                                text::wave_spent(&item, Some((*pull, commit)), STARTS, &reason)
+                            }
+                            _ => text::wave_spent(&item, None, STARTS, &reason),
                         };
                         world.tell(&wave, &body, None).await;
                     }
@@ -3565,6 +3539,10 @@ pub struct Finish {
     /// the wave starts no new verify of that head that the verdict stops
     /// ([`drop_verified`], #1960, #2019).
     pub verdict: Option<Verdict>,
+    /// What the steps after the end of a build read of the pull request
+    /// of its branch (`after_build`, #2170): the reason of the end names
+    /// it ([`crate::ends::End::reason`], 01M7FQECZY6RY5JE5QPY8NFRZR).
+    pub branch: crate::ends::Branch,
 }
 
 impl Finish {
@@ -3579,7 +3557,7 @@ impl From<Vec<String>> for Finish {
     fn from(lines: Vec<String>) -> Finish {
         Finish {
             lines,
-            verdict: None,
+            ..Finish::default()
         }
     }
 }
@@ -3590,18 +3568,22 @@ impl From<Vec<String>> for Finish {
 /// keeps it to then (01M53S7WDPQ2GWHJWJ6SZXZ5PN). The verdict of a verify
 /// that riff reported goes into [`Daemon::verified`] before the job ends
 /// (#1960, #2019). The steps wait while the OS keyring is locked
-/// ([`unlocked`], #2114).
+/// ([`unlocked`], #2114). The daemon keeps the reason of the end after the
+/// steps, with what they read of the pull request of the branch
+/// ([`Finish::branch`], #2170): the item is still taken then, so the wave
+/// sends no "started N times" before it.
 pub(crate) async fn finish<R: Runtime + 'static>(
     daemon: Arc<Daemon<R>>,
     record: Record,
     ended: Ended,
     held: InJob,
 ) -> Finish {
-    // The reason of the end, for the lead that reads "started N times".
-    let end = crate::ends::End::of(&record, ended, &crate::run::Scrub::new([]));
-    daemon.note_end(&record.live.item, end.reason());
     unlocked(&daemon, &record).await;
     let done = daemon.world().finish(&record, ended).await;
+    // The reason of the end, for the lead that reads "started N times".
+    let branch = done.as_ref().map(|done| done.branch).unwrap_or_default();
+    let end = crate::ends::End::of(&record, ended, branch, &crate::run::Scrub::new([]));
+    daemon.note_end(&record.live.item, end.reason());
     if let (
         Ok(Finish {
             verdict: Some(verdict),
@@ -3827,6 +3809,10 @@ async fn still_failed(gh: pr::Gh, repo: String, number: u64) -> Result<Vec<Strin
 /// failed. A session that pushed nothing may have run the job again.
 /// So riff reads the checks of the pull request: when one still failed,
 /// the lead gets a message, and else a note (#279).
+///
+/// It gives the line of each step, and what it read of the pull request
+/// of the branch ([`Finish::branch`], #2170): open, none, or not read for
+/// a limit of GitHub.
 async fn after_build(
     gh: pr::Gh,
     api: &Api,
@@ -3835,7 +3821,7 @@ async fn after_build(
     issue: u64,
     fix: Option<Fix<'_>>,
     ended: Ended,
-) -> Result<Vec<String>> {
+) -> Result<Finish> {
     let branch = branch_of(issue);
     let (view, at) = (gh.clone(), branch.clone());
     let read = blocking(move || {
@@ -3853,7 +3839,7 @@ async fn after_build(
         Err(e) if ghcalls::is_limit_error(&e) => {
             let body = text::wave_build_limit(item, &branch);
             api.post(me, Some(&thread), &to, &body, Kind::Note).await?;
-            return Ok(vec![body]);
+            return Ok(vec![body].into());
         }
         Err(_) => None,
     };
@@ -3949,18 +3935,22 @@ async fn after_build(
             lines.push(text::run_no_pull(&branch));
             // A fault of the post does not hide the note to the lead.
             let scrub = crate::run::Scrub::new(crate::session_relay::secrets_here());
-            // The pull request of a fix is not open now.
-            let end = crate::ends::End {
-                pull: None,
-                ..crate::ends::End::of(record, ended, &scrub)
-            };
+            let end = crate::ends::End::of(record, ended, crate::ends::Branch::NoPull, &scrub);
             if let Err(e) = crate::ends::post(api, me, &end).await {
                 eprintln!("riff daemon: {}: {e:#}", record.live.name);
             }
         }
     }
     api.post(me, Some(&thread), &to, &body, kind).await?;
-    Ok(lines)
+    let branch = match &pull {
+        Some(pull) => crate::ends::Branch::Open(pull.number),
+        None => crate::ends::Branch::NoPull,
+    };
+    Ok(Finish {
+        lines,
+        branch,
+        ..Finish::default()
+    })
 }
 
 /// True when the head commit `sha` of the repository `repo` is a WIP
@@ -4039,7 +4029,7 @@ async fn after_verify(
     let Some((verdict, result)) = found.as_deref().and_then(verdict) else {
         // A fault of the post does not hide the message to the lead.
         let scrub = crate::run::Scrub::new(crate::session_relay::secrets_here());
-        let end = crate::ends::End::of(record, ended, &scrub);
+        let end = crate::ends::End::of(record, ended, crate::ends::Branch::Unread, &scrub);
         if let Err(e) = crate::ends::post(api, me, &end).await {
             eprintln!("riff daemon: {}: {e:#}", record.live.name);
         }
@@ -4097,6 +4087,7 @@ async fn after_verify(
     Ok(Finish {
         lines: vec![line],
         verdict: Some(verdict),
+        ..Finish::default()
     })
 }
 
@@ -4288,12 +4279,10 @@ impl Live {
                     let (main, branch) = (main.clone(), branch.clone());
                     blocking(move || run::make_clone(&main, &at, &branch)).await?
                 };
-                let failed = blocking(move || {
-                    let pulls = rollout::pulls(&forge(&repo), &repo)?;
-                    Ok(failed_verify(&pulls, issue))
-                })
-                .await
-                .unwrap_or_default();
+                let pulls = blocking(move || rollout::pulls(&forge(&repo), &repo))
+                    .await
+                    .unwrap_or_default();
+                let failed = failed_verify(&pulls, work);
                 let frame = frame.context("a build has a milestone")?;
                 // The trailers of the session (01M6WZ2CB56PNSYKEX4E0ZJV3Y).
                 let made = {
@@ -4379,18 +4368,40 @@ impl Live {
     }
 }
 
-/// The line for the start text of a build when the verify of the pull
-/// request of its issue failed: where the result is.
-fn failed_verify(pulls: &[rollout::Pull], issue: u64) -> Option<String> {
-    let pull = pulls.iter().find(|p| p.issue() == Some(issue))?;
-    (pull.verify() == Some(rollout::Verify::Failed)).then(|| {
-        let url = pull
-            .verify_status()
+/// The first pull request of `issue` in `pulls` whose verify failed at
+/// its head: the build of the item is the fix of that head
+/// ([`Fixes::fails`], #2170).
+fn failed_pull(pulls: &[rollout::Pull], issue: u64) -> Option<&rollout::Pull> {
+    pulls
+        .iter()
+        .find(|p| p.issue() == Some(issue) && p.verify() == Some(rollout::Verify::Failed))
+}
+
+/// The line for the start text of the build `work` when the verify of
+/// the pull request of its issue failed: where the result is. A fix after
+/// a FAIL names its own pull request and head ([`Work::Fix`]), with the
+/// link of the FAIL of that head in `pulls`. Another build, as the lead
+/// asks for one ([`crate::daemon::Daemon::run_item`]), names the pull
+/// request of [`failed_pull`] (#2170).
+fn failed_verify(pulls: &[rollout::Pull], work: &Work) -> Option<String> {
+    let url = |pull: &rollout::Pull| {
+        pull.verify_status()
             .and_then(|c| c.url.as_deref())
             .map(text::safe)
-            .unwrap_or_default();
-        text::wave_failed_verify(pull.number, &pull.head, &url)
-    })
+            .unwrap_or_default()
+    };
+    match work {
+        Work::Fix { pull, commit, .. } => {
+            let url = pulls
+                .iter()
+                .find(|p| p.number == *pull && p.head == *commit)
+                .map(url)
+                .unwrap_or_default();
+            Some(text::wave_failed_verify(*pull, commit, &url))
+        }
+        work => failed_pull(pulls, work.issue())
+            .map(|pull| text::wave_failed_verify(pull.number, &pull.head, &url(pull))),
+    }
 }
 
 /// Makes the clone of a verify at `commit`, detached: the head commit of
@@ -4682,16 +4693,18 @@ pub fn fixes(open: &rollout::Open, free: Vec<String>) -> (Vec<String>, Fixes) {
     }
     // The build of an item whose verify failed fixes the head with the
     // FAIL, and counts its starts for that head (#2170).
-    for p in &open.pulls {
-        if let Some(n) = p.issue().filter(|n| !no_build.contains(n))
-            && p.verify() == Some(rollout::Verify::Failed)
-        {
-            found.fails.entry(n).or_insert_with(|| Fail {
+    let built = open.pulls.iter().filter_map(rollout::Pull::issue);
+    found.fails = built
+        .filter(|n| !no_build.contains(n))
+        .filter_map(|n| {
+            let p = failed_pull(&open.pulls, n)?;
+            let fail = Fail {
                 pull: p.number,
                 commit: p.head.clone(),
-            });
-        }
-    }
+            };
+            Some((n, fail))
+        })
+        .collect();
     // A failed check that the ruleset does not require holds no verify and
     // no merge: the lead hears of each one. A conflict gets the rebase
     // first, and a failed verify is a build already.
@@ -5501,16 +5514,12 @@ impl World for Live {
             let done = match &job.work {
                 Work::Build { issue } | Work::Fix { issue, .. } => {
                     let gh = forge(&wave.repo);
-                    after_build(gh, &api, record, wave, *issue, None, ended)
-                        .await
-                        .map(Finish::from)
+                    after_build(gh, &api, record, wave, *issue, None, ended).await
                 }
                 Work::Rebase { issue, commit, .. } => {
                     let gh = forge(&wave.repo);
                     let fix = Some(Fix::Rebase(commit));
-                    after_build(gh, &api, record, wave, *issue, fix, ended)
-                        .await
-                        .map(Finish::from)
+                    after_build(gh, &api, record, wave, *issue, fix, ended).await
                 }
                 Work::Checks {
                     issue,
@@ -5520,9 +5529,7 @@ impl World for Live {
                 } => {
                     let gh = forge(&wave.repo);
                     let fix = Some(Fix::Checks(commit, checks));
-                    after_build(gh, &api, record, wave, *issue, fix, ended)
-                        .await
-                        .map(Finish::from)
+                    after_build(gh, &api, record, wave, *issue, fix, ended).await
                 }
                 Work::Verify { pull, commit, .. } => {
                     // The result and its status go as the daemon
@@ -6168,6 +6175,9 @@ mod tests {
         /// The issues whose pull request has an old failed run of the check
         /// `Gate` and a newer run of it that passed (#1540).
         rerun: BTreeSet<u64>,
+        /// The issues whose pull request is a draft: no verify, so the
+        /// item is free work for a build.
+        drafts: BTreeSet<u64>,
         /// A rebase, a fix of checks and a fix after a FAIL end with no push.
         no_push: bool,
         /// The work of each claim of a session, in order.
@@ -6352,6 +6362,7 @@ mod tests {
                     _ => None,
                 },
                 required: Some(REQUIRED.map(String::from).to_vec()),
+                draft: self.drafts.contains(n),
                 ..rollout::Pull::default()
             });
             rollout::Open {
@@ -6743,9 +6754,19 @@ mod tests {
                 };
                 forge.claims.remove(&record.live.item);
                 forge.finished.push(record.live.item.clone());
+                // The read of the branch of a build, as `after_build` does
+                // it.
+                let branch = match job.work {
+                    Work::Verify { .. } => crate::ends::Branch::Unread,
+                    _ => match forge.pulls.contains_key(&job.work.issue()) {
+                        true => crate::ends::Branch::Open(40 + job.work.issue()),
+                        false => crate::ends::Branch::NoPull,
+                    },
+                };
                 Ok(Finish {
                     lines: Vec::new(),
                     verdict,
+                    branch,
                 })
             })
         }
@@ -7060,6 +7081,52 @@ mod tests {
         async fn end(&self, item: &str) {
             let name = self.running(item).expect("it runs");
             self.fake.stop(&name).await.unwrap();
+        }
+
+        /// Ends the live session of `item` with the exit `code` of
+        /// `claude`, as its relay sends it on the socket of the session.
+        async fn exit(&self, item: &str, code: i32) {
+            use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+            let name = self.running(item).expect("it runs");
+            let socket = crate::daemon::session_dir(self.daemon.dir(), &name);
+            let conn = crate::daemon::connect_in(&socket, crate::daemon::SOCKET)
+                .await
+                .unwrap();
+            let (read, mut write) = conn.into_split();
+            let mut lines = BufReader::new(read).lines();
+            let hello = crate::daemon::SessionAsk::Relay {
+                protocol: crate::daemon::PROTOCOL,
+                inputs: 0,
+                closed: false,
+                held: false,
+            };
+            let hello = serde_json::to_string(&hello).unwrap();
+            write
+                .write_all(format!("{hello}\n").as_bytes())
+                .await
+                .unwrap();
+            let events = loop {
+                let line = lines.next_line().await.unwrap().expect("a resume");
+                if let Ok(Say::Resume { events }) = serde_json::from_str(&line) {
+                    break events;
+                }
+            };
+            let exit = crate::session_relay::Up::Exit {
+                seq: events + 1,
+                code: Some(code),
+            };
+            let exit = serde_json::to_string(&exit).unwrap();
+            write
+                .write_all(format!("{exit}\n").as_bytes())
+                .await
+                .unwrap();
+            while let Ok(Some(line)) = lines.next_line().await {
+                if let Ok(Say::Ack { seq }) = serde_json::from_str(&line)
+                    && seq > events
+                {
+                    return;
+                }
+            }
         }
 
         /// Lets the wave look for a time. At most `limit` sessions live.
@@ -8031,6 +8098,88 @@ esac
             .collect();
         assert_eq!(lists.len(), 1, "{reads:?}");
         assert!(told.on(crate::daemon::now_ms()), "it waits for its wake");
+    }
+
+    /// 01M7B3BH3H8Y26MTERAGDDGJ0V (#2082), #2170: a fix after a FAIL reads
+    /// the open pull requests before its claim, as a build does. The verify
+    /// of #41 failed at its head c1, and the item is held. Then #41 gets
+    /// the new head c2, which waits for its verify, and no wake tells it:
+    /// the kept list of the look still shows the FAIL of c1. The read
+    /// before the fix of c1 finds #41 waiting for its verify: the wave
+    /// starts no fix of c1, and starts the verify of c2.
+    #[tokio::test]
+    async fn a_fix_after_a_fail_reads_the_pull_requests_before_its_claim() {
+        let bin = tempfile::tempdir().unwrap();
+        let put = |name: &str, value: serde_json::Value| {
+            isolated::write_whole(bin.path().join(name), value.to_string());
+        };
+        let mut failed = pull_41();
+        failed["statusCheckRollup"][0]["state"] = "FAILURE".into();
+        put("issues", serde_json::json!([open_issue(1)]));
+        put("pulls", serde_json::json!([failed]));
+        let (here, _) = reading_with(bin.path(), Duration::from_secs(3600)).await;
+        here.forge().holds.insert("issue-1".into());
+        here.run();
+        here.until(0, |h| h.forge().branch_reads >= 1).await;
+
+        // #41 gets the head c2, and its event is lost.
+        let mut pull = pull_41();
+        pull["headRefOid"] = "c2".into();
+        pull["statusCheckRollup"].as_array_mut().unwrap().remove(0);
+        put("pulls", serde_json::json!([pull]));
+        here.forge().holds.remove("issue-1");
+        here.until(1, |h| {
+            h.forge()
+                .starts
+                .iter()
+                .any(|(item, _)| item == "verify-issue-1")
+        })
+        .await;
+        here.idle(1).await;
+        let forge = here.forge();
+        let started: Vec<&str> = forge.starts.iter().map(|(i, _)| i.as_str()).collect();
+        assert_eq!(started, ["verify-issue-1"], "no fix of c1");
+        assert_eq!(forge.build_reads, 1, "one read before the fix");
+    }
+
+    /// #2170: the start text of a fix after a FAIL names the pull request
+    /// and the head of the fix, with the link of the FAIL of that head.
+    /// Another build names the first pull request of its issue whose
+    /// verify failed.
+    #[test]
+    fn the_start_of_a_fix_names_its_own_pull_request_and_head() {
+        let pull = |number: u64, head: &str, state: &str| rollout::Pull {
+            number,
+            branch: branch_of(1),
+            head: head.into(),
+            checks: vec![rollout::Check {
+                url: Some(format!("https://v/{number}")),
+                ..rollout::Check::verify(state)
+            }],
+            ..rollout::Pull::default()
+        };
+        let pulls = [pull(40, "c0", "SUCCESS"), pull(41, "c1", "FAILURE")];
+        let line = |pull, head, url| Some(text::wave_failed_verify(pull, head, url));
+        assert_eq!(
+            failed_verify(&pulls, &fix("c1")),
+            line(41, "c1", "https://v/41")
+        );
+        // The head of #41 moved: the line names the head of the fix, with
+        // no link.
+        let old = Work::Fix {
+            issue: 1,
+            pull: 41,
+            commit: "c0ld".into(),
+        };
+        assert_eq!(failed_verify(&pulls, &old), line(41, "c0ld", ""));
+        let build = Work::Build { issue: 1 };
+        assert_eq!(
+            failed_verify(&pulls, &build),
+            line(41, "c1", "https://v/41")
+        );
+        assert_eq!(failed_verify(&pulls[..1], &build), None);
+        // No read of the pull requests: the fix still names its FAIL.
+        assert_eq!(failed_verify(&[], &fix("c1")), line(41, "c1", ""));
     }
 
     /// 01M7B3BH0W46KJRKZ4Q5Z96A3N (#2082): a wave with a fake `gh` and the
@@ -9008,6 +9157,13 @@ esac
         "no exit code: a signal, or the container ended before its relay".into()
     }
 
+    /// The reason of the end of a session of the item 1 that the fake
+    /// daemon stops while its pull request #41 is open
+    /// (01M7FQECZY6RY5JE5QPY8NFRZR).
+    fn stopped_on_41() -> String {
+        format!("{}, and pull request #41 is open", stopped())
+    }
+
     #[tokio::test]
     async fn an_item_starts_at_most_three_times_and_the_lead_hears_of_it() {
         let free = Arc::new(AtomicU64::new(64));
@@ -9352,7 +9508,7 @@ esac
         assert!(here.forge().told.is_empty(), "{:?}", here.forge().told);
         verified(&here, 5).await;
         verified(&here, 6).await;
-        let spent = text::wave_spent("verify-issue-1", Some("c1b"), STARTS, &stopped());
+        let spent = text::wave_spent("verify-issue-1", Some((41, "c1b")), STARTS, &stopped());
         here.until(3, |h| h.forge().told == [spent.clone()]).await;
         here.idle(3).await;
         assert_eq!(here.forge().works.len(), 6, "`c1b` is spent");
@@ -9407,12 +9563,13 @@ esac
         assert!(forge.told.is_empty(), "{:?}", forge.told);
     }
 
-    /// #2170, 01M7FJWPJKBK2V4X73Z45PHE7V, 01M7FJWPN3V3HS8DAM9B25JW9P: three
-    /// fixes of one head after its FAIL push nothing, and the verify of
-    /// the head fails after each new verify request. The guard stops the
+    /// #2170, 01M7FJWPJKBK2V4X73Z45PHE7V, 01M7FJWPN3V3HS8DAM9B25JW9P,
+    /// 01M7FQECZY6RY5JE5QPY8NFRZR: three fixes of one head after its FAIL
+    /// push nothing, and the verify of the head fails after each new
+    /// verify request. Each fix ends with exit code 0. The guard stops the
     /// fix of that head: the message names the pull request, the head and
-    /// the end of the last session, and the lead hears of it one time. A
-    /// new head starts a new count.
+    /// the true end of the last session, and the lead hears of it one
+    /// time. A new head starts a new count.
     #[tokio::test]
     async fn three_fixes_of_one_head_stop_that_head_and_the_message_names_the_pull_request() {
         let free = Arc::new(AtomicU64::new(64));
@@ -9428,10 +9585,11 @@ esac
             // The fix pushes nothing: the head gets a new verify, and it
             // fails.
             here.until(3, |h| h.running("issue-1").is_some()).await;
-            here.end("issue-1").await;
+            here.exit("issue-1", 0).await;
             verified(&here, 2 * n).await;
         }
-        let spent = text::wave_spent_fix("issue-1", 41, "c1", STARTS, &stopped());
+        let end = "exit code 0, and pull request #41 is open";
+        let spent = text::wave_spent_fix("issue-1", 41, "c1", STARTS, end);
         here.until(3, |h| h.forge().told == [spent.clone()]).await;
         here.idle(3).await;
         {
@@ -9442,7 +9600,7 @@ esac
             assert_eq!(forge.works, works, "`c1` is spent");
             assert_eq!(forge.told, std::slice::from_ref(&spent), "one notice");
         }
-        assert!(spent.contains("pull request #41"), "{spent}");
+        assert!(spent.contains(&format!("ended: {end}.")), "{spent}");
         assert!(!spent.contains("no pull request"), "{spent}");
         // A person pushes a new head, and its verify fails: a new count.
         {
@@ -9452,6 +9610,55 @@ esac
         }
         here.until(3, |h| h.running("issue-1").is_some()).await;
         assert_eq!(here.forge().works.last(), Some(&fix("c1b")));
+    }
+
+    /// #2170, 01M7FQECZY6RY5JE5QPY8NFRZR: the pull request #41 of the item
+    /// is a draft, so it gets no verify, and the item is free work for a
+    /// build. Three builds end with exit code 0, and the draft is still
+    /// open. The guard stops the item: the message names the pull request,
+    /// and does not say that the item has none.
+    #[tokio::test]
+    async fn a_spent_build_on_an_open_draft_names_its_pull_request() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 3, free).await;
+        {
+            let mut forge = here.forge();
+            forge.pulls.insert(1, Pr::Asked);
+            forge.drafts.insert(1);
+        }
+        here.run();
+        for n in 1..=STARTS as usize {
+            here.until(3, |h| h.running("issue-1").is_some()).await;
+            here.exit("issue-1", 0).await;
+            here.until(3, |h| h.forge().finished.len() == n).await;
+        }
+        let end = "exit code 0, and pull request #41 is open";
+        let spent = text::wave_spent("issue-1", None, STARTS, end);
+        here.until(3, |h| h.forge().told == [spent.clone()]).await;
+        here.idle(3).await;
+        let forge = here.forge();
+        assert_eq!(forge.works, vec![Work::Build { issue: 1 }; STARTS as usize]);
+        assert_eq!(forge.told, std::slice::from_ref(&spent), "one notice");
+        assert!(!spent.contains("no pull request"), "{spent}");
+    }
+
+    /// 01M5A5HXKZTDP5M5HY2FHCEBZA, #2170: three builds that end with exit
+    /// code 0 and no pull request: the message says that the last session
+    /// made none.
+    #[tokio::test]
+    async fn a_spent_build_with_a_clean_end_and_no_pull_request_says_so() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 3, free).await;
+        here.forge().no_pull = true;
+        here.run();
+        for n in 1..=STARTS as usize {
+            here.until(3, |h| h.running("issue-1").is_some()).await;
+            here.exit("issue-1", 0).await;
+            here.until(3, |h| h.forge().finished.len() == n).await;
+        }
+        let end = "exit code 0, and no pull request";
+        let spent = text::wave_spent("issue-1", None, STARTS, end);
+        here.until(3, |h| h.forge().told == [spent.clone()]).await;
     }
 
     /// #2170, 01M7FJWPJKBK2V4X73Z45PHE7V: the starts of a fix after a FAIL
@@ -9477,12 +9684,7 @@ esac
         };
         let starts: BTreeMap<String, u32> =
             [(fix("c1").key(), STARTS), ("issue-1".to_owned(), STARTS)].into();
-        let works = |look: &Look, running: &BTreeSet<String>| -> Vec<Work> {
-            super::spent(look, running, &starts)
-                .into_iter()
-                .map(|s| s.work)
-                .collect()
-        };
+        let works = |look: &Look, running: &BTreeSet<String>| super::spent(look, running, &starts);
         let none = BTreeSet::new();
         assert_eq!(works(&look("c1"), &none), [fix("c1")]);
         assert_eq!(works(&look("c1b"), &none), []);
@@ -9525,7 +9727,7 @@ esac
         let got: Vec<(String, Option<String>)> =
             super::spent(&look("c1b"), &BTreeSet::new(), &starts)
                 .into_iter()
-                .map(|s| (s.work.key(), s.work.commit().map(str::to_owned)))
+                .map(|s| (s.key(), s.commit().map(str::to_owned)))
                 .collect();
         assert_eq!(got, [("issue-2".to_owned(), None)]);
         assert_eq!(
@@ -9536,7 +9738,7 @@ esac
         let got: Vec<(String, String, Option<String>)> =
             super::spent(&look("c1"), &BTreeSet::new(), &starts)
                 .into_iter()
-                .map(|s| (s.item, s.work.key(), s.work.commit().map(str::to_owned)))
+                .map(|s| (s.item(), s.key(), s.commit().map(str::to_owned)))
                 .collect();
         assert_eq!(
             got,
@@ -9553,7 +9755,7 @@ esac
         let running: BTreeSet<String> = ["verify-issue-1".to_owned()].into();
         let items: Vec<String> = super::spent(&look("c1"), &running, &starts)
             .into_iter()
-            .map(|s| s.item)
+            .map(|s| s.item())
             .collect();
         assert_eq!(items, ["issue-2"]);
         // No pull request waits for a verify: no head, and no spent verify.
@@ -9563,7 +9765,7 @@ esac
         };
         let items: Vec<String> = super::spent(&none, &BTreeSet::new(), &starts)
             .into_iter()
-            .map(|s| s.item)
+            .map(|s| s.item())
             .collect();
         assert_eq!(items, ["issue-2"]);
     }
@@ -10439,8 +10641,15 @@ esac
         assert!(here.forge().told.is_empty(), "{:?}", here.forge().told);
         here.forge().stale.clear();
         here.until(3, |h| h.forge().told.len() == 1).await;
-        let tried =
-            text::wave_no_rebase(41, 1, "main", "c1", "thelio", NoRebase::Tried, &stopped());
+        let tried = text::wave_no_rebase(
+            41,
+            1,
+            "main",
+            "c1",
+            "thelio",
+            NoRebase::Tried,
+            &stopped_on_41(),
+        );
         assert_eq!(here.forge().told, [tried]);
     }
 
@@ -10557,8 +10766,15 @@ esac
                 [rebase("c1")],
                 "the same head: no second session"
             );
-            let tried =
-                text::wave_no_rebase(41, 1, "main", "c1", "thelio", NoRebase::Tried, &stopped());
+            let tried = text::wave_no_rebase(
+                41,
+                1,
+                "main",
+                "c1",
+                "thelio",
+                NoRebase::Tried,
+                &stopped_on_41(),
+            );
             assert_eq!(forge.told, [tried], "one message");
             assert_eq!(forge.told_keys, [None]);
         }
@@ -10588,8 +10804,15 @@ esac
         here.run();
         here.until(3, |h| h.running("issue-1").is_some()).await;
         here.end("issue-1").await;
-        let tried =
-            text::wave_no_rebase(41, 1, "main", "c1", "thelio", NoRebase::Tried, &stopped());
+        let tried = text::wave_no_rebase(
+            41,
+            1,
+            "main",
+            "c1",
+            "thelio",
+            NoRebase::Tried,
+            &stopped_on_41(),
+        );
         here.until(3, |h| h.forge().told.contains(&tried)).await;
         here.forge().unknown.insert(1);
         here.idle(3).await;
@@ -12319,7 +12542,8 @@ esac
                 },
             )
             .await
-            .unwrap();
+            .unwrap()
+            .lines;
             let thread = self.wave.thread().unwrap();
             let got = self
                 .api
@@ -12675,6 +12899,60 @@ esac
         let note = text::wave_build_limit("issue-12", "worktree-issue-12");
         assert_eq!(got, [(Kind::Note, note.clone())]);
         assert_eq!(lines, [note]);
+    }
+
+    /// #2170, 01M7FQECZY6RY5JE5QPY8NFRZR, 01M7FQED2JSP2QVPTKBC4405T1: the
+    /// steps after the end of a build give what they read of the pull
+    /// request of its branch: open, none, or not read while a limit of
+    /// GitHub is out. The pull request of a fix after a FAIL closed during
+    /// its session: the branch has none, and the record of the end names
+    /// the head of the fix and says "no pull request".
+    #[tokio::test]
+    async fn the_steps_after_a_build_give_the_pull_request_of_its_branch() {
+        use crate::ends::Branch;
+        let built = Built::new().await;
+        let clean = Ended {
+            code: Some(0),
+            failed: false,
+        };
+        let gh = |name: &str, script: &str| {
+            pr::Gh::at(isolated::write_program(built.dir.path().join(name), script))
+        };
+        let run = async |gh: pr::Gh, record: &Record| {
+            after_build(gh, &built.api, record, &built.wave, 12, None, clean)
+                .await
+                .unwrap()
+                .branch
+        };
+        assert_eq!(run(built.gh(false), &built.record).await, Branch::Open(40));
+        let limit = "#!/bin/sh\necho 'GraphQL: API rate limit already exceeded for user ID 1.' >&2\nexit 1\n";
+        assert_eq!(run(gh("limit", limit), &built.record).await, Branch::Unread);
+        assert!(
+            crate::ends::read(&built.api, &built.lead)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        let mut record = built.record.clone();
+        record.job = Some(Job {
+            wave: built.wave.clone(),
+            work: Work::Fix {
+                issue: 12,
+                pull: 40,
+                commit: "1a2b3c4d5e".into(),
+            },
+        });
+        let closed = r#"#!/bin/sh
+echo '{"number":40,"url":"https://github.com/o/r/pull/40","headRefOid":"1a2b3c4d5e","state":"CLOSED"}'
+"#;
+        assert_eq!(run(gh("closed", closed), &record).await, Branch::NoPull);
+        let records = crate::ends::read(&built.api, &built.lead).await.unwrap();
+        let [one] = &records[..] else {
+            panic!("one record: {records:?}");
+        };
+        assert_eq!(one.tag("head"), "1a2b3c4");
+        assert_eq!(one.reason, "exit code 0, and no pull request");
     }
 
     /// 01M5A5HXKZTDP5M5HY2FHCEBZA: a build with an open pull request

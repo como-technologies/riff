@@ -3827,7 +3827,9 @@ riff session why issue-1203
 It shows one line for each session of the item that ended with no pull
 request, and the last lines of the output of the last one. The message
 "started 3 times" to your lead names the same reason. A session that
-ends with an open pull request leaves no record.
+ends with an open pull request leaves no record. Then the reason in the
+message names that pull request, for example `exit code 0, and pull
+request #41 is open`.
 
 A verify session can end with no PASS or FAIL. Your lead gets the
 message "ended with no PASS or FAIL", and the pull request waits for a
@@ -3876,7 +3878,7 @@ session ended, and only for the head that the pull request has then, so
 your lead gets none for an old head:
 
 ```text
-The riff daemon started verify-issue-1597 3 times for the head 988cb7b of its pull request, and it is still free work. The last session ended: exit code 0, and no PASS or FAIL. It starts no more session for this head until riff host join again. A new head starts a new count. Read why: riff session why verify-issue-1597
+The riff daemon started verify-issue-1597 3 times for the head 988cb7b of its pull request #1600, and it is still free work. The last session ended: exit code 0, and no PASS or FAIL. It starts no more session for this head until riff host join again. A new head starts a new count. Read why: riff session why verify-issue-1597
 ```
 
 To read each of these sessions, run this on any machine:
@@ -3922,18 +3924,10 @@ flowchart LR
     Q -- no --> C["one start of the fix of A:<br/>3 stop the fix of A"]
 ```
 
-For a spent fix, the message names the pull request and the head, and
-the end of the last session. Read the FAIL on the pull request, for
-example on pull request 41:
-
-```sh
-gh pr view 41 --comments
-```
-
-For each other spent item, read the cause first: [See why a session
-ended with no pull
-request](#see-why-a-session-ended-with-no-pull-request). When you fixed
-the cause, run this in your clone of the repository:
+For a spent item, read the cause first: [See why a session ended with
+no pull request](#see-why-a-session-ended-with-no-pull-request). For a
+spent fix, see [Start a spent fix again](#start-a-spent-fix-again).
+When you fixed the cause, run this in your clone of the repository:
 
 ```sh
 riff host join
@@ -3943,6 +3937,31 @@ The wave goes on, and the starts of each item go back to 0. The
 sessions that run go on. The rebase of a pull request with a conflict
 starts again too, also for the same commit (see
 [Start the rebase of a conflict again](#start-the-rebase-of-a-conflict-again)).
+
+#### Start a spent fix again
+
+For a spent fix, the message to your lead names the pull request, the
+head and the end of the last session. For example, for pull request 41:
+
+```text
+The riff daemon started issue-1 3 times to fix the head 988cb7b of its pull request #41 after the FAIL of its verify, and the pull request still has that head. The last session ended: exit code 0, and pull request #41 is open. It starts no more fix of this head until riff host join again. A new head starts a new count. Read the FAIL: gh pr view 41 --comments
+```
+
+1. Read the FAIL on the pull request:
+
+   ```sh
+   gh pr view 41 --comments
+   ```
+
+2. Fix the cause. When you push a new head to the pull request, the
+   wave verifies the new head, with no `riff host join`. When its verify
+   fails, the fix of the new head gets a new count of 3.
+3. To start the fix of the same head again, run this in your clone of
+   the repository:
+
+   ```sh
+   riff host join
+   ```
 
 ### Add a Done when line to an issue
 
