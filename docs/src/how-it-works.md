@@ -463,10 +463,10 @@ riff follows no link in a folder that a session can write: /home/mike/.local/sha
 ```
 
 On Linux, find the error in the log of the daemon (see also
-[See the daemon](development.md#see-the-daemon)):
+[Read the log of the daemon](development.md#read-the-log-of-the-daemon)):
 
 ```sh
-journalctl --user -u riff | grep 'follows no link'
+riff daemon log --grep 'follows no link'
 ```
 
 Find each link in the Claude folder of the lead. Then remove the link
