@@ -11,9 +11,11 @@
 //! [`THREAD`], as the session ([`post`]), and the session leaves the
 //! thread. When a limit of GitHub or a fault stops the read, it posts no
 //! note (01M7FVQP0N4ZEZ7SBP9WE9YWMS). A verify has a pull request, so
-//! the daemon looks for its PASS or FAIL: when there is none, it posts
-//! the same note for the item `verify-issue-N`. The lead reads it with
-//! `riff session why ITEM` ([`read`]).
+//! the daemon looks for its PASS or FAIL: when there is none, or riff
+//! refuses its PASS for a member of the council with no line, it posts
+//! the same note for the item `verify-issue-N`
+//! (01M7G6H601C6NYC7ACSF6GVW50). The lead reads it with `riff session
+//! why ITEM` ([`read`]).
 //!
 //! ```mermaid
 //! sequenceDiagram

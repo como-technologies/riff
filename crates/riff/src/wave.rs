@@ -3621,6 +3621,19 @@ async fn then(
     Finish { lines, found }
 }
 
+/// Posts the end of the session of `record`, as it `ended`, with what the
+/// steps after the end `found`, in the thread `ends` ([`crate::ends::post`]).
+/// It reads the folder of the session, so it comes before the folder goes.
+/// A fault of the post goes to the log of the daemon, and does not stop
+/// the steps after it.
+async fn post_end(api: &Api, record: &Record, ended: Ended, found: Found) {
+    let scrub = crate::run::Scrub::new(crate::session_relay::secrets_here());
+    let end = crate::ends::End::of(record, ended, found, &scrub);
+    if let Err(e) = crate::ends::post(api, &record.me, &end).await {
+        eprintln!("riff daemon: {}: {e:#}", record.live.name);
+    }
+}
+
 /// Waits until the steps after the end of the session of `record` can read
 /// the OS keyring ([`World::unlocked`], 01M7CGA8PN39YQ67S3N0MAHR7Y).
 /// While it is locked, or does not answer, the daemon tries again each
@@ -3975,12 +3988,7 @@ async fn after_build(
             }
             None => {
                 lines.push(text::run_no_pull(&branch));
-                // A fault of the post does not hide the note to the lead.
-                let scrub = crate::run::Scrub::new(crate::session_relay::secrets_here());
-                let end = crate::ends::End::of(record, ended, found, &scrub);
-                if let Err(e) = crate::ends::post(api, me, &end).await {
-                    eprintln!("riff daemon: {}: {e:#}", record.live.name);
-                }
+                post_end(api, record, ended, found).await;
             }
         }
         api.post(me, Some(&thread), &to, &body, kind).await?;
@@ -4045,9 +4053,11 @@ async fn no_verify(
 /// PASS with no line for a member of the council in the part `## The
 /// council` is a result with no verdict too: the report refuses it, the
 /// message names each member with no line ([`no_report`],
-/// 01M7CFBZSQEEZNZBR9H1S54GS1), and the steps find [`Found::NoVerdict`]
-/// (01M7G3DR4R4KF5RSD94F6ZN80H). The report reads the council in the main
-/// clone of the wave, never in the clone of the verify
+/// 01M7CFBZSQEEZNZBR9H1S54GS1), the steps find [`Found::NoVerdict`]
+/// (01M7G3DR4R4KF5RSD94F6ZN80H), and the session leaves its record in the
+/// thread `ends` before its folder goes (01M7G6H601C6NYC7ACSF6GVW50). The
+/// report reads the council in the main clone of the wave, never in the
+/// clone of the verify
 /// (01M7DZ4E5BZAD38E3K9A3N277E). A pull request that merged or closed
 /// waits for none: the lead gets a note that says so ([`open_now`],
 /// 01M75R71BCDCP882W75GSE52VT).
@@ -4065,12 +4075,7 @@ async fn after_verify(
     let item = &record.live.item;
     let found = last_result(&record.folder.join(crate::daemon::EVENTS));
     let Some((verdict, result)) = found.as_deref().and_then(verdict) else {
-        // A fault of the post does not hide the message to the lead.
-        let scrub = crate::run::Scrub::new(crate::session_relay::secrets_here());
-        let end = crate::ends::End::of(record, ended, Found::NoVerdict, &scrub);
-        if let Err(e) = crate::ends::post(api, me, &end).await {
-            eprintln!("riff daemon: {}: {e:#}", record.live.name);
-        }
+        post_end(api, record, ended, Found::NoVerdict).await;
         let _ = std::fs::remove_dir_all(&record.folder);
         let steps = async {
             let open = open_now(&gh, pull).await;
@@ -4089,6 +4094,13 @@ async fn after_verify(
         Ok(reported) => reported,
         Err(e) => {
             let error = format!("{e:#}");
+            let found = match e.is::<crate::council::result::NoLine>() {
+                true => Found::NoVerdict,
+                false => Found::Unread,
+            };
+            if found == Found::NoVerdict {
+                post_end(api, record, ended, found).await;
+            }
             let result = kept::Kept {
                 repo: wave.repo.clone(),
                 item: item.clone(),
@@ -4114,10 +4126,6 @@ async fn after_verify(
                     let open = open_now(&gh, pull).await;
                     (no_report(item, pull, &e, open), waits_kind(open))
                 }
-            };
-            let found = match e.is::<crate::council::result::NoLine>() {
-                true => Found::NoVerdict,
-                false => Found::Unread,
             };
             let steps = async {
                 api.post(me, Some(&thread), &lead, &body, kind).await?;
@@ -14621,8 +14629,9 @@ esac
     /// verify, and the member file `evil` of that clone counts for nothing.
     /// A PASS with no line for docs and big-o is a result with no verdict:
     /// no squash message, no comment and no status. The lead gets a message
-    /// that names docs and big-o, the folder goes, and the start counts.
-    /// The same PASS with a line for each member is on the pull request.
+    /// that names docs and big-o, the session leaves a record in the thread
+    /// `ends`, the folder goes, and the start counts. The same PASS with a
+    /// line for each member is on the pull request, and leaves no record.
     #[tokio::test]
     async fn a_pass_of_the_wave_with_no_line_for_a_member_is_a_result_with_no_verdict() {
         let built = Built::new().await;
@@ -14641,6 +14650,14 @@ esac
             let mut record = built.record.clone();
             record.live.item = "verify-issue-12".into();
             record.folder = sessions.join(format!("verify-issue-12-{n}"));
+            record.job = Some(Job {
+                wave: wave.clone(),
+                work: Work::Verify {
+                    issue: 12,
+                    pull: 7,
+                    commit: fork.head.clone(),
+                },
+            });
             verify_folder(&fork, &record.folder);
             let result = format!("PASS\n\n- It works.\n\n## The council\n\n{council}");
             let event = serde_json::json!({ "type": "result", "result": result });
@@ -14672,6 +14689,25 @@ esac
         let end = crate::ends::End::of(&record, ended, done.found, &run::Scrub::new([]));
         assert_eq!(end.reason(), "exit code 0, and no PASS or FAIL");
         assert!(!record.folder.exists(), "the folder of the verify goes");
+        // The record in the thread `ends` has the reason and the last lines
+        // of the output: the post came before the folder went
+        // (01M7G6H601C6NYC7ACSF6GVW50).
+        let records = crate::ends::read(&built.api, &built.lead).await.unwrap();
+        let [first] = &records[..] else {
+            panic!("one record: {records:?}");
+        };
+        assert_eq!(first.tag("item"), "verify-issue-12");
+        assert_eq!(first.tag("head"), &fork.head[..7]);
+        assert_eq!(first.reason, "exit code 0, and no PASS or FAIL");
+        let [tail] = &first.tail[..] else {
+            panic!("the line of the result: {first:?}");
+        };
+        assert!(tail.contains("## The council"), "{tail}");
+        let shown = crate::ends::why("verify-issue-12", &records);
+        assert!(
+            shown.starts_with("verify-issue-12: 1 session ended with no PASS or FAIL."),
+            "{shown}"
+        );
         // The fetch of `main` ran in the main clone.
         git_in(
             &fork.main,
@@ -14712,6 +14748,8 @@ esac
         let log = calls(bin.path());
         let status = format!("api repos/o/r/statuses/{} -f state=success", fork.head);
         assert!(log.contains(&status), "{log}");
+        let records = crate::ends::read(&built.api, &built.lead).await.unwrap();
+        assert_eq!(records.len(), 1, "a PASS on the pull request: {records:?}");
     }
 
     /// 01M7CFBZSQEEZNZBR9H1S54GS1, 01M6H1N332TZ17CQQ8A5CQKG7B,

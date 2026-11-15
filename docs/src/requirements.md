@@ -7548,6 +7548,12 @@ of this part when they merge.
   another fault of the report, it says nothing of a result. It names the
   denied tool calls of the session, also when a step after the end
   removes the folder of the session.
+- **01M7G6H601C6NYC7ACSF6GVW50** A verify session of a wave whose PASS
+  riff refuses for a member of the council with no line
+  (01M7CFBZSQEEZNZBR9H1S54GS1) leaves one record in the thread `ends`,
+  as a verify with no PASS or FAIL does (01M5SMP2D4MGME90EHVKAQHQ26).
+  Its reason says "no PASS or FAIL", and the post goes before the folder
+  of the verify goes. `riff session why verify-issue-N` shows it.
 
 ### The lead, the view and the takeover
 
