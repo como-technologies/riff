@@ -525,7 +525,7 @@ pub trait Runtime: Send + Sync {
 /// ([`Runtime::volume_folders`]), and the fault of each look-up that
 /// failed. With a fault, the list can miss a folder: the daemon starts no
 /// container that binds a volume with write (01M7EW2106JGGTSZKMRG4N9SH0).
-/// Each fault is one line ([`VolumeFolders::failed`]), so the line of
+/// The faults come in one line ([`VolumeFolders::fault`]), so the line of
 /// `riff daemon status` stays one line.
 ///
 /// ```
@@ -538,30 +538,30 @@ pub trait Runtime: Send + Sync {
 /// unread.failed("podman info: level=warning msg=\"old\"\nError: no store\n");
 /// unread.failed("podman volume inspect --all: no");
 /// assert_eq!(
-///     unread.fault().as_deref(),
-///     Some("podman info: level=warning msg=\"old\" Error: no store; podman volume inspect --all: no")
+///     unread.fault().unwrap().as_str(),
+///     "podman info: level=warning msg=\"old\" Error: no store; podman volume inspect --all: no"
 /// );
 /// ```
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct VolumeFolders {
     /// The folders that the runtime said.
     pub folders: Vec<PathBuf>,
-    /// The fault of each look-up that failed, in one line each.
-    faults: Vec<String>,
+    /// The fault of each look-up that failed.
+    faults: Vec<crate::text::OneLine>,
 }
 
 impl VolumeFolders {
-    /// A look-up failed with `fault`. Its lines become one line: podman
-    /// can print a warning line before its error.
+    /// A look-up failed with `fault`. podman can print a warning line
+    /// before its error: the lines become one ([`crate::text::OneLine`]).
     pub fn failed(&mut self, fault: &str) {
-        let fault = fault.split_whitespace().collect::<Vec<_>>().join(" ");
-        self.faults.push(fault);
+        self.faults.push(fault.into());
     }
 
     /// The faults in one line, or `None` when each look-up gave its
     /// folders.
-    pub fn fault(&self) -> Option<String> {
-        (!self.faults.is_empty()).then(|| self.faults.join("; "))
+    pub fn fault(&self) -> Option<crate::text::OneLine> {
+        let faults: Vec<&str> = self.faults.iter().map(|f| f.as_str()).collect();
+        (!faults.is_empty()).then(|| faults.join("; ").into())
     }
 }
 
@@ -1068,7 +1068,7 @@ impl Fake {
     /// tokio::runtime::Builder::new_current_thread().build()?.block_on(async {
     ///     let said = fake.volume_folders().await;
     ///     assert_eq!(said.folders, [std::path::Path::new("/v")]);
-    ///     assert_eq!(said.fault().as_deref(), Some("podman info: no store"));
+    ///     assert_eq!(said.fault().unwrap().as_str(), "podman info: no store");
     ///     fake.volumes_heal();
     ///     assert_eq!(fake.volume_folders().await.fault(), None);
     ///     assert_eq!(fake.volume_looks(), 2);

@@ -7507,6 +7507,10 @@ of this part when they merge.
   (01M7EW2106JGGTSZKMRG4N9SH0), the job claims nothing, and the start
   does not count. The wave starts no item for one minute, then tries
   again.
+- **01M7F29TEWNHPR79RB6BT8C8SS** While a wave waits for the folders of
+  the podman volumes (01M7EZCTKYFPS4QDQ1N3K3BT23), the line of the wave
+  in `riff daemon status` says that it waits for them, and names `riff
+  daemon status`. The lead gets no message.
 
 ### The lead, the view and the takeover
 

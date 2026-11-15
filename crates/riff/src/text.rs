@@ -10112,6 +10112,60 @@ fn flat(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// A text in one line: each run of white space is one space, also after
+/// a read from the wire. A cause in a line of `riff daemon status` is
+/// one (01M7EZCTGNFJ4CWN0WYXKJKRYV).
+///
+/// ```
+/// use riff::text::OneLine;
+///
+/// let line = OneLine::new("level=warning msg=\"old\"\nError: no store\n");
+/// assert_eq!(line.as_str(), "level=warning msg=\"old\" Error: no store");
+/// let read: OneLine = serde_json::from_str(r#""a\nb""#)?;
+/// assert_eq!(read.to_string(), "a b");
+/// assert_eq!(serde_json::to_string(&read)?, r#""a b""#);
+/// # Ok::<(), serde_json::Error>(())
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(from = "String", into = "String")]
+pub struct OneLine(String);
+
+impl OneLine {
+    /// `text` in one line: each run of white space is one space.
+    pub fn new(text: &str) -> Self {
+        Self(flat(text))
+    }
+
+    /// The line.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for OneLine {
+    fn from(text: String) -> Self {
+        Self::new(&text)
+    }
+}
+
+impl From<&str> for OneLine {
+    fn from(text: &str) -> Self {
+        Self::new(text)
+    }
+}
+
+impl From<OneLine> for String {
+    fn from(line: OneLine) -> Self {
+        line.0
+    }
+}
+
+impl std::fmt::Display for OneLine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// A check of `riff init` that passed.
 ///
 /// ```
@@ -12044,7 +12098,7 @@ pub fn daemon_volumes_unread(cause: &str) -> String {
 }
 
 /// The log line of the first look that read each folder of the volumes
-/// after a fault (01M7EW2106JGGTSZKMRG4N9SH0).
+/// after a fault (01M7EZCTGNFJ4CWN0WYXKJKRYV).
 pub const DAEMON_VOLUMES_READ: &str =
     "riff reads the folders of the podman volumes again: the sessions with a volume start.";
 
@@ -12819,7 +12873,7 @@ pub const WAVE_NO_TOKEN: &str =
 
 /// The word of a wave that starts no item for one look: riff cannot read
 /// the folders of the podman volumes of its sessions
-/// (01M7EZCTKYFPS4QDQ1N3K3BT23).
+/// (01M7EZCTKYFPS4QDQ1N3K3BT23, 01M7F29TEWNHPR79RB6BT8C8SS).
 pub const WAVE_VOLUMES_UNREAD: &str =
     "waits: riff cannot read the folders of the podman volumes. See riff daemon status";
 

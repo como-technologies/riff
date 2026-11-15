@@ -336,7 +336,9 @@
 //! - any item for one look after a job found no folders of the podman
 //!   volumes that the `riff.toml` of the wave names (`NoVolumes`,
 //!   `Daemon::volumes_wait`). The job claims nothing, and the start does
-//!   not count (01M7EZCTKYFPS4QDQ1N3K3BT23).
+//!   not count (01M7EZCTKYFPS4QDQ1N3K3BT23). The line of the wave says
+//!   that it waits, and the lead gets no message
+//!   (01M7F29TEWNHPR79RB6BT8C8SS).
 //!
 //! # A look that does not see the verdict yet
 //!
@@ -2945,7 +2947,8 @@ pub(crate) async fn run<R: Runtime + 'static>(
                     && daemon.no_start_waits(&wave.repo).is_some();
                 // riff cannot read the folders of the volumes of the
                 // sessions of the wave: the wave waits for the next look,
-                // and no start counts (01M7EZCTKYFPS4QDQ1N3K3BT23).
+                // and no start counts (01M7EZCTKYFPS4QDQ1N3K3BT23). Its line
+                // says so (01M7F29TEWNHPR79RB6BT8C8SS).
                 let unread = fault.is_none() && next.is_some() && daemon.volumes_wait(&wave.repo);
                 say(match (&next, &fault) {
                     _ if look.paused => text::WAVE_PAUSED.into(),
@@ -9736,8 +9739,9 @@ esac
     /// 01M7EZCTKYFPS4QDQ1N3K3BT23: podman cannot say the folders of its
     /// volumes, and the `riff.toml` of the wave names a volume. More times
     /// than [`STARTS`], the job claims nothing, no start counts, and the
-    /// lead hears nothing. After each try, the wave waits for the next
-    /// look. When podman says the folders again, the item starts.
+    /// lead hears nothing (01M7F29TEWNHPR79RB6BT8C8SS). After each try,
+    /// the wave waits for the next look, and its line says so. When podman
+    /// says the folders again, the item starts.
     #[tokio::test]
     async fn a_wave_claims_no_item_while_podman_cannot_say_the_folders_of_its_volumes() {
         let free = Arc::new(AtomicU64::new(64));
@@ -9750,10 +9754,10 @@ esac
         here.run();
         for tries in 1..=STARTS as usize + 1 {
             here.until(0, |h| h.fake.volume_looks() == tries).await;
-            // The wave waits for the next look: no new try comes.
-            here.idle(0).await;
+            // The look after the try waits: it starts no new try.
+            let waits = |h: &Here| h.daemon.waves_shown()[0].word == text::WAVE_VOLUMES_UNREAD;
+            here.until(0, waits).await;
             assert_eq!(here.fake.volume_looks(), tries);
-            assert_eq!(here.daemon.waves_shown()[0].word, text::WAVE_VOLUMES_UNREAD);
             here.daemon.age_volume_wait("o/r", crate::look::LOOK_EVERY);
         }
         {
@@ -9764,6 +9768,23 @@ esac
 
         fake.volumes_heal();
         here.until(3, |h| h.running("issue-1").is_some()).await;
+    }
+
+    /// 01M7EZCTKYFPS4QDQ1N3K3BT23: podman cannot say the folders of its
+    /// volumes, and the `riff.toml` of the wave names no volume. The job
+    /// does not look at the folders, and the item starts.
+    #[tokio::test]
+    async fn a_wave_with_no_volume_starts_its_item_while_podman_cannot_say_the_folders() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 3, free).await;
+        let _fake = here
+            .fake
+            .clone()
+            .with_volume_fault("podman info: Error: no store");
+        here.run();
+        here.until(3, |h| h.running("issue-1").is_some()).await;
+        assert_eq!(here.fake.volume_looks(), 0);
+        assert_eq!(here.forge().starts.len(), 1);
     }
 
     /// The output of `claude --version` and `gh --version` in a fake

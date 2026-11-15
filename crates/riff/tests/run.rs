@@ -949,11 +949,19 @@ async fn the_env_and_the_volumes_of_a_session_are_the_ones_of_the_merged_riff_to
 /// line: the volume inspect ran after the failed info, and the warning
 /// line of `info` joins its error. Then only the volume inspect fails: its
 /// cause is the last one. When podman lists its volumes again, the item
-/// starts, the log says so, and the line goes.
+/// starts, the log says so one time, and the line goes. The good look at
+/// the start of the daemon, with no fault before it, writes no line.
 #[tokio::test]
 async fn no_session_with_a_volume_starts_while_podman_cannot_list_its_volumes() {
     let machine = Machine::new().await;
     machine.lead().await;
+    // The daemon answers after its look at its start.
+    let status = machine.ok(None, &["daemon", "status"]).await;
+    assert!(!status.contains("Volumes:"), "{status}");
+    let read = "riff reads the folders of the podman volumes again: the sessions with a volume \
+                start.\n";
+    let log = machine.read("daemon.out");
+    assert!(!log.contains(read), "{log}");
     let (no_info, no_volumes) = (
         machine.bin.path().join("no-info"),
         machine.bin.path().join("no-volumes"),
@@ -1006,10 +1014,8 @@ async fn no_session_with_a_volume_starts_while_podman_cannot_list_its_volumes() 
     let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
     assert!(out.status.success(), "{stdout}\n{stderr}");
     assert!(machine.read("run.args").contains("riff-cargo:"));
-    let read = "riff reads the folders of the podman volumes again: the sessions with a volume \
-                start.\n";
     let log = machine.read("daemon.out");
-    assert!(log.contains(read), "{log}");
+    assert_eq!(log.matches(read).count(), 1, "{log}");
     let status = machine.ok(None, &["daemon", "status"]).await;
     assert!(!status.contains("Volumes:"), "{status}");
 }

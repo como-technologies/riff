@@ -401,7 +401,7 @@ no volume starts, and a session that runs goes on. `riff daemon status`
 shows the cause until a look reads each folder. In that time, a wave
 whose `riff.toml` names a volume claims no item, and no start of an
 item counts. The wave tries again after one minute, and its line says
-that it waits:
+that it waits. riff sends no message to the lead:
 
 ```text
 Volumes: riff cannot read the folders of the podman volumes, for 4m. No session with a volume starts. The last cause: podman info --format {{.Store.VolumePath}}: Error: cannot read the store. riff reads them again at the next start of a session with a volume.
@@ -419,8 +419,14 @@ podman volume inspect --all
 ```
 
 Repair podman. The next start of a session with a volume reads the
-folders again: you run no other command. The log of the daemon then
-says `riff reads the folders of the podman volumes again`.
+folders again. The log of the daemon then says `riff reads the folders
+of the podman volumes again`. On Linux, find the lines of the fault and
+of the new read in the log (see also
+[See the daemon](development.md#see-the-daemon)):
+
+```sh
+journalctl --user -u riff | grep 'folders of the podman volumes'
+```
 
 ### The home of a session is in memory
 

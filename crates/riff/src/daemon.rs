@@ -1739,7 +1739,7 @@ pub struct Status {
     /// The folders of the podman volumes that the daemon cannot read: no
     /// session with a volume starts (`Daemon::guard_volumes`,
     /// 01M7EW2106JGGTSZKMRG4N9SH0). An old daemon gives none.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub volumes: Option<VolumesUnread>,
 }
 
@@ -1750,9 +1750,9 @@ pub struct VolumesUnread {
     /// The first look of the row that failed, in milliseconds since the
     /// epoch.
     pub since_ms: i64,
-    /// The cause of the last look that failed, in one line
-    /// ([`crate::runtime::VolumeFolders::failed`]).
-    pub cause: String,
+    /// The cause of the last look that failed
+    /// ([`crate::runtime::VolumeFolders::fault`]).
+    pub cause: crate::text::OneLine,
 }
 
 /// A repository whose sessions get no token of a GitHub App
@@ -5264,8 +5264,7 @@ impl<R: Runtime + 'static> Daemon<R> {
     }
 
     /// True while the wave of `repo` waits after
-    /// [`Daemon::volumes_refused`]. A look that reads each folder ends each
-    /// wait.
+    /// [`Daemon::volumes_refused`].
     pub(crate) fn volumes_wait(&self, repo: &str) -> bool {
         self.volume_waits_lock()
             .get(repo)
@@ -5391,9 +5390,8 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// The guard gets each folder that the runtime said, also with a fault
     /// (01M7EW2106JGGTSZKMRG4N9SH0). A fault fails it: the log of the
     /// daemon gets the cause, and [`Status::volumes`] keeps it until a look
-    /// reads each folder. That look writes a line to the log, and ends
-    /// each wait of a wave ([`Daemon::volumes_wait`],
-    /// 01M7EZCTGNFJ4CWN0WYXKJKRYV).
+    /// reads each folder. That look writes a line to the log
+    /// (01M7EZCTGNFJ4CWN0WYXKJKRYV).
     ///
     /// ```mermaid
     /// flowchart LR
@@ -5419,12 +5417,11 @@ impl<R: Runtime + 'static> Daemon<R> {
         };
         let Some(cause) = cause else {
             if before.is_some() {
-                self.volume_waits_lock().clear();
                 println!("{}", text::DAEMON_VOLUMES_READ);
             }
             return Ok(());
         };
-        let why = text::daemon_volumes_unread(&cause);
+        let why = text::daemon_volumes_unread(cause.as_str());
         eprintln!("riff daemon: {why}");
         bail!("{why}")
     }
@@ -8931,7 +8928,8 @@ mod tests {
     /// keeps them, with the time of the first look that failed. The guard
     /// still gets the folder that podman said. A session with no volume
     /// starts. When podman says each folder again, a session with a volume
-    /// starts, and the status shows no fault.
+    /// starts, and the status shows no fault. A wave that waits still
+    /// waits.
     #[tokio::test]
     async fn the_daemon_starts_no_session_with_a_volume_while_podman_cannot_say_its_folders() {
         let root = tempfile::tempdir().unwrap();
@@ -8968,7 +8966,7 @@ mod tests {
         assert!(here.fake.calls().is_empty(), "{:?}", here.fake.calls());
         assert!(crate::host_git::guard(&said).is_err());
         let unread = here.daemon.status().await.volumes.unwrap();
-        assert_eq!(unread.cause, format!("{info}; {inspect}"));
+        assert_eq!(unread.cause.as_str(), format!("{info}; {inspect}"));
         let status = text::daemon_status(&here.daemon.status().await, now_ms());
         assert!(
             status.contains("Volumes: riff cannot read the folders of the podman volumes"),
@@ -8992,8 +8990,8 @@ mod tests {
             .await;
         assert_eq!(here.fake.calls(), [format!("start {name}")]);
 
-        // podman says each folder again: the wait of a wave ends
-        // (01M7EZCTKYFPS4QDQ1N3K3BT23).
+        // podman says each folder again. A wave that waits still waits
+        // for its minute (01M7EZCTKYFPS4QDQ1N3K3BT23).
         here.daemon.volumes_refused("o/r");
         assert!(here.daemon.volumes_wait("o/r"));
         here.fake.volumes_heal();
@@ -9002,7 +9000,7 @@ mod tests {
         let (_four, four) = here.started(start).await;
         assert_eq!(here.fake.calls().last(), Some(&format!("start {four}")));
         assert_eq!(here.daemon.status().await.volumes, None);
-        assert!(!here.daemon.volumes_wait("o/r"));
+        assert!(here.daemon.volumes_wait("o/r"));
     }
 
     /// 01M7EW2106JGGTSZKMRG4N9SH0: at the start of the daemon, podman cannot
@@ -9015,7 +9013,7 @@ mod tests {
         let here = Here::new(fake).await;
         here.daemon.recover().await;
         let unread = here.daemon.status().await.volumes.unwrap();
-        assert_eq!(unread.cause, info);
+        assert_eq!(unread.cause.as_str(), info);
     }
 
     /// A path through a link, also one that does not exist yet, resolves to

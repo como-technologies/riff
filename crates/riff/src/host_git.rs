@@ -25,10 +25,13 @@
 //!   volume of `riff.toml`. A `riff.toml` can name each volume of podman.
 //!   So the daemon gives the guard the source of each bind with write
 //!   before the start of each container, and the folders of the volumes
-//!   of podman at its start and before the start of each container with
-//!   a volume (`Daemon::guard_writes`,
-//!   [`crate::runtime::Runtime::volume_folders`],
-//!   01M7EAZ9JS8K3TBWG8ZXKV00J9).
+//!   of podman at its start, before the claim of an item of a wave with a
+//!   volume, and before the start of each container with a volume
+//!   (`Daemon::guard_writes`, [`crate::runtime::Runtime::volume_folders`],
+//!   01M7EAZ9JS8K3TBWG8ZXKV00J9). When podman cannot say them, no
+//!   container with a volume starts, and the wave claims no item with a
+//!   volume (`Daemon::guard_volumes`, 01M7EW2106JGGTSZKMRG4N9SH0,
+//!   01M7EZCTKYFPS4QDQ1N3K3BT23).
 //! - The daemon takes no folder for git from a file that a session
 //!   wrote: the main clone of a lead comes from the records of the daemon
 //!   ([`crate::lead::main_of`], 01M7EAZ9N9DY7JPXZP1V8JY01E).

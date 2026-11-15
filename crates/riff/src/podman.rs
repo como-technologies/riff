@@ -558,15 +558,15 @@ pub fn volume_folders_of(printed: &[u8]) -> Result<Vec<PathBuf>> {
 /// // podman info prints no folder.
 /// let said = volume_folders_said(Ok(b"\n".to_vec()), Ok(volumes.to_vec()));
 /// assert_eq!(said.folders, [Path::new("/v/riff-cargo/_data")]);
-/// assert_eq!(said.fault().as_deref(), Some("podman info prints no folder of the volumes"));
+/// assert_eq!(said.fault().unwrap().as_str(), "podman info prints no folder of the volumes");
 ///
 /// // podman info works, and the volume inspect fails.
 /// let error = anyhow!("podman volume inspect --all: level=warning msg=\"old\"\nError: no store");
 /// let said = volume_folders_said(Ok(b"/v\n".to_vec()), Err(error));
 /// assert_eq!(said.folders, [Path::new("/v")]);
 /// assert_eq!(
-///     said.fault().as_deref(),
-///     Some("podman volume inspect --all: level=warning msg=\"old\" Error: no store")
+///     said.fault().unwrap().as_str(),
+///     "podman volume inspect --all: level=warning msg=\"old\" Error: no store"
 /// );
 /// ```
 pub fn volume_folders_said(store: Result<Vec<u8>>, volumes: Result<Vec<u8>>) -> VolumeFolders {
