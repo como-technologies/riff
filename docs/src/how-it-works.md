@@ -365,7 +365,7 @@ hold each decision of the design.
 | What sessions share | How riff keeps them apart | What a session can still do to another |
 |---|---|---|
 | The files of your machine | Each session is a rootless podman container (`--userns=keep-id`). It writes only its binds: its own Claude folder, the folder of its socket and the volumes that `riff.toml` names, its clone, a volume of its own container, and with `--no-github` the folder `out/` of its bundle. Each other write goes to the copy-on-write layer of the container, and goes when the session ends. riff on your machine follows no link in a folder that a session can write: its Claude folder, the folder of its socket and `out/`. A link there gives an error, and riff reads and writes no file of yours through it: see [When a session puts a link in its folder](#when-a-session-puts-a-link-in-its-folder). | Nothing outside its binds. See the rows of git and of the caches. |
-| git: the clone and its alternates | Each session clones in its container, and pushes from there with its own token on GitHub. Its clone is an empty volume of its container, at the path of `clone/` in the folder of the session: on the disk, not in the tmpfs of the home. The host has no folder there. The clone goes with the container: `podman run --rm` removes the volume. So the work of a session is the commits that it pushed. The container sees the git dir of the main clone at the same path, with no write: the clone reads its objects, and copies none. No session writes the git dir of the main clone or of another session. The host binds no git tree with write into a container, and runs no git in a folder that a session can write: the session writes the git config there, and a git config can name a program that git runs. One guard of riff refuses each git call on your machine in the folder of the sessions, in the folder of the leads, in each bind of a session with write, and in the folders of the podman volumes. When podman cannot list its volumes, no session with a volume starts: see [When podman cannot list its volumes](#when-podman-cannot-list-its-volumes). The daemon knows the main clone of a lead from its own records: the main clone of the wave of the repository, else the main clone that it serves for the repository. The sweep reads only GitHub and the file `repo` of the folder, and the council of a verify reads the main clone. See [Where the clone of a session lives](#where-the-clone-of-a-session-lives). | Nothing in the clone of another session. It reads the git dir of the main clone, with its config. A `git gc` of the main clone can remove an object that a session clone reads. |
+| git: the clone and its alternates | Each session clones in its container, and pushes from there with its own token on GitHub. Its clone is an empty volume of its container, at the path of `clone/` in the folder of the session: on the disk, not in the tmpfs of the home. The host has no folder there. The clone goes with the container: `podman run --rm` removes the volume. So the work of a session is the commits that it pushed. The container sees the git dir of the main clone at the same path, with no write: the clone reads its objects, and copies none. No session writes the git dir of the main clone or of another session. The host binds no git tree with write into a container, and runs no git in a folder that a session can write: the session writes the git config there, and a git config can name a program that git runs. One guard of riff refuses each git call on your machine in the folder of the sessions, in the folder of the leads, in each bind of a session with write, and in the folders of the podman volumes. When podman cannot list its volumes, no session starts: see [When podman cannot list its volumes](#when-podman-cannot-list-its-volumes). The daemon knows the main clone of a lead from its own records: the main clone of the wave of the repository, else the main clone that it serves for the repository. The sweep reads only GitHub and the file `repo` of the folder, and the council of a verify reads the main clone. See [Where the clone of a session lives](#where-the-clone-of-a-session-lives). | Nothing in the clone of another session. It reads the git dir of the main clone, with its config. A `git gc` of the main clone can remove an object that a session clone reads. |
 | git: the config | `~/.gitconfig` is bound with no write, or as an overlay whose changes go when the session ends. riff writes no git config of yours. A session writes only the config of its own clone. | Nothing. |
 | git: the commit | A commit has the bot of the GitHub App of the session as its author, for example `riff-como-technologies[bot]`, with the noreply email of the bot, and a `Riff-Session:` trailer that names the session. Where the Apps are not on the repository, it has your git identity. A session commits with no signature: riff sets `commit.gpgsign=false` in the environment of the container, so it applies to each git call of the session. The squash merge on GitHub makes the commit on `main` from the message that `riff verify pass` gives: the body of the pull request, which ends with `Riff-Session:` and `Co-authored-by:` you. No gpg agent goes into a container. See [Find the commits of a session](development.md#find-the-commits-of-a-session). | Nothing. The trailer `Riff-Session:` tells the commits of two sessions apart. |
 | git: the repository on GitHub | Each session pushes its own branch from its own clone. The daemon makes the claims, not the session: see the next row. | With your sign-in, a session can push to the branch of another session, or delete it. |
@@ -384,27 +384,27 @@ hold each decision of the design.
 
 #### When podman cannot list its volumes
 
-The daemon asks podman for the folders of its volumes at its start,
-before the claim of an item of a wave whose `riff.toml` names a volume,
-and before each start of a session with a volume. It runs two
-commands, and the second one runs also when the first one fails. The
-host runs no git in each folder that podman names.
+The clone of each session is a volume of its container (see
+[Where the clone of a session lives](#where-the-clone-of-a-session-lives)).
+So the daemon asks podman for the folders of its volumes at its start,
+before the claim of each item of a wave, and before each start of a
+session. It runs two commands, and the second one runs also when the
+first one fails. The host runs no git in each folder that podman names.
 
 ```mermaid
 flowchart LR
     L["podman info<br/>podman volume inspect --all"] --> G["the host runs no git<br/>in each folder that podman named"]
     G --> F{did one fail?}
     F -- no --> S[the session starts]
-    F -- yes --> N["no session with a volume starts<br/>riff daemon status says why"]
+    F -- yes --> N["no session starts<br/>riff daemon status says why"]
 ```
 
 When one of the commands fails, riff cannot know each folder that a
-session can write. So the daemon starts no session that binds a volume
-with write. `riff run` and the log of the daemon say why. A session with
-no volume starts, and a session that runs goes on. In that time, a wave
-whose `riff.toml` names a volume claims no item, and no start of an
-item counts. The wave tries again after one minute. riff sends the lead
-no message about these tries.
+session can write. So the daemon starts no session. `riff run` and the
+log of the daemon say why. A session that runs goes on. In that time, a
+wave claims no item, and no start of an item counts. The wave tries
+again after one minute. riff sends the lead no message about these
+tries.
 
 `riff daemon status` shows the cause until a look reads each folder.
 The line of the wave says that it waits:
@@ -424,10 +424,10 @@ podman info --format '{{.Store.VolumePath}}'
 podman volume inspect --all
 ```
 
-Repair podman. The next start of a session with a volume reads the
-folders again. The log of the daemon then says `riff reads the folders
-of the podman volumes again`. On Linux, find the lines of the fault and
-of the new read in the log (see also
+Repair podman. The next start of a session reads the folders again.
+The log of the daemon then says `riff reads the folders of the podman
+volumes again`. On Linux, find the lines of the fault and of the new
+read in the log (see also
 [Read the log of the daemon](development.md#read-the-log-of-the-daemon)):
 
 ```sh

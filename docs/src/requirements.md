@@ -7608,12 +7608,10 @@ of this part when they merge.
   branch has no pushed commit, the daemon commits nothing and pushes
   nothing. The lead gets one note with the branch. This supersedes
   01M5P26VSA7AA99K1RYG83R8J9 and 01M5TKETGZP9NTHBXFBP1RM1HP.
-- **01M7EZCTKYFPS4QDQ1N3K3BT23** Before the claim of an item of a wave
-  whose `riff.toml` names a volume, the job asks podman for the folders
-  of the volumes. When podman cannot say them
-  (01M7EW2106JGGTSZKMRG4N9SH0), the job claims nothing, and the start
-  does not count. The wave starts no item for one minute, then tries
-  again.
+- **01M7EZCTKYFPS4QDQ1N3K3BT23** When podman cannot say the folders of
+  the volumes (01M7EW2106JGGTSZKMRG4N9SH0) before the claim of an item
+  of a wave, the job claims nothing, and the start does not count. The
+  wave starts no item for one minute, then tries again.
 - **01M7F29TEWNHPR79RB6BT8C8SS** While a wave waits for the folders of
   the podman volumes (01M7EZCTKYFPS4QDQ1N3K3BT23), the line of the wave
   in `riff daemon status` says that it waits for them, and names `riff
@@ -7623,6 +7621,13 @@ of this part when they merge.
   and says that the clone went with the container: only the work that
   the session pushed stays. This supersedes 01M7DZ4E2P5RJMQE0W9K1AAA4P
   in part: the clone.
+- **01M7FAQJXE54J7K8CR9DX2EVCX** The clone of each session is a volume
+  of its container (01M7EY3P0Q8TQF5QRTRDWCYCTQ). So the job of each wave
+  asks podman for the folders of the volumes before the claim of each
+  item, also when its `riff.toml` names no volume. While podman cannot
+  say them (01M7EW2106JGGTSZKMRG4N9SH0), no session starts. This
+  supersedes 01M7EZCTKYFPS4QDQ1N3K3BT23 in part: the waves whose
+  `riff.toml` names a volume.
 
 ### The lead, the view and the takeover
 

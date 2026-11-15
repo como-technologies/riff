@@ -334,9 +334,10 @@
 //!   `podman login REGISTRY` on each host of the wave
 //!   (01M5SMSB3H1E9NXMBDN8ZDJ6CD);
 //! - any item for one look after a job found no folders of the podman
-//!   volumes that the `riff.toml` of the wave names (`NoVolumes`,
-//!   `Daemon::volumes_wait`). The job claims nothing, and the start does
-//!   not count (01M7EZCTKYFPS4QDQ1N3K3BT23). The line of the wave says
+//!   volumes (`NoVolumes`, `Daemon::volumes_wait`): the clone of each
+//!   session is a volume (01M7FAQJXE54J7K8CR9DX2EVCX). The job claims
+//!   nothing, and the start does not count
+//!   (01M7EZCTKYFPS4QDQ1N3K3BT23). The line of the wave says
 //!   that it waits, and the lead gets no message
 //!   (01M7F29TEWNHPR79RB6BT8C8SS).
 //!
@@ -3331,8 +3332,8 @@ impl std::fmt::Display for NoBuild {
 impl std::error::Error for NoBuild {}
 
 /// The look at the folders of the volumes before the claim of an item of
-/// a wave whose `riff.toml` names a volume failed, with the cause
-/// ([`Daemon::guard_volumes`], 01M7EZCTKYFPS4QDQ1N3K3BT23). No claim and
+/// a wave failed, with the cause ([`Daemon::guard_volumes`],
+/// 01M7EZCTKYFPS4QDQ1N3K3BT23, 01M7FAQJXE54J7K8CR9DX2EVCX). No claim and
 /// no session, the start does not count, and the wave waits for the next
 /// look ([`Daemon::volumes_wait`]).
 #[derive(Debug)]
@@ -3444,10 +3445,9 @@ async fn start_job<R: Runtime + 'static>(
     daemon.pull_worked(&wave.repo);
     daemon.check_tools(wave, &pinned.image).await;
     // No claim while riff cannot read the folders of the volumes that the
-    // session binds (01M7EZCTKYFPS4QDQ1N3K3BT23).
-    if !pinned.setup.volumes.is_empty()
-        && let Err(e) = daemon.guard_volumes().await
-    {
+    // session binds (01M7EZCTKYFPS4QDQ1N3K3BT23): its clone is one of them
+    // (01M7FAQJXE54J7K8CR9DX2EVCX).
+    if let Err(e) = daemon.guard_volumes().await {
         return Err(NoVolumes(format!("{e:#}")).into());
     }
     let Some(start) = world.begin(wave, work, &pinned).await? else {
@@ -9805,20 +9805,28 @@ esac
         here.until(3, |h| h.running("issue-1").is_some()).await;
     }
 
-    /// 01M7EZCTKYFPS4QDQ1N3K3BT23: podman cannot say the folders of its
-    /// volumes, and the `riff.toml` of the wave names no volume. The job
-    /// does not look at the folders, and the item starts.
+    /// 01M7FAQJXE54J7K8CR9DX2EVCX: podman cannot say the folders of its
+    /// volumes, and the `riff.toml` of the wave names no volume. The clone
+    /// of the session is a volume all the same: the job looks at the
+    /// folders and claims nothing, and the wave waits. When podman says
+    /// the folders again, the item starts.
     #[tokio::test]
-    async fn a_wave_with_no_volume_starts_its_item_while_podman_cannot_say_the_folders() {
+    async fn a_wave_with_no_volume_claims_no_item_while_podman_cannot_say_the_folders() {
         let free = Arc::new(AtomicU64::new(64));
         let here = Here::new(&[1], 3, free).await;
-        let _fake = here
+        let fake = here
             .fake
             .clone()
             .with_volume_fault("podman info: Error: no store");
         here.run();
+        here.until(0, |h| h.fake.volume_looks() == 1).await;
+        let waits = |h: &Here| h.daemon.waves_shown()[0].word == text::WAVE_VOLUMES_UNREAD;
+        here.until(0, waits).await;
+        assert!(here.forge().starts.is_empty());
+
+        fake.volumes_heal();
+        here.daemon.age_volume_wait("o/r", crate::look::LOOK_EVERY);
         here.until(3, |h| h.running("issue-1").is_some()).await;
-        assert_eq!(here.fake.volume_looks(), 0);
         assert_eq!(here.forge().starts.len(), 1);
     }
 
