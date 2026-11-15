@@ -1720,31 +1720,22 @@ It takes these secrets out of each line first. So `--grep` finds no
 part of them:
 
 - a token of GitHub and a key of Anthropic;
-- after the word `Bearer` and the white space after it, each character
-  up to the next space or tab: the token, its quotes and the rest of the
-  word, also the rest of the JSON. A quote or a colon just after
-  `Bearer` stays, as in `"Bearer" [secret]`;
-- the value of `NAME=value` when NAME has the text `TOKEN`, `KEY`,
-  `SECRET` or `PASSWORD` in any place and in any case, as in
-  `SECRET_KEY_BASE`. The value goes up to the first white space outside
-  quotes: `DB_PASSWORD="a b" x` shows as `DB_PASSWORD=[secret] x`. With
-  no closing quote, the value goes up to the end of the line;
+- the rest of the line after the word `Bearer`, and after the `=` of a
+  `NAME=` when NAME has the text `TOKEN`, `KEY`, `SECRET` or `PASSWORD`
+  in any place and in any case: `{"env":"DB_PASSWORD=a b"} x` shows as
+  `{"env":"DB_PASSWORD=[secret]`;
 - the secrets in the environment of riff, and in the sign-in file of
   claude;
 - the token of `riff claude-token`;
 - each value of the `env` and the `headers` of the MCP servers of the
   host (`riff daemon mcp add`).
 
-With no white space after `Bearer` and its quotes and colons, nothing
-goes: `xyz` shows in `Bearer:xyz` and in
-`{"token_type":"Bearer","access_token":"xyz"}`.
-
 riff finds each secret of this list on the line as the daemon wrote
 it. Then it puts one `[secret]` in place of each run of secrets. So a
 secret goes whole, also when another rule finds a part of it. For
-example, with the MCP value `correct horse battery staple`, the line
-`-e DB_PASSWORD=correct horse battery staple` shows as
-`-e DB_PASSWORD=[secret]`.
+example, with the MCP value `sessionid=8f2kq9x7ab; csrftoken=Zt0k3n`,
+the line `Cookie: sessionid=8f2kq9x7ab; csrftoken=Zt0k3n` shows as
+`Cookie: [secret]`.
 
 When riff cannot read the file of the MCP servers, it shows no line:
 fix the file, or remove it. When riff cannot read the OS keyring, it

@@ -6757,26 +6757,9 @@ of this part when they merge.
   its text in the whole line, with no secret. riff cuts the line to 1000
   characters after that: a line with the text after its character 1000
   shows too.
-- **01M7FFA3GN7F2GW3NGYJPTMKN3** The filter of the log of the
-  real-session test, and so of `riff daemon log`, finds the word
-  `Bearer` in each form of a header: after a space, a quote or a colon,
-  for example in JSON, and with more spaces or a tab after it.
-- **01M7FN5SSWJRDXWTAYAERBAAFB** The filter of the log of the
-  real-session test, and so of `riff daemon log`, hides each character
-  after the word `Bearer` and the white space after it, up to the next
-  space or tab, or to the end of the line: the token, its quotes and the
-  rest of the word, for example the rest of the JSON. Supersedes
-  01M7FJB2HQAVFWCJNMPCX483ZH in full, and 01M7FFA3GN7F2GW3NGYJPTMKN3 in
-  part.
 - **01M7FS2HD407ZCTF60EX7XZ2FF** The filter of the log of the
   real-session test reads each line of `riff daemon log` as the daemon
   wrote it.
-- **01M7FS2HFPJ18E102RWWK3XZ75** The filter of the log of the
-  real-session test, and so of `riff daemon log`, finds the word
-  `Bearer` also with quotes or colons just after it, for example
-  `"Bearer"` or `Bearer:`. These quotes and colons stay. The part that
-  01M7FN5SSWJRDXWTAYAERBAAFB hides starts after the white space after
-  them.
 - **01M7FXE86QYC8D6P6WDK69ZSMA** `riff daemon log` finds the parts of a
   line to hide on the line as the daemon wrote it, with each filter on
   the same text: each match of each secret that the daemon takes out of
@@ -6785,25 +6768,22 @@ of this part when they merge.
   Anthropic. Then it puts one `[secret]` in place of each run of the
   union of these parts: two parts that overlap or touch make one run.
   Supersedes 01M7FS2HD407ZCTF60EX7XZ2FF in part.
-- **01M7GCP0ST7RACEV1GTZCZ9KAP** The filter of the log of the
-  real-session test, and so of `riff daemon log`, hides the value of
-  `NAME=value` up to the first white space outside quotes, also in the
-  part after the word `Bearer`. A `"`, a `'`, or a `\"` outside quotes
-  opens a quote, also before NAME, and the same mark closes it. Outside
-  a `'` quote, a `\` keeps the next character in the value, apart from
-  the `\"` that opens or closes a quote. With no closing quote, the
-  value goes up to the last character of the line that is not white
-  space.
 - **01M7GCP11AAPM078B2CXTDH03K** For the filter of the log of the
   real-session test, and so of `riff daemon log`, NAME of `NAME=value`
   names a secret when it has the text TOKEN, KEY, SECRET or PASSWORD in
   any place and in any case, also in a longer word: for example
   `SECRET_KEY_BASE`, `GITHUB_TOKEN_RO`, `db_password` or `MONKEY`.
-- **01M7GD6J18WNK7JEFKXMS8YDCH** The filter of the log of the
-  real-session test, and so of `riff daemon log`, goes on after the end
-  of each value of `NAME=value` that it hides, and finds the part after
-  `Bearer` only once, also when a `Bearer` is in that part. So the time
-  to filter a line grows with its length, not with its square.
+- **01M7GGCT0Z0GXM3BCAAGX7CE6Q** The filter of the log of the
+  real-session test, and so of `riff daemon log`, parses no quotes and
+  no escapes. On each line, it hides the rest of the line after the
+  first of these: the `=` of a `NAME=` whose NAME names a secret
+  (01M7GCP11AAPM078B2CXTDH03K), with NAME the run of letters, digits and
+  `_` just before the `=`, at any place in the line; and the word
+  `Bearer` in any case, with no letter or digit just before or after it.
+  The white space just after them, and at the end of the line, stays. A
+  word that starts like a token of GitHub or with `sk-` goes whole, also
+  when it has a `NAME=` in it. So the filter can hide more than a
+  secret, and never less.
 
 ### riff relay
 

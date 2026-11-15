@@ -197,8 +197,8 @@ fn a_time_of_the_day_is_in_the_local_time() {
 /// #2156, 01M7EX1Q1F468NWGPJJS0W0ZG9, 01M7F0HECNG3F2H1ZF4JB7WN0Y: a line
 /// with a token-like text shows with `[secret]` in its place, and
 /// `--grep` finds no part of a secret: a token of GitHub, a key of
-/// Anthropic, `NAME=value` of a token, a bearer token, a word that
-/// starts with `sk-`, the value of a secret variable of the host, each
+/// Anthropic, the rest of the line after `NAME=` of a token and after
+/// `Bearer`, a word that starts with `sk-`, the value of a secret variable of the host, each
 /// value of the `headers` and the `env` of an MCP server of the host,
 /// the token of `riff claude-token` in the keyring and the tokens of the
 /// sign-in file of claude, as in the events of a session. When riff
@@ -262,7 +262,7 @@ fn a_line_with_a_token_like_text_is_filtered() {
         format!(
             "{stamp} riff daemon: git push with [secret]\n\
              {stamp} riff daemon: claude said {{\"token\":\"[secret]\"}}\n\
-             {stamp} riff daemon: podman run -e GH_TOKEN=[secret] -e RIFF_ITEM=issue-12\n\
+             {stamp} riff daemon: podman run -e GH_TOKEN=[secret]\n\
              {stamp} riff daemon: Authorization: Bearer [secret]\n\
              {stamp} riff daemon: a key [secret] of another tool\n\
              {stamp} riff daemon: the token [secret] of the host\n\
@@ -274,6 +274,7 @@ fn a_line_with_a_token_like_text_is_filtered() {
         "ghs_16C7",
         "sk-ant-oat01",
         "GH_TOKEN=abc",
+        "RIFF_ITEM",
         "Bearer xyz",
         "sk-proj",
         "a-token-of",
@@ -316,80 +317,117 @@ fn a_secret_at_the_cut_of_a_long_line_goes_whole() {
     assert_eq!(text(&out.stdout), format!("{head} [secret] …\n"));
 }
 
-/// #2156, 01M7EX1Q1F468NWGPJJS0W0ZG9: the value of `NAME=value` goes
-/// when NAME names a key, a secret or a password, in any case, and
-/// `--grep` finds no part of it. A value with a `=` in it goes whole. A
-/// `NAME=` with no value hides nothing.
+/// #2156, 01M7EX1Q1F468NWGPJJS0W0ZG9, 01M7GGCT0Z0GXM3BCAAGX7CE6Q: the
+/// rest of the line after the `=` of a NAME that names a key, a secret,
+/// a password or a token goes, in any case, and `--grep` finds no part
+/// of it. A `NAME=` with nothing after it hides nothing.
 #[test]
-fn the_value_of_each_secret_name_goes_in_any_case() {
+fn the_rest_of_the_line_after_each_secret_name_goes() {
     let env = Isolated::new();
     let at = Utc::now() - Duration::minutes(5);
-    let names = "-e OPENAI_API_KEY=abc1 -e CLIENT_SECRET=abc2 --password=abc3 \
-                 -e API_KEY=abc4== -e DB_PASSWORD=abc5=b -e GH_TOKEN= x";
-    write_log(
-        &env,
-        &[],
-        &[line(at, &format!("riff daemon: podman run {names}"))],
-    );
+    let pairs = [
+        (
+            "podman run -e OPENAI_API_KEY=abc1 -e RIFF_ITEM=issue-12",
+            "podman run -e OPENAI_API_KEY=[secret]",
+        ),
+        ("-e CLIENT_SECRET=abc2 x", "-e CLIENT_SECRET=[secret]"),
+        ("--password=abc3 x", "--password=[secret]"),
+        ("-e API_KEY=abc4== x", "-e API_KEY=[secret]"),
+        ("-e DB_PASSWORD=abc5=b x", "-e DB_PASSWORD=[secret]"),
+        ("-e gh_token= abc6 x", "-e gh_token= [secret]"),
+        ("-e GH_TOKEN=", "-e GH_TOKEN="),
+    ];
+    let lines = pairs.map(|(l, _)| line(at, &format!("riff daemon: {l}")));
+    write_log(&env, &[], &lines);
     let out = daemon_log(&env, &[]);
     assert!(out.status.success(), "{}", text(&out.stderr));
     let stamp = at.format("%Y-%m-%dT%H:%M:%SZ");
-    assert_eq!(
-        text(&out.stdout),
-        format!(
-            "{stamp} riff daemon: podman run -e OPENAI_API_KEY=[secret] \
-             -e CLIENT_SECRET=[secret] --password=[secret] -e API_KEY=[secret] \
-             -e DB_PASSWORD=[secret] -e GH_TOKEN= x\n"
-        )
-    );
-    let out = daemon_log(&env, &["--grep", "abc"]);
-    assert_eq!(
-        text(&out.stdout),
-        "riff daemon log: no line of the log of the riff daemon matches.\n"
-    );
-}
-
-/// #2156, 01M7GCP0ST7RACEV1GTZCZ9KAP, 01M7GCP11AAPM078B2CXTDH03K: a
-/// quoted value with a space goes up to its closing quote, also with the
-/// text of the name in the middle of NAME and with the quote before
-/// NAME. `--grep` finds no word of the value, and the next word stays.
-#[test]
-fn a_quoted_value_with_a_space_goes_whole() {
-    let env = Isolated::new();
-    let at = Utc::now() - Duration::minutes(5);
-    let names = "-e DB_PASSWORD=\"qqone qqtwo\" -e SECRET_KEY_BASE='qqthree qqfour' \
-                 \"GH_TOKEN=qqfive qqsix\" next-word";
-    write_log(
-        &env,
-        &[],
-        &[line(at, &format!("riff daemon: podman run {names}"))],
-    );
-    let out = daemon_log(&env, &[]);
-    assert!(out.status.success(), "{}", text(&out.stderr));
-    let stamp = at.format("%Y-%m-%dT%H:%M:%SZ");
-    let shown = format!(
-        "{stamp} riff daemon: podman run -e DB_PASSWORD=[secret] \
-         -e SECRET_KEY_BASE=[secret] \"GH_TOKEN=[secret] next-word\n"
-    );
+    let shown: String = pairs
+        .iter()
+        .map(|(_, shown)| format!("{stamp} riff daemon: {shown}\n"))
+        .collect();
     assert_eq!(text(&out.stdout), shown);
-    for word in ["qqone", "qqtwo", "qqfour", "qqsix"] {
-        let out = daemon_log(&env, &["--grep", word]);
+    for probe in ["abc", "RIFF_ITEM", " x"] {
+        let out = daemon_log(&env, &["--grep", probe]);
         assert_eq!(
             text(&out.stdout),
             "riff daemon log: no line of the log of the riff daemon matches.\n",
-            "{word}"
+            "{probe}"
         );
     }
-    let out = daemon_log(&env, &["--grep", "next-word"]);
-    assert_eq!(text(&out.stdout), shown);
 }
 
-/// #2156, 01M7G3CSVWSV6RTGJY1WMFGV7V, 01M7GD6J18WNK7JEFKXMS8YDCH: a line
+/// #2156, 01M7GGCT0Z0GXM3BCAAGX7CE6Q: the filter parses no quotes and no
+/// escapes. After a `NAME=` of a secret at any place in the line, and
+/// after `Bearer`, the rest of the line goes: also after a quote with a
+/// space in it, after another `=`, a `,`, a `&` or a `?`, with a
+/// no-break space, a space just after the `=` or two levels of escape in
+/// the value. A word that starts like a token goes whole, also with a
+/// `NAME=` in it. `--grep` finds no word after the `=` or after `Bearer`.
+#[test]
+fn a_secret_name_or_bearer_hides_the_rest_of_the_line() {
+    let env = Isolated::new();
+    let at = Utc::now() - Duration::minutes(5);
+    let pairs = [
+        (
+            r#"{"msg":"x y","env":"DB_PASSWORD=qi1 qi2"} x"#,
+            r#"{"msg":"x y","env":"DB_PASSWORD=[secret]"#,
+        ),
+        (
+            "podman run --env=DB_PASSWORD=qe1 x",
+            "podman run --env=DB_PASSWORD=[secret]",
+        ),
+        (r#"x=1,DB_PASSWORD="qd1 qd2" e"#, "x=1,DB_PASSWORD=[secret]"),
+        (
+            "grant_type=refresh_token&refresh_token=qr1",
+            "grant_type=refresh_token&refresh_token=[secret]",
+        ),
+        (
+            "https://h/?user=me&access_token=qt1",
+            "https://h/?user=me&access_token=[secret]",
+        ),
+        ("DB_PASSWORD=qs1\u{a0}qs2 x", "DB_PASSWORD=[secret]"),
+        (r#""GH_TOKEN= qg1 qg2" x"#, r#""GH_TOKEN= [secret]"#),
+        (
+            r#"{"msg":"podman run -e DB_PASSWORD=\"qn1 \\\" qn2\" next"}"#,
+            r#"{"msg":"podman run -e DB_PASSWORD=[secret]"#,
+        ),
+        ("key sk-proj-qw1,API_KEY=x ok", "key [secret]"),
+        (
+            r#""Authorization": "Bearer qb1", "x": 1"#,
+            r#""Authorization": "Bearer [secret]"#,
+        ),
+    ];
+    let lines = pairs.map(|(l, _)| line(at, &format!("riff daemon: {l}")));
+    write_log(&env, &[], &lines);
+    let out = daemon_log(&env, &[]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let stamp = at.format("%Y-%m-%dT%H:%M:%SZ");
+    let shown: String = pairs
+        .iter()
+        .map(|(_, shown)| format!("{stamp} riff daemon: {shown}\n"))
+        .collect();
+    assert_eq!(text(&out.stdout), shown);
+    for probe in [
+        "qi1", "qi2", "qe1", "qd2", "qr1", "qt1", "qs2", "qg1", "qn2", "next", "qw1", " ok", "qb1",
+        "\"x\"",
+    ] {
+        let out = daemon_log(&env, &["--grep", probe]);
+        assert_eq!(
+            text(&out.stdout),
+            "riff daemon log: no line of the log of the riff daemon matches.\n",
+            "{probe}"
+        );
+    }
+}
+
+/// #2156, 01M7G3CSVWSV6RTGJY1WMFGV7V, 01M7GGCT0Z0GXM3BCAAGX7CE6Q: a line
 /// of 256 KiB of starts of tokens of GitHub, of starts of keys of
 /// Anthropic, of quoted values, and of values with a `\` before each
 /// space, each show as one `[secret]`. A line of 256 KiB of `Bearer` with
-/// a no-break space after each one shows its first `Bearer` and one
-/// `[secret]`. Each goes in a short time.
+/// a no-break space after each one shows its first `Bearer`, one
+/// `[secret]` and the no-break space at its end. Each goes in a short
+/// time.
 #[test]
 fn a_long_line_of_starts_of_tokens_goes_in_a_short_time() {
     let env = Isolated::new();
@@ -413,19 +451,19 @@ fn a_long_line_of_starts_of_tokens_goes_in_a_short_time() {
         format!(
             "{stamp} riff daemon: [secret]\n{stamp} riff daemon: [secret]\n\
              {stamp} riff daemon: KEY=[secret]\n{stamp} riff daemon: KEY=[secret]\n\
-             {stamp} riff daemon: Bearer\u{a0}[secret]\n"
+             {stamp} riff daemon: Bearer\u{a0}[secret]\u{a0}\n"
         )
     );
     assert!(took < std::time::Duration::from_secs(20), "{took:?}");
 }
 
-/// #2156, 01M7EX1Q1F468NWGPJJS0W0ZG9, 01M7FFA3GN7F2GW3NGYJPTMKN3,
-/// 01M7FN5SSWJRDXWTAYAERBAAFB, 01M7FS2HFPJ18E102RWWK3XZ75: the rest of
-/// the word after `Bearer` goes in each form of a header, with each
-/// secret in it, and `--grep` finds no part of them. A quote or a colon
-/// after `Bearer` stays, and a space at the end of the line too.
+/// #2156, 01M7EX1Q1F468NWGPJJS0W0ZG9, 01M7GGCT0Z0GXM3BCAAGX7CE6Q: the
+/// rest of the line after `Bearer` goes in each form of a header, with
+/// each secret in it, and `--grep` finds no part of them. The white
+/// space just after `Bearer` stays, and a space at the end of the line
+/// too.
 #[test]
-fn the_rest_of_the_word_after_bearer_goes_in_each_form_of_a_header() {
+fn the_rest_of_the_line_after_bearer_goes_in_each_form_of_a_header() {
     let env = Isolated::new();
     let at = Utc::now() - Duration::minutes(5);
     let pairs = [
@@ -453,12 +491,12 @@ fn the_rest_of_the_word_after_bearer_goes_in_each_form_of_a_header() {
             "Authorization: bearer\ttab-form-6",
             "Authorization: bearer\t[secret]",
         ),
-        (r#""Bearer" quoted-end-7"#, r#""Bearer" [secret]"#),
-        ("'Bearer' single-end-8", "'Bearer' [secret]"),
+        (r#""Bearer" quoted-end-7"#, r#""Bearer[secret]"#),
+        ("'Bearer' single-end-8", "'Bearer[secret]"),
         ("Bearer 'single-form-9'", "Bearer [secret]"),
         (
             "Authorization: Bearer: colon-end-10",
-            "Authorization: Bearer: [secret]",
+            "Authorization: Bearer[secret]",
         ),
         (
             "Authorization: Bearer space-end-11 ",
@@ -536,7 +574,7 @@ fn a_secret_of_the_host_that_another_filter_finds_in_part_goes_whole() {
         ),
         (
             r#"{"X-Api-Key":"c2VjcmV0dmFsdWUxMjM0NQ=="}"#,
-            r#"{"X-Api-Key":"[secret]"#,
+            r#"{"X-Api-Key":"[secret]"}"#,
         ),
         (
             "-e DB_PASSWORD=correct horse battery staple",

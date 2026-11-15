@@ -724,7 +724,7 @@ pub const KEY_START: &str = "sk-ant-";
 /// assert_eq!(clean("Authorization: Bearer xyz", &scrub), "Authorization: [secret] [secret]");
 /// let scrub = Scrub::new(["correct horse battery staple".to_owned()]);
 /// assert_eq!(clean("-e DB_PASSWORD=correct horse battery staple", &scrub), "-e DB_PASSWORD=[secret]");
-/// assert_eq!(clean(r#"-e DB_PASSWORD="qq one" x"#, &scrub), "-e DB_PASSWORD=[secret] x");
+/// assert_eq!(clean(r#"-e DB_PASSWORD="qq one" x"#, &scrub), "-e DB_PASSWORD=[secret]");
 /// ```
 pub fn clean(line: &str, scrub: &Scrub) -> String {
     let key = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_';
@@ -1454,7 +1454,7 @@ mod tests {
             ),
             (
                 r#"{"X-Api-Key":"c2VjcmV0dmFsdWUxMjM0NQ=="}"#,
-                r#"{"X-Api-Key":"[secret]"#,
+                r#"{"X-Api-Key":"[secret]"}"#,
             ),
             (
                 "-e DB_PASSWORD=correct horse battery staple",

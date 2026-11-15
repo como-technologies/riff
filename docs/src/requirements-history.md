@@ -2133,14 +2133,6 @@ page [Requirements](requirements.md) holds the rules of today.
 - **01M5NVKNVTVR722EA148V5127M** The book says where the kept work goes,
   riff-kept/ITEM-ID8 of origin, and how to get it back with git fetch
   origin riff-kept/ITEM-ID8. Superseded by 01M7DZ4E02PX5Y0WMHFCJ9KS14.
-- **01M7FJB2HQAVFWCJNMPCX483ZH** In the filter of the log of the
-  real-session test, the token after `Bearer` starts after the opening
-  quotes of the next word. It ends at the closing quote: the first `"`
-  or `'` at the end of the word, or before `,`, `}`, `]` or `)`. The
-  quotes and the rest of the word stay, and the other rules of the
-  filter take each secret out of that rest. A word with no closing quote
-  goes whole. Supersedes 01M7FFA3GN7F2GW3NGYJPTMKN3 in part. Superseded
-  by 01M7FN5SSWJRDXWTAYAERBAAFB.
 
 ### riff relay
 
