@@ -317,49 +317,86 @@ fn a_secret_at_the_cut_of_a_long_line_goes_whole() {
 }
 
 /// #2156, 01M7EX1Q1F468NWGPJJS0W0ZG9, 01M7FFA3GN7F2GW3NGYJPTMKN3,
-/// 01M7FJB2HQAVFWCJNMPCX483ZH: the token after `Bearer` goes in each
-/// form of a header, with each secret in the rest of its word, and
-/// `--grep` finds no part of them.
+/// 01M7FN5SSWJRDXWTAYAERBAAFB: the rest of the word after `Bearer` goes
+/// in each form of a header, with each secret in it, and `--grep` finds
+/// no part of them.
 #[test]
-fn a_bearer_token_goes_in_each_form_of_a_header() {
+fn the_rest_of_the_word_after_bearer_goes_in_each_form_of_a_header() {
     let env = Isolated::new();
     let at = Utc::now() - Duration::minutes(5);
-    let lines = [
-        r#"riff daemon: {"Authorization":"Bearer json-form-2"}"#,
-        r#"riff daemon: Authorization: "Bearer quoted-form-3""#,
-        "riff daemon: Authorization:Bearer nospace-form-4",
-        "riff daemon: Authorization: Bearer  twospace-form-5",
-        "riff daemon: Authorization: bearer\ttab-form-6",
-        "riff daemon: Authorization: Bearer xyz,DB_PASSWORD=hunter2",
-        r#"riff daemon: {"Authorization":"Bearer xyz","env":"DB_PASSWORD=hunter2"}"#,
-        "riff daemon: Authorization: Bearer abc:def",
+    let pairs = [
+        (
+            "Authorization: Bearer plain-form-1",
+            "Authorization: Bearer [secret]",
+        ),
+        (
+            r#"{"Authorization":"Bearer json-form-2"}"#,
+            r#"{"Authorization":"Bearer [secret]"#,
+        ),
+        (
+            r#"Authorization: "Bearer quoted-form-3""#,
+            r#"Authorization: "Bearer [secret]"#,
+        ),
+        (
+            "Authorization:Bearer nospace-form-4",
+            "Authorization:Bearer [secret]",
+        ),
+        (
+            "Authorization: Bearer  twospace-form-5",
+            "Authorization: Bearer  [secret]",
+        ),
+        (
+            "Authorization: bearer\ttab-form-6",
+            "Authorization: bearer\t[secret]",
+        ),
+        (r#""Bearer" quoted-end-7"#, r#""Bearer" [secret]"#),
+        ("'Bearer' single-end-8", "'Bearer' [secret]"),
+        ("Bearer 'single-form-9'", "Bearer [secret]"),
+        (
+            "Authorization: Bearer xyz,DB_PASSWORD=hunter2",
+            "Authorization: Bearer [secret]",
+        ),
+        (
+            r#"{"Authorization":"Bearer xyz","env":"DB_PASSWORD=hunter2"}"#,
+            r#"{"Authorization":"Bearer [secret]"#,
+        ),
+        (
+            "Authorization: Bearer abc:def",
+            "Authorization: Bearer [secret]",
+        ),
+        (
+            r#"["Authorization: Bearer xyz","X-GitHub-Token:ghp_abc123"]"#,
+            r#"["Authorization: Bearer [secret]"#,
+        ),
+        (
+            r#"Authorization: Bearer "xyz",ghp_abc123"#,
+            "Authorization: Bearer [secret]",
+        ),
+        (
+            r#"["Authorization: Bearer xyz","X-Api-Key:sk-proj-abc123"]"#,
+            r#"["Authorization: Bearer [secret]"#,
+        ),
     ];
-    write_log(&env, &[], &lines.map(|l| line(at, l)));
+    let lines = pairs.map(|(l, _)| line(at, &format!("riff daemon: {l}")));
+    write_log(&env, &[], &lines);
     let out = daemon_log(&env, &[]);
     assert!(out.status.success(), "{}", text(&out.stderr));
     let stamp = at.format("%Y-%m-%dT%H:%M:%SZ");
-    assert_eq!(
-        text(&out.stdout),
-        format!(
-            "{stamp} riff daemon: {{\"Authorization\":\"Bearer [secret]\"}}\n\
-             {stamp} riff daemon: Authorization: \"Bearer [secret]\"\n\
-             {stamp} riff daemon: Authorization:Bearer [secret]\n\
-             {stamp} riff daemon: Authorization: Bearer  [secret]\n\
-             {stamp} riff daemon: Authorization: bearer\t[secret]\n\
-             {stamp} riff daemon: Authorization: Bearer [secret]\n\
-             {stamp} riff daemon: {{\"Authorization\":\"Bearer [secret]\",\"env\":\"DB_PASSWORD=[secret]\n\
-             {stamp} riff daemon: Authorization: Bearer [secret]\n"
-        )
-    );
+    let shown: String = pairs
+        .iter()
+        .map(|(_, shown)| format!("{stamp} riff daemon: {shown}\n"))
+        .collect();
+    assert_eq!(text(&out.stdout), shown);
     for probe in [
-        "json-form",
-        "quoted-form",
-        "nospace-form",
-        "twospace-form",
-        "tab-form",
+        "form-",
+        "end-",
         "xyz",
         "hunter2",
         ":def",
+        "ghp_abc123",
+        "sk-proj",
+        "X-GitHub-Token",
+        "X-Api-Key",
     ] {
         let out = daemon_log(&env, &["--grep", probe]);
         assert_eq!(

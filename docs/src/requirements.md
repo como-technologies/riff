@@ -6758,16 +6758,16 @@ of this part when they merge.
   characters after that: a line with the text after its character 1000
   shows too.
 - **01M7FFA3GN7F2GW3NGYJPTMKN3** The filter of the log of the
-  real-session test, and so of `riff daemon log`, takes out the token
-  after the word `Bearer` in each form of a header: after a space, a
-  quote or a colon, for example in JSON, and after more spaces or a tab.
-- **01M7FJB2HQAVFWCJNMPCX483ZH** In the filter of the log of the
-  real-session test, the token after `Bearer` starts after the opening
-  quotes of the next word. It ends at the closing quote: the first `"`
-  or `'` at the end of the word, or before `,`, `}`, `]` or `)`. The
-  quotes and the rest of the word stay, and the other rules of the
-  filter take each secret out of that rest. A word with no closing quote
-  goes whole. Supersedes 01M7FFA3GN7F2GW3NGYJPTMKN3 in part.
+  real-session test, and so of `riff daemon log`, finds the word
+  `Bearer` in each form of a header: after a space, a quote or a colon,
+  for example in JSON, and with more spaces or a tab after it.
+- **01M7FN5SSWJRDXWTAYAERBAAFB** The filter of the log of the
+  real-session test, and so of `riff daemon log`, hides each character
+  after the word `Bearer` and the white space after it, up to the next
+  space or tab, or to the end of the line: the token, its quotes and the
+  rest of the word, for example the rest of the JSON. Supersedes
+  01M7FJB2HQAVFWCJNMPCX483ZH in full, and 01M7FFA3GN7F2GW3NGYJPTMKN3 in
+  part.
 
 ### riff relay
 

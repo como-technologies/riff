@@ -1720,7 +1720,8 @@ It takes each secret out of each line first, as from the events of a
 session. So `--grep` finds no part of a secret. riff takes out:
 
 - a token of GitHub and a key of Anthropic;
-- the token after `Bearer`, also in JSON or in quotes;
+- each character after `Bearer` up to the next space or tab: the token,
+  its quotes and the rest of the word, also the rest of the JSON;
 - the value of `NAME=value` when NAME names a token, a key, a secret or
   a password;
 - the secrets in the environment of riff, and in the sign-in file of
