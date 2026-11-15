@@ -1,7 +1,7 @@
 //! The local client that finds sessions and wakes yours.
 
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -3167,18 +3167,7 @@ async fn daemon_command(command: Option<&DaemonCommand>, server: Option<&str>) -
             (None, None) => {}
         }
     }
-    if let Some(DaemonCommand::Log {
-        since,
-        lines,
-        grep,
-        host,
-    }) = command
-    {
-        let since = since.as_deref().map(riff::daemon::log::since).transpose()?;
-        let query = riff::daemon::log::Query::new(since, Some(*lines), grep.clone())?;
-        return daemon_log(host.as_deref(), &query, server).await;
-    }
-    if let Some((host, request)) = command.and_then(remote_request) {
+    if let Some((host, request)) = command.map(remote_request).transpose()?.flatten() {
         let (server, source) = server_of(server)?;
         let here = identity::place(&identity::working_dir()?)?;
         let reach = Reach::of(&server, source, riff::session_relay::socket_here().ok());
@@ -3221,8 +3210,9 @@ async fn daemon_command(command: Option<&DaemonCommand>, server: Option<&str>) -
             }
             Ok(())
         }
-        // `daemon_log` reads the log.
-        DaemonCommand::Log { .. } => Ok(()),
+        DaemonCommand::Log {
+            since, lines, grep, ..
+        } => daemon_log(&dir, &log_query(since.as_deref(), *lines, grep)?).await,
         DaemonCommand::Limit { .. } => {
             let change = limit_change(command).unwrap_or_default();
             let limit = riff::room::set(&dir, change)?;
@@ -3361,16 +3351,42 @@ fn limit_change(command: &DaemonCommand) -> Option<riff::room::Change> {
     })
 }
 
+/// The query of `riff daemon log --since SINCE --lines LINES` with each
+/// `--grep` of `grep` (01M7EX1PVSG64G8EE5SNDRHM7G).
+fn log_query(
+    since: Option<&str>,
+    lines: usize,
+    grep: &[String],
+) -> Result<riff::daemon::log::Query> {
+    let since = since.map(riff::daemon::log::since).transpose()?;
+    riff::daemon::log::Query::new(since, Some(lines), grep.to_vec())
+}
+
 /// The host and the request of a daemon command with `--host`
-/// (01M579Z9MPS86MX7890T6HV18S).
-fn remote_request(command: &DaemonCommand) -> Option<(&str, riff::daemon::remote::Request)> {
+/// (01M579Z9MPS86MX7890T6HV18S, 01M7EX1PYJ99BDSVJK7MAPDFD0). The
+/// request of `riff daemon log` fails on a bad flag.
+fn remote_request(
+    command: &DaemonCommand,
+) -> Result<Option<(&str, riff::daemon::remote::Request)>> {
     use riff::daemon::remote::Request;
     let (host, request) = match command {
         DaemonCommand::Status { host } => (host, Request::Status),
-        // `daemon_command` follows the events of another host, and
-        // `daemon_log` reads the log of another host.
-        DaemonCommand::Events { .. } | DaemonCommand::Log { .. } => return None,
-        DaemonCommand::Limit { host, .. } => (host, Request::Limit(limit_change(command)?)),
+        // `daemon_command` follows the events of another host, and reads the
+        // log of this host.
+        DaemonCommand::Events { .. } | DaemonCommand::Log { host: None, .. } => return Ok(None),
+        DaemonCommand::Log {
+            since,
+            lines,
+            grep,
+            host,
+        } => (
+            host,
+            Request::Log(log_query(since.as_deref(), *lines, grep)?),
+        ),
+        DaemonCommand::Limit { host, .. } => match limit_change(command) {
+            Some(change) => (host, Request::Limit(change)),
+            None => return Ok(None),
+        },
         DaemonCommand::Cache { clear, host } => (host, Request::Cache { clear: *clear }),
         DaemonCommand::Sweep {
             host,
@@ -3387,10 +3403,10 @@ fn remote_request(command: &DaemonCommand) -> Option<(&str, riff::daemon::remote
         DaemonCommand::End { name, host } => (host, Request::End(name.clone())),
         DaemonCommand::Restart { host } => (host, Request::Restart),
         DaemonCommand::Install | DaemonCommand::Uninstall | DaemonCommand::Mcp { .. } => {
-            return None;
+            return Ok(None);
         }
     };
-    Some((host.as_deref()?, request))
+    Ok(host.as_deref().map(|host| (host, request)))
 }
 
 /// The check of riff-server before a step that can lose work on this
@@ -3453,28 +3469,16 @@ async fn ask_daemon(
     }
 }
 
-/// `riff daemon log` (#2156): prints the lines of the log of the daemon
-/// that `query` picks, with no secret. With `host`, riff asks the daemon
-/// of that host through riff-server. In a container, the daemon on the
-/// socket of the session reads the log. On the host, riff reads the log
-/// file itself. It exits with 1 when the read failed, or the daemon
-/// refused.
-async fn daemon_log(
-    host: Option<&str>,
-    query: &riff::daemon::log::Query,
-    server: Option<&str>,
-) -> Result<()> {
-    let socket = riff::session_relay::socket_here().ok();
-    if let Some(host) = host {
-        let (server, source) = server_of(server)?;
-        let here = identity::place(&identity::working_dir()?)?;
-        let reach = Reach::of(&server, source, socket);
-        let request = riff::daemon::remote::Request::Log(query.clone());
-        return ask_daemon(host, &request, &here, &reach).await;
-    }
-    let text = match socket {
-        Some(socket) => Reach::daemon_log(&socket, query).await,
-        None => riff::daemon::log::read_here(&riff::daemon::dir()?, query),
+/// `riff daemon log` with no `--host` (#2156): prints the lines of the
+/// log of the daemon in its folder `dir` that `query` picks, with no
+/// secret. In a container, the daemon on the socket of the session reads
+/// the log. On the host, riff reads the log file itself. It exits with 1
+/// when the read failed, or the daemon refused. `--host` goes as each
+/// other request to the daemon of another host ([`remote_request`]).
+async fn daemon_log(dir: &Path, query: &riff::daemon::log::Query) -> Result<()> {
+    let text = match riff::session_relay::socket_here() {
+        Ok(socket) => Reach::daemon_log(&socket, query).await,
+        Err(_) => riff::daemon::log::read_here(dir, query),
     };
     match text {
         Ok(text) => {

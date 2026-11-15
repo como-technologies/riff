@@ -6723,6 +6723,20 @@ of this part when they merge.
   of the events of a session, each key of Anthropic, and the secrets
   that the real-session test takes out of its log. So `--grep` finds no
   part of a secret.
+- **01M7F0HE514TQMGQJKH8CVYY52** `riff daemon log` refuses a `--grep`
+  with no character or with a line break, and a `--since` before
+  1970-01-01T00:00Z or after 9999-12-31T23:59Z: it says what the flag
+  takes, and exits with 1. The daemon refuses such a query on a socket
+  too.
+- **01M7F0HE7JY09V4XA2KMKPX2P6** For `--since` of `riff daemon log`, a
+  line of the log of the daemon with no time at its start, for example
+  the rest of a long line, has the time of the line before it. Such a
+  line before the first line with a time shows only with no `--since`.
+- **01M7F0HEA4GVKQ47Q5GN29FQ22** When no line matches, `riff daemon log`
+  prints one line that says so, and exits with 0.
+- **01M7F0HECNG3F2H1ZF4JB7WN0Y** When riff cannot read the MCP servers
+  of the host for `riff daemon log`, it cannot know their secrets: it
+  shows no line, says why, and exits with 1.
 
 ### riff relay
 

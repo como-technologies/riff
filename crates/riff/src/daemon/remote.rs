@@ -39,9 +39,10 @@
 //! ```
 //!
 //! `riff daemon status`, `riff daemon limit`, `riff daemon cache`, `riff
-//! daemon events`, `riff daemon log`, `riff daemon sweep`, `riff daemon
-//! end`, `riff daemon restart`, `riff host join` and `riff host leave`
-//! take `--host HOST` (01M579Z9MPS86MX7890T6HV18S). With it, riff posts the [`Request`] as
+//! daemon events`, `riff daemon sweep`, `riff daemon end`, `riff daemon
+//! restart`, `riff host join` and `riff host leave` take `--host HOST`
+//! (01M579Z9MPS86MX7890T6HV18S), and so does `riff daemon log`
+//! (01M7EX1PYJ99BDSVJK7MAPDFD0). With it, riff posts the [`Request`] as
 //! a direct message to the session of the daemon of HOST ([`ask`]).
 //! The daemon judges it ([`judge`]), does it through its own control
 //! socket, as the command does on that host ([`answer`]), and posts the
@@ -463,16 +464,20 @@ pub fn remove_clone(dir: &Path, data: &Path, wave: &Wave) -> Vec<String> {
 /// for body in [
 ///     "daemon log",
 ///     "daemon log --since 2026-11-14T07:12:00Z",
+///     // The first and the last time of `--since`: each one has 4 digits in its year.
+///     "daemon log --since 1970-01-01T00:00:00Z",
+///     "daemon log --since 9999-12-31T23:59:59Z",
 ///     "daemon log --lines 50",
 ///     "daemon log --since 2026-11-14T07:12:00Z --lines 50\n--grep issue-12\n--grep  the cause: x",
 /// ] {
 ///     assert_eq!(body.parse::<Request>().unwrap().to_string(), body);
 /// }
 /// let Ok(Request::Log(query)) = "daemon log --lines 50\n--grep  a b".parse() else { panic!() };
-/// assert_eq!((query.lines, query.grep), (50, vec![" a b".to_owned()]));
+/// assert_eq!((query.lines(), query.grep()), (50, &[" a b".to_owned()][..]));
 /// for bad in [
 ///     "daemon log --lines 0", "daemon log --lines x", "daemon log --lines", "daemon log --since 07:12",
 ///     "daemon log --grep x", "daemon log\nissue-12", "daemon log\n--grep ", "daemon status\n--grep x",
+///     "daemon log --since +10000-01-01T00:00:00Z", "daemon log --since 1969-12-31T23:59:59Z",
 /// ] {
 ///     assert!(bad.parse::<Request>().is_err(), "{bad}");
 /// }
@@ -773,15 +778,15 @@ impl fmt::Display for Request {
             Request::Log(query) => {
                 write!(f, "daemon log")?;
                 if let Some(at) = query
-                    .since
+                    .since()
                     .and_then(|s| chrono::DateTime::from_timestamp(s, 0))
                 {
                     write!(f, " --since {}", at.format("%Y-%m-%dT%H:%M:%SZ"))?;
                 }
-                if query.lines != super::log::LINES {
-                    write!(f, " --lines {}", query.lines)?;
+                if query.lines() != super::log::LINES {
+                    write!(f, " --lines {}", query.lines())?;
                 }
-                for text in &query.grep {
+                for text in query.grep() {
                     write!(f, "\n--grep {text}")?;
                 }
                 Ok(())

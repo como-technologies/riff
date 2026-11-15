@@ -28,10 +28,16 @@ fn write_log(env: &Isolated, old: &[String], new: &[String]) {
 /// `riff daemon log ARGS` in `env`, in the time zone UTC, with the value
 /// of a secret variable of the host.
 fn daemon_log(env: &Isolated, args: &[&str]) -> Output {
+    daemon_log_in(env, "UTC", args)
+}
+
+/// `riff daemon log ARGS` in `env`, in the time zone `tz`, with the value
+/// of a secret variable of the host.
+fn daemon_log_in(env: &Isolated, tz: &str, args: &[&str]) -> Output {
     env.riff()
         .args(["daemon", "log"])
         .args(args)
-        .env("TZ", "UTC")
+        .env("TZ", tz)
         .env("GH_TOKEN", "a-token-of-the-host-1")
         .output()
         .unwrap()
@@ -94,7 +100,7 @@ fn since_and_grep_pick_the_known_lines_of_the_log() {
         text(&out.stdout)
     );
 
-    // No line matches.
+    // No line matches (01M7F0HEA4GVKQ47Q5GN29FQ22).
     let out = daemon_log(&env, &["--grep", "issue-99"]);
     assert!(out.status.success());
     assert_eq!(
@@ -103,10 +109,36 @@ fn since_and_grep_pick_the_known_lines_of_the_log() {
     );
 }
 
-/// #2156, 01M7EX1Q1F468NWGPJJS0W0ZG9: a line with a token-like text
-/// shows with `[secret]` in its place, and `--grep` finds no part of a
-/// secret: a token of GitHub, a key of Anthropic, `NAME=value` of a
-/// token, a bearer token, and the value of a secret variable of the host.
+/// #2156, 01M7EX1PVSG64G8EE5SNDRHM7G: a time of the day is in the local
+/// time of the machine where riff runs. At UTC+05:30, the time of the day
+/// of 90 minutes ago picks the line of 60 minutes ago, and not the line
+/// of 120 minutes ago.
+#[test]
+fn a_time_of_the_day_is_in_the_local_time() {
+    let env = Isolated::new();
+    let now = Utc::now();
+    let ago = |minutes| now - Duration::minutes(minutes);
+    let new = [
+        line(ago(120), "riff daemon: o/r: claims issue-12"),
+        line(ago(60), "riff daemon: o/r: claims issue-13"),
+    ];
+    write_log(&env, &[], &new);
+    let local = (ago(90) + Duration::minutes(330))
+        .format("%H:%M")
+        .to_string();
+    let out = daemon_log_in(&env, "IST-5:30", &["--since", &local]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(text(&out.stdout), format!("{}\n", new[1]));
+}
+
+/// #2156, 01M7EX1Q1F468NWGPJJS0W0ZG9, 01M7F0HECNG3F2H1ZF4JB7WN0Y: a line
+/// with a token-like text shows with `[secret]` in its place, and
+/// `--grep` finds no part of a secret: a token of GitHub, a key of
+/// Anthropic, `NAME=value` of a token, a bearer token, the value of a
+/// secret variable of the host, and each value of the `headers` and the
+/// `env` of an MCP server of the host, as in the events of a session.
+/// When riff cannot read the MCP servers, it shows no line, and exits
+/// with 1.
 #[test]
 fn a_line_with_a_token_like_text_is_filtered() {
     let env = Isolated::new();
@@ -129,8 +161,19 @@ fn a_line_with_a_token_like_text_is_filtered() {
             at,
             "riff daemon: the token a-token-of-the-host-1 of the host",
         ),
+        line(
+            at,
+            "riff daemon: docs refused docs-header-value-1, db refused db-env-value-2",
+        ),
     ];
     write_log(&env, &[], &lines);
+    let servers = env.riff_home().join("daemon").join(riff::session_mcp::FILE);
+    std::fs::write(
+        &servers,
+        r#"{"mcpServers": {"docs": {"url": "u", "headers": {"X-Docs": "docs-header-value-1"}},
+            "db": {"command": "db", "env": {"DB_AUTH": "db-env-value-2"}}}}"#,
+    )
+    .unwrap();
     let out = daemon_log(&env, &[]);
     assert!(out.status.success(), "{}", text(&out.stderr));
     let shown = text(&out.stdout);
@@ -142,7 +185,8 @@ fn a_line_with_a_token_like_text_is_filtered() {
              {stamp} riff daemon: claude said {{\"token\":\"[secret]\"}}\n\
              {stamp} riff daemon: podman run -e GH_TOKEN=[secret] -e RIFF_ITEM=issue-12\n\
              {stamp} riff daemon: Authorization: Bearer [secret]\n\
-             {stamp} riff daemon: the token [secret] of the host\n"
+             {stamp} riff daemon: the token [secret] of the host\n\
+             {stamp} riff daemon: docs refused [secret], db refused [secret]\n"
         )
     );
     for probe in [
@@ -151,6 +195,8 @@ fn a_line_with_a_token_like_text_is_filtered() {
         "GH_TOKEN=abc",
         "Bearer xyz",
         "a-token-of",
+        "docs-header",
+        "db-env",
     ] {
         let out = daemon_log(&env, &["--grep", probe]);
         assert_eq!(
@@ -159,11 +205,21 @@ fn a_line_with_a_token_like_text_is_filtered() {
             "{probe}"
         );
     }
+    std::fs::write(&servers, "{").unwrap();
+    let out = daemon_log(&env, &[]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(text(&out.stdout), "");
+    assert!(
+        text(&out.stderr).starts_with(riff::text::DAEMON_LOG_NO_MCP),
+        "{}",
+        text(&out.stderr)
+    );
 }
 
-/// #2156, 01M7EX1PVSG64G8EE5SNDRHM7G: with no log file, riff names the
-/// file and the command that shows the log, and exits with 1. A bad flag
-/// says what it takes.
+/// #2156, 01M7EX1PVSG64G8EE5SNDRHM7G, 01M7F0HE514TQMGQJKH8CVYY52: with
+/// no log file, riff names the file and the command of the service
+/// manager that shows the log, and exits with 1. A bad flag says what it
+/// takes.
 #[test]
 fn with_no_log_file_riff_names_the_file_and_exits_with_1() {
     let env = Isolated::new();
@@ -175,10 +231,20 @@ fn with_no_log_file_riff_names_the_file_and_exits_with_1() {
         "{}",
         text(&out.stderr)
     );
+    let command = if cfg!(target_os = "macos") {
+        "See its log with: tail -f "
+    } else {
+        "See its log with: journalctl --user -u riff\n"
+    };
+    assert!(text(&out.stderr).contains(command), "{}", text(&out.stderr));
     for (args, says) in [
         (
             &["--since", "noon"][..],
             riff::text::daemon_log_bad_since("noon"),
+        ),
+        (
+            &["--since", "+10000-01-01T00:00Z"],
+            riff::text::DAEMON_LOG_SINCE_RANGE.to_owned(),
         ),
         (&["--lines", "2001"], riff::text::daemon_log_bad_lines(2001)),
         (&["--grep", ""], riff::text::daemon_log_bad_grep("")),
@@ -190,24 +256,59 @@ fn with_no_log_file_riff_names_the_file_and_exits_with_1() {
 }
 
 /// #2156: the book has the how-to of `riff daemon log`, also from the
-/// lead with `--host`, and each command of it runs.
+/// lead with `--host`. No step of the book reads the journal with `grep`
+/// now. Each step of `riff daemon log` in the book runs: with no
+/// `--host`, on a log with a line for each text of its `--grep`, which it
+/// shows. With `--host`, its flags are real.
 #[test]
 fn the_book_shows_how_to_read_the_log_of_the_daemon_from_the_lead() {
     let page = book::page("development.md");
     for heading in [
         "### Read the log of the daemon",
         "### Read the log of the daemon from the lead",
+        "### See more lines of the log of the daemon",
     ] {
         assert!(page.lines().any(|l| l == heading), "{heading}");
     }
     let commands = book::riff_commands_of("development.md");
     let want = "riff daemon log --host thelio --since 02:12 --grep issue-12";
     assert!(commands.iter().any(|c| c == want), "{commands:?}");
-    // A text in quotes is more than one word: those commands stay out.
-    let ours: Vec<String> = commands
-        .into_iter()
-        .filter(|c| c.starts_with("riff daemon log") && !c.contains(['\'', '"']))
-        .collect();
-    assert!(ours.len() >= 2, "{ours:?}");
-    book::each_is_real(&ours);
+
+    let mut steps = Vec::new();
+    for name in book::pages() {
+        for command in book::commands_of(&name) {
+            let journal = command.starts_with("journalctl") && command.contains("grep");
+            assert!(!journal, "{name}: {command}");
+            if command.starts_with("riff daemon log") {
+                steps.push(book::words(&command));
+            }
+        }
+    }
+    assert!(steps.len() >= 10, "{steps:?}");
+    let env = Isolated::new();
+    // A line after now: each --since of the book picks it.
+    let at = Utc::now() + Duration::minutes(1);
+    for words in steps {
+        let args: Vec<&str> = words[3..].iter().map(String::as_str).collect();
+        if args.contains(&"--host") {
+            let out = env.riff().args(&words[1..]).arg("--help").output().unwrap();
+            assert!(out.status.success(), "{words:?}: {}", text(&out.stderr));
+            continue;
+        }
+        let texts = args
+            .windows(2)
+            .filter(|pair| pair[0] == "--grep")
+            .map(|pair| pair[1]);
+        let mut lines: Vec<String> = texts
+            .map(|t| line(at, &format!("riff daemon: {t}")))
+            .collect();
+        if lines.is_empty() {
+            lines.push(line(at, "riff daemon: a line"));
+        }
+        write_log(&env, &[], &lines);
+        let out = daemon_log(&env, &args);
+        assert!(out.status.success(), "{words:?}: {}", text(&out.stderr));
+        let shown = lines.iter().map(|l| format!("{l}\n")).collect::<String>();
+        assert_eq!(text(&out.stdout), shown, "{words:?}");
+    }
 }

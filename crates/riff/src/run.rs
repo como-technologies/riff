@@ -1047,7 +1047,9 @@ impl Scrub {
         }
         for start in TOKEN_STARTS {
             if out.contains(start) {
-                out = Cow::Owned(tokens_out(&out, start));
+                out = Cow::Owned(tokens_out(&out, start, |c| {
+                    c.is_ascii_alphanumeric() || c == '_'
+                }));
             }
         }
         out
@@ -1058,10 +1060,18 @@ impl Scrub {
 /// person, of a user to server, of a refresh, and a fine-grained one.
 pub const TOKEN_STARTS: [&str; 6] = ["ghs_", "gho_", "ghp_", "ghu_", "ghr_", "github_pat_"];
 
-/// `text` with each token of GitHub that starts with `start` replaced
-/// by [`HIDDEN`].
-fn tokens_out(text: &str, start: &str) -> String {
-    let part = |c: char| c.is_ascii_alphanumeric() || c == '_';
+/// `text` with each token that starts with `start` replaced by
+/// [`HIDDEN`]: `start` and each character after it that `part` takes.
+/// `start` alone stays.
+///
+/// ```
+/// use riff::run::tokens_out;
+///
+/// let part = |c: char| c.is_ascii_alphanumeric() || c == '-';
+/// assert_eq!(tokens_out("a=ghs_A-9,ghs_b end", "ghs_", part), "a=[secret],[secret] end");
+/// assert_eq!(tokens_out("ghs_ alone, and no_ghs", "ghs_", part), "ghs_ alone, and no_ghs");
+/// ```
+pub fn tokens_out(text: &str, start: &str, part: fn(char) -> bool) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(at) = rest.find(start) {

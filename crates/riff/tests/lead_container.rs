@@ -668,5 +668,21 @@ async fn daemon_log_in_a_container_shows_a_refusal_of_the_daemon() {
         "{}",
         text(&out.stderr)
     );
+    // With --host too: the time of the request has 4 digits in its year.
+    let args = [
+        "daemon",
+        "log",
+        "--host",
+        "thelio",
+        "--since",
+        "+10000-01-01T00:00Z",
+    ];
+    let out = container.riff(&socket, &args).await;
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        text(&out.stderr).contains(riff::text::DAEMON_LOG_SINCE_RANGE),
+        "{}",
+        text(&out.stderr)
+    );
     assert_eq!(common::call_names(&asked), ["daemon_log"]);
 }

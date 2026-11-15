@@ -8756,9 +8756,19 @@ pub const DAEMON_EVENTS_ONLY_LEAD: &str =
 pub const DAEMON_LOG_ONLY_LEAD: &str =
     "Only the lead can read the log of the riff daemon through the riff daemon.";
 
+/// `riff daemon log --since` with a time out of its range (#2156).
+pub const DAEMON_LOG_SINCE_RANGE: &str =
+    "riff daemon log: --since takes a time from 1970-01-01T00:00Z to 9999-12-31T23:59Z.";
+
+/// `riff daemon log` cannot read the MCP servers of the host, so it
+/// cannot know their secrets (#2156).
+pub const DAEMON_LOG_NO_MCP: &str = "riff daemon log: riff shows no line, because it cannot \
+     read the MCP servers of the host, and so it cannot take their secrets out. Fix the file, \
+     or remove it";
+
 /// The text of `riff daemon log` for `found` (#2156): a first line when
 /// older lines match too, then each line. With no line, one line that
-/// says so.
+/// says so (01M7F0HEA4GVKQ47Q5GN29FQ22).
 ///
 /// ```
 /// use riff::daemon::log::Found;

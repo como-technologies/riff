@@ -1713,14 +1713,30 @@ riff daemon log --since 02:12 --grep issue-12
 |---|---|
 | `--since TIME` | The lines at or after TIME. A time of the day, for example `02:12`, is in your local time: the last 02:12 before now. A date and a time has its zone, for example `2026-11-14T07:12Z`. |
 | `--grep TEXT` | The lines that have TEXT. With more than one `--grep`, the lines that have one of the texts. |
-| `--lines N` | At most N lines, the newest ones: 1 to 2000. The default is 200. When more lines match, the first line says how many. |
+| `--lines N` | At most N lines, the newest ones. See [See more lines of the log of the daemon](#see-more-lines-of-the-log-of-the-daemon). |
 
 riff reads the files itself, so it works also while the daemon is down.
-It takes each secret out of each line first: a token of GitHub, a key
-of Anthropic, the value of `NAME=value` when NAME names a token, a key,
-a secret or a password, a bearer token, and each secret of the host. So
-`--grep` finds no part of a secret. On a Mac, launchd writes the log of
-the daemon: `riff daemon log` names that file.
+It takes each secret out of each line first, as from the events of a
+session: a token of GitHub, a key of Anthropic, the value of
+`NAME=value` when NAME names a token, a key, a secret or a password, a
+bearer token, the secrets in the environment of riff and in the sign-in
+file of claude, and each value of the `env` and the `headers` of the
+MCP servers of the host (`riff daemon mcp add`). So `--grep` finds no
+part of a secret. When riff cannot read the file of the MCP servers, it
+shows no line: fix the file, or remove it. On a Mac, launchd writes the
+log of the daemon: `riff daemon log` names that file.
+
+### See more lines of the log of the daemon
+
+`riff daemon log` shows at most 200 lines, the newest ones. When more
+lines match, its first line says how many. Ask for up to 2000 lines:
+
+```sh
+riff daemon log --lines 2000 --grep issue-12
+```
+
+A line shows with at most 1000 characters: a longer line ends with `…`.
+The lines of one answer have at most 1 MiB: the oldest lines go first.
 
 ### Read the log of the daemon from the lead
 

@@ -342,17 +342,9 @@ const TAIL_LINES: usize = 30;
 /// assert_eq!(redact("step 6 of 10"), "step 6 of 10");
 /// ```
 pub fn redact(text: &str) -> String {
-    const PREFIXES: [&str; 8] = [
-        "ghp_",
-        "gho_",
-        "ghs_",
-        "ghu_",
-        "ghr_",
-        "github_pat_",
-        "sk-ant-",
-        "sk-",
-    ];
     const NAMES: [&str; 4] = ["TOKEN", "KEY", "SECRET", "PASSWORD"];
+    // `sk-` is the start of each key of Anthropic.
+    let prefixes = || crate::run::TOKEN_STARTS.iter().chain(&["sk-"]);
     let mut out = Vec::new();
     let mut after_bearer = false;
     for line in text.lines() {
@@ -366,7 +358,7 @@ pub fn redact(text: &str) -> String {
                 && NAMES.iter().any(|n| name.to_ascii_uppercase().contains(n))
             {
                 format!("{name}=[secret]")
-            } else if PREFIXES.iter().any(|p| word.starts_with(p)) {
+            } else if prefixes().any(|p| word.starts_with(p)) {
                 "[secret]".to_owned()
             } else {
                 word.to_owned()

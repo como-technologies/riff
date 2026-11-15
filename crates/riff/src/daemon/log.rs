@@ -41,9 +41,11 @@
 //! (`--grep`), and of them the newest (`--lines`, at most
 //! [`MOST_LINES`]). Each line goes through [`clean`] first
 //! (01M7EX1Q1F468NWGPJJS0W0ZG9): the filter of the events of a session
-//! ([`Scrub`]), each key of Anthropic, and the filter of the log of the
-//! real-session test ([`redact`](super::release_test::redact)). So no
-//! line has a secret, and `--grep` finds no part of a secret.
+//! ([`scrub_of`]: the secrets of this process, of the sign-in file of
+//! `claude` and of the MCP servers of the host), each key of Anthropic,
+//! and the filter of the log of the real-session test
+//! ([`redact`](super::release_test::redact)). So no line has a secret,
+//! and `--grep` finds no part of a secret.
 //!
 //! Only the riff of the host reads the files, in the folder of the
 //! daemon: no session can write there (01M7EX1PYJ99BDSVJK7MAPDFD0). On
@@ -75,7 +77,7 @@ use anyhow::{Context, Result, bail};
 use chrono::{DateTime, NaiveDateTime, NaiveTime, TimeZone};
 use serde::{Deserialize, Serialize};
 
-use crate::run::{HIDDEN, Scrub};
+use crate::run::Scrub;
 use crate::text;
 
 /// The log file of the daemon, in its folder.
@@ -334,8 +336,8 @@ pub const LINES: usize = 200;
 /// The most lines of one `riff daemon log`.
 pub const MOST_LINES: usize = 2000;
 
-/// The most characters of one line of `riff daemon log`: the rest of a
-/// longer line goes.
+/// The most characters of one line of `riff daemon log`, with the `…`
+/// in place of the rest of a longer line.
 pub const LINE_CHARS: usize = 1000;
 
 /// The most bytes of the lines of one `riff daemon log`: the reply of
@@ -343,36 +345,68 @@ pub const LINE_CHARS: usize = 1000;
 /// lines go first.
 pub const MOST_BYTES: usize = 1024 * 1024;
 
-/// What `riff daemon log` asks for (#2156). [`Query::new`] checks it.
+/// The last time of `--since`, 9999-12-31T23:59:59Z, in seconds since
+/// the epoch. The first one is 0, 1970-01-01T00:00:00Z. Each time from
+/// the one to the other has 4 digits in its year: the request of
+/// `--host` writes it, and the daemon of the host reads it again.
+pub const LAST_SINCE: i64 = 253_402_300_799;
+
+/// What `riff daemon log` asks for (#2156, 01M7F0HE514TQMGQJKH8CVYY52).
+/// Only [`Query::new`] makes one, also from the JSON of a socket: no
+/// query is out of its range.
 ///
 /// ```
-/// use riff::daemon::log::{LINES, Query};
+/// use riff::daemon::log::{LAST_SINCE, LINES, Query};
 ///
 /// let query = Query::new(Some(1_794_640_320), None, vec!["issue-12".into()])?;
-/// assert_eq!(query.lines, LINES);
+/// assert_eq!((query.since(), query.lines(), query.grep()), (Some(1_794_640_320), LINES, &["issue-12".to_owned()][..]));
 /// assert!(Query::new(None, Some(0), vec![]).is_err());
 /// assert!(Query::new(None, Some(2001), vec![]).is_err());
 /// assert!(Query::new(None, None, vec!["".into()]).is_err());
 /// assert!(Query::new(None, None, vec!["a\nb".into()]).is_err());
+/// assert!(Query::new(Some(-1), None, vec![]).is_err());
+/// assert!(Query::new(Some(LAST_SINCE + 1), None, vec![]).is_err());
+/// assert!(Query::new(Some(LAST_SINCE), None, vec![]).is_ok());
+/// // The JSON of a socket gets the same checks.
+/// let json = serde_json::to_string(&query)?;
+/// assert_eq!(json, r#"{"since":1794640320,"lines":200,"grep":["issue-12"]}"#);
+/// assert_eq!(serde_json::from_str::<Query>(&json)?, query);
+/// assert!(serde_json::from_str::<Query>(r#"{"since":null,"lines":0,"grep":[]}"#).is_err());
+/// assert!(serde_json::from_str::<Query>(r#"{"since":null,"lines":9,"grep":[""]}"#).is_err());
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "Asked")]
 pub struct Query {
-    /// The first time of a line, in seconds since the epoch: an older
-    /// line does not show. `None`: from the first line.
-    pub since: Option<i64>,
-    /// The most lines: the newest ones show.
-    pub lines: usize,
-    /// A line shows only when it has one of these texts. Empty: each
-    /// line can show.
-    pub grep: Vec<String>,
+    since: Option<i64>,
+    lines: usize,
+    grep: Vec<String>,
+}
+
+/// A [`Query`] as a socket gives it, before [`Query::new`] checks it.
+#[derive(Deserialize)]
+struct Asked {
+    since: Option<i64>,
+    lines: usize,
+    grep: Vec<String>,
+}
+
+impl TryFrom<Asked> for Query {
+    type Error = anyhow::Error;
+
+    fn try_from(asked: Asked) -> Result<Query> {
+        Query::new(asked.since, Some(asked.lines), asked.grep)
+    }
 }
 
 impl Query {
-    /// The query of `--since`, `--lines` and each `--grep`. `lines` is 1
-    /// to [`MOST_LINES`], with [`LINES`] for `None`. Each text has a
-    /// character, and no line break.
+    /// The query of `--since`, `--lines` and each `--grep`. `since` is 0
+    /// to [`LAST_SINCE`]. `lines` is 1 to [`MOST_LINES`], with [`LINES`]
+    /// for `None`. Each text has a character, and no line break.
     pub fn new(since: Option<i64>, lines: Option<usize>, grep: Vec<String>) -> Result<Query> {
+        if since.is_some_and(|at| !(0..=LAST_SINCE).contains(&at)) {
+            bail!("{}", text::DAEMON_LOG_SINCE_RANGE);
+        }
         let lines = lines.unwrap_or(LINES);
         if !(1..=MOST_LINES).contains(&lines) {
             bail!("{}", text::daemon_log_bad_lines(lines));
@@ -384,6 +418,23 @@ impl Query {
             bail!("{}", text::daemon_log_bad_grep(bad));
         }
         Ok(Query { since, lines, grep })
+    }
+
+    /// The first time of a line, in seconds since the epoch: an older
+    /// line does not show. `None`: from the first line.
+    pub fn since(&self) -> Option<i64> {
+        self.since
+    }
+
+    /// The most lines: the newest ones show.
+    pub fn lines(&self) -> usize {
+        self.lines
+    }
+
+    /// A line shows only when it has one of these texts. Empty: each line
+    /// can show.
+    pub fn grep(&self) -> &[String] {
+        &self.grep
     }
 }
 
@@ -457,15 +508,37 @@ pub fn since(text: &str) -> Result<i64> {
     since_at(text, &chrono::Local::now())
 }
 
-/// The secrets that [`clean`] takes out on this host: the secrets of
-/// this process and the sign-in file of `claude`
-/// ([`crate::session_relay::secrets_here`]).
-pub fn scrub_here() -> Scrub {
-    Scrub::new(crate::session_relay::secrets_here())
+/// The secrets that [`clean`] takes out of the lines of the log of the
+/// daemon in its folder `dir`: the secrets that the daemon takes out of
+/// the events of a session. They are the secrets of this process and of
+/// the sign-in file of `claude` ([`crate::session_relay::secrets_here`]),
+/// and the secrets of the MCP servers of the host in `dir`
+/// ([`crate::session_mcp::secrets`]). When riff cannot read the MCP
+/// servers, it cannot know their secrets: the error says so
+/// (01M7F0HECNG3F2H1ZF4JB7WN0Y).
+///
+/// ```
+/// let dir = tempfile::tempdir()?;
+/// let servers = r#"{"mcpServers": {"docs": {"url": "u", "headers": {"X-Key": "a-header-value"}}}}"#;
+/// std::fs::write(dir.path().join("mcp.json"), servers)?;
+/// let scrub = riff::daemon::log::scrub_of(dir.path())?;
+/// assert_eq!(scrub.clean("docs said a-header-value"), "docs said [secret]");
+/// std::fs::write(dir.path().join("mcp.json"), "no")?;
+/// assert!(riff::daemon::log::scrub_of(dir.path()).is_err());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn scrub_of(dir: &Path) -> Result<Scrub> {
+    let servers = crate::session_mcp::read(dir).context(text::DAEMON_LOG_NO_MCP)?;
+    let mut secrets = crate::session_relay::secrets_here();
+    secrets.extend(crate::session_mcp::secrets(&servers));
+    Ok(Scrub::new(secrets))
 }
 
+/// The start of a key of Anthropic.
+pub const KEY_START: &str = "sk-ant-";
+
 /// `line` with no secret: [`Scrub::clean`], then each key of Anthropic
-/// (`sk-ant-` and the letters, digits, `-` and `_` after it), then
+/// ([`KEY_START`] and the letters, digits, `-` and `_` after it), then
 /// [`redact`](super::release_test::redact).
 ///
 /// ```
@@ -482,25 +555,9 @@ pub fn scrub_here() -> Scrub {
 /// ```
 pub fn clean(line: &str, scrub: &Scrub) -> String {
     let line = scrub.clean(line);
-    let line = keys_out(&line);
+    let key = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_';
+    let line = crate::run::tokens_out(&line, KEY_START, key);
     super::release_test::redact(&line)
-}
-
-/// `text` with each key of Anthropic replaced by [`HIDDEN`].
-fn keys_out(text: &str) -> String {
-    const START: &str = "sk-ant-";
-    let part = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_';
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(at) = rest.find(START) {
-        let after = &rest[at + START.len()..];
-        let len = after.find(|c: char| !part(c)).unwrap_or(after.len());
-        out.push_str(&rest[..at]);
-        out.push_str(HIDDEN);
-        rest = &after[len..];
-    }
-    out.push_str(rest);
-    out
 }
 
 /// The time at the start of a line of the log, as [`Capped`] writes it.
@@ -511,12 +568,17 @@ fn time_of(line: &str) -> Option<i64> {
         .map(|t| t.timestamp())
 }
 
-/// `line` with at most [`LINE_CHARS`] characters.
+/// `line` with at most [`LINE_CHARS`] characters: a longer line keeps
+/// one character fewer, and gets `…`.
 fn cut(line: String) -> String {
-    match line.char_indices().nth(LINE_CHARS) {
-        Some((at, _)) => format!("{}…", &line[..at]),
-        None => line,
+    if line.chars().nth(LINE_CHARS).is_none() {
+        return line;
     }
+    let at = line
+        .char_indices()
+        .nth(LINE_CHARS - 1)
+        .map_or(line.len(), |(at, _)| at);
+    format!("{}…", &line[..at])
 }
 
 /// Picks the lines of a [`Query`], one line after the other.
@@ -524,7 +586,8 @@ struct Picker<'a> {
     query: &'a Query,
     scrub: &'a Scrub,
     /// The time of the last line with a time: a line with no time, for
-    /// example a part of a long line, has the time of the line before.
+    /// example a part of a long line, has the time of the line before
+    /// (01M7F0HE7JY09V4XA2KMKPX2P6).
     time: Option<i64>,
     kept: VecDeque<String>,
     picked: usize,
@@ -567,8 +630,9 @@ impl Picker<'_> {
     }
 }
 
-/// The lines of `logs`, each one the text of a log, the oldest first,
-/// that `query` picks, with no secret of `scrub` ([`clean`]).
+/// The lines of `logs`, each one a log, the oldest log first, that
+/// `query` picks, with no secret of `scrub` ([`clean`]). A byte that is
+/// no UTF-8 is read as `\u{fffd}`.
 ///
 /// ```
 /// use riff::daemon::log::{Query, pick};
@@ -580,7 +644,7 @@ impl Picker<'_> {
 ///            2026-11-14T07:14:00Z riff daemon: o/r: claims issue-13\n";
 /// let since = Some(1_794_640_320); // 2026-11-14T07:12:00Z
 /// let query = Query::new(since, None, vec!["issue-12".into()])?;
-/// let found = pick([log], &query, &Scrub::default());
+/// let found = pick([log.as_bytes()], &query, &Scrub::default())?;
 /// assert_eq!(
 ///     found.lines,
 ///     [
@@ -589,15 +653,19 @@ impl Picker<'_> {
 ///     ]
 /// );
 /// let newest = Query::new(None, Some(1), vec!["claims".into()])?;
-/// let found = pick([log], &newest, &Scrub::default());
+/// let found = pick([log.as_bytes()], &newest, &Scrub::default())?;
 /// assert_eq!(found.lines, ["2026-11-14T07:14:00Z riff daemon: o/r: claims issue-13"]);
 /// assert_eq!(found.more, 2);
 /// // No part of a secret is found.
 /// let probe = Query::new(None, None, vec!["ghs_abc".into()])?;
-/// assert!(pick([log], &probe, &Scrub::default()).lines.is_empty());
+/// assert!(pick([log.as_bytes()], &probe, &Scrub::default())?.lines.is_empty());
 /// # Ok::<(), anyhow::Error>(())
 /// ```
-pub fn pick<'a>(logs: impl IntoIterator<Item = &'a str>, query: &Query, scrub: &Scrub) -> Found {
+pub fn pick(
+    logs: impl IntoIterator<Item = impl BufRead>,
+    query: &Query,
+    scrub: &Scrub,
+) -> std::io::Result<Found> {
     let mut picker = Picker {
         query,
         scrub,
@@ -605,52 +673,39 @@ pub fn pick<'a>(logs: impl IntoIterator<Item = &'a str>, query: &Query, scrub: &
         kept: VecDeque::new(),
         picked: 0,
     };
-    for log in logs {
-        for line in log.lines() {
-            picker.line(line);
-        }
-    }
-    picker.found()
-}
-
-/// The lines of the log of the daemon in its folder `dir` that `query`
-/// picks ([`pick`]): [`OLD`], then [`FILE`]. With neither file, the
-/// error names `log_command`, the command that shows the log of the
-/// daemon on this host, for example on a Mac.
-pub fn read(dir: &Path, query: &Query, log_command: &str) -> Result<Found> {
-    let mut picker = Picker {
-        query,
-        scrub: &scrub_here(),
-        time: None,
-        kept: VecDeque::new(),
-        picked: 0,
-    };
-    let mut any = false;
-    for path in [dir.join(OLD), dir.join(FILE)] {
-        let file = match File::open(&path) {
-            Ok(file) => file,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(e) => return Err(e).with_context(|| format!("cannot read {}", path.display())),
-        };
-        any = true;
-        let mut reader = BufReader::new(file);
-        let mut bytes = Vec::new();
+    let mut bytes = Vec::new();
+    for mut log in logs {
         loop {
             bytes.clear();
-            let n = reader
-                .read_until(b'\n', &mut bytes)
-                .with_context(|| format!("cannot read {}", path.display()))?;
-            if n == 0 {
+            if log.read_until(b'\n', &mut bytes)? == 0 {
                 break;
             }
             let line = String::from_utf8_lossy(&bytes);
             picker.line(line.trim_end_matches(['\n', '\r']));
         }
     }
-    if !any {
+    Ok(picker.found())
+}
+
+/// The lines of the log of the daemon in its folder `dir` that `query`
+/// picks ([`pick`]), with no secret of [`scrub_of`]: [`OLD`], then
+/// [`FILE`]. With neither file, the error names `log_command`, the
+/// command that shows the log of the daemon on this host, for example on
+/// a Mac.
+pub fn read(dir: &Path, query: &Query, log_command: &str) -> Result<Found> {
+    let mut logs = Vec::new();
+    for path in [dir.join(OLD), dir.join(FILE)] {
+        match File::open(&path) {
+            Ok(file) => logs.push(BufReader::new(file)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e).with_context(|| format!("cannot read {}", path.display())),
+        }
+    }
+    if logs.is_empty() {
         bail!("{}", text::daemon_no_log(&dir.join(FILE), log_command));
     }
-    Ok(picker.found())
+    let scrub = scrub_of(dir)?;
+    pick(logs, query, &scrub).with_context(|| format!("cannot read the log in {}", dir.display()))
 }
 
 /// [`read`] in the folder `dir` of the daemon of this host, with the
@@ -782,48 +837,132 @@ mod tests {
         );
     }
 
-    /// #2156: a long line is cut, and the oldest lines go when the lines
-    /// have more than [`MOST_BYTES`]: they count as more lines.
+    /// #2156, 01M7EX1Q1F468NWGPJJS0W0ZG9, 01M7F0HECNG3F2H1ZF4JB7WN0Y: each
+    /// value of the `env` and of the `headers` of an MCP server of the host
+    /// goes, as in the events of a session, and `--grep` finds no part of
+    /// it. When riff cannot read the MCP servers, it shows no line.
+    #[test]
+    fn read_takes_the_secrets_of_the_mcp_servers_out() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(crate::session_mcp::FILE),
+            r#"{"mcpServers": {"docs": {"url": "u", "headers": {"X-Docs": "docs-header-value-1"}},
+                "db": {"command": "db", "env": {"DB_AUTH": "db-env-value-2"}}}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join(FILE),
+            "2026-11-14T07:12:00Z riff daemon: docs said docs-header-value-1\n\
+             2026-11-14T07:13:00Z riff daemon: db said X=db-env-value-2\n",
+        )
+        .unwrap();
+        let all = Query::new(None, None, vec![]).unwrap();
+        assert_eq!(
+            read(dir.path(), &all, "").unwrap().lines,
+            [
+                "2026-11-14T07:12:00Z riff daemon: docs said [secret]",
+                "2026-11-14T07:13:00Z riff daemon: db said X=[secret]",
+            ]
+        );
+        for probe in ["docs-header", "db-env"] {
+            let query = Query::new(None, None, vec![probe.into()]).unwrap();
+            assert!(
+                read(dir.path(), &query, "").unwrap().lines.is_empty(),
+                "{probe}"
+            );
+        }
+        std::fs::write(dir.path().join(crate::session_mcp::FILE), "{").unwrap();
+        let error = format!("{:#}", read(dir.path(), &all, "").unwrap_err());
+        assert!(error.starts_with(text::DAEMON_LOG_NO_MCP), "{error}");
+        assert!(error.contains("mcp.json"), "{error}");
+    }
+
+    /// #2156: an error other than no file names the file or the folder:
+    /// a folder of the daemon that is a file cannot open, and a log file
+    /// that is a folder cannot be read.
+    #[test]
+    fn an_open_error_and_a_read_error_name_the_log() {
+        let root = tempfile::tempdir().unwrap();
+        let all = Query::new(None, None, vec![]).unwrap();
+        let file = root.path().join("a-file");
+        std::fs::write(&file, "").unwrap();
+        let error = format!("{:#}", read(&file, &all, "").unwrap_err());
+        let old = file.join(OLD).display().to_string();
+        assert!(
+            error.starts_with(&format!("cannot read {old}: ")),
+            "{error}"
+        );
+
+        let dir = root.path().join("daemon");
+        std::fs::create_dir_all(dir.join(FILE)).unwrap();
+        let error = format!("{:#}", read(&dir, &all, "").unwrap_err());
+        let want = format!("cannot read the log in {}: ", dir.display());
+        assert!(error.starts_with(&want), "{error}");
+    }
+
+    /// #2156, 01M7EX1PVSG64G8EE5SNDRHM7G: a line of [`LINE_CHARS`]
+    /// characters stays whole, and a longer one is cut to [`LINE_CHARS`]
+    /// characters with its `…`. When the lines have more than
+    /// [`MOST_BYTES`], the oldest go first: they count as more lines.
     #[test]
     fn a_long_line_is_cut_and_the_answer_keeps_its_byte_cap() {
-        let line = format!("2026-11-14T07:12:00Z {}", "x".repeat(3 * LINE_CHARS));
-        let log = std::iter::repeat_n(line.as_str(), MOST_LINES)
-            .collect::<Vec<_>>()
-            .join("\n");
+        let whole = "x".repeat(LINE_CHARS);
+        assert_eq!(cut(whole.clone()), whole);
+        let long = format!("{whole}é");
+        assert_eq!(cut(long), format!("{}…", &whole[1..]));
+
+        let lines: Vec<String> = (0..MOST_LINES)
+            .map(|n| format!("2026-11-14T07:12:00Z {n:04} {}", "é".repeat(LINE_CHARS)))
+            .collect();
+        let log = lines.join("\n");
         let query = Query::new(None, Some(MOST_LINES), vec![]).unwrap();
-        let found = pick([log.as_str()], &query, &Scrub::default());
+        let found = pick([log.as_bytes()], &query, &Scrub::default()).unwrap();
         assert!(
             found
                 .lines
                 .iter()
-                .all(|l| l.chars().count() == LINE_CHARS + 1)
+                .all(|l| l.chars().count() == LINE_CHARS && l.ends_with('…'))
         );
         let bytes: usize = found.lines.iter().map(|l| l.len() + 1).sum();
         assert!(bytes <= MOST_BYTES, "{bytes}");
         assert!(found.more > 0);
         assert_eq!(found.more + found.lines.len(), MOST_LINES);
+        // The newest lines stay, in their order.
+        let numbers: Vec<usize> = found
+            .lines
+            .iter()
+            .map(|l| l[21..25].parse().unwrap())
+            .collect();
+        let want: Vec<usize> = (found.more..MOST_LINES).collect();
+        assert_eq!(numbers, want);
     }
 
-    /// #2156: with --since, a line with no time before the first line
-    /// with a time does not show: riff does not know its time.
+    /// #2156, 01M7F0HE7JY09V4XA2KMKPX2P6: with --since, a line with no
+    /// time before the first line with a time does not show: riff does
+    /// not know its time.
     #[test]
     fn a_first_line_with_no_time_shows_only_with_no_since() {
         let log = "a line with no time\n2026-11-14T07:12:00Z a line\n";
         let since = Query::new(Some(AT_0712), None, vec![]).unwrap();
-        let found = pick([log], &since, &Scrub::default());
+        let found = pick([log.as_bytes()], &since, &Scrub::default()).unwrap();
         assert_eq!(found.lines, ["2026-11-14T07:12:00Z a line"]);
         let all = Query::new(None, None, vec![]).unwrap();
-        assert_eq!(pick([log], &all, &Scrub::default()).lines.len(), 2);
+        let found = pick([log.as_bytes()], &all, &Scrub::default()).unwrap();
+        assert_eq!(found.lines.len(), 2);
     }
 
     /// #2156: each key of Anthropic goes, also inside a word, with each
     /// `-` and `_` of it.
     #[test]
     fn each_key_of_anthropic_goes() {
+        let scrub = Scrub::default();
         assert_eq!(
-            keys_out("a=sk-ant-oat01-A_b-9,sk-ant-api03-x end sk-ant-"),
-            "a=[secret],[secret] end [secret]"
+            clean("a=sk-ant-oat01-A_b-9,sk-ant-api03-x end", &scrub),
+            "a=[secret],[secret] end"
         );
-        assert_eq!(keys_out("sk-other and ask-ant"), "sk-other and ask-ant");
+        assert_eq!(
+            clean("a task-ant and ask-ants", &scrub),
+            "a task-ant and ask-ants"
+        );
     }
 }
