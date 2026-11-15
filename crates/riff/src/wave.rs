@@ -9990,8 +9990,9 @@ esac
 
     /// #1338: a job that the lead asked for has no next look of a loop.
     /// So each case that stops its start tells the lead why: a hold or
-    /// another claim, a pause, a fault of the host, and an error. The
-    /// start of the loop of a wave tells less.
+    /// another claim, a pause, a fault of the host, the folders of the
+    /// volumes that podman cannot say, and an error. The start of the loop
+    /// of a wave tells less.
     #[tokio::test]
     async fn the_lead_hears_why_the_run_of_an_item_did_not_start() {
         let free = Arc::new(AtomicU64::new(64));
@@ -10023,9 +10024,20 @@ esac
         let fault = run::HostFault::SignInEnds(42).wave_text();
         assert_eq!(body, text::run_job_failed("issue-6", &fault));
 
+        // podman cannot say the folders of the volumes that the `riff.toml`
+        // of the wave names (01M7EZCTKYFPS4QDQ1N3K3BT23).
+        here.forge().volumes = vec![("riff-cargo".into(), "$HOME/.cargo".into())];
+        let cause = "podman info: Error: no store";
+        let fake = here.fake.clone().with_volume_fault(cause);
+        here.daemon.run_item(&lead, "issue-8").unwrap();
+        let body = told(4).await;
+        let why = text::daemon_volumes_unread(cause);
+        assert_eq!(body, text::run_job_failed("issue-8", &why));
+        fake.volumes_heal();
+
         here.forge().refusals = vec!["not_allowed".into()];
         here.daemon.run_item(&lead, "issue-7").unwrap();
-        let body = told(4).await;
+        let body = told(5).await;
         assert!(
             body.starts_with("The riff daemon started no session for issue-7: ")
                 && body.contains("not_allowed"),

@@ -8929,7 +8929,8 @@ mod tests {
     /// still gets the folder that podman said. A session with no volume
     /// starts. When podman says each folder again, a session with a volume
     /// starts, and the status shows no fault. A wave that waits still
-    /// waits.
+    /// waits, and its wait ends after one minute
+    /// (01M7EZCTKYFPS4QDQ1N3K3BT23).
     #[tokio::test]
     async fn the_daemon_starts_no_session_with_a_volume_while_podman_cannot_say_its_folders() {
         let root = tempfile::tempdir().unwrap();
@@ -8958,7 +8959,9 @@ mod tests {
                 other => panic!("{other:?}"),
             }
         }
+        let before = now_ms();
         let error = refused(&here, &volume).await;
+        let after = now_ms();
         assert_eq!(
             error,
             text::daemon_volumes_unread(&format!("{info}; {inspect}"))
@@ -8967,9 +8970,14 @@ mod tests {
         assert!(crate::host_git::guard(&said).is_err());
         let unread = here.daemon.status().await.volumes.unwrap();
         assert_eq!(unread.cause.as_str(), format!("{info}; {inspect}"));
-        let status = text::daemon_status(&here.daemon.status().await, now_ms());
         assert!(
-            status.contains("Volumes: riff cannot read the folders of the podman volumes"),
+            (before..=after).contains(&unread.since_ms),
+            "{before} {unread:?} {after}"
+        );
+        let status = here.daemon.status().await;
+        let status = text::daemon_status(&status, unread.since_ms + 240_000);
+        assert!(
+            status.contains("Volumes: riff cannot read the folders of the podman volumes, for 4m."),
             "{status}"
         );
         // A second look that fails keeps the time of the first, and the
@@ -9001,6 +9009,13 @@ mod tests {
         assert_eq!(here.fake.calls().last(), Some(&format!("start {four}")));
         assert_eq!(here.daemon.status().await.volumes, None);
         assert!(here.daemon.volumes_wait("o/r"));
+
+        // The wait of a wave ends after one minute.
+        here.daemon.volumes_refused("o/s");
+        here.daemon.age_volume_wait("o/s", Duration::from_secs(59));
+        assert!(here.daemon.volumes_wait("o/s"));
+        here.daemon.age_volume_wait("o/s", Duration::from_secs(1));
+        assert!(!here.daemon.volumes_wait("o/s"));
     }
 
     /// 01M7EW2106JGGTSZKMRG4N9SH0: at the start of the daemon, podman cannot

@@ -397,11 +397,13 @@ flowchart LR
 When one of the commands fails, riff cannot know each folder that a
 session can write. So the daemon starts no session that binds a volume
 with write. `riff run` and the log of the daemon say why. A session with
-no volume starts, and a session that runs goes on. `riff daemon status`
-shows the cause until a look reads each folder. In that time, a wave
+no volume starts, and a session that runs goes on. In that time, a wave
 whose `riff.toml` names a volume claims no item, and no start of an
-item counts. The wave tries again after one minute, and its line says
-that it waits. riff sends no message to the lead:
+item counts. The wave tries again after one minute. riff sends the lead
+no message about these tries.
+
+`riff daemon status` shows the cause until a look reads each folder.
+The line of the wave says that it waits:
 
 ```text
 Volumes: riff cannot read the folders of the podman volumes, for 4m. No session with a volume starts. The last cause: podman info --format {{.Store.VolumePath}}: Error: cannot read the store. riff reads them again at the next start of a session with a volume.
