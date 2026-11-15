@@ -35,7 +35,7 @@
 //! | The folder | `leads/OWNER-REPO` in the data folder of riff ([`folder_of`]): `clone/` and `claude/` | 01M501P9Q51AYN9GBPWKVHA229 |
 //! | The start | one start of the lead at a time on the host: each start holds the lock `start.lock` in the folder of the lead ([`start_lock`]), and under the lock a start that finds the lead running starts nothing ([`one_start`]) | 01M77Y2BG12SEVF4ZEZ673QBFZ |
 //! | The cause | each start gives the daemon its cause ([`LeadCause`], #2099): the lead loop ([`claim_start`]), `riff lead move` and who ran it ([`take`]), and in the daemon the start of the daemon, a fault and an update (`Daemon::lead_back`, `Daemon::leads_again`). The daemon writes the cause in the line of the start in its log ([`text::lead_starts`]), and keeps it in the record of the lead for `riff daemon status` | 01M7BNP4ZYJCCEK7ZHCJ3EX3SJ |
-//! | The clone | a new clone at each start of a new lead: `git clone --reference MAIN`, on the default branch of `origin`, in `new-clones/lead-OWNER-REPO` ([`new_clone_of`]); then it takes the place of the old clone, which goes with each change in it. The host runs no git in the old clone, and the guard of the host refuses git in the folder of the leads ([`crate::host_git`]). When the new clone fails, the old clone stays with a note. A start again of the same session keeps the clone ([`fresh_clone`]) | 01M501P9Q51AYN9GBPWKVHA229, 01M7E7A8QM8SRPQN3G1BXVJW1R, 01M7E7ACTYP4RX8TCJ9XSYMMPM |
+//! | The clone | a new clone at each start of a new lead: `git clone --reference MAIN`, on the default branch of `origin`, in `new-clones/lead-OWNER-REPO` ([`new_clone_of`]); then it takes the place of the old clone, which goes with each change in it. The host runs no git in the old clone, and the guard of the host refuses git in the folder of the leads ([`crate::host_git`]). When the new clone fails, the old clone stays with a note. Each old clone goes as the person, then with `podman unshare` ([`crate::compile_cache::remove`]); an old clone that stays stops no start: one line in the log, and the sweep of the daemon removes it later ([`Fresh::Left`], [`sweep_old_clones`]). A start again of the same session keeps the clone ([`fresh_clone`]) | 01M501P9Q51AYN9GBPWKVHA229, 01M7E7A8QM8SRPQN3G1BXVJW1R, 01M7E7ACTYP4RX8TCJ9XSYMMPM, 01M7EBBVE6WYKT5JDVASFCYPQQ |
 //! | The Claude folder | the first-run answers of `claude`, as for each session ([`run::claude_folder`]), and `"tui": "default"`, so `claude` turns on no mouse reports ([`run::TUI`]) | 01M501P9SDGVWG3MTVCW5BDRQQ, 01M51JACH6TQP318ZFG6NQ9GRM, 01M6XVBRT2T838TX53SSXR6HRH |
 //! | The command | `claude --model MODEL --session-id ID --dangerously-skip-permissions START` ([`spec`]), with the model of the merged `riff.toml` ([`crate::session_setup::Setup::claude`]); the daemon runs it as `riff relay --terminal -- ...` | 01M501P9VN47QAKZ6B8P39ZSW4, 01M5GG2X5F1HXCQJ2JJWV6305K, 01M6VAQWECJ6N6VJF66KCMNYD1 |
 //! | The riff tools | [`crate::tools::LEAD_TOOLS`], on riff-server as the session of the lead | 01M501P9XWXWDBSXP4QRTHTZ4P |
@@ -286,14 +286,144 @@ pub enum Fresh {
     /// It made a new clone, and put it in the place of the old clone,
     /// which went.
     New,
+    /// It made a new clone and put it in place, but an old clone stays:
+    /// riff cannot remove it. Each line names an old clone that stays,
+    /// and says why ([`text::lead_old_clone_stays`]). The sweep of the
+    /// daemon tries again ([`sweep_old_clones`]).
+    Left(Vec<String>),
     /// The new clone failed: the old clone stays as it is. The text says
     /// why.
     Kept(String),
 }
 
 /// The folder of the old clone in the folder of the lead, while the new
-/// clone takes its place ([`fresh_clone`]).
+/// clone takes its place ([`fresh_clone`]). When an old clone of an
+/// earlier start stays there, the old clone gets the first free name of
+/// `old-clone-2`, `old-clone-3` and so on ([`old_clones`]).
 pub const OLD_CLONE: &str = "old-clone";
+
+/// The old clones in the folder `folder` of a lead: [`OLD_CLONE`] and
+/// each `old-clone-N`, in the order of their names. An old clone stays
+/// when riff cannot remove it ([`remove_old_clones`]).
+///
+/// ```
+/// let folder = tempfile::tempdir()?;
+/// for name in ["clone", "claude", "old-clone", "old-clone-2", "old-clone-x", "old-clones"] {
+///     std::fs::create_dir(folder.path().join(name))?;
+/// }
+/// let old = riff::lead::old_clones(folder.path());
+/// assert_eq!(old, [folder.path().join("old-clone"), folder.path().join("old-clone-2")]);
+/// assert!(riff::lead::old_clones(&folder.path().join("none")).is_empty());
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn old_clones(folder: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(folder) else {
+        return Vec::new();
+    };
+    let old = |name: &str| {
+        name == OLD_CLONE
+            || name
+                .strip_prefix(OLD_CLONE)
+                .and_then(|n| n.strip_prefix('-'))
+                .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+    };
+    let mut all: Vec<PathBuf> = entries
+        .flatten()
+        .filter(|entry| entry.file_name().to_str().is_some_and(old))
+        .map(|entry| entry.path())
+        .collect();
+    all.sort();
+    all
+}
+
+/// The folder for the old clone of the clone `clone` of a lead while
+/// the new clone takes its place: [`OLD_CLONE`] beside it, else the
+/// first free `old-clone-N`.
+fn aside_of(clone: &Path) -> PathBuf {
+    let mut aside = clone.with_file_name(OLD_CLONE);
+    let mut n = 1;
+    while aside.symlink_metadata().is_ok() {
+        n += 1;
+        aside = clone.with_file_name(format!("{OLD_CLONE}-{n}"));
+    }
+    aside
+}
+
+/// Removes each old clone in the folder `folder` of a lead
+/// ([`old_clones`]) with `remove`, and gives each one with the result.
+/// The start of a lead and the sweep of the daemon remove with
+/// [`crate::compile_cache::remove`]: as the person, then with `podman
+/// unshare` (#2153). The host runs no git in an old clone.
+///
+/// ```
+/// let folder = tempfile::tempdir()?;
+/// let old = folder.path().join("old-clone");
+/// std::fs::create_dir_all(old.join("a"))?;
+/// let gone = riff::lead::remove_old_clones(folder.path(), riff::compile_cache::remove);
+/// assert_eq!(gone.len(), 1);
+/// assert_eq!(gone[0].0, old);
+/// assert!(gone[0].1.is_ok() && !old.exists());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn remove_old_clones(
+    folder: &Path,
+    remove: impl Fn(&Path) -> Result<()>,
+) -> Vec<(PathBuf, Result<()>)> {
+    old_clones(folder)
+        .into_iter()
+        .map(|old| {
+            let gone = remove(&old);
+            (old, gone)
+        })
+        .collect()
+}
+
+/// Removes the old clones of each lead in the folder `leads` of the
+/// leads ([`remove_old_clones`]) with [`crate::compile_cache::remove`],
+/// for the sweep of the daemon (01M7EBBVE6WYKT5JDVASFCYPQQ). It gives each old clone with the
+/// result. It skips the folder of a lead while a start of the lead holds
+/// its lock ([`START_LOCK`]): the start moves the clones, and removes
+/// each old clone itself.
+///
+/// ```
+/// let leads = tempfile::tempdir()?;
+/// let old = leads.path().join("o-r/old-clone");
+/// std::fs::create_dir_all(old.join("a"))?;
+/// let swept = riff::lead::sweep_old_clones(leads.path());
+/// assert_eq!(swept.len(), 1);
+/// assert!(swept[0].1.is_ok() && !old.exists());
+/// assert!(riff::lead::sweep_old_clones(leads.path()).is_empty());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn sweep_old_clones(leads: &Path) -> Vec<(PathBuf, Result<()>)> {
+    let Ok(entries) = std::fs::read_dir(leads) else {
+        return Vec::new();
+    };
+    let mut folders: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir() && !old_clones(path).is_empty())
+        .collect();
+    folders.sort();
+    let mut swept = Vec::new();
+    for folder in folders {
+        let lock = open_start_lock(&folder).and_then(|file| match file.try_lock() {
+            Ok(()) => Ok(Some(file)),
+            Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+            Err(std::fs::TryLockError::Error(e)) => {
+                Err(e).with_context(|| format!("cannot lock {}", folder.join(START_LOCK).display()))
+            }
+        });
+        match lock {
+            Ok(Some(_held)) => {
+                swept.extend(remove_old_clones(&folder, crate::compile_cache::remove));
+            }
+            Ok(None) => {}
+            Err(e) => swept.push((folder, Err(e))),
+        }
+    }
+    swept
+}
 
 /// The folder where the host makes the new clone of the lead whose
 /// clone is `clone`, `leads/OWNER-REPO/clone`:
@@ -332,7 +462,9 @@ pub fn new_clone_of(clone: &Path) -> Result<PathBuf> {
 /// (`put_in_place`). The host runs no git in the old clone: the lead
 /// wrote it, and so its git config ([`crate::host_git`]). When the new
 /// clone fails, an old clone stays as it is. With no old clone, the
-/// error stays.
+/// error stays. An old clone that riff cannot remove, also with `podman
+/// unshare`, stays for the sweep of the daemon, and the new lead starts
+/// ([`Fresh::Left`], 01M7EBBVE6WYKT5JDVASFCYPQQ).
 pub fn fresh_clone(main: &Path, clone: &Path) -> Result<Fresh> {
     let new = new_clone_of(clone)?;
     let made = run::clone_in(&new, |new| {
@@ -352,40 +484,50 @@ pub fn fresh_clone(main: &Path, clone: &Path) -> Result<Fresh> {
         Err(e) => return Err(e),
         Ok(()) => {}
     }
-    put_in_place(&new, clone)?;
-    Ok(if old { Fresh::New } else { Fresh::Made })
+    let stays = put_in_place(&new, clone, crate::compile_cache::remove)?;
+    Ok(match (stays.is_empty(), old) {
+        (false, _) => Fresh::Left(stays),
+        (true, true) => Fresh::New,
+        (true, false) => Fresh::Made,
+    })
 }
 
 /// Puts the new clone `new` in the place of the clone `clone` of the
-/// lead: the old clone moves to [`OLD_CLONE`] beside it, the new clone
-/// moves in, and the old clone goes. Each step moves or removes files,
-/// with no git. When the new clone cannot move in, the old clone moves
-/// back.
-fn put_in_place(new: &Path, clone: &Path) -> Result<()> {
-    let aside = clone.with_file_name(OLD_CLONE);
-    let remove = |dir: &Path| match dir.symlink_metadata() {
-        Ok(_) => {
-            std::fs::remove_dir_all(dir).with_context(|| format!("cannot remove {}", dir.display()))
-        }
-        Err(_) => Ok(()),
-    };
-    // An old clone of an earlier fault.
-    remove(&aside)?;
+/// lead: the old clone moves aside ([`aside_of`]), the new clone moves
+/// in, and each old clone of the folder of the lead goes with `remove`
+/// ([`remove_old_clones`]). Each step moves or removes files, with no
+/// git. When the new clone cannot move in, the old clone moves back. It
+/// gives a line for each old clone that stays
+/// ([`text::lead_old_clone_stays`]): an old clone that riff cannot
+/// remove does not stop the start (01M7EBBVE6WYKT5JDVASFCYPQQ).
+fn put_in_place(
+    new: &Path,
+    clone: &Path,
+    remove: impl Fn(&Path) -> Result<()>,
+) -> Result<Vec<String>> {
+    let folder = clone
+        .parent()
+        .filter(|f| !f.as_os_str().is_empty())
+        .with_context(|| format!("the clone {} is in no folder of a lead", clone.display()))?;
+    let aside = aside_of(clone);
     if clone.symlink_metadata().is_ok() {
         std::fs::rename(clone, &aside)
             .with_context(|| format!("cannot move {} to {}", clone.display(), aside.display()))?;
     }
-    if let Some(parent) = clone.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("cannot make {}", parent.display()))?;
-    }
+    std::fs::create_dir_all(folder).with_context(|| format!("cannot make {}", folder.display()))?;
     if let Err(e) = std::fs::rename(new, clone) {
         let _ = std::fs::rename(&aside, clone);
         let _ = std::fs::remove_dir_all(new);
         return Err(e)
             .with_context(|| format!("cannot move {} to {}", new.display(), clone.display()));
     }
-    remove(&aside)
+    Ok(remove_old_clones(folder, remove)
+        .into_iter()
+        .filter_map(|(old, gone)| {
+            let why = gone.err()?;
+            Some(text::lead_old_clone_stays(&old, &format!("{why:#}")))
+        })
+        .collect())
 }
 
 /// How an attach to the lead ended (01M51PD7Q24N252V66NFEHY49N).
@@ -876,13 +1018,7 @@ pub const START_LOCK: &str = "start.lock";
 /// ```
 pub async fn start_lock(folder: &Path, waits: impl FnOnce()) -> Result<std::fs::File> {
     let path = folder.join(START_LOCK);
-    std::fs::create_dir_all(folder).with_context(|| format!("cannot make {}", folder.display()))?;
-    let file = riff_client::files::options()
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(&path)
-        .with_context(|| format!("cannot open {}", path.display()))?;
+    let file = open_start_lock(folder)?;
     match file.try_lock() {
         Ok(()) => return Ok(file),
         Err(std::fs::TryLockError::WouldBlock) => waits(),
@@ -893,6 +1029,20 @@ pub async fn start_lock(folder: &Path, waits: impl FnOnce()) -> Result<std::fs::
     tokio::task::spawn_blocking(move || file.lock().map(|()| file))
         .await?
         .with_context(|| format!("cannot lock {}", path.display()))
+}
+
+/// Opens the file [`START_LOCK`] of the starts of the lead in the folder
+/// `folder` of the lead, and makes it when it is not there. It takes no
+/// lock.
+fn open_start_lock(folder: &Path) -> Result<std::fs::File> {
+    let path = folder.join(START_LOCK);
+    std::fs::create_dir_all(folder).with_context(|| format!("cannot make {}", folder.display()))?;
+    riff_client::files::options()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .with_context(|| format!("cannot open {}", path.display()))
 }
 
 /// What a start of the lead did ([`one_start`]).
@@ -990,8 +1140,10 @@ async fn launch_new(
     let folder = folder_of(&run::data_dir()?, &repo);
     let clone = folder.join("clone");
     let claude = folder.join("claude");
-    if let Fresh::Kept(why) = fresh_clone(main, &clone)? {
-        println!("{}", text::lead_clone_kept(&clone, &why));
+    match fresh_clone(main, &clone)? {
+        Fresh::Kept(why) => println!("{}", text::lead_clone_kept(&clone, &why)),
+        Fresh::Left(stays) => stays.iter().for_each(|line| println!("{line}")),
+        Fresh::Made | Fresh::New => {}
     }
     let sources = session_image::merged_sources(main)?;
     run::claude_folder(
@@ -2189,13 +2341,114 @@ mod tests {
         std::fs::create_dir_all(&new).unwrap();
         std::fs::write(new.join("new"), "").unwrap();
 
-        put_in_place(&new, &clone).unwrap();
+        let stays = put_in_place(&new, &clone, crate::compile_cache::remove).unwrap();
+        assert_eq!(stays, Vec::<String>::new());
         assert!(clone.join("new").exists() && !clone.join(".git").exists());
-        assert!(!new.exists() && !aside.exists());
+        assert!(!new.exists() && old_clones(clone.parent().unwrap()).is_empty());
         assert!(!mark.exists(), "the program of the old clone ran");
 
-        let error = put_in_place(&new, &clone).unwrap_err();
+        let error = put_in_place(&new, &clone, crate::compile_cache::remove).unwrap_err();
         assert!(format!("{error:#}").contains("cannot move"), "{error:#}");
         assert!(clone.join("new").exists() && !aside.exists());
+    }
+
+    /// Makes the folder `dir` and a read-only folder `dir/ro` with a file:
+    /// the person cannot remove it with no `chmod`, as with the module
+    /// cache of Go.
+    fn with_read_only_folder(dir: &Path) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+
+        let ro = dir.join("ro");
+        std::fs::create_dir_all(&ro).unwrap();
+        std::fs::write(ro.join("f"), "").unwrap();
+        std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o555)).unwrap();
+        ro
+    }
+
+    /// Makes each folder under `dir` writable again, so the drop of the
+    /// test folder removes it.
+    fn writable(dir: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+
+        for old in old_clones(dir) {
+            let _ =
+                std::fs::set_permissions(old.join("ro"), std::fs::Permissions::from_mode(0o700));
+        }
+    }
+
+    /// 01M7EBBVE6WYKT5JDVASFCYPQQ (#2153): an old clone of an earlier start
+    /// holds a read-only folder, and riff cannot remove it, also with
+    /// `podman unshare`. The new clone still takes its place: the start
+    /// goes on, and a line names each old clone that stays. The old clone
+    /// of this start moves to the next free name. When riff can remove
+    /// them, each goes.
+    #[test]
+    fn an_old_clone_that_riff_cannot_remove_stops_no_start() {
+        let root = tempfile::tempdir().unwrap();
+        let clone = root.path().join("leads/o-r/clone");
+        let folder = clone.parent().unwrap().to_owned();
+        let new = new_clone_of(&clone).unwrap();
+        let stuck = clone.with_file_name(OLD_CLONE);
+        with_read_only_folder(&stuck);
+        std::fs::create_dir_all(&clone).unwrap();
+        std::fs::write(clone.join("old"), "").unwrap();
+        std::fs::create_dir_all(&new).unwrap();
+        std::fs::write(new.join("new"), "").unwrap();
+        let cannot =
+            |dir: &Path| -> Result<()> { bail!("podman unshare failed for {}", dir.display()) };
+
+        let stays = put_in_place(&new, &clone, cannot).unwrap();
+        assert!(clone.join("new").exists() && !new.exists());
+        let second = clone.with_file_name(format!("{OLD_CLONE}-2"));
+        assert_eq!(old_clones(&folder), [stuck.clone(), second.clone()]);
+        assert!(second.join("old").exists());
+        assert_eq!(
+            stays,
+            [&stuck, &second].map(|old| text::lead_old_clone_stays(
+                old,
+                &format!("podman unshare failed for {}", old.display())
+            ))
+        );
+
+        // The remove of riff: as the person, then with `podman unshare`.
+        writable(&folder);
+        with_read_only_folder(&stuck);
+        std::fs::create_dir_all(&new).unwrap();
+        let stays = put_in_place(&new, &clone, crate::compile_cache::remove).unwrap();
+        writable(&folder);
+        // With no `podman unshare`, the read-only folder stays, and the
+        // start goes on.
+        let left = old_clones(&folder);
+        assert_eq!(stays.len(), left.len(), "{stays:?}");
+        assert!(left.iter().all(|old| *old == stuck), "{left:?}");
+        assert!(clone.exists() && !new.exists());
+        for gone in remove_old_clones(&folder, crate::compile_cache::remove) {
+            gone.1.unwrap();
+        }
+        assert!(old_clones(&folder).is_empty());
+    }
+
+    /// 01M7EBBVE6WYKT5JDVASFCYPQQ (#2153): the sweep of the daemon removes
+    /// the old clones of a lead that stayed, but not while a start of the
+    /// lead holds its lock.
+    #[tokio::test]
+    async fn the_sweep_removes_old_clones_of_a_lead_with_no_start() {
+        let leads = tempfile::tempdir().unwrap();
+        let folder = leads.path().join("o-r");
+        let old = folder.join(OLD_CLONE);
+        std::fs::create_dir_all(old.join("a")).unwrap();
+        std::fs::create_dir_all(leads.path().join("o-other/clone")).unwrap();
+
+        let start = start_lock(&folder, || panic!("no other start"))
+            .await
+            .unwrap();
+        assert!(sweep_old_clones(leads.path()).is_empty());
+        assert!(old.exists());
+        drop(start);
+
+        let swept = sweep_old_clones(leads.path());
+        assert_eq!(swept.len(), 1);
+        assert_eq!(swept[0].0, old);
+        assert!(swept[0].1.is_ok() && !old.exists());
     }
 }

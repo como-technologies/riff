@@ -81,6 +81,17 @@
 //!     T -- "merged, closed, or the issue closed" --> D
 //! ```
 //!
+//! The sweep of the daemon, with no repository, also removes each old
+//! clone of a lead that a start of the lead could not remove
+//! ([`crate::lead::sweep_old_clones`], 01M7EBBVE6WYKT5JDVASFCYPQQ):
+//! `leads/OWNER-REPO/old-clone` and `old-clone-N`. It skips a lead while
+//! a start of the lead runs.
+//!
+//! A removal goes as the person first. When the person may not delete a
+//! file, for example in a read-only folder or a file of a user of the
+//! container, it goes with `podman unshare`
+//! ([`crate::compile_cache::remove`]).
+//!
 //! One sweep runs at a time. Each step of `gh` and each removal can
 //! block, so it runs on a thread for blocking work. Each wave sweeps
 //! before each look, so a `gh` that never ends would stop each wave.
@@ -504,13 +515,9 @@ pub const KEPT_DAYS: u64 = 30;
 
 /// Removes the folder `folder` of a session and its lock. A file of the
 /// container belongs to another user of the user namespace: riff removes
-/// it with `podman unshare` ([`crate::compile_cache::clear`]).
+/// it with `podman unshare` ([`crate::compile_cache::remove`]).
 fn remove_folder(folder: &Path) -> Result<()> {
-    if std::fs::remove_dir_all(folder).is_err() {
-        crate::compile_cache::clear(folder)?;
-        std::fs::remove_dir(folder)
-            .with_context(|| format!("cannot remove {}", folder.display()))?;
-    }
+    crate::compile_cache::remove(folder)?;
     let _ = std::fs::remove_file(lock_of(folder));
     Ok(())
 }
@@ -770,16 +777,19 @@ impl<R: Runtime + 'static> Daemon<R> {
 
     /// Removes the folder of each session that does not run, when its
     /// fate on the forge says so or when it is [`OLD_DAYS`] old: see the
-    /// design. With `repo`, only the folders of that repository. It gives
-    /// a line for each folder that it removed, and for each folder that it
-    /// kept for a fault, with the reason.
+    /// design. With `repo`, only the folders of that repository. With no
+    /// `repo`, also each old clone of a lead that stayed at a start of the
+    /// lead (`Daemon::sweep_old_clones`). It gives a line for each folder
+    /// that it removed, and for each folder that it kept for a fault, with
+    /// the reason.
     pub async fn sweep(&self, repo: Option<&str>) -> Vec<Swept> {
         let _one = self.folders.sweep.lock().await;
         let dir = self.sessions_dir();
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            return Vec::new();
-        };
-        let mut folders: Vec<PathBuf> = entries
+        // With no folder of the sessions, the old clones of the leads still
+        // go.
+        let mut folders: Vec<PathBuf> = std::fs::read_dir(&dir)
+            .into_iter()
+            .flatten()
             .flatten()
             .map(|entry| entry.path())
             .filter(|path| path.is_dir())
@@ -793,6 +803,11 @@ impl<R: Runtime + 'static> Daemon<R> {
                 Ok(None) => {}
                 Err(e) => eprintln!("riff daemon: {e:#}"),
             }
+        }
+        // An old clone of a lead that a start of the lead could not remove
+        // goes at the sweep of the daemon (#2153).
+        if repo.is_none() {
+            swept.extend(self.sweep_old_clones().await);
         }
         // The old branches of `riff-kept` go at the sweep of the daemon, not
         // at each look of a wave (#1549): they are 30 days old.
@@ -828,6 +843,38 @@ impl<R: Runtime + 'static> Daemon<R> {
             }
         }
         swept
+    }
+
+    /// Removes each old clone of a lead that stayed at a start of the lead
+    /// ([`crate::lead::sweep_old_clones`], 01M7EBBVE6WYKT5JDVASFCYPQQ): a
+    /// line for each one that went, and for each one that stays, with the
+    /// reason.
+    async fn sweep_old_clones(&self) -> Vec<Swept> {
+        let leads = self.dir.with_file_name(crate::lead::LEADS);
+        let old = match blocking(move || Ok(crate::lead::sweep_old_clones(&leads))).await {
+            Ok(old) => old,
+            Err(e) => {
+                eprintln!("riff daemon: {e:#}");
+                Vec::new()
+            }
+        };
+        old.into_iter()
+            .map(|(folder, gone)| {
+                let (line, kept) = match gone {
+                    Ok(()) => (text::swept(&folder, text::SWEPT_OLD_CLONE), false),
+                    Err(e) => (
+                        text::swept_old_clone_stays(&folder, &format!("{e:#}")),
+                        true,
+                    ),
+                };
+                Swept {
+                    folder,
+                    line,
+                    kept,
+                    digest: None,
+                }
+            })
+            .collect()
     }
 
     /// The `gh` of the sweep on `repo`, whose writes go as the daemon

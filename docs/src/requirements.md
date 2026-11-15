@@ -7922,6 +7922,15 @@ of this part when they merge.
   same session of the lead keeps its clone. This supersedes
   01M50RRQ9DT0JPSB358EAZRP8Z and 01M51JYDHAQDJ3GH2J8DT3AZQS in full, and
   01M501P9Q51AYN9GBPWKVHA229 in part: the clone.
+- **01M7EBBVE6WYKT5JDVASFCYPQQ** At each start of a new lead, riff
+  removes each old clone of the lead (01M7E7A8QM8SRPQN3G1BXVJW1R) as the
+  person first, then with podman unshare. When an old clone stays, for
+  example for a file that riff cannot remove, the new lead starts with
+  its new clone, and the log of the riff daemon gets one line that names
+  the old clone and the error. The next old clone then gets the first
+  free name of old-clone-2, old-clone-3 and so on. The sweep of the riff
+  daemon removes each old clone that stayed, but not while a start of
+  the lead runs (#2153).
 
 ### The first run
 

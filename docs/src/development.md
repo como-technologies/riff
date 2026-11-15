@@ -5049,8 +5049,10 @@ flowchart TD
     C -- "the clone failed" --> K["the old clone stays as it is,<br/>and riff shows a note"]
     C -- "done" --> M["the new clone takes the place of<br/>leads/OWNER-REPO/clone"]
     M --> R["the old clone goes,<br/>with each change in it"]
+    M -- "riff cannot remove the old clone" --> O["the old clone stays for the sweep,<br/>with one line in the log"]
     K --> L["the lead starts"]
     R --> L
+    O --> L
 ```
 
 The new clone is on the default branch of `origin`, at its last commit.
@@ -5060,6 +5062,30 @@ of the same lead, after `riff update` or after `/exit`, keeps its clone.
 When riff cannot make the new clone, for example with no network, the
 old clone stays as it is, and the lead starts with it. The note gives
 the error of git.
+
+##### When the old clone cannot go
+
+A lead can leave a file in its clone that you cannot remove: a
+read-only folder, or a file of another user of the container. Then
+riff removes the old clone with `podman unshare`. When that fails too,
+the new lead starts all the same. The old clone stays beside the new
+clone, as `old-clone` in the folder of the lead. A later old clone that
+stays gets the name `old-clone-2`, then `old-clone-3`. The log of the
+riff daemon gets one line for each old clone that stays, with the
+error:
+
+```sh
+journalctl --user -u riff | grep 'cannot remove the old clone'
+```
+
+The sweep of the riff daemon tries again each 10 minutes. To try again
+now:
+
+```sh
+riff daemon sweep
+```
+
+It prints each old clone that it removed, or the error again.
 
 Run no git on your machine in the clone of the lead: the lead wrote its
 git config. riff runs no git there either: it refuses, and the error

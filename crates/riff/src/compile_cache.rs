@@ -291,6 +291,34 @@ fn clear_here(dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Removes the folder `dir` with each file in it. It removes as the
+/// person first. When the person may not delete a file, for example in
+/// a read-only folder or a file of a user of the container, it empties
+/// `dir` with [`clear`], then removes it. A folder that is not there is
+/// no matter. The sweep of the session folders and the start of a lead
+/// remove with it ([`crate::lead::remove_old_clones`]).
+///
+/// ```
+/// let dir = tempfile::tempdir()?;
+/// let gone = dir.path().join("gone");
+/// std::fs::create_dir_all(gone.join("a/b"))?;
+/// std::fs::write(gone.join("a/b/f"), b"o")?;
+/// riff::compile_cache::remove(&gone)?;
+/// assert!(!gone.exists());
+/// riff::compile_cache::remove(&gone)?;
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn remove(dir: &Path) -> Result<()> {
+    if dir.symlink_metadata().is_err() {
+        return Ok(());
+    }
+    if std::fs::remove_dir_all(dir).is_err() {
+        clear(dir)?;
+        std::fs::remove_dir(dir).with_context(|| format!("cannot remove {}", dir.display()))?;
+    }
+    Ok(())
+}
+
 /// The cache of the host now, as `riff daemon cache` and `riff daemon
 /// status` show it ([`crate::text::daemon_cache`]).
 pub fn shown() -> String {
