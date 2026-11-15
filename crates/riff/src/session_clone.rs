@@ -474,9 +474,11 @@ pub struct Plan {
     /// the same path, with no write.
     pub refs: PathBuf,
     /// The default branch of `origin`, as the host gives it: `riff run`
-    /// and the lead read it from `origin/HEAD` of the main clone
-    /// ([`crate::permissions::Project::of`]), a wave from GitHub
-    /// ([`crate::pr::default_branch`]).
+    /// and the lead ask `origin` for the branch of its `HEAD`
+    /// ([`crate::run::on_origin`], 01M7G29PSP7X56X8E60A3KRV4V), a wave
+    /// reads it from GitHub ([`crate::pr::default_branch`]). No ref of
+    /// the main clone gives it: a rename on GitHub does not change
+    /// `origin/HEAD` there.
     pub base: Branch,
     /// What the clone checks out.
     pub checkout: Checkout,

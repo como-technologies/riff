@@ -201,6 +201,7 @@
 //! |---|---|
 //! | `repo` | The repository `OWNER/REPO` of the session. The host writes it before the start, and the sweep reads it ([`crate::daemon::sweep::note_repo`], 01M7DZ42EVHAT8N5MZEV97G3DW). |
 //! | `clone/` | No folder of the host: the clone of the session is at this path in its container only, an empty volume of the container where the relay clones ([`crate::session_clone`], 01M7EY3P0Q8TQF5QRTRDWCYCTQ). It goes with the container. The host runs no git in the folder of a session ([`crate::host_git`]). |
+//! | `origin-refs` | The branches of `origin` of the main clone, which the host writes before each start ([`refs_in`], [`crate::session_clone::write_refs`], 01M7FMJJB0TZM8875T7GQZAJEA). The container sees the file at the same path, with no write. |
 //! | `out/` | With no GitHub only: the bundle of the branch of the session, which the relay writes when `claude` ends ([`crate::session_clone::Plan::bundle_file`], 01M7EY3WHQQP9330CZ736HK0FJ). The session can write it. |
 //! | `BRANCH.bundle` | With no GitHub only: the copy of the bundle that `riff run` checked ([`bundle_copy`], [`take_bundle`]). No session sees it, and the person fetches from it. |
 //! | `claude/` | The own Claude folder of the session ([`claude_folder`]): the first-run answers of `claude` with the trust of the clone, no attribution line of `claude`, and the auto mode settings ([`settings`]). |
@@ -2086,6 +2087,72 @@ pub fn earlier(main: &Path, branch: &Branch) -> Result<bool> {
     )
 }
 
+/// What the host asks `origin` before the start of a session of `riff
+/// run` or of the lead ([`on_origin`], 01M7G29PSP7X56X8E60A3KRV4V).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OnOrigin {
+    /// The default branch of `origin`: the branch of its `HEAD`. A rename
+    /// of the default branch on GitHub does not change `origin/HEAD` of
+    /// the main clone, so riff does not read that ref.
+    pub base: Branch,
+    /// `origin` has the branch of the item: the session goes on from it
+    /// (01M4Z81AX3ND5RX7V1GEY4HMF5).
+    pub earlier: bool,
+}
+
+impl OnOrigin {
+    /// The facts in `listed`, the output of `git ls-remote --symref --
+    /// URL HEAD refs/heads/BRANCH`, with `branch` the branch of the item.
+    /// A `HEAD` that names no branch, as on an empty repository, is an
+    /// error.
+    ///
+    /// ```
+    /// use riff::run::OnOrigin;
+    ///
+    /// let branch = "worktree-issue-12".parse()?;
+    /// let listed = "ref: refs/heads/trunk\tHEAD\n1a2b\tHEAD\n3c4d\trefs/heads/worktree-issue-12\n";
+    /// let on = OnOrigin::of_listed(listed, Some(&branch))?;
+    /// assert_eq!(on, OnOrigin { base: "trunk".parse()?, earlier: true });
+    /// assert!(!OnOrigin::of_listed(listed, None)?.earlier);
+    /// // Only the branch of the item counts.
+    /// let other = "ref: refs/heads/main\tHEAD\n3c4d\trefs/heads/x/worktree-issue-12\n";
+    /// assert!(!OnOrigin::of_listed(other, Some(&branch))?.earlier);
+    /// assert!(OnOrigin::of_listed("3c4d\trefs/heads/worktree-issue-12\n", Some(&branch)).is_err());
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn of_listed(listed: &str, branch: Option<&Branch>) -> Result<OnOrigin> {
+        let item = branch.map(|b| format!("refs/heads/{b}"));
+        let mut base = None;
+        let mut earlier = false;
+        for line in listed.lines() {
+            match line.split_once('\t') {
+                Some((target, "HEAD")) => {
+                    base = target.strip_prefix("ref: refs/heads/").or(base);
+                }
+                Some((_, name)) => earlier |= item.as_deref() == Some(name),
+                None => {}
+            }
+        }
+        let base = base.ok_or_else(|| anyhow!("{}", text::ORIGIN_NO_DEFAULT))?;
+        Ok(OnOrigin {
+            base: base.parse()?,
+            earlier,
+        })
+    }
+}
+
+/// Asks `origin` of the main clone `main` with one `git ls-remote
+/// --symref`: its default branch, and with `branch`, whether it has the
+/// branch of the item (01M7G29PSP7X56X8E60A3KRV4V). The host makes no
+/// clone for it.
+pub fn on_origin(main: &Path, branch: Option<&Branch>) -> Result<OnOrigin> {
+    let remote = crate::host_git::output(main, &["remote", "get-url", "origin"])?;
+    let item = branch.map(|b| format!("refs/heads/{b}"));
+    let mut args = vec!["ls-remote", "--symref", "--", &remote, "HEAD"];
+    args.extend(item.as_deref());
+    OnOrigin::of_listed(&git_credential::run(main, &remote, &args)?, branch)
+}
+
 /// Before the start of a session of `riff run --no-github`: fetches the
 /// default branch `base`, and the branch `branch` of the item when the
 /// look on `origin` found it (`earlier`, [`earlier`]), from `origin` into
@@ -2569,16 +2636,16 @@ async fn work(
         crate::permissions::Role::Worker,
     )?;
     let branch: Branch = branch(item).parse()?;
-    let earlier = earlier(main, &branch)?;
+    // One look on `origin`: its default branch, and the branch of the item
+    // (01M7G29PSP7X56X8E60A3KRV4V).
+    let OnOrigin { base, earlier } = on_origin(main, Some(&branch))?;
     let repo = me.place().repo_text();
     let plan = Plan {
         path: clone,
         origin: Origin::github(&repo)?,
         main: common.to_owned(),
         refs: refs_in(&folder),
-        // The main clone has the `origin/HEAD` of the forge: its branch is
-        // the default branch (01M7EY3WM6XYQR3CXNMM6MFA5C).
-        base: crate::permissions::Project::of(main).branch.parse()?,
+        base,
         checkout: Checkout::Branch {
             name: branch.clone(),
             earlier,
@@ -3052,6 +3119,51 @@ mod tests {
         assert!(Opened::of(&out, limit).is_err());
     }
 
+    /// 01M7FDN9EWZ28AQS4CKJQD3A3B, 01M7FMJJDJN9Q5ZPA7ECTGK1MD: `riff run`
+    /// takes a bundle of version 3, and a bundle of exactly the limit:
+    /// here the limit is the size of the bundle. A limit of one byte less
+    /// refuses it at the open. A file that grows to exactly the limit
+    /// after the open gives the whole bundle.
+    #[test]
+    fn riff_run_takes_a_bundle_of_version_3_and_of_exactly_the_limit() {
+        use std::io::Write;
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path();
+        git(root, &["init", "-q", "-b", "main", "main"]);
+        git(root, &["init", "-q", "-b", "main", "other"]);
+        let (main, other) = (root.join("main"), root.join("other"));
+        let git_dir = main.join(".git");
+        git(&other, &["commit", "-q", "--allow-empty", "-m", "work"]);
+        let (out, copy) = (root.join("out.bundle"), root.join("copy.bundle"));
+        let at = out.to_string_lossy();
+        git(
+            &other,
+            &["bundle", "create", "-q", "--version=3", &at, "main"],
+        );
+        let bundle = std::fs::read(&out).unwrap();
+        assert!(bundle.starts_with(BUNDLE_HEADS[1]), "{bundle:?}");
+        let limit = u64::try_from(bundle.len()).unwrap();
+
+        let error = Opened::of(&out, limit - 1).err().unwrap();
+        assert_eq!(error.to_string(), text::run_bundle_too_large(limit - 1));
+        let opened = Opened::of(&out, limit).unwrap().unwrap();
+        assert_eq!(opened.take(&copy, &git_dir, limit).unwrap(), copy);
+        assert_eq!(std::fs::read(&copy).unwrap(), bundle);
+
+        let (last, start) = bundle.split_last().unwrap();
+        std::fs::write(&out, start).unwrap();
+        let opened = Opened::of(&out, limit).unwrap().unwrap();
+        let mut more = std::fs::OpenOptions::new().append(true).open(&out).unwrap();
+        more.write_all(&[*last]).unwrap();
+        assert_eq!(opened.take(&copy, &git_dir, limit).unwrap(), copy);
+        assert_eq!(std::fs::read(&copy).unwrap(), bundle);
+        git(&main, &["fetch", "-q", &copy.to_string_lossy(), "main"]);
+        assert_eq!(
+            git(&main, &["log", "-1", "--format=%s", "FETCH_HEAD"]),
+            "work"
+        );
+    }
+
     /// 01M7EY3WHQQP9330CZ736HK0FJ: after riff opened the bundle, the
     /// session puts a new file in its place, then a link to a file that
     /// the session must not give. The copy is the bundle that riff opened
@@ -3259,6 +3371,49 @@ mod tests {
         git(&main, &["push", "-q", "origin", "HEAD:worktree-issue-12"]);
         assert!(earlier(&main, &name("worktree-issue-12")).unwrap());
         assert_eq!(std::fs::read_dir(root).unwrap().count(), 2);
+    }
+
+    /// 01M7G29PSP7X56X8E60A3KRV4V: one `git ls-remote --symref` gives the
+    /// default branch of `origin` and the branch of the item. The default
+    /// branch moves on `origin` to `trunk`, and `origin/HEAD` of the main
+    /// clone stays on `main`: the host names `trunk`. When the `HEAD` of
+    /// `origin` names no branch, no session starts, and the error says why.
+    #[test]
+    fn the_host_asks_origin_for_its_default_branch() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path();
+        git(root, &["init", "-q", "--bare", "-b", "main", "origin.git"]);
+        git(root, &["clone", "-q", "origin.git", "main"]);
+        let (main, origin) = (root.join("main"), root.join("origin.git"));
+        git(&main, &["commit", "-q", "--allow-empty", "-m", "start"]);
+        git(&main, &["push", "-q", "origin", "HEAD:main"]);
+        git(&main, &["remote", "set-head", "origin", "main"]);
+        let item = name("worktree-issue-12");
+        let on = |base: &str, earlier| OnOrigin {
+            base: name(base),
+            earlier,
+        };
+        assert_eq!(on_origin(&main, Some(&item)).unwrap(), on("main", false));
+
+        git(
+            &main,
+            &[
+                "push",
+                "-q",
+                "origin",
+                "HEAD:trunk",
+                "HEAD:worktree-issue-12",
+            ],
+        );
+        git(&origin, &["symbolic-ref", "HEAD", "refs/heads/trunk"]);
+        assert_eq!(on_origin(&main, Some(&item)).unwrap(), on("trunk", true));
+        assert_eq!(on_origin(&main, None).unwrap(), on("trunk", false));
+        let stale = git(&main, &["symbolic-ref", "refs/remotes/origin/HEAD"]);
+        assert_eq!(stale, "refs/remotes/origin/main");
+
+        git(&origin, &["symbolic-ref", "HEAD", "refs/heads/gone"]);
+        let error = on_origin(&main, Some(&item)).unwrap_err();
+        assert_eq!(error.to_string(), text::ORIGIN_NO_DEFAULT);
     }
 
     /// #1858, 01M749XKWD72JYB3QD8RYNHKTV: a step of the host with a time

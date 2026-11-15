@@ -518,8 +518,21 @@ no write. Before `claude` starts, `riff relay` clones there:
    commit of its pull request. The lead gets the default branch.
 
 Each start point is explicit, so a setting of your `~/.gitconfig`, for
-example `checkout.guess = false`, changes no branch. When a step fails,
-`claude` does not start, and the log of the session names the step.
+example `checkout.guess = false`, changes no branch. The default
+branch is the default branch on GitHub: before each start, `riff run`
+and the lead ask `origin` for the branch of its `HEAD`, with `git
+ls-remote --symref`, and a wave reads it from GitHub at each look. So
+when you rename the default branch on GitHub, your clone needs no step.
+
+When a step fails, `claude` does not start, and the session ends. The
+relay prints one line that names the step. `riff run` shows it. For a
+session of a wave, the log of the riff daemon has the line, and `riff
+daemon events` shows it for 5 minutes after the end:
+
+```sh
+journalctl --user -u riff | grep 'the clone failed'
+riff daemon events riff-issue-12-1a2b3c4d
+```
 
 The volume is on the disk, and goes with the container.
 

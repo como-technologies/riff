@@ -8738,9 +8738,6 @@ of this part when they merge.
   This supersedes 01M6Z87JY83V3KR72E2AG8V8KG and
   01M4Z60B7QDWEFQ96H448RE9N2 in part: the clone and the command to push
   the branch, and the binds with write.
-- **01M7EY3WM6XYQR3CXNMM6MFA5C** riff run names the default branch in
-  the start text from origin/HEAD of the main clone. This supersedes
-  01M5QYBWPAJ219BE8QKVKG1TWW in part: the clone.
 - **01M7EY3WPK3D9HXVM3DHYH5EF0** The start text of a build says that the
   clone of the session goes with its container, and that only the
   commits that it pushes stay.
@@ -8771,6 +8768,13 @@ of this part when they merge.
   is cut or zeroed is refused. The main clone gets no object, and the
   folder of objects goes. This supersedes 01M7EY3WHQQP9330CZ736HK0FJ in
   part: git bundle verify.
+- **01M7G29PSP7X56X8E60A3KRV4V** riff run and the lead take the default
+  branch of a session from origin, with one git ls-remote --symref from
+  the main clone: the branch of the HEAD of origin, not origin/HEAD of
+  the main clone, which a rename of the default branch on GitHub does
+  not change. The start text and the plan of the clone name that branch.
+  When the HEAD of origin names no branch, no session starts, and the
+  error says why. This supersedes 01M7EY3WM6XYQR3CXNMM6MFA5C.
 - **01M7GCESN7RY3GW6ZPP9PBM87D** A job of the daemon keeps only the
   folder of its own session: each folder of its item that was not there
   at the start of the job, and the folder of the session that a new
@@ -8815,6 +8819,12 @@ of this part when they merge.
 - **01M4Z60B84FTGMXDZ1F52DC98C** riff keeps the MCP servers of the
   claude.ai account of the person in a session, as a plain `claude` has
   them.
+- **01M7G39RG8TC27717MMT20FTSW** The daemon keeps each note of the relay
+  in the output of the container of a session, a line that starts with
+  "riff relay: ", as a line of the session, and writes it to its log. So
+  riff daemon events NAME shows it, also after the end of the session.
+  When the clone of a session fails, the relay prints one such note that
+  names the step, and claude does not start.
 
 ### The home of the person
 

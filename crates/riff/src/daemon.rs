@@ -123,7 +123,7 @@
 //! | [`Ask::Status`] | [`Say::Status`] |
 //! | [`Ask::Ps`] | [`Say::Ps`]: the riff processes of the host and of each container ([`Daemon::ps`], [`crate::ps`]) |
 //! | [`Ask::Image`] | [`Say::Line`] for a pull, then [`Say::Done`] or [`Say::Failed`] |
-//! | [`Ask::Start`] | [`Say::Started`], each [`Say::Event`] and [`Say::Stderr`], then [`Say::Ended`] or [`Say::Failed`] |
+//! | [`Ask::Start`] | [`Say::Started`], each [`Say::Event`] and [`Say::Stderr`], and a [`Say::Line`] for each note of the relay ([`crate::session_relay::NOTE`]: the daemon keeps it, and writes it to its log), then [`Say::Ended`] or [`Say::Failed`] |
 //! | [`Ask::Follow`] | each [`Say::Event`] after a number, and each [`Say::Line`] of the daemon about the session in its place, then as [`Ask::Start`]. For a session that ended in the last [`KEEP_END`]: then [`Say::Ended`] |
 //! | [`Ask::Join`] | [`Say::Done`] when the daemon runs the wave and serves the repository, or [`Say::Failed`] |
 //! | [`Ask::Leave`] | [`Say::Line`] for each step, then [`Say::Done`] when the host had the part workers or a session to end, or [`Say::Failed`] ([`Daemon::leave_repo`]) |
@@ -380,8 +380,10 @@
 //!     R -- 3 faults --> E[leave, one line in chat: riff lead start]
 //! ```
 //!
-//! The new container has the same name, session, clone and Claude folder.
-//! `claude --resume` gives it the conversation back. Its first prompt
+//! The new container has the same name, session and Claude folder. Its
+//! relay makes a new clone at the same path (01M7EY51EMJ6ZEGNW7H852PEGR):
+//! only the commits that the lead pushed stay. `claude --resume` gives it
+//! the conversation back. Its first prompt
 //! ([`text::lead_again`]) tells the lead to start its Monitor again: the
 //! old one ended with the old container. The session of the lead on
 //! riff-server stays, and so does its place as the lead of the project.
@@ -3606,9 +3608,10 @@ impl<R: Runtime + 'static> Daemon<R> {
         Ok(())
     }
 
-    /// Starts the lead of `record` again: the same session, the same
-    /// clone and Claude folder, `claude --resume` of its conversation, and
-    /// the bind of the riff of this daemon (01M5TC2919TB9XPF42YFNJBP79).
+    /// Starts the lead of `record` again: the same session and Claude
+    /// folder, a new clone at the same path in the new container
+    /// (01M7EY51EMJ6ZEGNW7H852PEGR), `claude --resume` of its conversation,
+    /// and the bind of the riff of this daemon (01M5TC2919TB9XPF42YFNJBP79).
     ///
     /// ```mermaid
     /// sequenceDiagram
@@ -5804,14 +5807,22 @@ impl<R: Runtime + 'static> Daemon<R> {
             }
         };
         // The output of the container: the notes of the relay and the
-        // stderr of claude.
+        // stderr of claude. A note of the relay, for example the clone or
+        // why it failed, is a line of the session for a later follower,
+        // and a line of the log.
         for output in [running.events, running.errors] {
-            let (scrub, owned) = (scrub.clone(), owned.clone());
+            let (scrub, owned, name) = (scrub.clone(), owned.clone(), name.clone());
             tokio::spawn(async move {
                 let mut lines = BufReader::new(output).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
                     let line = scrub.clean(&line).into_owned();
-                    Owned::tell(&mut owned.lock(), &Say::Stderr { line });
+                    if line.starts_with(crate::session_relay::NOTE) {
+                        let line = text::safe(&line);
+                        println!("{}", text::daemon_relay_note(&name, &line));
+                        Owned::say_line(&mut owned.lock(), line);
+                    } else {
+                        Owned::tell(&mut owned.lock(), &Say::Stderr { line });
+                    }
                 }
             });
         }
@@ -8178,6 +8189,47 @@ mod tests {
         assert!(!socket.exists());
         assert!(!record_path(&here.dir, &name).exists());
         assert_eq!(here.fake.exit(&name), Some(Exit::SUCCESS));
+    }
+
+    /// #2139, 01M7G39RG8TC27717MMT20FTSW: a note of the relay in the output
+    /// of the container, here why the clone failed, is a line of the
+    /// session. The follower of the start gets it, and so does a follower
+    /// after the end, as `riff daemon events NAME` shows it. Each other
+    /// line of the output is a line of stderr, for the followers of now
+    /// only.
+    #[tokio::test]
+    async fn a_note_of_the_relay_is_a_line_of_the_session_also_after_its_end() {
+        let note = text::relay_clone_failed("git fetch -q --prune origin: fatal: no repo");
+        let output = [note.as_str(), "a note"];
+        let here = Here::new(Fake::default().with_image(IMAGE).with_events(output)).await;
+        let start = here.start("riff-issue-12-1a2b3c4d", "issue-12");
+        let (mut client, name) = here.started(start).await;
+        let line = Say::Line { text: note };
+        let mut said = Vec::new();
+        while !said.contains(&line) {
+            said.push(client.next().await.unwrap().unwrap());
+        }
+        let (mut relay, _) = Relay::connect(&session_dir(&here.dir, &name), 0, false).await;
+        assert!(matches!(relay.next().await, Say::Input { .. }));
+        relay.exit(1, 1).await;
+        let (rest, end) = to_the_end(&mut client).await;
+        said.extend(rest);
+        assert!(matches!(end, Some(Say::Ended(_))), "{end:?}");
+        let stderr = Say::Stderr {
+            line: "a note".into(),
+        };
+        assert!(said.contains(&stderr), "{said:?}");
+
+        let mut later = Client::connect(&here.dir).await.unwrap();
+        let follow = Ask::Follow {
+            name: name.clone(),
+            after: 0,
+        };
+        later.ask(follow).await.unwrap();
+        let (seen, end) = to_the_end(&mut later).await;
+        assert!(matches!(end, Some(Say::Ended(_))), "{end:?}");
+        assert!(seen.contains(&line), "{seen:?}");
+        assert!(!seen.contains(&stderr), "{seen:?}");
     }
 
     #[tokio::test]
@@ -11197,9 +11249,9 @@ mod tests {
         );
 
         // The new container: `claude --resume ID` of the same conversation
-        // in the same clone, and the bind of the new riff. This daemon has
-        // no riff-server: the lead gets no token, and the fix ends its
-        // prompt.
+        // at the same path of the clone, and the bind of the new riff. This
+        // daemon has no riff-server: the lead gets no token, and the fix
+        // ends its prompt.
         let spec = here.fake.spec(LEAD).unwrap();
         let session = record.live.session.as_str();
         let prompt = format!(

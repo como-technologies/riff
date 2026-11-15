@@ -27,8 +27,9 @@
 //!
 //! - the repository of the folder: its file [`REPO`], which the host
 //!   writes before the start ([`note_repo`], 01M7DZ42EVHAT8N5MZEV97G3DW).
-//!   The container sees only `claude/` of the folder, and `out/` with no
-//!   GitHub;
+//!   Of the folder, the container sees `claude/`, `out/` with no GitHub,
+//!   and the file `origin-refs` with no write
+//!   ([`crate::session_clone::REFS`]);
 //! - the fate on the forge: the pull requests of the branch of its item
 //!   on `origin`, and the state of its issue ([`World::fate`],
 //!   [`Fate::of`]);
@@ -61,7 +62,7 @@
 //!
 //! - the daemon has the record of the session;
 //! - a job of the daemon runs for the session of the folder, from before
-//!   the clone of its session to its last step after the end, which reads
+//!   the start of its session to its last step after the end, which reads
 //!   `events.jsonl` in the folder (`Daemon::in_job`,
 //!   01M53S7WDPQ2GWHJWJ6SZXZ5PN). The daemon has no record of the
 //!   session after its end. A job keeps each folder of its item that was
@@ -428,8 +429,9 @@ pub fn held(folder: &Path) -> bool {
 
 /// The file in the folder of a session that names its repository
 /// `OWNER/REPO` (01M7DZ42EVHAT8N5MZEV97G3DW). The host writes it before
-/// the start. The container sees only `claude/` of the folder, and `out/`
-/// with no GitHub, so no session writes it.
+/// the start. Of the folder, the container sees `claude/`, `out/` with no
+/// GitHub, and the file `origin-refs` with no write
+/// ([`crate::session_clone::REFS`]), so no session writes it.
 pub const REPO: &str = "repo";
 
 /// Writes the repository `repo` (`OWNER/REPO`) of the session of the
@@ -1049,8 +1051,9 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// (01M5P26VW5GBJDQZGEYW9A77Y0): it never removes a session that
     /// runs. The folder of an ended session of an item that runs again
     /// can go (01M7GCESN7RY3GW6ZPP9PBM87D). With no `force`, the pull
-    /// request of its work must have merged. The leftover work of the
-    /// clone goes with the folder.
+    /// request of its work must have merged. The work of a session is what
+    /// it pushed (#2139): a clone that an older riff left in the folder
+    /// goes with it.
     pub async fn remove_one(&self, name: &str, force: bool) -> Result<String> {
         let _one = self.folders.sweep.lock().await;
         let Some(item) = item_of_folder(name).filter(|_| !name.contains('/')) else {

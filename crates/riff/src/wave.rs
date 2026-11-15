@@ -35,12 +35,12 @@
 //!
 //! ```mermaid
 //! flowchart TD
-//!     A["wait for room (crate::room)"] --> S["sweep: the clone of each item whose work is over goes"]
+//!     A["wait for room (crate::room)"] --> S["sweep: the folder of each item whose work is over goes"]
 //!     S --> L["look: the pause, the claims, the holds,<br/>the free work of gh, the full check of each waiting pull request"]
 //!     L --> P{"pick"}
 //!     P -- "an item, and a fact of the host fails" --> W
 //!     P -- "no work" --> W["give the room back; wait for an end, a change of the plan,<br/>a wake of GitHub, LOOK_EVERY, IDLE_LOOK_EVERY or the safety look"] --> A
-//!     P -- "an item" --> J["a job: the wait before the claim, claim, clone, start,<br/>wait for the end, the steps after the end, release"]
+//!     P -- "an item" --> J["a job: the wait before the claim, claim, the plan of the clone, start,<br/>wait for the end, the steps after the end, release"]
 //!     J -.-> A
 //! ```
 //!
@@ -729,9 +729,10 @@
 //!
 //! A job does the steps of the host of `riff run` itself
 //! ([`crate::run`]), with the sign-in of the person on this machine: a
-//! new worker session on riff-server, the claim, the keep-alive,
-//! the clone, the start text, and the start of the container in the
-//! room that the loop took. The [`Record`] of the session holds the
+//! new worker session on riff-server, the claim, the keep-alive, the
+//! plan of the clone ([`crate::session_clone`]: the host makes no clone),
+//! the start text, and the start of the container in the room that the
+//! loop took. The [`Record`] of the session holds the
 //! [`Job`], so a new daemon goes on with the keep-alive and does the
 //! steps after the end ([`crate::daemon::Daemon::recover`]).
 //!
@@ -2200,8 +2201,8 @@ pub trait World: Send + Sync {
         Box::pin(async { true })
     }
 
-    /// The steps before the start: the checks, the claim, the clone and
-    /// the start text. `None` when another session holds the item, or
+    /// The steps before the start: the checks, the claim, the plan of the
+    /// clone and the start text. `None` when another session holds the item, or
     /// the item is held. Each other refusal of the claim, for example
     /// `paused`, is the error ([`api::Refusal`]), and the new session
     /// ends. After the claim, an error releases the item.

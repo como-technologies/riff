@@ -7982,6 +7982,13 @@ pub fn run_bundle_too_large(limit: u64) -> String {
     )
 }
 
+/// The `HEAD` of `origin` names no branch, for example on an empty
+/// repository: riff knows no default branch, and starts no session
+/// ([`crate::run::on_origin`], 01M7G29PSP7X56X8E60A3KRV4V).
+pub const ORIGIN_NO_DEFAULT: &str = "The HEAD of origin names no branch, so riff knows no \
+     default branch of the repository, and starts no session. Push the default branch to \
+     origin, then start again.";
+
 /// `riff run --no-github` in a container (01M6Z87JY83V3KR72E2AG8V8KG):
 /// there the daemon runs the item as a job of the wave.
 pub const RUN_NO_GITHUB_ON_HOST: &str = "riff run --no-github works only on the host. In a \
@@ -8699,6 +8706,47 @@ pub fn relay_cloned(plan: &crate::session_clone::Plan, fetched: bool) -> String 
     } else {
         format!("riff relay: cloned {main} into {path}, with no fetch of {origin}, {on}.")
     }
+}
+
+/// The note of the relay when the clone of the session failed for the
+/// reason `why`, with the step that failed
+/// ([`crate::session_relay::clone_here`]): one line, so the daemon keeps
+/// all of it ([`crate::session_relay::NOTE`]).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::relay_clone_failed("git fetch -q --prune origin: fatal: no repo\nfatal: again"),
+///     "riff relay: the clone failed, so claude did not start: \
+///      git fetch -q --prune origin: fatal: no repo fatal: again"
+/// );
+/// ```
+pub fn relay_clone_failed(why: &str) -> String {
+    let why: Vec<&str> = why
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    format!(
+        "riff relay: the clone failed, so claude did not start: {}",
+        why.join(" ")
+    )
+}
+
+/// The error of the relay after [`relay_clone_failed`]: the note before
+/// it names the step.
+pub const RELAY_NO_CLONE: &str = "the clone of the session failed, so claude did not start";
+
+/// The line of the log of the daemon for the note `note` of the relay of
+/// the session in the container `name` ([`crate::session_relay::NOTE`]).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::daemon_relay_note("riff-issue-12-1a2b3c4d", "riff relay: cloned."),
+///     "riff daemon: riff-issue-12-1a2b3c4d: riff relay: cloned."
+/// );
+/// ```
+pub fn daemon_relay_note(name: &str, note: &str) -> String {
+    format!("riff daemon: {name}: {note}")
 }
 
 /// `riff relay` wrote the commits of a session with no GitHub in the

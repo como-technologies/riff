@@ -50,7 +50,9 @@
 //! Before it starts `claude`, also with a terminal, the relay makes the
 //! clone of the session in its container from the plan in
 //! [`crate::session_clone::VAR`] ([`clone_here`], #2139). When the clone
-//! fails, `claude` does not start, and the relay ends with the error.
+//! fails, `claude` does not start: the relay prints the note
+//! [`text::relay_clone_failed`], which names the step, and ends with an
+//! error. The daemon keeps each note of the relay ([`NOTE`]).
 //! `claude` does not get the variable. For a session with no GitHub, the
 //! end of `claude` comes after the bundle of its branch
 //! ([`crate::session_clone::Plan::bundle`]): so the bundle is there when
@@ -862,20 +864,37 @@ fn bundle_after(plan: &crate::session_clone::Plan, code: Option<i32>) -> Option<
     }
 }
 
+/// The start of each note of the relay on stderr, for example the line
+/// of the clone ([`crate::text::relay_cloned`]). The daemon keeps each
+/// such line of a session for a later follower, and writes it to its
+/// log (01M7G39RG8TC27717MMT20FTSW): so `riff daemon events NAME` shows
+/// why a clone failed, also after the end of the session.
+pub const NOTE: &str = "riff relay: ";
+
 /// Makes the clone of this session in its container from the plan in
 /// [`crate::session_clone::VAR`], and prints its line on stderr
 /// ([`crate::session_clone::Plan::make_line`], #2139). It gives the
 /// plan, or `None` with no plan. Both paths of the relay call it before
 /// `claude` starts: [`main`] and [`terminal`]. The relay of a takeover
-/// finds the clone there.
+/// finds the clone there. When the clone fails, it prints the note
+/// [`crate::text::relay_clone_failed`], which names the step, and the
+/// error is [`crate::text::RELAY_NO_CLONE`].
 pub fn clone_here() -> Result<Option<crate::session_clone::Plan>> {
     let Some(plan) = crate::session_clone::Plan::here()? else {
         return Ok(None);
     };
-    if let Some(line) = plan.make_line()? {
-        eprintln!("{line}");
+    match plan.make_line() {
+        Ok(line) => {
+            if let Some(line) = line {
+                eprintln!("{line}");
+            }
+            Ok(Some(plan))
+        }
+        Err(e) => {
+            eprintln!("{}", text::relay_clone_failed(&format!("{e:#}")));
+            Err(anyhow!("{}", text::RELAY_NO_CLONE))
+        }
     }
-    Ok(Some(plan))
 }
 
 /// `riff relay -- COMMAND`: starts `COMMAND` with the riff tools, and

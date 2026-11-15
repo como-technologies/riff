@@ -2336,6 +2336,10 @@ page [Requirements](requirements.md) holds the rules of today.
   that stays because of its clone, with the reason. The log of the
   daemon gets that line one time, and again when the reason changes.
   Superseded by 01M7DZ4E02PX5Y0WMHFCJ9KS14.
+- **01M7EY3WM6XYQR3CXNMM6MFA5C** riff run names the default branch in
+  the start text from origin/HEAD of the main clone. This supersedes
+  01M5QYBWPAJ219BE8QKVKG1TWW in part: the clone. Superseded by
+  01M7G29PSP7X56X8E60A3KRV4V.
 
 ### Data and peers
 

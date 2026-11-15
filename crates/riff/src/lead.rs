@@ -32,7 +32,7 @@
 //! | Part | Value | Requirement |
 //! |---|---|---|
 //! | The container | `riff-lead-OWNER-REPO` ([`name_of`]): one lead for each repository | 01M4Z60B81RTZT71PN5HV0GZHX, 01M501P9MXNAP5QXNVBVF5JJFN |
-//! | The folder | `leads/OWNER-REPO` in the data folder of riff ([`folder_of`]): `claude/`. The clone of the lead is at `clone/` in its container only | 01M501P9Q51AYN9GBPWKVHA229, 01M7EY51EMJ6ZEGNW7H852PEGR |
+//! | The folder | `leads/OWNER-REPO` in the data folder of riff ([`folder_of`]): `claude/`, and the file `origin-refs` of the branches of `origin` of the main clone, which the host writes before each start of the container (`facts`, [`crate::session_clone::write_refs`]). The clone of the lead is at `clone/` in its container only | 01M501P9Q51AYN9GBPWKVHA229, 01M7EY51EMJ6ZEGNW7H852PEGR |
 //! | The start | one start of the lead at a time on the host: each start holds the lock `start.lock` in the folder of the lead ([`start_lock`]), and under the lock a start that finds the lead running starts nothing ([`one_start`]) | 01M77Y2BG12SEVF4ZEZ673QBFZ |
 //! | The cause | each start gives the daemon its cause ([`LeadCause`], #2099): the lead loop ([`claim_start`]), `riff lead move` and who ran it ([`take`]), and in the daemon the start of the daemon, a fault and an update (`Daemon::lead_back`, `Daemon::leads_again`). The daemon writes the cause in the line of the start in its log ([`text::lead_starts`]), and keeps it in the record of the lead for `riff daemon status` | 01M7BNP4ZYJCCEK7ZHCJ3EX3SJ |
 //! | The clone | in the container, as for each session ([`crate::session_clone`], 01M7EY3P0Q8TQF5QRTRDWCYCTQ): a new clone of the git dir of the main clone, on the default branch of `origin`, at each start of the container, also at a start again, and no clone of the host. With no token of an App, the clone fetches nothing from GitHub, and the lead starts from the main clone. At each start of a new lead, the clone that an older riff made on the host, `clone/` in the folder of the lead, goes with no git ([`remove_host_clone`]): the guard of the host refuses git in the folder of the leads ([`crate::host_git`]). When it cannot move aside, the new lead does not start. Each old clone goes as the person, then with `podman unshare` ([`crate::compile_cache::remove`]); an old clone that stays stops no start: one line in the log, and the sweep of the daemon removes it later ([`sweep_old_clones`]) | 01M501P9Q51AYN9GBPWKVHA229, 01M7EY51EMJ6ZEGNW7H852PEGR, 01M7E7ACTYP4RX8TCJ9XSYMMPM, 01M7EBBVE6WYKT5JDVASFCYPQQ, 01M7FTWWAJB8B09S89VY8XA8RQ |
@@ -203,7 +203,8 @@ pub fn spec(facts: &Facts, repo: &str, start: &str) -> SessionSpec {
 ///     ["claude", "--model", "opus", "--resume", facts.session.as_str(), "--dangerously-skip-permissions"]
 /// );
 /// assert!(!spec.command.iter().any(|a| a == "--session-id"));
-/// // The same clone and the same Claude folder: `claude` finds the conversation.
+/// // The same path of the clone, a new clone there, and the same Claude
+/// // folder: `claude` finds the conversation.
 /// assert_eq!(spec.workdir, facts.plan.path);
 /// ```
 pub fn spec_again(facts: &Facts, repo: &str, start: &str) -> SessionSpec {
@@ -1188,9 +1189,9 @@ impl Parts<'_> {
 /// clone, its git dir `common`, in the folder of the lead
 /// ([`crate::session_clone::write_refs`]). It gives the facts of the
 /// spec ([`spec`], [`spec_again`]): the clone of the lead on the default
-/// branch, the branch of `origin/HEAD` of the main clone
-/// (01M7EY51EMJ6ZEGNW7H852PEGR), with the image and the setup of
-/// `merged`, and the facts of the host `host`.
+/// branch (01M7EY51EMJ6ZEGNW7H852PEGR), the branch of the `HEAD` of
+/// `origin` ([`run::on_origin`], 01M7G29PSP7X56X8E60A3KRV4V), with the
+/// image and the setup of `merged`, and the facts of the host `host`.
 pub(crate) fn facts(
     repo: &str,
     host: &run::Host,
@@ -1199,6 +1200,7 @@ pub(crate) fn facts(
     common: &Path,
     session: &str,
 ) -> Result<Facts> {
+    let base = run::on_origin(common, None)?.base;
     crate::session_clone::write_refs(common, folder)?;
     let existing = |p: PathBuf| p.exists().then_some(p);
     Ok(Facts {
@@ -1212,7 +1214,7 @@ pub(crate) fn facts(
             origin: crate::session_clone::Origin::github(repo)?,
             main: common.to_owned(),
             refs: run::refs_in(folder),
-            base: crate::permissions::Project::of(common).branch.parse()?,
+            base,
             checkout: crate::session_clone::Checkout::Default,
         },
         claude: run::claude_in(folder),
@@ -1281,12 +1283,13 @@ impl std::fmt::Display for NoMain {
 impl std::error::Error for NoMain {}
 
 /// The [`daemon::Start`] of the lead of `record` for a start again on the
-/// riff of this daemon (01M5TC2919TB9XPF42YFNJBP79): the same session, the
-/// same clone and the same Claude folder, and `claude --resume ID`
+/// riff of this daemon (01M5TC2919TB9XPF42YFNJBP79): the same session and
+/// the same Claude folder, a new clone at the same path in the new
+/// container (01M7EY51EMJ6ZEGNW7H852PEGR), and `claude --resume ID`
 /// ([`spec_again`]) with the first prompt [`text::lead_again`]. The
 /// host facts, the image and the setup are those of now, as for a new
-/// lead. It makes no clone and no new session on riff-server. It reads
-/// the host, so call it off the async threads.
+/// lead. The host makes no clone and no new session on riff-server. It
+/// reads the host, so call it off the async threads.
 ///
 /// `main` is the main clone of the repository of the lead in the records
 /// of the daemon ([`main_of`], 01M7EAZ9N9DY7JPXZP1V8JY01E): that of its
@@ -2462,14 +2465,16 @@ mod tests {
         assert!(swept[0].1.is_ok() && !old.exists());
     }
 
-    /// 01M7EY51EMJ6ZEGNW7H852PEGR: the default branch of the repository is
-    /// `master`. The facts of the start of the lead take the base from
-    /// `origin/HEAD` of the git dir of the main clone, and the host writes
-    /// the list of the branches of `origin` in the folder of the lead
-    /// (01M7FMJJB0TZM8875T7GQZAJEA). The clone of the plan of the spec of
-    /// the lead is on `master`, with its upstream.
+    /// 01M7EY51EMJ6ZEGNW7H852PEGR, 01M7G29PSP7X56X8E60A3KRV4V: the default
+    /// branch of the repository moved from `master` to `trunk` on `origin`
+    /// after the main clone, so `origin/HEAD` of the main clone still names
+    /// `master`. The facts of the start of the lead take the base from the
+    /// `HEAD` of `origin`, and the host writes the list of the branches of
+    /// `origin` in the folder of the lead (01M7FMJJB0TZM8875T7GQZAJEA). The
+    /// clone of the plan of the spec of the lead is on `trunk`, with its
+    /// upstream.
     #[test]
-    fn the_lead_of_a_repository_on_master_clones_on_master() {
+    fn the_lead_clones_on_the_default_branch_of_origin_after_a_rename() {
         let git = |dir: &Path, args: &[&str]| {
             let out = std::process::Command::new("git")
                 .args(["-c", "user.name=t", "-c", "user.email=t@t"])
@@ -2494,6 +2499,14 @@ mod tests {
         let url = format!("file://{}", root.join("origin.git").display());
         git(&seed, &["push", "-q", &url, "master"]);
         git(root, &["clone", "-q", "--", &url, "main"]);
+        let origin = root.join("origin.git");
+        git(&origin, &["branch", "-m", "master", "trunk"]);
+        git(&root.join("main"), &["fetch", "-q", "origin"]);
+        let stale = git(
+            &root.join("main"),
+            &["rev-parse", "--abbrev-ref", "origin/HEAD"],
+        );
+        assert_eq!(stale, "origin/master");
         let host = run::Host {
             home: "/home/mike".into(),
             user: "mike".into(),
@@ -2511,15 +2524,15 @@ mod tests {
         let common = root.join("main/.git");
         let facts = facts("o/r", &host, &merged, &folder, &common, session).unwrap();
         let plan = crate::session_clone::Plan::of_spec(&spec(&facts, "o/r", "Start.")).unwrap();
-        assert_eq!(plan.base.as_str(), "master");
+        assert_eq!(plan.base.as_str(), "trunk");
         assert_eq!(plan.checkout, crate::session_clone::Checkout::Default);
         assert_eq!(plan.refs, run::refs_in(&folder));
         assert!(plan.refs.is_file());
         plan.make(false).unwrap();
-        assert_eq!(git(&plan.path, &["branch", "--show-current"]), "master");
+        assert_eq!(git(&plan.path, &["branch", "--show-current"]), "trunk");
         assert_eq!(
             git(&plan.path, &["rev-parse", "--abbrev-ref", "@{upstream}"]),
-            "origin/master"
+            "origin/trunk"
         );
     }
 }

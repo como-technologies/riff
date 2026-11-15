@@ -2159,12 +2159,12 @@ riff run issue-12 --no-github
 
 The daemon asks riff-server for no token. The container gets no
 `GH_TOKEN` and no `hosts.yml`, so `gh`, `git fetch` and `git push` do
-not work there. The clone of the session fetches nothing from GitHub:
-it starts from your clone. So `--no-github` works on a private
-repository too. Before the start, `riff run` fetches the default
-branch from `origin` into your clone, with your git. When an earlier
-session pushed the branch of the item, it fetches that branch too, and
-the session goes on from it. The start text holds the body of the
+not work there. For the clone of such a session, see
+[Where the clone of a session lives](how-it-works.md#where-the-clone-of-a-session-lives).
+Before the start, `riff run` fetches the default branch from `origin`
+into your clone, with your git. When an earlier session pushed the
+branch of the item, it fetches that branch too, and the session goes
+on from it. The start text holds the body of the
 issue. The session commits on its branch, and pushes nothing. `riff
 whoami` in the session shows `github   none`. Its clone goes with its
 container, so when `claude` ends, `riff relay` writes the commits of
@@ -2293,8 +2293,11 @@ riff run stopped at a signal. It did not send the verify request, the release, t
 The folder of the session is
 `~/.local/share/riff/sessions/ITEM-ID8`. It holds the Claude folder of
 the session and its `events.jsonl`, with each event and no secret: the
-daemon writes it. With `--no-github`, it also holds `out/` and the copy
-of the bundle. The clone of the session is in its container only: see
+daemon writes it. It holds the file `repo`, with the repository of the
+session, and `origin-refs`, with the branches of `origin` of your clone
+at the start: riff writes both before the start. With `--no-github`, it
+also holds `out/` and the copy of the bundle. The clone of the session
+is in its container only: see
 [Where the clone of a session lives](how-it-works.md#where-the-clone-of-a-session-lives).
 The folder stays until the work of the branch is over.
 Then the daemon removes the folder: see
@@ -5260,10 +5263,9 @@ The lead clones in its container, as each session does: see
 [Where the clone of a session lives](how-it-works.md#where-the-clone-of-a-session-lives).
 At each start of its container, the lead gets a new clone on the
 default branch of `origin`: at a new lead, and at a start again after
-`riff update` or after `/exit`. With no token of an App, the clone
-starts from the main clone, and fetches nothing from GitHub. A change
-that the lead did not push goes with its container: tell the lead to
-push each change that you want to keep.
+`riff update` or after `/exit`. A change that the lead did not push
+goes with its container: tell the lead to push each change that you
+want to keep.
 
 ```mermaid
 flowchart TD
@@ -5275,7 +5277,9 @@ flowchart TD
 
 An older riff made the clone of the lead on your machine, at
 `leads/OWNER-REPO/clone`. The start of a new lead removes it, with each
-change in it, and runs no git in it.
+change in it, and runs no git in it. First the old clone moves to the
+name `old-clone` in the folder of the lead. When it cannot move, the
+new lead does not start, and riff says why. The error names the move.
 
 ##### When the old clone cannot go
 

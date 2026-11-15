@@ -1985,26 +1985,22 @@ async fn riff_run_refuses_a_bundle_that_does_not_unbundle_and_ends_with_1() {
 }
 
 /// 01M7FDN99KZE54CX17DDEP787V: the fetch of the main clone before a
-/// session of `riff run --no-github` fails: `origin/HEAD` of the main
-/// clone names a branch that `origin` does not have. `riff run` starts no
-/// container, the error names the fetch, and the item is free again.
+/// session of `riff run --no-github` fails: `origin` has a newer commit of
+/// `main`, and the main clone has the lock file of `origin/main`, as when
+/// another git writes the ref, so git cannot write `origin/main`. `riff
+/// run` starts no container, the error names the fetch, and the item is
+/// free again.
 #[tokio::test]
 async fn a_fetch_for_no_github_that_fails_starts_no_container() {
     let machine = Machine::new().await;
     machine.lead().await;
     let main = &machine.main;
-    git(
-        main,
-        &["update-ref", "refs/remotes/origin/gone", "origin/main"],
-    );
-    git(
-        main,
-        &[
-            "symbolic-ref",
-            "refs/remotes/origin/HEAD",
-            "refs/remotes/origin/gone",
-        ],
-    );
+    let url = git(main, &["remote", "get-url", "origin"]);
+    git(main, &["commit", "-q", "--allow-empty", "-m", "newer"]);
+    git(main, &["push", "-q", &url, "HEAD:main"]);
+    let lock = main.join(".git/refs/remotes/origin/main.lock");
+    std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
+    std::fs::write(&lock, "").unwrap();
 
     let out = machine
         .run(None, &["run", "issue-12", "--image", IMAGE, "--no-github"])
@@ -2012,7 +2008,7 @@ async fn a_fetch_for_no_github_that_fails_starts_no_container() {
     let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
     assert!(!out.status.success(), "{stdout}\n{stderr}");
     assert!(stderr.contains("fetch"), "{stderr}");
-    assert!(stderr.contains("gone"), "{stderr}");
+    assert!(stderr.contains("main.lock"), "{stderr}");
     assert!(!machine.bin.path().join("run.args").exists());
     machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
 }
@@ -4517,15 +4513,24 @@ async fn a_default_branch_that_does_not_read_starts_no_work_and_the_next_look_re
     }
 }
 
-/// 01M7EY3WM6XYQR3CXNMM6MFA5C: `riff run` names the default branch from
-/// `origin/HEAD` of the main clone, here `master`: the host has no clone
-/// of the session to read it from.
+/// 01M7G29PSP7X56X8E60A3KRV4V: `riff run` names the default branch of
+/// `origin`, the branch of its `HEAD`, here `master`. The default branch
+/// moved from `main` on `origin` after the clone, so `origin/HEAD` of the
+/// main clone still names `main`: riff does not read it.
 #[tokio::test]
-async fn riff_run_names_the_default_branch_of_the_main_clone() {
+async fn riff_run_names_the_default_branch_of_origin() {
     let machine = Machine::new().await;
     machine.lead().await;
     git(&machine.main, &["push", "-q", "origin", "HEAD:master"]);
-    git(&machine.main, &["remote", "set-head", "origin", "master"]);
+    let url = git(&machine.main, &["remote", "get-url", "origin"]);
+    git(
+        Path::new(&url),
+        &["symbolic-ref", "HEAD", "refs/heads/master"],
+    );
+    assert_eq!(
+        git(&machine.main, &["symbolic-ref", "refs/remotes/origin/HEAD"]),
+        "refs/remotes/origin/main"
+    );
 
     let out = machine
         .run(None, &["run", "issue-12", "--image", IMAGE])
