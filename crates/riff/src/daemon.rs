@@ -6009,7 +6009,10 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// waits for `gh`, and never fails by the report
     /// (01M3Y1YP39VFX6GH33H7B8A8KR). The comment goes as the daemon
     /// ([`gh_token::writer`], 01M6XZJFE2ZTR5RE3AWM30R704). The line of the
-    /// report goes to the log of the daemon.
+    /// report goes to the log of the daemon. A folder `projects` that riff
+    /// does not list counts no tokens: the line of
+    /// [`text::transcript_skipped`] goes to the log
+    /// (01M7FNTSHXPQXXKZF761V0NN9Z).
     fn count_tokens(&self, record: &Record) {
         let Some(thread) = record.me.default_thread().map(|t| t.to_string()) else {
             return;
@@ -6019,6 +6022,14 @@ impl<R: Runtime + 'static> Daemon<R> {
         };
         let live = record.live.clone();
         let transcripts = usage::transcripts_in(&record.folder.join("claude"), &live.session);
+        let transcripts = match transcripts {
+            Ok(transcripts) => transcripts,
+            Err(e) => {
+                let line = text::transcript_skipped(&format!("{e:#}"));
+                println!("riff daemon: {}: {line}", live.name);
+                return;
+            }
+        };
         let claim = (thread.as_str(), live.item.as_str());
         let from_ms = u64::try_from(live.since_ms).unwrap_or(0);
         let Some(ended) =

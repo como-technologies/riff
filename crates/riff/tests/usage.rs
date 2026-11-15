@@ -597,7 +597,7 @@ async fn usage_shows_the_claim_of_a_container_session_with_its_session() {
         dir: marks.path().to_owned(),
         gh: Gh::at(machine.bin.path().join("gh")),
     };
-    let transcripts = riff::usage::transcripts_in(&folder.path().join("claude"), session);
+    let transcripts = riff::usage::transcripts_in(&folder.path().join("claude"), session).unwrap();
     let start = riff::usage::now_ms() - 60_000;
     let claim = ("como-technologies/riff", "verify-issue-12");
     let ended = meter.session_ended(session, claim, start, &transcripts, start + 120_000);
@@ -621,10 +621,27 @@ async fn usage_shows_the_claim_of_a_container_session_with_its_session() {
     );
 }
 
+/// 2026-10-02 09:00 UTC, in milliseconds since the epoch.
+const NINE_MS: u64 = 1_790_931_600_000;
+
+/// A time 30 s after [`NINE_MS`], as a transcript has it.
+const NINE_THIRTY: &str = "2026-10-02T09:00:30.000Z";
+
+/// Makes the transcript `path` one byte over the limit of riff: its
+/// lines stay, and a sparse end of zeros comes after them.
+fn over_the_limit(path: &Path) {
+    std::fs::File::options()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_len(riff::usage::MAX_TRANSCRIPT + 1)
+        .unwrap();
+}
+
 /// 01M7FNTSHXPQXXKZF761V0NN9Z: a container session makes its transcript
-/// a sparse file of 64 GiB. At the end of the session, the daemon reads
-/// none of it and goes on: the claim counts the transcript of its
-/// helper agent.
+/// one byte larger than the limit, with a reply at its start. At the end
+/// of the session, the daemon counts no tokens of it and goes on: the
+/// claim counts the transcript of its helper agent.
 #[test]
 fn the_end_of_a_container_session_skips_a_transcript_over_the_limit() {
     let (folder, marks) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
@@ -633,26 +650,48 @@ fn the_end_of_a_container_session_skips_a_transcript_over_the_limit() {
     let helpers = project.join(session).join("subagents");
     std::fs::create_dir_all(&helpers).unwrap();
     let main = project.join(format!("{session}.jsonl"));
-    std::fs::File::create(&main)
-        .unwrap()
-        .set_len(64 << 30)
-        .unwrap();
+    let line = reply(NINE_THIRTY, "m1", OPUS, [9, 90, 900, 9000]);
+    std::fs::write(&main, format!("{line}\n")).unwrap();
+    over_the_limit(&main);
     std::fs::write(
         helpers.join("agent-a.jsonl"),
-        reply(&now(), "h1", OPUS, [1, 20, 300, 4000]),
+        reply(NINE_THIRTY, "h1", OPUS, [1, 20, 300, 4000]),
     )
     .unwrap();
     let meter = Meter {
         dir: marks.path().to_owned(),
         gh: Gh::at(marks.path().join("no-gh")),
     };
-    let transcripts = riff::usage::transcripts_in(&folder.path().join("claude"), session);
+    let transcripts = riff::usage::transcripts_in(&folder.path().join("claude"), session).unwrap();
     assert_eq!(transcripts, std::slice::from_ref(&main));
-    let start = riff::usage::now_ms() - 60_000;
     let claim = ("como-technologies/riff", "issue-12");
-    let ended = meter.session_ended(session, claim, start, &transcripts, start + 120_000);
+    let ended = meter.session_ended(session, claim, NINE_MS, &transcripts, NINE_MS + 60_000);
     let claim = ended.expect("a transcript").unwrap();
     assert_eq!(riff::usage::total(&claim.models).total(), 4321);
+}
+
+/// 01M7FNTSHXPQXXKZF761V0NN9Z: a transcript of this machine grows one
+/// byte over the limit. `riff usage` counts no tokens of it, and the line
+/// on stderr names it.
+#[tokio::test]
+async fn usage_counts_no_tokens_of_a_transcript_over_the_limit_and_names_it() {
+    let machine = Machine::new().await;
+    machine.start("s1").await;
+    machine.says("s1", &[reply(NINE_THIRTY, "m1", OPUS, [1, 20, 300, 4000])]);
+    let shown = machine.ok("s1", &["usage"]).await;
+    assert!(shown.starts_with("session s1: 4,321 tokens"), "{shown}");
+
+    let transcript = machine.transcript("s1");
+    over_the_limit(&transcript);
+    let out = machine.run("s1", &["usage"]).await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let shown = text(&out.stdout);
+    assert!(shown.starts_with("session s1: 0 tokens"), "{shown}");
+    let line = riff::text::transcript_skipped(&riff::text::host_file_too_large(
+        &transcript,
+        riff::usage::MAX_TRANSCRIPT,
+    ));
+    assert_eq!(text(&out.stderr).lines().collect::<Vec<_>>(), [line]);
 }
 
 /// Makes the fake `gh` of `machine` also know pull request 40 of the

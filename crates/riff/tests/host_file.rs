@@ -143,28 +143,32 @@ fn a_fifo_in_the_claude_folder_gives_an_error_at_once() {
     assert_eq!(format!("{error:#}"), riff::text::host_file_not_plain(&fifo));
 }
 
+/// The inode of the file `path`: [`riff::host_file::write`] makes a new
+/// file at each write.
+fn inode(path: &Path) -> u64 {
+    std::os::unix::fs::MetadataExt::ino(&std::fs::metadata(path).unwrap())
+}
+
 /// A sparse file of 64 GiB in the place of `.claude.json` or of
 /// `settings.json` (01M7FNTSHXPQXXKZF761V0NN9Z): the start reads none of
-/// it, gives an error that names it at once, and writes nothing. With the
+/// it, gives an error that names it at once, and writes no file. With the
 /// file gone, the next start writes the folder.
 #[test]
 fn a_sparse_config_over_the_limit_gives_an_error_that_names_it() {
-    for name in [".claude.json", "settings.json"] {
+    for (name, other) in [
+        (".claude.json", "settings.json"),
+        ("settings.json", ".claude.json"),
+    ] {
         let root = tempfile::tempdir().unwrap();
         let hostile = hostile(root.path(), &[]);
         let claude = &hostile.claude;
         claude_folder(claude).unwrap();
-        let big = claude.join(name);
+        let (big, other) = (claude.join(name), claude.join(other));
         std::fs::File::create(&big)
             .unwrap()
             .set_len(64 << 30)
             .unwrap();
-        let other = if name == "settings.json" {
-            ".claude.json"
-        } else {
-            "settings.json"
-        };
-        let before = std::fs::read(claude.join(other)).unwrap();
+        let before = inode(&other);
         let error = claude_folder(claude).unwrap_err();
         assert_eq!(
             format!("{error:#}"),
@@ -172,27 +176,14 @@ fn a_sparse_config_over_the_limit_gives_an_error_that_names_it() {
             "{name}"
         );
         assert_eq!(std::fs::metadata(&big).unwrap().len(), 64 << 30, "{name}");
-        assert!(!claude.join(format!("{name}.riff")).exists(), "{name}");
+        assert_eq!(inode(&other), before, "riff wrote {}", other.display());
         std::fs::remove_file(&big).unwrap();
         claude_folder(claude).unwrap();
         assert!(std::fs::metadata(&big).unwrap().len() < 1 << 20, "{name}");
-        if name == ".claude.json" {
-            assert_eq!(std::fs::read(claude.join(other)).unwrap(), before);
-        }
+        let config: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(claude.join(".claude.json")).unwrap()).unwrap();
+        assert_eq!(config["hasCompletedOnboarding"], true, "{name}");
     }
-}
-
-/// The text of the how-to with the heading `heading` in `page`, up to the
-/// next heading of its level or above.
-fn how_to<'a>(page: &'a str, heading: &str) -> &'a str {
-    let start = page.find(heading).expect("the how-to is in the book");
-    let rest = &page[start + heading.len()..];
-    let end = ["\n### ", "\n#### "]
-        .iter()
-        .filter_map(|next| rest.find(next))
-        .min()
-        .unwrap_or(rest.len());
-    &rest[..end]
 }
 
 /// The how-to "When a session makes a large file in its folder" in the
@@ -202,8 +193,8 @@ fn how_to<'a>(page: &'a str, heading: &str) -> &'a str {
 #[test]
 fn the_book_says_what_to_do_with_a_large_file_in_the_folder_of_the_lead() {
     let page = crate::book::page("how-it-works.md");
-    let how_to = how_to(
-        &page,
+    let how_to = &crate::book::how_to(
+        "how-it-works.md",
         "#### When a session makes a large file in its folder",
     );
     let error = riff::text::host_file_too_large(
@@ -249,7 +240,10 @@ fn the_book_says_what_to_do_with_a_large_file_in_the_folder_of_the_lead() {
 #[test]
 fn the_book_says_what_to_do_with_a_link_in_the_folder_of_the_lead() {
     let page = crate::book::page("how-it-works.md");
-    let how_to = how_to(&page, "#### When a session puts a link in its folder");
+    let how_to = &crate::book::how_to(
+        "how-it-works.md",
+        "#### When a session puts a link in its folder",
+    );
     let error = riff::text::host_file_link(Path::new(
         "/home/mike/.local/share/riff/leads/acme-app/claude/settings.json",
     ));
@@ -267,9 +261,7 @@ fn the_book_says_what_to_do_with_a_link_in_the_folder_of_the_lead() {
             "rm ~/.local/share/riff/leads/OWNER-REPO/claude/settings.json",
         ]
     );
-    let heading = "#### When the lead fails to start";
-    let rest = &page[page.find(heading).expect("the wait is in the book") + heading.len()..];
-    let wait = &rest[..rest.find("\n### ").unwrap_or(rest.len())];
+    let wait = &crate::book::how_to("how-it-works.md", "#### When the lead fails to start");
     assert_eq!(
         crate::book::commands_in(wait).last().map(String::as_str),
         Some("systemctl --user restart riff"),

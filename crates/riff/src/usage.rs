@@ -395,8 +395,9 @@ impl Replies {
     }
 
     /// The replies of each transcript of `paths`, and of the helper
-    /// agents of each one. A file that is not there is skipped: the
-    /// agent tool can remove an old transcript. A container session
+    /// agents of each one. A file that is not there is skipped with no
+    /// line of the log: the agent tool can remove an old transcript, and
+    /// the Claude folder of an ended session goes. A container session
     /// writes its transcripts, so each read goes through
     /// [`crate::host_file`] from the Claude folder of the transcript
     /// ([`in_claude`]), with the limits [`MAX_TRANSCRIPT`] and
@@ -1578,7 +1579,9 @@ impl Meter {
 /// `claude` of a container session: `projects/*/SESSION.jsonl`. `claude`
 /// takes the riff session ID as its own (01M588N8AYSGVWFW05A5RV976H). A
 /// link at `projects`, or more than [`MAX_ENTRIES`] entries in it, gives
-/// no transcript, and the log names it (01M7FNTSHXPQXXKZF761V0NN9Z).
+/// an error that names the folder (01M7FNTSHXPQXXKZF761V0NN9Z): the
+/// daemon counts no tokens of the session, and its log has the line of
+/// [`text::transcript_skipped`].
 ///
 /// ```
 /// let claude = tempfile::tempdir()?;
@@ -1587,40 +1590,35 @@ impl Meter {
 /// std::fs::write(project.join("a6cf.jsonl"), "")?;
 /// std::fs::write(project.join("other.jsonl"), "")?;
 /// assert_eq!(
-///     riff::usage::transcripts_in(claude.path(), "a6cf"),
+///     riff::usage::transcripts_in(claude.path(), "a6cf")?,
 ///     [project.join("a6cf.jsonl")]
 /// );
-/// assert!(riff::usage::transcripts_in(&claude.path().join("none"), "a6cf").is_empty());
-/// # Ok::<(), std::io::Error>(())
+/// assert!(riff::usage::transcripts_in(&claude.path().join("none"), "a6cf")?.is_empty());
+/// # Ok::<(), anyhow::Error>(())
 /// ```
-pub fn transcripts_in(claude: &Path, session: &str) -> Vec<PathBuf> {
-    match transcripts_with_times(claude, session) {
-        Ok(found) => found.into_iter().map(|(path, _)| path).collect(),
-        Err(e) => {
-            eprintln!("{}", text::transcript_skipped(&format!("{e:#}")));
-            Vec::new()
-        }
-    }
+pub fn transcripts_in(claude: &Path, session: &str) -> Result<Vec<PathBuf>> {
+    let found = transcripts_with_times(claude, session)?;
+    Ok(found.into_iter().map(|(path, _)| path).collect())
 }
 
 /// The time of the last write to a transcript of `session` in the Claude
-/// folder `claude` ([`transcripts_in`]), if it has one.
+/// folder `claude` ([`transcripts_in`]), if it has one. A folder
+/// `projects` that riff does not list gives the error of
+/// [`transcripts_in`]: the log of the daemon has the line of
+/// [`text::lead_turns_unseen`] (01M7FNTSHXPQXXKZF761V0NN9Z).
 ///
 /// ```
 /// let claude = tempfile::tempdir()?;
 /// let project = claude.path().join("projects/-data-clone");
 /// std::fs::create_dir_all(&project)?;
-/// assert_eq!(riff::usage::written_in(claude.path(), "a6cf"), None);
+/// assert_eq!(riff::usage::written_in(claude.path(), "a6cf")?, None);
 /// std::fs::write(project.join("a6cf.jsonl"), "")?;
-/// assert!(riff::usage::written_in(claude.path(), "a6cf").is_some());
-/// # Ok::<(), std::io::Error>(())
+/// assert!(riff::usage::written_in(claude.path(), "a6cf")?.is_some());
+/// # Ok::<(), anyhow::Error>(())
 /// ```
-pub fn written_in(claude: &Path, session: &str) -> Option<SystemTime> {
-    transcripts_with_times(claude, session)
-        .ok()?
-        .into_iter()
-        .map(|(_, time)| time)
-        .max()
+pub fn written_in(claude: &Path, session: &str) -> Result<Option<SystemTime>> {
+    let found = transcripts_with_times(claude, session)?;
+    Ok(found.into_iter().map(|(_, time)| time).max())
 }
 
 /// Each transcript of `session` in the Claude folder `claude`, in the
@@ -2004,14 +2002,17 @@ mod tests {
             projects.join("-data-clone/s1/subagents"),
         )
         .unwrap();
-        assert_eq!(transcripts_in(&claude, "s1"), std::slice::from_ref(&main));
+        assert_eq!(
+            transcripts_in(&claude, "s1").unwrap(),
+            std::slice::from_ref(&main)
+        );
         let models = Replies::read(std::slice::from_ref(&main)).sum(&[(0, u64::MAX)]);
         assert_eq!(models["opus"].output, 1);
 
         // The transcript itself as a link, or as a FIFO.
         std::fs::remove_file(&main).unwrap();
         std::os::unix::fs::symlink(person.join("s1.jsonl"), &main).unwrap();
-        assert!(transcripts_in(&claude, "s1").is_empty());
+        assert!(transcripts_in(&claude, "s1").unwrap().is_empty());
         assert!(
             Replies::read(std::slice::from_ref(&main))
                 .sum(&[(0, u64::MAX)])
@@ -2019,7 +2020,7 @@ mod tests {
         );
         std::fs::remove_file(&main).unwrap();
         nix::unistd::mkfifo(&main, nix::sys::stat::Mode::S_IRWXU).unwrap();
-        assert!(transcripts_in(&claude, "s1").is_empty());
+        assert!(transcripts_in(&claude, "s1").unwrap().is_empty());
         assert!(Replies::read(&[main]).sum(&[(0, u64::MAX)]).is_empty());
     }
 
@@ -2045,7 +2046,7 @@ mod tests {
         let other = project.join("s2.jsonl");
         write(&other, &[reply(NINE, "m2", "opus", 3)]);
         assert_eq!(
-            transcripts_in(claude.path(), "s1"),
+            transcripts_in(claude.path(), "s1").unwrap(),
             std::slice::from_ref(&main)
         );
         let replies = Replies::read(&[main.clone(), other]);
@@ -2058,6 +2059,83 @@ mod tests {
                 MAX_TRANSCRIPT
             ))]
         );
+    }
+
+    /// Makes `n` empty files in the folder `dir`.
+    fn fill(dir: &Path, n: usize) {
+        std::fs::create_dir_all(dir).unwrap();
+        for i in 0..n {
+            std::fs::write(dir.join(format!("agent-{i}.jsonl")), "").unwrap();
+        }
+    }
+
+    /// 01M7FNTSHXPQXXKZF761V0NN9Z: a container session makes more
+    /// entries than the limit in the folder of the helpers of a
+    /// transcript. riff counts no tokens of the helpers, the log names
+    /// the folder, and the transcript counts.
+    #[test]
+    fn a_folder_of_helpers_over_the_limit_is_skipped_and_the_log_names_it() {
+        let claude = tempfile::tempdir().unwrap();
+        let project = claude.path().join(PROJECTS).join("-data-clone");
+        let main = project.join("s1.jsonl");
+        write(&main, &[reply(NINE, "m1", "opus", 1)]);
+        let subagents = project.join("s1").join(SUBAGENTS);
+        fill(&subagents, MAX_ENTRIES);
+        write(
+            &subagents.join("agent-a.jsonl"),
+            &[reply(NINE, "h1", "haiku", 2)],
+        );
+        let replies = Replies::read(std::slice::from_ref(&main));
+        let models = replies.sum(&[(0, u64::MAX)]);
+        assert_eq!(models["opus"].output, 1);
+        assert!(!models.contains_key("haiku"), "{models:?}");
+        assert_eq!(
+            replies.skipped(),
+            [text::transcript_skipped(&text::host_file_too_many(
+                &subagents,
+                MAX_ENTRIES
+            ))]
+        );
+
+        // At the limit, each helper counts.
+        std::fs::remove_file(subagents.join("agent-0.jsonl")).unwrap();
+        let replies = Replies::read(std::slice::from_ref(&main));
+        assert_eq!(replies.sum(&[(0, u64::MAX)])["haiku"].output, 2);
+        assert!(replies.skipped().is_empty());
+    }
+
+    /// 01M7FNTSHXPQXXKZF761V0NN9Z: a container session makes more
+    /// entries than the limit in its folder `projects`. riff finds no
+    /// transcript there, and the error names the folder.
+    #[test]
+    fn a_folder_of_projects_over_the_limit_gives_an_error_that_names_it() {
+        let claude = tempfile::tempdir().unwrap();
+        let projects = claude.path().join(PROJECTS);
+        write(&projects.join("-data-clone/s1.jsonl"), &[]);
+        fill(&projects, MAX_ENTRIES);
+        let error = text::host_file_too_many(&projects, MAX_ENTRIES);
+        let found = transcripts_in(claude.path(), "s1").unwrap_err();
+        assert_eq!(format!("{found:#}"), error);
+        let written = written_in(claude.path(), "s1").unwrap_err();
+        assert_eq!(format!("{written:#}"), error);
+
+        // At the limit, riff finds the transcript.
+        std::fs::remove_file(projects.join("agent-0.jsonl")).unwrap();
+        assert_eq!(transcripts_in(claude.path(), "s1").unwrap().len(), 1);
+        assert!(written_in(claude.path(), "s1").unwrap().is_some());
+    }
+
+    /// A transcript in a Claude folder that is gone: the folder of an
+    /// ended session goes. riff counts no tokens of it, and logs nothing.
+    #[test]
+    fn a_transcript_in_a_claude_folder_that_is_gone_is_skipped_with_no_log() {
+        let root = tempfile::tempdir().unwrap();
+        let main = root
+            .path()
+            .join("sessions/issue-7-1a2b3c4d/claude/projects/-data-clone/s1.jsonl");
+        let replies = Replies::read(&[main]);
+        assert!(replies.sum(&[(0, u64::MAX)]).is_empty());
+        assert!(replies.skipped().is_empty(), "{:?}", replies.skipped());
     }
 
     #[test]

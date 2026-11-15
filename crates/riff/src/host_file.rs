@@ -35,8 +35,8 @@
 //!   [`text::host_file_too_large`], which names it. [`read()`] reads at
 //!   most one byte past the limit, also from a file that grows in the
 //!   read. A folder with more entries gives the error
-//!   [`text::host_file_too_many`], which names the folder: [`list`] reads
-//!   no entry past the limit.
+//!   [`text::host_file_too_many`], which names the folder: [`list`] stops
+//!   at the entry one past the limit.
 //! - The steps of the host there: the Claude folder of each start
 //!   ([`crate::run::claude_folder`]), the transcripts
 //!   ([`crate::usage::transcripts_in`], [`crate::usage::written_in`],
@@ -165,20 +165,24 @@ fn fault(dir: &OwnedFd, at: &Path, part: &OsStr, errno: Errno) -> anyhow::Error 
 }
 
 /// The folder `root`, opened with each link of its own path followed.
-fn open_root(root: &Path) -> Result<OwnedFd> {
-    nix::fcntl::open(
-        root,
-        OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_CLOEXEC,
-        Mode::empty(),
-    )
-    .map_err(std::io::Error::from)
-    .with_context(|| format!("open {}", root.display()))
+/// `None` when it is not there.
+fn open_root(root: &Path) -> Result<Option<OwnedFd>> {
+    let flags = OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_CLOEXEC;
+    match nix::fcntl::open(root, flags, Mode::empty()) {
+        Ok(dir) => Ok(Some(dir)),
+        Err(Errno::ENOENT) => Ok(None),
+        Err(errno) => {
+            Err(std::io::Error::from(errno)).with_context(|| format!("open {}", root.display()))
+        }
+    }
 }
 
 /// The folder `ROOT/PARTS`: each part opens from the folder above it,
-/// with no follow of a link. `None` when a part is not there.
+/// with no follow of a link. `None` when `root` or a part is not there.
 fn open_folder(root: &Path, parts: &[OsString]) -> Result<Option<(OwnedFd, PathBuf)>> {
-    let mut dir = open_root(root)?;
+    let Some(mut dir) = open_root(root)? else {
+        return Ok(None);
+    };
     let mut at = root.to_owned();
     for part in parts {
         let flags = OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC;
@@ -202,11 +206,12 @@ fn open_parent(root: &Path, name: &Path) -> Result<Option<(OwnedFd, OsString, Pa
 }
 
 /// The bytes of the plain file `ROOT/NAME`, or `None` when it is not
-/// there. A link in `NAME` gives the error [`text::host_file_link`]. A
-/// file that is no plain file, for example a FIFO, gives the error
-/// [`text::host_file_not_plain`]. A file with more than `most` bytes
-/// gives the error [`text::host_file_too_large`]: the read stops at
-/// `most` and one byte.
+/// there, also when `ROOT` is not there. A link in `NAME` gives the error
+/// [`text::host_file_link`]. A file that is no plain file, for example a
+/// FIFO, gives the error [`text::host_file_not_plain`]. A file with more
+/// than `most` bytes gives the error [`text::host_file_too_large`]: when
+/// its size is over `most`, the host reads none of it, and else the read
+/// stops at `most` and one byte.
 ///
 /// ```
 /// use std::path::Path;
@@ -216,6 +221,7 @@ fn open_parent(root: &Path, name: &Path) -> Result<Option<(OwnedFd, OsString, Pa
 /// std::fs::write(root.path().join("projects/a.jsonl"), "line")?;
 /// assert_eq!(riff::host_file::read(root.path(), Path::new("projects/a.jsonl"), 4)?, Some(b"line".to_vec()));
 /// assert_eq!(riff::host_file::read(root.path(), Path::new("none/a.jsonl"), 4)?, None);
+/// assert_eq!(riff::host_file::read(&root.path().join("gone"), Path::new("a.jsonl"), 4)?, None);
 ///
 /// // A link in the middle of the name counts.
 /// let other = tempfile::tempdir()?;
@@ -249,18 +255,20 @@ pub fn read(root: &Path, name: &Path, most: u64) -> Result<Option<Vec<u8>>> {
     if !meta.is_file() {
         bail!("{}", text::host_file_not_plain(&path));
     }
-    if meta.len() > most {
-        bail!("{}", text::host_file_too_large(&path, most));
-    }
-    match read_most(file, most).with_context(|| format!("read {}", path.display()))? {
+    match read_most(file, meta.len(), most).with_context(|| format!("read {}", path.display()))? {
         Some(bytes) => Ok(Some(bytes)),
         None => bail!("{}", text::host_file_too_large(&path, most)),
     }
 }
 
-/// The bytes of `from`, or `None` when it has more than `most`: it reads
-/// at most `most` and one byte, also from a file that grows in the read.
-fn read_most(from: impl Read, most: u64) -> std::io::Result<Option<Vec<u8>>> {
+/// The bytes of `from`, a file of `len` bytes, or `None` when it has more
+/// than `most`. When `len` is over `most`, it reads none of it. Else it
+/// reads at most `most` and one byte, also from a file that grows in the
+/// read.
+fn read_most(from: impl Read, len: u64, most: u64) -> std::io::Result<Option<Vec<u8>>> {
+    if len > most {
+        return Ok(None);
+    }
     let mut bytes = Vec::new();
     from.take(most.saturating_add(1)).read_to_end(&mut bytes)?;
     Ok((u64::try_from(bytes.len()).unwrap_or(u64::MAX) <= most).then_some(bytes))
@@ -375,7 +383,8 @@ pub fn write(root: &Path, name: &Path, bytes: &[u8]) -> Result<()> {
 
 /// Each entry of the folder `ROOT/NAME` with its kind, with no follow of
 /// a link, in the order of the names. `None` when the folder is not
-/// there. A link at `NAME` or in its folders gives the error
+/// there, also when `ROOT` is not there. A link at `NAME` or in its
+/// folders gives the error
 /// [`text::host_file_link`]. A folder with more than `most` entries
 /// gives the error [`text::host_file_too_many`]: the list stops at
 /// `most` and one entry.
@@ -398,6 +407,7 @@ pub fn write(root: &Path, name: &Path, bytes: &[u8]) -> Result<()> {
 ///     ])
 /// );
 /// assert_eq!(riff::host_file::list(root.path(), Path::new("none"), 3)?, None);
+/// assert_eq!(riff::host_file::list(&root.path().join("gone"), Path::new("projects"), 3)?, None);
 ///
 /// // One entry over the limit.
 /// let error = riff::host_file::list(root.path(), Path::new("projects"), 2).unwrap_err();
@@ -631,10 +641,36 @@ mod tests {
     #[test]
     fn a_read_stops_one_byte_past_the_limit() {
         let mut endless = Endless(0);
-        assert_eq!(read_most(&mut endless, 1000).unwrap(), None);
+        assert_eq!(read_most(&mut endless, 0, 1000).unwrap(), None);
         assert_eq!(endless.0, 1001);
-        assert_eq!(read_most(&b"1234"[..], 4).unwrap(), Some(b"1234".to_vec()));
-        assert_eq!(read_most(&b"12345"[..], 4).unwrap(), None);
+        assert_eq!(
+            read_most(&b"1234"[..], 4, 4).unwrap(),
+            Some(b"1234".to_vec())
+        );
+        assert_eq!(read_most(&b"12345"[..], 4, 4).unwrap(), None);
+    }
+
+    /// 01M7FNTSHXPQXXKZF761V0NN9Z: a file whose size is over the limit
+    /// gives no bytes, and the host reads none of it.
+    #[test]
+    fn a_file_whose_size_is_over_the_limit_is_not_read() {
+        let mut endless = Endless(0);
+        assert_eq!(read_most(&mut endless, 1001, 1000).unwrap(), None);
+        assert_eq!(endless.0, 0);
+    }
+
+    /// A folder of a session that is gone holds no file and no folder:
+    /// the agent tool can remove an old session.
+    #[test]
+    fn a_root_that_is_gone_holds_nothing() {
+        let (root, _claude, _person) = folders();
+        let gone = root.path().join("gone");
+        let name = Path::new("projects/a.jsonl");
+        assert_eq!(read(&gone, name, 16).unwrap(), None);
+        assert_eq!(list(&gone, Path::new("projects"), 16).unwrap(), None);
+        assert_eq!(modified(&gone, name).unwrap(), None);
+        assert!(write(&gone, Path::new("a.json"), b"{}").is_err());
+        assert!(!gone.exists());
     }
 
     /// 01M7FNTSHXPQXXKZF761V0NN9Z: a sparse file far over the limit gives
@@ -738,7 +774,7 @@ mod scan {
         ),
         (
             "lead.rs",
-            "crate::usage::written_in(&record.folder.join(\"claude\"), &record.live.session)",
+            "let written = crate::usage::written_in(&record.folder.join(\"claude\"), &record.live.session);",
         ),
         // The clones that link to a main clone
         // ([`crate::lead::linked_main`]).

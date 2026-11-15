@@ -8898,11 +8898,13 @@ of this part when they merge.
   file in a folder that a container writes, and at most a limit of the
   entries of each folder there: 256 MB of a transcript, 16 MB of
   `.claude.json` and of `settings.json`, 1 MB of the file `alternates`
-  of a clone, and 10,000 entries of a folder. The read stops at the
-  limit, also when the file grows in the read. A file over its limit
-  gives an error that names it, and a folder with more entries gives an
-  error that names the folder. A transcript over its limit counts as no
-  transcript, and the log names it.
+  of a clone, and 10,000 entries of a folder. The host reads none of a
+  file whose size is over its limit, and stops one byte past the limit
+  when the file grows in the read. A file over its limit gives an error
+  that names it, and a folder with more entries gives an error that
+  names the folder. riff counts no tokens of a transcript over its
+  limit, and the log names it. A start with a `.claude.json` or a
+  `settings.json` over its limit writes neither file.
 
 ### Process
 

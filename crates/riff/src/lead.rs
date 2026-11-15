@@ -675,9 +675,17 @@ fn started(record: &daemon::Record) -> std::time::SystemTime {
 }
 
 /// The last write to the transcript of the lead of `record`, if it has
-/// one.
+/// one. A folder `projects` that riff does not list, for example with
+/// more than [`crate::usage::MAX_ENTRIES`] entries, gives none: the line
+/// of [`text::lead_turns_unseen`] goes to the log of the daemon
+/// (01M7FNTSHXPQXXKZF761V0NN9Z).
 fn written(record: &daemon::Record) -> Option<std::time::SystemTime> {
-    crate::usage::written_in(&record.folder.join("claude"), &record.live.session)
+    let written = crate::usage::written_in(&record.folder.join("claude"), &record.live.session);
+    written.unwrap_or_else(|e| {
+        let line = text::lead_turns_unseen(&format!("{e:#}"));
+        eprintln!("riff daemon: {}: {line}", record.live.name);
+        None
+    })
 }
 
 /// The file of the end of the last turn of a lead, in the folder of the
@@ -2380,6 +2388,25 @@ mod tests {
         written_ago(&record, Duration::from_secs(600));
         assert!(!between_turns(&record));
         assert!(idle(&record, quiet));
+    }
+
+    /// 01M7FNTSHXPQXXKZF761V0NN9Z: the lead makes more entries than the
+    /// limit in its folder `projects`. riff sees no write of the lead
+    /// there: after the end of a turn, the lead is between two turns.
+    #[test]
+    fn a_folder_of_projects_over_the_limit_shows_no_turn_of_the_lead() {
+        use std::time::Duration;
+        let dir = tempfile::tempdir().unwrap();
+        let record = record_in(dir.path());
+        ended_ago(&record, Duration::from_secs(60));
+        written_ago(&record, Duration::from_secs(1));
+        assert!(!between_turns(&record));
+        let projects = dir.path().join("claude/projects");
+        for n in 0..crate::usage::MAX_ENTRIES {
+            std::fs::write(projects.join(format!("{n}.jsonl")), "").unwrap();
+        }
+        assert_eq!(written(&record), None);
+        assert!(between_turns(&record));
     }
 
     /// 01M7E7A8QM8SRPQN3G1BXVJW1R: the new clone takes the place of the

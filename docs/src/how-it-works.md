@@ -494,13 +494,14 @@ reads at most a limit of each one:
 | What riff reads | Its limit | Over the limit |
 |---|---|---|
 | A transcript, and the transcript of each helper agent | 256 MB | riff counts no tokens of it, and goes on. The log of the daemon names the file. |
-| `.claude.json` and `settings.json` of a Claude folder | 16 MB | The start stops. The error names the file. |
+| `.claude.json` and `settings.json` of a Claude folder | 16 MB | The start stops, and riff writes neither file. The error names the file. |
 | `.git/objects/info/alternates` of a clone | 1 MB | riff counts no main clone for the clone. |
-| The entries of the folder `projects` of a Claude folder, and of the folder of the helper agents of a transcript | 10,000 entries | riff counts no tokens of the transcripts there, and goes on. The log of the daemon names the folder. |
+| The entries of the folder `projects` of a Claude folder, and of the folder of the helper agents of a transcript | 10,000 entries | riff counts no tokens of the transcripts there, and sees no turn of the lead there. riff goes on, and the log of the daemon names the folder. |
 
-The read stops at the limit, also when the file grows in the read. So
-the riff daemon takes no more memory for the file, and each other
-session goes on.
+When the size of a file is over its limit, riff reads none of it. When
+the file grows in the read, riff stops one byte past the limit. So the
+riff daemon takes no more memory for the file, and each other session
+goes on.
 
 ```mermaid
 flowchart LR
@@ -517,7 +518,7 @@ riff reads at most 16MB of a file in a folder that a session can write: /home/mi
 
 Find the error in the log of the daemon, and each large file in the
 Claude folder of the lead. Then remove the file that the error names.
-At the next start, riff writes a new `.claude.json`:
+At the next start, riff will write a new `.claude.json`:
 
 ```sh
 journalctl --user -u riff | grep -E 'reads at most|lists at most'

@@ -860,9 +860,10 @@ pub const MAX_CONFIG: u64 = 16 << 20;
 ///
 /// The session writes `dir`, so each read and write there goes through
 /// [`crate::host_file`]: a link there gives an error that names it, and
-/// the host reads and writes no file of the person through it. A file
-/// over [`MAX_CONFIG`] gives an error that names it, and riff reads no
-/// more of it and writes nothing (01M7FNTSHXPQXXKZF761V0NN9Z).
+/// the host reads and writes no file of the person through it. It reads
+/// both files before it writes one: a file over [`MAX_CONFIG`] gives an
+/// error that names it, riff reads no more of it, and it writes no file
+/// (01M7FNTSHXPQXXKZF761V0NN9Z).
 ///
 /// ```
 /// use riff::permissions::{Role, Trust};
@@ -917,6 +918,17 @@ pub const MAX_CONFIG: u64 = 16 << 20;
 ///     .unwrap_err();
 /// assert_eq!(format!("{error:#}"), riff::text::host_file_too_large(&config, riff::run::MAX_CONFIG));
 /// assert_eq!(std::fs::metadata(&config)?.len(), 64 << 30);
+///
+/// // A sparse `settings.json` of 64 GiB: riff writes no `.claude.json`
+/// // either.
+/// let settings = claude.join("settings.json");
+/// std::fs::remove_file(&config)?;
+/// std::fs::remove_file(&settings)?;
+/// std::fs::File::create(&settings)?.set_len(64 << 30)?;
+/// let error = riff::run::claude_folder(&claude, "/data/clone".as_ref(), &person, &auto, Role::Worker)
+///     .unwrap_err();
+/// assert_eq!(format!("{error:#}"), riff::text::host_file_too_large(&settings, riff::run::MAX_CONFIG));
+/// assert!(!config.exists());
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn claude_folder(
@@ -927,10 +939,11 @@ pub fn claude_folder(
     role: crate::permissions::Role,
 ) -> Result<()> {
     std::fs::create_dir_all(dir).with_context(|| format!("cannot make {}", dir.display()))?;
-    let config = Path::new(CLAUDE_JSON);
-    let mut root = match crate::host_file::read(dir, config, MAX_CONFIG)?
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-    {
+    let (config, name) = (Path::new(CLAUDE_JSON), Path::new(SETTINGS_JSON));
+    // Both reads come before each write: an error writes no file.
+    let old_config = crate::host_file::read(dir, config, MAX_CONFIG)?;
+    let old_settings = crate::host_file::read_to_string(dir, name, MAX_CONFIG)?;
+    let mut root = match old_config.and_then(|bytes| serde_json::from_slice(&bytes).ok()) {
         Some(Value::Object(map)) => map,
         _ => serde_json::Map::new(),
     };
@@ -955,17 +968,16 @@ pub fn claude_folder(
             .entry("hasTrustDialogAccepted")
             .or_insert(json!(true));
     }
+    let new = match old_settings {
+        Some(text) => session_settings(&text, auto, role)
+            .with_context(|| dir.join(name).display().to_string())?,
+        None => Some(serde_json::to_string_pretty(&settings(auto, role))?),
+    };
     crate::host_file::write(
         dir,
         config,
         &serde_json::to_vec_pretty(&Value::Object(root))?,
     )?;
-    let name = Path::new(SETTINGS_JSON);
-    let new = match crate::host_file::read_to_string(dir, name, MAX_CONFIG)? {
-        Some(text) => session_settings(&text, auto, role)
-            .with_context(|| dir.join(name).display().to_string())?,
-        None => Some(serde_json::to_string_pretty(&settings(auto, role))?),
-    };
     if let Some(new) = new {
         crate::host_file::write(dir, name, new.as_bytes())?;
     }

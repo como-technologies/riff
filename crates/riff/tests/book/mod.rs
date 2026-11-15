@@ -39,16 +39,32 @@ pub fn commands_of(name: &str) -> Vec<String> {
 /// to the next `##` heading. A line that starts with `## ` in a code
 /// block is no heading.
 pub fn part(name: &str, heading: &str) -> String {
+    cut(name, &format!("## {heading}"), |line| {
+        line.starts_with("## ")
+    })
+}
+
+/// The text of the how-to with the heading line `heading` of the book
+/// page `name`, for example `### Open a pull request`: from its heading
+/// to the next heading. A line that starts with `#` in a code block is no
+/// heading.
+pub fn how_to(name: &str, heading: &str) -> String {
+    cut(name, heading, |line| line.starts_with('#'))
+}
+
+/// The text of the book page `name` from the heading line `heading` to
+/// the first line out of a code block that `ends` holds for.
+fn cut(name: &str, heading: &str, ends: impl Fn(&str) -> bool) -> String {
     let page = page(name);
     let start = page
-        .find(&format!("\n## {heading}\n"))
+        .find(&format!("\n{heading}\n"))
         .unwrap_or_else(|| panic!("{heading} is in {name}"));
     let rest = &page[start + 1..];
     let (mut fenced, mut at) = (false, 0);
     for line in rest.split_inclusive('\n') {
         if line.trim_start().starts_with("```") {
             fenced = !fenced;
-        } else if !fenced && at > 0 && line.starts_with("## ") {
+        } else if !fenced && at > 0 && ends(line) {
             return rest[..at - 1].to_owned();
         }
         at += line.len();

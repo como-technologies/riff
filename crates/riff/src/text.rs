@@ -7371,6 +7371,23 @@ pub fn transcript_skipped(cause: &str) -> String {
     format!("riff counts no tokens of a transcript, and goes on. {cause}")
 }
 
+/// The line of the log of the daemon when it cannot list the transcripts
+/// of a lead to see its turns ([`crate::lead::idle`],
+/// 01M7FNTSHXPQXXKZF761V0NN9Z): `cause` names the folder.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::lead_turns_unseen("riff lists at most 10000 entries of a folder that a \
+///         session can write: /l/o-r/claude/projects has more. Remove some, and start again."),
+///     "riff sees no turn of the lead in its transcripts, and goes on. riff lists at most 10000 \
+///      entries of a folder that a session can write: /l/o-r/claude/projects has more. Remove \
+///      some, and start again."
+/// );
+/// ```
+pub fn lead_turns_unseen(cause: &str) -> String {
+    format!("riff sees no turn of the lead in its transcripts, and goes on. {cause}")
+}
+
 /// `riff run` on a host that is not Linux (01M4ZBGK7SFEXE1AGH6Z0YQHJP).
 pub const RUN_LINUX_ONLY: &str = "riff run needs Linux: riff starts no session on this OS. The \
      sessions on a Mac come with #1649.";
