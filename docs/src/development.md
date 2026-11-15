@@ -2364,8 +2364,18 @@ that work on purpose:
 riff daemon sweep --remove issue-1136-5fcf04cb --force
 ```
 
-riff never removes the folder of a session that runs. For a folder on
-another host, add `--host thelio`.
+riff never removes the folder of a session that runs. Only that
+folder counts, with its ID: the folder of an ended session of an item
+that runs again can go. For example, `issue-1136-5fcf04cb` ended, and
+`issue-1136-9a8b7c6d` runs now: riff removes `issue-1136-5fcf04cb`,
+and refuses `issue-1136-9a8b7c6d`. To see which session of an item
+runs:
+
+```sh
+riff daemon status
+```
+
+For a folder on another host, add `--host thelio`.
 
 ### What the container gets
 

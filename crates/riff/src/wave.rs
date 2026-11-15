@@ -3135,7 +3135,7 @@ pub(crate) async fn job<R: Runtime + 'static>(
     asked: bool,
 ) {
     let item = work.item();
-    let held = daemon.in_job(&item);
+    let held = daemon.in_job(&item, None);
     let no_start = match start_job(&daemon, &wave, &work, slot, asked).await {
         Ok(Some((record, ended))) => {
             // A worker or a verify that got no token of a GitHub App did not

@@ -6698,7 +6698,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                     };
                     let key = (job.wave.repo.clone(), record.live.item.clone());
                     self.ending_lock().insert(key.clone());
-                    let held = self.in_job(&record.live.item);
+                    let held = self.in_job(&record.live.item, Some(&record.folder));
                     let daemon = self.clone();
                     tokio::spawn(async move {
                         crate::wave::finish(daemon.clone(), record, ended, held).await;
@@ -6737,7 +6737,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                         let (out, said) = Out::keep();
                         owned.lock().followers.push(out);
                         self.world.resume(&record);
-                        let job = self.in_job(&record.live.item);
+                        let job = self.in_job(&record.live.item, Some(&record.folder));
                         tokio::spawn(crate::wave::after(self.clone(), record, said, job));
                     }
                     tokio::spawn(self.clone().watch(owned, notes, None));
