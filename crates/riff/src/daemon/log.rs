@@ -715,6 +715,7 @@ pub const KEY_START: &str = "sk-ant-";
 /// assert_eq!(clean("a key sk-proj-Ab_c-9 here", &scrub), "a key [secret] here");
 /// assert_eq!(clean("podman run -e GH_TOKEN=abc", &scrub), "podman run -e GH_TOKEN=[secret]");
 /// assert_eq!(clean("Authorization: Bearer xyz", &scrub), "Authorization: Bearer [secret]");
+/// assert_eq!(clean(r#"{"auth":"Bearer xyz"}"#, &scrub), r#"{"auth":"Bearer [secret]"}"#);
 /// assert_eq!(clean("riff daemon: o/r: 2 sessions", &scrub), "riff daemon: o/r: 2 sessions");
 /// ```
 pub fn clean(line: &str, scrub: &Scrub) -> String {

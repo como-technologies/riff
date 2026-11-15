@@ -1608,9 +1608,9 @@ enum DaemonCommand {
     /// the socket of the lead. On a Mac, launchd writes the log of the
     /// daemon, and riff daemon log names that file.
     Log {
-        /// Show only the lines at or after TIME: a time of the day in
-        /// your local time, for example 02:12, the last one before now,
-        /// or a date and a time with its zone, for example
+        /// Show only the lines at or after TIME. A time of the day, for
+        /// example 02:12, is in your local time: the last 02:12 before
+        /// now. A date and a time has its zone, for example
         /// 2026-11-14T07:12Z.
         #[arg(long, value_name = "TIME")]
         since: Option<String>,
@@ -3470,8 +3470,8 @@ async fn ask_daemon(
 }
 
 /// `riff daemon log` with no `--host` (#2156): prints the lines of the
-/// log of the daemon in its folder `dir` that `query` picks, with no
-/// secret. In a container, the daemon on the socket of the session reads
+/// log of the daemon in `dir` that `query` picks, with no secret. In a
+/// container, the daemon on the socket of the session reads
 /// the log. On the host, riff reads the log file itself. It exits with 1
 /// when the read failed, or the daemon refused. `--host` goes as each
 /// other request to the daemon of another host ([`remote_request`]).

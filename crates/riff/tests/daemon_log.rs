@@ -316,6 +316,42 @@ fn a_secret_at_the_cut_of_a_long_line_goes_whole() {
     assert_eq!(text(&out.stdout), format!("{head} [secret] …\n"));
 }
 
+/// #2156, 01M7EX1Q1F468NWGPJJS0W0ZG9, 01M7FFA3GN7F2GW3NGYJPTMKN3: the
+/// token after `Bearer` goes in each form of a header, and `--grep`
+/// finds no part of it.
+#[test]
+fn a_bearer_token_goes_in_each_form_of_a_header() {
+    let env = Isolated::new();
+    let at = Utc::now() - Duration::minutes(5);
+    let lines = [
+        r#"riff daemon: {"Authorization":"Bearer json-form-2"}"#,
+        r#"riff daemon: Authorization: "Bearer quoted-form-3""#,
+        "riff daemon: Authorization:Bearer nospace-form-4",
+        "riff daemon: Authorization: Bearer  twospace-form-5",
+    ];
+    write_log(&env, &[], &lines.map(|l| line(at, l)));
+    let out = daemon_log(&env, &[]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let stamp = at.format("%Y-%m-%dT%H:%M:%SZ");
+    assert_eq!(
+        text(&out.stdout),
+        format!(
+            "{stamp} riff daemon: {{\"Authorization\":\"Bearer [secret]\"}}\n\
+             {stamp} riff daemon: Authorization: \"Bearer [secret]\"\n\
+             {stamp} riff daemon: Authorization:Bearer [secret]\n\
+             {stamp} riff daemon: Authorization: Bearer  [secret]\n"
+        )
+    );
+    for probe in ["json-form", "quoted-form", "nospace-form", "twospace-form"] {
+        let out = daemon_log(&env, &["--grep", probe]);
+        assert_eq!(
+            text(&out.stdout),
+            "riff daemon log: no line of the log of the riff daemon matches.\n",
+            "{probe}"
+        );
+    }
+}
+
 /// #2156, 01M7EX1PVSG64G8EE5SNDRHM7G, 01M7F0HE514TQMGQJKH8CVYY52: with
 /// no log file, riff names the file and the command of the service
 /// manager that shows the log, and exits with 1. A bad flag says what it

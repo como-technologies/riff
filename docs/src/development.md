@@ -1719,7 +1719,8 @@ riff reads the files itself, so it works also while the daemon is down.
 It takes each secret out of each line first, as from the events of a
 session. So `--grep` finds no part of a secret. riff takes out:
 
-- a token of GitHub, a key of Anthropic and a bearer token;
+- a token of GitHub and a key of Anthropic;
+- the token after `Bearer`, also in JSON or in quotes;
 - the value of `NAME=value` when NAME names a token, a key, a secret or
   a password;
 - the secrets in the environment of riff, and in the sign-in file of

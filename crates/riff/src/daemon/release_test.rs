@@ -83,6 +83,7 @@ use riff_client::daemons::Test;
 use super::remote::Served;
 use crate::cycle::{TestState, status_args};
 use crate::pr::Gh;
+use crate::run::HIDDEN;
 use crate::text;
 use crate::watches::{Op, Watches};
 
@@ -330,8 +331,9 @@ fn finish(
 const TAIL_LINES: usize = 30;
 
 /// `text` with each secret cut out: a word that starts like a token of
-/// GitHub or Anthropic, `Bearer X`, and the value of `NAME=value` when
-/// NAME names a token, a key, a secret or a password.
+/// GitHub or Anthropic, the token after `Bearer` ([`bearer_out`],
+/// 01M7FFA3GN7F2GW3NGYJPTMKN3), and the value of `NAME=value` when NAME
+/// names a token, a key, a secret or a password.
 ///
 /// ```
 /// use riff::daemon::release_test::redact;
@@ -340,6 +342,7 @@ const TAIL_LINES: usize = 30;
 /// assert_eq!(redact("a key sk-proj-abc1 here"), "a key [secret] here");
 /// assert_eq!(redact("GH_TOKEN=abc ok"), "GH_TOKEN=[secret] ok");
 /// assert_eq!(redact("Authorization: Bearer xyz"), "Authorization: Bearer [secret]");
+/// assert_eq!(redact(r#"{"Authorization":"Bearer xyz"}"#), r#"{"Authorization":"Bearer [secret]"}"#);
 /// assert_eq!(redact("step 6 of 10"), "step 6 of 10");
 /// ```
 pub fn redact(text: &str) -> String {
@@ -347,30 +350,82 @@ pub fn redact(text: &str) -> String {
     // `sk-` is the start of each key of Anthropic.
     let prefixes = || crate::run::TOKEN_STARTS.iter().chain(&["sk-"]);
     let mut out = Vec::new();
-    let mut after_bearer = false;
     for line in text.lines() {
-        let mut words = Vec::new();
-        for word in line.split(' ') {
-            let upper = word.to_ascii_uppercase();
-            let word = if after_bearer && !word.is_empty() {
-                "[secret]".to_owned()
+        let mut shown = String::with_capacity(line.len());
+        let mut after_bearer = false;
+        for part in line.split_inclusive(char::is_whitespace) {
+            let word = part.trim_end_matches(char::is_whitespace);
+            if word.is_empty() {
+                shown.push_str(part);
+                continue;
+            }
+            let hidden = if after_bearer {
+                bearer_out(word)
             } else if let Some((name, value)) = word.split_once('=')
                 && !value.is_empty()
                 && NAMES.iter().any(|n| name.to_ascii_uppercase().contains(n))
             {
-                format!("{name}=[secret]")
+                format!("{name}={HIDDEN}")
             } else if prefixes().any(|p| word.starts_with(p)) {
-                "[secret]".to_owned()
+                HIDDEN.to_owned()
             } else {
                 word.to_owned()
             };
-            after_bearer = upper == "BEARER";
-            words.push(word);
+            after_bearer = ends_with_bearer(word);
+            shown.push_str(&hidden);
+            shown.push_str(&part[word.len()..]);
         }
-        after_bearer = false;
-        out.push(words.join(" "));
+        out.push(shown);
     }
     out.join("\n")
+}
+
+/// `word` ends with the word `Bearer`, in any case, before its quotes
+/// and its colons: `Bearer`, `"Bearer`, `{"Authorization":"Bearer` or
+/// `Authorization:Bearer`.
+///
+/// ```
+/// use riff::daemon::release_test::ends_with_bearer;
+///
+/// for word in ["Bearer", "bearer:", "\"Bearer", "{\"Authorization\":\"Bearer", "Authorization:BEARER"] {
+///     assert!(ends_with_bearer(word), "{word}");
+/// }
+/// for word in ["Bearers", "MyBearer", "Bear", "érBearer"] {
+///     assert!(!ends_with_bearer(word), "{word}");
+/// }
+/// ```
+pub fn ends_with_bearer(word: &str) -> bool {
+    const BEARER: &str = "bearer";
+    let word = word.trim_end_matches(['"', '\'', ':']);
+    let Some(at) = word.len().checked_sub(BEARER.len()) else {
+        return false;
+    };
+    word.get(at..)
+        .is_some_and(|end| end.eq_ignore_ascii_case(BEARER))
+        && !word[..at].ends_with(char::is_alphanumeric)
+}
+
+/// The `word` after `Bearer` with its token cut out: the characters of
+/// a token of RFC 6750 after its quotes. The quotes and the rest of the
+/// word stay. A word with no such character goes whole.
+///
+/// ```
+/// use riff::daemon::release_test::bearer_out;
+///
+/// assert_eq!(bearer_out("eyJ0.a-b_c~d+e/f=="), "[secret]");
+/// assert_eq!(bearer_out(r#"xyz"}"#), r#"[secret]"}"#);
+/// assert_eq!(bearer_out(r#""xyz","next":1"#), r#""[secret]","next":1"#);
+/// assert_eq!(bearer_out("{xyz}"), "[secret]");
+/// ```
+pub fn bearer_out(word: &str) -> String {
+    let token = |c: char| c.is_ascii_alphanumeric() || "-._~+/=".contains(c);
+    let body = word.trim_start_matches(['"', '\'']);
+    let quotes = &word[..word.len() - body.len()];
+    let len = body.find(|c: char| !token(c)).unwrap_or(body.len());
+    if len == 0 {
+        return HIDDEN.to_owned();
+    }
+    format!("{quotes}{HIDDEN}{}", &body[len..])
 }
 
 /// The failed step in the log of the test: the text after the last
@@ -514,6 +569,44 @@ mod tests {
             assert_eq!(redact(&line), "a key [secret] here", "{line}");
         }
         assert_eq!(redact("a disk-1 and task-2"), "a disk-1 and task-2");
+    }
+
+    /// #2156, 01M7FFA3GN7F2GW3NGYJPTMKN3: the token after `Bearer` goes in
+    /// each form of a header: a plain one, in JSON, in quotes, with no
+    /// space after the colon, with two spaces, and with a tab. The other
+    /// spaces of the line stay.
+    #[test]
+    fn the_token_after_bearer_goes_in_each_form_of_a_header() {
+        for (line, shown) in [
+            (
+                "Authorization: Bearer plain-form-1",
+                "Authorization: Bearer [secret]",
+            ),
+            (
+                r#"{"Authorization":"Bearer json-form-2"}"#,
+                r#"{"Authorization":"Bearer [secret]"}"#,
+            ),
+            (
+                r#"Authorization: "Bearer quoted-form-3""#,
+                r#"Authorization: "Bearer [secret]""#,
+            ),
+            (
+                "Authorization:Bearer nospace-form-4",
+                "Authorization:Bearer [secret]",
+            ),
+            (
+                "Authorization: Bearer  twospace-form-5 end",
+                "Authorization: Bearer  [secret] end",
+            ),
+            (
+                "Authorization: bearer\ttab-form-6",
+                "Authorization: bearer\t[secret]",
+            ),
+        ] {
+            assert_eq!(redact(line), shown, "{line}");
+        }
+        assert_eq!(redact("Bearer\nnext line"), "Bearer\nnext line");
+        assert_eq!(redact("a Bearers b"), "a Bearers b");
     }
 
     /// 01M5QVBTXE8YRY44A1C1VP71QS: the status shows the tag, the commit

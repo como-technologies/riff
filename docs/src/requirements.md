@@ -6757,6 +6757,11 @@ of this part when they merge.
   its text in the whole line, with no secret. riff cuts the line to 1000
   characters after that: a line with the text after its character 1000
   shows too.
+- **01M7FFA3GN7F2GW3NGYJPTMKN3** The filter of the log of the
+  real-session test, and so of `riff daemon log`, takes out the token
+  after the word `Bearer` in each form of a header: after a space, a
+  quote or a colon, for example in JSON, and after more spaces or a tab.
+  The quotes and the rest of the JSON stay.
 
 ### riff relay
 

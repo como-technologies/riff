@@ -722,6 +722,16 @@ fn a_failed_codeql_is_a_notice_of_an_optional_check_or_of_another_app() {
     );
 }
 
+#[test]
+fn shell_words_keep_the_spaces_of_a_quoted_word() {
+    let shell_words = crate::book::shell_words;
+    assert_eq!(
+        shell_words(r#"gh api  -f a="b c" 'd e'"#),
+        ["gh", "api", "-f", "a=b c", "d e"]
+    );
+    assert_eq!(shell_words(r#"x """#), ["x", ""]);
+}
+
 /// No session builds a release (the label `release`, or a branch
 /// `release-…`): a failed check of its pull request is a notice, at any
 /// state of its verify, also when the pull request names no issue.

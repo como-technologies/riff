@@ -478,6 +478,7 @@ pub fn remove_clone(dir: &Path, data: &Path, wave: &Wave) -> Vec<String> {
 ///     "daemon log --lines 0", "daemon log --lines x", "daemon log --lines", "daemon log --since 07:12",
 ///     "daemon log --grep x", "daemon log\nissue-12", "daemon log\n--grep ", "daemon status\n--grep x",
 ///     "daemon log --since +10000-01-01T00:00:00Z", "daemon log --since 1969-12-31T23:59:59Z",
+///     "daemon log--lines 5", "daemon logs",
 /// ] {
 ///     assert!(bad.parse::<Request>().is_err(), "{bad}");
 /// }
@@ -2031,6 +2032,27 @@ impl Session {
         let post = self.api.post(&self.me, None, &to, &body, Kind::Note);
         if let Err(e) = post.await {
             eprintln!("riff daemon: cannot reply: {e:#}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #2156: a request is `daemon log` only with a space or a line
+    /// break after `log`, or nothing. `daemon log--lines 5` is no request.
+    #[test]
+    fn a_log_request_has_a_space_or_a_line_break_after_log() {
+        for body in ["daemon log", "daemon log --lines 5", "daemon log\n--grep x"] {
+            assert!(matches!(body.parse(), Ok(Request::Log(_))), "{body}");
+        }
+        for body in [
+            "daemon log--lines 5",
+            "daemon logs",
+            "daemon log\t--lines 5",
+        ] {
+            assert!(body.parse::<Request>().is_err(), "{body}");
         }
     }
 }

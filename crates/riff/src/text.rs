@@ -8791,10 +8791,10 @@ pub const DAEMON_LOG_NO_MCP: &str = "riff daemon log: riff shows no line, becaus
 pub const DAEMON_LOG_NO_KEYRING: &str = "riff daemon log: riff shows no line, because it cannot \
      read the OS keyring, and so it cannot take the token of riff claude-token out";
 
-/// The text of `riff daemon log` for `found` (#2156): a first line when
-/// older lines match too, with the limit that keeps them out
-/// (01M7F7GWP88VC0QETN4GNTTJEV), then each line. With no line, one line
-/// that says so (01M7F0HEA4GVKQ47Q5GN29FQ22).
+/// The text of `riff daemon log` for `found` (#2156): each line. When
+/// older lines match too, a first line names them and the limit that
+/// keeps them out (01M7F7GWP88VC0QETN4GNTTJEV). With no line, one line
+/// says so (01M7F0HEA4GVKQ47Q5GN29FQ22).
 ///
 /// ```
 /// use riff::daemon::log::{Found, MOST_LINES, Query, pick};

@@ -112,12 +112,3 @@ pub fn shell_words(command: &str) -> Vec<String> {
     words.extend(word);
     words
 }
-
-#[test]
-fn shell_words_keep_the_spaces_of_a_quoted_word() {
-    assert_eq!(
-        shell_words(r#"gh api  -f a="b c" 'd e'"#),
-        ["gh", "api", "-f", "a=b c", "d e"]
-    );
-    assert_eq!(shell_words(r#"x """#), ["x", ""]);
-}
