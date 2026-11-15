@@ -9444,6 +9444,42 @@ mod tests {
         assert_eq!(server.said(), [format!("resume {name}-session")]);
     }
 
+    /// 01M53S7WDPQ2GWHJWJ6SZXZ5PN, 01M7GCESN7RY3GW6ZPP9PBM87D: a new daemon
+    /// takes up a session of a job that runs. The session ends, and the
+    /// daemon has no record of it: the sweep keeps its folder until the
+    /// last step after the end, as the folder of the session of the job.
+    #[tokio::test]
+    async fn a_job_that_a_new_daemon_took_up_keeps_its_folder_to_its_last_step() {
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let fates = [(12, sweep::Fate::Closed { pull: 40 })];
+        let server = Arc::new(Server::with_fates(&fates).with_gate(gate.clone()));
+        let world: Arc<dyn World> = server.clone();
+        let mut here =
+            Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
+        let start = here.start("issue-12-9f8e7d6c", "issue-12");
+        sweep::note_repo(&start.folder, "o/r").unwrap();
+        let folder = start.folder.clone();
+        let (name, _task, _said) = here.launched(start).await;
+
+        here.restart().await;
+        here.daemon.recover().await;
+        let (mut relay, _) = Relay::connect(&session_dir(&here.dir, &name), 1, false).await;
+        relay.exit(1, 0).await;
+        until(|| server.said().contains(&"finish issue-12".to_owned())).await;
+        until(|| here.daemon.records().is_empty()).await;
+        assert!(here.daemon.sweep(None).await.is_empty());
+        assert!(folder.exists(), "the steps after the end run");
+
+        gate.add_permits(1);
+        until(|| server.said().contains(&"finished issue-12".to_owned())).await;
+        let start = std::time::Instant::now();
+        while folder.exists() {
+            assert!(start.elapsed() < isolated::HANG, "the job did not end");
+            here.daemon.sweep(None).await;
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
     #[tokio::test]
     async fn a_new_daemon_takes_up_a_session_that_runs_and_drops_one_that_ended() {
         let root = tempfile::tempdir().unwrap();
