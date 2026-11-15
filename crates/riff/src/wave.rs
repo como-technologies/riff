@@ -4072,7 +4072,7 @@ async fn after_verify(
                 .await?;
             Ok(vec![body])
         };
-        return Ok(then(record, end.found, steps).await);
+        return Ok(then(record, Found::NoVerdict, steps).await);
     };
     let (repo, tested, shown) = (wave.repo.clone(), commit.to_owned(), result.clone());
     let (reporter, main) = (gh.clone(), wave.main.clone());

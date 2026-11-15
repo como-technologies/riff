@@ -7539,7 +7539,8 @@ of this part when they merge.
   (`text::wave_build_unread`), riff posts no record in the thread
   `ends`, and the wave reads the pull request again at its next look. A
   fault of a step after the read keeps what the read found for the
-  reason of the end (`wave::then`).
+  reason of the end (`wave::then`). Supersedes
+  01M5A5HXKZTDP5M5HY2FHCEBZA in part.
 
 ### The lead, the view and the takeover
 
@@ -10261,14 +10262,14 @@ that builds it merges.
   sends the lead to the handover in the notes (`text::lead_moved`). The
   daemon then makes the new session the lead (R177) and replies with its
   session ID. Only the person and the lead of the person act on it.
-- **01M5A5HXKZTDP5M5HY2FHCEBZA** A session of a wave that ends with no
-  open pull request leaves one record as a note in the thread `ends` on
-  riff-server (`ends::post`). The first line has the tags `item`,
-  `session`, `code`, `failed` and `denied`, then a colon and the reason
-  in words. The lines after it are the last 50 lines of its output, each
-  with no secret and at most 300 characters. The session leaves the
-  thread after the post. A session with an open pull request leaves no
-  record.
+- **01M5A5HXKZTDP5M5HY2FHCEBZA** A session of a wave whose branch has no
+  open pull request, as the steps after its end read it, leaves one
+  record as a note in the thread `ends` on riff-server (`ends::post`).
+  The first line has the tags `item`, `session`, `code`, `failed` and
+  `denied`, then a colon and the reason in words. The lines after it are
+  the last 50 lines of its output, each with no secret and at most 300
+  characters. The session leaves the thread after the post. A session
+  with an open pull request leaves no record.
 - **01M5A5HXP9X3AXTS6N3A57DMQM** `riff session why ITEM` reads the
   thread `ends` and shows the records of ITEM
   (01M6QQ7WCCGYN5X3XZNHEJYKGS). It works in a container: the lead reads
