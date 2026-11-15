@@ -40,6 +40,12 @@
 //!   two head commits in the main clone of the daemon. A merge with no
 //!   conflict puts the two in two groups ([`Lane::clean`]). A test that
 //!   cannot run keeps them in one group.
+//! - A stale head, with a conflict with the default branch, conflicts
+//!   with each newer head that holds the default branch. So a head with
+//!   a conflict and a head with none merge over the merge base of the
+//!   other head and the default branch (01M7E06YMNMF92TDW21XED5JZ8,
+//!   #2128): a conflict that only the default branch gives does not
+//!   count, and the rebase of the stale head starts at once.
 //! - A pull request whose state GitHub does not know yet keeps its place
 //!   ([`Lane::unknown`]): for a short time after the push of its rebase,
 //!   GitHub does not say that it has no conflict now.
@@ -54,7 +60,9 @@
 //! each one as `verify waits for #N` or `rebase waits for #N`
 //! ([`riff_client::waves::Board::groups`]). The look of the daemon sends
 //! no message "waits for a verify" for such a pull request, and no
-//! message of its conflict ([`crate::look::PullWatch::news`]).
+//! message of its conflict ([`crate::look::PullWatch::news`]). The loop
+//! of the wave sends one message for each rebase that waits
+//! ([`crate::text::wave_rebase_waits`], 01M7E075M743X8TE00T5PFMTVR).
 //!
 //! ```mermaid
 //! flowchart TD
@@ -301,7 +309,7 @@ pub const FETCH_WAIT: Duration = Duration::from_secs(60);
 /// };
 /// let mut lanes: BTreeMap<u64, Lane> =
 ///     [lane(1, &a), lane(2, &b), lane(3, &c), lane(4, "1a2b3c4d")].into();
-/// merges(main, &mut lanes);
+/// merges(main, "main", &mut lanes);
 /// // 1 and 2 add to two sections: no conflict. 1 and 3 add to one: a conflict.
 /// assert_eq!(lanes[&1].clean, [42].into());
 /// assert_eq!(lanes[&2].clean, [41, 43].into());
@@ -311,7 +319,82 @@ pub const FETCH_WAIT: Duration = Duration::from_secs(60);
 /// assert!(lanes[&4].clean.is_empty());
 /// # Ok::<(), anyhow::Error>(())
 /// ```
-pub fn merges(main: &Path, lanes: &mut BTreeMap<u64, Lane>) {
+///
+/// A head with a conflict with the default branch `branch`
+/// ([`Lane::conflict`]) conflicts with each newer head that holds the
+/// change of the default branch (#2128,
+/// 01M7E06YMNMF92TDW21XED5JZ8). So the test of such a head and a head
+/// with no conflict takes as its base the merge base of the other head
+/// and `refs/remotes/origin/BRANCH`, after a fetch of the branch: only a
+/// conflict of the changes of the two pull requests counts. The test puts
+/// the changes of the stale head over the lines of the default branch,
+/// and keeps the lines of both where the two changed the same lines
+/// (01M7E7ER1Z43M1Q07GWT8RSBMC). So a
+/// newer head that changes lines next to a change of the default branch
+/// does not clash with the stale head. Two heads with a conflict each, or
+/// with none, have the test of `git merge-tree` with no base.
+///
+/// ```
+/// use std::collections::BTreeMap;
+/// use std::process::Command;
+/// use riff::order::{Lane, merges};
+///
+/// let dir = tempfile::tempdir()?;
+/// let main = dir.path();
+/// let git = |args: &[&str]| {
+///     let out = Command::new("git")
+///         .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
+///         .args(args)
+///         .current_dir(main)
+///         .output()
+///         .unwrap();
+///     assert!(out.status.success(), "git {args:?}: {out:?}");
+///     String::from_utf8_lossy(&out.stdout).trim().to_owned()
+/// };
+/// let write = |name: &str, text: &str| std::fs::write(main.join(name), text).unwrap();
+/// git(&["init", "-q", "-b", "main"]);
+/// write("lib.rs", "one\ntwo\nthree\n");
+/// write("wave.rs", "a\nb\n");
+/// git(&["add", "."]);
+/// git(&["commit", "-q", "-m", "base"]);
+/// // The stale head changes line one of lib.rs. main then changes it too,
+/// // and adds a line to wave.rs.
+/// git(&["switch", "-q", "-c", "stale"]);
+/// write("lib.rs", "one of the stale head\ntwo\nthree\n");
+/// git(&["commit", "-q", "-am", "stale"]);
+/// let stale = git(&["rev-parse", "HEAD"]);
+/// git(&["switch", "-q", "main"]);
+/// write("lib.rs", "one of main\ntwo\nthree\n");
+/// write("wave.rs", "a\nb\nc of main\n");
+/// git(&["commit", "-q", "-am", "main moves"]);
+/// git(&["update-ref", "refs/remotes/origin/main", "HEAD"]);
+/// // Two newer heads on main: one adds a line next to the line of main in
+/// // wave.rs, the other changes line one of lib.rs.
+/// let fresh = |name: &str, lib: &str, wave: &str| {
+///     git(&["switch", "-q", "-c", name, "main"]);
+///     write("lib.rs", lib);
+///     write("wave.rs", wave);
+///     git(&["commit", "-q", "-am", name]);
+///     git(&["rev-parse", "HEAD"])
+/// };
+/// let next = fresh("next", "one of main\ntwo\nthree\n", "a\nb\nc of main\nd of next\n");
+/// let same = fresh("same", "one of same\ntwo\nthree\n", "a\nb\nc of main\n");
+/// let lane = |issue, head: &str, conflict| {
+///     let files = ["lib.rs".to_owned(), "wave.rs".to_owned()].into();
+///     (issue, Lane { issue, pull: 860 + issue, head: head.into(), files, conflict, ..Lane::default() })
+/// };
+/// // A plain merge-tree of the stale head and each newer head gives a conflict.
+/// let plain = |head: &str| Command::new("git").current_dir(main).args(["merge-tree", "--write-tree", &stale, head]).output().unwrap().status.code();
+/// assert_eq!((plain(&next), plain(&same)), (Some(1), Some(1)));
+/// let mut lanes: BTreeMap<u64, Lane> = [lane(1, &stale, true), lane(2, &next, false), lane(3, &same, false)].into();
+/// merges(main, "main", &mut lanes);
+/// // The clash of 1 with 2 is only of main. 1 and 3 change line one of lib.rs both.
+/// assert_eq!(lanes[&1].clean, [862].into());
+/// assert!(!lanes[&1].clashes(&lanes[&2]));
+/// assert!(lanes[&1].clashes(&lanes[&3]));
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn merges(main: &Path, branch: &str, lanes: &mut BTreeMap<u64, Lane>) {
     let pairs: Vec<(u64, u64)> = lanes
         .values()
         .flat_map(|one| {
@@ -322,12 +405,26 @@ pub fn merges(main: &Path, lanes: &mut BTreeMap<u64, Lane>) {
         })
         .collect();
     let tested: BTreeSet<u64> = pairs.iter().flat_map(|&(one, two)| [one, two]).collect();
-    let missing: Vec<String> = tested
+    let mut missing: Vec<String> = tested
         .iter()
         .filter_map(|issue| lanes.get(issue))
         .filter(|lane| commit(&lane.head) && !has(main, &lane.head))
         .map(|lane| format!("refs/pull/{}/head", lane.pull))
         .collect();
+    // A pair of a head with a conflict and a head with none tests over the
+    // default branch (#2128): the fetch brings it too.
+    let stale = |one: &Lane, two: &Lane| one.conflict != two.conflict;
+    let over = branch_name(branch)
+        && pairs
+            .iter()
+            .any(|(one, two)| match (lanes.get(one), lanes.get(two)) {
+                (Some(a), Some(b)) => stale(a, b),
+                _ => false,
+            });
+    let tip = format!("refs/remotes/origin/{branch}");
+    if over {
+        missing.push(format!("+refs/heads/{branch}:{tip}"));
+    }
     if !missing.is_empty() {
         let mut args = vec!["fetch", "-q", "--no-write-fetch-head", "origin"];
         args.extend(missing.iter().map(String::as_str));
@@ -339,11 +436,17 @@ pub fn merges(main: &Path, lanes: &mut BTreeMap<u64, Lane>) {
             let _ = crate::host_git::within(main, &args, FETCH_WAIT);
         }
     }
+    let union = over.then(union_attributes).flatten();
     for (one, two) in pairs {
         let (Some(a), Some(b)) = (lanes.get(&one), lanes.get(&two)) else {
             continue;
         };
-        if !clean(main, &a.head, &b.head) {
+        let merge = match (a.conflict, b.conflict, &union) {
+            (true, false, Some(file)) => clean_over(main, &a.head, &b.head, &tip, file.path()),
+            (false, true, Some(file)) => clean_over(main, &b.head, &a.head, &tip, file.path()),
+            _ => clean(main, &a.head, &b.head),
+        };
+        if !merge {
             continue;
         }
         let (a, b) = (a.pull, b.pull);
@@ -382,6 +485,97 @@ fn clean(main: &Path, one: &str, two: &str) -> bool {
     commit(one) && commit(two) && git_code(main, &args) == Some(0)
 }
 
+/// True when the changes of the pull request of the head `stale`, which
+/// has a conflict with the default branch, merge with the changes of the
+/// pull request of the head `fresh`, which has none (#2128): a three-way
+/// merge of the two over the merge base of `fresh` and `tip`, the default
+/// branch in the clone `main`. A conflict that only the default branch
+/// gives `stale` does not count. No merge base is no test.
+///
+/// `git merge-tree --merge-base` needs git 2.40. So the test makes a
+/// stand-in commit on that merge base, with a fixed author and time, and
+/// gives it to `git merge-tree` ([`clean`]): the merge base of the
+/// stand-in and `fresh` is that base. The tree of the stand-in is a merge
+/// of `stale` into the base, with the attributes file `union`
+/// ([`union_attributes`]): it has the lines of the default branch and the
+/// changes of `stale`. Where the two changed the same lines, it has the
+/// lines of both, those of `stale` first. So a change of `fresh` next to a
+/// change of the default branch merges, and a change of `fresh` next to a
+/// change of `stale` does not.
+fn clean_over(main: &Path, stale: &str, fresh: &str, tip: &str, union: &Path) -> bool {
+    if !(commit(stale) && commit(fresh)) {
+        return false;
+    }
+    let Some(base) = git_line(main, &["merge-base", fresh, tip]).filter(|b| commit(b)) else {
+        return false;
+    };
+    let attributes = format!("core.attributesFile={}", union.display());
+    let merge = [
+        "-c",
+        &attributes,
+        "merge-tree",
+        "--write-tree",
+        "--no-messages",
+        "--name-only",
+        stale,
+        &base,
+    ];
+    // Code 1 is a conflict that a union does not solve, for example of a
+    // file that one side removes: the tree has one side of it.
+    let Some(tree) = git_first(main, &merge)
+        .filter(|(code, tree)| matches!(code, 0 | 1) && commit(tree))
+        .map(|(_, tree)| tree)
+    else {
+        return false;
+    };
+    let args = [
+        "-c",
+        "user.name=riff",
+        "-c",
+        "user.email=riff@localhost",
+        "commit-tree",
+        "--no-gpg-sign",
+        &tree,
+        "-p",
+        &base,
+        "-m",
+        "riff: the head over the default branch",
+    ];
+    git_line(main, &args)
+        .filter(|stand_in| commit(stand_in))
+        .is_some_and(|stand_in| clean(main, &stand_in, fresh))
+}
+
+/// A new attributes file that gives each path the merge driver `union`
+/// of git: a merge keeps the lines of both sides of a conflict, with no
+/// markers. A path can name another driver in its `.gitattributes`.
+/// `None` when the file cannot be written: then the pull requests stay
+/// in one group.
+fn union_attributes() -> Option<tempfile::NamedTempFile> {
+    let mut file = tempfile::NamedTempFile::new().ok()?;
+    std::io::Write::write_all(&mut file, b"* merge=union\n").ok()?;
+    Some(file)
+}
+
+/// True when `name` can be a branch of the forge in a refspec: not empty,
+/// with no `-` first, and only letters, digits and `/._-`. Another name
+/// gives no fetch and no test over the branch.
+///
+/// ```
+/// assert!(riff::order::branch_name("main"));
+/// assert!(riff::order::branch_name("release/2.x"));
+/// assert!(!riff::order::branch_name(""));
+/// assert!(!riff::order::branch_name("--upload-pack=x"));
+/// assert!(!riff::order::branch_name("a:b"));
+/// ```
+pub fn branch_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with('-')
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"/._-".contains(&b))
+}
+
 /// The exit code of `git ARGS` in `dir`, with no prompt and no output.
 /// `None` when `git` does not run, or a signal ends it.
 fn git_code(dir: &Path, args: &[&str]) -> Option<i32> {
@@ -395,6 +589,33 @@ fn git_code(dir: &Path, args: &[&str]) -> Option<i32> {
         .status()
         .ok()?
         .code()
+}
+
+/// The first line of the output of `git ARGS` in `dir`, with no prompt,
+/// when it ends with code 0 ([`git_first`]).
+fn git_line(dir: &Path, args: &[&str]) -> Option<String> {
+    git_first(dir, args).and_then(|(code, line)| (code == 0).then_some(line))
+}
+
+/// The exit code and the first line of the output of `git ARGS` in
+/// `dir`, with no prompt. A commit that it makes has a fixed time, so the
+/// same tree and parent give the same commit. `None` when `git` does not
+/// run, or a signal ends it.
+fn git_first(dir: &Path, args: &[&str]) -> Option<(i32, String)> {
+    const TIME: &str = "1700000000 +0000";
+    let out = crate::host_git::git(dir)
+        .ok()?
+        .args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_AUTHOR_DATE", TIME)
+        .env("GIT_COMMITTER_DATE", TIME)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let line = text.lines().next().unwrap_or_default().trim().to_owned();
+    Some((out.status.code()?, line))
 }
 
 #[cfg(test)]
@@ -529,7 +750,7 @@ mod tests {
             ..lane(issue, &["a.rs"], false, Some(issue as usize))
         };
         let mut lanes: BTreeMap<u64, Lane> = [(1, with(1)), (2, with(2))].into();
-        merges(&none, &mut lanes);
+        merges(&none, "main", &mut lanes);
         assert!(lanes.values().all(|lane| lane.clean.is_empty()));
         assert_eq!(waits([], lanes.values()), BTreeMap::from([(2, 41)]));
     }

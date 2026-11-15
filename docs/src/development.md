@@ -2627,6 +2627,8 @@ verifies the new commit. The wave starts no verify of a commit with a
 conflict. Of the pull requests whose heads conflict, only the next of
 the order of the verifies gets its rebase (see
 [The order of the verifies of a wave](how-it-works.md#the-order-of-the-verifies-of-a-wave)).
+A pull request whose head conflicts only with `main` waits for no
+other: its rebase starts at once.
 
 A verify waits until GitHub knows that the pull request has no
 conflict. After a push, and after `main` moves, GitHub does not know it
@@ -2638,20 +2640,27 @@ verify starts, or it gives `CONFLICTING`, and the rebase starts.
 flowchart LR
     C["pull request: auto-merge on, a conflict"] --> R["a session rebases the branch"]
     R -- "push" --> V["a new Gate, then a new verify"]
-    R -- "no push" --> L["a message to your lead"]
+    R -- "no push" --> L["a note, then one message to your lead"]
     U["GitHub gives UNKNOWN"] -- "next look: MERGEABLE" --> W["the verify"]
     U -- "next look: CONFLICTING" --> C
 ```
 
 The wave starts one session for each head commit with a conflict.
-When that session ends with no push, your lead gets a message:
+When that session ends with no push, your lead gets a note:
 
 ```text
-issue-12: the rebase session of the wave ended with no push (session 9f8e7d6c). PR #40, branch worktree-issue-12, still has the head commit 1a2b3c4 with the conflict with main. The riff daemon sends no verify request, and the wave starts no second session for this commit. Give the item to a session to rebase, or run riff host join to start the rebase again. The item is free.
+issue-12: the rebase session of the wave ended with no push (session 9f8e7d6c). PR #40, branch worktree-issue-12, still has the head commit 1a2b3c4 with the conflict with main. The riff daemon sends no verify request, and the wave starts no second rebase of this commit: a message with the fix follows. The item is free.
+```
+
+Then the wave does not start the rebase of that commit again. Your lead
+gets one message with the cause and the fix:
+
+```text
+PR #40 of issue-12 has a conflict with main at commit 1a2b3c4, and the riff daemon of thelio will not start its rebase again: the rebase of this commit started in this run of the wave, and the conflict is still there. The last session ended: exit code 0. Start the rebase again with riff host join on thelio, or on another machine with riff host join --host thelio
 ```
 
 To start the rebase of the same commit again, see
-[Start a spent item again](#start-a-spent-item-again).
+[Start the rebase of a conflict again](#start-the-rebase-of-a-conflict-again).
 
 #### See why a verify waits
 
@@ -3307,7 +3316,7 @@ flowchart TD
 
 | The pull request | What the wave does | In `riff top` |
 |---|---|---|
-| A conflict, auto-merge on | A session rebases it at its turn (see [Run the wave](#run-the-wave)) | `stuck: #12 (conflict)` |
+| A conflict, auto-merge on | A session rebases it at its turn (see [Run the wave](#run-the-wave)). After a rebase that did not fix the conflict, the wave does not start the rebase of that commit again: your lead gets one message, and `riff host join` starts it again (see [Start the rebase of a conflict again](#start-the-rebase-of-a-conflict-again)) | `stuck: #12 (conflict)`, then `stuck: #12 (conflict, its rebase was tried: riff host join starts it again)` |
 | The verify passed or waits, a required run of GitHub Actions failed, or a job that a required check needs | A session fixes the check. The wave starts no verify of this commit (see [See why a verify waits](#see-why-a-verify-waits) and [See a failed job that the Gate needs](#see-a-failed-job-that-the-gate-needs)) | `stuck: #12 (checks)` |
 | The verify passed or waits, a required check of another app failed | Your lead gets one message for the check. No session starts (see [Fix a failed check of another app](#fix-a-failed-check-of-another-app)) | `stuck: #12 (checks)` |
 | The verify passed or waits, a check that the ruleset does not require failed | Your lead gets one message for the check. The verify goes on, and no session starts (see [See a failed check that no rule requires](#see-a-failed-check-that-no-rule-requires)) | not stuck |
@@ -3368,6 +3377,64 @@ Wave 40  current  runs on thelio  4 open, 0 closed
 ```
 
 An item with a session is in `claimed`, not in `stuck`.
+
+#### Start the rebase of a conflict again
+
+The wave starts one rebase for each head commit with a conflict in a
+run of the wave. When that rebase ends and the conflict is still there,
+the wave does not start it again. Your lead gets one message (see
+[Run the wave](#run-the-wave)), and `riff wave list` names the cause on
+the row of the item:
+
+```text
+Wave 59  current  runs on host-a  3 open, 9 closed
+  stuck: #12 (conflict, its rebase was tried: riff host join starts it again)
+```
+
+Read why the session ended first (see
+[See why a session ended with no pull request](#see-why-a-session-ended-with-no-pull-request)).
+Then, on the host of the message, in your clone of the repository:
+
+```sh
+riff host join
+```
+
+On another machine, name the host of the message:
+
+```sh
+riff host join --host host-a
+```
+
+The starts of each item of the wave go back to 0, and the wave starts
+the rebase at its next look. A new head with a conflict gets its own
+rebase with no step of yours.
+
+The row names each other cause that keeps a rebase from its start, and
+your lead gets one message for each pull request, head commit and
+cause:
+
+| The row | Why no rebase starts | What starts it |
+|---|---|---|
+| `conflict, its rebase was tried: riff host join starts it again` | The rebase of this commit ran in this run of the wave | `riff host join`, or `riff host join --host HOST` |
+| `conflict, its item is held: riff plan free starts its rebase` | Your lead holds the item | `riff plan free issue-12` |
+| `conflict, its issue has the label question: the rebase waits for the answer` | The issue waits for the answer of a person (see [Ask the person a question](#ask-the-person-a-question)) | The answer, then `gh issue edit 12 --remove-label question` |
+| `conflict, a session of the daemon still has its item: see riff daemon status` | A session of the daemon of the host still has the item, with no claim on riff-server | The end of that session |
+
+A rebase that waits for its turn is in the group `rebase waits for #N`,
+not in `stuck`. Your lead gets one message for it too (see
+[The order of the verifies of a wave](how-it-works.md#the-order-of-the-verifies-of-a-wave)).
+
+`riff daemon status` shows the same causes in the line of the wave:
+
+```sh
+riff daemon status --host host-a
+```
+
+```text
+Waves:
+  como-technologies/riff  no free work now
+    no rebase of #12: its rebase was tried: riff host join starts it again
+```
 
 #### Turn on auto-merge for a pull request
 
@@ -3851,7 +3918,7 @@ riff host join
 The wave goes on, and the starts of each item go back to 0. The
 sessions that run go on. The rebase of a pull request with a conflict
 starts again too, also for the same commit (see
-[Run the wave](#run-the-wave)).
+[Start the rebase of a conflict again](#start-the-rebase-of-a-conflict-again)).
 
 ### Add a Done when line to an issue
 

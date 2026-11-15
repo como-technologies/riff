@@ -1931,6 +1931,7 @@ mod tests {
                 word: "waits".into(),
                 image: None,
                 waits: Default::default(),
+                stops: Default::default(),
             }],
             ..fine(
                 3,
@@ -2628,6 +2629,7 @@ mod tests {
                 here: true,
             }),
             waits: Default::default(),
+            stops: Default::default(),
         }];
         look.who.sessions[1] = daemon("mike", "thelio", &sent, 20);
         let found = rows(&look);

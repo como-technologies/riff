@@ -1795,7 +1795,7 @@ impl Status {
     /// assert_eq!(run.busy(), 1);
     /// let wave = riff::daemon::Status {
     ///     waiting: vec![riff::text::wave_slot("o/r")],
-    ///     waves: vec![riff::daemon::WaveShown { repo: "o/r".into(), word: "waits".into(), waits: Default::default(), unfollowed: vec![] }],
+    ///     waves: vec![riff::daemon::WaveShown { repo: "o/r".into(), word: "waits".into(), waits: Default::default(), stops: Default::default(), unfollowed: vec![] }],
     ///     ..status.clone()
     /// };
     /// assert_eq!(wave.busy(), 0);
@@ -1865,6 +1865,15 @@ pub struct WaveShown {
         with = "riff_core::number_keys"
     )]
     pub waits: BTreeMap<u64, u64>,
+    /// The pull requests with a conflict whose rebase the wave does not
+    /// start, by issue, with the cause ([`crate::wave::no_rebases`],
+    /// #2128). The keys are text on the wire, as for `waits`.
+    #[serde(
+        default,
+        skip_serializing_if = "BTreeMap::is_empty",
+        with = "riff_core::number_keys"
+    )]
+    pub stops: BTreeMap<u64, riff_client::waves::NoRebase>,
     /// The followers of the wave on riff-server that do not run: their
     /// failed starts, their time and the last cause
     /// ([`crate::followers::Followers`], 01M7B2RWBQWA6X8BNZEB025SWX). An
@@ -4613,25 +4622,29 @@ impl<R: Runtime + 'static> Daemon<R> {
     pub fn waves_shown(&self) -> Vec<WaveShown> {
         self.waves_lock()
             .iter()
-            .map(|(repo, running)| WaveShown {
-                repo: repo.clone(),
-                // A pull that failed shows until a pull works.
-                word: self.failed_pull(repo).map_or_else(
-                    || {
-                        running
-                            .word
-                            .lock()
-                            .unwrap_or_else(PoisonError::into_inner)
-                            .clone()
-                    },
-                    |pull| text::wave_pull_word(&pull.image, &pull.reason),
-                ),
-                waits: running
+            .map(|(repo, running)| {
+                let ordered = running
                     .waits
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
-                    .clone(),
-                unfollowed: running.followers.shown(),
+                    .clone();
+                WaveShown {
+                    repo: repo.clone(),
+                    // A pull that failed shows until a pull works.
+                    word: self.failed_pull(repo).map_or_else(
+                        || {
+                            running
+                                .word
+                                .lock()
+                                .unwrap_or_else(PoisonError::into_inner)
+                                .clone()
+                        },
+                        |pull| text::wave_pull_word(&pull.image, &pull.reason),
+                    ),
+                    waits: ordered.waits,
+                    stops: ordered.stops,
+                    unfollowed: running.followers.shown(),
+                }
             })
             .collect()
     }
@@ -4647,6 +4660,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                     .waits
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
+                    .waits
                     .clone()
             })
             .unwrap_or_default()
@@ -15955,7 +15969,7 @@ mod tests {
             vec![(724, 728), (725, 728), (730, 731)],
         ] {
             let waits: BTreeMap<u64, u64> = waits.into_iter().collect();
-            *here.daemon.waves_lock()["o/r"].waits.lock().unwrap() = waits.clone();
+            here.daemon.waves_lock()["o/r"].waits.lock().unwrap().waits = waits.clone();
             let read = status(&here.dir).await.unwrap();
             assert_eq!(read.waves, here.daemon.waves_shown());
             assert_eq!(read.waves[0].waits, waits);
@@ -15970,6 +15984,23 @@ mod tests {
             read.waves[0].word
         );
         assert!(text.contains(&wave), "{text}");
+        // #2128: the rebases that do not start, with their causes, read
+        // again too, and the facts keep them.
+        use riff_client::waves::NoRebase;
+        let stops = BTreeMap::from([(12, NoRebase::Tried), (13, NoRebase::Record)]);
+        here.daemon.waves_lock()["o/r"].waits.lock().unwrap().stops = stops.clone();
+        let read = status(&here.dir).await.unwrap();
+        assert_eq!(read.waves[0].stops, stops);
+        let line = facts::of_status(&read).line();
+        assert!(
+            line.contains(r#""stops":{"12":"tried","13":"record"}"#),
+            "{line}"
+        );
+        let facts = riff_client::daemons::Facts::parse(&line).unwrap();
+        assert_eq!(facts.waves[0].stops, stops, "{line}");
+        let text = text::daemon_status(&read, now_ms());
+        let line = "    no rebase of #12: its rebase was tried: riff host join starts it again\n";
+        assert!(text.contains(line), "{text}");
     }
 
     /// 01M74BVSFDAE67FA1PRYK7E2PN, #1855: a status with each field set,
@@ -15982,6 +16013,7 @@ mod tests {
             repo: repo.into(),
             word: "no free work now".into(),
             waits: waits.iter().copied().collect(),
+            stops: BTreeMap::new(),
             unfollowed: Vec::new(),
         };
         let full = |waves: Vec<WaveShown>| Status {

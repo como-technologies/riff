@@ -17,7 +17,8 @@
 //!   `tracker`, `question`, `merged` and `live check`
 //!   (01M3Z9N6X92KT051P10CKKV7EK, 01M58ATZ1F42DWNNB24C2HJPEY,
 //!   01M5ND16V2SVN8A9K7W90VC6X9). `stuck` holds the items whose pull
-//!   request cannot merge by itself, with the reason (#279).
+//!   request cannot merge by itself, with the reason (#279). A conflict
+//!   whose rebase does not start has its cause too ([`NoRebase`], #2128).
 //!   `riff top` shows the board of the current wave, `riff wave list`
 //!   the board of each wave (01M58ATZ408RBCX0PM0D0ZCY4B).
 //! - [`is_tracker`]: a tracker issue has no code of its own. No session
@@ -134,6 +135,11 @@ pub struct Issues {
     /// ([`crate::daemons::Wave::waits`]).
     #[serde(default)]
     pub waits: BTreeMap<u64, u64>,
+    /// The issues whose pull request has a conflict, and whose rebase the
+    /// daemon of the wave does not start, each with the cause (#2128). The
+    /// daemon tells them in its facts ([`crate::daemons::Wave::stops`]).
+    #[serde(default)]
+    pub stops: BTreeMap<u64, NoRebase>,
     /// The issues that a merged pull request keeps out of the free work
     /// ([`Merged`], 01M7DYX2Q2VJW5V4RNQEEHCVKS).
     #[serde(default)]
@@ -237,6 +243,7 @@ impl Issues {
             verify: BTreeSet::new(),
             stuck: BTreeMap::new(),
             waits: BTreeMap::new(),
+            stops: BTreeMap::new(),
             merged: BTreeMap::new(),
         }
     }
@@ -278,6 +285,43 @@ impl Issues {
     pub fn with_merged(mut self, merged: impl IntoIterator<Item = (u64, Merged)>) -> Issues {
         self.merged = merged.into_iter().collect();
         self
+    }
+
+    /// These issues with `stops`, the issues whose rebase the daemon of
+    /// the wave does not start, each with the cause (#2128).
+    #[must_use]
+    pub fn with_stops(mut self, stops: impl IntoIterator<Item = (u64, NoRebase)>) -> Issues {
+        self.stops = stops.into_iter().collect();
+        self
+    }
+
+    /// Why the wave starts no rebase of the conflict of the issue `n`
+    /// (#2128): a hold of `holds` or the label [`QUESTION`] first, as
+    /// these reads are new, then the cause that the daemon of the wave
+    /// tells ([`Issues::stops`]). `None` when nothing stops the rebase.
+    ///
+    /// ```
+    /// use std::collections::BTreeMap;
+    /// use riff_client::waves::{Issue, Issues, NoRebase};
+    /// use riff_core::wire::HoldInfo;
+    ///
+    /// let issue = |number, question| Issue { number, title: "t".into(), milestone: None, tracker: false, question, needs: vec![] };
+    /// let issues = Issues::of(vec![issue(12, false), issue(13, true), issue(14, false), issue(15, false)])
+    ///     .with_stops([(12, NoRebase::Tried), (13, NoRebase::Tried), (14, NoRebase::Record)]);
+    /// let holds = BTreeMap::from([("issue-12".to_owned(), HoldInfo { reason: "later".into(), by: None, at_ms: 0 })]);
+    /// assert_eq!(issues.no_rebase(12, &holds), Some(NoRebase::Held));
+    /// assert_eq!(issues.no_rebase(13, &holds), Some(NoRebase::Question));
+    /// assert_eq!(issues.no_rebase(14, &holds), Some(NoRebase::Record));
+    /// assert_eq!(issues.no_rebase(15, &holds), None);
+    /// ```
+    pub fn no_rebase(&self, n: u64, holds: &BTreeMap<String, HoldInfo>) -> Option<NoRebase> {
+        if holds.contains_key(&format!("issue-{n}")) {
+            return Some(NoRebase::Held);
+        }
+        if self.questions.contains(&n) {
+            return Some(NoRebase::Question);
+        }
+        self.stops.get(&n).copied()
     }
 
     /// The issues after a new read of the forge: `new`, or `last` when
@@ -345,6 +389,54 @@ pub const QUESTION: &str = "question";
 /// The reason of a stuck pull request with a conflict with the default
 /// branch ([`Issues::stuck`]).
 pub const CONFLICT: &str = "conflict";
+
+/// Why the wave starts no rebase of a pull request with a conflict
+/// (#2128, 01M7E075HSSYBXN34JY1K4HDEG). The row of the item in `riff wave
+/// list` names it after [`CONFLICT`] ([`NoRebase::word`]). A rebase that
+/// waits for its turn is not one: it has its own group
+/// ([`Issues::waits`]).
+///
+/// ```
+/// use riff_client::waves::NoRebase;
+///
+/// assert_eq!(serde_json::to_string(&NoRebase::Tried)?, r#""tried""#);
+/// assert_eq!(serde_json::from_str::<NoRebase>(r#""record""#)?, NoRebase::Record);
+/// assert_eq!(NoRebase::Tried.word(), "its rebase was tried: riff host join starts it again");
+/// # Ok::<(), serde_json::Error>(())
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NoRebase {
+    /// The rebase of its head started in this run of the wave, and the
+    /// conflict is still there: the daemon starts no second one until
+    /// `riff host join`.
+    Tried,
+    /// The lead holds its item.
+    Held,
+    /// Its issue has the label [`QUESTION`]: the rebase waits for the
+    /// answer.
+    Question,
+    /// A session of the daemon still has its item, with no claim on
+    /// riff-server.
+    Record,
+}
+
+impl NoRebase {
+    /// The words of the cause on the row of the item, with the step that
+    /// starts the rebase.
+    pub fn word(self) -> &'static str {
+        match self {
+            NoRebase::Tried => "its rebase was tried: riff host join starts it again",
+            NoRebase::Held => "its item is held: riff plan free starts its rebase",
+            NoRebase::Question => {
+                "its issue has the label question: the rebase waits for the answer"
+            }
+            NoRebase::Record => {
+                "a session of the daemon still has its item: see riff daemon status"
+            }
+        }
+    }
+}
 
 /// The start of the title of a tracker issue.
 pub const TRACKER_TITLE: &str = "Tracker:";
@@ -501,7 +593,8 @@ pub struct Board {
     /// each with the reason: `checks`, `conflict`, `auto-merge off` or
     /// `removed from queue`
     /// (#279). They wait for a session or for the lead, not for the
-    /// merge.
+    /// merge. A conflict whose rebase does not start has the cause after
+    /// the reason ([`Issues::no_rebase`], #2128).
     #[serde(default)]
     pub stuck: Vec<(u64, String)>,
     /// The tracker issues with no claim and no pull request in verify
@@ -633,10 +726,14 @@ impl Board {
             if claims.iter().any(|c| c.starts_with("verify-")) {
                 board.verify.push(n);
             } else if let Some(why) = issues.stuck.get(&n).filter(|_| claims.is_empty()) {
-                // A conflict whose rebase waits for its turn (#1801).
+                // A conflict whose rebase waits for its turn (#1801), or
+                // that does not start (#2128).
                 match issues.waits.get(&n).filter(|_| why == CONFLICT) {
                     Some(pull) => board.rebases.push((n, *pull)),
-                    None => board.stuck.push((n, why.clone())),
+                    None => match issues.no_rebase(n, holds).filter(|_| why == CONFLICT) {
+                        Some(stop) => board.stuck.push((n, format!("{why}, {}", stop.word()))),
+                        None => board.stuck.push((n, why.clone())),
+                    },
                 }
             } else if claims.is_empty() && issues.verify.contains(&n) {
                 board.verify.push(n);
@@ -990,6 +1087,56 @@ mod tests {
             board.groups(true),
             ["claimed: #12", "verify: #13 #15", "question: #14"],
             "a pause hides no question"
+        );
+    }
+
+    /// #2128: the row of a conflict whose rebase does not start names the
+    /// cause: a spent rebase start or a record that the daemon tells, a
+    /// hold, or the label `question`. A conflict whose rebase can start
+    /// has no cause, and one that waits for its turn is in its own group.
+    #[test]
+    fn the_row_of_a_conflict_with_no_rebase_names_the_cause() {
+        let issue = |number, question| Issue {
+            number,
+            title: format!("item {number}"),
+            milestone: Some("Wave 3".into()),
+            tracker: false,
+            question,
+            needs: vec![],
+        };
+        let conflicts = [12, 13, 14, 15, 16, 17];
+        let issues = Issues::of(vec![
+            issue(12, false),
+            issue(13, false),
+            issue(14, true),
+            issue(15, false),
+            issue(16, false),
+            issue(17, false),
+        ])
+        .with_verify(conflicts)
+        .with_stuck(conflicts.map(|n| (n, CONFLICT.to_owned())))
+        .with_waits([(17, 44)])
+        .with_stops([(12, NoRebase::Tried), (15, NoRebase::Record)]);
+        let holds = BTreeMap::from([(
+            "issue-13".to_owned(),
+            HoldInfo {
+                reason: "later".into(),
+                by: None,
+                at_ms: 1,
+            },
+        )]);
+        let sessions = Sessions::new(vec![], vec![]);
+        let board = Board::of("o/r", &issues, &sessions, &holds).unwrap();
+        assert_eq!(
+            board.groups(false),
+            [
+                "rebase waits for #44: #17",
+                "stuck: #12 (conflict, its rebase was tried: riff host join starts it again), \
+                 #13 (conflict, its item is held: riff plan free starts its rebase), \
+                 #14 (conflict, its issue has the label question: the rebase waits for the \
+                 answer), #15 (conflict, a session of the daemon still has its item: see riff \
+                 daemon status), #16 (conflict)",
+            ]
         );
     }
 

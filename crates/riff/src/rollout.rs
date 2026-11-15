@@ -2535,6 +2535,65 @@ pub fn merge_off(gh: &Gh, repo: &str, number: u64, head: &str) -> bool {
         .is_ok_and(|reply| merge_off_in(&reply, head))
 }
 
+/// The GraphQL query of [`conflicts_now`]: the state of one pull request,
+/// its head commit and whether it merges. As [`QUEUE_QUERY`], it also asks
+/// for `rateLimit`.
+pub const CONFLICT_QUERY: &str = "query($owner: String!, $name: String!, $number: Int!) { \
+    rateLimit { cost limit remaining resetAt } \
+    repository(owner: $owner, name: $name) { \
+    pullRequest(number: $number) { state headRefOid mergeable } } }";
+
+/// True when the reply `reply` of [`CONFLICT_QUERY`] says that the pull
+/// request is open, at the head commit `head`, and `CONFLICTING`. Each
+/// other reply, and a reply that is no JSON, gives false.
+///
+/// ```
+/// use riff::rollout::conflicts_in;
+///
+/// let reply = |state: &str, head: &str, mergeable: &str| {
+///     format!(r#"{{"data":{{"repository":{{"pullRequest":{{"state":"{state}","headRefOid":"{head}","mergeable":"{mergeable}"}}}}}}}}"#)
+/// };
+/// assert!(conflicts_in(&reply("OPEN", "1a2b", "CONFLICTING"), "1a2b"));
+/// // The rebase pushed after the look: a new head.
+/// assert!(!conflicts_in(&reply("OPEN", "5e6f", "UNKNOWN"), "1a2b"));
+/// assert!(!conflicts_in(&reply("OPEN", "1a2b", "MERGEABLE"), "1a2b"));
+/// assert!(!conflicts_in(&reply("MERGED", "1a2b", "CONFLICTING"), "1a2b"));
+/// assert!(!conflicts_in("not json", "1a2b"));
+/// ```
+pub fn conflicts_in(reply: &str, head: &str) -> bool {
+    let Ok(reply) = serde_json::from_str::<serde_json::Value>(reply) else {
+        return false;
+    };
+    let pull = &reply["data"]["repository"]["pullRequest"];
+    pull["state"] == "OPEN" && pull["headRefOid"] == head && pull["mergeable"] == "CONFLICTING"
+}
+
+/// True when GitHub says now that the pull request `number` of `repo`
+/// (`OWNER/REPO`) is open, at the head commit `head`, and has a conflict
+/// ([`conflicts_in`]). It makes one call of `gh api graphql` with
+/// [`CONFLICT_QUERY`], and takes no kept reply.
+///
+/// The wave asks it before it tells the lead that it will not start the
+/// rebase of `head` again (01M7E075FAD9CH3FT957W8C9W8): a look right
+/// after the push of a rebase can still read the old head. A fault of
+/// `gh` gives false: the next look asks again.
+pub fn conflicts_now(gh: &Gh, repo: &str, number: u64, head: &str) -> bool {
+    let Some((owner, name)) = repo.split_once('/') else {
+        return false;
+    };
+    let (query, owner, name) = (
+        format!("query={CONFLICT_QUERY}"),
+        format!("owner={owner}"),
+        format!("name={name}"),
+    );
+    let number = format!("number={number}");
+    let args = [
+        "api", "graphql", "-f", &query, "-f", &owner, "-f", &name, "-F", &number,
+    ];
+    gh.run(&args, None)
+        .is_ok_and(|reply| conflicts_in(&reply, head))
+}
+
 /// Makes the kept replies of the open pull requests, the open issues and
 /// the merge queue of `repo` as new as now (#1566). The look of the wave
 /// calls it when GitHub says that nothing changed since it read them

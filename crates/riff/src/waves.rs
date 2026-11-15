@@ -665,7 +665,7 @@ impl Items {
     ///     s
     /// };
     /// let runs = |repo: &str, waits: BTreeMap<u64, u64>| Facts {
-    ///     waves: vec![Wave { repo: repo.into(), word: "no free work now".into(), image: None, waits }],
+    ///     waves: vec![Wave { repo: repo.into(), word: "no free work now".into(), image: None, waits, ..Wave::default() }],
     ///     ..Facts::default()
     /// };
     /// let who = vec![
@@ -711,7 +711,8 @@ impl Items {
         let sessions = Sessions::new(who, Vec::new());
         let issues = issues
             .clone()
-            .with_waits(riff_client::daemons::waits(&daemons, repo));
+            .with_waits(riff_client::daemons::waits(&daemons, repo))
+            .with_stops(riff_client::daemons::stops(&daemons, repo));
         Items {
             boards: Board::each(repo, &issues, &sessions, holds),
             hosts,
@@ -1232,6 +1233,7 @@ mod tests {
                 word: "no free work now".into(),
                 image: None,
                 waits: Default::default(),
+                stops: Default::default(),
             }],
             ..Facts::default()
         };

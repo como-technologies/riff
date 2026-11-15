@@ -293,8 +293,11 @@
 //!   01M6YPYTGR2JEBDHGX4K1RDCAW, 01M750ED646BKBZSA9KHF0953Y). Two heads
 //!   that change a file in common conflict unless `git merge-tree` in the
 //!   main clone says that they merge with no conflict
-//!   ([`order::merges`]). A session of its item does not put a pull
-//!   request before the others (01M74EP20TDQEXW42MK0XE73QF).
+//!   ([`order::merges`]). A head with a conflict with `main` and a head
+//!   with none merge over the merge base of the other head and `main`, so
+//!   a conflict of `main` alone puts no pull request in a group
+//!   (01M7E06YMNMF92TDW21XED5JZ8). A session of its item does not put a
+//!   pull request before the others (01M74EP20TDQEXW42MK0XE73QF).
 //!   It waits until that pull request merges or its verify fails. The loop
 //!   keeps these waits for the look and for `riff wave list`
 //!   ([`Daemon::order_waits`]);
@@ -313,7 +316,8 @@
 //!   the head that the pull request has now (01M6QQ7NZTF2G4MRXKWWG30CFX,
 //!   [`text::wave_spent`]);
 //! - the rebase of a head commit that started one time in this run of
-//!   the wave ([`REBASES`], 01M57FJ3WWMQSDBFRRHXN3SMFQ);
+//!   the wave ([`REBASES`], 01M57FJ3WWMQSDBFRRHXN3SMFQ). The lead gets one
+//!   message for it, with the fix (see "A conflict with main");
 //! - the fix of the failed checks of a head commit that started one time
 //!   in this run of the wave ([`CHECKS`]);
 //! - any item while a fact of the host fails ([`World::host`]): the
@@ -496,7 +500,9 @@
 //! head a conflict. Of these, only the next of the order gets its
 //! rebase. The others keep their conflict until the pull request before
 //! them merges or its verify fails, and the look sends no message of
-//! their conflict.
+//! their conflict. The loop tells the lead one time for each head and
+//! each pull request before it that the rebase waits
+//! ([`text::wave_rebase_waits`], 01M7E075M743X8TE00T5PFMTVR).
 //! A pull request keeps its place while a session rebases it, and after
 //! its push, also while it reads `UNKNOWN`. The session does not make it
 //! go first (01M74EP20TDQEXW42MK0XE73QF).
@@ -506,8 +512,28 @@
 //! or a fault of the host takes the start back, as for each item.
 //! `riff host join` clears the starts, so a person can start the rebase
 //! of the same head again. When the session ends with the head that had
-//! the conflict, the lead gets a message in place of the verify request
-//! (01M57FJ3Z8AFDY9G0KTAYZJESY).
+//! the conflict, the lead gets a note in place of the verify request
+//! ([`text::wave_not_rebased`], 01M57FJ3Z8AFDY9G0KTAYZJESY).
+//!
+//! At each look, the loop finds why each other conflict gets no rebase
+//! ([`no_rebases`], #2128). The lead gets one message for each pull
+//! request, head and cause, with the fix ([`text::wave_no_rebase`],
+//! 01M7E075FAD9CH3FT957W8C9W8). The daemon sends the causes in its
+//! facts, and `riff wave list` names each on the row of the item
+//! ([`riff_client::waves::NoRebase`], 01M7E075HSSYBXN34JY1K4HDEG):
+//!
+//! ```mermaid
+//! flowchart TD
+//!     C["a conflict at the look"] --> S{"a session claims the item?"}
+//!     S -- yes --> N["that session rebases it"]
+//!     S -- no --> H{"a hold, the label question,<br/>or a record of the daemon?"}
+//!     H -- yes --> M1["no rebase: one message,<br/>the row names the cause"]
+//!     H -- no --> O{"its turn in the order?"}
+//!     O -- "no: it waits for #N" --> M2["rebase waits for #N:<br/>one message"]
+//!     O -- yes --> T{"its rebase of this head<br/>started in this run?"}
+//!     T -- yes --> M3["no rebase: one message,<br/>riff host join starts it again"]
+//!     T -- no --> R["the rebase starts"]
+//! ```
 //!
 //! # The look
 //!
@@ -809,6 +835,7 @@ use crate::{
 };
 use riff_client::api::{self, Api};
 use riff_client::link::STREAM_RETRY;
+use riff_client::waves::NoRebase;
 
 /// The file of the waves that the daemon runs, in its folder.
 pub const WAVES_FILE: &str = "waves.json";
@@ -1347,6 +1374,10 @@ pub struct Fixes {
     pub failed: BTreeMap<u64, Failed>,
     /// The pull requests that the lead hears of.
     pub notices: Vec<Notice>,
+    /// The issues of `conflicts` and of `failed` with the label
+    /// `question`: they get no rebase and no fix of checks, and are no
+    /// free work (#1605, #2128).
+    pub asking: BTreeSet<u64>,
 }
 
 /// The facts of a wave at one look.
@@ -1647,6 +1678,106 @@ pub fn order(
     let first = look.lanes.values().filter(|lane| goes(lane));
     let asked = look.lanes.values().filter(|lane| !goes(lane) && next(lane));
     order::waits(first, asked)
+}
+
+/// The pull requests of `look` with a conflict whose rebase the pick does
+/// not start, by issue, with the cause (#2128), from the items that the
+/// daemon runs (`running`, as for [`pick`]), the items of `running` that
+/// only a record of a session of the daemon has (`records`: no job runs
+/// them), the starts of each item (`starts`) and the order (`waits`,
+/// [`order()`]). The lead gets one message for each, and `riff wave list`
+/// names the cause on the row of the item:
+///
+/// - a hold of the item: [`NoRebase::Held`];
+/// - the label `question` on the issue: [`NoRebase::Question`];
+/// - a record with no job and no claim: [`NoRebase::Record`];
+/// - the rebase of the head started [`REBASES`] times in this run of the
+///   wave: [`NoRebase::Tried`].
+///
+/// A rebase that waits for its turn has its own group and message, and a
+/// pull request whose item a session claims, or whose verify runs, gets
+/// its rebase from that session or after that verify: none of them is
+/// here. Nor is anything while the wave is paused or has no lead: no item
+/// starts then.
+///
+/// ```
+/// use std::collections::{BTreeMap, BTreeSet};
+/// use riff::wave::{Conflict, Fixes, Look, Work, no_rebases};
+/// use riff_client::waves::NoRebase;
+///
+/// let conflict = |issue| (issue, Conflict { pull: 40 + issue, commit: format!("c{issue}") });
+/// let look = Look {
+///     free: vec!["issue-1".into(), "issue-2".into(), "issue-4".into(), "issue-5".into(), "issue-6".into()],
+///     holds: ["issue-2".to_owned()].into(),
+///     fixes: Fixes {
+///         conflicts: [conflict(1), conflict(2), conflict(3), conflict(4), conflict(5), conflict(6)].into(),
+///         asking: [3].into(),
+///         ..Fixes::default()
+///     },
+///     ..Look::default()
+/// };
+/// let tried = Work::Rebase { issue: 1, pull: 41, commit: "c1".into() };
+/// let starts: BTreeMap<String, u32> = [(tried.key(), 1)].into();
+/// let running: BTreeSet<String> = ["issue-4".to_owned(), "issue-6".to_owned()].into();
+/// let records: BTreeSet<String> = ["issue-4".to_owned()].into();
+/// // 5 waits for its turn after #46. A job rebases 6.
+/// let waits = BTreeMap::from([(5, 46)]);
+/// assert_eq!(
+///     no_rebases(&look, &running, &records, &starts, &waits),
+///     BTreeMap::from([
+///         (1, NoRebase::Tried),
+///         (2, NoRebase::Held),
+///         (3, NoRebase::Question),
+///         (4, NoRebase::Record),
+///     ])
+/// );
+/// // `riff host join` cleared the starts: the rebase of 1 can start.
+/// assert!(!no_rebases(&look, &running, &records, &BTreeMap::new(), &waits).contains_key(&1));
+/// // A paused wave starts nothing: no cause is of a rebase.
+/// let paused = Look { paused: true, ..look };
+/// assert!(no_rebases(&paused, &running, &records, &starts, &waits).is_empty());
+/// ```
+pub fn no_rebases(
+    look: &Look,
+    running: &BTreeSet<String>,
+    records: &BTreeSet<String>,
+    starts: &BTreeMap<String, u32>,
+    waits: &BTreeMap<u64, u64>,
+) -> BTreeMap<u64, NoRebase> {
+    if look.paused || look.no_lead {
+        return BTreeMap::new();
+    }
+    let busy = |item: &str| running.contains(item) || look.claims.contains(item);
+    look.fixes
+        .conflicts
+        .iter()
+        .filter_map(|(&issue, conflict)| {
+            let item = format!("issue-{issue}");
+            let rebase = Work::Rebase {
+                issue,
+                pull: conflict.pull,
+                commit: conflict.commit.clone(),
+            };
+            let stop = if look.claims.contains(&item) {
+                return None;
+            } else if look.holds.contains(&item) {
+                NoRebase::Held
+            } else if look.fixes.asking.contains(&issue) {
+                NoRebase::Question
+            } else if waits.contains_key(&issue) || busy(&format!("verify-issue-{issue}")) {
+                return None;
+            } else if records.contains(&item) {
+                NoRebase::Record
+            } else if running.contains(&item) {
+                return None;
+            } else if starts.get(&rebase.key()).copied().unwrap_or(0) >= rebase.most() {
+                NoRebase::Tried
+            } else {
+                return None;
+            };
+            Some((issue, stop))
+        })
+        .collect()
 }
 
 /// True when the item `issue-N` of the free work of `look` is a fix of
@@ -1986,6 +2117,16 @@ pub trait World: Send + Sync {
         Box::pin(async { true })
     }
 
+    /// True when the forge says now that the pull request `pull` of `wave`
+    /// is open, at the head commit `head`, and has a conflict
+    /// ([`rollout::conflicts_now`]). The loop asks it before it tells the
+    /// lead that it will not start the rebase of `head` again
+    /// (01M7E075FAD9CH3FT957W8C9W8). A fault of the read is false: the next
+    /// look asks again. The default is true.
+    fn conflicts<'a>(&'a self, _wave: &'a Wave, _pull: u64, _head: &'a str) -> BoxFuture<'a, bool> {
+        Box::pin(async { true })
+    }
+
     /// The steps before the start: the checks, the claim, the clone and
     /// the start text. `None` when another session holds the item, or
     /// the item is held. Each other refusal of the claim, for example
@@ -2280,6 +2421,26 @@ fn running<R: Runtime + 'static>(
     items
 }
 
+/// The items of [`running`] that only a record of a session of the wave
+/// `wave` has, or a session that ended while no daemon ran
+/// ([`Daemon::ending`]): no job of the loop runs them (`taken`), for
+/// [`NoRebase::Record`] (#2128).
+fn records<R: Runtime + 'static>(
+    daemon: &Daemon<R>,
+    wave: &Wave,
+    taken: &Mutex<BTreeSet<String>>,
+) -> BTreeSet<String> {
+    let taken = lock(taken).clone();
+    daemon
+        .records()
+        .into_iter()
+        .filter(|r| r.job.as_ref().is_some_and(|j| j.wave.repo == wave.repo))
+        .map(|r| r.live.item)
+        .chain(daemon.ending(&wave.repo))
+        .filter(|item| !taken.contains(item))
+        .collect()
+}
+
 /// The `gh` of the loop and the jobs of a wave for `repo`: its calls are
 /// the calls of the caller `wave` in the count of the daemon
 /// ([`crate::ghcalls`]). Each call has the time limit
@@ -2440,10 +2601,136 @@ async fn say_merged(world: &dyn World, wave: &Wave, look: &Look, said: &mut BTre
     }
 }
 
+/// The key of the message to the lead for the rebase of `conflict` that
+/// does not start for `stop` (#2128). The key of a spent start and of a
+/// record names `host`: they are facts of the daemon of that host. The
+/// wave of each host makes the same key for a hold or a question of the
+/// same head, and riff-server drops the second post.
+///
+/// ```
+/// use riff::wave::{Conflict, no_rebase_key};
+/// use riff_client::waves::NoRebase;
+///
+/// let conflict = Conflict { pull: 40, commit: "1a2b3c4".into() };
+/// assert_eq!(no_rebase_key(&conflict, NoRebase::Tried, "host-a"), "rebase-tried-#40@1a2b3c4-host-a");
+/// assert_eq!(no_rebase_key(&conflict, NoRebase::Record, "host-a"), "rebase-record-#40@1a2b3c4-host-a");
+/// assert_eq!(no_rebase_key(&conflict, NoRebase::Held, "host-a"), "rebase-held-#40@1a2b3c4");
+/// assert_eq!(no_rebase_key(&conflict, NoRebase::Question, "host-a"), "rebase-question-#40@1a2b3c4");
+/// ```
+pub fn no_rebase_key(conflict: &Conflict, stop: NoRebase, host: &str) -> String {
+    let (pull, head) = (conflict.pull, &conflict.commit);
+    match stop {
+        NoRebase::Tried => format!("rebase-tried-#{pull}@{head}-{host}"),
+        NoRebase::Record => format!("rebase-record-#{pull}@{head}-{host}"),
+        NoRebase::Held => format!("rebase-held-#{pull}@{head}"),
+        NoRebase::Question => format!("rebase-question-#{pull}@{head}"),
+    }
+}
+
+/// The key of the message to the lead for the rebase of `conflict` that
+/// waits for its turn after the pull request `before` (#2128). The wave
+/// of each host makes the same key, and riff-server drops the second
+/// post.
+///
+/// ```
+/// use riff::wave::{Conflict, rebase_waits_key};
+///
+/// let conflict = Conflict { pull: 40, commit: "1a2b3c4".into() };
+/// assert_eq!(rebase_waits_key(&conflict, 44), "rebase-waits-#40@1a2b3c4:#44");
+/// ```
+pub fn rebase_waits_key(conflict: &Conflict, before: u64) -> String {
+    format!(
+        "rebase-waits-#{}@{}:#{before}",
+        conflict.pull, conflict.commit
+    )
+}
+
+/// The rebases of one look that do not start: those that wait for their
+/// turn (`waits`, [`order()`]) and the others with their cause (`stops`,
+/// [`no_rebases`]).
+struct Unstarted<'a> {
+    look: &'a Look,
+    waits: &'a BTreeMap<u64, u64>,
+    stops: &'a BTreeMap<u64, NoRebase>,
+}
+
+/// Tells the lead of each rebase of `unstarted` one time (#2128,
+/// 01M7E075FAD9CH3FT957W8C9W8, 01M7E075HSSYBXN34JY1K4HDEG,
+/// 01M7E075M743X8TE00T5PFMTVR): its pull request, its head, the cause and
+/// the fix. `told` holds the keys of the messages that the lead got,
+/// while the cause lasts: a rebase that starts and stops again gets a new
+/// message. The message of a spent start names the end of its last
+/// session (`end`), and has no key of a post, as for a spent item: after
+/// `riff host join`, the lead hears of a second spent start. Before it,
+/// the loop asks the forge again that the head still has the conflict
+/// ([`World::conflicts`]). Its key keeps the start of the rebase
+/// ([`Work::key`]), and stays while that start is spent (`spent`), as for
+/// a spent item (01M7E4ZSWBC0H3EP24Y2AQHC4W): a look that does not show
+/// the conflict, for example while the forge reads `UNKNOWN` after a move
+/// of the default branch ([`rollout::Pull::unknown`]), does not give the
+/// message again. Each other message has its key ([`no_rebase_key`],
+/// [`rebase_waits_key`]).
+async fn tell_unstarted(
+    world: &dyn World,
+    wave: &Wave,
+    unstarted: Unstarted<'_>,
+    end: impl Fn(&str) -> Option<String>,
+    spent: impl Fn(&str) -> bool,
+    told: &mut BTreeMap<String, Option<String>>,
+) {
+    let Unstarted { look, waits, stops } = unstarted;
+    let base = match look.branch.as_str() {
+        "" => text::WAVE_BASE_UNREAD,
+        branch => branch,
+    };
+    let mut now = BTreeSet::new();
+    for (issue, conflict) in &look.fixes.conflicts {
+        let (key, body, post) = if let Some(before) = waits.get(issue) {
+            let key = rebase_waits_key(conflict, *before);
+            let body =
+                text::wave_rebase_waits(conflict.pull, *issue, base, &conflict.commit, *before);
+            (key.clone(), body, Some(key))
+        } else if let Some(stop) = stops.get(issue) {
+            let key = no_rebase_key(conflict, *stop, &wave.host);
+            let reason =
+                end(&format!("issue-{issue}")).unwrap_or_else(|| text::WAVE_END_UNKNOWN.to_owned());
+            let (pull, head) = (conflict.pull, &conflict.commit);
+            let body = text::wave_no_rebase(pull, *issue, base, head, &wave.host, *stop, &reason);
+            let post = (*stop != NoRebase::Tried).then(|| key.clone());
+            (key, body, post)
+        } else {
+            continue;
+        };
+        let tried = (stops.get(issue) == Some(&NoRebase::Tried)).then(|| {
+            let rebase = Work::Rebase {
+                issue: *issue,
+                pull: conflict.pull,
+                commit: conflict.commit.clone(),
+            };
+            rebase.key()
+        });
+        // A look right after the push of a rebase can still read the old
+        // head: the forge tells it again first.
+        if !told.contains_key(&key)
+            && tried.is_some()
+            && !world.conflicts(wave, conflict.pull, &conflict.commit).await
+        {
+            continue;
+        }
+        now.insert(key.clone());
+        if let std::collections::btree_map::Entry::Vacant(new) = told.entry(key) {
+            new.insert(tried);
+            world.tell(wave, &body, post.as_deref()).await;
+        }
+    }
+    told.retain(|key, start| now.contains(key) || start.as_deref().is_some_and(&spent));
+}
+
 /// The loop of the wave `wave` in `daemon`, until the daemon stops it.
 /// `taken` holds the items of its jobs before the start, `starts` the
 /// starts of each item, `word` what it did last, `ordered` the verifies
-/// that wait for another pull request at its last look ([`order()`]), and
+/// and the rebases that wait for another pull request at its last look
+/// ([`order()`]) and the rebases that do not start ([`no_rebases`]), and
 /// `followers` the failed starts of its followers on riff-server
 /// ([`followers::follow`], 01M7B2RQPTFVK02YAZGMN2SYAR).
 pub(crate) async fn run<R: Runtime + 'static>(
@@ -2460,6 +2747,10 @@ pub(crate) async fn run<R: Runtime + 'static>(
     let mut told: BTreeSet<String> = BTreeSet::new();
     // The stuck pull requests that the lead heard of ([`Notice::key`]).
     let mut noticed: BTreeSet<String> = BTreeSet::new();
+    // The rebases that do not start, or wait for their turn, that the lead
+    // heard of ([`no_rebase_key`], [`rebase_waits_key`]), each with the
+    // start of a spent rebase ([`Work::key`]).
+    let mut rebases: BTreeMap<String, Option<String>> = BTreeMap::new();
     // The issues with no `Done when:` line that the lead heard of.
     let mut bare: BTreeSet<u64> = BTreeSet::new();
     // The issues and the merged pull requests whose comment `Merged in`
@@ -2600,8 +2891,25 @@ pub(crate) async fn run<R: Runtime + 'static>(
                     );
                     world.tell(&wave, &body, Some(&notice.post_key())).await;
                 }
-                let next = pick(&look, &running(&daemon, &wave, &taken), &lock(&starts));
-                *lock(&ordered) = order(&look, &running(&daemon, &wave, &taken), &lock(&starts));
+                let busy = running(&daemon, &wave, &taken);
+                let next = pick(&look, &busy, &lock(&starts));
+                let turns = order(&look, &busy, &lock(&starts));
+                // Why each other rebase does not start: the lead hears of
+                // each one time (#2128).
+                let kept = records(&daemon, &wave, &taken);
+                let stops = no_rebases(&look, &busy, &kept, &lock(&starts), &turns);
+                let unstarted = Unstarted {
+                    look: &look,
+                    waits: &turns,
+                    stops: &stops,
+                };
+                let end = |item: &str| daemon.last_end(item);
+                let spent = |key: &str| lock(&starts).get(key).is_some_and(|n| *n >= REBASES);
+                tell_unstarted(&*world, &wave, unstarted, end, spent, &mut rebases).await;
+                *lock(&ordered) = Ordered {
+                    waits: turns,
+                    stops,
+                };
                 // A fault of the host stops each item: the wave waits,
                 // and no start counts (01M57A7A1W2K9440WZA1QZ3M9T).
                 let fault = match &next {
@@ -2759,11 +3067,21 @@ fn has_session<R: Runtime + 'static>(daemon: &Daemon<R>, wave: &Wave) -> bool {
 /// (01M57A7A48A70Y7PTD95A3MBYC).
 pub(crate) type Starts = Arc<Mutex<BTreeMap<String, u32>>>;
 
-/// The verifies and the rebases of a wave that wait for another pull
-/// request, by issue, with the number of that pull request ([`order()`]).
-/// Its loop writes them at each look. Its look and the status of the
-/// daemon read them.
-pub(crate) type Waits = Arc<Mutex<BTreeMap<u64, u64>>>;
+/// What keeps the verifies and the rebases of a wave from their start at
+/// the last look of its loop. Its loop writes it at each look. Its look,
+/// the status and the facts of the daemon read it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct Ordered {
+    /// The verifies and the rebases that wait for another pull request, by
+    /// issue, with the number of that pull request ([`order()`]).
+    pub(crate) waits: BTreeMap<u64, u64>,
+    /// The rebases that do not start, by issue, with the cause
+    /// ([`no_rebases`], #2128).
+    pub(crate) stops: BTreeMap<u64, NoRebase>,
+}
+
+/// The [`Ordered`] of a wave, shared by its loop, its look and the daemon.
+pub(crate) type Waits = Arc<Mutex<Ordered>>;
 
 /// True when `error` is a refusal of riff-server for a pause: the riff
 /// or the repository is paused.
@@ -3350,8 +3668,9 @@ async fn still_failed(gh: pr::Gh, repo: String, number: u64) -> Result<Vec<Strin
 ///
 /// After a rebase, `fix` is the head commit that had the conflict. When
 /// the pull request still has that head, the session pushed nothing: the
-/// lead gets a message in place of the verify request
-/// (01M57FJ3Z8AFDY9G0KTAYZJESY).
+/// lead gets a note in place of the verify request
+/// (01M57FJ3Z8AFDY9G0KTAYZJESY). The loop of the wave then sends the one
+/// message with the fix ([`text::wave_no_rebase`], #2128).
 ///
 /// After the fix of failed checks, `fix` is the head commit whose checks
 /// failed. A session that pushed nothing may have run the job again.
@@ -3418,8 +3737,9 @@ async fn after_build(
                 Kind::Message,
             ),
             None => {
-                // The default branch is not in a file: the message says
-                // "the default branch" when it does not read.
+                // The default branch is not in a file: the note says
+                // "the default branch" when it does not read. The loop of
+                // the wave sends the message with the fix (#2128).
                 let base = blocking({
                     let (gh, repo) = (gh.clone(), wave.repo.clone());
                     move || pr::default_branch(&gh, &repo)
@@ -3435,7 +3755,7 @@ async fn after_build(
                         &pull.head_ref_oid,
                         session,
                     ),
-                    Kind::Message,
+                    Kind::Note,
                 )
             }
         },
@@ -4259,6 +4579,13 @@ pub fn fixes(open: &rollout::Open, free: Vec<String>) -> (Vec<String>, Fixes) {
         .filter(|item| !free.contains(item))
         .collect();
     free.splice(at..at, new);
+    found.asking = found
+        .conflicts
+        .keys()
+        .chain(found.failed.keys())
+        .filter(|n| asking.contains(n))
+        .copied()
+        .collect();
     (free, found)
 }
 
@@ -4847,7 +5174,7 @@ impl World for Live {
                 let mut look = look_told(&forge(&repo), &repo, claims, holds, &messages, &told)?;
                 // Two pull requests whose heads merge with no conflict are
                 // in two groups of the order (#1895).
-                order::merges(&main, &mut look.lanes);
+                order::merges(&main, &look.branch, &mut look.lanes);
                 Ok(look)
             })
             .await
@@ -4908,6 +5235,15 @@ impl World for Live {
         let (repo, head) = (wave.repo.clone(), head.to_owned());
         Box::pin(async move {
             blocking(move || Ok(rollout::merge_off(&forge(&repo), &repo, pull, &head)))
+                .await
+                .unwrap_or(false)
+        })
+    }
+
+    fn conflicts<'a>(&'a self, wave: &'a Wave, pull: u64, head: &'a str) -> BoxFuture<'a, bool> {
+        let (repo, head) = (wave.repo.clone(), head.to_owned());
+        Box::pin(async move {
+            blocking(move || Ok(rollout::conflicts_now(&forge(&repo), &repo, pull, &head)))
                 .await
                 .unwrap_or(false)
         })
@@ -5603,6 +5939,10 @@ mod tests {
         heads: BTreeMap<u64, String>,
         /// The issues whose pull request has a conflict with `main`.
         conflicting: BTreeSet<u64>,
+        /// The issues whose pull request the forge has at a head with no
+        /// conflict when the loop asks again ([`World::conflicts`]), while
+        /// the look still shows the head with the conflict (#2128).
+        stale: BTreeSet<u64>,
         /// The issues whose pull request reads `UNKNOWN`: GitHub did not
         /// find yet if it has a conflict. It wins over `conflicting`.
         unknown: BTreeSet<u64>,
@@ -6039,6 +6379,22 @@ mod tests {
                     return true;
                 };
                 blocking(move || Ok(rollout::merge_off(&gh, "o/r", pull, &head)))
+                    .await
+                    .unwrap_or(false)
+            })
+        }
+
+        /// The ask of the real loop to the fake `gh` of `reads`
+        /// ([`rollout::conflicts_now`]). Else the forge in memory: no
+        /// conflict for an issue of `stale`.
+        fn conflicts<'a>(&'a self, _: &'a Wave, pull: u64, head: &'a str) -> BoxFuture<'a, bool> {
+            let (reads, head) = (lock(&self.reads).clone(), head.to_owned());
+            let stale = lock(&self.forge).stale.contains(&(pull - 40));
+            Box::pin(async move {
+                let Some(gh) = reads else {
+                    return !stale;
+                };
+                blocking(move || Ok(rollout::conflicts_now(&gh, "o/r", pull, &head)))
                     .await
                     .unwrap_or(false)
             })
@@ -7957,8 +8313,9 @@ esac
     /// #1605, 01M6QBJHM5BQR59QX2K2BMZVYH: an issue with the label
     /// `question` gets no build, and no rebase of its pull request, as a
     /// held item. The verify of an open pull request goes on. The lead
-    /// hears nothing about a missing line of such an issue. After the
-    /// label goes, the issue is free work at the next look.
+    /// hears nothing about a missing line of such an issue, and one time
+    /// of the rebase that waits for the answer (#2128). After the label
+    /// goes, the issue is free work at the next look.
     #[tokio::test]
     async fn an_item_that_waits_for_an_answer_never_starts() {
         let free = Arc::new(AtomicU64::new(64));
@@ -7991,7 +8348,18 @@ esac
             let mut started: Vec<&str> = forge.starts.iter().map(|(i, _)| i.as_str()).collect();
             started.sort_unstable();
             assert_eq!(started, ["issue-3", "verify-issue-2"]);
-            assert!(forge.told.is_empty(), "no message: {:?}", forge.told);
+            // #2128: the conflict of 4 gets one message: its rebase waits
+            // for the answer.
+            let question = text::wave_no_rebase(
+                44,
+                4,
+                "main",
+                "c4",
+                "thelio",
+                NoRebase::Question,
+                text::WAVE_END_UNKNOWN,
+            );
+            assert_eq!(forge.told, [question]);
         }
 
         // The person answered: the lead removes the label.
@@ -9624,9 +9992,148 @@ esac
         }
     }
 
+    /// The rows of `riff wave list` for the item 1, whose pull request has
+    /// a conflict, with the causes of the wave `shown`
+    /// ([`riff_client::waves::Issues::stops`], #2128).
+    fn stuck_row(shown: &crate::daemon::WaveShown) -> Vec<String> {
+        use riff_client::waves::{Board, CONFLICT, Issue, Issues};
+        let issue = Issue {
+            number: 1,
+            title: "item 1".into(),
+            milestone: Some("Wave 1".into()),
+            tracker: false,
+            question: false,
+            needs: vec![],
+        };
+        let issues = Issues::of(vec![issue])
+            .with_verify([1])
+            .with_stuck([(1, CONFLICT.to_owned())])
+            .with_stops(shown.stops.clone());
+        let sessions = riff_client::sessions::Sessions::new(vec![], vec![]);
+        Board::of("o/r", &issues, &sessions, &BTreeMap::new())
+            .expect("the board of the wave")
+            .groups(false)
+    }
+
+    /// #2128: the rebase of 1 ended, and the look still shows the head
+    /// with the conflict, but the forge has a new head when the loop asks
+    /// again: the lead gets no message that the rebase does not start
+    /// again. When the forge says that the head still has the conflict,
+    /// the message comes.
+    #[tokio::test]
+    async fn a_spent_rebase_tells_the_lead_only_when_the_forge_still_has_the_conflict() {
+        let here = conflict(Pr::Passed).await;
+        here.forge().no_push = true;
+        here.forge().stale.insert(1);
+        here.run();
+        here.until(3, |h| h.running("issue-1").is_some()).await;
+        here.end("issue-1").await;
+        here.until(3, |h| h.forge().finished == ["issue-1"]).await;
+        here.idle(3).await;
+        assert!(here.forge().told.is_empty(), "{:?}", here.forge().told);
+        here.forge().stale.clear();
+        here.until(3, |h| h.forge().told.len() == 1).await;
+        let tried =
+            text::wave_no_rebase(41, 1, "main", "c1", "thelio", NoRebase::Tried, &stopped());
+        assert_eq!(here.forge().told, [tried]);
+    }
+
+    /// #2128: the item of the conflict of 1 is held, and the issue of the
+    /// conflict of 2 has the label `question`. No rebase starts, and the
+    /// lead gets one message for each, with the key of its post: the wave
+    /// of each host makes the same key. The status of the daemon names
+    /// each cause.
+    #[tokio::test]
+    async fn a_held_conflict_and_a_conflict_with_a_question_each_tell_the_lead_once() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1, 2], 3, free).await;
+        {
+            let mut forge = here.forge();
+            forge.pulls.extend([(1, Pr::Passed), (2, Pr::Passed)]);
+            forge.conflicting.extend([1, 2]);
+            forge.holds.insert("issue-1".into());
+            forge.labels.insert(2, vec!["question".into()]);
+        }
+        here.run();
+        here.idle(3).await;
+        let message = |pull, issue, stop| {
+            let head = format!("c{issue}");
+            let end = text::WAVE_END_UNKNOWN;
+            text::wave_no_rebase(pull, issue, "main", &head, "thelio", stop, end)
+        };
+        {
+            let forge = here.forge();
+            assert!(forge.works.is_empty(), "{:?}", forge.works);
+            assert_eq!(
+                forge.told,
+                [
+                    message(41, 1, NoRebase::Held),
+                    message(42, 2, NoRebase::Question)
+                ]
+            );
+            assert_eq!(
+                forge.told_keys,
+                [
+                    Some("rebase-held-#41@c1".to_owned()),
+                    Some("rebase-question-#42@c2".to_owned())
+                ]
+            );
+        }
+        let stops = &here.daemon.waves_shown()[0].stops;
+        let both = BTreeMap::from([(1, NoRebase::Held), (2, NoRebase::Question)]);
+        assert_eq!(stops, &both);
+        // The lead frees the item: its rebase starts, with no new message.
+        here.forge().holds.clear();
+        here.until(3, |h| h.running("issue-1").is_some()).await;
+        assert_eq!(here.forge().told.len(), 2);
+    }
+
+    /// #1801, #2128: the conflicts of 1 and 2 change one file, and their
+    /// heads conflict. The rebase of 1 starts, and the rebase of 2 waits
+    /// for its turn after #41: the lead gets one message for it, with the
+    /// key of its post, and no second one at the next looks.
+    #[tokio::test]
+    async fn a_rebase_that_waits_for_its_turn_tells_the_lead_once() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1, 2], 3, free).await;
+        {
+            let mut forge = here.forge();
+            forge.pulls.extend([(1, Pr::Passed), (2, Pr::Passed)]);
+            forge.conflicting.extend([1, 2]);
+            for n in [1, 2] {
+                forge.files.insert(n, vec!["crates/riff/src/tui.rs".into()]);
+            }
+        }
+        here.run();
+        here.until(3, |h| h.running("issue-1").is_some()).await;
+        here.idle(3).await;
+        let forge = here.forge();
+        assert_eq!(forge.works, [rebase("c1")]);
+        let waits = text::wave_rebase_waits(42, 2, "main", "c2", 41);
+        assert_eq!(forge.told, [waits]);
+        assert_eq!(
+            forge.told_keys,
+            [Some("rebase-waits-#42@c2:#41".to_owned())]
+        );
+        // "The order of the verifies of a wave" in the book shows the same
+        // message.
+        let book = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/src/how-it-works.md"
+        ))
+        .unwrap();
+        let sample = text::wave_rebase_waits(40, 12, "main", "1a2b3c4d5e", 44);
+        assert!(book.contains(&format!("\n{sample}\n")), "{sample}");
+    }
+
     /// 01M57FJ3WWMQSDBFRRHXN3SMFQ: a pull request with a passed verify
     /// and a conflict gets one rebase for its head. The same head gets no
     /// second session. A new head with a conflict is a new conflict.
+    ///
+    /// #2128: the lead gets one message that the rebase of the head does
+    /// not start again, with the end of its session and the fix. The
+    /// status and the facts of the daemon give the cause, and the row of
+    /// `riff wave list` names it.
     #[tokio::test]
     async fn a_passed_pull_request_with_a_conflict_gets_one_rebase_for_each_head() {
         let here = conflict(Pr::Passed).await;
@@ -9644,12 +10151,53 @@ esac
                 [rebase("c1")],
                 "the same head: no second session"
             );
-            assert!(forge.told.is_empty(), "{:?}", forge.told);
+            let tried =
+                text::wave_no_rebase(41, 1, "main", "c1", "thelio", NoRebase::Tried, &stopped());
+            assert_eq!(forge.told, [tried], "one message");
+            assert_eq!(forge.told_keys, [None]);
         }
+        let shown = here.daemon.waves_shown();
+        assert_eq!(shown[0].stops, BTreeMap::from([(1, NoRebase::Tried)]));
+        let row = stuck_row(&shown[0]);
+        assert_eq!(
+            row,
+            ["stuck: #1 (conflict, its rebase was tried: riff host join starts it again)"]
+        );
         // main moves again, and a person pushed a new head with a conflict.
         here.forge().heads.insert(1, "c1b".into());
         here.until(3, |h| h.running("issue-1").is_some()).await;
         assert_eq!(here.forge().works, [rebase("c1"), rebase("c1b")]);
+    }
+
+    /// 01M7E4ZSWBC0H3EP24Y2AQHC4W (#2128): GitHub reads `UNKNOWN` for each
+    /// open pull request after a move of the default branch, so a look
+    /// does not show the conflict of a spent rebase. The start is still
+    /// spent: when the conflict reads again, the lead gets no second
+    /// message. After `riff host join`, a second spent start gets its
+    /// message.
+    #[tokio::test]
+    async fn a_spent_rebase_tells_the_lead_once_across_a_read_of_unknown() {
+        let here = conflict(Pr::Passed).await;
+        here.forge().no_push = true;
+        here.run();
+        here.until(3, |h| h.running("issue-1").is_some()).await;
+        here.end("issue-1").await;
+        let tried =
+            text::wave_no_rebase(41, 1, "main", "c1", "thelio", NoRebase::Tried, &stopped());
+        here.until(3, |h| h.forge().told.contains(&tried)).await;
+        here.forge().unknown.insert(1);
+        here.idle(3).await;
+        here.forge().unknown.clear();
+        here.idle(3).await;
+        assert_eq!(here.forge().told.len(), 1, "one message");
+        assert_eq!(here.forge().works, [rebase("c1")]);
+        // `riff host join`: the rebase starts again, and its end tells
+        // the lead again.
+        here.run();
+        here.until(3, |h| h.running("issue-1").is_some()).await;
+        here.end("issue-1").await;
+        here.until(3, |h| h.forge().told.len() == 2).await;
+        assert_eq!(here.forge().told, [tried.clone(), tried]);
     }
 
     /// #1157: a FAIL for the head C, then a new verify request for C: the
@@ -11834,17 +12382,18 @@ esac
     }
 
     /// 01M57FJ3Z8AFDY9G0KTAYZJESY: the rebase session ended, and the pull
-    /// request still has the head with the conflict: the lead gets a
-    /// message, and no verify request. "Run the wave" in the book shows
-    /// the same message.
+    /// request still has the head with the conflict: the lead gets a note,
+    /// and no verify request. The loop of the wave sends the one message
+    /// with the fix (#2128). "Run the wave" in the book shows the same
+    /// note and the same message.
     #[tokio::test]
-    async fn a_rebase_with_no_push_tells_the_lead_and_sends_no_verify_request() {
+    async fn a_rebase_with_no_push_notes_the_lead_and_sends_no_verify_request() {
         let riff = Built::new().await;
         let (lines, got) = riff
             .after(riff.gh(false), Some(Fix::Rebase("1a2b3c4d5e")))
             .await;
-        assert_eq!(lines[1], text::run_lead_told("issue-12"));
-        let message = text::wave_not_rebased(
+        assert_eq!(lines[1], text::run_lead_noted("issue-12"));
+        let note = text::wave_not_rebased(
             "issue-12",
             40,
             "worktree-issue-12",
@@ -11852,7 +12401,7 @@ esac
             "1a2b3c4d5e",
             "9f8e7d6c",
         );
-        assert_eq!(got, [(Kind::Message, message.clone())]);
+        assert_eq!(got, [(Kind::Note, note.clone())]);
         let book = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../docs/src/development.md"
@@ -11863,18 +12412,26 @@ esac
             .nth(1)
             .and_then(|rest| rest.split("\n### ").next())
             .expect("the how-to Run the wave");
-        assert!(
-            run_the_wave.contains(&format!("\n{message}\n")),
-            "{message}"
+        let tried = text::wave_no_rebase(
+            40,
+            12,
+            "main",
+            "1a2b3c4d5e",
+            "thelio",
+            NoRebase::Tried,
+            "exit code 0",
         );
+        for text in [note, tried] {
+            assert!(run_the_wave.contains(&format!("\n{text}\n")), "{text}");
+        }
     }
 
     /// 01M5R56GN3DC09GAPAF69GENEZ (#1404): the default branch is not in a
     /// file. When it does not read after a rebase with no push, the lead
-    /// still gets the message, with "the default branch" in place of its
+    /// still gets the note, with "the default branch" in place of its
     /// name.
     #[tokio::test]
-    async fn a_rebase_with_no_push_tells_the_lead_when_the_default_branch_does_not_read() {
+    async fn a_rebase_with_no_push_notes_the_lead_when_the_default_branch_does_not_read() {
         let riff = Built::new().await;
         let gh = pr::Gh::at(isolated::write_program(
             riff.dir.path().join("gh"),
@@ -11895,7 +12452,7 @@ esac
             "1a2b3c4d5e",
             "9f8e7d6c",
         );
-        assert_eq!(got, [(Kind::Message, message)]);
+        assert_eq!(got, [(Kind::Note, message)]);
     }
 
     /// A fake `gh` for the fix of checks: the pull request #40 of the

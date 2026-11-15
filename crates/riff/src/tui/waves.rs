@@ -999,10 +999,12 @@ pub fn rows(waves: &Waves, look: &Look, look_ms: i64) -> Vec<Row> {
             continue;
         };
         let holds = look.holds.get(&repo).unwrap_or(&none);
-        // The verifies and the rebases that wait for their turn, from the
-        // facts of the daemons (#1801).
+        // The verifies and the rebases that wait for their turn, and the
+        // rebases that do not start, from the facts of the daemons (#1801,
+        // #2128).
         let waits = riff_client::daemons::waits(&daemons, &repo);
-        let issues = forge.issues.clone().with_waits(waits);
+        let stops = riff_client::daemons::stops(&daemons, &repo);
+        let issues = forge.issues.clone().with_waits(waits).with_stops(stops);
         let Some(board) = Board::of(&repo, &issues, &sessions, holds) else {
             boards.push((2, folded(Wave::None), Vec::new()));
             continue;
@@ -2058,6 +2060,7 @@ mod tests {
                 word: text::wave_no_lead(repo),
                 image: None,
                 waits: BTreeMap::new(),
+                stops: BTreeMap::new(),
             }],
             ..riff_client::daemons::Facts::default()
         };
@@ -2493,6 +2496,7 @@ mod tests {
                 word: "no free work now".into(),
                 image: None,
                 waits: BTreeMap::from([(1599, 1613), (1601, 1613)]),
+                stops: BTreeMap::new(),
             }],
             ..riff_client::daemons::Facts::default()
         };

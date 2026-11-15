@@ -216,7 +216,7 @@ pub(crate) fn build_facts(server: Option<&Build>) -> Vec<(&'static str, String)>
 /// use riff_core::wire::{MachineInfo, RiffReply, RiffState, SessionInfo};
 ///
 /// let facts = Facts {
-///     waves: vec![Wave { repo: "o/r".into(), word: String::new(), image: None, waits: Default::default() }],
+///     waves: vec![Wave { repo: "o/r".into(), word: String::new(), image: None, waits: Default::default(), stops: Default::default() }],
 ///     ..Facts::default()
 /// };
 /// let mut daemon: SessionInfo = serde_json::from_value(serde_json::json!({
@@ -251,7 +251,7 @@ pub fn waits_for_lead<'a>(
 /// use riff_core::wire::{MachineInfo, SessionInfo};
 ///
 /// let facts = Facts {
-///     waves: vec![Wave { repo: "o/r".into(), word: String::new(), image: None, waits: Default::default() }],
+///     waves: vec![Wave { repo: "o/r".into(), word: String::new(), image: None, waits: Default::default(), stops: Default::default() }],
 ///     ..Facts::default()
 /// };
 /// let mut daemon: SessionInfo = serde_json::from_value(serde_json::json!({
@@ -902,6 +902,7 @@ pub fn release(pauses: &RiffReply, sessions: &[SessionInfo]) -> Option<String> {
 ///         word: "started issue-12".into(),
 ///         image: Some(Image { digest: "1a2b3c4d5e6f".into(), here: true }),
 ///         waits: Default::default(),
+///         stops: Default::default(),
 ///     }],
 ///     ..Facts::default()
 /// };
