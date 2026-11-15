@@ -468,7 +468,7 @@ pub fn new_clone_of(clone: &Path) -> Result<PathBuf> {
 pub fn fresh_clone(main: &Path, clone: &Path) -> Result<Fresh> {
     let new = new_clone_of(clone)?;
     let made = run::clone_in(&new, |new| {
-        let remote = crate::host_git::output(main, &["remote", "get-url", "origin"])?;
+        let remote = identity::origin(main)?.with_context(|| text::no_origin(main))?;
         let top = main.to_string_lossy();
         let path = new.to_string_lossy();
         git_credential::run(

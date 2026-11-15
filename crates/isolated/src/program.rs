@@ -126,6 +126,72 @@ pub fn copy_program(from: impl AsRef<Path>, to: impl AsRef<Path>) -> PathBuf {
     to.to_owned()
 }
 
+/// The origins with the token `T0KEN` in their URL that riff refuses
+/// (01M7GMV5ZYYF94ZKQ5ECQYTJXH): one for each form of a URL whose user
+/// info a cleanup of the text missed, and two near the origin of a
+/// Claude Code cloud session, `http://local_proxy@127.0.0.1:PORT/PATH`.
+pub const ORIGINS_WITH_TOKEN: [&str; 7] = [
+    "https://U:T0KEN@h/o/r.git",
+    "https:/U:T0KEN@h/o/r.git",
+    "https::U:T0KEN@h/o/r.git",
+    "https::https:/U:T0KEN@h/o/r.git",
+    "https://T0KEN#x@h/o/r.git",
+    "http://local_proxy:T0KEN@127.0.0.1:8080/git/o/r",
+    "http://T0KEN@127.0.0.1:8080/git/o/r",
+];
+
+/// Writes a `git` in the folder `bin` that adds its words to
+/// `bin/git.log`, one line for each call, then runs the first other `git`
+/// of `PATH`. Gives the path of the log. A test puts `bin` first in
+/// `PATH`, and reads in the log which calls of git ran.
+///
+/// ```
+/// let bin = tempfile::tempdir()?;
+/// let log = isolated::logged_git(bin.path());
+/// let out = std::process::Command::new(bin.path().join("git")).arg("--version").output()?;
+/// assert!(out.status.success());
+/// assert_eq!(std::fs::read_to_string(&log)?, "--version\n");
+/// # Ok::<(), std::io::Error>(())
+/// ```
+///
+/// # Panics
+///
+/// When `PATH` has no other `git`.
+pub fn logged_git(bin: &Path) -> PathBuf {
+    let real = git_of_path(bin);
+    let log = bin.join("git.log");
+    write_program(
+        bin.join("git"),
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexec '{}' \"$@\"\n",
+            log.display(),
+            real.display()
+        ),
+    );
+    log
+}
+
+/// The first `git` of `PATH` out of the folder `bin`: the real git, for a
+/// fake `git` in `bin` that runs it.
+///
+/// ```
+/// let bin = tempfile::tempdir()?;
+/// let git = isolated::git_of_path(bin.path());
+/// assert!(git.ends_with("git") && !git.starts_with(bin.path()));
+/// # Ok::<(), std::io::Error>(())
+/// ```
+///
+/// # Panics
+///
+/// When `PATH` has no other `git`.
+pub fn git_of_path(bin: &Path) -> PathBuf {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    std::env::split_paths(&path)
+        .map(|dir| dir.join("git"))
+        .find(|git| git.is_file() && !git.starts_with(bin))
+        .expect("a git in PATH")
+}
+
 /// Writes `text` to the file `path` in one step (see "The answer of a fake
 /// program" above): a new file in the folder of `path` gets the text, and
 /// a rename puts it in the place of `path`. A program that reads `path`

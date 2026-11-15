@@ -177,26 +177,31 @@ fn when_the_new_clone_fails_the_old_clone_stays_as_it_is() {
     assert!(!none.exists());
 }
 
-/// 01M7G1J1F1QWT4S45CDMMXP6J5: the origin of the main clone has a token
-/// with a `#` in its URL, and git cannot reach it. The note of the old
-/// clone, and the error with no old clone, name the URL with no token.
+/// 01M7GMV5ZYYF94ZKQ5ECQYTJXH: the origin of the main clone has a token
+/// in its URL. The new clone of the lead refuses it before each git with
+/// the URL: the old clone stays, and its note names `origin` and no
+/// token. With no old clone, the start fails with the same error.
 #[test]
-fn a_failed_clone_of_the_lead_shows_no_token_of_the_origin() {
+fn the_clone_of_the_lead_refuses_an_origin_with_a_token() {
     let dir = tempfile::tempdir().unwrap();
     let (_, main) = origin_and_main(dir.path());
     let clone = lead_clone(dir.path());
     fresh_clone(&main, &clone).unwrap();
-    let url = "https://USER:TO#KEN@127.0.0.1:1/o/r.git";
-    git(&main, &["remote", "set-url", "origin", url]);
+    let old = git(&clone, &["rev-parse", "HEAD"]);
+    let refused = riff::text::origin_with_user(&main);
 
-    let Fresh::Kept(why) = fresh_clone(&main, &clone).unwrap() else {
-        panic!("the old clone did not stay");
-    };
-    let none = dir.path().join("leads/o-other/clone");
-    let error = format!("{:#}", fresh_clone(&main, &none).unwrap_err());
-    for text in [riff::text::lead_clone_kept(&clone, &why), error] {
-        assert!(text.contains(" https://127.0.0.1:1/o/r.git "), "{text}");
-        assert!(!text.contains("USER:") && !text.contains("KEN@"), "{text}");
+    for url in isolated::ORIGINS_WITH_TOKEN {
+        git(&main, &["remote", "set-url", "origin", url]);
+        let Fresh::Kept(why) = fresh_clone(&main, &clone).unwrap() else {
+            panic!("the old clone did not stay");
+        };
+        assert_eq!(why, refused);
+        assert!(!riff::text::lead_clone_kept(&clone, &why).contains("T0KEN"));
+        assert_eq!(git(&clone, &["rev-parse", "HEAD"]), old);
+        let none = dir.path().join("leads/o-other/clone");
+        let error = format!("{:#}", fresh_clone(&main, &none).unwrap_err());
+        assert_eq!(error, refused);
+        assert!(!none.exists());
     }
 }
 

@@ -1481,14 +1481,18 @@ pub fn read(
 
 /// The facts of the repository of the folder `dir`, with the `gh` of
 /// the machine, the bot `bot` of the session App and the lead App `lead`:
-/// `None` when the folder has no remote `origin` on GitHub.
+/// `None` when the folder has no remote `origin` on GitHub. An `Err` when
+/// riff refuses the remote `origin` ([`crate::identity::origin`]).
 pub fn here(
     dir: &std::path::Path,
     bot: Result<Option<String>, String>,
     lead: Result<Option<LeadApp>, String>,
 ) -> Option<Result<Github, String>> {
-    let repo = crate::identity::github_origin(dir)?;
-    Some(read(&Forge::of(&repo).gh, bot, lead))
+    let repo = crate::identity::github_origin(dir).transpose()?;
+    Some(
+        repo.map_err(|e| format!("{e:#}"))
+            .and_then(|repo| read(&Forge::of(&repo).gh, bot, lead)),
+    )
 }
 
 /// The numbers of the open issues of the repository of `gh` that have no
@@ -1536,10 +1540,14 @@ pub fn no_done_when(gh: &Gh) -> anyhow::Result<Vec<u64>> {
 
 /// [`no_done_when`] for the repository of the folder `dir`, with the
 /// `gh` of the machine: `None` when the folder has no remote `origin` on
-/// GitHub. An `Err` says why `gh` could not list the issues.
+/// GitHub. An `Err` says why riff refuses the remote `origin`, or why `gh`
+/// could not list the issues.
 pub fn no_done_when_here(dir: &std::path::Path) -> Option<Result<Vec<u64>, String>> {
-    let repo = crate::identity::github_origin(dir)?;
-    Some(no_done_when(&Forge::of(&repo).gh).map_err(|e| format!("{e:#}")))
+    let repo = crate::identity::github_origin(dir).transpose()?;
+    Some(
+        repo.and_then(|repo| no_done_when(&Forge::of(&repo).gh))
+            .map_err(|e| format!("{e:#}")),
+    )
 }
 
 /// The checks on the facts `github`, in order: the facts of the

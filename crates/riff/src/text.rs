@@ -4454,6 +4454,39 @@ pub fn git_not_run(args: &str) -> String {
     format!("riff did not run git {args}")
 }
 
+/// The error of a remote `origin` of the clone `dir` with user info in a
+/// URL or a push URL ([`crate::identity::origin`],
+/// 01M7GMV5ZYYF94ZKQ5ECQYTJXH). It names `origin`, never the URL, and
+/// says how to fix it.
+///
+/// ```
+/// let text = riff::text::origin_with_user(std::path::Path::new("/src/r"));
+/// assert!(text.starts_with("riff refuses the remote origin of /src/r: its URL holds a user or a token"));
+/// assert!(text.contains("git remote set-url origin https://github.com/OWNER/REPO.git"));
+/// assert!(text.contains("then `gh auth setup-git`"));
+/// ```
+pub fn origin_with_user(dir: &Path) -> String {
+    format!(
+        "riff refuses the remote origin of {}: its URL holds a user or a token, and riff runs no \
+         git with that URL. Give origin a URL with no user, and let gh give git the token: run \
+         `git remote set-url origin https://github.com/OWNER/REPO.git` in that clone, then `gh \
+         auth setup-git`. For a push URL, also run `git remote set-url --push origin \
+         https://github.com/OWNER/REPO.git`.",
+        dir.display()
+    )
+}
+
+/// The error of a step that clones from the remote `origin` of the clone
+/// `dir`, when `dir` has no `origin` ([`crate::identity::origin`]).
+///
+/// ```
+/// let text = riff::text::no_origin(std::path::Path::new("/src/r"));
+/// assert_eq!(text, "riff finds no remote origin in /src/r");
+/// ```
+pub fn no_origin(dir: &Path) -> String {
+    format!("riff finds no remote origin in {}", dir.display())
+}
+
 /// The error of a step of the host, `program ARGS`, that gave no answer
 /// in `limit` (#1858): riff stopped it.
 ///

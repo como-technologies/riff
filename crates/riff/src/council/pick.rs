@@ -443,7 +443,10 @@ impl Pull {
 /// with `gh` ([`Pull::read`]), fetches its base branch `BASE` from
 /// `origin` in `main`, and picks the council from the member files of
 /// `origin/BASE` over the default set ([`pick`]). When the fetch fails,
-/// it says so to `say`, and reads `origin/BASE` as `main` has it.
+/// it says so to `say`, and reads `origin/BASE` as `main` has it. Before
+/// `gh` and the fetch, it reads the URL of `origin` of `main`, and fails
+/// when riff refuses it ([`crate::identity::origin`],
+/// 01M7GMV5ZYYF94ZKQ5ECQYTJXH).
 ///
 /// The daemon gives its main clone, never the clone of a verify session:
 /// a session writes its clone, and the host runs no git there
@@ -456,6 +459,7 @@ pub fn of_pull(
     number: u64,
     mut say: impl FnMut(&str),
 ) -> Result<(Council, String)> {
+    crate::identity::origin(main)?;
     let pull = Pull::read(gh, number)?;
     let branch = format!("origin/{}", pull.base);
     // Full names: no name of a branch reads as an option of git.

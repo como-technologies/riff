@@ -1944,12 +1944,27 @@ flowchart LR
 
 3. Give your clone an HTTPS `origin`. The clone of the session takes
    the URL of `origin` from your clone. The container has no SSH
-   agent, so it cannot push to an SSH URL. To see the URL, and to
-   change it to HTTPS:
+   agent, so it cannot push to an SSH URL.
+
+   riff refuses an `origin` with a token or another user in its URL,
+   for example `https://USER:TOKEN@github.com/OWNER/REPO.git`. The
+   command stops with exit code 1, and runs no git with that URL. Its
+   error names `origin`, never the URL, so the token goes to no
+   terminal and no log. riff takes two users only, because each one is
+   a fixed name with no secret:
+
+   - the user `git` of an SSH URL: `git@HOST:PATH` or
+     `ssh://git@HOST/PATH`;
+   - the user `local_proxy` of the origin of a Claude Code cloud
+     session: `http://local_proxy@127.0.0.1:PORT/PATH`.
+
+   To see the URL, to change it to HTTPS, and to let `gh` give git
+   your token:
 
    ```sh
    git remote get-url origin
    git remote set-url origin https://github.com/OWNER/REPO.git
+   gh auth setup-git
    ```
 
 ### Give the container sessions a long-lived sign-in of claude

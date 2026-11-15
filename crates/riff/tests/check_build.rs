@@ -120,40 +120,115 @@ fn riff_build_fails_when_just_static_fails() {
     assert!(out.stdout.is_empty(), "{out:?}");
 }
 
-/// 01M7G1J1F1QWT4S45CDMMXP6J5: the origin has a token in its URL, with a
-/// `?` in it, with a third `/` after the scheme, or in the form
-/// `TRANSPORT::ADDRESS`, and git cannot reach it. The error of `riff
-/// build` on the terminal names the URL with no token.
+/// `riff build` in `here` as [`build`], with the programs of `bin` first
+/// in `PATH`.
+fn build_with(env: &Isolated, here: &Path, just: &Path, bin: &Path) -> Output {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let path =
+        std::env::join_paths(std::iter::once(bin.to_owned()).chain(std::env::split_paths(&path)));
+    env.riff()
+        .arg("build")
+        .arg("--just")
+        .arg(just)
+        .current_dir(here)
+        .env("PATH", path.unwrap())
+        .output()
+        .unwrap()
+}
+
+/// The calls of the log of [`isolated::logged_git`] that talk to a
+/// remote: a clone, a fetch, an `ls-remote`, a push or a pull.
+fn remote_calls(log: &Path) -> Vec<String> {
+    let calls = std::fs::read_to_string(log).unwrap_or_default();
+    calls
+        .lines()
+        .filter(|call| {
+            call.split(' ')
+                .any(|word| ["clone", "fetch", "ls-remote", "push", "pull"].contains(&word))
+        })
+        .map(str::to_owned)
+        .collect()
+}
+
+/// 01M7GMV5ZYYF94ZKQ5ECQYTJXH: `riff build` refuses an origin with a token
+/// in its URL, in each form of [`isolated::ORIGINS_WITH_TOKEN`]. It exits
+/// with 1, starts no git that talks to the origin, and makes no check
+/// clone. Its error names `origin`, and no token.
 #[test]
-fn a_failed_clone_of_riff_build_shows_no_token_of_the_origin() {
+fn riff_build_refuses_an_origin_with_a_token() {
     let env = Isolated::new();
     let root = isolated::outside_git();
     let (_origin, here) = repo(root.path());
     let fake = isolated::outside_git();
     let just = isolated::write_program(fake.path().join("just"), FAKE_JUST);
+    let log = isolated::logged_git(fake.path());
+    let refused = riff::text::origin_with_user(Path::new("DIR"));
+    let (head, tail) = refused.split_once("DIR").unwrap();
 
-    for (url, clean) in [
-        (
-            "https://USER:TO?KEN@127.0.0.1:1/o/r.git",
-            "https://127.0.0.1:1/o/r.git",
-        ),
-        (
-            "https:///USER:TOKEN@127.0.0.1:1/o/r.git",
-            "https:///127.0.0.1:1/o/r.git",
-        ),
-        (
-            "https::USER:TOKEN@127.0.0.1:1/o/r.git",
-            "https::127.0.0.1:1/o/r.git",
-        ),
-    ] {
+    for url in isolated::ORIGINS_WITH_TOKEN {
         git(&here, &["remote", "set-url", "origin", url]);
-        let out = build(&env, &here, &just);
-        assert!(!out.status.success(), "{out:?}");
+        let out = build_with(&env, &here, &just, fake.path());
+        assert_eq!(out.status.code(), Some(1), "{url}: {out:?}");
         let err = String::from_utf8_lossy(&out.stderr);
-        assert!(err.contains(&format!("git clone -q -- {clean} ")), "{err}");
-        assert!(!err.contains("USER:") && !err.contains("KEN@"), "{err}");
+        assert!(err.starts_with(&format!("Error: {head}")), "{err}");
+        assert!(err.trim_end().ends_with(tail), "{err}");
+        assert!(!err.contains("T0KEN"), "{err}");
     }
+    assert!(
+        std::fs::read_to_string(&log)
+            .unwrap()
+            .contains("remote get-url")
+    );
+    assert!(!std::fs::read_to_string(&log).unwrap().contains("T0KEN"));
+    assert_eq!(remote_calls(&log), Vec::<String>::new());
+    assert!(!env.home().join(".cache/riff/check").exists());
     assert!(!fake.path().join("just.log").exists());
+}
+
+/// 01M7GMV5ZYYF94ZKQ5ECQYTJXH: an origin with no user, with the user
+/// `git` of SSH, or with the user `local_proxy` of a Claude Code cloud
+/// session works as before: `riff build` clones it, and builds. The `git`
+/// of the test fetches the bare origin in place of that URL, and gives
+/// each other call to git as it is.
+#[test]
+fn riff_build_takes_an_origin_with_no_secret() {
+    let env = Isolated::new();
+    let root = isolated::outside_git();
+    let (origin, here) = repo(root.path());
+    let fake = isolated::outside_git();
+    let just = isolated::write_program(fake.path().join("just"), FAKE_JUST);
+    let urls = [
+        "https://github.com/o/r.git",
+        "git@github.com:o/r.git",
+        "ssh://git@github.com/o/r.git",
+        "http://local_proxy@127.0.0.1:8080/git/o/r",
+    ];
+    let real = isolated::git_of_path(fake.path());
+    let real = real.display();
+    let instead: String = urls
+        .iter()
+        .map(|url| format!(" -c 'url.{}.insteadOf={url}'", origin.display()))
+        .collect();
+    isolated::write_program(
+        fake.path().join("git"),
+        format!(
+            "#!/bin/sh\ncase \" $* \" in *\" clone \"*|*\" fetch \"*) exec '{real}'{instead} \"$@\" ;; esac\n\
+             exec '{real}' \"$@\"\n"
+        ),
+    );
+    let check = env.home().join(".cache/riff/check");
+
+    for url in urls {
+        git(&here, &["remote", "set-url", "origin", url]);
+        let _ = std::fs::remove_dir_all(&check);
+        let out = build_with(&env, &here, &just, fake.path());
+        assert!(out.status.success(), "{url}: {out:?}");
+        assert_eq!(git(&check, &["remote", "get-url", "origin"]), url);
+        assert_eq!(
+            git(&check, &["rev-parse", "HEAD"]),
+            git(&here, &["rev-parse", "HEAD"])
+        );
+    }
 }
 
 /// 01M5SMPX8NM75P8E38DGQ17W7B: a repository with no `[release]` in its

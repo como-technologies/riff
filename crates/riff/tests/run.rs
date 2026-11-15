@@ -3937,53 +3937,45 @@ async fn a_claim_refused_for_a_pause_ends_the_session_of_the_job() {
     machine.ok(None, &["host", "leave"]).await;
 }
 
-/// 01M7G1J1F1QWT4S45CDMMXP6J5: the origin of the main clone has a token
-/// with a quote in its URL, and git cannot reach it. The clone of the
-/// session of a wave fails. The line of the log of the daemon and the
-/// message to the lead name the URL with no token.
+/// 01M7GMV5ZYYF94ZKQ5ECQYTJXH: the main clone has an origin with a token
+/// in its URL, in each form of [`isolated::ORIGINS_WITH_TOKEN`]. `riff
+/// run` and `riff host join` refuse it: each exits with 1, and its error
+/// names `origin` and no token. No git has the token in its words, the
+/// item has no claim, no wave starts, and the log of the daemon holds no
+/// token.
 #[tokio::test]
-async fn a_failed_clone_of_a_wave_session_logs_no_token_of_the_origin() {
+async fn riff_run_and_riff_host_join_refuse_an_origin_with_a_token() {
     let machine = Machine::new().await;
     machine.lead().await;
-    let url = "https://USER:TO'KEN@127.0.0.1:1/como-technologies/riff.git";
-    git(&machine.main, &["remote", "set-url", "origin", url]);
     let bin = machine.bin.path();
+    let calls = isolated::logged_git(bin);
     std::fs::write(bin.join("wave-issue"), "").unwrap();
-    machine.ok(None, &["host", "join"]).await;
+    let good = git(&machine.main, &["remote", "get-url", "origin"]);
+    let refused = riff::text::origin_with_user(Path::new("DIR"));
+    let (head, tail) = refused.split_once("DIR").unwrap();
 
-    let log = bin.join("daemon.out");
-    wait_for(&log, "riff daemon: como-technologies/riff: issue-12: ").await;
-    let started = Instant::now();
-    let thread = loop {
-        let thread = machine.ok(Some("lead1"), &["read", "--all"]).await;
-        if thread.contains("could not start issue-12") {
-            break thread;
+    for url in isolated::ORIGINS_WITH_TOKEN {
+        git(&machine.main, &["remote", "set-url", "origin", url]);
+        for args in [&["run", "issue-12"][..], &["host", "join"]] {
+            let out = machine.run(None, args).await;
+            let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
+            assert_eq!(out.status.code(), Some(1), "riff {args:?}: {stderr}");
+            assert!(stderr.contains(head), "{stderr}");
+            assert!(stderr.trim_end().ends_with(tail), "{stderr}");
+            assert!(!stdout.contains("T0KEN") && !stderr.contains("T0KEN"));
         }
-        assert!(
-            started.elapsed() < isolated::HANG,
-            "no message to the lead: {thread}"
-        );
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    };
-    machine.ok(None, &["host", "leave"]).await;
+    }
+    git(&machine.main, &["remote", "set-url", "origin", &good]);
+    let status = machine.ok(None, &["daemon", "status"]).await;
+    assert!(!status.contains("Waves:"), "{status}");
+    let who = machine.ok(None, &["who", "--long"]).await;
+    assert!(!who.contains("claim=issue-12"), "{who}");
+    let calls = std::fs::read_to_string(&calls).unwrap();
+    assert!(calls.contains("remote get-url"), "{calls}");
+    assert!(!calls.contains("T0KEN"), "{calls}");
     let log = machine.read("daemon.out");
-    let line = log
-        .lines()
-        .find(|l| l.starts_with("riff daemon: como-technologies/riff: issue-12: "))
-        .unwrap();
-    assert!(
-        line.contains(" -- https://127.0.0.1:1/como-technologies/riff.git "),
-        "{line}"
-    );
-    assert!(!log.contains("USER:") && !log.contains("KEN@"), "{log}");
-    assert!(
-        thread.contains(" -- https://127.0.0.1:1/como-technologies/riff.git "),
-        "{thread}"
-    );
-    assert!(
-        !thread.contains("USER:") && !thread.contains("KEN@"),
-        "{thread}"
-    );
+    assert!(!log.contains("T0KEN"), "{log}");
+    std::fs::remove_file(bin.join("wave-issue")).unwrap();
 }
 
 /// 01M5SNTPHHXP54YBTV09JNRY3F: before the first job of a wave, the daemon

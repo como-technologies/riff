@@ -91,3 +91,25 @@ fn a_directory_outside_git_uses_a_dash() {
     std::fs::create_dir(&dir).unwrap();
     assert_eq!(name(&dir), "riff://mike@pangolin/-?session=a6cf#notes");
 }
+
+/// R100, 01M7GMV5ZYYF94ZKQ5ECQYTJXH: the origin of a Claude Code cloud
+/// session, `http://local_proxy@127.0.0.1:PORT/PATH`, gives the place of
+/// the session, as before. An origin with a token, also near that form,
+/// gives no place: the error names `origin` and no token.
+#[test]
+fn a_cloud_session_keeps_its_place_and_an_origin_with_a_token_has_none() {
+    let tmp = tempfile::tempdir().unwrap();
+    repo(
+        tmp.path(),
+        Some("http://local_proxy@127.0.0.1:8080/git/como-technologies/riff"),
+    );
+    assert_eq!(
+        name(tmp.path()),
+        "riff://mike@pangolin/como-technologies/riff?session=a6cf"
+    );
+    for url in isolated::ORIGINS_WITH_TOKEN {
+        git(tmp.path(), &["remote", "set-url", "origin", url]);
+        let error = format!("{:#}", place_in(tmp.path(), "pangolin").unwrap_err());
+        assert_eq!(error, riff::text::origin_with_user(tmp.path()), "{url}");
+    }
+}

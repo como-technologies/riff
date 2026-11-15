@@ -1944,7 +1944,7 @@ pub(crate) fn clone_in(new: &Path, steps: impl FnOnce(&Path) -> Result<()>) -> R
 /// before it moves into the folder of the session ([`clone_in_new`],
 /// 01M7DZ42C8SY2GV5ZQJZHM2VTV).
 pub(crate) fn make_clone(main: &Path, clone: &Path, branch: &str) -> Result<bool> {
-    let remote = crate::host_git::output(main, &["remote", "get-url", "origin"])?;
+    let remote = identity::origin(main)?.with_context(|| text::no_origin(main))?;
     let head = format!("refs/heads/{branch}");
     let earlier = !git_credential::run(main, &remote, &["ls-remote", "--", &remote, &head])?
         .trim()
@@ -2600,22 +2600,26 @@ mod tests {
         assert!(!bad.exists() && !new.join("issue-13-3c4d5e6f").exists());
     }
 
-    /// 01M7G1J1F1QWT4S45CDMMXP6J5: the origin of the main clone has a
-    /// token in its URL, and git cannot reach it. The error of the clone of
-    /// a session, as `riff run` shows it and the daemon logs it for a
-    /// wave, names the URL with no token.
+    /// 01M7GMV5ZYYF94ZKQ5ECQYTJXH: the origin of the main clone has a token
+    /// in its URL. The clone of a session, as `riff run` and a wave of the
+    /// daemon make it, refuses it before each git with the URL: the error
+    /// names `origin` and no token, and no clone is there. With no
+    /// `origin`, the error says so.
     #[test]
-    fn a_failed_clone_of_a_session_shows_no_token_of_the_origin() {
+    fn the_clone_of_a_session_refuses_an_origin_with_a_token() {
         let root = tempfile::tempdir().unwrap();
         let main = root.path().join("main");
         git(root.path(), &["init", "-q", "-b", "main", "main"]);
-        let url = "https://USER:TOKEN@127.0.0.1:1/o/r.git";
-        git(&main, &["remote", "add", "origin", url]);
         let clone = root.path().join("sessions/issue-12-1a2b3c4d/clone");
         let error = make_clone(&main, &clone, "worktree-issue-12").unwrap_err();
-        let error = format!("{error:#}");
-        assert!(error.contains(" https://127.0.0.1:1/o/r.git "), "{error}");
-        assert!(!error.contains("TOKEN"), "{error}");
+        assert_eq!(error.to_string(), text::no_origin(&main));
+        git(&main, &["remote", "add", "origin", "/no/such/origin.git"]);
+        for url in isolated::ORIGINS_WITH_TOKEN {
+            git(&main, &["remote", "set-url", "origin", url]);
+            let error = make_clone(&main, &clone, "worktree-issue-12").unwrap_err();
+            assert_eq!(format!("{error:#}"), text::origin_with_user(&main));
+            assert!(!clone.exists() && !new_clone_of(&clone).unwrap().exists());
+        }
     }
 
     /// 01M7G1J1F1QWT4S45CDMMXP6J5: a step of the host with a URL with

@@ -468,6 +468,42 @@ fn riff_council_show_reads_the_member_files_of_the_base_branch() {
     assert_eq!(headings(&stdout_of(out)), joined);
 }
 
+/// 01M7GMV5ZYYF94ZKQ5ECQYTJXH: `riff council show` in a clone whose
+/// origin has a token in its URL, in each form of
+/// [`isolated::ORIGINS_WITH_TOKEN`], refuses it before `gh` and before
+/// the fetch. It exits with 1, its error names `origin` and no token, and
+/// no git has the token in its words.
+#[test]
+fn riff_council_show_refuses_an_origin_with_a_token() {
+    let root = tempfile::tempdir().unwrap();
+    let work = clone_with_origin(root.path());
+    let bin = tempfile::tempdir().unwrap();
+    let gh = bin.path().join("gh.log");
+    isolated::write_program(
+        bin.path().join("gh"),
+        format!("#!/bin/sh\necho \"$*\" >> '{}'\nexit 1\n", gh.display()),
+    );
+    let calls = isolated::logged_git(bin.path());
+    let refused = riff::text::origin_with_user(Path::new("DIR"));
+    let (head, tail) = refused.split_once("DIR").unwrap();
+
+    for url in isolated::ORIGINS_WITH_TOKEN {
+        git(&work, &["remote", "set-url", "origin", url]);
+        let out = show(&work, bin.path(), 40);
+        assert_eq!(out.status.code(), Some(1), "{out:?}");
+        assert!(out.stdout.is_empty(), "{out:?}");
+        let stderr = String::from_utf8(out.stderr).unwrap();
+        assert!(stderr.contains(head), "{stderr}");
+        assert!(stderr.trim_end().ends_with(tail), "{stderr}");
+        assert!(!stderr.contains("T0KEN"), "{stderr}");
+    }
+    assert!(!gh.exists(), "gh ran");
+    let calls = fs::read_to_string(&calls).unwrap();
+    assert!(calls.contains("remote get-url"), "{calls}");
+    assert!(!calls.contains("T0KEN"), "{calls}");
+    assert!(!calls.contains(" fetch "), "{calls}");
+}
+
 /// `riff council show` exits with 1 when `gh` cannot read the pull
 /// request, and names the call.
 #[test]

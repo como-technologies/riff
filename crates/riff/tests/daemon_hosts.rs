@@ -1523,45 +1523,35 @@ async fn the_daemon_runs_the_test_and_the_build_with_the_release_table_that_orig
     );
 }
 
-/// 01M7G1J1F1QWT4S45CDMMXP6J5: the origin of the main clone has a token
-/// in its URL, and the clone of `riff build` on the daemon cannot reach
-/// it. The reply, as the terminal of the lead shows it, holds no token.
-/// The git of the daemon fetches from a bare clone in place of that URL,
-/// so the build gets to its clone.
+/// 01M7GMV5ZYYF94ZKQ5ECQYTJXH: the origin of the main clone has a token
+/// in its URL. The daemon refuses `riff build --host` before each git
+/// with the URL. The reply, as the terminal of the lead shows it, names
+/// `origin` and no token, no git of the daemon has the token in its words,
+/// and the build does not run.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_failed_clone_of_the_daemon_shows_no_token_of_the_origin() {
+async fn the_daemon_refuses_a_build_of_an_origin_with_a_token() {
     let tmp = tempfile::tempdir().unwrap();
     let (log, code) = (tmp.path().join("gh.log"), tmp.path().join("code"));
     let extra = fake_build(tmp.path(), &log, &code);
-    let url = "https://USER:TOKEN@127.0.0.1:1/local/riff.git";
-    let bare = tmp.path().join("origin.git");
-    let real = Command::new("sh")
-        .args(["-c", "command -v git"])
-        .output()
-        .unwrap();
-    isolated::write_program(
-        tmp.path().join("bin/git"),
-        format!(
-            "#!/bin/sh\ncase \" $* \" in *\" fetch \"*) exec {real} -c 'url.{bare}.insteadOf={url}' \"$@\" ;; esac\n\
-             exec {real} \"$@\"\n",
-            real = text(&real.stdout).trim(),
-            bare = bare.display()
-        ),
-    );
+    let calls = isolated::logged_git(&tmp.path().join("bin"));
     let r = riff_env(300, 300, &extra).await;
-    assert_eq!(add_origin(&r.main, tmp.path()), bare);
-    git(&r.main, &["remote", "set-url", "origin", url]);
+    add_origin(&r.main, tmp.path());
+    let refused = riff::text::origin_with_user(Path::new("DIR"));
+    let (head, tail) = refused.split_once("DIR").unwrap();
 
     let wait = Duration::from_secs(30);
-    let err = remote::ask(&r.api(&r.lead), &r.lead, "a", &remote::Request::Build, wait)
-        .await
-        .unwrap_err();
-    let err = format!("{err:#}");
-    assert!(
-        err.contains("git clone -q -- https://127.0.0.1:1/local/riff.git "),
-        "{err}"
-    );
-    assert!(!err.contains("TOKEN"), "{err}");
+    for url in isolated::ORIGINS_WITH_TOKEN {
+        git(&r.main, &["remote", "set-url", "origin", url]);
+        let err = remote::ask(&r.api(&r.lead), &r.lead, "a", &remote::Request::Build, wait)
+            .await
+            .unwrap_err();
+        let err = format!("{err:#}");
+        assert!(err.contains(head) && err.contains(tail), "{err}");
+        assert!(!err.contains("T0KEN"), "{err}");
+    }
+    let calls = std::fs::read_to_string(&calls).unwrap();
+    assert!(calls.contains("remote get-url"), "{calls}");
+    assert!(!calls.contains("T0KEN"), "{calls}");
     assert!(!tmp.path().join("check").exists(), "the build ran");
 }
 

@@ -271,7 +271,8 @@ fn prepare(dir: &Path, served: &Served, gh: &Gh, commit: &str) -> Result<PathBuf
     if clone.exists() {
         std::fs::remove_dir_all(&clone)?;
     }
-    let origin = crate::host_git::output(&served.wave.main, &["remote", "get-url", "origin"])?;
+    let main = &served.wave.main;
+    let origin = crate::identity::origin(main)?.with_context(|| text::no_origin(main))?;
     let clone_text = clone.to_string_lossy().into_owned();
     let args = ["clone", "-q", "--no-checkout", &origin, &clone_text];
     crate::git_credential::keyring_open(&folder, &origin, &args)?;

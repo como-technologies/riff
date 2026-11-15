@@ -230,8 +230,14 @@ pub fn item_of(branch: &str) -> Option<&str> {
 
 /// Runs `git fetch --prune origin` in the clone of `dir` for at most
 /// `wait`. False when the fetch fails or takes longer, for example with
-/// no remote.
+/// no remote. False with no fetch when riff refuses the remote `origin`
+/// ([`crate::identity::origin`], 01M7GMV5ZYYF94ZKQ5ECQYTJXH).
 pub async fn fetch(dir: &Path, wait: Duration) -> bool {
+    let at = dir.to_owned();
+    let read = tokio::task::spawn_blocking(move || crate::identity::origin(&at));
+    if !matches!(read.await, Ok(Ok(_))) {
+        return false;
+    }
     let Ok(git) = crate::host_git::git(dir) else {
         return false;
     };

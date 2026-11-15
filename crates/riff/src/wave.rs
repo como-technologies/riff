@@ -4293,7 +4293,7 @@ fn failed_verify(pulls: &[rollout::Pull], issue: u64) -> Option<String> {
 /// before it moves into the folder of the session ([`run::clone_in_new`],
 /// 01M7DZ42C8SY2GV5ZQJZHM2VTV).
 fn clone_at(main: &Path, clone: &Path, pull: u64, commit: &str) -> Result<()> {
-    let remote = crate::host_git::output(main, &["remote", "get-url", "origin"])?;
+    let remote = identity::origin(main)?.with_context(|| text::no_origin(main))?;
     let top = main.to_string_lossy();
     run::clone_in_new(clone, |new| {
         let path = new.to_string_lossy();

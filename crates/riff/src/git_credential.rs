@@ -73,7 +73,9 @@ pub fn run(dir: &Path, remote: &str, args: &[&str]) -> Result<String> {
 /// (01M78TSH2VNHA75RR1HXC5Z27G). The environment gives `gh` no token
 /// ([`pr::token_given`]). A process that can ask for a prompt reads no
 /// config of git here. The error names the call with no user info of a
-/// URL ([`crate::host_git::no_user_info`]).
+/// URL ([`crate::host_git::no_user_info`]). In each process, a call that
+/// names the remote `origin` first reads its URL, and fails when riff
+/// refuses it ([`crate::identity::origin`], 01M7GMV5ZYYF94ZKQ5ECQYTJXH).
 ///
 /// ```standalone_crate
 /// # keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
@@ -111,9 +113,16 @@ pub fn run(dir: &Path, remote: &str, args: &[&str]) -> Result<String> {
 /// // The keyring is open again: the git runs.
 /// keyring_open(dir.path(), "origin", &["fetch", "-q", "origin"])?;
 /// # }
+/// // An `origin` with user info: riff runs no git that names it.
+/// git(&["remote", "set-url", "origin", "https://U:T0KEN@github.example/o/r.git"])?;
+/// let error = keyring_open(dir.path(), "origin", &["fetch", "-q", "origin"]).unwrap_err();
+/// assert_eq!(error.to_string(), riff::text::origin_with_user(dir.path()));
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn keyring_open(dir: &Path, remote: &str, args: &[&str]) -> Result<()> {
+    if remote == "origin" {
+        crate::identity::origin(dir)?;
+    }
     if secrets::prompts() || pr::token_given() {
         return Ok(());
     }

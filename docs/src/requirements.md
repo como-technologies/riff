@@ -4696,6 +4696,19 @@
   user info: riff takes `USER:TOKEN@` out of each URL of the command and
   of the output of git. This holds for the terminal and for the log of
   the daemon.
+- **01M7GMV5ZYYF94ZKQ5ECQYTJXH** riff refuses the remote `origin` when
+  one of its URLs or push URLs has an `@`, other than in three forms
+  whose user is a fixed name with no secret: `git@HOST:PATH`,
+  `ssh://git@HOST/PATH`, and `http://local_proxy@127.0.0.1:PORT/PATH`,
+  the origin of a Claude Code cloud session (R100). It checks each form
+  by its exact start. Each read of riff of the URL of `origin` goes
+  through one function, and each git of riff that names `origin` and
+  talks to it reads that URL first. So the refusal comes before each git
+  with that URL. Its error names `origin` and never its URL, and says
+  how to fix it: `git remote set-url origin
+  https://github.com/OWNER/REPO.git`, then `gh auth setup-git`. The
+  command exits with 1. The cleanup of 01M7G1J1F1QWT4S45CDMMXP6J5 stays
+  as a second guard, and its time is linear in the size of the text.
 
 ## Terminal
 
