@@ -15,7 +15,7 @@
 //! the tab shows ([`super::look`], 01M6VFGK79JGRF919BM8SJ6E08).
 //!
 //! ```text
-//!  1 Sessions  2 Chat•2  [3 Waves]  4 Machines  5 Devices  6 Reports
+//!  1 Sessions  2 Chat•2  [3 Waves]  4 Machines  5 Devices  6 Reports  7 Decisions
 //!  riff running · build 10df8a4 · link ok 2s
 //!  ▼ como-technologies/riff · Wave 48        1 stuck 2 free 1 held 3 work 2 verify
 //!        STATE   ITEM   TITLE                           WHO / PULL REQUEST   AGE
@@ -1686,7 +1686,7 @@ mod tests {
     #[test]
     fn the_waves_tab_at_80_x_24_is_the_mock_up() {
         let want = [
-            " 1 Sessions  2 Chat•2  [3 Waves]  4 Machines  5 Devices  6 Reports",
+            " 1 Sessions  2 Chat•2  [3 Waves]  4 Machines  5 Devices  6 Reports  7 Decisions",
             " riff running · build 10df8a4 · link ok 2s",
             " ▼ como-technologies/riff · Wave 48        1 stuck 2 free 1 held 3 work 2 verify",
             "       STATE   ITEM   TITLE                           WHO / PULL REQUEST   AGE",
@@ -1773,7 +1773,7 @@ mod tests {
     #[test]
     fn the_waves_tab_at_40_x_24_is_the_narrow_mock_up() {
         let want = [
-            "‹ 3/6 Waves ›",
+            "‹ 3/7 Waves ›",
             "riff running · link ok 2s",
             "▼ riff · Wave 48",
             "  ! stuck   #1601  Fix the help",

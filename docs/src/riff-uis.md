@@ -163,6 +163,7 @@ tab comes with a build item:
 | [D #1639](https://github.com/como-technologies/riff/issues/1639) | 4 Machines: the numbers of each host, the link and riff-server, the limit of a host, and the filter of the hosts (#1702). Built: see [See the hosts in the TUI](how-it-works.md#see-the-hosts-in-the-tui) and [Filter the hosts in the TUI](how-it-works.md#filter-the-hosts-in-the-tui). |
 | [G #1642](https://github.com/como-technologies/riff/issues/1642) | 5 Devices: list the devices, add one with a QR code, remove one. |
 | [F #1641](https://github.com/como-technologies/riff/issues/1641) | 6 Reports: the usage, the audit and the log of a session. Built: see [See the tokens in the TUI](development.md#see-the-tokens-in-the-tui), [Audit a wave in the TUI](development.md#audit-a-wave-in-the-tui) and [See the events in the TUI](development.md#see-the-events-in-the-tui). |
+| [#2188](https://github.com/como-technologies/riff/issues/2188) | 7 Decisions: each open issue with the label `question` or `design`, in a wave, in the Backlog or with no milestone, the questions for you first. Built: see [Work through the decisions in the TUI](how-it-works.md#work-through-the-decisions-in-the-tui). |
 
 Until its build item merges, the Devices tab says that it is not built
 yet.
@@ -176,21 +177,24 @@ flowchart LR
     TABS --> M["Machines: the hosts, the daemons,<br/>the limits"]
     TABS --> DV["Devices: list, add with a QR code,<br/>remove"]
     TABS --> RP["Reports: the usage, the audit,<br/>the log of a session"]
+    TABS --> DC["Decisions: each open question<br/>and each design issue"]
 ```
 
 Each tab has the same five parts:
 
 ```text
-[1 Sessions]  2 Chat•2  3 Waves•  4 Machines  5 Devices  6 Reports
+[1 Sessions]  2 Chat•2  3 Waves•  4 Machines  5 Devices  6 Reports  7 Decisions
  riff running · build 10df8a4 · link ok 2s
  the body of the tab
 
  the note: the result of the last action, or the fault of the link
- 1-6 tab  r read again  ? help  q quit
+ 1-7 tab  r read again  ? help  q quit
 ```
 
 - The tab strip shows the active tab in `[ ]`. A dot after a tab says
   that it has news since you looked at it: `Chat•2` is two new lines.
+  When the dots make the strip wider than the terminal, one space comes
+  between two tabs.
 - The header shows the state of the whole riff, the build of your
   riff, and the link: `link ok` with the age of the last look,
   or `link down`. When riff-server runs another build, the header
@@ -214,7 +218,7 @@ Each tab has the same five parts:
   `n` in the note line first. The attach and the takeover leave the
   screen of the TUI, and the TUI draws again at their end.
 - Under 80 columns the TUI shows the narrow layout, for a phone with
-  SSH: the strip is `‹ 1/6 Sessions ›`, and the rows have fewer words.
+  SSH: the strip is `‹ 1/7 Sessions ›`, and the rows have fewer words.
   Under 40 columns or 10 rows, the TUI asks for a bigger terminal.
 
 A session in a tab gets one of five marks. The worst mark comes first.

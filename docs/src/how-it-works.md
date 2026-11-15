@@ -2196,7 +2196,7 @@ riff
 ```
 
 ```text
-[1 Sessions]  2 Chat•2  3 Waves•  4 Machines  5 Devices  6 Reports
+[1 Sessions]  2 Chat•2  3 Waves•  4 Machines  5 Devices  6 Reports  7 Decisions
  riff running · build 10df8a4 · link ok 2s
  6 sessions: 1 blocked · 1 done · 3 busy · 1 idle · 1 to update         by repo
  ▼ riff  lead thelio  › mike  admin  online                          4 sessions
@@ -5260,7 +5260,7 @@ riff
 ```
 
 ```text
- 1 Sessions  [2 Chat]  3 Waves  4 Machines  5 Devices  6 Reports
+ 1 Sessions  [2 Chat]  3 Waves  4 Machines  5 Devices  6 Reports  7 Decisions
  riff running · build 10df8a4 · link ok 2s
  chat · online: mike, brett · away: ann · @NAME wakes a person or a project
 ──── Friday 2026-11-06 ──────────────────────────────────────────────
@@ -5271,7 +5271,7 @@ riff
 
 > @riff what is next?
 
- Enter send  Esc log  PgUp older  Alt-1..6 tab  Ctrl-C quit
+ Enter send  Esc log  PgUp older  Alt-1..7 tab  Ctrl-C quit
 ```
 
 The row under the header names the people who are online and away,
@@ -5295,14 +5295,14 @@ until you send the next line.
 | Key | Does |
 |---|---|
 | `Enter` | Send the line. While a list of names or issues shows: pick the first one. |
-| `Esc` | Leave the prompt. Then the keys of the TUI work: `1` to `6`, `?` and `q`. While a list of names or issues shows: close the list. |
+| `Esc` | Leave the prompt. Then the keys of the TUI work: `1` to `7`, `?` and `q`. While a list of names or issues shows: close the list. |
 | `i`, `Enter` | Go back to the prompt. |
 | `↑`, `↓` | Move the cursor one row in a long line. On the first row, `↑` goes to the start of the line, and on the last row, `↓` goes to the end. `↑` brings back a line that you sent only on an empty line: see "Send a line again". Out of the prompt: scroll one row. |
 | `←`, `→` | Move the cursor one character, also over the end of a row. |
 | `Home`, `End` | Go to the start or the end of the line. At the end of the line, `End` shows the newest line. Out of the prompt: show the oldest or the newest line. |
 | `PgUp`, `PgDn` | Show older or newer lines. |
 | `g`, `G` | Out of the prompt: show the oldest or the newest line. |
-| `Alt-1` to `Alt-6`, `Tab` | Open another tab, also from the prompt. While a list of names or issues shows, `Tab` picks the first one. |
+| `Alt-1` to `Alt-7`, `Tab` | Open another tab, also from the prompt. While a list of names or issues shows, `Tab` picks the first one. |
 | `Ctrl-C` | End the TUI. The sessions go on. |
 | a paste | Put the text in the line at the cursor, with its new lines. Also from the log. |
 | `@` | Show the list of the names: see "Pick a name in the Chat tab". |
@@ -5370,7 +5370,7 @@ riff
  12:46 <riff> #994 still has no answer; I wait for mike
  2 new lines below: End
 >
- Enter send  Esc log  PgUp older  Alt-1..6 tab  Ctrl-C quit
+ Enter send  Esc log  PgUp older  Alt-1..7 tab  Ctrl-C quit
 ```
 
 The row shows while the log is not at the bottom and a new line is
@@ -5992,7 +5992,9 @@ The board of the current wave has an `asked` row for each question:
   later wave: see
   [Mark the questions of an issue as answered](development.md#mark-the-questions-of-an-issue-as-answered).
 - A question with no wave, for example in the Backlog, is not on the
-  board. `riff questions` lists it: see
+  board. The Decisions tab lists it: see
+  [Work through the decisions in the TUI](#work-through-the-decisions-in-the-tui).
+  `riff questions` lists it too: see
   [See all your open questions](development.md#see-all-your-open-questions).
 
 ```mermaid
@@ -6002,7 +6004,75 @@ flowchart LR
     G --> N["no wave"]
     C --> A["the asked rows of the board"]
     L -- "Wave N · TITLE" --> A
-    N --> Q["riff questions"]
+    N --> Q["the Decisions tab,<br/>riff questions"]
+```
+
+### Work through the decisions in the TUI
+
+The Decisions tab shows each decision that waits for a person in one
+place: each open issue with the label `question` or `design`, in a
+wave, in the Backlog, or with no milestone. It shows the issues of
+your projects, the same projects as the Waves tab. Run riff with no
+command, and press `7` for the Decisions tab:
+
+```sh
+riff
+```
+
+Your questions come first, under `QUESTIONS FOR` and your name. The
+other decisions come after them:
+
+```text
+ QUESTIONS FOR MIKE · 2
+       ITEM   WAVE      TITLE                       LABELS            FOR
+ > ?   #2173  Wave 60   The verify of a pull requ…  design question   mike
+   ?   #1489  Backlog   Design: one place where a…  question          Mike
+
+ OTHER DECISIONS · 3
+       ITEM   WAVE      TITLE                       LABELS            FOR
+   ?   #2189  Wave 60   Design: a Plan tab in the…  design question   nate
+   ·   #1739  Backlog   Design: take over or atta…  design            -
+   ?   #1532  -         A wave item whose result …  question          -
+```
+
+- `FOR` names each person of a heading `Questions for PERSON` in the
+  body of the issue (see
+  [Ask the person a question](development.md#ask-the-person-a-question)).
+  An issue whose questions name you is yours: `Mike` and `mike` are
+  the same name.
+- `?` marks an issue with the label `question`. `·` marks a design
+  issue with no open question.
+- `WAVE` is `Wave N`, `Backlog`, or `-` for an issue with no milestone.
+  In each part, the current wave comes first, then the later waves,
+  then the Backlog.
+- With more than one project, the item names its repository, as
+  `riff#2173`.
+
+To answer the questions of the selected issue, open it, and write the
+answers in the body or in a comment. Then mark the questions as
+answered:
+
+| Key | Does |
+|---|---|
+| `↑` `↓` | Select an issue. |
+| `Enter` | Open the issue in your browser. The note line shows its URL too: in a terminal over SSH, click the URL. |
+| `o` | Show the URL of the issue in the note line. |
+| `a` | Mark the questions of the issue as answered, after `y`: the label `question` goes, and the lead wakes. See [Mark the questions of an issue as answered](development.md#mark-the-questions-of-an-issue-as-answered). |
+| `r` | Read GitHub again now. |
+
+The tab reads the open issues from GitHub when you open it, each 60
+seconds while it shows, and soon after a change on GitHub. An issue
+leaves the tab at the next read after its labels `question` and
+`design` go.
+
+```mermaid
+flowchart LR
+    G["gh: the open issues<br/>of your projects"] -- "the label question or design" --> D["the Decisions tab"]
+    D -- "Questions for you" --> M["QUESTIONS FOR YOU, first"]
+    D --> O["OTHER DECISIONS"]
+    M -- "Enter" --> B["the issue in your browser"]
+    O -- "Enter" --> B
+    M -- "a, then y" --> L["the label question goes,<br/>the lead wakes"]
 ```
 
 ### See the merged items in the TUI

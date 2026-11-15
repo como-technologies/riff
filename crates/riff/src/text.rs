@@ -1765,6 +1765,38 @@ pub fn questions_web(url: &str) -> String {
     format!("riff: opening {} in your browser.", safe(url))
 }
 
+/// The note of `Enter` in the Decisions tab of the TUI
+/// (01M7FYVHDJJ288RRV8EBRKSY49): riff opens the issue at `url` in the
+/// browser. The URL stays in the note line, for a terminal with no
+/// browser.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::tui_opens("https://github.com/o/r/issues/12"),
+///     "riff opens https://github.com/o/r/issues/12 in your browser."
+/// );
+/// ```
+pub fn tui_opens(url: &str) -> String {
+    format!("riff opens {} in your browser.", safe(url))
+}
+
+/// The note of `Enter` in the Decisions tab of the TUI when no browser
+/// opened the issue at `url`: the error, and the URL.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::tui_not_opened("https://github.com/o/r/issues/12", "no xdg-open"),
+///     "riff could not open a browser (no xdg-open). The issue: https://github.com/o/r/issues/12"
+/// );
+/// ```
+pub fn tui_not_opened(url: &str, error: &str) -> String {
+    format!(
+        "riff could not open a browser ({}). The issue: {}",
+        safe(error),
+        safe(url)
+    )
+}
+
 /// The note of `riff questions --answered N` for an issue with no label
 /// `question` (#1782): riff changed nothing.
 ///

@@ -9591,13 +9591,6 @@ that builds it merges.
   with 2. The TUI is `riff`, not `riff ui`. An error of the start, for
   example no sign-in, prints as in the CLI, before the TUI draws a
   screen.
-- **01M6VAZJYYQZDHD6YDB0NBQ7KW** The TUI has six tabs, in this order:
-  Sessions, Chat, Waves, Machines, Devices and Reports. `Alt-1` to
-  `Alt-6` open a tab. `Tab` opens the next tab, and `Shift-Tab` the tab
-  before. Outside the prompt of the Chat tab and a text that the note
-  line asks for, the keys `1` to `6` open a tab too. While a question of
-  the TUI waits in the note line, these keys answer no
-  (01M6VFD0S90SB8M8WV952NT4Y1).
 - **01M6VAZK1R932VQMJBC32MTTJB** Each tab of the TUI has five parts: the
   tab strip on the first row, the header on the second row, the body,
   the note line on the row before the last, and the key line on the last
@@ -9631,8 +9624,8 @@ that builds it merges.
   click closes the help popup. The setting `tui.mouse` turns the mouse
   off. It is on by default.
 - **01M6VAZKK4KHCDCX4RKG9B95D7** Under 80 columns, the TUI shows the
-  narrow layout: the strip is `‹ N/6 NAME ›` with no news, the
-  header has only the state of the riff and the link, and the rows have
+  narrow layout: the strip has no news, the header has only the state of
+  the riff and the link, and the rows have
   no margin. A click on `‹` or `›` opens the tab before or after.
   Under 40 columns or 10 rows, the TUI asks for a bigger terminal.
 - **01M6VAZKNXZV1RTG7MT0GMHKT3** The render of the TUI is pure.
@@ -9707,8 +9700,8 @@ that builds it merges.
   header names the people who are online and away. `riff chat` stays.
 - **01M6VG1PA4PM47777ZT4PNGETF** The prompt of the Chat tab has the
   focus when you open the tab. In the prompt, each key that types a
-  character types it, also `1` to `6`, `q`, `r` and `?`. There `Alt-1`
-  to `Alt-6` and `Shift-Tab` open a tab, and `Ctrl-C` ends the TUI. In
+  character types it, also `q`, `r` and `?`. There `Shift-Tab` opens a
+  tab, and `Ctrl-C` ends the TUI. In
   the log, the keys of the frame work and `?` shows the keys of the Chat
   tab. `i` or `Enter` gives the focus back to the prompt. `PgUp` and
   `PgDn` show older and newer lines. Supersedes
@@ -9892,8 +9885,8 @@ that builds it merges.
   hosts that match against all the hosts, and ends with the filter. From
   120 columns, the key line shows `/ filter`.
 - **01M6VJQPNJ4AX4RT877F1QAPPX** While the person types a filter in the
-  TUI, each character is a letter of the filter, also `1` to `6`, `q`,
-  `r`, `?`, `j`, `k`, `g` and `G`. `Ctrl-C` still ends the TUI.
+  TUI, each character is a letter of the filter, also `q`, `r`, `?`,
+  `j`, `k`, `g` and `G`. `Ctrl-C` still ends the TUI.
 - **01M6VT7TTV8J90C5E3QAZ454GY** `q` and `Ctrl-C` end the TUI and give
   back the screen at once, also while a read of `gh` runs. The read may
   go on in the background, and its result goes nowhere.
@@ -10195,6 +10188,38 @@ that builds it merges.
   line in its "Done when", the pull request says `live check` in place
   of `merged`: `PR #1866 live check`. Such an item is never a `free`
   row. Supersedes 01M6VFGK4P2FWMFQHBZKR3JXSZ in part.
+- **01M7FYVA218ARDXTFPWSZV6N4P** The TUI has seven tabs, in this order:
+  Sessions, Chat, Waves, Machines, Devices, Reports and Decisions.
+  `Alt-1` to `Alt-7` open a tab. `Tab` opens the next tab, and
+  `Shift-Tab` the tab before. Outside the prompt of the Chat tab and a
+  text that the note line asks for, the keys `1` to `7` open a tab too.
+  While a question of the TUI waits in the note line, these keys answer
+  no (01M6VFD0S90SB8M8WV952NT4Y1). In the prompt of the Chat tab and in
+  a filter, `1` to `7` type. The narrow strip is `‹ N/7 NAME ›`.
+  Supersedes 01M6VAZJYYQZDHD6YDB0NBQ7KW in full, and
+  01M6VAZKK4KHCDCX4RKG9B95D7, 01M6VG1PA4PM47777ZT4PNGETF and
+  01M6VJQPNJ4AX4RT877F1QAPPX in part.
+- **01M7FYVHB1APFXPXA71PMD18EH** The Decisions tab of the TUI lists each
+  open issue with the label `question` or `design` of each project of
+  the person, the projects of the Waves tab: in a wave, in the Backlog,
+  or with no milestone. Each row shows the number, the wave or
+  `Backlog`, the title, the labels, and each person that a heading
+  `Questions for PERSON` of the body names. The rows whose questions
+  name the person of the TUI come first, under `QUESTIONS FOR PERSON`,
+  and the others after them, under `OTHER DECISIONS`. In each part, the
+  rows go in the order of the waves, then the Backlog, then the other
+  milestones, then no milestone, and in number order. With more than one
+  project, an item names its repository, as `riff#2173`. While the tab
+  shows, the TUI reads the open issues with the conditional REST read of
+  the Waves tab, and no other call: when the tab opens, each 60 seconds,
+  at once on `r`, and soon after a wake of GitHub. An issue whose labels
+  `question` and `design` go leaves the tab at the next read.
+- **01M7FYVHDJJ288RRV8EBRKSY49** In the Decisions tab of the TUI,
+  `Enter`, or a click on the selected row, opens the issue of the row in
+  the browser, and puts its URL in the note line. `o` puts the URL in
+  the note line, as in the Waves tab. `a` marks the questions of the
+  issue as answered after `y`, with the code of `riff questions
+  --answered`.
 
 ## The notes of the lead
 

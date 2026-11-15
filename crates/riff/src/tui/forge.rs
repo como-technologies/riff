@@ -1,6 +1,6 @@
-//! The reads of the forge for the Waves tab and the Sessions tab of the
-//! TUI (#1638, #1707, 01M6VFGK4P2FWMFQHBZKR3JXSZ,
-//! 01M6VT7TXBW8EJKY0FTYQ0H49M).
+//! The reads of the forge for the Waves tab, the Sessions tab and the
+//! Decisions tab of the TUI (#1638, #1707, #2188,
+//! 01M6VFGK4P2FWMFQHBZKR3JXSZ, 01M6VT7TXBW8EJKY0FTYQ0H49M).
 //!
 //! # Design
 //!
@@ -50,7 +50,8 @@
 //! conditional read, and with no other call ([`titles`]). The two tabs
 //! share one [`Kept`], so a read of one tab after a read of the other
 //! gets a `304` too. The list of `#` of the Chat tab and of `riff chat`
-//! reads the open issues in the same way ([`open_issues`]).
+//! reads the open issues in the same way ([`open_issues`]), and so does
+//! the Decisions tab ([`decisions`]).
 //!
 //! An open issue with the label [`crate::cycle::LABEL`] is a release
 //! whose checks after the deploy have not passed: the release issue
@@ -79,6 +80,7 @@ use anyhow::{Context, Result, bail};
 use riff_client::waves::{Issues, wave_number};
 use serde::Deserialize;
 
+use super::decisions::Decision;
 use crate::pr::{Gate, Gh, Reply};
 use crate::rollout::{Comment, Label, Merge, MergedPull, Pull, Verify};
 use crate::typeahead::OpenIssue;
@@ -747,6 +749,65 @@ pub fn open_issues_each(
         .iter()
         .map(|repo| {
             let read = open_issues(gh, repo, kept).map_err(|e| format!("{e:#}"));
+            (repo.clone(), read)
+        })
+        .collect()
+}
+
+/// The decisions of `repo` for the Decisions tab (#2188,
+/// 01M7FYVHB1APFXPXA71PMD18EH): each open issue with the label
+/// `question` or `design`, with its wave, its labels and the persons of
+/// its questions ([`Decision::of`]). It makes the conditional read of the
+/// open issues of [`read`], and no other call, so a read that changed
+/// nothing costs no point. It fails with the error of `gh`.
+///
+/// ```
+/// use riff::pr::Gh;
+/// use riff::tui::forge::{Kept, decisions};
+///
+/// let dir = tempfile::tempdir()?;
+/// let script = r###"#!/bin/sh
+/// echo "$*" >> "$(dirname "$0")/calls"
+/// case "$*" in
+///   *'If-None-Match: "v1"'*) echo 'gh: HTTP 304' >&2; exit 1 ;;
+///   *'issues?state=open'*)
+///     printf 'HTTP/2.0 200 OK\r\nEtag: "v1"\r\n\r\n[
+///       {"number":12,"title":"Which name?","labels":[{"name":"question"}],
+///        "milestone":{"number":1,"title":"Backlog"},"body":"## Questions for mike"},
+///       {"number":13,"title":"Design: the board","labels":[{"name":"design"}],
+///        "milestone":{"number":5,"title":"Wave 3"}},
+///       {"number":14,"title":"Fix it","milestone":{"number":5,"title":"Wave 3"}},
+///       {"number":40,"title":"Which name?","labels":[{"name":"question"}],"pull_request":{}}]' ;;
+///   *) echo 'gh: Not Found (HTTP 404)' >&2; exit 1 ;;
+/// esac
+/// "###;
+/// let gh = Gh::at(isolated::write_program(dir.path().join("gh"), script));
+/// let kept = Kept::default();
+/// let found = decisions(&gh, "o/r", &kept)?;
+/// let numbers: Vec<u64> = found.iter().map(|d| d.number).collect();
+/// assert_eq!(numbers, [12, 13]);
+/// assert_eq!(found[0].persons, ["mike"]);
+/// // The second read is a `304`: the same decisions, for no point.
+/// assert_eq!(decisions(&gh, "o/r", &kept)?, found);
+/// let calls = std::fs::read_to_string(dir.path().join("calls"))?;
+/// assert_eq!(calls.lines().count(), 2, "{calls}");
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn decisions(gh: &Gh, repo: &str, kept: &Kept) -> Result<Vec<Decision>> {
+    let (open, _) = open(gh, repo, kept)?;
+    Ok(open.iter().filter_map(|e| Decision::of(repo, e)).collect())
+}
+
+/// [`decisions`] of each repository of `repos`, in order.
+pub fn decisions_each(
+    gh: &Gh,
+    repos: &[String],
+    kept: &Kept,
+) -> Vec<(String, Result<Vec<Decision>, String>)> {
+    repos
+        .iter()
+        .map(|repo| {
+            let read = decisions(gh, repo, kept).map_err(|e| format!("{e:#}"));
             (repo.clone(), read)
         })
         .collect()

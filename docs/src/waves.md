@@ -288,7 +288,7 @@ riff.` A board has the current wave and one row for each of its open
 items:
 
 ```text
- 1 Sessions  2 Chat•2  [3 Waves]  4 Machines  5 Devices  6 Reports
+ 1 Sessions  2 Chat•2  [3 Waves]  4 Machines  5 Devices  6 Reports  7 Decisions
  riff running · build 10df8a4 · link ok 2s
  ▼ como-technologies/riff · Wave 48        1 stuck 2 free 1 held 3 work 2 verify
        STATE   ITEM   TITLE                           WHO / PULL REQUEST   AGE

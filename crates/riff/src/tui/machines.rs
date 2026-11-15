@@ -5,7 +5,7 @@
 //! # Design
 //!
 //! ```text
-//!  1 Sessions  2 Chat•2  3 Waves•  [4 Machines]  5 Devices  6 Reports
+//!  1 Sessions  2 Chat•2  3 Waves•  [4 Machines]  5 Devices  6 Reports  7 Decisions
 //!  riff running · build 10df8a4 · link ok 2s
 //!  3 hosts · 1 at its limit · 1 low on memory
 //!      HOST       WORK  LOAD     MEM FREE    DISK FREE   USED  WAITS SEEN
@@ -2046,7 +2046,7 @@ mod tests {
     fn the_machines_tab_at_132_x_24_adds_the_clock_and_the_pool() {
         let state = mock_up();
         let mut want: Vec<String> = [
-            " 1 Sessions  2 Chat•2  3 Waves•  [4 Machines]  5 Devices  6 Reports",
+            " 1 Sessions  2 Chat•2  3 Waves•  [4 Machines]  5 Devices  6 Reports  7 Decisions",
             " riff running · build 10df8a4 · link ok 2s",
             " 3 hosts · 1 at its limit · 1 low on memory",
             "     HOST       WORK  LOAD     CLOCK          MEM FREE    DISK FREE   USED  POOL          WAITS SEEN",
@@ -2255,7 +2255,7 @@ mod tests {
     fn the_machines_tab_at_80_x_24_is_the_mock_up() {
         let state = mock_up();
         let mut want: Vec<String> = [
-            " 1 Sessions  2 Chat•2  3 Waves•  [4 Machines]  5 Devices  6 Reports",
+            " 1 Sessions  2 Chat•2  3 Waves•  [4 Machines]  5 Devices  6 Reports  7 Decisions",
             " riff running · build 10df8a4 · link ok 2s",
             " 3 hosts · 1 at its limit · 1 low on memory",
             "     HOST       WORK  LOAD     MEM FREE    DISK FREE   USED  WAITS SEEN",
@@ -2304,7 +2304,7 @@ mod tests {
     fn the_machines_tab_at_40_x_24_is_the_narrow_mock_up() {
         let state = mock_up();
         let mut want: Vec<String> = [
-            "‹ 4/6 Machines ›",
+            "‹ 4/7 Machines ›",
             "riff running · link ok 2s",
             "3 hosts · 1 needs a look",
             "    HOST       WORK  LOAD    MEM GB",

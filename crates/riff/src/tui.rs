@@ -3,17 +3,17 @@
 //!
 //! # Design
 //!
-//! The TUI is a ratatui app with six tabs ([`Tab`],
-//! 01M6VAZJYYQZDHD6YDB0NBQ7KW). Each tab has the same five parts
+//! The TUI is a ratatui app with seven tabs ([`Tab`],
+//! 01M7FYVA218ARDXTFPWSZV6N4P). Each tab has the same five parts
 //! (01M6VAZK1R932VQMJBC32MTTJB):
 //!
 //! ```text
-//! [1 Sessions]  2 Chat•2  3 Waves•  4 Machines  5 Devices  6 Reports
+//! [1 Sessions]  2 Chat•2  3 Waves•  4 Machines  5 Devices  6 Reports  7 Decisions
 //!  riff running · build 10df8a4 · link ok 2s
 //!  the body of the tab
 //!
 //!  the note: the fault of the link, or the result of the last action
-//!  1-6 tab  r read again  ? help  q quit
+//!  1-7 tab  r read again  ? help  q quit
 //! ```
 //!
 //! - The strip shows the active tab in `[ ]`, and the news of a tab
@@ -30,7 +30,8 @@
 //!   link, in the Chat tab a post that failed and the note of the
 //!   prompt, else the result of the last action
 //!   (01M6VMACJGF4A0ZXC6YK13KNCH). With none of them, the Waves tab
-//!   shows the age of its last read of `gh` (01M6VFGYW0XVJ5JSX6R1NCR6W7).
+//!   and the Decisions tab show the age of their last read of `gh`
+//!   (01M6VFGYW0XVJ5JSX6R1NCR6W7).
 //!   The key line shows the keys of the tab, and `?` shows them all in a
 //!   popup (01M6VAZKDEQ6951KGPGAMF1SNJ).
 //! - The Sessions tab ([`sessions`], #1637) is the one view of the
@@ -38,9 +39,10 @@
 //!   The Waves tab ([`waves`], #1638) shows a board for each repository.
 //!   The Machines tab ([`machines`], #1639) shows the hosts. The Reports
 //!   tab ([`reports`], #1641) shows the usage, the audit and the log of
-//!   a session. The body of the Devices tab comes with its build item G
-//!   #1642. Until then, it says that it is not built yet
-//!   (01M6VAZKVK7530JJ63S7RVF88J).
+//!   a session. The Decisions tab ([`decisions`], #2188) shows each open
+//!   question and each design issue. The body of the Devices tab comes
+//!   with its build item G #1642. Until then, it says that it is not
+//!   built yet (01M6VAZKVK7530JJ63S7RVF88J).
 //!
 //! The render is pure (01M6VAZKNXZV1RTG7MT0GMHKT3). [`State`] holds what
 //! the TUI knows: the last look of riff-server, the last status of the
@@ -94,15 +96,19 @@
 //! 01M6VFGK4P2FWMFQHBZKR3JXSZ). Each call of `gh` of the TUI counts as
 //! the caller `tui`. While the Chat tab shows, the TUI reads the open
 //! issues for its list of `#` each [`forge::READ_EVERY`]
-//! ([`forge::open_issues_each`], 01M74CX9KVGQG4Y7ATT6268NMY). The three
-//! tabs share the `ETag` of each read ([`forge::Kept`]).
+//! ([`forge::open_issues_each`], 01M74CX9KVGQG4Y7ATT6268NMY). While the
+//! Decisions tab shows, the TUI reads the open issues of its projects
+//! each [`forge::READ_EVERY`] ([`forge::decisions_each`],
+//! 01M7FYVHB1APFXPXA71PMD18EH). The four tabs share the `ETag` of each
+//! read ([`forge::Kept`]).
 //!
 //! The TUI follows the wakes of the GitHub App of the repository of the
 //! folder (`GET /v1/github/watch`, 01M74N357CC7DN6B8QX8GDR0ZM). A wake of
 //! an issue or a pull request makes the next read of the forge, of the
-//! titles and of the list of `#` come at once, at most one each
-//! [`crate::hooks::SHOW_GAP`] ([`crate::hooks::Shows`]). So a change on
-//! GitHub shows within seconds. A wake of a check waits for the next read.
+//! titles, of the list of `#` and of the decisions come at once, at most
+//! one each [`crate::hooks::SHOW_GAP`] ([`crate::hooks::Shows`]). So a
+//! change on GitHub shows within seconds. A wake of a check waits for the
+//! next read.
 //!
 //! | What | Source | When |
 //! |---|---|---|
@@ -113,6 +119,7 @@
 //! | The titles of the issues | `gh api`: the conditional read of the open issues | each 60 s while the Sessions tab is open, and soon after a wake of GitHub |
 //! | The items of the boards | `gh api`, and `gh pr list` with an open pull request | each 60 s while the Waves tab shows, at once on `r`, and soon after a wake of GitHub |
 //! | The open issues of the list of `#` | `gh api`: the conditional read of the open issues | each 60 s while the Chat tab shows, and soon after a wake of GitHub |
+//! | The decisions | `gh api`: the conditional read of the open issues | when the Decisions tab opens, each 60 s while it shows, at once on `r`, and soon after a wake of GitHub |
 //! | The usage of a wave | `gh`: the milestones, the issues and their comments | when the Usage report shows with no read yet, and on `r` |
 //! | The audit of a wave | riff-server: the log; `gh`: the forge | on `Enter` and `r` in the Audit report |
 //! | The events of a session | the socket of the daemon, or riff-server for another host | while the Session log shows |
@@ -162,7 +169,7 @@
 //! while the note line asks for a text, it types into it
 //! (01M6VFGKCJ02G33TXR01GY6M0G). While the person types a filter of the
 //! Sessions tab or of the Machines tab ([`State::takes_text`]), each
-//! character is a letter of the filter, also `1` to `6` and `q`
+//! character is a letter of the filter, also `1` to `7` and `q`
 //! (01M6VJQPNJ4AX4RT877F1QAPPX).
 //! Else the frame takes its keys, and gives each other key to the tab:
 //! the arrows, `Enter`, and a letter. The tab turns it into an
@@ -171,7 +178,7 @@
 //!
 //! | Key | Does |
 //! |---|---|
-//! | `1` to `6`, also with Alt | Open a tab. |
+//! | `1` to `7`, also with Alt | Open a tab. |
 //! | `Tab`, `Shift-Tab` | Open the next tab, or the tab before. |
 //! | `r` | Look again now. |
 //! | `?` | Show or hide the keys of this tab. |
@@ -210,6 +217,7 @@
 //! | [`Action::Limit`] | `riff daemon limit --sessions N`: [`machines::set_limit`] |
 //! | [`Action::Do`] | `riff plan hold`, `riff plan free`, `riff pause`, `riff resume`, `riff questions --answered`: [`Effect::run`] |
 //! | [`Action::Post`] | `riff chat`: [`crate::chat::posts`], through [`chat::Link`] |
+//! | [`Action::Browse`] | `riff questions --web`: the browser of the system, with [`open::that_detached`] |
 //!
 //! # The marks
 //!
@@ -220,6 +228,7 @@
 //! gives the Sessions tab the news `•`.
 
 pub mod chat;
+pub mod decisions;
 pub mod forge;
 pub mod machines;
 pub mod reports;
@@ -284,7 +293,7 @@ pub fn every(idle: Duration) -> Duration {
 }
 
 /// A tab of the TUI, in the order of the strip
-/// (01M6VAZJYYQZDHD6YDB0NBQ7KW).
+/// (01M7FYVA218ARDXTFPWSZV6N4P).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Tab {
     /// Each session and each worker.
@@ -300,17 +309,20 @@ pub enum Tab {
     Devices,
     /// The usage, the audit and the log of a session.
     Reports,
+    /// Each open question and each design issue (#2188).
+    Decisions,
 }
 
 impl Tab {
     /// Each tab, in the order of the strip.
-    pub const ALL: [Tab; 6] = [
+    pub const ALL: [Tab; 7] = [
         Tab::Sessions,
         Tab::Chat,
         Tab::Waves,
         Tab::Machines,
         Tab::Devices,
         Tab::Reports,
+        Tab::Decisions,
     ];
 
     /// The name of the tab in the strip.
@@ -322,15 +334,16 @@ impl Tab {
             Tab::Machines => "Machines",
             Tab::Devices => "Devices",
             Tab::Reports => "Reports",
+            Tab::Decisions => "Decisions",
         }
     }
 
-    /// The number of the tab: its key, from 1 to 6.
+    /// The number of the tab: its key, from 1 to 7.
     pub fn number(self) -> usize {
         self as usize + 1
     }
 
-    /// The tab of the key `number`, from 1 to 6.
+    /// The tab of the key `number`, from 1 to 7.
     ///
     /// ```
     /// use riff::tui::Tab;
@@ -338,7 +351,8 @@ impl Tab {
     /// assert_eq!(Tab::of_number(1), Some(Tab::Sessions));
     /// assert_eq!(Tab::of_number(6), Some(Tab::Reports));
     /// assert_eq!(Tab::of_number(0), None);
-    /// assert_eq!(Tab::of_number(7), None);
+    /// assert_eq!(Tab::of_number(7), Some(Tab::Decisions));
+    /// assert_eq!(Tab::of_number(8), None);
     /// for tab in Tab::ALL {
     ///     assert_eq!(Tab::of_number(tab.number()), Some(tab));
     /// }
@@ -353,8 +367,9 @@ impl Tab {
     /// use riff::tui::Tab;
     ///
     /// assert_eq!(Tab::Sessions.next(), Tab::Chat);
-    /// assert_eq!(Tab::Reports.next(), Tab::Sessions);
-    /// assert_eq!(Tab::Sessions.before(), Tab::Reports);
+    /// assert_eq!(Tab::Reports.next(), Tab::Decisions);
+    /// assert_eq!(Tab::Decisions.next(), Tab::Sessions);
+    /// assert_eq!(Tab::Sessions.before(), Tab::Decisions);
     /// assert_eq!(Tab::Chat.before(), Tab::Sessions);
     /// ```
     pub fn next(self) -> Tab {
@@ -368,9 +383,9 @@ impl Tab {
 
     /// True when the build item of the tab merged: the tab draws its own
     /// body. The Sessions tab (#1637), the Chat tab (#1640), the Waves tab
-    /// (#1638), the Machines tab (#1639) and the Reports tab (#1641) are
-    /// built. The body of the Devices tab says that it is not built yet:
-    /// no command of the CLI shows its area yet
+    /// (#1638), the Machines tab (#1639), the Reports tab (#1641) and the
+    /// Decisions tab (#2188) are built. The body of the Devices tab says
+    /// that it is not built yet: no command of the CLI shows its area yet
     /// (01M6VAZKVK7530JJ63S7RVF88J).
     ///
     /// ```
@@ -381,6 +396,7 @@ impl Tab {
     /// assert!(Tab::Machines.built());
     /// assert!(Tab::Chat.built());
     /// assert!(Tab::Reports.built());
+    /// assert!(Tab::Decisions.built());
     /// assert!(!Tab::Devices.built());
     /// ```
     pub fn built(self) -> bool {
@@ -519,7 +535,7 @@ impl Mark {
 /// text, or the answer to a question.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Key {
-    /// Open a tab: `Alt-1` to `Alt-6`, and a click on a tab. The digits
+    /// Open a tab: `Alt-1` to `Alt-7`, and a click on a tab. The digits
     /// with no Alt are a [`Key::Char`].
     Open(Tab),
     /// Open the next tab: `Tab`.
@@ -602,6 +618,9 @@ pub enum Action {
     Post(String),
     /// Run the effect: the person said `y`.
     Do(Effect),
+    /// Open the URL in the browser, as `riff questions --web` does
+    /// (01M7FYVHDJJ288RRV8EBRKSY49).
+    Browse(String),
 }
 
 /// A question in the note line (01M6VFD0S90SB8M8WV952NT4Y1): `y` gives
@@ -879,7 +898,7 @@ pub struct State {
     /// The tab that the person sees.
     tab: Tab,
     /// The news of each tab, by the number of the tab less one.
-    news: [Option<News>; 6],
+    news: [Option<News>; 7],
     /// The last good look, and its time in milliseconds since the epoch.
     look: Option<(Look, i64)>,
     /// The fault of the last look, while the screen is the one of the
@@ -924,6 +943,8 @@ pub struct State {
     reason: Option<waves::Reason>,
     /// The Reports tab.
     reports: reports::Reports,
+    /// The Decisions tab.
+    decisions: decisions::Decisions,
     /// The rows of a page of the body at the last draw.
     page: usize,
     /// The time of the last draw, in milliseconds since the epoch: the
@@ -940,7 +961,7 @@ impl State {
     pub fn new(build: Build, me: SessionUri) -> State {
         State {
             tab: Tab::default(),
-            news: [None; 6],
+            news: [None; 7],
             look: None,
             fault: None,
             note: None,
@@ -960,6 +981,7 @@ impl State {
             waves: waves::Waves::default(),
             reason: None,
             reports: reports::Reports::default(),
+            decisions: decisions::Decisions::default(),
             page: 20,
             drawn_ms: 0,
             host_filter: machines::Filter::default(),
@@ -1393,14 +1415,15 @@ impl State {
         }
     }
 
-    /// Takes the key `key` of the person (01M6VAZJYYQZDHD6YDB0NBQ7KW,
+    /// Takes the key `key` of the person (01M7FYVA218ARDXTFPWSZV6N4P,
     /// 01M6VAZKDEQ6951KGPGAMF1SNJ). A question of the note line takes the
     /// key first, then a text that the person types: the limit of a host
     /// ([`machines::typed`]), the reason of a hold ([`waves::typed`]), or
     /// the filter of the Sessions tab. Then the frame takes its keys, and
     /// the tab the others: `k` `j` `g` `G` are `↑` `↓` `Home` `End`
     /// (01M6VFGKCJ02G33TXR01GY6M0G). Opening the Waves tab looks again at
-    /// once, for the holds of its boards.
+    /// once, for the holds of its boards, and so does opening the
+    /// Decisions tab, for its read of `gh` (01M7FYVHB1APFXPXA71PMD18EH).
     ///
     /// ```
     /// use riff::tui::{Action, Key, State, Tab};
@@ -1455,7 +1478,7 @@ impl State {
         if let Some(reason) = self.reason.take() {
             return waves::typed(self, reason, key);
         }
-        // A filter takes `1` to `6` and `q` too
+        // A filter takes `1` to `7` and `q` too
         // (01M6VJQPNJ4AX4RT877F1QAPPX).
         if self.tab == Tab::Sessions && self.sessions.typing() && key != Key::Quit {
             return self.on_sessions_key(key);
@@ -1464,7 +1487,7 @@ impl State {
             return machines::filter_typed(self, key);
         }
         let key = match key {
-            Key::Char(digit @ '1'..='6') => digit
+            Key::Char(digit @ '1'..='7') => digit
                 .to_digit(10)
                 .and_then(|n| Tab::of_number(n as usize))
                 .map_or(key, Key::Open),
@@ -1506,17 +1529,18 @@ impl State {
                 Tab::Waves => self.waves_key(key),
                 Tab::Machines => machines::on_key(self, key),
                 Tab::Reports => self.on_reports_key(key),
+                Tab::Decisions => self.on_decisions_key(key),
                 _ => None,
             },
         }
     }
 
-    /// Opens the tab `tab` ([`State::open`]). The Waves tab looks again
-    /// at once.
+    /// Opens the tab `tab` ([`State::open`]). The Waves tab and the
+    /// Decisions tab look again at once.
     fn go(&mut self, tab: Tab) -> Option<Action> {
         let was = self.tab;
         self.open(tab);
-        (tab == Tab::Waves && was != Tab::Waves).then_some(Action::Look)
+        (matches!(tab, Tab::Waves | Tab::Decisions) && was != tab).then_some(Action::Look)
     }
 
     /// Takes a key of the Waves tab that the frame does not take.
@@ -1546,9 +1570,12 @@ impl State {
         double: bool,
     ) -> Option<Action> {
         let key = view.hit(column, row)?;
-        // In the Waves tab, the second click is on the selected row: it
-        // acts as Enter already (01M6VFGKCJ02G33TXR01GY6M0G).
-        let enter = double && matches!(key, Key::Row(_)) && self.tab != Tab::Waves;
+        // In the Waves tab and in the Decisions tab, the second click is
+        // on the selected row: it acts as Enter already
+        // (01M6VFGKCJ02G33TXR01GY6M0G, 01M7FYVHDJJ288RRV8EBRKSY49).
+        let enter = double
+            && matches!(key, Key::Row(_))
+            && !matches!(self.tab, Tab::Waves | Tab::Decisions);
         let action = self.on_key(key);
         if enter {
             return self.on_key(Key::Enter);
@@ -1730,7 +1757,8 @@ pub enum Input {
 ///     assert_eq!(key(code, none), Some(Input::Key(want)), "{code:?}");
 /// }
 /// // A letter with Ctrl or Alt is no key of a tab.
-/// assert_eq!(key(KeyCode::Char('7'), KeyModifiers::ALT), None);
+/// assert_eq!(key(KeyCode::Char('7'), KeyModifiers::ALT), Some(Input::Key(Key::Open(Tab::Decisions))));
+/// assert_eq!(key(KeyCode::Char('8'), KeyModifiers::ALT), None);
 /// assert_eq!(key(KeyCode::Char('l'), KeyModifiers::CONTROL), None);
 /// assert_eq!(key(KeyCode::F(1), none), None);
 /// let mouse = |kind| {
@@ -1763,7 +1791,7 @@ pub fn input_of(event: &ratatui::crossterm::event::Event) -> Option<Input> {
             let alt = key.modifiers.contains(KeyModifiers::ALT);
             let key = match key.code {
                 KeyCode::Char('c') if control => Key::Quit,
-                KeyCode::Char(digit @ '1'..='6') if alt => {
+                KeyCode::Char(digit @ '1'..='7') if alt => {
                     Key::Open(Tab::of_number(digit.to_digit(10)? as usize)?)
                 }
                 KeyCode::Char(c) if !control && !alt => Key::Char(c),
@@ -1921,6 +1949,10 @@ type Boards = Vec<(String, Result<forge::Forge, String>)>;
 /// the Chat tab: the issues, or the error of `gh`.
 type Opened = Vec<(String, Result<Vec<crate::typeahead::OpenIssue>, String>)>;
 
+/// A read of the open issues of each project for the Decisions tab: the
+/// decisions, or the error of `gh`.
+type Decided = Vec<(String, Result<Vec<decisions::Decision>, String>)>;
+
 /// A read of `gh` on a thread of its own: the end of the TUI waits for
 /// no read (#1707). A thread that nobody joins holds up no exit.
 struct Reading<T>(std::thread::JoinHandle<T>);
@@ -1969,6 +2001,10 @@ struct Tasks {
     /// time of the last one.
     opening: Option<Reading<Opened>>,
     opened_at: Option<tokio::time::Instant>,
+    /// The read of the decisions that runs, and `r` or a wake while the
+    /// Decisions tab shows: read them again at once.
+    deciding: Option<Reading<Decided>>,
+    decisions_again: bool,
     /// The kept replies of the conditional reads of `gh`: the Sessions
     /// tab, the Waves tab and the Chat tab share them.
     kept: forge::Kept,
@@ -2061,6 +2097,8 @@ async fn frames(
         forge: None,
         opening: None,
         opened_at: None,
+        deciding: None,
+        decisions_again: false,
         kept: forge::Kept::default(),
         forge_again: false,
         acting: None,
@@ -2136,6 +2174,7 @@ async fn frames(
             tasks.forge_again = true;
             tasks.read_at = None;
             tasks.opened_at = None;
+            tasks.decisions_again = true;
         }
         if tasks.forge.as_ref().is_some_and(Reading::is_finished)
             && let Some(done) = tasks.forge.take()
@@ -2168,8 +2207,9 @@ async fn frames(
         {
             state.note(done.await?);
             // The action changed something: look again, and read the
-            // forge again while the Waves tab shows.
+            // forge again while the Waves tab or the Decisions tab shows.
             tasks.forge_again = true;
+            tasks.decisions_again = true;
             if tasks.looking.is_some() {
                 tasks.again = true;
             } else {
@@ -2177,6 +2217,7 @@ async fn frames(
             }
         }
         reports_tasks(&mut tasks, state, api, me, reach, &gh).await?;
+        decisions_tasks(&mut tasks, state, &gh)?;
         if tasks.forge.is_none()
             && state.tab() == Tab::Waves
             && (tasks.forge_again || state.waves().due(crate::run::now_ms()))
@@ -2333,6 +2374,7 @@ async fn frames(
             }
             Action::Look => {
                 tasks.forge_again = state.tab() == Tab::Waves;
+                tasks.decisions_again = state.tab() == Tab::Decisions;
                 if tasks.looking.is_some() {
                     tasks.again = true;
                 } else {
@@ -2391,6 +2433,13 @@ async fn frames(
                 }));
             }
             Action::Post(body) => link.send(body),
+            // The note already names the URL: a person over SSH clicks it
+            // (01M7FYVHDJJ288RRV8EBRKSY49).
+            Action::Browse(url) => {
+                if let Err(e) = open::that_detached(&url) {
+                    state.note(text::tui_not_opened(&url, &e.to_string()));
+                }
+            }
             Action::Do(effect) => {
                 state.note(effect.doing());
                 let (api, me, reach, gh) = (api.clone(), me.clone(), reach.clone(), gh.clone());
@@ -2502,6 +2551,31 @@ async fn reports_tasks(
                 async move { reports::follow(&api, &me, &reach, &followed, sender).await },
             );
         tasks.follow = Some((task, source, lines));
+    }
+    Ok(())
+}
+
+/// The read of the Decisions tab (01M7FYVHB1APFXPXA71PMD18EH): it takes
+/// the result of a read that ended. While the tab shows, it starts a
+/// read of the open issues of each project when one is due, or when the
+/// person or a wake of GitHub asked for one. The read runs on a thread of
+/// its own ([`Reading`]): a slow `gh` holds up no `q`.
+fn decisions_tasks(tasks: &mut Tasks, state: &mut State, gh: &crate::pr::Gh) -> Result<()> {
+    if tasks.deciding.as_ref().is_some_and(Reading::is_finished)
+        && let Some(done) = tasks.deciding.take()
+    {
+        state.read_decisions(done.result()?, crate::run::now_ms());
+    }
+    if tasks.deciding.is_none()
+        && state.tab() == Tab::Decisions
+        && (tasks.decisions_again || state.decisions().due(crate::run::now_ms()))
+    {
+        tasks.decisions_again = false;
+        let repos = state.decision_repos();
+        let (gh, kept) = (gh.clone(), tasks.kept.clone());
+        tasks.deciding = Some(Reading::start(move || {
+            forge::decisions_each(&gh, &repos, &kept)
+        }));
     }
     Ok(())
 }
