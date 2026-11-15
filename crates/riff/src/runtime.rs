@@ -97,6 +97,10 @@ pub enum Source {
     Path(PathBuf),
     /// A named volume of the runtime.
     Volume(String),
+    /// An empty folder on the disk of the container, which goes with the
+    /// container: the clone of the session ([`crate::session_clone`]). On
+    /// podman, a volume of the container that `podman run --rm` removes.
+    Empty,
 }
 
 /// One bind of a session.
@@ -205,7 +209,7 @@ impl SessionSpec {
     ///     L --> LS["~/.local/share: a tmpfs"]
     ///     L --> ST["~/.local/state: a tmpfs"]
     ///     LS --> R["~/.local/share/riff/...: a tmpfs for each folder"]
-    ///     R --> K["the clone of the session: a bind"]
+    ///     R --> K["the clone of the session: an empty volume"]
     /// ```
     ///
     /// ```

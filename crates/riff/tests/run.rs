@@ -1132,6 +1132,14 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         objects.display().to_string(),
     );
     let claude = folder.join("claude").display().to_string();
+    let plan = riff::session_clone::Plan {
+        path: clone.clone(),
+        origin: riff::session_clone::origin(REPO),
+        reference: objects.parent().unwrap().to_owned(),
+        checkout: riff::session_clone::Checkout::Branch("worktree-issue-12".into()),
+        bundle: None,
+    }
+    .to_var();
     // The folder of the token of the session: no token of the person
     // (01M6Z87A04EXTT1FFJSJ1EM6TB).
     let gh = folder.join("gh").display().to_string();
@@ -1173,8 +1181,10 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         &format!("type=tmpfs,destination={h}/.local/share,tmpfs-mode=0755,tmpfs-size=1g,U=true"),
         "--mount",
         &format!("type=tmpfs,destination={h}/.local/state,tmpfs-mode=0755,tmpfs-size=1g,U=true"),
-        "-v",
-        &format!("{c}:{c}"),
+        // #2139: the clone is an empty volume of the container, and no
+        // folder of the host. The relay clones there.
+        "--mount",
+        &format!("type=volume,destination={c},U=true"),
         "-v",
         &format!("{o}:{o}:ro"),
         "-v",
@@ -1218,6 +1228,8 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         "GIT_CONFIG_VALUE_2=!gh auth git-credential",
         "-e",
         &format!("CLAUDE_CONFIG_DIR={h}/.claude"),
+        "-e",
+        &format!("RIFF_CLONE={plan}"),
         "-e",
         &format!("CARGO_HOME={h}/.cargo"),
         "-e",
@@ -1368,7 +1380,7 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         "vcs_state_changed: action push, branch worktree-issue-12",
         "end: success, 3 turns, 5 s, 0.25 USD",
         "The pull request #40: https://github.com/como-technologies/riff/pull/40",
-        &format!("The clone stays until the work of its branch is over: {c}"),
+        &format!("  clone: {c}, in the container"),
     ] {
         assert!(stdout.contains(part), "{part}\nnot in\n{stdout}");
     }
@@ -1390,14 +1402,10 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         }
     }
 
-    // The clone: in the folder of riff, on the branch of the item, with
-    // the objects of the main clone as its alternates.
-    assert_eq!(
-        git(&clone, &["rev-parse", "--abbrev-ref", "HEAD"]),
-        "worktree-issue-12"
-    );
-    let alternates = std::fs::read_to_string(clone.join(".git/objects/info/alternates")).unwrap();
-    assert_eq!(alternates.trim(), o);
+    // The clone: the host makes none, and no folder of the host is at its
+    // path (#2139). The relay clones in the container from its plan.
+    assert!(!clone.exists(), "the host made a clone");
+    assert!(!machine.env.riff_home().join("new-clones").exists());
     // The first-run answers of claude, so a takeover asks no question
     // (01M51JACH6TQP318ZFG6NQ9GRM).
     let answers: Value =
@@ -1696,9 +1704,23 @@ async fn riff_run_with_no_github_asks_for_no_token_and_names_the_push() {
         .await;
     let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
     assert!(out.status.success(), "{stdout}\n{stderr}");
-    let clone = machine.folder("issue-12").join("clone");
-    let push = riff::text::run_pushed_nothing(&clone, "worktree-issue-12");
+    // The fake container runs no clone, so the relay wrote no bundle: the
+    // session made no commit that origin does not have.
+    let push = riff::text::run_pushed_nothing(None, "worktree-issue-12");
     assert!(stdout.contains(&push), "{stdout}");
+    // The relay writes the bundle in `out/` of the folder of the session:
+    // a folder with write, and no git tree.
+    let out_dir = machine.folder("issue-12").join("out");
+    let o = out_dir.display();
+    assert!(
+        machine
+            .read("run.args")
+            .lines()
+            .any(|a| a == format!("{o}:{o}")),
+        "{}",
+        machine.read("run.args")
+    );
+    assert!(out_dir.is_dir());
     assert!(
         machine
             ._signed
@@ -1777,8 +1799,13 @@ async fn riff_run_goes_on_from_the_branch_of_an_earlier_session() {
         .run(None, &["run", "issue-12", "--image", IMAGE])
         .await;
     assert!(out.status.success(), "{}", text(&out.stderr));
-    let clone = machine.folder("issue-12").join("clone");
-    assert_eq!(git(&clone, &["log", "-1", "--format=%s"]), "WIP: earlier");
+    // The host makes no clone: the relay clones the branch of origin in
+    // the container (#2139), and the start text says to go on from it.
+    assert!(!machine.folder("issue-12").join("clone").exists());
+    let args: Vec<String> = machine.read("run.args").lines().map(String::from).collect();
+    let plan = lead_plan(&args);
+    let branch = riff::session_clone::Checkout::Branch("worktree-issue-12".into());
+    assert_eq!(plan.checkout, branch);
     assert!(
         machine
             .read("run.stdin")
@@ -3200,9 +3227,10 @@ async fn the_daemon_starts_the_lead_with_a_terminal_and_riff_lead_start_attaches
     );
     assert!(!claude.contains("\n-p\n"), "{claude}");
 
-    // Its folder: a clone and a Claude folder with the first-run answers.
+    // Its folder: a Claude folder with the first-run answers, and no
+    // clone: the lead clones in its container (#2139).
     let folder = machine.env.riff_home().join("leads/como-technologies-riff");
-    assert!(folder.join("clone/.git").exists());
+    assert!(!folder.join("clone").exists());
     let json: Value =
         serde_json::from_slice(&std::fs::read(folder.join("claude/.claude.json")).unwrap())
             .unwrap();
@@ -3289,17 +3317,8 @@ async fn the_daemon_starts_the_lead_from_the_main_clone_of_its_wave_with_the_mer
     let args: Vec<String> = machine.read("run.args").lines().map(String::from).collect();
     assert!(args.iter().any(|a| a == PINNED), "{args:?}");
     assert!(!args.contains(&local), "{args:?}");
-    // The clone of the lead links to the main clone of the wave, and the
-    // container binds the objects of that main clone, with no write.
-    let clone = machine
-        .env
-        .riff_home()
-        .join("leads/como-technologies-riff/clone");
-    let linked = riff::lead::linked_main(&clone).unwrap();
-    assert_eq!(
-        std::fs::canonicalize(linked).unwrap(),
-        std::fs::canonicalize(&machine.main).unwrap()
-    );
+    // The lead clones in its container with the objects of the main clone
+    // of the wave, and the container binds them, with no write (#2139).
     let objects = PathBuf::from(git(
         &machine.main,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
@@ -3311,6 +3330,9 @@ async fn the_daemon_starts_the_lead_from_the_main_clone_of_its_wave_with_the_mer
         args.windows(2).any(|w| w[0] == "-v" && w[1] == bind),
         "{args:?}"
     );
+    let plan = lead_plan(&args);
+    assert_eq!(plan.reference, objects.parent().unwrap());
+    assert_eq!(plan.checkout, riff::session_clone::Checkout::Default);
 
     std::fs::remove_file(&hold).unwrap();
     machine.lead_ends().await;
@@ -3380,13 +3402,25 @@ fn hostile_config(clone: &Path, mark: &Path) {
     std::fs::write(&config, text).unwrap();
 }
 
-/// 01M7E7A8QM8SRPQN3G1BXVJW1R, 01M7E7ACTYP4RX8TCJ9XSYMMPM (#2140): the
-/// old lead left a change, an untracked file, and a git config that names
-/// a program. The next lead starts with a new clone at the new commit of
-/// origin, the old clone goes, and the program never runs. riff on the
-/// host runs no git in the clone of the lead, and says why.
+/// The plan of the clone of the lead in the arguments `args` of its
+/// `podman run` (#2139).
+fn lead_plan(args: &[String]) -> riff::session_clone::Plan {
+    let var = format!("{}=", riff::session_clone::VAR);
+    let plan = args
+        .iter()
+        .find_map(|a| a.strip_prefix(&var))
+        .unwrap_or_else(|| panic!("no plan of a clone: {args:?}"));
+    riff::session_clone::Plan::of_var(plan).unwrap()
+}
+
+/// #2139, 01M7EBBVE6WYKT5JDVASFCYPQQ, 01M7E7ACTYP4RX8TCJ9XSYMMPM: the
+/// lead clones in its container: its clone is an empty volume, and no
+/// folder of the host. A clone that an older riff left in the folder of
+/// the lead, with a change and a git config that names a program, goes
+/// at the next start, and the program never runs. riff on the host runs
+/// no git in a clone in the folder of the leads, and says why.
 #[tokio::test]
-async fn a_new_lead_gets_a_new_clone_and_the_host_runs_no_git_in_the_old_clone() {
+async fn a_new_lead_clones_in_its_container_and_the_clone_of_an_older_riff_goes() {
     let machine = Machine::new().await;
     machine.claude_token();
     let hold = machine.bin.path().join("hold");
@@ -3397,20 +3431,47 @@ async fn a_new_lead_gets_a_new_clone_and_the_host_runs_no_git_in_the_old_clone()
     machine.lead_ends().await;
     let leads = machine.env.riff_home().join("leads");
     let clone = leads.join("como-technologies-riff/clone");
+    assert!(!clone.exists(), "the host made a clone of the lead");
+    let args: Vec<String> = machine.read("run.args").lines().map(String::from).collect();
+    let c = clone.display().to_string();
+    let volume = format!("type=volume,destination={c},U=true");
+    assert!(
+        args.windows(2).any(|w| w[0] == "--mount" && w[1] == volume),
+        "{args:?}"
+    );
+    assert!(
+        !args.iter().any(|a| a.starts_with(&format!("{c}:"))),
+        "{args:?}"
+    );
+    assert_eq!(lead_plan(&args).path, clone);
 
-    // origin gets the new file b. The old lead changed README.md, made an
-    // untracked file b, and named a program in its git config.
-    std::fs::write(machine.main.join("b"), "origin\n").unwrap();
-    git(&machine.main, &["add", "b"]);
-    git(&machine.main, &["commit", "-q", "-m", "two"]);
-    git(&machine.main, &["push", "-q", "origin", "main"]);
-    let new = git(&machine.main, &["rev-parse", "HEAD"]);
+    // An older riff left a clone of the lead on the host, with a change
+    // and a git config that names a program.
+    git(
+        machine.main.parent().unwrap(),
+        &["clone", "-q", "--", &machine.main.to_string_lossy(), &c],
+    );
     std::fs::write(clone.join("README.md"), "mine\n").unwrap();
-    std::fs::write(clone.join("b"), "mine\n").unwrap();
     let mark = machine.bin.path().join("mark");
     hostile_config(&clone, &mark);
 
-    // The host joins again: its daemon starts the next lead.
+    // riff on the host refuses git in that clone, and the program does
+    // not run.
+    let mut whoami = machine.command(None, &["whoami"]);
+    whoami.current_dir(&clone);
+    let refused = tokio::task::spawn_blocking(move || whoami.output().unwrap())
+        .await
+        .unwrap();
+    assert!(!refused.status.success(), "{refused:?}");
+    let said = text(&refused.stderr);
+    let real = |p: &Path| std::fs::canonicalize(p).unwrap();
+    assert!(
+        said.contains(&riff::text::host_git_refused(&real(&clone), &real(&leads))),
+        "{said}"
+    );
+
+    // The host joins again: its daemon starts the next lead, and the old
+    // clone goes.
     std::fs::write(&hold, "").unwrap();
     machine.ok(None, &["host", "join"]).await;
     let started = Instant::now();
@@ -3431,44 +3492,13 @@ async fn a_new_lead_gets_a_new_clone_and_the_host_runs_no_git_in_the_old_clone()
         )),
         "{out}"
     );
-    assert!(!out.contains("riff did not make a new clone"), "{out}");
+    assert!(!clone.exists(), "the clone of the older riff stays");
+    assert!(!clone.with_file_name(riff::lead::OLD_CLONE).exists());
     assert!(
         !mark.exists(),
         "the program of the old clone ran: {}",
         std::fs::read_to_string(&mark).unwrap_or_default()
     );
-    // The new clone: the new commit of origin, and no change of the old
-    // lead.
-    let config = std::fs::read_to_string(clone.join(".git/config")).unwrap();
-    assert!(!config.contains("fsmonitor"), "{config}");
-    assert_eq!(git(&clone, &["rev-parse", "HEAD"]), new);
-    assert_eq!(git(&clone, &["status", "--porcelain"]), "");
-    assert_eq!(
-        std::fs::read_to_string(clone.join("b")).unwrap(),
-        "origin\n"
-    );
-    assert!(!clone.with_file_name(riff::lead::OLD_CLONE).exists());
-    assert!(
-        riff::lead::linked_main(&clone).is_ok(),
-        "the new clone links to no main clone"
-    );
-
-    // The new lead names a program in its git config too. riff on the
-    // host refuses git in its clone, and the program does not run.
-    hostile_config(&clone, &mark);
-    let mut whoami = machine.command(None, &["whoami"]);
-    whoami.current_dir(&clone);
-    let refused = tokio::task::spawn_blocking(move || whoami.output().unwrap())
-        .await
-        .unwrap();
-    assert!(!refused.status.success(), "{refused:?}");
-    let said = text(&refused.stderr);
-    let real = |p: &Path| std::fs::canonicalize(p).unwrap();
-    assert!(
-        said.contains(&riff::text::host_git_refused(&real(&clone), &real(&leads))),
-        "{said}"
-    );
-    assert!(!mark.exists(), "the program of the clone of the lead ran");
     std::fs::remove_file(&hold).unwrap();
     machine.lead_ends().await;
 }
@@ -3503,9 +3533,9 @@ fn read_only_folder(dir: &Path) {
     std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o555)).unwrap();
 }
 
-/// 01M7EBBVE6WYKT5JDVASFCYPQQ (#2153): the old lead left a read-only
-/// folder in its clone, and an earlier start left an old clone with a
-/// read-only folder. The next start removes both with `podman unshare`,
+/// 01M7EBBVE6WYKT5JDVASFCYPQQ (#2153, #2139): an older riff left the
+/// clone of the lead on the host with a read-only folder, and an earlier
+/// start left an old clone with a read-only folder. The next start removes both with `podman unshare`,
 /// and the new lead starts. When `podman unshare` fails too, the new lead
 /// still starts: each old clone stays with one line in the log, and the
 /// sweep of the daemon removes it later.
@@ -3524,7 +3554,7 @@ async fn a_new_lead_starts_when_riff_cannot_remove_its_old_clone() {
     read_only_folder(&clone);
     read_only_folder(&stuck);
     lead = next_lead(&machine, &hold, &lead).await;
-    assert!(clone.join("README.md").exists() && !clone.join("ro").exists());
+    assert!(!clone.exists());
     assert_eq!(riff::lead::old_clones(&folder), Vec::<PathBuf>::new());
     assert!(machine.read("podman.log").contains("podman unshare find"));
 
@@ -3538,7 +3568,7 @@ async fn a_new_lead_starts_when_riff_cannot_remove_its_old_clone() {
         riff::lead::old_clones(&folder),
         [stuck.clone(), second.clone()]
     );
-    assert!(clone.join("README.md").exists() && !clone.join("ro").exists());
+    assert!(!clone.exists());
     let out = machine.read("daemon.out");
     for old in [&stuck, &second] {
         let line = format!(
@@ -3569,7 +3599,7 @@ async fn a_new_lead_starts_when_riff_cannot_remove_its_old_clone() {
         assert!(out.contains(&line), "{out}");
     }
     assert_eq!(riff::lead::old_clones(&folder), Vec::<PathBuf>::new());
-    assert!(clone.join("README.md").exists());
+    assert!(!clone.exists());
     std::fs::remove_file(&hold).unwrap();
     machine.lead_ends().await;
 }
@@ -4649,7 +4679,7 @@ async fn a_lead_starts_again_from_the_main_clone_of_the_daemon_not_from_its_alte
     assert!(riff::wave::read_waves(&dir).unwrap().is_empty());
 
     // The lead writes a repository of its own, and names it in the
-    // alternates of its clone.
+    // alternates of a clone in its folder, as an older riff made it there.
     let other = machine.env.path().join("written-by-the-lead");
     std::fs::create_dir_all(&other).unwrap();
     git(&other, &["init", "-q", "-b", "main"]);
@@ -4660,6 +4690,7 @@ async fn a_lead_starts_again_from_the_main_clone_of_the_daemon_not_from_its_alte
         .riff_home()
         .join("leads/como-technologies-riff/clone");
     let alternates = clone.join(".git/objects/info/alternates");
+    std::fs::create_dir_all(alternates.parent().unwrap()).unwrap();
     let objects = other.join(".git/objects");
     std::fs::write(&alternates, format!("{}\n", objects.display())).unwrap();
 

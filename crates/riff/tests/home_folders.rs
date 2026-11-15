@@ -1,8 +1,9 @@
 //! In a real container, each folder of the home above a bind belongs to
 //! the session user, and `~/.local/state` exists
 //! (01M748WY71EFVZR6SG5CCEQYE0). A write over the size of a tmpfs of the
-//! home fails with no space left (01M7DYR99QK609NF61GGCN75QQ). `all.rs`
-//! builds this file on Linux only.
+//! home fails with no space left (01M7DYR99QK609NF61GGCN75QQ). The clone
+//! of a session is an empty volume of the session user, on the disk
+//! (01M7EY3P0Q8TQF5QRTRDWCYCTQ). `all.rs` builds this file on Linux only.
 //!
 //! Each test of a container uses the real podman and the session image
 //! of this repository. It skips, and says why, on a host that has no
@@ -103,6 +104,42 @@ async fn a_write_over_the_size_of_a_tmpfs_of_the_home_fails_with_no_space() {
     let full = format!("dd: error writing '{big}': No space left on device");
     assert!(out.contains(&full), "{out}{errors}");
     assert!(out.ends_with("exit 1\n"), "{out}{errors}");
+}
+
+/// #2139 (01M7EY3P0Q8TQF5QRTRDWCYCTQ): the clone of a session is an empty
+/// volume of its container at the path of the clone, the working folder.
+/// It belongs to the session user, it is no tmpfs of the home, and git
+/// makes a repository there.
+#[tokio::test]
+async fn the_clone_of_a_session_is_an_empty_volume_of_the_session_user() {
+    if let Err(why) = ready() {
+        eprintln!("skip: {why}");
+        return;
+    }
+    let clone = format!("{HOME}/.local/share/riff/s/clone");
+    let script = "stat -c '%u' . && ls -A | wc -l && \
+                  awk -v d=\"$PWD\" '$2 == d {print $3}' /proc/mounts && \
+                  git init -q . && test -d .git && echo made"
+        .to_owned();
+    let spec = SessionSpec {
+        name: format!("riff-clone-volume-test-{}", std::process::id()),
+        workdir: clone.clone().into(),
+        binds: vec![Bind {
+            source: Source::Empty,
+            target: clone.into(),
+            write: true,
+        }],
+        ..spec(script)
+    };
+    let (out, errors) = output(&spec).await;
+
+    let uid = nix::unistd::getuid().as_raw();
+    let got: Vec<&str> = out.lines().collect();
+    assert_eq!(got.len(), 4, "{out}{errors}");
+    assert_eq!(got[0], uid.to_string(), "{out}{errors}");
+    assert_eq!(got[1], "0", "the volume is not empty: {out}{errors}");
+    assert_ne!(got[2], "tmpfs", "{out}{errors}");
+    assert_eq!(got[3], "made", "{out}{errors}");
 }
 
 /// A spec of the test that runs `script` in the session image.

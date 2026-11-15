@@ -834,10 +834,11 @@ use crate::pr::Verdict;
 use crate::room::Slot;
 use crate::run::{self, Facts};
 use crate::runtime::Runtime;
+use crate::session_clone::Checkout;
 use crate::session_setup::Setup;
 use crate::{
-    changes, ghcalls, git_credential, hooks, identity, kept, look, order, pr, project, repo_setup,
-    rollout, session_image, text, usage,
+    changes, ghcalls, hooks, identity, kept, look, order, pr, project, repo_setup, rollout,
+    session_image, text, usage,
 };
 use riff_client::api::{self, Api};
 use riff_client::link::STREAM_RETRY;
@@ -1175,6 +1176,34 @@ impl Work {
             Work::Verify { .. } => crate::permissions::Role::Verifier,
             Work::Build { .. } | Work::Rebase { .. } | Work::Checks { .. } => {
                 crate::permissions::Role::Worker
+            }
+        }
+    }
+
+    /// What the clone of the session of this work checks out, in its
+    /// container ([`crate::session_clone`]): the branch of the item for a
+    /// build, a rebase and a fix of the checks, and the head commit of the
+    /// look for a verify, detached (01M5QVARWYFHTQV5THNRB09SZA).
+    ///
+    /// ```
+    /// use riff::session_clone::Checkout;
+    /// use riff::wave::Work;
+    ///
+    /// let branch = Checkout::Branch("worktree-issue-12".into());
+    /// assert_eq!(Work::Build { issue: 12 }.checkout(), branch);
+    /// let rebase = Work::Rebase { issue: 12, pull: 40, commit: "1a2b".into() };
+    /// assert_eq!(rebase.checkout(), branch);
+    /// let verify = Work::Verify { issue: 12, pull: 40, commit: "1a2b".into() };
+    /// assert_eq!(verify.checkout(), Checkout::Pull { pull: 40, commit: "1a2b".into() });
+    /// ```
+    pub fn checkout(&self) -> Checkout {
+        match self {
+            Work::Verify { pull, commit, .. } => Checkout::Pull {
+                pull: *pull,
+                commit: commit.clone(),
+            },
+            Work::Build { issue } | Work::Rebase { issue, .. } | Work::Checks { issue, .. } => {
+                Checkout::Branch(branch_of(*issue))
             }
         }
     }
@@ -3825,10 +3854,7 @@ async fn after_build(
                 Kind::Message,
             ),
         },
-        None => (
-            text::wave_no_pull(item, &branch, &record.folder.join("clone")),
-            Kind::Note,
-        ),
+        None => (text::wave_no_pull(item, &branch), Kind::Note),
     };
     match &pull {
         Some(pull) => {
@@ -4138,9 +4164,10 @@ impl Live {
         end_session(api, me).await;
     }
 
-    /// The steps before the start after the claim: the clone, the
-    /// Claude folder, the spec and the start text. `base` is the default
-    /// branch of the repository.
+    /// The steps before the start after the claim: the Claude folder, the
+    /// spec with the plan of the clone, and the start text. The session
+    /// clones in its container ([`crate::session_clone`]). `base` is the
+    /// default branch of the repository.
     #[allow(clippy::too_many_arguments)]
     async fn prepare(
         wave: &Wave,
@@ -4173,10 +4200,10 @@ impl Live {
             Work::Build { issue } => {
                 let issue = *issue;
                 let branch = branch_of(issue);
-                let (repo, at) = (wave.repo.clone(), clone.clone());
+                let repo = wave.repo.clone();
                 let earlier = {
                     let (main, branch) = (main.clone(), branch.clone());
-                    blocking(move || run::make_clone(&main, &at, &branch)).await?
+                    blocking(move || run::earlier(&main, &branch)).await?
                 };
                 let failed = blocking(move || {
                     let pulls = rollout::pulls(&forge(&repo), &repo)?;
@@ -4207,8 +4234,6 @@ impl Live {
                 commit,
             } => {
                 let branch = branch_of(*issue);
-                let (main, at, on) = (main.clone(), clone.clone(), branch.clone());
-                blocking(move || run::make_clone(&main, &at, &on)).await?;
                 text::wave_rebase_start(&wave.repo, base, *issue, *pull, commit, &branch, session)
             }
             Work::Checks {
@@ -4218,8 +4243,6 @@ impl Live {
                 checks,
             } => {
                 let branch = branch_of(*issue);
-                let (main, at, on) = (main.clone(), clone.clone(), branch.clone());
-                blocking(move || run::make_clone(&main, &at, &on)).await?;
                 text::wave_checks_start(
                     &wave.repo, base, *issue, *pull, commit, checks, &branch, session,
                 )
@@ -4229,9 +4252,6 @@ impl Live {
                 pull,
                 commit,
             } => {
-                let (at, commit_at) = (clone.clone(), commit.clone());
-                let (main_at, pull_at) = (main.clone(), *pull);
-                blocking(move || clone_at(&main_at, &at, pull_at, &commit_at)).await?;
                 let repo = wave.repo.clone();
                 let checks = blocking(move || repo_setup::full_check(&forge(&repo), &repo)).await?;
                 text::wave_verify_start(&wave.repo, base, *issue, *pull, commit, &checks)
@@ -4245,6 +4265,9 @@ impl Live {
             home: host.home.clone(),
             user: host.user.clone(),
             clone,
+            repo: wave.repo.clone(),
+            checkout: work.checkout(),
+            bundle: None,
             objects: common.join("objects"),
             claude,
             sign_in: host.claude.sign_in(),
@@ -4280,45 +4303,6 @@ fn failed_verify(pulls: &[rollout::Pull], issue: u64) -> Option<String> {
             .map(text::safe)
             .unwrap_or_default();
         text::wave_failed_verify(pull.number, &pull.head, &url)
-    })
-}
-
-/// Makes the clone of a verify at `commit`, detached: the head commit of
-/// the pull request `pull`. The clone has the branches of `origin` only,
-/// and the head of a pull request from a fork is on no such branch. So
-/// it fetches `refs/pull/PULL/head` from `origin` first. It checks out
-/// the commit, not the ref: a push to the pull request after the look
-/// does not change what the verify reads
-/// (01M5QVARWYFHTQV5THNRB09SZA). Each git step runs in the new clone
-/// before it moves into the folder of the session ([`run::clone_in_new`],
-/// 01M7DZ42C8SY2GV5ZQJZHM2VTV).
-fn clone_at(main: &Path, clone: &Path, pull: u64, commit: &str) -> Result<()> {
-    let remote = crate::host_git::output(main, &["remote", "get-url", "origin"])?;
-    let top = main.to_string_lossy();
-    run::clone_in_new(clone, |new| {
-        let path = new.to_string_lossy();
-        git_credential::run(
-            main,
-            &remote,
-            &["clone", "-q", "--reference", &top, "--", &remote, &path],
-        )?;
-        git_credential::run(
-            new,
-            "origin",
-            &["fetch", "-q", "origin", &format!("refs/pull/{pull}/head")],
-        )?;
-        crate::host_git::output(
-            new,
-            &[
-                "-c",
-                "advice.detachedHead=false",
-                "checkout",
-                "-q",
-                "--detach",
-                commit,
-            ],
-        )?;
-        Ok(())
     })
 }
 
@@ -11802,9 +11786,9 @@ esac
         git_in(dir, &["rev-parse", "HEAD"])
     }
 
-    /// The git of a test of [`clone_at`]: a bare `origin` that a `file://`
-    /// URL names, as a URL of GitHub does (a path would copy each
-    /// object), a main clone of it, and the head commit of the pull
+    /// The git of a test of the council of a verify: a bare `origin` that
+    /// a `file://` URL names, as a URL of GitHub does (a path would copy
+    /// each object), a main clone of it, and the head commit of the pull
     /// request 7 of a fork. `origin` has that commit only on
     /// `refs/pull/7/head`, as GitHub has it.
     struct Fork {
@@ -11844,65 +11828,6 @@ esac
                 head,
             }
         }
-
-        /// The clone of the verify, in the folder of a session under
-        /// `sessions/`. So the new clone of [`run::clone_in_new`] is in
-        /// `new-clones/` of this test, and no other test shares it.
-        fn verify_clone(&self) -> PathBuf {
-            self.dir.path().join("sessions/verify-7-1a2b3c4d/clone")
-        }
-
-        /// Whether the repository `repo` has the commit `commit`.
-        fn has(repo: &Path, commit: &str) -> bool {
-            std::process::Command::new("git")
-                .args(["cat-file", "-e", &format!("{commit}^{{commit}}")])
-                .current_dir(repo)
-                .stderr(std::process::Stdio::null())
-                .status()
-                .unwrap()
-                .success()
-        }
-    }
-
-    /// 01M5QVARWYFHTQV5THNRB09SZA: the head commit of a pull request
-    /// from a fork is on no branch of `origin`. The clone of the verify
-    /// fetches `refs/pull/N/head` and checks out the commit, detached.
-    #[test]
-    fn the_clone_of_a_verify_has_the_head_commit_of_a_pull_request_from_a_fork() {
-        let fork = Fork::new();
-        assert!(!Fork::has(&fork.main, &fork.head), "origin has no branch");
-        let clone = fork.verify_clone();
-        clone_at(&fork.main, &clone, 7, &fork.head).unwrap();
-        assert_eq!(git_in(&clone, &["rev-parse", "HEAD"]), fork.head);
-        assert_eq!(git_in(&clone, &["branch", "--show-current"]), "");
-        assert_eq!(std::fs::read_to_string(clone.join("a")).unwrap(), "two");
-    }
-
-    /// 01M5QVARWYFHTQV5THNRB09SZA: a push to the pull request after the
-    /// look moves `refs/pull/N/head`. The clone still has the commit of
-    /// the look.
-    #[test]
-    fn a_push_to_the_pull_request_after_the_look_does_not_change_the_commit_of_the_clone() {
-        let fork = Fork::new();
-        commit_a(&fork.fork, "three");
-        git_in(
-            &fork.fork,
-            &["push", "-q", "origin", "HEAD:refs/pull/7/head"],
-        );
-        let clone = fork.verify_clone();
-        clone_at(&fork.main, &clone, 7, &fork.head).unwrap();
-        assert_eq!(git_in(&clone, &["rev-parse", "HEAD"]), fork.head);
-        assert_eq!(std::fs::read_to_string(clone.join("a")).unwrap(), "two");
-    }
-
-    /// 01M5QVARWYFHTQV5THNRB09SZA: a pull request that `origin` does not
-    /// have fails, and the error names the ref.
-    #[test]
-    fn the_clone_of_a_verify_fails_with_the_ref_when_origin_does_not_have_it() {
-        let fork = Fork::new();
-        let clone = fork.verify_clone();
-        let error = clone_at(&fork.main, &clone, 8, &fork.head).unwrap_err();
-        assert!(error.to_string().contains("refs/pull/8/head"), "{error}");
     }
 
     /// The riff of a test of [`after_build`]: a riff-server in this
@@ -12079,9 +12004,9 @@ esac
     }
 
     /// 01M7DZ4E2P5RJMQE0W9K1AAA4P: a build that pushed nothing gives the
-    /// lead one note with the branch and the clone. riff runs no git in
-    /// the clone: its git config names a program, and that program does
-    /// not run.
+    /// lead one note with the branch. riff runs no git in a clone in the
+    /// folder of the session, as an older riff left it there: its git
+    /// config names a program, and that program does not run.
     #[tokio::test]
     async fn a_build_that_pushed_nothing_gets_a_note_and_no_git_in_its_clone() {
         let built = Built::new().await;
@@ -12107,7 +12032,7 @@ esac
         assert_eq!(one.message.kind, Kind::Note);
         assert_eq!(
             one.message.body,
-            text::wave_no_pull("issue-12", "worktree-issue-12", &clone)
+            text::wave_no_pull("issue-12", "worktree-issue-12")
         );
         assert!(
             !mark.exists(),
@@ -13768,13 +13693,16 @@ esac
         (fork, sessions)
     }
 
-    /// Makes the clone of the verify of pull request 7 in the folder
-    /// `folder` of a session, as the daemon makes it. The work tree of the
-    /// clone gets the member file `evil` of its own. The host runs no git in
-    /// that clone.
+    /// Puts a clone of pull request 7 in the folder `folder` of a session,
+    /// as a folder of an older riff holds it: the daemon makes none there
+    /// (#2139). The work tree of the clone gets the member file `evil` of
+    /// its own. The host runs no git in that clone.
     fn verify_folder(fork: &Fork, folder: &Path) {
         let clone = folder.join("clone");
-        clone_at(&fork.main, &clone, 7, &fork.head).unwrap();
+        std::fs::create_dir_all(folder).unwrap();
+        let from = fork.fork.to_string_lossy();
+        git_in(folder, &["clone", "-q", "--", &from, "clone"]);
+        git_in(&clone, &["checkout", "-q", "--detach", &fork.head]);
         std::fs::create_dir_all(clone.join(".riff/council")).unwrap();
         std::fs::write(clone.join(".riff/council/evil.md"), "+++\n+++\n# Evil\n").unwrap();
         let refused = crate::host_git::output(&clone, &["status"]).unwrap_err();

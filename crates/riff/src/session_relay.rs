@@ -45,6 +45,17 @@
 //!     Note over R: the relay ends with the exit code of claude
 //! ```
 //!
+//! # The clone
+//!
+//! Before it starts `claude`, also with a terminal, the relay makes the
+//! clone of the session in its container from the plan in
+//! [`crate::session_clone::VAR`] ([`crate::session_clone::Plan::make`],
+//! #2139). When the clone fails, `claude` does not start, and the relay
+//! ends with the error. `claude` does not get the variable. For a
+//! session with no GitHub, the end of `claude` comes after the bundle of
+//! its branch ([`crate::session_clone::Plan::bundle`]): so the bundle is
+//! there when the daemon gets the exit.
+//!
 //! # The protocol
 //!
 //! JSON, one message on each line, on the socket of the session
@@ -784,13 +795,21 @@ pub fn socket_here() -> Result<PathBuf> {
 }
 
 /// Starts `command` with pipes for its stdin, stdout and stderr, and
-/// keeps its process ID in `pid`.
-fn spawn_claude(command: &[String], pid: &Arc<AtomicU32>) -> Result<Child> {
+/// keeps its process ID in `pid`. With the plan `plan` of a session with
+/// no GitHub, its end comes after the bundle of the branch
+/// ([`crate::session_clone::Plan::bundle`]): so the bundle is there when
+/// the daemon gets the exit.
+fn spawn_claude(
+    command: &[String],
+    pid: &Arc<AtomicU32>,
+    plan: Option<&crate::session_clone::Plan>,
+) -> Result<Child> {
     let (program, args) = command
         .split_first()
         .ok_or_else(|| anyhow!("{}", text::RELAY_NO_COMMAND))?;
     let mut child = tokio::process::Command::new(program)
         .env_remove(crate::session_mcp::VAR)
+        .env_remove(crate::session_clone::VAR)
         .args(args)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -803,11 +822,23 @@ fn spawn_claude(command: &[String], pid: &Arc<AtomicU32>) -> Result<Child> {
         child.stdout.take().context("the stdout of claude")?,
         child.stderr.take().context("the stderr of claude")?,
     );
+    let plan = plan.filter(|p| p.bundle.is_some()).cloned();
     Ok(Child {
         stdin: Box::new(stdin),
         stdout: Box::new(stdout),
         stderr: Box::new(stderr),
-        end: Box::pin(async move { child.wait().await.ok().and_then(|s| s.code()) }),
+        end: Box::pin(async move {
+            let code = child.wait().await.ok().and_then(|s| s.code());
+            if let Some(plan) = plan {
+                match tokio::task::spawn_blocking(move || plan.bundle()).await {
+                    Ok(Ok(Some(bundle))) => eprintln!("{}", text::relay_bundled(&bundle)),
+                    Ok(Ok(None)) => {}
+                    Ok(Err(e)) => eprintln!("riff relay: {e:#}"),
+                    Err(e) => eprintln!("riff relay: {e}"),
+                }
+            }
+            code
+        }),
     })
 }
 
@@ -826,8 +857,18 @@ pub async fn main(command: Vec<String>) -> Result<i32> {
     // not claude.
     let mut term = signal(SignalKind::terminate())?;
     let mut int = signal(SignalKind::interrupt())?;
+    // The session clones in its container before claude starts (#2139).
+    let plan = crate::session_clone::Plan::here()?;
+    if let Some(plan) = plan.clone() {
+        let made = tokio::task::spawn_blocking(move || plan.make_line())
+            .await
+            .map_err(|e| anyhow!("{e}"))??;
+        if let Some(line) = made {
+            eprintln!("{line}");
+        }
+    }
     let pid = Arc::new(AtomicU32::new(0));
-    let child = spawn_claude(&command, &pid)?;
+    let child = spawn_claude(&command, &pid, plan.as_ref())?;
     {
         let pid = pid.clone();
         tokio::spawn(async move {
@@ -857,7 +898,7 @@ pub async fn main(command: Vec<String>) -> Result<i32> {
             let _ = stderr.write_all(format!("{line}\n").as_bytes()).await;
         }
     });
-    let again: Again = Box::new(move || spawn_claude(&again_command, &pid));
+    let again: Again = Box::new(move || spawn_claude(&again_command, &pid, plan.as_ref()));
     let code = relay(
         child,
         again,
@@ -913,9 +954,18 @@ pub fn terminal(command: &[String]) -> anyhow::Error {
     let Some((program, args)) = command.split_first() else {
         return anyhow!("{}", text::RELAY_NO_COMMAND);
     };
+    // The session clones in its container before claude starts (#2139).
+    // The relay of a takeover finds the clone there.
+    let plan = crate::session_clone::Plan::here();
+    match plan.and_then(|plan| plan.map_or(Ok(None), |plan| plan.make_line())) {
+        Ok(Some(line)) => eprintln!("{line}"),
+        Ok(None) => {}
+        Err(e) => return e,
+    }
     let error = std::process::Command::new(program)
         .args(args)
         .env_remove(crate::session_mcp::VAR)
+        .env_remove(crate::session_clone::VAR)
         .env("PATH", riff_first(std::env::var_os("PATH").as_deref()))
         .exec();
     anyhow!(error).context(text::no_program(program))
@@ -1292,6 +1342,50 @@ mod tests {
                 crate::run::HIDDEN
             )
         );
+    }
+
+    /// #2139: for a session with no GitHub, the end of `claude` comes
+    /// after the bundle of its branch, so the daemon gets the exit when
+    /// the bundle is there.
+    #[tokio::test]
+    async fn the_end_of_claude_with_no_github_comes_after_the_bundle() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let git = |at: &Path, args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+                .args(["-c", "commit.gpgsign=false"])
+                .args(args)
+                .current_dir(at)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}: {out:?}");
+        };
+        git(root, &["init", "-q", "--bare", "-b", "main", "origin.git"]);
+        let url = format!("file://{}", root.join("origin.git").display());
+        git(root, &["clone", "-q", "--", &url, "main"]);
+        let main = root.join("main");
+        git(&main, &["commit", "-q", "--allow-empty", "-m", "one"]);
+        git(&main, &["push", "-q", "origin", "HEAD:main"]);
+        git(&main, &["remote", "set-head", "origin", "main"]);
+        let bundle = root.join("out/worktree-issue-12.bundle");
+        let plan = crate::session_clone::Plan {
+            path: root.join("s/clone"),
+            origin: url,
+            reference: main.join(".git"),
+            checkout: crate::session_clone::Checkout::Branch("worktree-issue-12".into()),
+            bundle: Some(bundle.clone()),
+        };
+        plan.make().unwrap();
+        let script = format!(
+            "cd {} && git -c user.name=w -c user.email=w@w commit -q --allow-empty -m two",
+            plan.path.display()
+        );
+        let command: Vec<String> = ["sh", "-c", &script].map(String::from).into();
+        let pid = Arc::new(AtomicU32::new(0));
+        let child = spawn_claude(&command, &pid, Some(&plan)).unwrap();
+        assert_eq!(child.end.await, Some(0));
+        assert!(bundle.is_file(), "no bundle at the end of claude");
     }
 
     /// A fake daemon on a socket in a temp folder.

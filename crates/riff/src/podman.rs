@@ -22,6 +22,7 @@
 //! | `home` | `--mount type=tmpfs,destination=HOME,tmpfs-mode=0700,tmpfs-size=1g,U=true`: at most [`HOME_TMPFS_GIB`] GiB of memory (01M7DYR99QK609NF61GGCN75QQ) |
 //! | Each folder of [`SessionSpec::home_folders`] | `--mount type=tmpfs,destination=FOLDER,tmpfs-mode=0755,tmpfs-size=1g,U=true`: a folder of the session user, not of root (01M748WY71EFVZR6SG5CCEQYE0) |
 //! | A [`Bind`] | `-v SOURCE:TARGET`, with `:ro` when it has no write |
+//! | A [`Bind`] of [`Source::Empty`] | `--mount type=volume,destination=TARGET,U=true`: a new volume of the session user, on the disk, that `--rm` removes with the container. The clone of the session goes there ([`crate::session_clone`]) |
 //! | An [`Env::Value`] | `-e NAME=VALUE` |
 //! | An [`Env::Host`] | `-e NAME`: podman takes the value from its own environment |
 //! | `workdir` | `-w WORKDIR` |
@@ -171,7 +172,8 @@ pub struct Podman;
 ///     home: "/home/mike".into(),
 ///     workdir: "/data/clone".into(),
 ///     binds: vec![
-///         Bind { source: Source::Path("/data/clone".into()), target: "/data/clone".into(), write: true },
+///         Bind { source: Source::Empty, target: "/data/clone".into(), write: true },
+///         Bind { source: Source::Path("/src/r/.git/objects".into()), target: "/src/r/.git/objects".into(), write: false },
 ///         Bind { source: Source::Volume("riff-cargo".into()), target: "/home/mike/.cargo".into(), write: true },
 ///         Bind { source: Source::Path("/home/mike/.gitconfig".into()), target: "/home/mike/.gitconfig".into(), write: false },
 ///     ],
@@ -194,7 +196,8 @@ pub struct Podman;
 ///      --mount type=tmpfs,destination=/home/mike/.local,tmpfs-mode=0755,tmpfs-size=1g,U=true \
 ///      --mount type=tmpfs,destination=/home/mike/.local/share,tmpfs-mode=0755,tmpfs-size=1g,U=true \
 ///      --mount type=tmpfs,destination=/home/mike/.local/state,tmpfs-mode=0755,tmpfs-size=1g,U=true \
-///      -v /data/clone:/data/clone -v riff-cargo:/home/mike/.cargo \
+///      --mount type=volume,destination=/data/clone,U=true \
+///      -v /src/r/.git/objects:/src/r/.git/objects:ro -v riff-cargo:/home/mike/.cargo \
 ///      -v /home/mike/.gitconfig:/home/mike/.gitconfig:ro \
 ///      -e USER=mike -e GH_TOKEN -w /data/clone localhost/riff-session:latest claude -p"
 /// );
@@ -336,8 +339,9 @@ fn args_of(spec: &SessionSpec, first: &[&str]) -> Result<Vec<OsString>> {
         args.push(tmpfs(&folder, "0755")?.into());
     }
     for bind in &spec.binds {
-        args.push("-v".into());
-        args.push(volume(bind)?.into());
+        let (flag, value) = mount(bind)?;
+        args.push(flag.into());
+        args.push(value.into());
     }
     for env in &spec.env {
         args.push("-e".into());
@@ -364,14 +368,24 @@ fn tmpfs(path: &Path, mode: &str) -> Result<String> {
     ))
 }
 
-/// The value of `-v` for `bind`.
-fn volume(bind: &Bind) -> Result<String> {
+/// The option of `podman run` for `bind`, and its value: `-v
+/// SOURCE:TARGET`, with `:ro` when it has no write, and for
+/// [`Source::Empty`] `--mount` of a new volume of the session user, on
+/// the disk, that `podman run --rm` removes with the container.
+fn mount(bind: &Bind) -> Result<(&'static str, String)> {
+    let target = plain(&bind.target)?;
     let source = match &bind.source {
         Source::Path(path) => plain(path)?,
         Source::Volume(name) => name.as_str(),
+        Source::Empty => {
+            return Ok((
+                "--mount",
+                format!("type=volume,destination={target},U=true"),
+            ));
+        }
     };
     let mode = if bind.write { "" } else { ":ro" };
-    Ok(format!("{source}:{}{mode}", plain(&bind.target)?))
+    Ok(("-v", format!("{source}:{target}{mode}")))
 }
 
 /// `path` as text that podman can take in an option.

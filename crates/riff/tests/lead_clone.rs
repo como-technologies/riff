@@ -1,10 +1,12 @@
-//! Each start of a new lead gives the lead a new clone, and the host
-//! runs no git in the old clone (01M7E7A8QM8SRPQN3G1BXVJW1R, #2140).
+//! The lead clones in its container, and a clone that an older riff made
+//! on the host goes at the start of a new lead, with no git (#2139,
+//! #2140).
 
 use std::path::Path;
 use std::process::Command;
 
-use riff::lead::{Fresh, fresh_clone};
+use riff::runtime::Source;
+use riff::session_clone::{Checkout, Plan, VAR};
 
 /// Runs `git ARGS` in `dir`, and gives its output.
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -27,44 +29,100 @@ fn git(dir: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_owned()
 }
 
-/// Commits a change of the file `a` in `dir`.
-fn commit(dir: &Path, words: &str) -> String {
-    std::fs::write(dir.join("a"), words).unwrap();
-    git(dir, &["commit", "-q", "-a", "-m", words]);
-    git(dir, &["rev-parse", "HEAD"])
+/// The facts of the lead of `o/r` in the data folder `data`.
+fn facts(data: &Path) -> riff::run::Facts {
+    riff::run::Facts {
+        session: "1a2b3c4d-0000-4000-8000-000000000000".into(),
+        item: riff::lead::ITEM.into(),
+        image: "img".into(),
+        home: "/home/mike".into(),
+        user: "mike".into(),
+        clone: data.join("leads/o-r/clone"),
+        repo: "o/r".into(),
+        checkout: Checkout::Default,
+        bundle: None,
+        objects: "/src/r/.git/objects".into(),
+        claude: data.join("leads/o-r/claude"),
+        sign_in: riff::run::ClaudeSignIn::Token,
+        gitconfig: None,
+        setup: Default::default(),
+    }
 }
 
-/// An `origin` with one commit, and a main clone of it.
-fn origin_and_main(dir: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
-    let origin = dir.join("origin");
+/// #2139: the spec of the lead has its clone as an empty volume of the
+/// container, and the plan of the clone on the default branch. Each bind
+/// with write of a path of the host is a folder with no git tree: the
+/// Claude folder. The start again of the lead has the same plan.
+#[test]
+fn the_lead_clones_in_its_container_on_the_default_branch() {
+    let dir = tempfile::tempdir().unwrap();
+    let facts = facts(dir.path());
+    for spec in [
+        riff::lead::spec(&facts, "o/r", "Start."),
+        riff::lead::spec_again(&facts, "o/r", "Again."),
+    ] {
+        let clone = spec.binds.iter().find(|b| b.target == facts.clone).unwrap();
+        assert_eq!((&clone.source, clone.write), (&Source::Empty, true));
+        let writes: Vec<_> = spec
+            .binds
+            .iter()
+            .filter_map(|b| match &b.source {
+                Source::Path(path) if b.write => Some(path.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(writes, std::slice::from_ref(&facts.claude));
+        let plan = spec
+            .env
+            .iter()
+            .find_map(|e| match e {
+                riff::runtime::Env::Value(name, plan) if name == VAR => Plan::of_var(plan).ok(),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(plan.path, facts.clone);
+        assert_eq!(plan.origin, "https://github.com/o/r.git");
+        assert_eq!(plan.reference, Path::new("/src/r/.git"));
+        assert_eq!(plan.checkout, Checkout::Default);
+        let args: Vec<String> = riff::podman::terminal_args(&spec)
+            .unwrap()
+            .into_iter()
+            .map(|a| a.into_string().unwrap())
+            .collect();
+        let volume = format!("type=volume,destination={},U=true", facts.clone.display());
+        assert!(args.contains(&volume), "{args:?}");
+    }
+}
+
+/// #2140, 01M7EBBVE6WYKT5JDVASFCYPQQ: an older riff left the clone of the
+/// lead on the host, with a change and a git config that names a program
+/// for `core.fsmonitor`, `credential.helper` and `core.sshCommand`. The
+/// start of a new lead removes it, the Claude folder stays, and the
+/// program does not run: the host runs no git in that clone.
+#[test]
+fn the_clone_of_an_older_riff_goes_and_no_program_of_its_config_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let origin = dir.path().join("origin");
     std::fs::create_dir(&origin).unwrap();
     git(&origin, &["init", "-q"]);
     std::fs::write(origin.join("a"), "one").unwrap();
     git(&origin, &["add", "a"]);
     git(&origin, &["commit", "-q", "-m", "one"]);
-    let main = dir.join("main");
+    let folder = dir.path().join("leads/o-r");
+    std::fs::create_dir_all(folder.join("claude")).unwrap();
+    let clone = folder.join("clone");
     git(
-        dir,
+        dir.path(),
         &[
             "clone",
             "-q",
             "--",
             &origin.to_string_lossy(),
-            &main.to_string_lossy(),
+            &clone.to_string_lossy(),
         ],
     );
-    (origin, main)
-}
-
-/// The clone of the lead of `o/r` in the data folder `data`.
-fn lead_clone(data: &Path) -> std::path::PathBuf {
-    data.join("leads/o-r/clone")
-}
-
-/// Writes in the git config of the clone `clone` a program for
-/// `core.fsmonitor`, `credential.helper` and `core.sshCommand`, as a lead
-/// can leave it (#2140). The program writes the file `mark`.
-fn hostile_config(clone: &Path, mark: &Path) {
+    std::fs::write(clone.join("a"), "not committed").unwrap();
+    let mark = dir.path().join("mark");
     let program = isolated::write_program(
         mark.with_extension("sh"),
         format!("#!/bin/sh\necho \"$0 $*\" >> '{}'\n", mark.display()),
@@ -77,143 +135,15 @@ fn hostile_config(clone: &Path, mark: &Path) {
          [credential]\n\thelper = !{program}\n"
     ));
     std::fs::write(&config, text).unwrap();
-}
 
-/// 01M7E7A8QM8SRPQN3G1BXVJW1R: the first start makes the clone in
-/// `new-clones/lead-OWNER-REPO`, then moves it in.
-#[test]
-fn the_first_start_makes_the_clone_of_the_lead_in_a_folder_of_its_own() {
-    let dir = tempfile::tempdir().unwrap();
-    let (origin, main) = origin_and_main(dir.path());
-    let clone = lead_clone(dir.path());
-    assert_eq!(fresh_clone(&main, &clone).unwrap(), Fresh::Made);
-    assert_eq!(
-        git(&clone, &["rev-parse", "HEAD"]),
-        git(&origin, &["rev-parse", "HEAD"])
-    );
-    assert_eq!(git(&clone, &["branch", "--show-current"]), "main");
-    let new = riff::lead::new_clone_of(&clone).unwrap();
-    assert_eq!(new, dir.path().join("new-clones/lead-o-r"));
-    assert!(!new.exists(), "{}", new.display());
-}
-
-/// 01M7E7A8QM8SRPQN3G1BXVJW1R: each later start gives the lead a new
-/// clone at the new commit of origin. The old clone goes, with each
-/// change in it: a change that is not committed, a commit, a branch and
-/// an untracked file.
-#[test]
-fn a_second_start_gives_the_lead_a_new_clone_at_the_new_commit_of_origin() {
-    let dir = tempfile::tempdir().unwrap();
-    let (origin, main) = origin_and_main(dir.path());
-    let clone = lead_clone(dir.path());
-    fresh_clone(&main, &clone).unwrap();
-    commit(&clone, "mine");
-    git(&clone, &["switch", "-q", "-c", "alone"]);
-    std::fs::write(clone.join("a"), "not committed").unwrap();
-    std::fs::write(clone.join("b"), "untracked").unwrap();
-
-    let new = commit(&origin, "two");
-    assert_eq!(fresh_clone(&main, &clone).unwrap(), Fresh::New);
-    assert_eq!(git(&clone, &["rev-parse", "HEAD"]), new);
-    assert_eq!(git(&clone, &["branch", "--show-current"]), "main");
-    assert_eq!(git(&clone, &["status", "--porcelain"]), "");
-    assert_eq!(std::fs::read_to_string(clone.join("a")).unwrap(), "two");
-    assert!(!clone.join("b").exists());
-    assert!(!clone.with_file_name(riff::lead::OLD_CLONE).exists());
-    assert!(!riff::lead::new_clone_of(&clone).unwrap().exists());
-}
-
-/// #2140, 01M7E7A8QM8SRPQN3G1BXVJW1R: the old clone has a git config
-/// that names a program for `core.fsmonitor`, `credential.helper` and
-/// `core.sshCommand`. The start gives the lead a new clone, and the
-/// program does not run: the host runs no git in the old clone.
-#[test]
-fn a_start_runs_no_program_of_the_git_config_of_the_old_clone() {
-    let dir = tempfile::tempdir().unwrap();
-    let (origin, main) = origin_and_main(dir.path());
-    let clone = lead_clone(dir.path());
-    fresh_clone(&main, &clone).unwrap();
-    let mark = dir.path().join("mark");
-    hostile_config(&clone, &mark);
-
-    let new = commit(&origin, "two");
-    assert_eq!(fresh_clone(&main, &clone).unwrap(), Fresh::New);
+    let stays = riff::lead::remove_host_clone(&folder, riff::compile_cache::remove).unwrap();
+    assert!(stays.is_empty(), "{stays:?}");
+    assert!(!clone.exists());
+    assert!(riff::lead::old_clones(&folder).is_empty());
+    assert!(folder.join("claude").exists(), "the Claude folder stays");
     assert!(
         !mark.exists(),
         "the program of the old clone ran: {}",
         std::fs::read_to_string(&mark).unwrap_or_default()
     );
-    let config = std::fs::read_to_string(clone.join(".git/config")).unwrap();
-    assert!(!config.contains("fsmonitor"), "{config}");
-    assert_eq!(git(&clone, &["rev-parse", "HEAD"]), new);
-}
-
-/// 01M7E7A8QM8SRPQN3G1BXVJW1R: when the new clone fails, the old clone
-/// stays as it is, and the text says why. With no old clone, the start
-/// fails.
-#[test]
-fn when_the_new_clone_fails_the_old_clone_stays_as_it_is() {
-    let dir = tempfile::tempdir().unwrap();
-    let (origin, main) = origin_and_main(dir.path());
-    let clone = lead_clone(dir.path());
-    fresh_clone(&main, &clone).unwrap();
-    let old = git(&clone, &["rev-parse", "HEAD"]);
-    std::fs::write(clone.join("b"), "mine").unwrap();
-
-    // origin is gone.
-    std::fs::rename(&origin, dir.path().join("gone")).unwrap();
-    let Fresh::Kept(why) = fresh_clone(&main, &clone).unwrap() else {
-        panic!("the old clone did not stay");
-    };
-    assert!(why.contains("git clone"), "{why}");
-    assert_eq!(git(&clone, &["rev-parse", "HEAD"]), old);
-    assert_eq!(std::fs::read_to_string(clone.join("b")).unwrap(), "mine");
-    assert!(!riff::lead::new_clone_of(&clone).unwrap().exists());
-    let note = riff::text::lead_clone_kept(&clone, &why);
-    assert!(note.contains(&*clone.to_string_lossy()), "{note}");
-
-    let none = dir.path().join("leads/o-other/clone");
-    assert!(fresh_clone(&main, &none).is_err());
-    assert!(!none.exists());
-}
-
-/// 01M6QB89JJEM9Z1V3RVZYHKYT0: a host that runs no wave of the repository
-/// still finds the main clone of the lead: the clone links to it.
-#[test]
-fn the_clone_of_a_lead_links_to_the_main_clone_that_made_it() {
-    let dir = tempfile::tempdir().unwrap();
-    let (_, main) = origin_and_main(dir.path());
-    let clone = dir.path().join("lead/clone");
-    fresh_clone(&main, &clone).unwrap();
-
-    let linked = riff::lead::linked_main(&clone).unwrap();
-    assert_eq!(linked, std::fs::canonicalize(&main).unwrap());
-    // It is the main clone that a start takes: its top, and its git dir.
-    let (top, common) = riff::run::main_clone(&linked).unwrap();
-    assert_eq!(top, linked);
-    assert_eq!(common, linked.join(".git"));
-}
-
-/// 01M6QB89JJEM9Z1V3RVZYHKYT0: a clone with no link names no main clone.
-/// A clone that `git clone --dissociate` made is that case.
-#[test]
-fn a_clone_with_no_link_to_a_main_clone_names_none() {
-    let dir = tempfile::tempdir().unwrap();
-    let (origin, main) = origin_and_main(dir.path());
-    let clone = dir.path().join("lead/clone");
-    git(
-        dir.path(),
-        &[
-            "clone",
-            "-q",
-            "--reference",
-            &main.to_string_lossy(),
-            "--dissociate",
-            "--",
-            &origin.to_string_lossy(),
-            &clone.to_string_lossy(),
-        ],
-    );
-    let why = riff::lead::linked_main(&clone).unwrap_err();
-    assert!(format!("{why:#}").contains("alternates"), "{why:#}");
 }

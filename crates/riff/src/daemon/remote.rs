@@ -313,76 +313,18 @@ pub async fn end_served(dir: PathBuf, served: Served) {
     }
 }
 
-/// True when the folder `clone` has a `.git/objects/info/alternates` that
-/// names the main clone `main`: its objects live in `main`. `git clone
-/// --reference` writes the real path of the main clone there. So the host
-/// takes the path of the file as it is, and compares it with `main` and
-/// with the real path of `main`: it follows no link that the clone names
-/// (01M7FE5FYFAR92PM3EJJ211VM2).
-fn links_to(clone: &Path, main: &Path) -> bool {
-    // The main clone in the records of the daemon.
-    let real = main.canonicalize().ok();
-    crate::lead::linked_main(clone)
-        .is_ok_and(|linked| linked == main || real.as_deref() == Some(linked.as_path()))
-}
-
-/// The clones that link to the main clone `main`: the clone of each session
-/// folder, and the clone of each lead, in the data folder `data` of riff
-/// (#1643). A clone that links to it has no objects without it.
-///
-/// ```
-/// use riff::daemon::remote::linked_clones;
-///
-/// let root = tempfile::tempdir()?;
-/// let main = root.path().canonicalize()?.join("daemon/clones/o/r");
-/// std::fs::create_dir_all(main.join(".git/objects"))?;
-/// let clone = |path: &str, objects: &std::path::Path| -> std::io::Result<()> {
-///     let info = root.path().join(path).join("clone/.git/objects/info");
-///     std::fs::create_dir_all(&info)?;
-///     std::fs::write(info.join("alternates"), format!("{}\n", objects.display()))
-/// };
-/// clone("data/sessions/issue-1-1a2b3c4d", &main.join(".git/objects"))?;
-/// clone("data/leads/o-r", &main.join(".git/objects"))?;
-/// clone("data/sessions/issue-2-2b3c4d5e", &root.path().join("other/.git/objects"))?;
-/// assert_eq!(linked_clones(&root.path().join("data"), &main), 2);
-/// assert_eq!(linked_clones(&root.path().join("none"), &main), 0);
-/// // A link to the main clone: git writes the real path of the main clone.
-/// let by_link = root.path().join("by-link");
-/// std::os::unix::fs::symlink(&main, &by_link)?;
-/// assert_eq!(linked_clones(&root.path().join("data"), &by_link), 2);
-/// // A clone names a link in its own folder to the main clone: the host
-/// // follows no link that a clone names, so it does not count.
-/// let own = root.path().join("data/sessions/issue-3-3c4d5e6f/clone/main");
-/// clone("data/sessions/issue-3-3c4d5e6f", &own.join(".git/objects"))?;
-/// std::os::unix::fs::symlink(&main, &own)?;
-/// assert_eq!(linked_clones(&root.path().join("data"), &main), 2);
-/// # Ok::<(), std::io::Error>(())
-/// ```
-pub fn linked_clones(data: &Path, main: &Path) -> usize {
-    let folders = |root: PathBuf| -> Vec<PathBuf> {
-        std::fs::read_dir(root)
-            .map(|entries| entries.flatten().map(|e| e.path().join("clone")).collect())
-            .unwrap_or_default()
-    };
-    folders(data.join("sessions"))
-        .into_iter()
-        .chain(folders(data.join(crate::lead::LEADS)))
-        .filter(|clone| links_to(clone, main))
-        .count()
-}
-
 /// Removes the main clone that the daemon made for `wave` (#1643), and
 /// gives a line for what it did. It removes only a clone in [`CLONES`] of
-/// its folder `dir`: the clone of a person stays. It keeps the clone while
-/// a session folder or a lead in the data folder `data` of riff links to
-/// it ([`linked_clones`]).
+/// its folder `dir`: the clone of a person stays. The daemon calls it when
+/// no session of the repository runs ([`super::Daemon::retire`]): each
+/// session clones in its container, so no clone of the host needs the
+/// objects of the main clone (#2139).
 ///
 /// ```
 /// use riff::daemon::remote::{CLONES, remove_clone};
 /// use riff::wave::Wave;
 ///
 /// let dir = tempfile::tempdir()?;
-/// let data = dir.path().join("data");
 /// let made = dir.path().join(CLONES).join("o/r");
 /// std::fs::create_dir_all(made.join(".git"))?;
 /// let wave = |main: &std::path::Path| Wave {
@@ -394,29 +336,17 @@ pub fn linked_clones(data: &Path, main: &Path) -> usize {
 /// // A clone of a person stays.
 /// let mine = dir.path().join("mine");
 /// std::fs::create_dir_all(mine.join(".git"))?;
-/// assert!(remove_clone(dir.path(), &data, &wave(&mine)).is_empty());
+/// assert!(remove_clone(dir.path(), &wave(&mine)).is_empty());
 /// assert!(mine.exists());
-/// // A clone of a session folder links to the clone that the daemon made:
-/// // it stays.
-/// let info = data.join("sessions/issue-1-1a2b3c4d/clone/.git/objects/info");
-/// std::fs::create_dir_all(&info)?;
-/// std::fs::write(info.join("alternates"), format!("{}\n", made.join(".git/objects").display()))?;
-/// assert!(remove_clone(dir.path(), &data, &wave(&made))[0].contains("keeps its main clone"));
-/// assert!(made.exists());
-/// // With no such clone, the clone that the daemon made goes.
-/// std::fs::remove_dir_all(data.join("sessions"))?;
-/// assert_eq!(remove_clone(dir.path(), &data, &wave(&made)).len(), 1);
+/// // The clone that the daemon made goes.
+/// assert_eq!(remove_clone(dir.path(), &wave(&made)).len(), 1);
 /// assert!(!made.exists());
 /// # Ok::<(), anyhow::Error>(())
 /// ```
-pub fn remove_clone(dir: &Path, data: &Path, wave: &Wave) -> Vec<String> {
+pub fn remove_clone(dir: &Path, wave: &Wave) -> Vec<String> {
     let main = &wave.main;
     if !main.starts_with(dir.join(CLONES)) || !main.exists() {
         return Vec::new();
-    }
-    let linked = linked_clones(data, main);
-    if linked > 0 {
-        return vec![text::retire_keeps(&wave.repo, main, linked)];
     }
     match std::fs::remove_dir_all(main) {
         Ok(()) => {

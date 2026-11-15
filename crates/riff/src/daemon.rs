@@ -5015,11 +5015,10 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// host has a part, or the daemon does not serve the repository.
     ///
     /// The daemon removes only a main clone in [`remote::CLONES`] of its
-    /// own folder, never a clone of a person. It keeps the main clone while
-    /// the clone of a session or of a lead links to it
-    /// ([`remote::linked_clones`]): the clone has no objects without it.
-    /// The task of the session on riff-server ends by itself at its next
-    /// look ([`remote::serve`]).
+    /// own folder, never a clone of a person. Each session clones in its
+    /// container, so with no session that runs no clone needs the main
+    /// clone (#2139). The task of the session on riff-server ends by
+    /// itself at its next look ([`remote::serve`]).
     pub fn retire(&self, repo: &str) -> Vec<String> {
         if !parts::of(&self.dir, repo).none() {
             return Vec::new();
@@ -5044,8 +5043,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             return vec![format!("{e:#}")];
         }
         lines.push(text::retire_stops(repo));
-        let data = crate::run::data_dir().unwrap_or_default();
-        lines.extend(remote::remove_clone(&self.dir, &data, &served.wave));
+        lines.extend(remote::remove_clone(&self.dir, &served.wave));
         lines
     }
 
@@ -5390,7 +5388,9 @@ impl<R: Runtime + 'static> Daemon<R> {
         for bind in spec.binds.iter().filter(|b| b.write) {
             match &bind.source {
                 Source::Path(path) => crate::host_git::guard_also(path),
-                Source::Volume(_) => volume = true,
+                // The clone of the session is a volume of its container
+                // in the folder of the volumes (#2139).
+                Source::Volume(_) | Source::Empty => volume = true,
             }
         }
         if volume {
@@ -10705,6 +10705,9 @@ mod tests {
                     home: "/home/mike".into(),
                     user: "mike".into(),
                     clone: record.folder.join("clone"),
+                    repo: "o/r".into(),
+                    checkout: crate::session_clone::Checkout::Default,
+                    bundle: None,
                     objects: record.folder.join("objects"),
                     claude: record.folder.join("claude"),
                     sign_in: crate::run::ClaudeSignIn::Token,

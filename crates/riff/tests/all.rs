@@ -53,6 +53,7 @@ mod host_file;
 mod identity;
 mod launchd;
 mod lead_book;
+#[cfg(target_os = "linux")]
 mod lead_clone;
 mod lead_container;
 mod lead_move;
@@ -97,6 +98,8 @@ mod release_cycle;
 mod run;
 mod secrets;
 mod session;
+#[cfg(target_os = "linux")]
+mod session_clone;
 mod session_image;
 mod setup;
 mod signed;

@@ -7614,11 +7614,21 @@ pub fn podman_bad_path(path: &str) -> String {
     )
 }
 
-/// The first lines of a session of `riff run`.
+/// The first lines of a session of `riff run`. The clone is in the
+/// container, and goes with it (#2139).
+///
+/// ```
+/// let text = riff::text::run_started("issue-12", "1a2b", "/s/clone".as_ref(), "img", "riff-issue-12-1a2b");
+/// assert_eq!(
+///     text,
+///     "The session 1a2b works on issue-12 in the container riff-issue-12-1a2b.\n  \
+///      clone: /s/clone, in the container\n  image: img"
+/// );
+/// ```
 pub fn run_started(item: &str, session: &str, clone: &Path, image: &str, name: &str) -> String {
     format!(
         "The session {session} works on {item} in the container {name}.\n  \
-         clone: {}\n  image: {image}",
+         clone: {}, in the container\n  image: {image}",
         clone.display()
     )
 }
@@ -7632,6 +7642,12 @@ const READ_RULES: &str = "Read the rules of the repository for agents when it ha
 /// The words of a start text about the checks of the repository. They name
 /// no command (01M5RN89WH3PHV3BHMJ25T3SX4).
 const RUN_CHECKS: &str = "run the checks that the repository names, when it names some";
+
+/// The sentence of the start text of a build about its clone: it goes
+/// with the container, and only what the session pushes stays
+/// (01M7EY3WPK3D9HXVM3DHYH5EF0, #2139).
+pub const CLONE_GOES: &str =
+    "Your clone goes with your container: only the commits that you push stay.";
 
 /// The sentence of a start text about what decides the merge.
 const CI_DECIDES: &str =
@@ -7759,6 +7775,8 @@ pub fn build_trees() -> String {
 /// assert!(text.contains(&riff::text::build_trees()));
 /// assert!(text.contains("Run each check in the foreground"));
 /// assert!(text.contains("Commit and push the branch before the end of your work"));
+/// // 01M7EY3WPK3D9HXVM3DHYH5EF0: only what the session pushes stays.
+/// assert!(text.contains(riff::text::CLONE_GOES));
 /// // The text names no file as required and no command (01M5RN89WH3PHV3BHMJ25T3SX4).
 /// assert!(text.contains("2. Read the rules of the repository for agents when it has them, for example CLAUDE.md or AGENTS.md, and obey them."));
 /// assert!(text.contains("4. Before each push, run the checks that the repository names, when it names some."));
@@ -7802,6 +7820,7 @@ pub fn run_start(
          its end. {CI_DECIDES}\n\
          5. Commit and push the branch before the end of your work, even when the work is not \
          done: git push -u origin {branch}\n   \
+         {CLONE_GOES}\n   \
          Never push to {base}.\n\
          6. Write the body of the pull request to a file. Put your summary in place of \
          SUMMARY. Keep each other line:\n\n{frame}\n   {sentences}\n\
@@ -7879,21 +7898,39 @@ pub fn run_start_no_github(
 }
 
 /// The end of a session of `riff run --no-github`
-/// (01M6Z87JY83V3KR72E2AG8V8KG) with no pull request: it pushed nothing,
-/// and the person pushes the branch `branch` of the clone `clone`.
+/// (01M6Z87JY83V3KR72E2AG8V8KG) with no pull request: it pushed nothing.
+/// The person pushes the branch `branch` from its bundle `bundle`, in a
+/// clone of their own. With no bundle, the session made no commit that
+/// `origin` does not have.
 ///
 /// ```
+/// let bundle = "/s/issue-12/out/worktree-issue-12.bundle";
 /// assert_eq!(
-///     riff::text::run_pushed_nothing("/s/issue-12/clone".as_ref(), "worktree-issue-12"),
-///     "The session had no GitHub, so it pushed nothing. Push its branch from the host:\n  \
-///      git -C /s/issue-12/clone push origin worktree-issue-12"
+///     riff::text::run_pushed_nothing(Some(bundle.as_ref()), "worktree-issue-12"),
+///     "The session had no GitHub, so it pushed nothing. Its commits are in the bundle \
+///      /s/issue-12/out/worktree-issue-12.bundle. Push them from your clone:\n  \
+///      git fetch origin\n  \
+///      git fetch /s/issue-12/out/worktree-issue-12.bundle worktree-issue-12\n  \
+///      git push origin FETCH_HEAD:refs/heads/worktree-issue-12"
+/// );
+/// assert_eq!(
+///     riff::text::run_pushed_nothing(None, "worktree-issue-12"),
+///     "The session had no GitHub, so it pushed nothing. It made no commit on worktree-issue-12 \
+///      that origin does not have."
 /// );
 /// ```
-pub fn run_pushed_nothing(clone: &Path, branch: &str) -> String {
+pub fn run_pushed_nothing(bundle: Option<&Path>, branch: &str) -> String {
+    let Some(bundle) = bundle else {
+        return format!(
+            "The session had no GitHub, so it pushed nothing. It made no commit on {branch} that \
+             origin does not have."
+        );
+    };
+    let bundle = bundle.display();
     format!(
-        "The session had no GitHub, so it pushed nothing. Push its branch from the host:\n  git -C \
-         {} push origin {branch}",
-        clone.display()
+        "The session had no GitHub, so it pushed nothing. Its commits are in the bundle {bundle}. \
+         Push them from your clone:\n  git fetch origin\n  git fetch {bundle} {branch}\n  \
+         git push origin FETCH_HEAD:refs/heads/{branch}"
     )
 }
 
@@ -7993,22 +8030,6 @@ pub fn run_not_sent(item: &str, steps: &[&str]) -> String {
 /// A session of `riff run` with no open pull request.
 pub fn run_no_pull(branch: &str) -> String {
     format!("No open pull request has the branch {branch}. The work is in the clone.")
-}
-
-/// Where the clone of a session of `riff run` stays, and how long
-/// (01M53NJ5V27BCHDNHK2THQQZZQ).
-///
-/// ```
-/// assert_eq!(
-///     riff::text::run_kept(std::path::Path::new("/s/issue-12-1a2b3c4d/clone")),
-///     "The clone stays until the work of its branch is over: /s/issue-12-1a2b3c4d/clone"
-/// );
-/// ```
-pub fn run_kept(clone: &Path) -> String {
-    format!(
-        "The clone stays until the work of its branch is over: {}",
-        clone.display()
-    )
 }
 
 /// `riff run` lost the daemon before the end of its session: it waits
@@ -8562,6 +8583,62 @@ pub const RELAY_NO_SOCKET: &str =
 /// `riff relay` with no command to start.
 pub const RELAY_NO_COMMAND: &str =
     "riff relay needs the command of the session: riff relay -- claude -p ...";
+
+/// `riff relay` made the clone of its session in the container
+/// ([`crate::session_clone`]). `earlier` is true when the branch of the
+/// item was on `origin`.
+///
+/// ```
+/// use riff::session_clone::{Checkout, Plan};
+///
+/// let plan = |checkout| Plan {
+///     path: "/s/clone".into(),
+///     origin: "https://github.com/o/r.git".into(),
+///     reference: "/src/r/.git".into(),
+///     checkout,
+///     bundle: None,
+/// };
+/// let branch = plan(Checkout::Branch("worktree-issue-12".into()));
+/// assert_eq!(
+///     riff::text::relay_cloned(&branch, true),
+///     "riff relay: cloned https://github.com/o/r.git into /s/clone, on the branch \
+///      worktree-issue-12 of origin."
+/// );
+/// assert!(riff::text::relay_cloned(&branch, false).ends_with("on the new branch worktree-issue-12."));
+/// let pull = plan(Checkout::Pull { pull: 7, commit: "0123abcd".into() });
+/// assert!(riff::text::relay_cloned(&pull, false).ends_with("at 0123abcd, the head of pull request #7."));
+/// assert!(riff::text::relay_cloned(&plan(Checkout::Default), false).ends_with("on the default branch."));
+/// ```
+pub fn relay_cloned(plan: &crate::session_clone::Plan, earlier: bool) -> String {
+    use crate::session_clone::Checkout;
+    let on = match &plan.checkout {
+        Checkout::Default => "on the default branch".to_owned(),
+        Checkout::Branch(branch) if earlier => format!("on the branch {branch} of origin"),
+        Checkout::Branch(branch) => format!("on the new branch {branch}"),
+        Checkout::Pull { pull, commit } => format!("at {commit}, the head of pull request #{pull}"),
+    };
+    format!(
+        "riff relay: cloned {} into {}, {on}.",
+        plan.origin,
+        plan.path.display()
+    )
+}
+
+/// `riff relay` wrote the commits of a session with no GitHub in the
+/// bundle `bundle` ([`crate::session_clone::Plan::bundle`]).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::relay_bundled("/s/out/b.bundle".as_ref()),
+///     "riff relay: the commits of the branch are in the bundle /s/out/b.bundle."
+/// );
+/// ```
+pub fn relay_bundled(bundle: &Path) -> String {
+    format!(
+        "riff relay: the commits of the branch are in the bundle {}.",
+        bundle.display()
+    )
+}
 
 /// `riff relay ARGS` runs as the hook `event` of `claude`, and this riff
 /// cannot read `args`: a newer riff wrote the hook
@@ -12571,30 +12648,6 @@ pub fn retire_removes(repo: &str, main: &std::path::Path) -> String {
     )
 }
 
-/// The daemon keeps the main clone of `repo`, because `linked` clones link
-/// to it (#1643).
-///
-/// ```
-/// use std::path::Path;
-/// assert_eq!(
-///     riff::text::retire_keeps("o/r", Path::new("/d/clones/o/r"), 2),
-///     "The riff daemon keeps its main clone of o/r, /d/clones/o/r: 2 clones link to it. \
-///      riff daemon sweep removes the clones whose work is over."
-/// );
-/// ```
-pub fn retire_keeps(repo: &str, main: &std::path::Path, linked: usize) -> String {
-    let (noun, verb) = if linked == 1 {
-        ("clone", "links")
-    } else {
-        ("clones", "link")
-    };
-    format!(
-        "The riff daemon keeps its main clone of {repo}, {}: {linked} {noun} {verb} to it. riff \
-         daemon sweep removes the clones whose work is over.",
-        main.display()
-    )
-}
-
 /// The daemon could not remove the main clone `main` (#1643).
 pub fn retire_no_remove(main: &std::path::Path, error: &str) -> String {
     format!(
@@ -13351,23 +13404,23 @@ pub fn wave_wip_head(item: &str, number: u64, branch: &str, commit: &str, sessio
 }
 
 /// A build of a wave ended with no open pull request. riff pushes
-/// nothing from its clone (01M7DZ4E2P5RJMQE0W9K1AAA4P).
+/// nothing (01M7DZ4E2P5RJMQE0W9K1AAA4P), and the clone went with the
+/// container (#2139).
 ///
 /// ```
-/// let text = riff::text::wave_no_pull("issue-12", "worktree-issue-12", std::path::Path::new("/c"));
+/// let text = riff::text::wave_no_pull("issue-12", "worktree-issue-12");
 /// assert_eq!(
 ///     text,
 ///     "issue-12: the session of the wave ended, and no open pull request has the branch \
-///      worktree-issue-12. Its work that is not on origin is only in the clone /c: riff \
-///      commits and pushes nothing there. The item is free."
+///      worktree-issue-12. Its clone went with its container: only the work that it pushed \
+///      stays. riff commits and pushes nothing. The item is free."
 /// );
 /// ```
-pub fn wave_no_pull(item: &str, branch: &str, clone: &Path) -> String {
+pub fn wave_no_pull(item: &str, branch: &str) -> String {
     format!(
         "{item}: the session of the wave ended, and no open pull request has the branch \
-         {branch}. Its work that is not on origin is only in the clone {}: riff commits and \
-         pushes nothing there. The item is free.",
-        clone.display()
+         {branch}. Its clone went with its container: only the work that it pushed stays. riff \
+         commits and pushes nothing. The item is free."
     )
 }
 
@@ -15241,26 +15294,6 @@ pub fn takeover_session_ended(name: &str) -> String {
 /// `riff lead start`: the lead of the repository runs already.
 pub fn lead_runs(repo: &str, name: &str) -> String {
     format!("The lead of {repo} runs in the container {name}. riff attaches to it.")
-}
-
-/// The start of a new lead: the new clone of the lead failed with the
-/// error `why`, so the old clone at `clone` stays as it is
-/// (01M7E7A8QM8SRPQN3G1BXVJW1R).
-///
-/// ```
-/// let note = riff::text::lead_clone_kept("/d/leads/o-r/clone".as_ref(), "no network");
-/// assert_eq!(
-///     note,
-///     "riff did not make a new clone for the lead: no network. The lead will start with its \
-///      old clone at /d/leads/o-r/clone, which does not have the new commits of origin."
-/// );
-/// ```
-pub fn lead_clone_kept(clone: &Path, why: &str) -> String {
-    format!(
-        "riff did not make a new clone for the lead: {why}. The lead will start with its old \
-         clone at {}, which does not have the new commits of origin.",
-        clone.display()
-    )
 }
 
 /// The start of a new lead: riff cannot remove the old clone `old` of

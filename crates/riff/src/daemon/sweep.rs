@@ -5,9 +5,11 @@
 //! # Design
 //!
 //! Each session of `riff run` and of a wave has a folder of its own,
-//! `ITEM-ID8` in [`crate::run::sessions_dir`]: the clone with its
-//! `target`, often some GB. The daemon removes the folder of each session
-//! that does not run when the work of its branch is over
+//! `ITEM-ID8` in [`crate::run::sessions_dir`]: its Claude folder and its
+//! events. The clone of the session is in its container, and goes with it
+//! ([`crate::session_clone`]): a folder of an older riff can still hold a
+//! clone with its `target`, often some GB. The daemon removes the folder
+//! of each session that does not run when the work of its branch is over
 //! ([`Daemon::sweep`]):
 //!
 //! - at its start, after it took up its sessions, and then each
@@ -18,14 +20,15 @@
 //!   (#1549);
 //! - at once, for `riff daemon sweep` ([`Ask::Sweep`](super::Ask::Sweep)).
 //!
-//! The sweep looks into no clone (#2138). A session writes its clone, and
-//! a git config can name a program that git runs on the host
-//! ([`crate::host_git`]). So the sweep decides from facts that no session
-//! can write:
+//! The sweep looks into no clone (#2138). A session writes its clone and
+//! each folder that it binds with write, and a git config can name a
+//! program that git runs on the host ([`crate::host_git`]). So the sweep
+//! decides from facts that no session can write:
 //!
 //! - the repository of the folder: its file [`REPO`], which the host
-//!   writes before the clone ([`note_repo`], 01M7DZ42EVHAT8N5MZEV97G3DW).
-//!   The container sees only `clone/` and `claude/` of the folder;
+//!   writes before the start ([`note_repo`], 01M7DZ42EVHAT8N5MZEV97G3DW).
+//!   The container sees only `claude/` of the folder, and `out/` with no
+//!   GitHub;
 //! - the fate on the forge: the pull requests of the branch of its item
 //!   on `origin`, and the state of its issue ([`World::fate`],
 //!   [`Fate::of`]);
@@ -42,8 +45,8 @@
 //!
 //! A folder also goes when it is [`OLD_DAYS`] old, with each fate, and
 //! with no call to the forge. A folder with no file [`REPO`] stays until
-//! then, and riff says why. The work of the clone that is not on `origin`
-//! goes with the folder: riff pushes nothing from a clone. The sweep
+//! then, and riff says why. riff pushes nothing from a folder: the work
+//! of a session is what it pushed (#2139). The sweep
 //! deletes each branch `riff-kept/*` of an older sweep after
 //! [`KEPT_DAYS`] days, and posts one digest note to the lead of the
 //! repository (01M5NVKNPD938ASWY4TD5BGK67, 01M5NVKNS35SC8P514GYDJSRQM).
@@ -1817,14 +1820,9 @@ esac
             line.contains("the pushed branch origin/worktree-issue-12"),
             "{line}"
         );
-        let next = here.daemon.sessions_dir().join("issue-12-2b3c4d5e/clone");
-        assert!(run::make_clone(&main, &next, "worktree-issue-12").unwrap());
-        assert_eq!(
-            git(&next, &["rev-parse", "--abbrev-ref", "HEAD"]),
-            "worktree-issue-12"
-        );
-        let new = run::new_clone_of(&next).unwrap();
-        assert!(!new.exists(), "the new clone moved into the folder");
+        // The next session goes on from the branch on origin: the host
+        // looks for it from the main clone, and makes no clone.
+        assert!(run::earlier(&main, "worktree-issue-12").unwrap());
 
         // The council of a verify reads the member files of `origin/main`
         // in the main clone.

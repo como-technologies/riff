@@ -2235,6 +2235,18 @@ page [Requirements](requirements.md) holds the rules of today.
   path of a new file of `origin`, the clone stays as it is. riff shows
   the note with the error of git, and starts the lead.
   Superseded by 01M7E7A8QM8SRPQN3G1BXVJW1R.
+- **01M7E7A8QM8SRPQN3G1BXVJW1R** At each start of a new lead, the host
+  makes a new clone of the lead in a folder of its own,
+  `new-clones/lead-OWNER-REPO` in the data folder of riff, with `git
+  clone --reference MAIN` on the default branch of `origin`. Then it
+  puts the new clone in the place of the old clone `clone/`, and removes
+  the old clone, with each change in it. The host runs no git in the old
+  clone. When the new clone fails, the old clone stays as it is, riff
+  shows a note with the error, and the lead starts. A start again of the
+  same session of the lead keeps its clone. This supersedes
+  01M50RRQ9DT0JPSB358EAZRP8Z and 01M51JYDHAQDJ3GH2J8DT3AZQS in full, and
+  01M501P9Q51AYN9GBPWKVHA229 in part: the clone.
+  Superseded by 01M7EY3P0Q8TQF5QRTRDWCYCTQ.
 
 ### The first run
 
