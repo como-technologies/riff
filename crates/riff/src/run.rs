@@ -1033,6 +1033,12 @@ pub fn sign_in(file: &str, now_ms: i64) -> Result<SignIn> {
 /// of the person for a session (01M6Z87A04EXTT1FFJSJ1EM6TB), so no list
 /// holds that one either.
 ///
+/// The scrub finds each match in the raw text, also across an escape
+/// sequence (01M7FYCX6HRGHM2NR4RT8GS46P): each character that the filter
+/// of the terminal takes out ([`text::kept`]) can come between two
+/// characters of a match, or be one of them. It hides the union of the
+/// matches, so no secret cuts another.
+///
 /// ```
 /// use riff::run::Scrub;
 ///
@@ -1048,6 +1054,11 @@ pub fn sign_in(file: &str, now_ms: i64) -> Result<SignIn> {
 ///     Scrub::default().clean("gho_a1 ghp_b2 ghu_c3 ghr_d4 github_pat_11AB_cd"),
 ///     "[secret] [secret] [secret] [secret] [secret]"
 /// );
+/// // A short secret inside a long one, in each order of the list.
+/// for list in [["live", "sk_live_51HxyzAbCdEf"], ["sk_live_51HxyzAbCdEf", "live"]] {
+///     let scrub = Scrub::new(list.map(str::to_owned));
+///     assert_eq!(scrub.clean("refused sk_live_51HxyzAbCdEf"), "refused [secret]");
+/// }
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct Scrub {
@@ -1063,33 +1074,109 @@ impl Scrub {
         }
     }
 
-    /// `text` with each secret replaced by [`HIDDEN`].
+    /// `text` with one [`HIDDEN`] in place of each run of matches, with each
+    /// character next to it that the filter takes out. Each other character
+    /// stays as it is. So a filter after the scrub takes out no character
+    /// of a mark, and joins no part of a secret. The time is at most the
+    /// length of `text` times the length of the longest secret.
+    ///
+    /// ```
+    /// use riff::run::Scrub;
+    ///
+    /// let scrub = Scrub::new(["sk-ant-oat01-secret1".to_owned()]);
+    /// assert_eq!(scrub.clean("a \x1b[1msk-ant-\x1b[0moat01-secret1\x1b[0m b"), "a [secret] b");
+    /// assert_eq!(scrub.clean("\x1b[31mred\x1b[0m"), "\x1b[31mred\x1b[0m");
+    /// ```
     pub fn clean<'a>(&self, text: &'a str) -> Cow<'a, str> {
-        let mut out = Cow::Borrowed(text);
+        // With no control character, the filter takes out nothing, so a
+        // match is a part of the text.
+        let plain = !text
+            .chars()
+            .any(|c| c.is_control() && c != '\n' && c != '\t');
+        let mut patterns = self.secrets.iter().map(String::as_str).chain(TOKEN_STARTS);
+        if plain && !patterns.any(|pattern| text.contains(pattern)) {
+            return Cow::Borrowed(text);
+        }
+        let chars = text::kept(text);
+        let hidden = self.hidden(&chars);
+        if !hidden.contains(&true) {
+            return Cow::Borrowed(text);
+        }
+        let mut out = String::with_capacity(text.len());
+        let mut marked = false;
+        for ((c, _), hidden) in chars.into_iter().zip(hidden) {
+            match (hidden, marked) {
+                (false, _) => out.push(c),
+                (true, false) => out.push_str(HIDDEN),
+                (true, true) => {}
+            }
+            marked = hidden;
+        }
+        Cow::Owned(out)
+    }
+
+    /// True for each character of `chars` ([`text::kept`]) that the scrub
+    /// hides: each character of a match, and each character next to a
+    /// match that the filter takes out.
+    fn hidden(&self, chars: &[(char, bool)]) -> Vec<bool> {
+        let mut found = Vec::new();
         for secret in &self.secrets {
-            if out.contains(secret.as_str()) {
-                out = Cow::Owned(out.replace(secret.as_str(), HIDDEN));
-            }
+            matches(chars, secret, &mut found);
         }
+        // From each place on: the end of the run of the characters of a
+        // token and the characters that the filter takes out, and true when
+        // a character of a token in the run shows.
+        let part = |c: char| c.is_ascii_alphanumeric() || c == '_';
+        let mut runs = vec![(chars.len(), false); chars.len() + 1];
+        for (at, &(c, kept)) in chars.iter().enumerate().rev() {
+            runs[at] = match (kept, part(c)) {
+                (true, false) => (at, false),
+                (true, true) => (runs[at + 1].0, true),
+                (false, _) => runs[at + 1],
+            };
+        }
+        let mut starts = Vec::new();
         for start in TOKEN_STARTS {
-            if out.contains(start) {
-                out = Cow::Owned(tokens_out(&out, start));
+            matches(chars, start, &mut starts);
+        }
+        for start in starts {
+            // A start with no character of a token after it is no token.
+            if let (end, true) = runs[start.end] {
+                found.push(start.start..end);
             }
         }
-        out
+        // The union in one pass: the farthest end of a match so far.
+        let mut ends = vec![0; chars.len()];
+        for at in found {
+            ends[at.start] = ends[at.start].max(at.end);
+        }
+        let mut to = 0;
+        let mut hidden: Vec<bool> = ends
+            .into_iter()
+            .enumerate()
+            .map(|(at, end)| {
+                to = to.max(end);
+                at < to
+            })
+            .collect();
+        // Each character next to a match that the filter takes out goes
+        // with it.
+        for at in 1..chars.len() {
+            hidden[at] |= hidden[at - 1] && !chars[at].1;
+        }
+        for at in (1..chars.len()).rev() {
+            hidden[at - 1] |= hidden[at] && !chars[at - 1].1;
+        }
+        hidden
     }
 
     /// `text` with no secret and no control character, safe to print
-    /// (01M7FTC1DFAYKQAB6EPDCJ18ZA, 01M7FYCX6HRGHM2NR4RT8GS46P). The
-    /// filter ([`text::safe`]) removes an escape sequence with the bytes
-    /// after it, so it can take the start of a secret, or join the parts of
-    /// a secret that an escape sequence splits. So `safe` finds each secret,
-    /// each token of GitHub and each [`HIDDEN`] in the raw text, where each
-    /// character that the filter takes out can come between two characters
-    /// of a match, or be one of them ([`text::kept`]). Then it filters the
-    /// text, and puts [`HIDDEN`] in place of the characters of each match
-    /// that show. A text that the filter does not change gets
-    /// [`Scrub::clean`].
+    /// (01M7FTC1DFAYKQAB6EPDCJ18ZA, 01M7FYCX6HRGHM2NR4RT8GS46P): the
+    /// filter ([`text::safe`]) after the scrub ([`Scrub::clean`]). On the
+    /// raw text, the filter removes an escape sequence with the bytes after
+    /// it, so it can take the start of a secret, or join the parts of a
+    /// secret that an escape sequence splits. The scrub finds each secret
+    /// across each such sequence first.
     ///
     /// ```
     /// use riff::run::Scrub;
@@ -1098,6 +1185,7 @@ impl Scrub {
     /// for raw in [
     ///     "\x1bsk-ant-oat01-secret1",
     ///     "\x1b[sk-ant-\x1b[0moat01-secret1",
+    ///     "s\x1bsk-ant-oat01-secret1",
     ///     "\x1b[gh\x1b[0mo_abcdef123",
     ///     "gho_sec\x1b[0mret1",
     ///     "g\u{9b}ho_abc",
@@ -1108,110 +1196,56 @@ impl Scrub {
     /// assert_eq!(scrub.safe("a sk-ant-oat01-secret1").as_str(), "a [secret]");
     /// ```
     pub fn safe(&self, text: &str) -> text::Safe {
-        let chars = text::kept(text);
-        if chars.iter().all(|(_, kept)| *kept) {
-            return text::Safe::new(&self.clean(text));
-        }
-        // The relay puts the mark in the raw line, so the mark is a match
-        // too: it shows whole.
-        let mut found = Vec::new();
-        for secret in self.secrets.iter().map(String::as_str).chain([HIDDEN]) {
-            found.extend(matches(&chars, secret));
-        }
-        let part = |c: char| c.is_ascii_alphanumeric() || c == '_';
-        for start in TOKEN_STARTS {
-            for at in matches(&chars, start) {
-                // The rest of the token: each character of a token, and each
-                // character that the filter takes out.
-                let rest = chars[at.end..]
-                    .iter()
-                    .take_while(|(c, kept)| !kept || part(*c));
-                if rest.clone().any(|(c, kept)| *kept && part(*c)) {
-                    found.push(at.start..at.end + rest.count());
-                }
-            }
-        }
-        let mut hidden = vec![false; chars.len()];
-        for at in found {
-            hidden[at].fill(true);
-        }
-        let mut shown = String::with_capacity(text.len());
-        let mut marked = false;
-        for ((c, kept), hidden) in chars.into_iter().zip(hidden) {
-            if !kept {
-                continue;
-            }
-            match (hidden, marked) {
-                (false, _) => shown.push(c),
-                (true, false) => shown.push_str(HIDDEN),
-                (true, true) => {}
-            }
-            marked = hidden;
-        }
-        shown.into()
+        text::Safe::new(&self.clean(text))
     }
 }
 
-/// The ranges of `chars` ([`text::kept`]) that match `pattern`. Each
-/// character that the filter takes out can come between two characters of
-/// the pattern, or be one of them. A match starts as early as it can.
-fn matches(chars: &[(char, bool)], pattern: &str) -> Vec<std::ops::Range<usize>> {
+/// Adds to `found` each range of `chars` ([`text::kept`]) that matches
+/// `pattern`. Each character that the filter takes out can come between
+/// two characters of the pattern, or be one of them. A match starts as
+/// early as it can. The time is the length of `chars` times the count of
+/// the parts of a match that grow at once, at most the length of
+/// `pattern`.
+fn matches(chars: &[(char, bool)], pattern: &str, found: &mut Vec<std::ops::Range<usize>>) {
     let pattern: Vec<char> = pattern.chars().collect();
-    if pattern.is_empty() {
-        return Vec::new();
-    }
+    let Some(&first) = pattern.first() else {
+        return;
+    };
     // Each part of a match so far: the count of characters of the pattern
-    // that it has, and its start. One part for each count.
-    fn add(parts: &mut Vec<(usize, usize)>, done: usize, start: usize) {
-        match parts.iter_mut().find(|(d, _)| *d == done) {
-            Some(part) => part.1 = part.1.min(start),
-            None => parts.push((done, start)),
-        }
-    }
-    let mut found = Vec::new();
-    let (mut parts, mut next) = (Vec::new(), Vec::new());
+    // that it has, and its earliest start. The counts go up.
+    let (mut parts, mut next): (Vec<(usize, usize)>, Vec<(usize, usize)>) =
+        (Vec::new(), Vec::new());
     for (at, &(c, kept)) in chars.iter().enumerate() {
         next.clear();
-        for (done, start) in parts.iter().copied().chain([(0, at)]) {
-            if c == pattern[done] {
-                match done + 1 == pattern.len() {
-                    true => found.push(start..at + 1),
-                    false => add(&mut next, done + 1, start),
-                }
+        // The parts come in the order of their counts, so a part with the
+        // count of the last one joins it.
+        let mut add = |done: usize, start: usize| {
+            if done == pattern.len() {
+                found.push(start..at + 1);
+            } else if let Some(last) = next.last_mut().filter(|last| last.0 == done) {
+                last.1 = last.1.min(start);
+            } else {
+                next.push((done, start));
             }
-            if !kept && done > 0 {
-                add(&mut next, done, start);
+        };
+        if c == first {
+            add(1, at);
+        }
+        for &(done, start) in &parts {
+            if !kept {
+                add(done, start);
+            }
+            if c == pattern[done] {
+                add(done + 1, start);
             }
         }
         std::mem::swap(&mut parts, &mut next);
     }
-    found
 }
 
 /// The starts of the tokens of GitHub: of a GitHub App, of OAuth, of a
 /// person, of a user to server, of a refresh, and a fine-grained one.
 pub const TOKEN_STARTS: [&str; 6] = ["ghs_", "gho_", "ghp_", "ghu_", "ghr_", "github_pat_"];
-
-/// `text` with each token of GitHub that starts with `start` replaced
-/// by [`HIDDEN`].
-fn tokens_out(text: &str, start: &str) -> String {
-    let part = |c: char| c.is_ascii_alphanumeric() || c == '_';
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(at) = rest.find(start) {
-        let after = &rest[at + start.len()..];
-        let len = after.find(|c: char| !part(c)).unwrap_or(after.len());
-        out.push_str(&rest[..at]);
-        if len == 0 {
-            out.push_str(start);
-        } else {
-            out.push_str(HIDDEN);
-        }
-        rest = &after[len..];
-    }
-    out.push_str(rest);
-    out
-}
 
 /// The one stream-json line that gives `claude` the text of a person.
 ///
@@ -3361,8 +3395,13 @@ mod tests {
             // The second `a` of the secret: the one that ESC takes, or the
             // one after it.
             ("sk-a\x1baa-secret2", "[secret]"),
+            // The first `s` or `g` that shows starts the match, not the one
+            // that the escape sequence takes.
+            ("s\x1bsk-ant-oat01-secret1", "[secret]"),
+            ("g\x1b[gho_abcdef123", "[secret]"),
             ("a \x1b[1Ask-ant-oat01-secret1\x1b[0m b", "a [secret] b"),
-            ("a \x1b]0;sk-ant-oat01-secret1\x07b", "a b"),
+            ("a \x1b]0;sk-ant-oat01-secret1\x07b", "a [secret]b"),
+            ("\x1b]0;sk-ant-oat01-\x07secret1 b", "[secret] b"),
             ("gh\x1b[0mo_abcdef123 \u{9b}", "[secret] "),
             ("gho_abc\x1b[0m done", "[secret] done"),
             ("gho_\x1b[0m alone", "gho_ alone"),
@@ -3370,21 +3409,70 @@ mod tests {
                 "sk-ant-oat01-secret1 \x1b[0msk-aa-secret2",
                 "[secret] [secret]",
             ),
-            // The mark of the relay, in the raw line.
-            ("\x1b[secret] \x1b[[secret]", "[secret] [secret]"),
         ] {
             let safe = scrub.safe(raw);
             assert_eq!(safe.as_str(), shown, "{raw:?}");
             assert!(!safe.as_str().chars().any(char::is_control), "{raw:?}");
+            // The relay scrubs the line first, and the daemon knows no
+            // secret of the relay: the mark of the relay shows whole.
+            let relayed = scrub.clean(raw);
+            assert_eq!(Scrub::default().safe(&relayed).as_str(), shown, "{raw:?}");
+            assert_eq!(scrub.safe(&relayed), safe, "{raw:?}");
         }
-        // A scrub before and after the filter shows a part of each.
-        let twice = |raw: &str| scrub.clean(&text::safe(&scrub.clean(raw))).into_owned();
-        assert_eq!(
-            twice("\x1bsk-ant-\x1b[0moat01-secret1"),
-            "k-ant-oat01-secret1"
-        );
-        assert_eq!(twice("\x1b[gh\x1b[0mo_abcdef123"), "ho_abcdef123");
-        assert_eq!(twice("sk-ant-\x1boat01-secret1"), "sk-ant-at01-secret1");
+    }
+
+    /// 01M7FYCX6HRGHM2NR4RT8GS46P: the scrub hides the union of the
+    /// matches, so the same text that shows gives the same line, with or
+    /// without a control character.
+    #[test]
+    fn the_scrub_hides_the_union_of_the_matches() {
+        let scrub = Scrub::new([
+            "sk-ant-oat01-xyzgh".to_owned(),
+            "abcdef12".to_owned(),
+            "ef12ghij".to_owned(),
+        ]);
+        for raw in ["sk-ant-oat01-xyzgho_abc123", "abcdef12ghij"] {
+            assert_eq!(scrub.clean(raw), HIDDEN, "{raw:?}");
+            assert_eq!(scrub.safe(raw).as_str(), HIDDEN, "{raw:?}");
+            assert_eq!(
+                scrub.safe(&format!("{raw}\x07")).as_str(),
+                HIDDEN,
+                "{raw:?}"
+            );
+        }
+    }
+
+    /// 01M7FYCX6HRGHM2NR4RT8GS46P: the time of the scrub grows with the
+    /// length of a line, not with its square. Each line is 256 KiB, and
+    /// a scrub that walks the rest of the line for each match takes
+    /// minutes on it.
+    #[test]
+    fn the_scrub_of_a_long_line_ends_in_a_short_time() {
+        let secret = "sk-ant-oat01-secret1";
+        let scrub = Scrub::new([secret.to_owned()]);
+        let k = 256 * 1024;
+        for (raw, shown) in [
+            ("gho_\x07".repeat(k / 5), HIDDEN.to_owned()),
+            (format!("\x1b]{}\x07", "gho_;".repeat(k / 5)), String::new()),
+            (
+                format!("\x1b]{}\x07", secret.repeat(k / secret.len())),
+                HIDDEN.to_owned(),
+            ),
+            (
+                format!("{}\x07", "gho_a ".repeat(k / 6)),
+                format!("{HIDDEN} ").repeat(k / 6),
+            ),
+        ] {
+            let start = std::time::Instant::now();
+            let safe = scrub.safe(&raw);
+            let took = start.elapsed();
+            assert_eq!(safe.as_str(), shown, "{:?}", &raw[..12]);
+            assert!(
+                took < Duration::from_secs(5),
+                "{took:?} for {:?}",
+                &raw[..12]
+            );
+        }
     }
 
     #[test]

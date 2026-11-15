@@ -4387,23 +4387,28 @@ pub fn kept(text: &str) -> Vec<(char, bool)> {
         })
         .collect()
 }
-
 /// A text with no escape sequence and no control character but the tab
 /// and the line break ([`safe`]): safe to print on a terminal, also after
-/// a read from the wire. A line of the output of a container is one
+/// a read from the wire. A line of the output of a container is one, and
+/// so is each text of a record that a session can post
 /// (01M7FTC1DFAYKQAB6EPDCJ18ZA).
 ///
 /// ```
+/// use std::collections::BTreeMap;
 /// use riff::text::Safe;
 ///
 /// let line = Safe::new("a\x1b]0;owned\x07b\x1b[2J\tc\u{9b}");
-/// assert_eq!(line.as_str(), "ab\tc");
+/// assert_eq!(line, "ab\tc");
 /// let read: Safe = serde_json::from_str(r#""a\u001b[2Jb\u009b""#)?;
 /// assert_eq!(read.to_string(), "ab");
 /// assert_eq!(serde_json::to_string(&read)?, r#""ab""#);
+/// let tags = BTreeMap::from([(Safe::new("ro\x1b[2Jle"), Safe::new("lead"))]);
+/// assert_eq!(tags.get("role"), Some(&Safe::new("lead")));
 /// # Ok::<(), serde_json::Error>(())
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 #[serde(from = "String", into = "String")]
 pub struct Safe(String);
 
@@ -4440,6 +4445,18 @@ impl From<Safe> for String {
 impl std::fmt::Display for Safe {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
+    }
+}
+
+impl std::borrow::Borrow<str> for Safe {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+
+impl PartialEq<&str> for Safe {
+    fn eq(&self, other: &&str) -> bool {
+        self.0 == *other
     }
 }
 
@@ -10284,6 +10301,12 @@ impl std::fmt::Display for OneLine {
     }
 }
 
+impl PartialEq<&str> for OneLine {
+    fn eq(&self, other: &&str) -> bool {
+        self.0 == *other
+    }
+}
+
 /// A check of `riff init` that passed.
 ///
 /// ```
@@ -13112,8 +13135,8 @@ pub fn session_why_none(item: &str) -> String {
 /// first, one line for each session with its head commit (#1651), then the
 /// last lines of the output of the last session. A session can post a
 /// record in the thread [`crate::ends::THREAD`], so each tag, each reason
-/// and each line of a record shows with no control character ([`safe`],
-/// 01M7FTC1DFAYKQAB6EPDCJ18ZA).
+/// and each line of a record is a [`Safe`] text
+/// (01M7FTC1DFAYKQAB6EPDCJ18ZA).
 ///
 /// ```
 /// use riff::ends::Record;
@@ -13155,12 +13178,12 @@ pub fn session_why(item: &str, mine: &[&crate::ends::Record]) -> String {
     for record in mine {
         let head = match record.tag("head") {
             "-" => String::new(),
-            head => format!(", for the head {},", safe(head)),
+            head => format!(", for the head {head},"),
         };
         text.push_str(&format!(
             "\n- {}{head} ended: {}.",
-            safe(record.tag("session")),
-            safe(&record.reason)
+            record.tag("session"),
+            record.reason
         ));
     }
     if let Some(last) = mine.last() {
@@ -13168,11 +13191,11 @@ pub fn session_why(item: &str, mine: &[&crate::ends::Record]) -> String {
         let noun = if lines == 1 { "line" } else { "lines" };
         text.push_str(&format!(
             "\nThe last one is {}. Its last {lines} {noun} of output:",
-            safe(last.tag("session"))
+            last.tag("session")
         ));
         for line in &last.tail {
             text.push('\n');
-            text.push_str(&safe(line));
+            text.push_str(line.as_str());
         }
     }
     text

@@ -488,6 +488,50 @@ async fn session_why_prints_no_control_character_of_a_record() {
     );
 }
 
+/// 01M7FTC1DFAYKQAB6EPDCJ18ZA: a session can post a record in the thread
+/// `denials`. `riff denials` prints each name, tag and text of it with no
+/// ESC, no CSI sequence and no U+009B, as text and as JSON.
+#[tokio::test(flavor = "multi_thread")]
+async fn riff_denials_prints_no_control_character_of_a_record() {
+    let container = Container::new();
+    let body = "denied rea\u{1b}[2Kson=x\u{1b}]0;owned\u{7} role=wor\u{9b}ker tool=Ba\u{1b}[2Jsh \
+                head=git\u{7f}: \u{1b}[1A\u{1b}[2Kgit \u{9b}push\r";
+    let reply = json!([[9, body]]);
+    let (_dir, socket, _) = common::session_socket(move |_| Ok(reply.clone()));
+
+    let out = container.riff(&socket, &["denials"]).await;
+    let shown = text(&out.stdout);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    for part in [
+        "By reason:\n  1  x\n",
+        "By tool and head:\n  1  Bash git\n",
+        "By role:\n  1  worker\n",
+        " x worker Bash git: git push\n",
+    ] {
+        assert!(shown.contains(part), "{part:?} not in {shown:?}");
+    }
+    assert!(
+        !shown.chars().any(|c| c.is_control() && c != '\n'),
+        "{shown:?}"
+    );
+
+    let out = container
+        .riff(&socket, &["denials", "--format", "json"])
+        .await;
+    let shown = text(&out.stdout);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert!(
+        !shown.chars().any(|c| c.is_control() && c != '\n'),
+        "{shown:?}"
+    );
+    let records: Value = serde_json::from_str(&shown).unwrap();
+    assert_eq!(
+        records[0]["tags"],
+        json!({"head": "git", "reason": "x", "role": "worker", "tool": "Bash"})
+    );
+    assert_eq!(records[0]["text"], "git push");
+}
+
 const SESSION: &str = "riff-issue-12-1a2b3c4d";
 
 /// The fake daemon of a session: the text of the page that follows the

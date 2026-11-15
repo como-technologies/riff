@@ -489,24 +489,25 @@ of each event, each line that is not JSON, and the stderr of the
 container. `riff daemon events` and the Session log of the TUI print
 the lines of each event and each line that is not JSON, also with
 `--host`. `riff session why` prints the records of the thread `ends`:
-why a session ended, and the last lines of its output.
+why a session ended, and the last lines of its output. `riff denials`
+prints the records of the thread `denials`, as text or as JSON.
 
 A session can write an escape sequence in its output, or in a post to
-the thread `ends`, for example because a prompt injection told it to.
-Such a sequence can move the cursor, hide or rewrite a line, or set the
-title of your terminal. riff prints no control character of a session.
-It removes each escape sequence and each control character, also the C1
-control U+009B. It keeps the tab and the line break. So a session
-cannot change your terminal.
+the thread `ends` or `denials`, for example because a prompt injection
+told it to. Such a sequence can move the cursor, hide or rewrite a
+line, or set the title of your terminal. riff prints no control
+character of a session. It removes each escape sequence and each
+control character, also the C1 control U+009B. It keeps the tab and the
+line break. So a session cannot change your terminal.
 
-In the stderr of the container and in a record of `ends`, riff also
-puts `[secret]` in place of each secret. An escape sequence before a
-secret or inside it does not stop this: riff finds the secret in the
-text before it removes the sequence.
+In the stderr of the container, riff also puts `[secret]` in place of
+each secret. An escape sequence before a secret or inside it does not
+stop this: riff finds the secret in the text before it removes the
+sequence.
 
 ```mermaid
 flowchart LR
-    S["the session: a line with<br/>ESC [2J, ESC ]0;title or U+009B"] --> D["riff run, riff daemon events<br/>or riff session why"]
+    S["the session: a line with<br/>ESC [2J, ESC ]0;title or U+009B"] --> D["riff run, riff daemon events,<br/>riff session why or riff denials"]
     D --> R["riff removes each escape sequence<br/>and each control character"]
     R --> T["your terminal: the text only"]
 ```
@@ -515,6 +516,8 @@ To see the output of a session from another terminal, see
 [See the events of a session](development.md#see-the-events-of-a-session).
 To see why a session ended, see
 [See why a session ended with no pull request](development.md#see-why-a-session-ended-with-no-pull-request).
+To count the refusals of auto mode, see
+[See the refusals of auto mode](#see-the-refusals-of-auto-mode).
 
 ### The home of a session is in memory
 

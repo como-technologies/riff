@@ -1495,8 +1495,8 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
 /// sequence and the C1 control U+009B, as a plain line, in a text of
 /// claude and on its stderr. `riff run` and `riff daemon events` print
 /// each line with no control character. A token on stderr shows no part,
-/// also with an escape sequence before it or inside it
-/// (01M7FYCX6HRGHM2NR4RT8GS46P).
+/// also with an escape sequence before it or inside it, after the scrub
+/// of the relay and then of the daemon (01M7FYCX6HRGHM2NR4RT8GS46P).
 #[tokio::test]
 async fn riff_run_and_daemon_events_print_no_control_character_of_a_session() {
     let machine = Machine::new().await;
@@ -1514,9 +1514,11 @@ async fn riff_run_and_daemon_events_print_no_control_character_of_a_session() {
     std::fs::write(
         machine.bin.path().join("stderr"),
         format!(
-            "stderr {hostile}\ntoken \x1b{GH_TOKEN} \x1b[{GH_TOKEN} \x1b[{}\x1b[0m{}\n",
+            "stderr {hostile}\ntoken \x1b{GH_TOKEN} \x1b[{GH_TOKEN} \x1b[{}\x1b[0m{} {}\x1b[0m{}\n",
             &GH_TOKEN[..2],
-            &GH_TOKEN[2..]
+            &GH_TOKEN[2..],
+            &GH_TOKEN[..8],
+            &GH_TOKEN[8..]
         ),
     )
     .unwrap();
@@ -1536,7 +1538,7 @@ async fn riff_run_and_daemon_events_print_no_control_character_of_a_session() {
         // whole.
         (
             &stderr,
-            &["stderr abcde", "token [secret] [secret] [secret]"][..],
+            &["stderr abcde", "token [secret] [secret] [secret] [secret]"][..],
         ),
         (&viewed, &["plain abcde", "text abcde"][..]),
     ] {
@@ -1548,6 +1550,7 @@ async fn riff_run_and_daemon_events_print_no_control_character_of_a_session() {
             "{shown:?}"
         );
         assert!(!shown.contains(&GH_TOKEN[1..]), "{shown}");
+        assert!(!shown.contains(&GH_TOKEN[8..]), "{shown}");
     }
     machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
 }
