@@ -494,7 +494,7 @@ reads at most a limit of each one:
 | What riff reads | Its limit | Over the limit |
 |---|---|---|
 | A transcript, and the transcript of each helper agent | 256 MB | riff counts no tokens of it, and goes on. The log of the daemon names the file. |
-| `.claude.json` and `settings.json` of a Claude folder | 16 MB | The start stops, and riff writes neither file. The error names the file. See [When the start of the lead stops at a large file](#when-the-start-of-the-lead-stops-at-a-large-file). |
+| `.claude.json` of a Claude folder, and its `settings.json` | 16 MB, and 1 MB | The start stops, and riff writes neither file. The error names the file. riff writes no new text over the limit either. See [When the start of the lead stops at a large file](#when-the-start-of-the-lead-stops-at-a-large-file). |
 | `.git/objects/info/alternates` of a clone | 1 MB | riff counts no main clone for the clone. The log has no line for it. |
 | The entries of the folder `projects` of a Claude folder, and of the folder of the helper agents of a transcript | 10,000 entries | riff counts no tokens of the transcripts there, and sees no write of the lead there: after an update, riff can start the lead again in the middle of a turn. riff goes on, and the log of the daemon names the folder. See [When riff sees no turn of the lead](#when-riff-sees-no-turn-of-the-lead). |
 | All the transcripts of a session, at each count of its tokens | 1 GB, 100,000 entries, 1,000,000 replies and 32 models in all | riff counts the tokens of the files before the limit, and no tokens of the rest. The log of the daemon names the file or the folder where riff stopped. |
@@ -507,8 +507,9 @@ limit in all. It keeps each reply of the model in a fixed size, and no
 line of its log. The daemon reads the transcripts of an ended session
 on a thread of its own, so each other session goes on. It reads the
 transcripts of one count at a time, and holds the bytes of each file
-one time. The end of that session waits for the count. So a large file
-of a session does not fill the memory of the riff daemon.
+one time. The end of that session waits for the count. At a start,
+riff parses only the values of `.claude.json` that it changes. So a
+large file of a session does not fill the memory of the riff daemon.
 
 In the log, riff shows each control character of a name as its escape,
 for example `\n` for a line break: a name that a session chose makes no
@@ -524,7 +525,7 @@ flowchart LR
 To find each other limit that riff met, read the log of the daemon:
 
 ```sh
-journalctl --user -u riff | grep -E 'reads at most|lists at most'
+journalctl --user -u riff | grep -E 'reads at most|writes at most|lists at most'
 ```
 
 A line that says "riff counts no tokens" needs no step: riff goes on.
@@ -539,13 +540,21 @@ The error names the file:
 riff reads at most 16MB of a file in a folder that a session can write: /home/mike/.local/share/riff/leads/acme-app/claude/.claude.json is larger. Remove it, and start again.
 ```
 
-Find each large file in the Claude folder of the lead. Then remove the
-file that the error names. At the next start, riff will write a new
-`.claude.json`:
+The error says "riff writes at most" when the file is under its limit,
+but the text with what riff adds is over it. Remove the file that the
+error names. At the next start, riff will write a new one:
 
 ```sh
-find ~/.local/share/riff/leads/OWNER-REPO/claude -size +16M
 rm ~/.local/share/riff/leads/OWNER-REPO/claude/.claude.json
+```
+
+A new `settings.json` has none of your answers. So after you remove
+`settings.json`, `claude` will ask a question of its first start again,
+for example the warning of the Bypass Permissions mode, and the lead
+will wait for you. Attach to the lead, and answer it:
+
+```sh
+riff lead start
 ```
 
 ##### When riff sees no turn of the lead
@@ -570,7 +579,10 @@ riff lead clean
 riff moves each entry into a new folder `projects-left/TIME` in the
 folder of the lead, and names that folder. No session writes there.
 riff follows no link: a link moves as a link. At the next look, riff
-will see the turns of the lead again.
+will see the turns of the lead again. riff reads at most 10,000 entries
+of `projects` at each run. When `projects` has more, riff moves the
+entries that it read, and its error tells you to run `riff lead clean`
+again.
 
 When the line says that `projects` is a link, `riff lead clean` moves
 nothing. Remove the link, as in
@@ -8087,9 +8099,9 @@ A step of a person, a claim, and a command that needs a program of the
 host refuse in the container before each call: `riff login`, `riff
 logout`, `riff invite`, `riff remove`, `riff admin`,
 `riff chat`, `riff tail`, `riff claim`, `riff release ITEM`, `riff
-lead start`, `riff lead move`, `riff lead notes`, `riff questions
---answered`, `riff server`, `riff update` and `riff cloud`. Run them in
-a terminal on the host:
+lead start`, `riff lead move`, `riff lead notes`, `riff lead clean`,
+`riff questions --answered`, `riff server`, `riff update` and `riff
+cloud`. Run them in a terminal on the host:
 
 ```sh
 riff claim issue-12

@@ -50,7 +50,7 @@
 //! | The start | `riff lead start` starts no lead (#1793): it attaches to the lead of the project when its container runs on this host. Else it names the host of the lead and the step there, or says that the daemon of a host that joined the project starts the lead ([`start`], [`text::lead_not_here`]) | 01M77Y6ZBV7C8Z332SAFKQCZ5A |
 //! | The repository | the daemon serves it while the lead runs, so `riff who` and the commands with `--host` reach the host, with the main clone of the wave ([`main_of`], `Daemon::serve_lead`) | 01M6QVSWQZE41BMQ6YN2963C4V, 01M7EAZ9N9DY7JPXZP1V8JY01E |
 //! | The restart | `riff lead restart`: riff finds the lead of the project ([`to_restart`]), the lead writes its notes ([`restart_notes`]), then the daemon of its host ends its container ([`crate::daemon::Daemon::stop_lead`]); the host loses the part lead, an update starts the old lead no more, and a host that joined the project starts a new lead ([`crate::lead_host`]) | 01M77Y6ZEQ4A6C6E0XZ56WRE89, 01M6QVSWWM3EA4ZS47XCKV38D0 |
-//! | The folder `projects` | riff sees the turns of the lead in the folder `projects` of its Claude folder; with a link there, or with more than [`crate::usage::MAX_ENTRIES`] entries, riff sees no write, and the log names the folder ([`idle`]). `riff lead clean` on the host of the lead moves each entry of `projects` but the conversations of the lead ([`holds_conversations`]) into a new folder `projects-left/TIME` of the folder of the lead, with no follow of a link ([`clean_projects`]) | 01M7FX6YQKTN9EVPTZJ9XB8PM4, 01M7GF9QGV86BENYWT1TDJPM64 |
+//! | The folder `projects` | riff sees the turns of the lead in the folder `projects` of its Claude folder; with a link there, or with more than [`crate::usage::MAX_ENTRIES`] entries, riff sees no write, and the log names the folder ([`idle`]). `riff lead clean` on the host of the lead moves each entry of `projects` but the conversations of the lead ([`claude_name`]) into a new folder `projects-left/TIME` of the folder of the lead, with no follow of a link; it reads at most [`crate::usage::MAX_ENTRIES`] entries at each run ([`clean_projects`]) | 01M7FX6YQKTN9EVPTZJ9XB8PM4, 01M7GF9QGV86BENYWT1TDJPM64, 01M7FNTSHXPQXXKZF761V0NN9Z |
 //!
 //! The Claude folder stays between the starts of the lead: the lead
 //! keeps the history of its conversations, and a dialog of `claude` that
@@ -704,67 +704,81 @@ pub const PROJECTS_LEFT: &str = "projects-left";
 
 /// The most characters of the name that `claude` gives a folder of
 /// conversations in the folder `projects`. A longer name is its first
-/// characters, `-` and a hash ([`holds_conversations`]).
+/// characters, `-` and a hash ([`claude_name`]).
 const CLAUDE_NAME: usize = 200;
 
-/// True when `name`, an entry of the folder `projects` of a Claude
-/// folder, is the folder of the conversations that `claude` keeps for the
-/// working folder `dir` (01M7GF9QGV86BENYWT1TDJPM64). `claude` names it
-/// from the path of `dir`, with `-` for each character that is no ASCII
-/// letter and no digit, as JavaScript counts characters. A name over
-/// 200 characters is its first 200 characters, `-` and a hash that riff
-/// does not know: so a name with that start counts.
+/// The name that `claude` gives the folder of the conversations that it
+/// keeps for the working folder `dir`, in the folder `projects` of a
+/// Claude folder (01M7GF9QGV86BENYWT1TDJPM64): the path of `dir` with `-`
+/// for each character that is no ASCII letter and no digit, as
+/// JavaScript counts characters. A name over 200 characters is its first
+/// 200 characters, `-` and the hash of the path that `claude` makes: the
+/// hash of Java of each character, its size with no sign, in base 36.
 ///
 /// ```
-/// use std::ffi::OsStr;
 /// use std::path::Path;
-/// use riff::lead::holds_conversations;
+/// use riff::lead::claude_name;
 ///
 /// let clone = Path::new("/home/mike/.local/share/riff/leads/acme-app/clone");
-/// assert!(holds_conversations(clone, OsStr::new("-home-mike--local-share-riff-leads-acme-app-clone")));
-/// assert!(!holds_conversations(clone, OsStr::new("-home-mike--local-share-riff-leads-acme-app-clone-2")));
+/// assert_eq!(claude_name(clone), "-home-mike--local-share-riff-leads-acme-app-clone");
 /// // A character out of the BMP is two characters of JavaScript.
-/// assert!(holds_conversations(Path::new("/a/😀"), OsStr::new("-a---")));
+/// assert_eq!(claude_name(Path::new("/a/😀")), "-a---");
 ///
-/// // A path of 300 characters: its first 200, `-` and a hash.
+/// // A path of 300 characters: its first 200, `-` and the hash.
 /// let long = Path::new("/h").join("a".repeat(297));
-/// let start = format!("-h-{}", "a".repeat(197));
-/// assert!(holds_conversations(&long, OsStr::new(&format!("{start}-1k2j3h"))));
-/// assert!(!holds_conversations(&long, OsStr::new(&start)));
-/// assert!(!holds_conversations(&long, OsStr::new(&format!("{start}x1k2j3h"))));
+/// assert_eq!(claude_name(&long), format!("-h-{}-rhfl2j", "a".repeat(197)));
 /// ```
-pub fn holds_conversations(dir: &Path, name: &std::ffi::OsStr) -> bool {
-    use std::os::unix::ffi::OsStrExt;
-    let full: String = dir
-        .to_string_lossy()
+pub fn claude_name(dir: &Path) -> String {
+    let path = dir.to_string_lossy();
+    let full: String = path
         .encode_utf16()
         .map(|unit| match char::from_u32(u32::from(unit)) {
             Some(c) if c.is_ascii_alphanumeric() => c,
             _ => '-',
         })
         .collect();
-    let (full, name) = (full.as_bytes(), name.as_bytes());
     if full.len() <= CLAUDE_NAME {
-        return name == full;
+        return full;
     }
-    name.len() > CLAUDE_NAME + 1
-        && name.starts_with(&full[..CLAUDE_NAME])
-        && name[CLAUDE_NAME] == b'-'
+    let hash = base36(u64::from(java_hash(&path).unsigned_abs()));
+    format!("{}-{hash}", &full[..CLAUDE_NAME])
+}
+
+/// The hash of `text` as Java makes it for a string: `31 * hash + unit`
+/// for each unit of UTF-16, in 32 bits with a sign.
+fn java_hash(text: &str) -> i32 {
+    text.encode_utf16().fold(0, |hash: i32, unit| {
+        hash.wrapping_mul(31).wrapping_add(i32::from(unit))
+    })
+}
+
+/// `n` in base 36, with the small letters, as JavaScript writes it.
+fn base36(mut n: u64) -> String {
+    let mut digits = Vec::new();
+    loop {
+        digits.push(char::from_digit((n % 36) as u32, 36).expect("a digit of base 36"));
+        n /= 36;
+        if n == 0 {
+            return digits.into_iter().rev().collect();
+        }
+    }
 }
 
 /// `riff lead clean` (01M7GF9QGV86BENYWT1TDJPM64): moves each entry of
 /// the folder `projects` of the Claude folder of the lead of `repo`, in
 /// the data folder `data` of riff, out of it, apart from the folder of
-/// the conversations of the lead ([`holds_conversations`]). The entries
+/// the conversations of the lead ([`claude_name`]). The entries
 /// go into the new folder `projects-left/NOW` of the folder of the lead
 /// ([`PROJECTS_LEFT`]), where `NOW` is `now_ms`. The lead writes its
 /// Claude folder, so the move goes through
 /// [`crate::host_file::move_out`], with no follow of a link: a link at
 /// `projects` gives the error [`text::host_file_link`], and nothing
-/// moves. It gives the line for the person ([`text::lead_cleaned`]), and
-/// an error when an entry stayed ([`text::lead_clean_stayed`]) or when
-/// the lead has no folder `projects` on this host
-/// ([`text::lead_no_projects`]).
+/// moves. It reads at most [`crate::usage::MAX_ENTRIES`] entries
+/// (01M7FNTSHXPQXXKZF761V0NN9Z). It gives the line for the person
+/// ([`text::lead_cleaned`]), and an error when an entry stayed
+/// ([`text::lead_clean_stayed`]), when `projects` has more entries
+/// ([`text::lead_clean_more`]), or when the lead has no folder
+/// `projects` on this host ([`text::lead_no_projects`]).
 ///
 /// ```
 /// use std::path::Path;
@@ -772,9 +786,7 @@ pub fn holds_conversations(dir: &Path, name: &std::ffi::OsStr) -> bool {
 /// let data = tempfile::tempdir()?;
 /// let lead = riff::lead::folder_of(data.path(), "acme/app");
 /// let projects = lead.join("claude/projects");
-/// let own: String = lead.join("clone").to_string_lossy().chars()
-///     .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-///     .collect();
+/// let own = riff::lead::claude_name(&lead.join("clone"));
 /// std::fs::create_dir_all(projects.join(&own))?;
 /// std::fs::write(projects.join(".hidden"), "")?;
 /// std::fs::create_dir(projects.join(format!("{own}-2")))?;
@@ -793,19 +805,26 @@ pub fn holds_conversations(dir: &Path, name: &std::ffi::OsStr) -> bool {
 pub fn clean_projects(data: &Path, repo: &str, now_ms: u64) -> Result<String> {
     let folder = folder_of(data, repo);
     let claude = folder.join("claude");
-    let clone = folder.join("clone");
+    let own = claude_name(&folder.join("clone"));
     let projects = claude.join(crate::usage::PROJECTS);
     let left = folder.join(PROJECTS_LEFT).join(now_ms.to_string());
-    let keep = |name: &std::ffi::OsStr| holds_conversations(&clone, name);
+    let keep = |name: &std::ffi::OsStr| name == own.as_str();
     let name = Path::new(crate::usage::PROJECTS);
-    let Some(moved) = crate::host_file::move_out(&claude, name, &left, keep)? else {
+    let most = crate::usage::MAX_ENTRIES;
+    let Some(moved) = crate::host_file::move_out(&claude, name, &left, most, keep)? else {
         bail!("{}", text::lead_no_projects(repo, &projects));
     };
-    if let Some(first) = moved.first {
-        let why = format!("{first:#}");
+    if let Some(stayed) = moved.stayed {
+        let why = format!("{:#}", stayed.first);
         bail!(
             "{}",
-            text::lead_clean_stayed(&projects, moved.moved, &left, moved.stayed, &why)
+            text::lead_clean_stayed(&projects, moved.moved, &left, stayed.count(), &why)
+        );
+    }
+    if moved.more {
+        bail!(
+            "{}",
+            text::lead_clean_more(&projects, moved.moved, &left, most)
         );
     }
     Ok(text::lead_cleaned(&projects, moved.moved, &left))
@@ -2560,22 +2579,12 @@ mod tests {
         assert!(quiet(&record, quiet_for));
     }
 
-    /// The name that `claude` gives the folder of the conversations of
-    /// the lead in `folder`, for a path of at most 200 characters.
-    fn conversations(folder: &Path) -> String {
-        let clone = folder.join("clone").to_string_lossy().into_owned();
-        let name: String = clone
-            .chars()
-            .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-            .collect();
-        assert!(name.len() <= CLAUDE_NAME, "{name}");
-        name
-    }
-
     /// 01M7GF9QGV86BENYWT1TDJPM64, 01M7FX6YQKTN9EVPTZJ9XB8PM4: the lead
     /// made more entries than the limit in its folder `projects`, so riff
-    /// sees no write after the end of its turn. After `riff lead clean`,
-    /// riff sees the write 59 s after the end again: the lead is in a turn.
+    /// sees no write after the end of its turn. `riff lead clean` reads at
+    /// most the limit of entries: it moves them, and says that `projects`
+    /// has more. Then riff sees the write 59 s after the end again: the
+    /// lead is in a turn. The next clean moves the rest.
     #[test]
     fn after_the_clean_riff_sees_the_turns_of_the_lead_again() {
         use std::time::{Duration, UNIX_EPOCH};
@@ -2583,26 +2592,37 @@ mod tests {
         let folder = folder_of(data.path(), "acme/app");
         let record = record_in(&folder);
         let projects = folder.join("claude/projects");
-        let own = projects.join(conversations(&folder));
+        let own = projects.join(claude_name(&folder.join("clone")));
         std::fs::create_dir_all(&own).unwrap();
         let ended = UNIX_EPOCH + Duration::from_secs(4_000_000_000);
         ended_at(&record, ended);
         let file = std::fs::File::create(own.join("s1.jsonl")).unwrap();
         file.set_modified(ended + Duration::from_secs(59)).unwrap();
-        for n in 0..crate::usage::MAX_ENTRIES {
+        let most = crate::usage::MAX_ENTRIES;
+        for n in 0..most {
             std::fs::write(projects.join(format!("{n}.jsonl")), "").unwrap();
         }
         assert!(last_write(&record).is_err());
         assert!(between_turns(&record));
-        let line = clean_projects(data.path(), "acme/app", 1).unwrap();
+        let error = clean_projects(data.path(), "acme/app", 1).unwrap_err();
         let left = folder.join(PROJECTS_LEFT).join("1");
-        let made = crate::usage::MAX_ENTRIES;
-        assert_eq!(line, text::lead_cleaned(&projects, made, &left));
+        let moved = std::fs::read_dir(&left).unwrap().count();
+        assert!(moved >= most - 1, "{moved}");
+        let more = text::lead_clean_more(&projects, moved, &left, most);
+        assert_eq!(error.to_string(), more);
         assert_eq!(
             last_write(&record),
             Ok(Some(ended + Duration::from_secs(59)))
         );
         assert!(!between_turns(&record));
+        let line = clean_projects(data.path(), "acme/app", 2).unwrap();
+        let again = folder.join(PROJECTS_LEFT).join("2");
+        assert_eq!(line, text::lead_cleaned(&projects, most - moved, &again));
+        let kept: Vec<_> = std::fs::read_dir(&projects)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        assert_eq!(kept, [own]);
     }
 
     /// 01M7FX6YQKTN9EVPTZJ9XB8PM4, 01M7GF9QGV86BENYWT1TDJPM64: the lead put
@@ -2633,35 +2653,118 @@ mod tests {
         assert!(!folder.join(PROJECTS_LEFT).exists());
     }
 
-    /// 01M7GF9QGV86BENYWT1TDJPM64: the path of the clone of the lead has
-    /// more than 200 characters, so `claude` names the folder of the
-    /// conversations with its first 200 characters, `-` and a hash. `riff
-    /// lead clean` keeps that folder, and moves an entry with the same
-    /// first 200 characters and no `-` after them.
-    #[test]
-    fn the_clean_keeps_the_conversations_of_a_clone_with_a_long_path() {
-        let dir = tempfile::tempdir().unwrap();
-        let data = dir.path().join("d".repeat(200));
-        let folder = folder_of(&data, "acme/app");
-        let full: String = folder
-            .join("clone")
+    /// The data folder of riff in `dir` whose clone of the lead of
+    /// `acme/app` gives a name of `chars` characters, as `claude` makes
+    /// it before its cut, and that name.
+    fn data_with_name_of(dir: &Path, chars: usize) -> (PathBuf, String) {
+        let short = folder_of(&dir.join("d"), "acme/app").join("clone");
+        let pad = chars - short.as_os_str().len();
+        let data = dir.join("d".repeat(pad + 1));
+        let clone = folder_of(&data, "acme/app").join("clone");
+        let full: String = clone
             .to_string_lossy()
             .chars()
             .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
             .collect();
-        assert!(full.len() > CLAUDE_NAME, "{full}");
+        assert_eq!(full.len(), chars);
+        (data, full)
+    }
+
+    /// 01M7GF9QGV86BENYWT1TDJPM64: the name of the folder of the
+    /// conversations of a clone whose path has 200 characters is its
+    /// whole path, and with 201 characters, its first 200 characters, `-`
+    /// and the hash that `claude` makes.
+    #[test]
+    fn a_name_of_200_characters_has_no_hash_and_one_more_has_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let (data, full) = data_with_name_of(dir.path(), CLAUDE_NAME);
+        let clone = folder_of(&data, "acme/app").join("clone");
+        assert_eq!(claude_name(&clone), full);
+        let (data, full) = data_with_name_of(dir.path(), CLAUDE_NAME + 1);
+        let clone = folder_of(&data, "acme/app").join("clone");
+        let name = claude_name(&clone);
+        let (start, hash) = name.split_at(CLAUDE_NAME);
+        assert_eq!(start, &full[..CLAUDE_NAME]);
+        assert!(hash.len() > 1 && hash.starts_with('-'), "{name}");
+        assert!(
+            hash[1..]
+                .bytes()
+                .all(|b| b.is_ascii_digit() || b.is_ascii_lowercase())
+        );
+    }
+
+    /// The hash of `claude` for a name over 200 characters: the hash that
+    /// Java gives the path as a string, with no sign, in base 36. Java
+    /// gives `hello` the hash 99162322, the emoji 😀 (two units of UTF-16)
+    /// 1772899, and `polygenelubricants` -2^31, whose size is 2^31.
+    #[test]
+    fn the_hash_of_a_long_name_is_the_hash_of_claude() {
+        assert_eq!(java_hash(""), 0);
+        assert_eq!(java_hash("hello"), 99_162_322);
+        assert_eq!(java_hash("😀"), 1_772_899);
+        assert_eq!(java_hash("polygenelubricants"), i32::MIN);
+        assert_eq!(base36(0), "0");
+        assert_eq!(base36(35), "z");
+        assert_eq!(base36(36), "10");
+        assert_eq!(base36(99_162_322), "1n1e4y");
+        assert_eq!(base36(u64::from(i32::MIN.unsigned_abs())), "zik0zk");
+    }
+
+    /// 01M7GF9QGV86BENYWT1TDJPM64: the path of the clone of the lead has
+    /// more than 200 characters, so `claude` names the folder of the
+    /// conversations with its first 200 characters, `-` and its hash.
+    /// `riff lead clean` keeps that folder only, and moves an entry with
+    /// the same first 200 characters and another hash, or no `-` after
+    /// them.
+    #[test]
+    fn the_clean_keeps_the_conversations_of_a_clone_with_a_long_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let (data, full) = data_with_name_of(dir.path(), CLAUDE_NAME + 50);
+        let folder = folder_of(&data, "acme/app");
         let projects = folder.join("claude/projects");
+        let own = projects.join(claude_name(&folder.join("clone")));
         let start = &full[..CLAUDE_NAME];
-        let own = projects.join(format!("{start}-1k2j3h"));
-        let other = projects.join(format!("{start}x"));
-        for entry in [&own, &other] {
-            std::fs::create_dir_all(entry).unwrap();
+        let others = [
+            format!("{start}-1k2j3h"),
+            format!("{start}x"),
+            start.to_owned(),
+        ];
+        std::fs::create_dir_all(&own).unwrap();
+        for other in &others {
+            std::fs::create_dir_all(projects.join(other)).unwrap();
         }
         let line = clean_projects(&data, "acme/app", 5).unwrap();
         let left = folder.join(PROJECTS_LEFT).join("5");
-        assert_eq!(line, text::lead_cleaned(&projects, 1, &left));
+        assert_eq!(line, text::lead_cleaned(&projects, others.len(), &left));
         assert!(own.is_dir());
-        assert!(left.join(other.file_name().unwrap()).is_dir());
+        for other in &others {
+            assert!(left.join(other).is_dir(), "{other}");
+        }
+    }
+
+    /// 01M7GF9QGV86BENYWT1TDJPM64: an entry of `projects` cannot move,
+    /// for an entry of the same name in the new folder that is no empty
+    /// folder. It stays, the error names it with the count of the moves,
+    /// and the other entries move.
+    #[test]
+    fn an_entry_that_stays_gives_the_error_of_the_clean() {
+        let data = tempfile::tempdir().unwrap();
+        let folder = folder_of(data.path(), "acme/app");
+        let projects = folder.join("claude/projects");
+        std::fs::create_dir_all(projects.join("x")).unwrap();
+        std::fs::write(projects.join("a.jsonl"), "").unwrap();
+        let left = folder.join(PROJECTS_LEFT).join("3");
+        std::fs::create_dir_all(left.join("x/full")).unwrap();
+        let error = clean_projects(data.path(), "acme/app", 3).unwrap_err();
+        let why = format!(
+            "move {}: {}",
+            projects.join("x").display(),
+            std::io::Error::from(nix::errno::Errno::ENOTEMPTY)
+        );
+        let stayed = text::lead_clean_stayed(&projects, 1, &left, 1, &why);
+        assert_eq!(error.to_string(), stayed);
+        assert!(projects.join("x").is_dir());
+        assert!(left.join("a.jsonl").is_file());
     }
 
     /// 01M7E7A8QM8SRPQN3G1BXVJW1R: the new clone takes the place of the

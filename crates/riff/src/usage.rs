@@ -178,6 +178,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
 
 use crate::local;
 use crate::pr::Gh;
@@ -335,21 +336,22 @@ pub fn now_ms() -> u64 {
         .map_or(0, |d| d.as_millis() as u64)
 }
 
-/// The part of one line of a transcript that the sum reads.
+/// The part of one line of a transcript that the sum reads. Each text
+/// stays in the line as its JSON, with no copy (01M7GF9G7ZNJD2SXZZ62XKJYBG).
 #[derive(Deserialize)]
-struct Line {
-    #[serde(default)]
-    timestamp: Option<String>,
-    #[serde(default)]
-    message: Option<Reply>,
+struct Line<'a> {
+    #[serde(default, borrow)]
+    timestamp: Option<&'a RawValue>,
+    #[serde(default, borrow)]
+    message: Option<Reply<'a>>,
 }
 
 #[derive(Deserialize)]
-struct Reply {
-    #[serde(default)]
-    id: Option<String>,
-    #[serde(default)]
-    model: Option<String>,
+struct Reply<'a> {
+    #[serde(default, borrow)]
+    id: Option<&'a RawValue>,
+    #[serde(default, borrow)]
+    model: Option<&'a RawValue>,
     #[serde(default)]
     usage: Option<Used>,
 }
@@ -366,6 +368,19 @@ struct Used {
     cache_read_input_tokens: u64,
 }
 
+/// The id of a reply in a transcript, as JSON: its id, else its time and
+/// the name of its model.
+#[derive(Hash)]
+enum Id<'a> {
+    Given(&'a str),
+    Made(u64, &'a str),
+}
+
+/// The id of a reply in a count: a hash of 64 bits of its [`Id`]
+/// (01M7GF9G7ZNJD2SXZZ62XKJYBG).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct ReplyId(u64);
+
 /// One reply of the model, as a count keeps it: a fixed size, whatever
 /// the size of its line (01M7GF9G7ZNJD2SXZZ62XKJYBG).
 #[derive(Clone, Copy, Debug)]
@@ -379,9 +394,11 @@ struct Kept {
 }
 
 /// Each reply in the text of a transcript: its id, the name of its model
-/// as a report has it ([`name`]), its time and its tokens. A line that is
-/// no reply with a time, a model and a usage is skipped.
-fn replies_in(transcript: &str) -> impl Iterator<Item = (String, String, u64, Tokens)> + '_ {
+/// as a report has it ([`model_name`]), its time and its tokens. A line
+/// that is no reply with a time, a model and a usage is skipped: a time
+/// is a JSON string with no escape. It copies no text of a line, apart
+/// from the first [`NAME_CHARS`] characters of the name of a model.
+fn replies_in(transcript: &str) -> impl Iterator<Item = (Id<'_>, String, u64, Tokens)> + '_ {
     transcript.lines().filter_map(|line| {
         let Ok(Line {
             timestamp: Some(at),
@@ -393,17 +410,68 @@ fn replies_in(transcript: &str) -> impl Iterator<Item = (String, String, u64, To
         let (Some(model), Some(used)) = (reply.model, reply.usage) else {
             return None;
         };
-        let at = chrono::DateTime::parse_from_rfc3339(&at).ok()?;
+        let at: &str = serde_json::from_str(at.get()).ok()?;
+        let at = chrono::DateTime::parse_from_rfc3339(at).ok()?;
         let at_ms = u64::try_from(at.timestamp_millis()).unwrap_or(0);
+        let name = model_name(model.get())?;
         let tokens = Tokens {
             input: used.input_tokens,
             output: used.output_tokens,
             cache_write: used.cache_creation_input_tokens,
             cache_read: used.cache_read_input_tokens,
         };
-        let id = reply.id.unwrap_or_else(|| format!("{at_ms} {model}"));
-        Some((id, name(&model, NAME_CHARS), at_ms, tokens))
+        let id = match reply.id {
+            Some(id) => Id::Given(id.get()),
+            None => Id::Made(at_ms, model.get()),
+        };
+        Some((id, name, at_ms, tokens))
     })
+}
+
+/// The name of a model as a report has it ([`name`]), from `json`, the
+/// name in a transcript as JSON. It reads at most the first
+/// [`NAME_CHARS`] characters of the name, so a long name makes no copy
+/// of its bytes (01M7GF9G7ZNJD2SXZZ62XKJYBG). `None` when `json` is no
+/// JSON string. A half of a pair of UTF-16 with no other half is a
+/// character that a name cannot hold.
+fn model_name(json: &str) -> Option<String> {
+    let mut chars = json.strip_prefix('"')?.chars();
+    let mut text = String::new();
+    for _ in 0..NAME_CHARS {
+        let c = match chars.next()? {
+            '"' => break,
+            '\\' => match chars.next()? {
+                'u' => {
+                    let unit = unit_of(&mut chars)?;
+                    if (0xD800..0xDC00).contains(&unit) {
+                        let mut low = chars.clone();
+                        let pair = low.next() == Some('\\')
+                            && low.next() == Some('u')
+                            && unit_of(&mut low).is_some_and(|low| (0xDC00..0xE000).contains(&low));
+                        if pair {
+                            chars = low;
+                        }
+                    }
+                    char::from_u32(unit).unwrap_or(char::REPLACEMENT_CHARACTER)
+                }
+                'b' => '\u{8}',
+                'f' => '\u{c}',
+                'n' => '\n',
+                'r' => '\r',
+                't' => '\t',
+                c => c,
+            },
+            c => c,
+        };
+        text.push(c);
+    }
+    Some(name(&text, NAME_CHARS))
+}
+
+/// The unit of UTF-16 of the 4 hex digits at the start of `chars`, after
+/// `\u` in a JSON string.
+fn unit_of(chars: &mut std::str::Chars) -> Option<u32> {
+    (0..4).try_fold(0, |unit, _| Some(unit * 16 + chars.next()?.to_digit(16)?))
 }
 
 /// One read of the transcripts of a count at a time in a process of riff
@@ -421,7 +489,7 @@ static ONE_COUNT: std::sync::Mutex<()> = std::sync::Mutex::new(());
 #[derive(Debug)]
 pub struct Replies {
     /// Each reply, by the hash of its id.
-    replies: HashMap<u64, Kept>,
+    replies: HashMap<ReplyId, Kept>,
     /// The name of each model, at the index of [`Kept::model`].
     models: Vec<String>,
     /// The hash of the ids, with a key of its own.
@@ -479,7 +547,7 @@ impl Replies {
         // over a limit adds none.
         let (mut ids, mut models) = (std::collections::HashSet::new(), Vec::new());
         for (id, model, _, _) in replies_in(transcript) {
-            let id = self.ids.hash_one(&id);
+            let id = ReplyId(self.ids.hash_one(&id));
             if !self.replies.contains_key(&id)
                 && ids.insert(id)
                 && self.replies.len() + ids.len() > self.limits.replies
@@ -507,7 +575,7 @@ impl Replies {
                 model,
                 tokens,
             };
-            self.replies.insert(self.ids.hash_one(&id), kept);
+            self.replies.insert(ReplyId(self.ids.hash_one(&id)), kept);
         }
         Ok(())
     }
@@ -823,36 +891,23 @@ thread_local! {
     static WRITES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-/// Records `transcript` as a transcript of `session`.
+/// Records each of `transcripts` as a transcript of `session`, in one
+/// write of the marks: a session can have one transcript in each of
+/// [`MAX_ENTRIES`] folders of projects. A transcript that the marks have
+/// stays one time.
 ///
 /// ```
+/// use std::path::PathBuf;
+///
 /// let marks = tempfile::tempdir()?;
-/// riff::usage::saw(marks.path(), "a6cf", "/t/one.jsonl".as_ref())?;
-/// riff::usage::saw(marks.path(), "a6cf", "/t/one.jsonl".as_ref())?;
-/// riff::usage::saw(marks.path(), "a6cf", "/t/two.jsonl".as_ref())?;
+/// let [one, two] = ["/t/one.jsonl", "/t/two.jsonl"].map(PathBuf::from);
+/// riff::usage::saw(marks.path(), "a6cf", &[one.clone(), one.clone()])?;
+/// riff::usage::saw(marks.path(), "a6cf", &[one, two])?;
 /// assert_eq!(riff::usage::load(marks.path(), "a6cf").transcripts.len(), 2);
 /// assert_eq!(riff::usage::sessions(marks.path()), ["a6cf"]);
 /// # Ok::<(), std::io::Error>(())
 /// ```
-pub fn saw(dir: &Path, session: &str, transcript: &Path) -> io::Result<()> {
-    if load(dir, session)
-        .transcripts
-        .iter()
-        .any(|known| known == transcript)
-    {
-        return Ok(());
-    }
-    change(dir, session, |ledger| {
-        if !ledger.transcripts.iter().any(|known| known == transcript) {
-            ledger.transcripts.push(transcript.to_owned());
-        }
-    })
-}
-
-/// Records each of `transcripts` as a transcript of `session`, in one
-/// write of the marks: a session can have one transcript in each of
-/// [`MAX_ENTRIES`] folders of projects.
-fn saw_each(dir: &Path, session: &str, transcripts: &[PathBuf]) -> io::Result<()> {
+pub fn saw(dir: &Path, session: &str, transcripts: &[PathBuf]) -> io::Result<()> {
     change(dir, session, |ledger| {
         let mut known: BTreeSet<PathBuf> = ledger.transcripts.iter().cloned().collect();
         for transcript in transcripts {
@@ -1707,13 +1762,6 @@ impl Meter {
         })
     }
 
-    /// Records the transcript of `session`. A failure goes to stderr.
-    pub fn saw(&self, session: &str, transcript: &Path) {
-        if let Err(e) = saw(&self.dir, session, transcript) {
-            eprintln!("riff: cannot record the transcript of the session: {e}");
-        }
-    }
-
     /// Records the claim of `item` in `thread` of `session`, from now.
     /// A failure goes to stderr.
     pub fn started(&self, session: &str, thread: &str, item: &str) {
@@ -1772,7 +1820,7 @@ impl Meter {
         if transcripts.is_empty() {
             return None;
         }
-        saw_each(&self.dir, session, transcripts)
+        saw(&self.dir, session, transcripts)
             .and_then(|()| started(&self.dir, session, thread, item, from_ms))
             .and_then(|()| ended(&self.dir, session, thread, item, now))
             .transpose()
@@ -2854,26 +2902,98 @@ mod tests {
         assert_eq!(replies.sum(&[(0, u64::MAX)])["opus"].output, 2);
     }
 
-    /// 01M7GF9G7ZNJD2SXZZ62XKJYBG: a count waits for the end of the read
-    /// before it: here the test holds the lock of the counts.
+    /// 01M7GF9G7ZNJD2SXZZ62XKJYBG: a count holds the lock of the counts
+    /// in each read: in the read of a transcript that is no text, the log
+    /// of the count finds the lock taken. So a count waits for the end of
+    /// the read before it.
     #[test]
     fn one_count_reads_at_a_time() {
         let dir = tempfile::tempdir().unwrap();
         let main = dir.path().join("s1.jsonl");
-        write(&main, &[reply(NINE, "m1", "opus", 1)]);
-        let held = ONE_COUNT
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let (send, done) = std::sync::mpsc::channel();
-        let count = std::thread::spawn(move || {
-            let models = Replies::read(&[main]).sum(&[(0, u64::MAX)]);
-            send.send(models).unwrap();
+        std::fs::write(&main, [0xff]).unwrap();
+        let mut held = Vec::new();
+        Replies::read_within(&[main], Limits::COUNT, &mut |_| {
+            held.push(ONE_COUNT.try_lock().is_err());
         });
-        let waited = done.recv_timeout(std::time::Duration::from_millis(300));
-        drop(held);
-        assert!(waited.is_err(), "the count did not wait: {waited:?}");
-        assert_eq!(done.recv().unwrap()["opus"].output, 1);
-        count.join().unwrap();
+        assert_eq!(held, [true]);
+    }
+
+    /// 01M7FX6SWN3DGZMH5HS9BWEBY7: a count with room for 2 entries, and a
+    /// transcript with 10 helpers. The list of the helpers reads at most
+    /// the entry that is left and one more: the count reads one entry past
+    /// its limit, not the 10 helpers.
+    #[test]
+    fn a_count_lists_no_more_entries_than_are_left() {
+        let claude = tempfile::tempdir().unwrap();
+        let [main, a, _, _] = transcripts_with_helpers(claude.path());
+        let helpers = a.parent().unwrap();
+        for n in 0..8 {
+            write(&helpers.join(format!("agent-x{n}.jsonl")), &[]);
+        }
+        let budget = Limits {
+            entries: 2,
+            ..Limits::COUNT
+        };
+        let (replies, log) = logged(&[main], budget);
+        assert_eq!(
+            log,
+            [text::transcripts_stopped(helpers, CountLimit::Entries(2))]
+        );
+        assert_eq!(replies.taken.entries, 2 + 1);
+    }
+
+    /// 01M7GF9G7ZNJD2SXZZ62XKJYBG: the name of a model from its JSON: the
+    /// escapes of JSON, a pair of UTF-16 as one character, and at most the
+    /// first 100 characters. A value that is no string gives no name. A
+    /// name that `serde_json` writes reads as the name of a report.
+    #[test]
+    fn the_name_of_a_model_reads_only_its_first_characters() {
+        assert_eq!(model_name(r#""opus/5""#).as_deref(), Some("opus-5"));
+        assert_eq!(model_name(r#""op\/us\n\"\\""#).as_deref(), Some("op-us---"));
+        assert_eq!(model_name(r#""a😀b""#).as_deref(), Some("a-b"));
+        assert_eq!(model_name(r#""a\ud83db""#).as_deref(), Some("a-b"));
+        assert_eq!(model_name(r#""""#).as_deref(), Some("-"));
+        let long = format!("\"{}\"", r"m".repeat(300));
+        assert_eq!(model_name(&long), Some("m".repeat(NAME_CHARS)));
+        for json in ["5", "null", "{}", "[\"opus\"]"] {
+            assert_eq!(model_name(json), None, "{json}");
+        }
+        for text in [
+            "claude-opus-5-5",
+            "a\u{1}b\tc",
+            "😀x",
+            "é",
+            &"z".repeat(150),
+        ] {
+            let json = serde_json::to_string(text).unwrap();
+            assert_eq!(model_name(&json), Some(name(text, NAME_CHARS)), "{text}");
+        }
+    }
+
+    /// 01M7GF9G7ZNJD2SXZZ62XKJYBG: a reply with no id is its time and its
+    /// model: two lines with the same time and model are one reply, and a
+    /// line with another model is another reply. A time or a model that is
+    /// no string makes the line no reply.
+    #[test]
+    fn a_reply_with_no_id_is_its_time_and_its_model() {
+        let line = |at: &str, model: &str, output: u64| {
+            format!(
+                r#"{{"timestamp":{at},"message":{{"model":{model},"usage":{{"output_tokens":{output}}}}}}}"#
+            )
+        };
+        let at = r#""2026-10-02T09:00:00Z""#;
+        let lines = [
+            line(at, r#""opus""#, 1),
+            line(at, r#""opus""#, 2),
+            line(at, r#""haiku""#, 4),
+            line("5", r#""opus""#, 8),
+            line(at, "5", 16),
+        ];
+        let mut replies = Replies::default();
+        replies.add(&lines.join("\n")).unwrap();
+        let models = replies.sum(&[(0, u64::MAX)]);
+        assert_eq!((models["opus"].output, models["haiku"].output), (2, 4));
+        assert_eq!(models.len(), 2);
     }
 
     /// 01M7FX6SZ88S06N1AT6WJHKNMX: a container session names a folder of
@@ -2913,7 +3033,7 @@ mod tests {
         write(&one, &[reply(NINE + 1, "m1", "opus", 1)]);
         write(&two, &[reply(NINE + 2, "m2", "opus", 2)]);
         write(&three, &[reply(NINE + 3, "m3", "opus", 4)]);
-        saw(marks.path(), "a6cf", &one).unwrap();
+        saw(marks.path(), "a6cf", std::slice::from_ref(&one)).unwrap();
         let meter = Meter {
             dir: marks.path().to_owned(),
             gh: Gh::at(marks.path().join("no-gh")),
@@ -2944,10 +3064,10 @@ mod tests {
         );
         write(&one, &[reply(NINE + 1, "m1", "opus", 1)]);
         write(&two, &[reply(NINE + 2, "m2", "haiku", 2)]);
-        saw(marks.path(), "a6cf", &one).unwrap();
+        saw(marks.path(), "a6cf", std::slice::from_ref(&one)).unwrap();
         started(marks.path(), "a6cf", "acme/app", "issue-7", NINE).unwrap();
         // `/clear` starts a new transcript.
-        saw(marks.path(), "a6cf", &two).unwrap();
+        saw(marks.path(), "a6cf", std::slice::from_ref(&two)).unwrap();
         let claim = ended(marks.path(), "a6cf", "acme/app", "issue-7", NINE + HOUR)
             .unwrap()
             .unwrap();
@@ -2980,7 +3100,7 @@ mod tests {
             ],
         );
         let dir = marks.path();
-        saw(dir, "a6cf", &transcript).unwrap();
+        saw(dir, "a6cf", std::slice::from_ref(&transcript)).unwrap();
         started(dir, "a6cf", "acme/app", "issue-7", NINE).unwrap();
         started(dir, "a6cf", "acme/app", "verify-issue-9", NINE + HOUR).unwrap();
         let verify = ended(dir, "a6cf", "acme/app", "verify-issue-9", NINE + 2 * HOUR)
@@ -3022,7 +3142,7 @@ mod tests {
             ],
         );
         let dir = marks.path();
-        saw(dir, "a6cf", &transcript).unwrap();
+        saw(dir, "a6cf", std::slice::from_ref(&transcript)).unwrap();
         started(dir, "a6cf", "acme/app", "issue-7", NINE).unwrap();
         ended(dir, "a6cf", "acme/app", "issue-7", NINE + HOUR).unwrap();
         let no_issue = load(dir, "a6cf").no_issue(NINE + 2 * HOUR);
@@ -3042,7 +3162,7 @@ mod tests {
         let transcript = marks.path().join("t.jsonl");
         write(&transcript, &[reply(NINE + 1, "work", "opus", 70)]);
         let dir = marks.path();
-        saw(dir, "a6cf", &transcript).unwrap();
+        saw(dir, "a6cf", std::slice::from_ref(&transcript)).unwrap();
         started(dir, "a6cf", "acme/app", "issue-7", NINE).unwrap();
         let before = load(dir, "a6cf");
         let claim = so_far(dir, "a6cf", "issue-7", NINE + HOUR).unwrap();

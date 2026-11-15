@@ -7364,6 +7364,30 @@ pub fn config_too_large(path: &Path, most: u64) -> String {
     format!("{} {REMOVE_IT}", host_file_too_large(path, most))
 }
 
+/// The error of a start of a session when the new text of the file
+/// `path` of its Claude folder, with what riff adds, has more than `most`
+/// bytes ([`crate::run::claude_folder`], 01M7FNTSHXPQXXKZF761V0NN9Z):
+/// riff writes no file that it cannot read again, and the person removes
+/// the file.
+///
+/// ```
+/// use std::path::Path;
+///
+/// assert_eq!(
+///     riff::text::config_grows_too_large(Path::new("/l/o-r/claude/settings.json"), 1 << 20),
+///     "riff writes at most 1MB of a file in a folder that a session can write: \
+///      /l/o-r/claude/settings.json with what riff adds is larger. Remove it, and start again."
+/// );
+/// ```
+pub fn config_grows_too_large(path: &Path, most: u64) -> String {
+    format!(
+        "riff writes at most {} of a file in a folder that a session can write: {} with what riff \
+         adds is larger. {REMOVE_IT}",
+        limit_words(most),
+        path.display()
+    )
+}
+
 /// The words of a limit of `most` bytes: bytes below 1 MB, else
 /// [`size_words`].
 fn limit_words(most: u64) -> String {
@@ -15522,21 +15546,55 @@ pub fn lead_runs(repo: &str, name: &str) -> String {
 /// );
 /// ```
 pub fn lead_cleaned(projects: &Path, moved: usize, left: &Path) -> String {
+    if moved == 0 {
+        return format!(
+            "riff moved no entry of {}: it holds only the conversations of the lead.",
+            projects.display()
+        );
+    }
+    format!(
+        "{} riff will see the turns of the lead again at its next look.",
+        projects_moved(projects, moved, left)
+    )
+}
+
+/// The first sentence of each line of `riff lead clean`: riff moved
+/// `moved` entries of the folder `projects` into the folder `left`.
+fn projects_moved(projects: &Path, moved: usize, left: &Path) -> String {
     let entries = match moved {
-        0 => {
-            return format!(
-                "riff moved no entry of {}: it holds only the conversations of the lead.",
-                projects.display()
-            );
-        }
+        0 => "no entry".to_owned(),
         1 => "1 entry".to_owned(),
         n => format!("{n} entries"),
     };
     format!(
-        "riff moved {entries} of {} to {}. riff will see the turns of the lead again at its next \
-         look.",
+        "riff moved {entries} of {} to {}.",
         projects.display(),
         left.display()
+    )
+}
+
+/// The error of `riff lead clean` when the folder `projects` of the lead
+/// has more than `most` entries (01M7GF9QGV86BENYWT1TDJPM64,
+/// 01M7FNTSHXPQXXKZF761V0NN9Z): riff moved `moved` entries into the
+/// folder `left`, and the person runs the command again.
+///
+/// ```
+/// use std::path::Path;
+///
+/// let projects = Path::new("/d/leads/o-r/claude/projects");
+/// let left = Path::new("/d/leads/o-r/projects-left/7");
+/// assert_eq!(
+///     riff::text::lead_clean_more(projects, 9_999, left, 10_000),
+///     "riff moved 9999 entries of /d/leads/o-r/claude/projects to /d/leads/o-r/projects-left/7. \
+///      riff lists at most 10000 entries of a folder that a session can write: \
+///      /d/leads/o-r/claude/projects has more. Run riff lead clean again."
+/// );
+/// ```
+pub fn lead_clean_more(projects: &Path, moved: usize, left: &Path, most: usize) -> String {
+    format!(
+        "{} {} Run riff lead clean again.",
+        projects_moved(projects, moved, left),
+        host_file_too_many(projects, most)
     )
 }
 
@@ -15565,15 +15623,9 @@ pub fn lead_clean_stayed(
     stayed: usize,
     why: &str,
 ) -> String {
-    let entries = match moved {
-        0 => "no entry".to_owned(),
-        1 => "1 entry".to_owned(),
-        n => format!("{n} entries"),
-    };
     format!(
-        "riff moved {entries} of {} to {}. riff cannot move {stayed} more: {}.",
-        projects.display(),
-        left.display(),
+        "{} riff cannot move {stayed} more: {}.",
+        projects_moved(projects, moved, left),
         escaped(why)
     )
 }

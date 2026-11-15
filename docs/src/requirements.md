@@ -8119,11 +8119,14 @@ of this part when they merge.
   the lead. That folder has the name that `claude` gives the path of the
   clone of the lead: `-` for each character that is no ASCII letter and
   no digit, and for a name over 200 characters, its first 200
-  characters, `-` and a hash. riff moves each entry with no follow of a
-  link, as one entry, into a new folder `projects-left/TIME` in the
-  folder of the lead, which no session writes, and names that folder. A
-  link at `projects` gives the error that names the link, and riff moves
-  nothing. In a container, the command refuses.
+  characters, `-` and the hash of the path that `claude` makes. riff
+  moves each entry with no follow of a link, as one entry, into a new
+  folder `projects-left/TIME` in the folder of the lead, which no
+  session writes, and names that folder. A link at `projects` gives the
+  error that names the link, and riff moves nothing. riff reads at most
+  10,000 entries of `projects` at each run: when it has more, riff
+  moves the entries that it read, and its error tells the person to run
+  the command again. In a container, the command refuses.
 
 ### The first run
 
@@ -8918,17 +8921,18 @@ of this part when they merge.
 - **01M7FNTSHXPQXXKZF761V0NN9Z** The host reads at most a limit of each
   file in a folder that a container writes, and at most a limit of the
   entries of each folder there: 256 MB of a transcript, 16 MB of
-  `.claude.json` and of `settings.json`, 1 MB of the file `alternates`
-  of a clone, and 10,000 entries of a folder. The host reads none of a
-  file whose size is over its limit, and stops one byte past the limit
-  when the file grows in the read. A file over its limit gives an error
-  that names it, and a folder with more entries gives an error that
-  names the folder. riff counts no tokens of a transcript over its
-  limit, and the log names it. A start with a `.claude.json` or a
-  `settings.json` over its limit writes neither file, and its error
-  tells the person to remove the file. A line of the log where riff
-  goes on past a limit, or counts no tokens of a transcript, gives the
-  person no step.
+  `.claude.json`, 1 MB of `settings.json`, 1 MB of the file
+  `alternates` of a clone, and 10,000 entries of a folder. The host
+  reads none of a file whose size is over its limit, and stops one byte
+  past the limit when the file grows in the read. A file over its limit
+  gives an error that names it, and a folder with more entries gives an
+  error that names the folder. riff counts no tokens of a transcript
+  over its limit, and the log names it. A start with a `.claude.json`
+  or a `settings.json` over its limit, or with a new text of riff over
+  that limit, writes neither file, and its error tells the person to
+  remove the file. riff parses no value of `.claude.json` that it does
+  not change. A line of the log where riff goes on past a limit, or
+  counts no tokens of a transcript, gives the person no step.
 - **01M7FX6SWN3DGZMH5HS9BWEBY7** One count of the tokens of a session
   reads at most 1 GB of transcripts in all, with the transcripts of its
   helper agents, and at most 100,000 entries in all: each transcript
@@ -8957,8 +8961,10 @@ of this part when they merge.
   counts no tokens of it or of the files after it, and the log names it.
   A count keeps no line of its log in memory. A process of riff reads
   the transcripts of one count at a time, and holds the bytes of each
-  read in memory one time. So the memory of the counts of the riff
-  daemon does not grow with the number of sessions that end at once.
+  read in memory one time: a count copies no text of a line, apart from
+  the first 100 characters of the name of a model. So the memory of the
+  counts of the riff daemon does not grow with the number of sessions
+  that end at once.
 
 ### Process
 

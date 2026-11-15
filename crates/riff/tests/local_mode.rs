@@ -115,7 +115,7 @@ fn riff_says_why_it_cannot_make_the_folder_private() {
 fn a_usage_mark_has_0600_in_a_marks_folder_of_0700() {
     let state = tempfile::tempdir().unwrap();
     let marks = state.path().join("riff");
-    riff::usage::saw(&marks, "a6cf", "/t/one.jsonl".as_ref()).unwrap();
+    riff::usage::saw(&marks, "a6cf", &["/t/one.jsonl".into()]).unwrap();
     assert_eq!(mode(&marks), 0o700);
     assert_eq!(mode(&marks.join("usage-a6cf.json")), 0o600);
     assert_eq!(mode(&marks.join("usage-a6cf.lock")), 0o600);

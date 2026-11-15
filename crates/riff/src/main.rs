@@ -2003,8 +2003,10 @@ enum LeadCommand {
     /// new folder projects-left/TIME in the folder of the lead on this
     /// host, and names it. No session writes there. riff follows no link:
     /// a link moves as a link, and a link at projects stops the command
-    /// before it moves an entry. Run it on the host of the lead, when the
-    /// log of the riff daemon says that riff sees no turn of the lead.
+    /// before it moves an entry. riff reads at most 10000 entries of
+    /// projects at each run: when projects has more, run the command
+    /// again. Run it on the host of the lead, when the log of the riff
+    /// daemon says that riff sees no turn of the lead.
     Clean,
 }
 
@@ -5112,6 +5114,32 @@ mod tests {
             let of_its_own = own.iter().any(|own| row.args.starts_with(own));
             let wanted = row.way == Way::Host && !of_its_own;
             assert_eq!(refuses, wanted, "riff {}", row.args.join(" "));
+        }
+    }
+
+    /// 01M74A8CXVRD352VRJ9FH54HJ1: the list of the book of the commands
+    /// that refuse in a container before each call names each command of
+    /// [`super::needs_the_host`].
+    #[test]
+    fn the_book_names_each_command_that_needs_the_host() {
+        use clap::Parser;
+        let book = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/src/how-it-works.md"
+        ))
+        .unwrap();
+        let book = book.split_whitespace().collect::<Vec<_>>().join(" ");
+        let start = book
+            .find("refuse in the container before each call:")
+            .expect("the list of the book");
+        let list = &book[start..];
+        let list = &list[..list.find("Run them in a terminal on the host").unwrap()];
+        for row in riff::reach::COMMANDS {
+            let words = std::iter::once("riff").chain(row.args.iter().copied());
+            let command = Cli::try_parse_from(words).unwrap().command.unwrap();
+            if let Some(words) = super::needs_the_host(&command) {
+                assert!(list.contains(&format!("`{words}`")), "{words}: {list}");
+            }
         }
     }
 

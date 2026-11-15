@@ -203,7 +203,7 @@ impl Machine {
     /// Starts `session`: riff knows the path of its transcript.
     async fn start(&self, session: &str) {
         let marks = self.env.riff_home().join("state");
-        riff::usage::saw(&marks, session, &self.transcript(session)).unwrap();
+        riff::usage::saw(&marks, session, &[self.transcript(session)]).unwrap();
     }
 
     /// Makes the riff run, with `session` as the lead.
@@ -917,7 +917,7 @@ async fn the_release_tool_puts_the_tokens_of_its_claim_on_the_issue() {
     let client = ().serve(client_io).await.unwrap();
 
     let transcript = marks.path().join("a1.jsonl");
-    riff::usage::saw(marks.path(), "a1", &transcript).unwrap();
+    riff::usage::saw(marks.path(), "a1", std::slice::from_ref(&transcript)).unwrap();
     let claimed = call(&client, "claim", json!({ "item": "issue-12" })).await;
     assert!(claimed.contains("You hold issue-12"), "{claimed}");
     std::fs::write(&transcript, reply(&now(), "m1", OPUS, [1, 2, 3, 4])).unwrap();
