@@ -14,8 +14,9 @@
 //! the daemon looks for its PASS or FAIL: when there is none, or riff
 //! refuses its PASS for a member of the council with no line, it posts
 //! the same note for the item `verify-issue-N`
-//! (01M7G6H601C6NYC7ACSF6GVW50). The lead reads it with `riff session
-//! why ITEM` ([`read`]).
+//! (01M7G6H601C6NYC7ACSF6GVW50). The person posts it when riff refuses
+//! a kept PASS after the reset of a limit of GitHub ([`crate::kept`]).
+//! The lead reads it with `riff session why ITEM` ([`read`]).
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -67,6 +68,7 @@
 //! ```
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use anyhow::Result;
 use riff_client::api::Api;
@@ -196,22 +198,42 @@ impl End {
     /// steps after the end `found` ([`Found::said`]). It reads the events
     /// of the session, and replaces each secret of `scrub`.
     pub fn of(record: &crate::daemon::Record, ended: Ended, found: Found, scrub: &Scrub) -> End {
-        let events = std::fs::read_to_string(record.folder.join(EVENTS)).unwrap_or_default();
-        let head = record
-            .job
-            .as_ref()
-            .and_then(|job| job.work.commit())
-            .map(|commit| commit.get(..7).unwrap_or(commit).to_owned());
+        let commit = record.job.as_ref().and_then(|job| job.work.commit());
+        let session = (record.live.item.as_str(), record.live.session.as_str());
+        End::in_folder(session, commit, &record.folder, ended, found, scrub)
+    }
+
+    /// [`End::of`] for the session `(item, session ID)`, whose work is for
+    /// the head commit `commit`, with its events in `folder`: the end of a
+    /// verify whose kept result riff reports after the reset of a limit of
+    /// GitHub ([`crate::kept`]).
+    ///
+    /// ```
+    /// use riff::daemon::{EVENTS, Ended};
+    /// use riff::ends::{End, Found};
+    /// use riff::run::Scrub;
+    ///
+    /// let folder = tempfile::tempdir()?;
+    /// std::fs::write(folder.path().join(EVENTS), "the result\n")?;
+    /// let clean = Ended { code: Some(0), failed: false };
+    /// let session = ("verify-issue-7", "1a2b3c4d5e6f");
+    /// let end = End::in_folder(session, Some("988cb7b1"), folder.path(), clean, Found::NoVerdict, &Scrub::new([]));
+    /// assert_eq!(end.body(), "ended item=verify-issue-7 session=1a2b3c4d head=988cb7b code=0 failed=no denied=0: exit code 0, and no PASS or FAIL\nthe result");
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn in_folder(
+        (item, session): (&str, &str),
+        commit: Option<&str>,
+        folder: &Path,
+        ended: Ended,
+        found: Found,
+        scrub: &Scrub,
+    ) -> End {
+        let events = std::fs::read_to_string(folder.join(EVENTS)).unwrap_or_default();
         End {
-            head,
+            head: commit.map(|commit| commit.get(..7).unwrap_or(commit).to_owned()),
             said: found.said(),
-            ..End::from_events(
-                &record.live.item,
-                &record.live.session,
-                ended,
-                &events,
-                scrub,
-            )
+            ..End::from_events(item, session, ended, &events, scrub)
         }
     }
 

@@ -3867,7 +3867,8 @@ with no PASS or FAIL use these starts. riff refuses a PASS whose result
 has no line for a member of the council (see
 [The findings of the council](how-it-works.md#the-findings-of-the-council)).
 Such a PASS counts as no PASS or FAIL, and its session leaves a record
-too.
+too. This is also true when riff kept the PASS for a limit of GitHub
+and refuses it after the reset.
 
 ```mermaid
 flowchart TD

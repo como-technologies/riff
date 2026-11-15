@@ -17,6 +17,11 @@
 //! ([`crate::daemon::sweep`]). The report of a kept PASS reads the council
 //! of the pull request in the main clone of the wave, never in the clone
 //! of the folder ([`crate::pr::report`], 01M7DZ4E5BZAD38E3K9A3N277E).
+//! When riff refuses a kept PASS for a member of the council with no
+//! line, the person posts the end of the session of the verify in the
+//! thread `ends` before the folder goes, as the end step does
+//! ([`crate::ends`], 01M7G6H601C6NYC7ACSF6GVW50). So the file has the
+//! session and how it ended.
 //!
 //! ```mermaid
 //! flowchart TD
@@ -25,7 +30,9 @@
 //!     R -- "fails: the limit is out" --> K["keep the result in the folder"]
 //!     K --> W["the wave waits for the reset"]
 //!     W --> H{"the pull request is open<br/>at the same head commit?"}
-//!     H -- yes --> R2["report, post, and remove the file"]
+//!     H -- yes --> R2{"report to GitHub"}
+//!     R2 -- "done" --> P2["post, and remove the file"]
+//!     R2 -- "refused: a member of the council<br/>has no line" --> N["a record in ends, a message<br/>to the lead; the folder goes"]
 //!     H -- "no: the head changed, or it closed" --> D["drop the result;<br/>the wave starts a new verify"]
 //! ```
 //!
@@ -39,6 +46,8 @@ use riff_client::api::Api;
 use riff_core::name::SessionUri;
 use serde::{Deserialize, Serialize};
 
+use crate::daemon::Ended;
+use crate::ends::{self, End, Found};
 use crate::pr::{self, Gh, Verdict};
 use crate::wave::Wave;
 use crate::{ghcalls, run, text};
@@ -53,6 +62,10 @@ pub struct Kept {
     pub repo: String,
     /// The item of the verify, for example `verify-issue-12`.
     pub item: String,
+    /// The session ID of the verify.
+    pub session: String,
+    /// How the session of the verify ended.
+    pub ended: Ended,
     /// The pull request that the verify tested.
     pub pull: u64,
     /// The commit that the verifier tested.
@@ -67,6 +80,7 @@ impl Kept {
     /// Writes the result in `folder`.
     ///
     /// ```
+    /// use riff::daemon::Ended;
     /// use riff::kept::Kept;
     /// use riff::pr::Verdict;
     ///
@@ -74,6 +88,8 @@ impl Kept {
     /// let kept = Kept {
     ///     repo: "o/r".into(),
     ///     item: "verify-issue-12".into(),
+    ///     session: "9f8e7d6c5b4a".into(),
+    ///     ended: Ended { code: Some(0), failed: false },
     ///     pull: 40,
     ///     commit: "1a2b3c4d5e".into(),
     ///     verdict: Verdict::Pass,
@@ -187,6 +203,9 @@ async fn report_one(
         Err(e) if ghcalls::is_limit_error(&e) => return Err(e),
         Err(e) => {
             // The same end as a report that fails with no kept result.
+            if e.is::<crate::council::result::NoLine>() {
+                post_end(api, me, folder, kept).await;
+            }
             let _ = std::fs::remove_dir_all(folder);
             // The read above found the pull request open.
             let body = crate::wave::no_report(item, *pull, &e, true);
@@ -210,4 +229,26 @@ async fn report_one(
     }
     crate::wave::post_report(api, me, &thread, (*verdict, *pull), &reported, result).await?;
     Ok(line)
+}
+
+/// Posts the end of the session of the verify of `kept`, with no PASS or
+/// FAIL, in the thread `ends`, as `me` ([`ends::post`],
+/// 01M7G6H601C6NYC7ACSF6GVW50). It reads the events in `folder`, so it
+/// comes before the folder goes. A fault of the post goes to the log of
+/// the daemon.
+async fn post_end(api: &Api, me: &SessionUri, folder: &Path, kept: &Kept) {
+    let scrub = run::Scrub::new(crate::session_relay::secrets_here());
+    let session = (kept.item.as_str(), kept.session.as_str());
+    let commit = Some(kept.commit.as_str());
+    let end = End::in_folder(
+        session,
+        commit,
+        folder,
+        kept.ended,
+        Found::NoVerdict,
+        &scrub,
+    );
+    if let Err(e) = ends::post(api, me, &end).await {
+        eprintln!("riff daemon: {}: {e:#}", kept.item);
+    }
 }

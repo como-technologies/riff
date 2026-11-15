@@ -7553,7 +7553,9 @@ of this part when they merge.
   (01M7CFBZSQEEZNZBR9H1S54GS1) leaves one record in the thread `ends`,
   as a verify with no PASS or FAIL does (01M5SMP2D4MGME90EHVKAQHQ26).
   Its reason says "no PASS or FAIL", and the post goes before the folder
-  of the verify goes. `riff session why verify-issue-N` shows it.
+  of the verify goes. `riff session why verify-issue-N` shows it. A
+  kept PASS that riff refuses after the reset of a limit of GitHub
+  (01M6H1N332TZ17CQQ8A5CQKG7B) leaves the same record.
 
 ### The lead, the view and the takeover
 

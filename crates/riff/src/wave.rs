@@ -4104,6 +4104,8 @@ async fn after_verify(
             let result = kept::Kept {
                 repo: wave.repo.clone(),
                 item: item.clone(),
+                session: record.live.session.clone(),
+                ended,
                 pull,
                 commit: commit.to_owned(),
                 verdict,
@@ -14377,6 +14379,8 @@ esac
             Some(kept::Kept {
                 repo: "o/r".into(),
                 item: "verify-issue-12".into(),
+                session: record.live.session.clone(),
+                ended,
                 pull: 40,
                 commit: "1a2b3c4".into(),
                 verdict: Verdict::Fail,
@@ -14446,6 +14450,11 @@ esac
         assert!(!record.folder.exists(), "the folder of a FAIL goes");
         assert!(kept::find(sessions.path(), "o/r").is_empty());
         assert!(report().await.is_empty(), "reported one time");
+        let records = crate::ends::read(&built.api, &built.lead).await.unwrap();
+        assert!(
+            records.is_empty(),
+            "a FAIL on the pull request: {records:?}"
+        );
     }
 
     /// 01M6H1N332TZ17CQQ8A5CQKG7B (#1557): a kept result of a pull request
@@ -14460,6 +14469,11 @@ esac
         let old = kept::Kept {
             repo: "o/r".into(),
             item: "verify-issue-12".into(),
+            session: built.record.live.session.clone(),
+            ended: Ended {
+                code: Some(0),
+                failed: false,
+            },
             pull: 40,
             commit: "1a2b3c4".into(),
             verdict: Verdict::Pass,
@@ -14753,13 +14767,14 @@ esac
     }
 
     /// 01M7CFBZSQEEZNZBR9H1S54GS1, 01M6H1N332TZ17CQQ8A5CQKG7B,
-    /// 01M7DZ4E5BZAD38E3K9A3N277E: the report of a kept PASS reads the
-    /// council of the pull request in the main clone of the wave, and runs
-    /// no git in the clone of its folder. A kept PASS with no line for docs
-    /// and big-o is a result with no verdict: no squash message, no comment
-    /// and no status. The folder goes, and the lead gets the message that
-    /// names docs and big-o. A kept PASS with a line for each member is on
-    /// the pull request.
+    /// 01M7DZ4E5BZAD38E3K9A3N277E, 01M7G6H601C6NYC7ACSF6GVW50: the report
+    /// of a kept PASS reads the council of the pull request in the main
+    /// clone of the wave, and runs no git in the clone of its folder. A
+    /// kept PASS with no line for docs and big-o is a result with no
+    /// verdict: no squash message, no comment and no status. Its session
+    /// leaves a record in the thread `ends`, the folder goes, and the lead
+    /// gets the message that names docs and big-o. A kept PASS with a line
+    /// for each member is on the pull request, and leaves no record.
     #[tokio::test]
     async fn a_kept_pass_reads_the_council_in_the_main_clone_of_the_wave() {
         let built = Built::new().await;
@@ -14773,13 +14788,22 @@ esac
         let keep = |n: usize, council: &str| {
             let folder = sessions.join(format!("verify-issue-12-{n}"));
             verify_folder(&fork, &folder);
+            let result = format!("- It works.\n\n## The council\n\n{council}");
+            let event =
+                serde_json::json!({ "type": "result", "result": format!("PASS\n\n{result}") });
+            std::fs::write(folder.join(crate::daemon::EVENTS), format!("{event}\n")).unwrap();
             kept::Kept {
                 repo: "o/r".into(),
                 item: "verify-issue-12".into(),
+                session: built.record.live.session.clone(),
+                ended: Ended {
+                    code: Some(0),
+                    failed: false,
+                },
                 pull: 7,
                 commit: fork.head.clone(),
                 verdict: Verdict::Pass,
-                result: format!("- It works.\n\n## The council\n\n{council}"),
+                result,
             }
             .keep(&folder)
             .unwrap();
@@ -14813,6 +14837,26 @@ esac
             (one.message.kind, &one.message.body),
             (Kind::Message, &message)
         );
+        // The session of the verify leaves its record in the thread `ends`,
+        // with the last lines of its output: the post came before the
+        // folder went (01M7G6H601C6NYC7ACSF6GVW50).
+        let records = crate::ends::read(&built.api, &built.lead).await.unwrap();
+        let [first] = &records[..] else {
+            panic!("one record: {records:?}");
+        };
+        assert_eq!(first.tag("item"), "verify-issue-12");
+        assert_eq!(first.tag("session"), "9f8e7d6c");
+        assert_eq!(first.tag("head"), &fork.head[..7]);
+        assert_eq!(first.reason, "exit code 0, and no PASS or FAIL");
+        let [tail] = &first.tail[..] else {
+            panic!("the line of the result: {first:?}");
+        };
+        assert!(tail.contains("## The council"), "{tail}");
+        let shown = crate::ends::why("verify-issue-12", &records);
+        assert!(
+            shown.starts_with("verify-issue-12: 1 session ended with no PASS or FAIL."),
+            "{shown}"
+        );
 
         let all = "- design: no finding.\n- testing: no finding.\n- docs: no finding.\n\
                    - big-o: no finding.\n";
@@ -14832,5 +14876,7 @@ esac
             folder.join("clone").exists(),
             "the sweep removes the folder"
         );
+        let records = crate::ends::read(&built.api, &built.lead).await.unwrap();
+        assert_eq!(records.len(), 1, "a PASS on the pull request: {records:?}");
     }
 }
