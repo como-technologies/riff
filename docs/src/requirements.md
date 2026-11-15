@@ -1208,9 +1208,8 @@
   RULESET` adds the rule to a ruleset, and `off` removes it.
 - **01M5TKPHH2627K9NDS4P1Y1N3T** CI runs the Gate and Hygiene on the
   event `merge_group`. A job of CI sets the status `riff/verify` on the
-  merge group commit: success when the head commit of the pull request
-  of the group has a passed `riff/verify`, else failure. A verified pull
-  request merges through the queue with no new verify.
+  merge group commit. A verified pull request merges through the queue
+  with no new verify.
 - **01M6FYW8NG0E9HYPWTG2RV5EAM** `riff verify` takes the repository of
   the pull request from its thread, the thread of the post, not from the
   URI of the verifier. A person in a terminal has no repository in the
@@ -1299,6 +1298,18 @@
   checks `Gate`, `Hygiene` and `riff/verify` of the ruleset run on each
   merge group. A second run sets the same ruleset, so it changes
   nothing.
+- **01M7GQKYP6E1YASQ1XCTWYH6XZ** The ruleset `main` of `just github`
+  requires `riff/verify` from the lead App only: the check has the App
+  ID of the lead App as its `integration_id`. `Gate` and `Hygiene` have
+  none. A person runs `just github` to put the pin on the ruleset of
+  GitHub: the lead App cannot change a ruleset.
+- **01M7GQKYSE0XZ1QFXCVR73JQ5R** The job `Verify of the merge group`
+  takes only a status `riff/verify` of the head commit whose creator is
+  the bot of the lead App, `LEAD_APP[bot]`. The default of `LEAD_APP` is
+  `riff-como-technologies-lead`. The job takes the newest such status. A
+  success of another creator is no pass: the job sets failure on the
+  merge group commit, and fails. Supersedes 01M5TKPHH2627K9NDS4P1Y1N3T
+  in part.
 
 ## Tokens on GitHub
 
@@ -7646,6 +7657,14 @@ of this part when they merge.
   the verify goes. `riff session why verify-issue-N` shows it. A
   kept PASS that riff refuses after the reset of a limit of GitHub
   (01M6H1N332TZ17CQQ8A5CQKG7B) leaves the same record.
+- **01M7GQKZ0WR6RHKJC9MB43X6MN** The daemon sets the status
+  `riff/verify` on the merge group commit of each pull request in the
+  merge queue, with the token of the lead App. The status is success
+  when the newest `riff/verify` of the head commit whose creator is the
+  bot of the lead App is a success, else failure. On a merge group, a
+  ruleset that requires `riff/verify` from the lead App counts only this
+  status. The loop of the wave sets it one time for each merge group
+  commit. A daemon that writes with the token of the person sets none.
 
 ### The lead, the view and the takeover
 
@@ -8387,6 +8406,14 @@ of this part when they merge.
   the machine: a session container skips it
   (01M5SMJMR5KS1Z1Z7CEPH9JVBB), and at each start the riff daemon shows
   it as a step that needs a person (01M51QFPW37EXVH4AXH70MSXBT).
+- **01M7GQKYK5VJESMTFE6X6QKMH6** The ruleset `riff` that `riff project
+  init` makes requires `riff/verify` from the lead App of the riff only:
+  the check has the App ID of the lead App as its `integration_id`. A
+  status `riff/verify` of a worker, of a workflow or of a person does
+  not count. In a riff with no lead App, the check has no
+  `integration_id`. When riff cannot ask riff-server for the lead App,
+  the step makes no ruleset and says why. The how-to makes the same
+  ruleset with the App ID from `gh api apps/SLUG`.
 
 ### The permission rules
 

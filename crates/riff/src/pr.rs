@@ -3452,6 +3452,109 @@ pub fn verify_state(gh: &Gh, repo: &str, commit: &str) -> Result<Option<String>>
         .map(str::to_owned))
 }
 
+/// Sets the status `riff/verify` ([`VERIFY_CONTEXT`]) of the merge group
+/// commit `group` of the pull request `pull` of `repo`, from its head
+/// commit `head` (01M7GQKZ0WR6RHKJC9MB43X6MN). On a merge group, a ruleset
+/// that requires `riff/verify` from the lead App counts only a status of
+/// that App, so `gh` writes as the bot of the lead App ([`Gh::writer`]).
+/// The status is success when the newest `riff/verify` of `head` whose
+/// creator is that bot is a success, with the link of that status. Else
+/// it is failure: the queue removes the pull request. A status of another
+/// creator, also a success, does not count.
+///
+/// It gives `Some(true)` for success and `Some(false)` for failure. A
+/// `gh` that writes with the token of the person sets nothing, and gives
+/// `None`. It makes one read and one write.
+///
+/// ```
+/// let dir = tempfile::tempdir()?;
+/// let script = r#"#!/bin/sh
+/// echo "$*" >> "$(dirname "$0")/calls"
+/// case "$*" in
+///   *'/statuses?per_page=100 --jq '*'.creator.login == "riff-o-lead[bot]"'*) printf 'success\thttps://c/1\n' ;;
+///   *) ;;
+/// esac
+/// "#;
+/// let gh = riff::pr::Gh::at(isolated::write_program(dir.path().join("gh"), script));
+/// // The token of the person: no status.
+/// assert_eq!(riff::pr::verify_group(&gh, "o/r", 40, "1a2b3c4d", "9f8e7d6")?, None);
+/// assert!(!dir.path().join("calls").exists());
+///
+/// let lead = gh.clone().writing_as("riff-o-lead[bot]", "ghs_lead");
+/// assert_eq!(riff::pr::verify_group(&lead, "o/r", 40, "1a2b3c4d", "9f8e7d6")?, Some(true));
+/// let calls = std::fs::read_to_string(dir.path().join("calls"))?;
+/// let calls: Vec<&str> = calls.lines().collect();
+/// assert_eq!(
+///     calls[1],
+///     "api repos/o/r/statuses/9f8e7d6 -f state=success -f context=riff/verify \
+///      -f description=The verify of pull request #40 passed at 1a2b3c4 -f target_url=https://c/1"
+/// );
+///
+/// // Another lead App set no riff/verify on the head.
+/// let other = gh.writing_as("riff-x-lead[bot]", "ghs_lead");
+/// assert_eq!(riff::pr::verify_group(&other, "o/r", 40, "1a2b3c4d", "9f8e7d6")?, Some(false));
+/// let calls = std::fs::read_to_string(dir.path().join("calls"))?;
+/// assert_eq!(
+///     calls.lines().last().unwrap(),
+///     "api repos/o/r/statuses/9f8e7d6 -f state=failure -f context=riff/verify \
+///      -f description=Pull request #40 has no passed verify of riff-x-lead[bot] at 1a2b3c4"
+/// );
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn verify_group(
+    gh: &Gh,
+    repo: &str,
+    pull: u64,
+    head: &str,
+    group: &str,
+) -> Result<Option<bool>> {
+    let Some(bot) = gh.writer() else {
+        return Ok(None);
+    };
+    // GitHub gives the statuses of a commit newest first, each with its
+    // creator.
+    let path = format!("repos/{repo}/commits/{head}/statuses?per_page=100");
+    let jq = format!(
+        "[.[] | select(.context == \"{VERIFY_CONTEXT}\" and .creator.login == \"{bot}\")][0] \
+         | [.state // \"\", .target_url // \"\"] | @tsv"
+    );
+    let out = gh.run(&["api", &path, "--jq", &jq], None)?;
+    let line = out.lines().next().unwrap_or_default();
+    let (state, url) = line.split_once('\t').unwrap_or((line, ""));
+    let passed = state.trim() == "success";
+    let short: String = head.chars().take(7).collect();
+    let path = format!("repos/{repo}/statuses/{group}");
+    let (state, description) = match passed {
+        true => (
+            "success",
+            format!("The verify of pull request #{pull} passed at {short}"),
+        ),
+        false => (
+            "failure",
+            format!("Pull request #{pull} has no passed verify of {bot} at {short}"),
+        ),
+    };
+    let state = format!("state={state}");
+    let context = format!("context={VERIFY_CONTEXT}");
+    let description = format!("description={description}");
+    let target = format!("target_url={}", url.trim());
+    let mut args = vec![
+        "api",
+        &path,
+        "-f",
+        &state,
+        "-f",
+        &context,
+        "-f",
+        &description,
+    ];
+    if passed && !url.trim().is_empty() {
+        args.extend(["-f", &target]);
+    }
+    gh.run(&args, None)?;
+    Ok(Some(passed))
+}
+
 /// Puts the result on pull request `number` as a comment, and sets the
 /// status `riff/verify` of its head commit in `repo`
 /// (01M3NB6FYXXKX80VHEVA5CV6RY). It reports nothing when the head is

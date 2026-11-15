@@ -6,14 +6,17 @@
 //! conflict, else one message for the lead. A `gh` that cannot read the
 //! queue leaves the wave as it was. A pull request that the queue merged
 //! between the two reads of the look gets no message of auto-merge off:
-//! the wave asks GitHub again first (01M777N148MY8NR5RNDKXE9EVJ).
+//! the wave asks GitHub again first (01M777N148MY8NR5RNDKXE9EVJ). The
+//! same call reads the merge group commit of each pull request in the
+//! queue, and the daemon copies the verify of the lead App to it
+//! (01M7GQKZ0WR6RHKJC9MB43X6MN).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use riff::pr::Gh;
 use riff::rollout::{Queue, Stuck};
-use riff::wave::{self, Conflict, Work};
+use riff::wave::{self, Conflict, Group, Work};
 
 const REPO: &str = "o/r";
 
@@ -231,6 +234,102 @@ fn the_look_reads_the_queue_with_one_graphql_call() {
         graphql[0].contains("REMOVED_FROM_MERGE_QUEUE_EVENT"),
         "{}",
         graphql[0]
+    );
+}
+
+/// 01M7GQKZ0WR6RHKJC9MB43X6MN: the same call reads the merge group commit
+/// of each pull request in the queue. The look has it for 41, and none for
+/// 42, whose group GitHub did not build yet, and none for 43, out of the
+/// queue.
+#[test]
+fn the_look_reads_the_merge_group_commit_of_each_pull_request_in_the_queue() {
+    let dir = tempfile::tempdir().unwrap();
+    let grouped = r#"{"number":41,"isInMergeQueue":true,"mergeQueueEntry":{"headCommit":{"oid":"9f8e7d6"}},"timelineItems":{"nodes":[]}}"#;
+    let gh = forge(
+        dir.path(),
+        &[
+            pull(1, "aaaa111", "MERGEABLE", true),
+            pull(2, "bbbb222", "MERGEABLE", true),
+            pull(3, "cccc333", "MERGEABLE", true),
+        ],
+        Some(&[
+            grouped.to_owned(),
+            node(42, true, Some(ADDED)),
+            node(43, false, None),
+        ]),
+    );
+    let look = look(&gh);
+    assert_eq!(
+        look.groups,
+        BTreeMap::from([(
+            41,
+            Group {
+                head: "aaaa111".into(),
+                commit: "9f8e7d6".into()
+            }
+        )])
+    );
+    let calls = std::fs::read_to_string(dir.path().join("calls")).unwrap();
+    let graphql: Vec<&str> = calls
+        .lines()
+        .filter(|c| c.starts_with("api graphql"))
+        .collect();
+    assert_eq!(graphql.len(), 1, "{calls}");
+    assert!(
+        graphql[0].contains("mergeQueueEntry { headCommit { oid } }"),
+        "{}",
+        graphql[0]
+    );
+}
+
+/// A fake `gh` of the statuses of the head `aaaa111`: the newest
+/// `riff/verify` of the bot `riff-o-lead[bot]` is the file `lead`, and each
+/// write goes to `calls`.
+const STATUS_GH: &str = r#"#!/bin/sh
+dir=$(dirname "$0")
+echo "$*" >> "$dir/calls"
+case "$*" in
+  'api repos/o/r/commits/aaaa111/statuses?per_page=100 --jq '*'.creator.login == "riff-o-lead[bot]"'*) cat "$dir/lead" ;;
+  'api repos/o/r/commits/aaaa111/statuses?per_page=100 --jq '*) ;;
+  'api repos/o/r/statuses/9f8e7d6 '*) ;;
+  *) exit 1 ;;
+esac
+"#;
+
+/// 01M7GQKZ0WR6RHKJC9MB43X6MN: the daemon copies a pass of the lead App
+/// to the merge group commit, as the lead App. A head whose `riff/verify`
+/// the lead App did not set gets failure.
+#[test]
+fn the_merge_group_gets_the_verify_of_the_lead_app_from_the_head() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("gh");
+    isolated::write_program(&path, STATUS_GH);
+    let lead = Gh::at(path).writing_as("riff-o-lead[bot]", "ghs_lead");
+    let calls = || std::fs::read_to_string(dir.path().join("calls")).unwrap();
+
+    std::fs::write(dir.path().join("lead"), "success\thttps://c/41\n").unwrap();
+    let set = riff::pr::verify_group(&lead, REPO, 41, "aaaa111", "9f8e7d6").unwrap();
+    assert_eq!(set, Some(true));
+    assert!(
+        calls().ends_with(
+            "api repos/o/r/statuses/9f8e7d6 -f state=success -f context=riff/verify \
+             -f description=The verify of pull request #41 passed at aaaa111 \
+             -f target_url=https://c/41\n"
+        ),
+        "{}",
+        calls()
+    );
+
+    std::fs::write(dir.path().join("lead"), "\t\n").unwrap();
+    let set = riff::pr::verify_group(&lead, REPO, 41, "aaaa111", "9f8e7d6").unwrap();
+    assert_eq!(set, Some(false));
+    assert!(
+        calls().ends_with(
+            "api repos/o/r/statuses/9f8e7d6 -f state=failure -f context=riff/verify \
+             -f description=Pull request #41 has no passed verify of riff-o-lead[bot] at aaaa111\n"
+        ),
+        "{}",
+        calls()
     );
 }
 

@@ -983,6 +983,11 @@ pub struct Pull {
     /// requests ([`queue_of`]).
     #[serde(skip)]
     pub queue: Queue,
+    /// The merge group commit of a pull request in the merge queue, once
+    /// GitHub built it. [`pulls`] reads it with the place in the queue
+    /// ([`groups_from`], 01M7GQKZ0WR6RHKJC9MB43X6MN).
+    #[serde(skip)]
+    pub group: Option<String>,
     /// The runs of GitHub Actions of the head that wait for the approval
     /// of a maintainer ([`Run`]), newest first. `gh pr list` does not
     /// tell them: [`pulls`] reads them for a verified pull request that
@@ -2370,7 +2375,8 @@ pub fn claims(sessions: &[SessionInfo]) -> HashSet<String> {
 }
 
 /// The GraphQL query of [`queue_of`]: for each open pull request, whether
-/// it is in the merge queue, and the last event that tells the queue or a
+/// it is in the merge queue, its merge group commit there
+/// ([`groups_from`]), and the last event that tells the queue or a
 /// push. A removal is the last of them only when nobody pushed to the pull
 /// request since. The query also asks for `rateLimit`: its reply tells the
 /// cost of the query and the points that are left, with no more call
@@ -2379,6 +2385,7 @@ pub const QUEUE_QUERY: &str = "query($owner: String!, $name: String!) { \
     rateLimit { cost limit remaining resetAt } \
     repository(owner: $owner, name: $name) { \
     pullRequests(states: OPEN, first: 100) { nodes { number isInMergeQueue \
+    mergeQueueEntry { headCommit { oid } } \
     timelineItems(last: 1, itemTypes: [PULL_REQUEST_COMMIT, HEAD_REF_FORCE_PUSHED_EVENT, \
     ADDED_TO_MERGE_QUEUE_EVENT, REMOVED_FROM_MERGE_QUEUE_EVENT]) { \
     nodes { __typename ... on RemovedFromMergeQueueEvent { reason } } } } } } }";
@@ -2431,6 +2438,44 @@ pub fn queue_from(reply: &str) -> HashMap<u64, Queue> {
         .collect()
 }
 
+/// The merge group commit of each pull request in the merge queue in the
+/// reply `reply` of [`QUEUE_QUERY`], by number: the commit whose checks
+/// the queue runs (01M7GQKZ0WR6RHKJC9MB43X6MN). A pull request in the
+/// queue whose group GitHub did not build yet has none. A reply that is
+/// no JSON gives nothing.
+///
+/// ```
+/// use riff::rollout::groups_from;
+///
+/// let reply = r#"{"data":{"repository":{"pullRequests":{"nodes":[
+///   {"number":40,"isInMergeQueue":true,"mergeQueueEntry":{"headCommit":{"oid":"9f8e7d6"}}},
+///   {"number":41,"isInMergeQueue":true,"mergeQueueEntry":{"headCommit":null}},
+///   {"number":42,"isInMergeQueue":false,"mergeQueueEntry":null}
+/// ]}}}}"#;
+/// let groups = groups_from(reply);
+/// assert_eq!(groups.len(), 1);
+/// assert_eq!(groups[&40], "9f8e7d6");
+/// assert!(groups_from("not json").is_empty());
+/// ```
+pub fn groups_from(reply: &str) -> HashMap<u64, String> {
+    let Ok(reply) = serde_json::from_str::<serde_json::Value>(reply) else {
+        return HashMap::new();
+    };
+    let nodes = reply["data"]["repository"]["pullRequests"]["nodes"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    nodes
+        .iter()
+        .filter(|pull| pull["isInMergeQueue"].as_bool() == Some(true))
+        .filter_map(|pull| {
+            let number = pull["number"].as_u64()?;
+            let commit = pull["mergeQueueEntry"]["headCommit"]["oid"].as_str()?;
+            Some((number, crate::text::forge(commit)))
+        })
+        .collect()
+}
+
 /// The place in the merge queue ([`Queue`]) of each open pull request of
 /// the repository `repo` (`OWNER/REPO`), by number, with one call of
 /// `gh api graphql` (01M5TKPNDET56VR8WZ74FSR71F). A repository with no merge
@@ -2438,13 +2483,18 @@ pub fn queue_from(reply: &str) -> HashMap<u64, Queue> {
 /// gives nothing, as for [`head_wip`]: the wave then acts as if no queue
 /// was there.
 pub fn queue_of(gh: &Gh, repo: &str) -> HashMap<u64, Queue> {
-    let Some(args) = queue_args(repo) else {
-        return HashMap::new();
-    };
-    let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    gh.read(&args)
+    queue_reply(gh, repo)
         .map(|reply| queue_from(&reply))
         .unwrap_or_default()
+}
+
+/// The reply of [`QUEUE_QUERY`] for `repo`, with one call of `gh api
+/// graphql`. `None` for a fault of `gh`, and for a name that is not
+/// `OWNER/REPO`.
+fn queue_reply(gh: &Gh, repo: &str) -> Option<String> {
+    let args = queue_args(repo)?;
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    gh.read(&args).ok()
 }
 
 /// The arguments of `gh` for the merge queue of `repo`, or `None` for a
@@ -2644,8 +2694,9 @@ pub fn open_in_kept(gh: &Gh, repo: &str, branch: &str, age: std::time::Duration)
 /// The open pull requests of the repository `repo` (`OWNER/REPO`),
 /// with `gh`. The head commit of a pull request that waits for a verify
 /// ([`Verify::Asked`]) is read one more time, for [`Pull::wip`]
-/// ([`head_wip`]). Their place in the merge queue is read one time
-/// ([`queue_of`]). The runs of Actions that wait for approval are read
+/// ([`head_wip`]). Their place in the merge queue and their merge group
+/// commit are read one time ([`queue_of`], [`groups_from`]). The runs of
+/// Actions that wait for approval are read
 /// for a verified pull request that GitHub blocks with no check open
 /// only ([`Pull::settled`], [`runs_waiting`], 01M6FZ144M0BTEDWNB9V4MGWDD).
 /// The checks that the ruleset of the default branch requires are read
@@ -2659,7 +2710,9 @@ pub fn open_in_kept(gh: &Gh, repo: &str, branch: &str, age: std::time::Duration)
 /// accepts an older reply takes the reply of the look that just ran.
 pub fn pulls(gh: &Gh, repo: &str) -> Result<Vec<Pull>> {
     let mut pulls: Vec<Pull> = gh.read_json(&pull_args(repo))?;
-    let queue = queue_of(gh, repo);
+    let reply = queue_reply(gh, repo);
+    let queue = reply.as_deref().map(queue_from).unwrap_or_default();
+    let groups = reply.as_deref().map(groups_from).unwrap_or_default();
     let required = match pulls.iter().any(|p| !p.failed_checks().is_empty()) {
         true => Some(crate::repo_setup::full_check(gh, repo)?),
         false => None,
@@ -2670,6 +2723,7 @@ pub fn pulls(gh: &Gh, repo: &str) -> Result<Vec<Pull>> {
         }
         pull.wip = pull.verify() == Some(Verify::Asked) && head_wip(gh, repo, &pull.head);
         pull.queue = queue.get(&pull.number).cloned().unwrap_or_default();
+        pull.group = groups.get(&pull.number).cloned();
         if pull.settled() {
             pull.waiting = runs_waiting(gh, repo, &pull.head);
         }

@@ -85,8 +85,11 @@
 //!   GitHub may need a moment to say that the pull request can merge, so
 //!   riff tries again for [`Waits::merge`].
 //! - The ruleset comes last. It needs a pull request, so it comes after
-//!   the pull request of `riff.toml`. It requires [`VERIFY_CONTEXT`] and
-//!   the checks of the CI: the required checks that the rules have
+//!   the pull request of `riff.toml`. It requires [`VERIFY_CONTEXT`] from
+//!   the lead App of the riff only, by its App ID ([`ruleset_for`],
+//!   01M7GQKYK5VJESMTFE6X6QKMH6): a worker can set a status with a
+//!   workflow, and GitHub does not count it. It also requires the checks
+//!   of the CI: the required checks that the rules have
 //!   already, else the check runs of the head of the latest pull request
 //!   that has some ([`ci_checks`]). The pull request of `riff.toml` is
 //!   often the first one that has check runs, so riff waits up to
@@ -343,9 +346,12 @@ impl Forge {
 
 /// The ruleset that [`Step::Ruleset`] makes when the repository has no CI:
 /// a pull request with squash merges only, no bypass, and the check
-/// [`VERIFY_CONTEXT`] on the default branch. The how-to "Add another
-/// repository to the riff" shows the same text, and a test checks that
-/// they agree. [`ruleset_for`] puts the checks of a CI in it.
+/// [`VERIFY_CONTEXT`] on the default branch, from the lead App only: its
+/// `integration_id` is the App ID of the lead App, [`LEAD_ID`] in the
+/// text. So a status `riff/verify` that a worker, a workflow or a person
+/// sets does not count. The how-to "Add another repository to the riff"
+/// shows the same text, and a test checks that they agree.
+/// [`ruleset_for`] puts the App ID and the checks of a CI in it.
 pub const RULESET: &str = r#"{
   "name": "riff",
   "target": "branch",
@@ -371,38 +377,59 @@ pub const RULESET: &str = r#"{
       "parameters": {
         "strict_required_status_checks_policy": false,
         "required_status_checks": [
-          { "context": "riff/verify" }
+          { "context": "riff/verify", "integration_id": $LEAD_ID }
         ]
       }
     }
   ]
 }"#;
 
+/// The place of the App ID of the lead App in [`RULESET`]: the variable
+/// of the shell in the how-to.
+pub const LEAD_ID: &str = "$LEAD_ID";
+
 /// [`RULESET`] with the checks `checks` of the CI before the check
-/// [`VERIFY_CONTEXT`], which comes last, once.
+/// [`VERIFY_CONTEXT`], which comes last, once. With the App ID `lead` of
+/// the lead App, the check [`VERIFY_CONTEXT`] counts only from that App.
+/// A riff with no lead App (`None`) takes it from any source.
 ///
 /// ```
-/// use riff::repo_setup::{RULESET, ruleset_for};
+/// use riff::repo_setup::{LEAD_ID, RULESET, ruleset_for};
+/// use serde_json::{Value, json};
 ///
-/// let same = ruleset_for(&[]);
-/// assert_eq!(same, serde_json::from_str::<serde_json::Value>(RULESET)?);
+/// let same = ruleset_for(&[], Some(7));
+/// assert_eq!(same, serde_json::from_str::<Value>(&RULESET.replace(LEAD_ID, "7"))?);
 ///
-/// let ruleset = ruleset_for(&["checks / docs".into(), "riff/verify".into()]);
-/// let contexts: Vec<&str> = ruleset["rules"][3]["parameters"]["required_status_checks"]
-///     .as_array().unwrap().iter().map(|c| c["context"].as_str().unwrap()).collect();
-/// assert_eq!(contexts, ["checks / docs", "riff/verify"]);
+/// let ruleset = ruleset_for(&["checks / docs".into(), "riff/verify".into()], Some(7));
+/// assert_eq!(
+///     ruleset["rules"][3]["parameters"]["required_status_checks"],
+///     json!([{ "context": "checks / docs" }, { "context": "riff/verify", "integration_id": 7 }])
+/// );
+/// // No lead App: a status of each writer counts.
+/// assert_eq!(
+///     ruleset_for(&[], None)["rules"][3]["parameters"]["required_status_checks"],
+///     json!([{ "context": "riff/verify" }])
+/// );
 /// # Ok::<(), serde_json::Error>(())
 /// ```
-pub fn ruleset_for(checks: &[String]) -> Value {
-    let mut ruleset: Value = serde_json::from_str(RULESET).expect("RULESET is JSON");
+pub fn ruleset_for(checks: &[String], lead: Option<u64>) -> Value {
+    let text = RULESET.replace(LEAD_ID, "0");
+    let mut ruleset: Value = serde_json::from_str(&text).expect("RULESET is JSON");
     let mut contexts: Vec<&str> = Vec::new();
     for check in checks {
         if check != VERIFY_CONTEXT && !contexts.contains(&check.as_str()) {
             contexts.push(check);
         }
     }
-    contexts.push(VERIFY_CONTEXT);
-    let required: Vec<Value> = contexts.iter().map(|c| json!({ "context": c })).collect();
+    let mut verify = json!({ "context": VERIFY_CONTEXT });
+    if let Some(id) = lead {
+        verify["integration_id"] = json!(id);
+    }
+    let required: Vec<Value> = contexts
+        .iter()
+        .map(|c| json!({ "context": c }))
+        .chain([verify])
+        .collect();
     if let Some(rules) = ruleset["rules"].as_array_mut() {
         for rule in rules
             .iter_mut()
@@ -580,9 +607,11 @@ pub enum Step {
     /// labels `question` and `escaped` when they are missing
     /// ([`crate::waves::make_first`], #1605, 01M7CJMWGNFF57BAEHDF6BC2DX).
     Wave,
-    /// Make the ruleset [`RULESET`] with the checks of the CI:
-    /// `gh api -X POST .../rulesets`, or `PUT` when a ruleset named `riff`
-    /// is there.
+    /// Make the ruleset [`RULESET`] with the checks of the CI and the App
+    /// ID of the lead App ([`ruleset_for`]): `gh api -X POST
+    /// .../rulesets`, or `PUT` when a ruleset named `riff` is there. When
+    /// riff cannot ask riff-server for the lead App, it makes none
+    /// (01M7GQKYK5VJESMTFE6X6QKMH6).
     Ruleset,
     /// Put the rule [`merge_queue`] in the ruleset that requires
     /// [`VERIFY_CONTEXT`] on the default branch: `gh api -X PUT
@@ -747,8 +776,14 @@ impl Step {
                 Ok(format!("made {FIRST_WAVE}"))
             }
             Step::Ruleset => {
+                // riff/verify counts only from the lead App
+                // (01M7GQKYK5VJESMTFE6X6QKMH6).
+                let lead = match &github.lead {
+                    Ok(lead) => lead.clone(),
+                    Err(why) => anyhow::bail!(text::init_ruleset_no_lead(why)),
+                };
                 let names = wanted(forge, github, pull.as_ref())?;
-                let body = ruleset_for(&names);
+                let body = ruleset_for(&names, lead.as_ref().map(|lead| lead.id));
                 let rulesets: Vec<Value> =
                     gh.json(&["api", "repos/{owner}/{repo}/rulesets?per_page=100"])?;
                 let there = rulesets.iter().find(|r| r["name"] == body["name"]);
@@ -770,7 +805,8 @@ impl Step {
                         github.required.push((*name).to_owned());
                     }
                 }
-                Ok(format!("requires {}", required.join(" and ")))
+                let slug = lead.as_ref().map(|lead| lead.slug.as_str());
+                Ok(text::init_ruleset_done(&required, slug))
             }
             Step::Queue => {
                 // The rules again: the step of the ruleset may have made it.
@@ -2479,7 +2515,7 @@ mod tests {
         let ruleset = fake.json("ruleset");
         assert_eq!(
             ruleset,
-            ruleset_for(&["checks / lint".into(), "checks / test".into()])
+            ruleset_for(&["checks / lint".into(), "checks / test".into()], None)
         );
         assert_eq!(ruleset["name"], "riff");
 
@@ -2580,17 +2616,59 @@ mod tests {
         let mut github = fake.github();
         let done = setup(&fake.forge(), &[Step::Ruleset], &mut github);
         assert_eq!(done[0].1.as_deref(), Ok("requires riff/verify"));
-        assert_eq!(fake.json("ruleset"), ruleset_for(&[]));
-        assert_eq!(
-            fake.json("ruleset"),
-            serde_json::from_str::<Value>(RULESET).unwrap()
-        );
+        assert_eq!(fake.json("ruleset"), ruleset_for(&[], None));
         // No job Gate: the ruleset names no check of the CI.
         assert!(!fake.read_file("ruleset").contains("Gate"));
         // The check of the CI passes, with its note.
         let ci = checks(&github).swap_remove(5);
         assert!(ci.passed(), "{}", ci.line());
         assert!(ci.line().contains("has no CI"), "{}", ci.line());
+    }
+
+    /// 01M7GQKYK5VJESMTFE6X6QKMH6: in a riff with a lead App, the step makes
+    /// the ruleset of the how-to: `riff/verify` counts only from the App
+    /// ID of the lead App.
+    #[test]
+    fn the_ruleset_takes_the_verify_only_from_the_lead_app() {
+        let fake = Fake::new(&[]).with_lead();
+        let mut github = fake.github();
+        let done = setup(&fake.forge(), &[Step::Ruleset], &mut github);
+        assert_eq!(
+            done[0].1.as_deref(),
+            Ok("requires riff/verify, riff/verify only from riff-acme-lead")
+        );
+        let ruleset = fake.json("ruleset");
+        assert_eq!(ruleset, ruleset_for(&[], Some(7)));
+        assert_eq!(
+            ruleset,
+            serde_json::from_str::<Value>(&RULESET.replace(LEAD_ID, "7")).unwrap()
+        );
+        assert_eq!(
+            ruleset["rules"][3]["parameters"]["required_status_checks"],
+            json!([{ "context": "riff/verify", "integration_id": 7 }])
+        );
+        let ruleset = checks(&github)
+            .into_iter()
+            .find(|c| c.name == "the ruleset of main")
+            .unwrap();
+        assert!(ruleset.passed(), "{}", ruleset.line());
+    }
+
+    /// 01M7GQKYK5VJESMTFE6X6QKMH6: when riff cannot ask riff-server for the
+    /// lead App, the step makes no ruleset, and says why.
+    #[test]
+    fn the_ruleset_waits_for_an_answer_of_riff_server_on_the_lead_app() {
+        let fake = Fake {
+            lead: Err("riff cannot ask riff-server at https://r for the lead App: down".into()),
+            ..Fake::new(&[])
+        };
+        let mut github = fake.github();
+        let done = setup(&fake.forge(), &[Step::Ruleset], &mut github);
+        let error = done[0].1.as_ref().unwrap_err();
+        assert!(error.contains("for the lead App: down."), "{error}");
+        assert!(error.contains("so riff made no ruleset"), "{error}");
+        assert!(fake.changes().is_empty(), "{:?}", fake.changes());
+        assert!(!github.required.iter().any(|c| c == VERIFY_CONTEXT));
     }
 
     /// 01M5SMNKDWBD1J6Y18ENQG87CK: the steps of `riff project init --yes` in a
@@ -2606,7 +2684,7 @@ mod tests {
             Some("requires riff/verify"),
             "{said:?}"
         );
-        assert_eq!(fake.json("ruleset"), ruleset_for(&[]));
+        assert_eq!(fake.json("ruleset"), ruleset_for(&[], None));
         let after = fake.github();
         assert_eq!(after.required, ["riff/verify"]);
         assert!(after.ci.is_empty(), "{after:?}");
@@ -2627,7 +2705,10 @@ mod tests {
         let mut github = fake.github();
         let done = setup(&fake.forge(), &[Step::Ruleset], &mut github);
         assert!(done[0].1.is_ok(), "{done:?}");
-        assert_eq!(fake.json("ruleset"), ruleset_for(&["checks / docs".into()]));
+        assert_eq!(
+            fake.json("ruleset"),
+            ruleset_for(&["checks / docs".into()], None)
+        );
         // It asked for no pull request: the rules named the checks.
         assert!(!fake.calls().iter().any(|c| c.contains("pulls?state=all")));
     }
@@ -2655,7 +2736,7 @@ mod tests {
         };
         let done = setup(&forge, &steps, &mut github);
         assert!(done.iter().all(|(_, done)| done.is_ok()), "{done:?}");
-        assert_eq!(fake.json("ruleset"), ruleset_for(&["build".into()]));
+        assert_eq!(fake.json("ruleset"), ruleset_for(&["build".into()], None));
 
         // No wait: the runs are not there, and the ruleset requires the verify alone.
         let fake = Fake::new(&[
@@ -2665,7 +2746,7 @@ mod tests {
         let mut github = fake.github();
         let done = setup(&fake.forge(), &steps, &mut github);
         assert!(done.iter().all(|(_, done)| done.is_ok()), "{done:?}");
-        assert_eq!(fake.json("ruleset"), ruleset_for(&[]));
+        assert_eq!(fake.json("ruleset"), ruleset_for(&[], None));
     }
 
     #[test]
@@ -2805,7 +2886,7 @@ mod tests {
 
     #[test]
     fn the_ruleset_requires_what_riff_checks() {
-        let ruleset: serde_json::Value = serde_json::from_str(RULESET).unwrap();
+        let ruleset: serde_json::Value = ruleset_for(&[], Some(7));
         let rules: Vec<Rule> = serde_json::from_value(ruleset["rules"].clone()).unwrap();
         let required: Vec<String> = rules.iter().flat_map(Rule::required).collect();
         assert_eq!(required, [VERIFY_CONTEXT]);
@@ -3184,7 +3265,7 @@ esac
             ]
         );
         let ruleset = fake.json("ruleset");
-        let mut want = ruleset_for(&[]);
+        let mut want = ruleset_for(&[], None);
         want["rules"].as_array_mut().unwrap().push(merge_queue());
         assert_eq!(ruleset, want);
         assert!(fake.has_change("api -X PUT repos/{owner}/{repo}/rulesets/77"));

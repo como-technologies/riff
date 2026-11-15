@@ -11158,6 +11158,44 @@ pub fn init_releases_done(slug: &str) -> String {
     format!("only the admin role and {slug} push a tag v*")
 }
 
+/// What the step of the ruleset `riff` did: it requires the checks
+/// `required`, the last one `riff/verify`, from the lead App `slug` when
+/// the riff has one (01M7GQKYK5VJESMTFE6X6QKMH6).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_ruleset_done(&["checks / lint", "riff/verify"], Some("riff-o-lead")),
+///     "requires checks / lint and riff/verify, riff/verify only from riff-o-lead"
+/// );
+/// assert_eq!(riff::text::init_ruleset_done(&["riff/verify"], None), "requires riff/verify");
+/// ```
+pub fn init_ruleset_done(required: &[&str], slug: Option<&str>) -> String {
+    let checks = required.join(" and ");
+    match slug {
+        Some(slug) => format!("requires {checks}, riff/verify only from {slug}"),
+        None => format!("requires {checks}"),
+    }
+}
+
+/// The step of the ruleset `riff` made no ruleset: riff cannot ask
+/// riff-server for the lead App, and `why` says why
+/// (01M7GQKYK5VJESMTFE6X6QKMH6).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_ruleset_no_lead("riff cannot ask riff-server at https://r for the lead App: down"),
+///     "riff cannot ask riff-server at https://r for the lead App: down. The ruleset requires \
+///      riff/verify from the lead App only, so riff made no ruleset. Run riff project init again \
+///      when riff-server answers"
+/// );
+/// ```
+pub fn init_ruleset_no_lead(why: &str) -> String {
+    format!(
+        "{why}. The ruleset requires riff/verify from the lead App only, so riff made no \
+         ruleset. Run riff project init again when riff-server answers"
+    )
+}
+
 /// The name of the check of the merge queue of the default branch
 /// (01M75NAPNH1SP8AC90NYFQP8SK).
 pub const INIT_QUEUE: &str = "the merge queue";
@@ -14448,6 +14486,54 @@ pub fn wave_no_merged_in(issue: u64, pull: u64, error: &str) -> String {
     format!(
         "cannot add the comment Merged in #{pull} to issue #{issue}: {error}. The issue is no \
          free work, and the next look tries again."
+    )
+}
+
+/// The log line of a look of the wave that set `riff/verify` on the merge
+/// group commit `commit` of the pull request `pull`: success when its
+/// verify `passed`, else failure (01M7GQKZ0WR6RHKJC9MB43X6MN).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::wave_group_verify(40, "9f8e7d6c5b4a", true),
+///     "riff/verify is success on the merge group 9f8e7d6 of pull request #40: its verify passed."
+/// );
+/// assert_eq!(
+///     riff::text::wave_group_verify(40, "9f8e7d6c5b4a", false),
+///     "riff/verify is failure on the merge group 9f8e7d6 of pull request #40: its head has no \
+///      passed verify of the lead App, so the queue will remove it."
+/// );
+/// ```
+pub fn wave_group_verify(pull: u64, commit: &str, passed: bool) -> String {
+    let short: String = commit.chars().take(7).collect();
+    match passed {
+        true => format!(
+            "riff/verify is success on the merge group {short} of pull request #{pull}: its \
+             verify passed."
+        ),
+        false => format!(
+            "riff/verify is failure on the merge group {short} of pull request #{pull}: its head \
+             has no passed verify of the lead App, so the queue will remove it."
+        ),
+    }
+}
+
+/// The log line of a look of the wave that could not set `riff/verify` on
+/// the merge group commit `commit` of the pull request `pull`
+/// (01M7GQKZ0WR6RHKJC9MB43X6MN).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::wave_no_group_verify(40, "9f8e7d6c5b4a", "HTTP 502"),
+///     "cannot set riff/verify on the merge group 9f8e7d6 of pull request #40: HTTP 502. The \
+///      next look will try again."
+/// );
+/// ```
+pub fn wave_no_group_verify(pull: u64, commit: &str, error: &str) -> String {
+    let short: String = commit.chars().take(7).collect();
+    format!(
+        "cannot set riff/verify on the merge group {short} of pull request #{pull}: {error}. The \
+         next look will try again."
     )
 }
 

@@ -749,7 +749,7 @@ skips each step that is done already:
 | `riff.toml` and the guard | When the default branch has no `riff.toml`, or no guard of the bot of the session App, it makes the branch `riff-setup` with each file that is missing, opens the pull request "Set up riff", and squash-merges it. `riff.toml` pins `riff-base`, the image of riff with `claude`, `git` and `gh` and no language. The guard is `.github/workflows/riff-guard.yml`: see [Add the guard](#add-the-guard). |
 | The Backlog | It makes the `Backlog`. |
 | The first wave | When the repository has no open wave, it makes `Wave 1`, and the labels `question` and `escaped` when the repository has none. |
-| The ruleset | It makes the ruleset `riff` of the default branch: a pull request, squash merges only, and the checks that your CI runs on a pull request, and `riff/verify`. A repository with no CI gets `riff/verify` alone. |
+| The ruleset | It makes the ruleset `riff` of the default branch: a pull request, squash merges only, and the checks that your CI runs on a pull request, and `riff/verify`. Only a `riff/verify` of the lead App of the riff counts: see [Make the ruleset of the default branch](#make-the-ruleset-of-the-default-branch). A repository with no CI gets `riff/verify` alone. |
 | The merge queue | In a repository with `[release]` in `riff.toml`, it puts the rule `merge_queue` in the ruleset that requires `riff/verify`: each pull request merges through a merge queue with the method squash. See [Turn the merge queue on or off](development.md#turn-the-merge-queue-on-or-off). |
 | The ruleset `releases` | In a repository with `[release]` in `riff.toml`, it makes the ruleset `releases` on the tags `v*`: only the admin role of the repository and the lead App of the riff push a release tag. See [Let the lead push the release tag](#let-the-lead-push-the-release-tag). |
 
@@ -1078,10 +1078,17 @@ gh api -X PATCH repos/{owner}/{repo} -F allow_auto_merge=true -F allow_squash_me
 Without a rule, nothing on GitHub makes a merge wait for the verify.
 This ruleset needs a pull request, and the check `riff/verify`. It
 allows squash merges only, and it lets nobody bypass it. When your CI
-has checks, put each of them before `riff/verify`, in the same list:
+has checks, put each of them before `riff/verify`, in the same list.
+
+Only the lead App of the riff can set a `riff/verify` that counts: the
+check names the App ID of the lead App. A worker, a workflow or a
+person can set a status `riff/verify` too, but GitHub does not count
+it. Put the slug of your lead App in place of `riff-acme-lead`. In a
+riff with no lead App, remove `, "integration_id": $LEAD_ID`:
 
 ```sh
-gh api -X POST repos/{owner}/{repo}/rulesets --input - <<'JSON'
+LEAD_ID=$(gh api apps/riff-acme-lead --jq .id)
+gh api -X POST repos/{owner}/{repo}/rulesets --input - <<JSON
 {
   "name": "riff",
   "target": "branch",
@@ -1107,7 +1114,7 @@ gh api -X POST repos/{owner}/{repo}/rulesets --input - <<'JSON'
       "parameters": {
         "strict_required_status_checks_policy": false,
         "required_status_checks": [
-          { "context": "riff/verify" }
+          { "context": "riff/verify", "integration_id": $LEAD_ID }
         ]
       }
     }

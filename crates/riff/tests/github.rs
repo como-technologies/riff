@@ -219,9 +219,18 @@ fn just_github_sets_the_repository_and_makes_the_ruleset() {
     assert_eq!(pr["allowed_merge_methods"], serde_json::json!(["squash"]));
     let checks = rule("required_status_checks")["parameters"].clone();
     assert_eq!(checks["strict_required_status_checks_policy"], false);
+    // 01M7GQKYP6E1YASQ1XCTWYH6XZ: riff/verify counts only from the lead App.
     assert_eq!(
         checks["required_status_checks"],
-        serde_json::json!([{ "context": "Gate" }, { "context": "Hygiene" }, { "context": "riff/verify" }])
+        serde_json::json!([
+            { "context": "Gate" },
+            { "context": "Hygiene" },
+            { "context": "riff/verify", "integration_id": LEAD_ID },
+        ])
+    );
+    assert!(
+        out.contains("riff/verify (only from the lead App riff-como-technologies-lead)"),
+        "{out}"
     );
     // 01M75NAPJVW8FJZTJEF416MR4J: the merge queue of riff project init.
     assert_eq!(rule("merge_queue"), riff::repo_setup::merge_queue());

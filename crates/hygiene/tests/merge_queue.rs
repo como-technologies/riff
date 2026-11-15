@@ -86,6 +86,7 @@ fn run(script: &str, dir: &Path, args: &[&str]) -> Output {
         .args(args)
         .env("PATH", path)
         .env("GH_REPO", "o/r")
+        .env_remove("LEAD_APP")
         .output()
         .unwrap()
 }
@@ -98,9 +99,14 @@ fn calls(dir: &Path) -> Vec<String> {
         .collect()
 }
 
+/// The fake `gh` of `deploy/merge-group-verify.sh`. The statuses of the
+/// head answer as the filter asks: the newest `riff/verify` of the bot of
+/// the lead App (`lead`), else the newest `riff/verify` of each creator
+/// (`status`).
 const VERIFY_GH: &str = r#"case "$*" in
   'api repos/o/r/pulls/1234 --jq .head.sha') cat "$dir/head" ;;
-  'api repos/o/r/commits/'*'/status --jq '*) cat "$dir/status" ;;
+  'api repos/o/r/commits/abc1234def/statuses?per_page=100 --jq '*'.creator.login == "riff-como-technologies-lead[bot]"'*) cat "$dir/lead" ;;
+  'api repos/o/r/commits/abc1234def/statuses?per_page=100 --jq '*) cat "$dir/status" ;;
   'api -X POST repos/o/r/statuses/'*) ;;
   *) echo "no such call: $*" >&2; exit 1 ;;
 esac
@@ -108,15 +114,29 @@ esac
 
 const GROUP: &str = "refs/heads/gh-readonly-queue/main/pr-1234-5e6f7a8";
 
-/// The folder of a fake `gh` whose pull request has the head `abc1234def`
-/// and the status line `status`.
-fn verify_forge(status: &str) -> tempfile::TempDir {
+/// The folder of a fake `gh` whose pull request has the head `abc1234def`,
+/// whose newest `riff/verify` of the lead App is the status line `lead`,
+/// and whose newest `riff/verify` of each creator is the line `status`.
+fn forge_of(lead: &str, status: &str) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     gh(dir.path(), VERIFY_GH);
     std::fs::write(dir.path().join("head"), "abc1234def\n").unwrap();
+    std::fs::write(dir.path().join("lead"), lead).unwrap();
     std::fs::write(dir.path().join("status"), status).unwrap();
     dir
 }
+
+/// The folder of a fake `gh` whose newest `riff/verify` is the status
+/// line `status`, from the lead App.
+fn verify_forge(status: &str) -> tempfile::TempDir {
+    forge_of(status, status)
+}
+
+/// The post of the failure of the merge group commit of pull request
+/// #1234: no passed verify of the lead App at its head.
+const FAILURE: &str = "api -X POST repos/o/r/statuses/9999aaa -f state=failure \
+                       -f context=riff/verify -f description=Pull request #1234 has no passed \
+                       verify of riff-como-technologies-lead[bot] at abc1234";
 
 #[test]
 fn a_passed_verify_of_the_head_is_success_on_the_merge_group_commit() {
@@ -129,6 +149,14 @@ fn a_passed_verify_of_the_head_is_success_on_the_merge_group_commit() {
     assert!(out.status.success(), "{out:?}");
     let calls = calls(dir.path());
     assert_eq!(calls.len(), 3, "{calls:?}");
+    // 01M7GQKYSE0XZ1QFXCVR73JQ5R: the newest riff/verify of the lead App.
+    assert!(
+        calls[1].contains(
+            "[.[] | select(.context == \"riff/verify\" and .creator.login == \
+             \"riff-como-technologies-lead[bot]\")][0]"
+        ),
+        "{calls:?}"
+    );
     assert_eq!(
         calls[2],
         "api -X POST repos/o/r/statuses/9999aaa -f state=success -f context=riff/verify \
@@ -148,14 +176,62 @@ fn a_pull_request_with_no_passed_verify_is_failure_on_the_merge_group_commit() {
         );
         assert_eq!(out.status.code(), Some(1), "{status:?}: {out:?}");
         let post = calls(dir.path()).pop().unwrap();
-        assert_eq!(
-            post,
-            "api -X POST repos/o/r/statuses/9999aaa -f state=failure -f context=riff/verify \
-             -f description=Pull request #1234 has no passed verify at abc1234",
-            "{status:?}"
-        );
+        assert_eq!(post, FAILURE, "{status:?}");
         assert!(String::from_utf8_lossy(&out.stderr).contains("pull request #1234"));
     }
+}
+
+/// 01M7GQKYSE0XZ1QFXCVR73JQ5R: a success that another creator set, for
+/// example a workflow of the pull request, is no pass. The script copies
+/// nothing: it sets failure, and fails.
+#[test]
+fn a_success_of_another_creator_is_failure_on_the_merge_group_commit() {
+    for lead in ["\t\n", "failure\thttps://github.com/o/r/pull/1234#c1\n"] {
+        let dir = forge_of(lead, "success\thttps://evil.example\n");
+        let out = run(
+            "deploy/merge-group-verify.sh",
+            dir.path(),
+            &[GROUP, "9999aaa"],
+        );
+        assert_eq!(out.status.code(), Some(1), "{lead:?}: {out:?}");
+        let posts: Vec<String> = calls(dir.path())
+            .into_iter()
+            .filter(|c| c.contains("-X POST"))
+            .collect();
+        assert_eq!(posts, [FAILURE], "{lead:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("has no passed riff/verify of riff-como-technologies-lead[bot]"),
+            "{stderr}"
+        );
+    }
+}
+
+/// `LEAD_APP` names another lead App: only a status of its bot counts.
+#[test]
+fn lead_app_names_the_creator_of_a_verify_that_counts() {
+    let dir = verify_forge("success\t\n");
+    let path = format!(
+        "{}:{}",
+        dir.path().display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let out = Command::new("bash")
+        .arg(top().join("deploy/merge-group-verify.sh"))
+        .args([GROUP, "9999aaa"])
+        .env("PATH", path)
+        .env("GH_REPO", "o/r")
+        .env("LEAD_APP", "riff-acme-lead")
+        .output()
+        .unwrap();
+    // The fake knows only the bot of riff-como-technologies-lead: the
+    // filter of riff-acme-lead[bot] gets the status of each creator.
+    assert!(out.status.success(), "{out:?}");
+    let calls = calls(dir.path());
+    assert!(
+        calls[1].contains(".creator.login == \"riff-acme-lead[bot]\""),
+        "{calls:?}"
+    );
 }
 
 #[test]

@@ -8381,10 +8381,10 @@ App, and refuses each step that the rights of the role do not give. See
 
 | Who | Acts on GitHub as | What GitHub lets it do |
 |---|---|---|
-| A worker | `riff-OWNER[bot]`, the session App | Push a branch, open a pull request, comment, run a workflow again, and change `.github/workflows`. It cannot set `riff/verify` or push a tag `v*`. |
+| A worker | `riff-OWNER[bot]`, the session App | Push a branch, open a pull request, comment, run a workflow again, and change `.github/workflows`. It cannot set a `riff/verify` that counts, or push a tag `v*`. |
 | A verifier | `riff-OWNER[bot]`, the session App | Read only. The daemon reports the verify on the pull request. |
 | The lead in a container | `riff-OWNER-lead[bot]`, the lead App | The steps of a worker, set `riff/verify`, push a tag `v*` (see [Who tags and who approves a release](#who-tags-and-who-approves-a-release)), read the alerts of the repository, and dismiss a false positive. It cannot change `.github/workflows`, and it cannot approve a deploy. |
-| The daemon on the host, for its writes | `riff-OWNER-lead[bot]`, the lead App | The comment of the tokens of a claim, the comment `Merged in #PR`, the result of a verify with `riff/verify`, the issue of a broken main, and the delete of an old branch `riff-kept`. The daemon is no session: its reads and its pushes with git keep your token. |
+| The daemon on the host, for its writes | `riff-OWNER-lead[bot]`, the lead App | The comment of the tokens of a claim, the comment `Merged in #PR`, the result of a verify with `riff/verify`, the `riff/verify` of each merge group of the merge queue, the issue of a broken main, and the delete of an old branch `riff-kept`. The daemon is no session: its reads and its pushes with git keep your token. |
 | A session of `riff run --no-github` | Nobody: it has no token | Nothing on GitHub. Its person pushes its branch: see [Run an item with no GitHub](development.md#run-an-item-with-no-github). |
 | You in a terminal, a plain `claude` | You | Each step that you can do. |
 
