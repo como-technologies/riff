@@ -271,15 +271,18 @@ pub fn within(dir: &Path, args: &[&str], limit: Duration) -> Result<String> {
 /// `text` with no user info in a URL: `SCHEME://USER:TOKEN@HOST/PATH`
 /// is `SCHEME://HOST/PATH` (01M7G1J1F1QWT4S45CDMMXP6J5). The user info
 /// starts after the `://` and each `/` that comes next: curl reads
-/// `SCHEME:///USER:TOKEN@HOST` as a URL with user info. It ends at the
-/// last `@` before the next `/`, or before the end of the text. Each
-/// other sign is part of it: for example a quote, a space, a tab, a `?`
-/// or a `#`. After a URL with no path, the text up to that last `@` goes
-/// out too. Each git call of riff on the host with a URL in its words
-/// runs through [`crate::git_credential::keyring_open`] and [`output`].
-/// Their error texts and the error text of [`within`] go through it, with
-/// the stderr of git. So these texts show no token of the URL of the
-/// origin.
+/// `SCHEME:///USER:TOKEN@HOST` as a URL with user info. It also starts
+/// after the `::` of the form `TRANSPORT::ADDRESS` of git, and each `/`
+/// that comes next. It ends at the last `@` before the next `/`, or
+/// before the end of the text. Each other sign is part of it: for
+/// example a quote, a space, a tab, a `?` or a `#`. After a URL with no
+/// path, the text up to that last `@` goes out too. Each user info that
+/// it finds also goes out at each other place in the text: git shows the
+/// `ADDRESS` of `https::USER:TOKEN@HOST/PATH` in its stderr with no `::`.
+/// Each git call of riff on the host with a URL in its words runs
+/// through [`crate::git_credential::keyring_open`] and [`output`]. Their
+/// error texts and the error text of [`within`] go through it, with the
+/// stderr of git. So these texts show no token of the URL of the origin.
 ///
 /// ```
 /// use riff::host_git::no_user_info;
@@ -299,6 +302,14 @@ pub fn within(dir: &Path, args: &[&str], limit: Duration) -> Result<String> {
 ///     no_user_info("'http://a@b@127.0.0.1:8080' and ssh://git@github.com/o/r.git"),
 ///     "'http://127.0.0.1:8080' and ssh://github.com/o/r.git"
 /// );
+/// // The form `TRANSPORT::ADDRESS`, and its `ADDRESS` in the stderr of
+/// // git.
+/// assert_eq!(
+///     no_user_info("git clone -- https::U:T@h/o/r.git /c: url has no scheme: U:T@h/o/r.git/"),
+///     "git clone -- https::h/o/r.git /c: url has no scheme: h/o/r.git/"
+/// );
+/// assert_eq!(no_user_info("http::/U:T@h/o: no /U:T@h/o"), "http::/h/o: no /h/o");
+/// assert_eq!(no_user_info("https::https://U:T@h/o"), "https::https://h/o");
 /// // A quote, a space, a tab, a `?` or a `#` in the password.
 /// assert_eq!(
 ///     no_user_info("git ls-remote -- https://U:T'O\"K E\tN@h/o/r.git: fatal"),
@@ -313,24 +324,53 @@ pub fn within(dir: &Path, args: &[&str], limit: Duration) -> Result<String> {
 /// assert_eq!(no_user_info("https://U:T@h?a=b"), "https://h?a=b");
 /// assert_eq!(no_user_info("https://U:T@h#a"), "https://h#a");
 /// assert_eq!(no_user_info("git fetch https://h: no a@b/c"), "git fetch https://b/c");
+/// // An empty user info: each other `@` stays.
+/// assert_eq!(no_user_info("https://@h/o, git@h:o"), "https://h/o, git@h:o");
 /// // No user info: the text stays as it is.
-/// let plain = "git@github.com:o/r.git, https://github.com/o/r@v1, file:///tmp/a@b";
+/// let plain = "git@github.com:o/r.git, https://github.com/o/r@v1, file:///tmp/a@b, \
+///              http://[::1]:8080/o@v1";
 /// assert_eq!(no_user_info(plain), plain);
 /// ```
 pub fn no_user_info(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(at) = rest.find("://") {
-        let (head, after) = rest.split_at(at + "://".len());
-        out.push_str(head);
-        let slashes = after.len() - after.trim_start_matches('/').len();
-        let (slashes, after) = after.split_at(slashes);
-        out.push_str(slashes);
-        let host_end = after.find('/').unwrap_or(after.len());
-        let host = after[..host_end].rfind('@').map_or(0, |user| user + 1);
-        rest = &after[host..];
+    let mut found = Vec::new();
+    // The `:` signs at the end of the last part with no `/`, and the `/`
+    // signs after it.
+    let (mut colons, mut slashes) = (0, 0);
+    for (n, part) in text.split('/').enumerate() {
+        if n > 0 {
+            out.push('/');
+            slashes += 1;
+        }
+        if part.is_empty() {
+            continue;
+        }
+        let address = (colons > 0 && slashes > 1) || (colons > 1 && slashes > 0);
+        let start = if address {
+            Some(0)
+        } else {
+            part.find("::").map(|at| at + "::".len())
+        };
+        match start.and_then(|start| Some((start, start + part[start..].rfind('@')? + 1))) {
+            Some((start, end)) => {
+                out.push_str(&part[..start]);
+                out.push_str(&part[end..]);
+                if end - start > 1 {
+                    found.push(&part[start..end]);
+                }
+            }
+            None => out.push_str(part),
+        }
+        colons = part.len() - part.trim_end_matches(':').len();
+        slashes = 0;
     }
-    out.push_str(rest);
+    found.sort_unstable();
+    found.dedup();
+    for user in found {
+        while out.contains(user) {
+            out = out.replace(user, "");
+        }
+    }
     out
 }
 
@@ -618,10 +658,10 @@ pub(crate) mod tests {
     }
 
     /// 01M7G1J1F1QWT4S45CDMMXP6J5: a git call with a URL with user info
-    /// fails, with a quote, a space, a `?` and a `#` in the password, or
-    /// with a third `/` after the scheme. The error of [`output`] and of
-    /// [`within`] names the URL with no user info, in the command and in
-    /// the stderr of git.
+    /// fails, with a quote, a space, a `?` and a `#` in the password, with
+    /// a third `/` after the scheme, or in the form `TRANSPORT::ADDRESS`.
+    /// The error of [`output`] and of [`within`] names the URL with no user
+    /// info, in the command and in the stderr of git.
     #[test]
     fn an_error_of_git_shows_no_user_info_of_a_url() {
         let root = tempfile::tempdir().unwrap();
@@ -633,6 +673,10 @@ pub(crate) mod tests {
             (
                 "https:///USER:TOKEN@127.0.0.1:1/o/r.git",
                 "https:///127.0.0.1:1/o/r.git",
+            ),
+            (
+                "https::USER:TOKEN@127.0.0.1:1/o/r.git",
+                "https::127.0.0.1:1/o/r.git",
             ),
         ] {
             let args = ["ls-remote", "--", url, "refs/heads/main"];

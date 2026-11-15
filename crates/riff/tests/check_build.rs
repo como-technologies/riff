@@ -121,9 +121,9 @@ fn riff_build_fails_when_just_static_fails() {
 }
 
 /// 01M7G1J1F1QWT4S45CDMMXP6J5: the origin has a token in its URL, with a
-/// `?` in it or with a third `/` after the scheme, and git cannot reach
-/// it. The error of `riff build` on the terminal names the URL with no
-/// token.
+/// `?` in it, with a third `/` after the scheme, or in the form
+/// `TRANSPORT::ADDRESS`, and git cannot reach it. The error of `riff
+/// build` on the terminal names the URL with no token.
 #[test]
 fn a_failed_clone_of_riff_build_shows_no_token_of_the_origin() {
     let env = Isolated::new();
@@ -140,6 +140,10 @@ fn a_failed_clone_of_riff_build_shows_no_token_of_the_origin() {
         (
             "https:///USER:TOKEN@127.0.0.1:1/o/r.git",
             "https:///127.0.0.1:1/o/r.git",
+        ),
+        (
+            "https::USER:TOKEN@127.0.0.1:1/o/r.git",
+            "https::127.0.0.1:1/o/r.git",
         ),
     ] {
         git(&here, &["remote", "set-url", "origin", url]);
