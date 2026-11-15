@@ -99,7 +99,7 @@ fn the_control_of_a_verify_runs_at_the_base_commit_and_goes_back_to_the_head() {
     git(&clone, &["checkout", "-q", "--detach", &head]);
 
     let checks = ["CI".to_owned()];
-    let text = riff::text::wave_verify_start("o/r", "main", 12, PULL, &head, &checks);
+    let text = riff::text::wave_verify_start("o/r", "main", 12, PULL, &head, &checks, None);
     let step = between(&text, "\n6. Run a control", "\n7. ");
     assert!(
         step.contains("Never edit the code for a control, also not for a moment"),
@@ -177,7 +177,8 @@ fn the_levers_of_a_verify_name_the_step_of_the_control() {
     let step = riff::text::verify_control("main", "1a2b3c4d5e6f");
     assert!(step.starts_with(&format!("{name}:")), "{name:?} {step}");
     let checks = ["CI".to_owned()];
-    let text = riff::text::wave_verify_start("o/r", "main", 12, PULL, "1a2b3c4d5e6f", &checks);
+    let text =
+        riff::text::wave_verify_start("o/r", "main", 12, PULL, "1a2b3c4d5e6f", &checks, None);
     let own = text.lines().find(|line| {
         line.split_once(". ")
             .is_some_and(|(n, rest)| n.parse::<u32>().is_ok() && rest.starts_with(name))

@@ -2806,7 +2806,7 @@ async fn cli() -> Result<()> {
             file,
             commit,
         } => {
-            let result = std::fs::read_to_string(&file)
+            let mut result = std::fs::read_to_string(&file)
                 .with_context(|| format!("cannot read {}", file.display()))?;
             let dir = identity::working_dir()?;
             let tested = match commit {
@@ -2822,7 +2822,7 @@ async fn cli() -> Result<()> {
                 number,
                 &tested,
                 verdict,
-                &result,
+                &mut result,
             )?;
             println!("{}", text::verify_reported(verdict, number, &reported));
             let state = match verdict {

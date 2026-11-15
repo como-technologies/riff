@@ -1263,7 +1263,7 @@ fn a_verifier_puts_each_finding_in_its_result_and_comments_on_no_issue() {
     assert!(allow_of(Role::Worker).contains(&comment));
 
     let checks = ["Gate".to_owned()];
-    let text = riff::text::wave_verify_start(REPO, "main", 12, 40, "1a2b3c4", &checks);
+    let text = riff::text::wave_verify_start(REPO, "main", 12, 40, "1a2b3c4", &checks, None);
     assert!(!text.contains("gh issue comment"), "{text}");
     assert!(text.contains(riff::text::VERIFY_READS_ONLY), "{text}");
 

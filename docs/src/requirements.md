@@ -249,8 +249,9 @@
   findings. A finding names the file, the line and the rule: the member
   file and the heading of the rule. The verifier checks each finding in
   the code. A finding that the verifier shows, with a test, a run or a
-  read of the code, fails the verify. A finding that it cannot show goes
-  in the result as not shown, and does not fail the verify.
+  read of the code, fails a verify that is not the verify of a fix head.
+  A finding that it cannot show goes in the result as not shown, and
+  does not fail the verify.
 - **01M7CFBZSQEEZNZBR9H1S54GS1** The result of a verify has the part `##
   The council`, with one line for each member of the council: its
   findings, or `no finding`. A finding of a live security fault goes to
@@ -310,6 +311,29 @@
   Each such part counts. For a PASS of the wave with no line for a
   member, the message to the lead names each member with no line
   (01M7CFBZSQEEZNZBR9H1S54GS1).
+- **01M7GDQWDA1Z08V4EDMP255ZF1** The verify of a fix head, a head after
+  a FAIL of the same pull request, fails only on: a criterion of "Done
+  when"; a security fault; a finding of the last verify that stays; a
+  fault that the verifier shows in the diff since the head of the last
+  verify. The verifier puts each other finding that it shows in the part
+  `## New findings` of its result, one line each. Supersedes
+  01M7CFBZQ0QNE65WBQ31FSDWGR in part: the verify of a fix head.
+- **01M7GDQWGCBVJE6S4MJDEJ6P8T** The riff daemon reads the head of the
+  last verify of a pull request in its newest comment `verify result:`.
+  When that verify failed at another commit, and that commit has a
+  `riff/verify` failure, the head now is a fix head. The start text of
+  its verify says the rule of a fix head, gives the head of the last
+  verify, and gives the command of the diff since it. The start text of
+  each other verify has no such part. When riff cannot read the comments
+  or the status, the verify is a first verify.
+- **01M7GDQWK92WWTTE361JGWDVGY** The report of a verify files each line
+  of the part `## New findings` of the result as an issue of its own, in
+  the Backlog, with the line `Found by: #PR`. When the repository has no
+  open Backlog, the issue is in no wave and not in the Backlog. The
+  report files them after the checks of a pass and before the comment.
+  In the comment and in the post of the result, each such line starts
+  with the number of its issue, `#N: `. riff files no line that starts
+  so.
 
 ## Waves
 

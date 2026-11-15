@@ -171,20 +171,38 @@ async fn report_one(
         return Ok(text::wave_kept_dropped(item, *pull, commit));
     }
     let reported = {
-        let (gh, repo, tested, shown) = (
+        let (gh, repo, tested, mut shown) = (
             gh.clone(),
             wave.repo.clone(),
             commit.clone(),
             result.clone(),
         );
         let (pull, verdict, main) = (*pull, *verdict, wave.main.clone());
-        crate::wave::blocking(move || pr::report(&gh, &repo, &main, pull, &tested, verdict, &shown))
-            .await
+        crate::wave::blocking(move || {
+            let reported = pr::report(&gh, &repo, &main, pull, &tested, verdict, &mut shown);
+            Ok((reported, shown))
+        })
+        .await
+    };
+    let (reported, result) = match reported {
+        Ok(pair) => pair,
+        Err(e) => (Err(e), result.clone()),
     };
     let thread = wave.thread()?;
     let reported = match reported {
         Ok(reported) => reported,
-        Err(e) if ghcalls::is_limit_error(&e) => return Err(e),
+        Err(e) if ghcalls::is_limit_error(&e) => {
+            // The issues of the new findings that the report filed stay
+            // in the result (01M7GDQWK92WWTTE361JGWDVGY).
+            let again = Kept {
+                result,
+                ..kept.clone()
+            };
+            if let Err(keep) = again.keep(folder) {
+                eprintln!("riff daemon: {}: {}: {keep:#}", wave.repo, kept.item);
+            }
+            return Err(e);
+        }
         Err(e) => {
             // The same end as a report that fails with no kept result.
             let _ = std::fs::remove_dir_all(folder);
@@ -208,6 +226,6 @@ async fn report_one(
     if *verdict == Verdict::Fail {
         let _ = std::fs::remove_dir_all(folder);
     }
-    crate::wave::post_report(api, me, &thread, (*verdict, *pull), &reported, result).await?;
+    crate::wave::post_report(api, me, &thread, (*verdict, *pull), &reported, &result).await?;
     Ok(line)
 }

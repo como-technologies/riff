@@ -3555,7 +3555,9 @@ after the check of each criterion and the control:
 4. The verifier checks each finding in the code. A finding that it
    shows, with a test, a run or a read of the code, fails the verify.
    A finding that it cannot show goes in the result as not shown, and
-   does not fail the verify.
+   does not fail the verify. The verify of a fix head fails on fewer
+   findings: see
+   [What fails the verify of a fix head](#what-fails-the-verify-of-a-fix-head).
 5. The result has the part `## The council`, with one line for each
    member: its findings, or `no finding` (see
    [Report a verify](#report-a-verify)). A live security fault goes to
@@ -3689,6 +3691,65 @@ In the part `## The council` of the result, each member has one line:
 `- NAME: no finding.`, or its findings, each after `shown:` or
 `not shown:`. `riff verify pass` refuses a result with no line for a
 member of the council (see [Report a verify](#report-a-verify)).
+
+#### What fails the verify of a fix head
+
+A fix head is a new head of a pull request after a FAIL of its verify.
+Its verify fails only on:
+
+- a criterion of `Done when:` that fails;
+- a security fault;
+- a finding of the last verify that stays;
+- a fault that the verifier shows in the diff since the head of the
+  last verify.
+
+So each fix only has to fix the faults of the last verify, and the
+verifies of a pull request come to an end. The first verify of a pull
+request fails on each finding that the verifier shows.
+
+The riff daemon finds the head of the last verify in the newest
+comment `verify result:` of the pull request. When that verify failed
+at another commit, and that commit has a `riff/verify` failure, the
+head now is a fix head. Then the start text of the verify gives the
+rule, the head of the last verify, and the diff since it, for example
+`git diff 9f8e7d6 HEAD`. When riff cannot read the comments or the
+status, the verify is a first verify.
+
+The verifier puts each other finding that it shows in the part
+`## New findings` of its result, one line each, in the form of a
+finding of the council:
+
+```markdown
+## New findings
+
+- crates/riff/src/text.rs:120: .riff/council/docs.md "No stale text": the rustdoc names an old flag.
+```
+
+The report of the verify files each line as an issue of its own in the
+Backlog, with the line `Found by: #40`. Then the line in the result
+names its issue: `- #77: crates/riff/src/text.rs:120: ...`. riff files
+no line that names an issue already. When the repository has no open
+Backlog, the issue is in no wave and not in the Backlog. A pass that
+riff refuses files nothing. `riff verify` by hand files the lines in the
+same way.
+
+To see the issues that the verifies of pull request 40 filed:
+
+```sh
+gh issue list --search '"Found by: #40" in:body'
+```
+
+```mermaid
+flowchart TD
+    H["a new head of PR #40"] --> L{"the newest comment verify result:<br/>a FAIL of another commit,<br/>with a riff/verify failure?"}
+    L -- "no" --> F["a first verify: each shown finding fails it"]
+    L -- "yes" --> X["the verify of a fix head:<br/>the start text gives the rule<br/>and git diff LAST HEAD"]
+    X --> K{"a shown finding is a criterion,<br/>a security fault, a finding that stays,<br/>or in the diff since LAST?"}
+    K -- "yes" --> T["it fails the verify"]
+    K -- "no" --> N["the part ## New findings"]
+    N --> I["the report files an issue in the Backlog:<br/>Found by: #40"]
+    I --> R["the result names the issue: #77"]
+```
 
 #### The build items of the council
 
@@ -4172,7 +4233,10 @@ request, with the steps of
 
 Write the result to a file: each criterion, and what you did to check
 it, then the part `## The council` with one line for each member. For
-a fail, give the steps to see each failure. A result of a pass:
+a fail, give the steps to see each failure. The verify of a fix head
+adds the part `## New findings`: see
+[What fails the verify of a fix head](#what-fails-the-verify-of-a-fix-head).
+A result of a pass:
 
 ```markdown
 PASS

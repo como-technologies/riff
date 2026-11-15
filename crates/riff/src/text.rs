@@ -7696,6 +7696,115 @@ pub fn verify_control(base: &str, commit: &str) -> String {
     )
 }
 
+/// The rule of step 9 of the start text of a verify that is not of a fix
+/// head ([`wave_verify_start`], 01M7CFBZQ0QNE65WBQ31FSDWGR): each shown
+/// finding fails the verify.
+pub const VERIFY_FIRST_RULE: &str = "A finding that you show, with a test, a run or a read of the \
+     code, fails the verify. A finding that you cannot show goes in the result as not shown, and \
+     does not fail the verify.";
+
+/// The part of step 3 of the start text of a verify of a fix head
+/// ([`wave_verify_start`], 01M7GDQWGCBVJE6S4MJDEJ6P8T): `last` is the
+/// head of the last verify, which failed. The verifier reads the diff
+/// since it, and fetches it when its clone does not have it, for example
+/// after a rebase.
+///
+/// ```
+/// let part = riff::text::verify_fix_diff("9f8e7d6c5b4a");
+/// assert!(part.starts_with("This head is a fix: the last verify of the pull request failed at the commit 9f8e7d6c5b4a,"));
+/// assert!(part.contains("Read the diff since that commit: git diff 9f8e7d6c5b4a HEAD."));
+/// assert!(part.ends_with("When git has no commit 9f8e7d6c5b4a, run git fetch origin 9f8e7d6c5b4a first."));
+/// ```
+pub fn verify_fix_diff(last: &str) -> String {
+    format!(
+        "This head is a fix: the last verify of the pull request failed at the commit {last}, and \
+         its result is a comment of the pull request. Read the diff since that commit: git diff \
+         {last} HEAD. When git has no commit {last}, run git fetch origin {last} first."
+    )
+}
+
+/// The rule of step 9 of the start text of a verify of a fix head of the
+/// pull request `pull` ([`wave_verify_start`],
+/// 01M7GDQWDA1Z08V4EDMP255ZF1): a shown finding fails the verify only on a
+/// criterion, a security fault, a finding of the last verify that stays,
+/// or a fault in the diff since `last`. Each other shown finding goes in
+/// the part `## New findings`, and the report files it
+/// (01M7GDQWK92WWTTE361JGWDVGY).
+///
+/// ```
+/// let rule = riff::text::verify_fix_rule(40, "9f8e7d6c5b4a");
+/// assert!(rule.contains("fails the verify only when it is one of these: a fail of a criterion of \"Done when\"; a security fault; a finding of the last verify that stays; a fault in the diff since 9f8e7d6c5b4a."));
+/// assert!(rule.contains("Put each other finding that you show in the part `## New findings` of your result, one line each"));
+/// assert!(rule.contains("riff files each line as an issue of its own in the Backlog, with the line `Found by: #40`, and names the issue in the result."));
+/// assert!(rule.ends_with("A finding that you cannot show goes in the result as not shown, and does not fail the verify."));
+/// ```
+pub fn verify_fix_rule(pull: u64, last: &str) -> String {
+    format!(
+        "This head is a fix, so a finding that you show, with a test, a run or a read of the code, \
+         fails the verify only when it is one of these: a fail of a criterion of \"Done when\"; a \
+         security fault; a finding of the last verify that stays; a fault in the diff since \
+         {last}. Put each other finding that you show in the part `{}` of your result, one line \
+         each, as a finding of the council: the file, the line, the rule and the fault. riff \
+         files each line as an issue of its own in the Backlog, with the line `{FOUND_BY} \
+         #{pull}`, and names the issue in the result. A finding that you cannot show goes in the \
+         result as not shown, and does not fail the verify.",
+        crate::council::found::HEADING
+    )
+}
+
+/// The start of the line of the issue of a new finding that names the pull
+/// request of its verify ([`found_body`], 01M7GDQWK92WWTTE361JGWDVGY).
+pub const FOUND_BY: &str = "Found by:";
+
+/// The most characters of the title of the issue of a new finding
+/// ([`found_title`]).
+const FOUND_TITLE: usize = 100;
+
+/// The title of the issue of the new finding `finding` of a verify
+/// (01M7GDQWK92WWTTE361JGWDVGY): the finding, cut at a space to at most
+/// 100 characters, with `...` at the cut.
+///
+/// ```
+/// use riff::text::found_title;
+///
+/// assert_eq!(found_title("src/a.rs:12: a gap."), "src/a.rs:12: a gap.");
+/// let long = format!("src/a.rs:12: {}", "word ".repeat(30));
+/// let title = found_title(&long);
+/// assert!(title.chars().count() <= 100, "{title}");
+/// assert!(title.starts_with("src/a.rs:12: word word"));
+/// assert!(title.ends_with(" word..."), "{title}");
+/// ```
+pub fn found_title(finding: &str) -> String {
+    if finding.chars().count() <= FOUND_TITLE {
+        return finding.to_owned();
+    }
+    let cut: String = finding.chars().take(FOUND_TITLE - 3).collect();
+    let cut = cut.rsplit_once(' ').map_or(cut.as_str(), |(head, _)| head);
+    format!("{}...", cut.trim_end())
+}
+
+/// The body of the issue of the new finding `finding` of the verify of the
+/// pull request `pull` at `commit` (01M7GDQWK92WWTTE361JGWDVGY): the
+/// finding, why it did not fail the verify, and the line `Found by:
+/// #PULL`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::found_body(40, "1a2b3c4d5e", "src/a.rs:12: a gap."),
+///     "src/a.rs:12: a gap.\n\nThe verify of #40 found this at the commit 1a2b3c4. It did not \
+///      fail the verify: the fault is in code that the fix did not change. riff filed it in the \
+///      Backlog.\n\nFound by: #40\n"
+/// );
+/// ```
+pub fn found_body(pull: u64, commit: &str, finding: &str) -> String {
+    let commit = commit.get(..7).unwrap_or(commit);
+    format!(
+        "{finding}\n\nThe verify of #{pull} found this at the commit {commit}. It did not fail \
+         the verify: the fault is in code that the fix did not change. riff filed it in the \
+         Backlog.\n\n{FOUND_BY} #{pull}\n"
+    )
+}
+
 /// The line of the start text of a worker about the body of the pull
 /// request: a line `Key: value` at its end is a trailer line, and the
 /// merge wraps a trailer line over [`hygiene::MERGE_WIDTH`] characters
@@ -14042,21 +14151,36 @@ pub fn wave_checks_rerun(
 /// 01M7CX5BTPFX77KS5J87C7GBY2, and a live security fault goes to the
 /// lead, not into the result (01M7CFBZSQEEZNZBR9H1S54GS1).
 ///
+/// `last` is the head of the last verify of the pull request when that
+/// verify failed at another commit ([`crate::pr::last_failed`]): the
+/// head now is a fix head (01M7GDQWGCBVJE6S4MJDEJ6P8T). Then step 3
+/// gives that head and the diff since it ([`verify_fix_diff`]), and step
+/// 9 gives the rule of a fix head ([`verify_fix_rule`],
+/// 01M7GDQWDA1Z08V4EDMP255ZF1): a shown finding fails the verify only on
+/// a criterion, a security fault, a finding of the last verify that
+/// stays, or a fault in that diff. Each other shown finding goes in the
+/// part `## New findings`, and the report files it
+/// ([`crate::council::found`]). With no `last`, the text has none of it.
+///
 /// ```mermaid
 /// flowchart TD
 ///     C["5. each criterion, 6. a control"] --> S["7. riff council show PR"]
 ///     S --> A["8. one subagent for each member:<br/>its text, the diff, the rules"]
 ///     A --> F["the findings: the file, the line, the rule"]
 ///     F --> K{"9. the verifier shows it<br/>in the code?"}
-///     K -- "yes" --> X["shown: the verify fails"]
+///     K -- "yes, and no fix head" --> X["shown: the verify fails"]
+///     K -- "yes, a fix head" --> H{"a criterion, a security fault,<br/>a finding that stays,<br/>or in the diff since the last head?"}
+///     H -- "yes" --> X
+///     H -- "no" --> W["shown, in the part ## New findings:<br/>the report files it"]
 ///     K -- "no" --> N["not shown"]
 ///     X --> R["11. the result, with the part ## The council"]
+///     W --> R
 ///     N --> R
 /// ```
 ///
 /// ```
 /// let checks = ["CI".to_owned()];
-/// let text = riff::text::wave_verify_start("o/r", "master", 12, 40, "1a2b3c4d5e6f", &checks);
+/// let text = riff::text::wave_verify_start("o/r", "master", 12, 40, "1a2b3c4d5e6f", &checks, None);
 /// assert!(text.contains("git diff origin/master...HEAD"));
 /// assert!(!text.contains("origin/main"));
 /// assert!(text.contains("pull request #40"));
@@ -14082,7 +14206,7 @@ pub fn wave_checks_rerun(
 /// assert!(text.contains("start one subagent for each member with the Agent tool"));
 /// assert!(text.contains("Then the part `## The council`, with one line for each member of the council"));
 /// let two = ["Lint".to_owned(), "Test".to_owned()];
-/// let text = riff::text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4d5e6f", &two);
+/// let text = riff::text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4d5e6f", &two, None);
 /// assert!(text.contains("was done: the checks Lint, Test."));
 /// // No part for a release pull request.
 /// assert!(!text.contains("release pull request"));
@@ -14090,11 +14214,23 @@ pub fn wave_checks_rerun(
 /// assert!(text.contains("Find its \"Done when\" line or heading: a line \"Done when:\", or a heading \"## Done when\".\n2. Read the rules"));
 ///
 /// // No CI (01M5SMNKDWBD1J6Y18ENQG87CK): no check to wait for, and none ran.
-/// let none = riff::text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4d5e6f", &[]);
+/// let none = riff::text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4d5e6f", &[], None);
 /// assert!(none.contains("The repository has no CI: riff/verify is its only check"));
 /// assert!(none.contains("Run the tests that the criteria name."));
 /// assert!(!none.contains("the full check of the commit was done"));
 /// assert!(!none.contains(riff::text::VERIFY_CI_TESTS));
+///
+/// // A fix head (01M7GDQWGCBVJE6S4MJDEJ6P8T): the head of the last
+/// // verify, the diff since it, and the rule.
+/// let fix = riff::text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4d5e6f", &checks, Some("9f8e7d6c5b4a"));
+/// assert!(fix.contains(&format!("\n   {}\n4. ", riff::text::verify_fix_diff("9f8e7d6c5b4a"))));
+/// assert!(fix.contains(&format!("\n9. Check each finding in the code. {}\n", riff::text::verify_fix_rule(40, "9f8e7d6c5b4a"))));
+/// assert!(fix.contains("Then the part `## New findings` of step 9, when it has a line.\n   The result is public"));
+/// // The rest is the text of a first verify.
+/// let first = riff::text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4d5e6f", &checks, None);
+/// assert!(!first.contains("9f8e7d6c5b4a"));
+/// assert!(!first.contains("New findings"));
+/// assert!(first.contains(&format!("\n9. Check each finding in the code. {}\n", riff::text::VERIFY_FIRST_RULE)));
 /// ```
 pub fn wave_verify_start(
     repo: &str,
@@ -14103,6 +14239,7 @@ pub fn wave_verify_start(
     pull: u64,
     commit: &str,
     checks: &[String],
+    last: Option<&str>,
 ) -> String {
     let ran = if checks.is_empty() {
         "The repository has no CI: riff/verify is its only check, and no check ran on the commit. \
@@ -14123,6 +14260,19 @@ pub fn wave_verify_start(
     };
     let control = verify_control(base, commit);
     let trees = build_trees();
+    // The verify of a fix head (01M7GDQWDA1Z08V4EDMP255ZF1,
+    // 01M7GDQWGCBVJE6S4MJDEJ6P8T).
+    let (since, judge, found) = match last {
+        Some(last) => (
+            format!("\n   {}", verify_fix_diff(last)),
+            verify_fix_rule(pull, last),
+            format!(
+                "Then the part `{}` of step 9, when it has a line.\n   ",
+                crate::council::found::HEADING
+            ),
+        ),
+        None => (String::new(), VERIFY_FIRST_RULE.to_owned(), String::new()),
+    };
     format!(
         "You are a verifier of riff. You run in a container, in your own clone of {repo}, at the \
          commit {commit} of pull request #{pull}, detached. Check the work of issue-{issue} \
@@ -14134,7 +14284,7 @@ pub fn wave_verify_start(
          \"## Done when\".\n\
          2. {READ_RULES}, and obey the rules for a verify.\n\
          3. Read the pull request and its diff: gh pr view {pull} --comments, and git diff \
-         origin/{base}...HEAD\n\
+         origin/{base}...HEAD{since}\n\
          4. See the checks of the commit: gh pr checks {pull}\n   \
          {ran}\n\
          5. Check each criterion: review the code and its fit with the design, read the test \
@@ -14148,9 +14298,7 @@ pub fn wave_verify_start(
          repository for agents. Each subagent reads only, and changes nothing. Each member \
          gives its findings, each with the file, the line and the rule: the member file and \
          the heading of the rule. Wait for the findings of each member.\n\
-         9. Check each finding in the code. A finding that you show, with a test, a run or a \
-         read of the code, fails the verify. A finding that you cannot show goes in the result \
-         as not shown, and does not fail the verify.\n\
+         9. Check each finding in the code. {judge}\n\
          10. {VERIFY_READS_ONLY} Run each test in the foreground, and wait for its end. Never \
          end a turn while a background task runs: a session does not continue after its \
          result.\n\
@@ -14162,7 +14310,7 @@ pub fn wave_verify_start(
          - design: no finding.\n   \
          - rust: shown: src/main.rs:40: .riff/council/rust.md \"Each conversion names each \
          field\": the match skips a field.\n   \
-         The result is public: it holds no secret and no security fault. Tell the lead a \
+         {found}The result is public: it holds no secret and no security fault. Tell the lead a \
          security fault with the riff tool tell. A live security fault that a member finds goes \
          to the lead too, not into the result.\n\n\
          {trees}\n\
@@ -16170,7 +16318,7 @@ mod tests {
         for text in [
             wave_rebase_start("o/r", "main", 12, 40, "1a2b3c4", "b", "1a"),
             wave_checks_start("o/r", "main", 12, 40, "1a2b3c4", &checks, "b", "1a"),
-            wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &checks),
+            wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &checks, None),
         ] {
             assert!(!text.contains("plain sentences"), "{text}");
         }
@@ -16211,8 +16359,8 @@ mod tests {
         texts.extend([
             wave_rebase_start("o/r", "main", 12, 40, "1a2b3c4", "b", "1a"),
             wave_checks_start("o/r", "main", 12, 40, "1a2b3c4", &checks, "b", "1a"),
-            wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &checks),
-            wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &[]),
+            wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &checks, None),
+            wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &[], None),
         ]);
         for text in texts {
             assert_eq!(text.matches(&line).count(), 1, "{text}");
@@ -16256,7 +16404,7 @@ mod tests {
     fn the_start_text_of_a_verify_names_the_heading_of_done_when() {
         let checks = ["CI".to_owned()];
         for checks in [&checks[..], &[][..]] {
-            let text = wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", checks);
+            let text = wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", checks, None);
             let step = text
                 .split("\n2. ")
                 .next()
@@ -16290,7 +16438,7 @@ mod tests {
                 .to_owned()
         };
         let checks = ["CI".to_owned()];
-        let text = wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &checks);
+        let text = wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &checks, None);
         let five = step(&text);
         assert!(
             five.starts_with("Check each criterion: review the code"),
@@ -16312,7 +16460,7 @@ mod tests {
             "{five}"
         );
         assert_eq!(text.matches(VERIFY_CI_TESTS).count(), 1, "{text}");
-        let none = wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &[]);
+        let none = wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &[], None);
         let five = step(&none);
         assert!(
             five.ends_with("run that test by its name when you must."),
@@ -16333,7 +16481,7 @@ mod tests {
     fn the_start_text_of_a_verify_gives_the_control() {
         let checks = ["CI".to_owned()];
         for checks in [&checks[..], &[][..]] {
-            let text = wave_verify_start("o/r", "trunk", 12, 40, "1a2b3c4d5e", checks);
+            let text = wave_verify_start("o/r", "trunk", 12, 40, "1a2b3c4d5e", checks, None);
             let six = text
                 .split("\n6. ")
                 .nth(1)
@@ -16408,7 +16556,7 @@ mod tests {
         };
         let checks = ["CI".to_owned()];
         for checks in [&checks[..], &[][..]] {
-            let text = wave_verify_start("o/r", "trunk", 12, 40, "1a2b3c4d5e", checks);
+            let text = wave_verify_start("o/r", "trunk", 12, 40, "1a2b3c4d5e", checks, None);
             assert_eq!(
                 step(&text, 7),
                 "Pick the council of the pull request: /opt/riff/riff council show 40\n   It \
@@ -16519,7 +16667,7 @@ mod tests {
             ),
             (
                 "verify",
-                wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &checks),
+                wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &checks, None),
             ),
             (
                 "failed verify",

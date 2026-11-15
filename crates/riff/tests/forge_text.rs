@@ -126,8 +126,9 @@ fn each_reply_of_the_forge_that_riff_reads_has_no_control_character() {
         .status();
     assert!(init.unwrap().success());
     crate::common::base_branch(clone.path());
-    let result = "ok\n\n## The council\n\n- design: no finding.\n- testing: no finding.\n\
-                  - docs: no finding.\n";
+    let mut result = "ok\n\n## The council\n\n- design: no finding.\n- testing: no finding.\n\
+                      - docs: no finding.\n"
+        .to_owned();
     let reported = riff::pr::report(
         &gh,
         "acme/app",
@@ -135,7 +136,7 @@ fn each_reply_of_the_forge_that_riff_reads_has_no_control_character() {
         40,
         "abc1234",
         Verdict::Pass,
-        result,
+        &mut result,
     )
     .unwrap();
     clean(&reported.commit);

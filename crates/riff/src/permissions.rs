@@ -2038,7 +2038,28 @@ mod tests {
             ),
             (
                 Role::Verifier,
-                text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4d", &["CI".to_owned()]),
+                text::wave_verify_start(
+                    "o/r",
+                    "main",
+                    12,
+                    40,
+                    "1a2b3c4d",
+                    &["CI".to_owned()],
+                    None,
+                ),
+            ),
+            // The verify of a fix head (01M7GDQWGCBVJE6S4MJDEJ6P8T).
+            (
+                Role::Verifier,
+                text::wave_verify_start(
+                    "o/r",
+                    "main",
+                    12,
+                    40,
+                    "1a2b3c4d",
+                    &["CI".to_owned()],
+                    Some("9f8e7d6c"),
+                ),
             ),
             (Role::Lead, text::MCP_LEAD.to_owned()),
         ];

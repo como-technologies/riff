@@ -3898,7 +3898,9 @@ async fn no_verify(
 ///
 /// A report that fails because a limit of GitHub is out keeps the result in
 /// the folder, and the loop of the wave reports it after the reset
-/// ([`kept`], #1557). The lead gets a note.
+/// ([`kept`], #1557). The lead gets a note. The kept result has the
+/// number of each issue that the report filed for a new finding, so the
+/// next report files it no second time (01M7GDQWK92WWTTE361JGWDVGY).
 ///
 /// A report that works sets [`Finish::verdict`]: the start of that verify
 /// does not count toward [`STARTS`] (#1651).
@@ -3940,10 +3942,19 @@ async fn after_verify(
             .await?;
         return Ok(vec![body].into());
     };
-    let (repo, tested, shown) = (wave.repo.clone(), commit.to_owned(), result.clone());
+    let (repo, tested, mut shown) = (wave.repo.clone(), commit.to_owned(), result.clone());
     let (reporter, main) = (gh.clone(), wave.main.clone());
-    let reported =
-        blocking(move || pr::report(&reporter, &repo, &main, pull, &tested, verdict, &shown)).await;
+    // The report writes the issue of each new finding in the result
+    // (01M7GDQWK92WWTTE361JGWDVGY): a kept result keeps them.
+    let reported = blocking(move || {
+        let reported = pr::report(&reporter, &repo, &main, pull, &tested, verdict, &mut shown);
+        Ok((reported, shown))
+    })
+    .await;
+    let (reported, result) = match reported {
+        Ok(pair) => pair,
+        Err(e) => (Err(e), result),
+    };
     let reported = match reported {
         Ok(reported) => reported,
         Err(e) => {
@@ -4234,7 +4245,16 @@ impl Live {
                 blocking(move || clone_at(&main_at, &at, pull_at, &commit_at)).await?;
                 let repo = wave.repo.clone();
                 let checks = blocking(move || repo_setup::full_check(&forge(&repo), &repo)).await?;
-                text::wave_verify_start(&wave.repo, base, *issue, *pull, commit, &checks)
+                let last = last_failed(&wave.repo, *pull, commit).await;
+                text::wave_verify_start(
+                    &wave.repo,
+                    base,
+                    *issue,
+                    *pull,
+                    commit,
+                    &checks,
+                    last.as_deref(),
+                )
             }
         };
         let existing = |p: PathBuf| p.exists().then_some(p);
@@ -4281,6 +4301,20 @@ fn failed_verify(pulls: &[rollout::Pull], issue: u64) -> Option<String> {
             .unwrap_or_default();
         text::wave_failed_verify(pull.number, &pull.head, &url)
     })
+}
+
+/// The head of the last verify of the pull request `pull` of `repo` when
+/// `commit`, its head now, is a fix head ([`pr::last_failed`],
+/// 01M7GDQWGCBVJE6S4MJDEJ6P8T). A fault of `gh` shows on stderr, and
+/// gives `None`: a first verify, which fails on each shown finding.
+async fn last_failed(repo: &str, pull: u64, commit: &str) -> Option<String> {
+    let (at, head) = (repo.to_owned(), commit.to_owned());
+    blocking(move || pr::last_failed(&forge(&at), &at, pull, &head))
+        .await
+        .unwrap_or_else(|e| {
+            eprintln!("riff daemon: {repo}: {e:#}");
+            None
+        })
 }
 
 /// Makes the clone of a verify at `commit`, detached: the head commit of
