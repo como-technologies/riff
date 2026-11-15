@@ -388,18 +388,29 @@ impl Replies {
 
     /// The replies of each transcript of `paths`, and of the helper
     /// agents of each one. A file that cannot be read is skipped: the
-    /// agent tool can remove an old transcript.
+    /// agent tool can remove an old transcript. A container session
+    /// writes its transcripts, so each read goes through
+    /// [`crate::host_file`] from the Claude folder of the transcript
+    /// ([`in_claude`]): a link there is skipped too.
     pub fn read(paths: &[PathBuf]) -> Replies {
         let mut replies = Replies::default();
         for path in paths {
-            let helpers = std::fs::read_dir(path.with_extension("").join("subagents"))
+            let Some((claude, name)) = in_claude(path) else {
+                continue;
+            };
+            let subagents = name.with_extension("").join(SUBAGENTS);
+            let helpers = crate::host_file::list(claude, &subagents)
+                .ok()
+                .flatten()
+                .unwrap_or_default()
                 .into_iter()
-                .flatten()
-                .flatten()
-                .map(|entry| entry.path())
-                .filter(|p| p.extension().is_some_and(|e| e == "jsonl"));
-            for file in std::iter::once(path.clone()).chain(helpers) {
-                if let Ok(text) = std::fs::read_to_string(&file) {
+                .filter(|(file, kind)| {
+                    *kind == crate::host_file::Kind::File
+                        && Path::new(file).extension().is_some_and(|e| e == "jsonl")
+                })
+                .map(|(file, _)| subagents.join(file));
+            for file in std::iter::once(name.to_owned()).chain(helpers) {
+                if let Ok(Some(text)) = crate::host_file::read_to_string(claude, &file) {
                     replies.add(&text);
                 }
             }
@@ -1551,16 +1562,86 @@ impl Meter {
 /// # Ok::<(), std::io::Error>(())
 /// ```
 pub fn transcripts_in(claude: &Path, session: &str) -> Vec<PathBuf> {
-    let name = format!("{}.jsonl", riff_core::name::sanitize(session));
-    let mut found: Vec<PathBuf> = std::fs::read_dir(claude.join("projects"))
+    transcripts_with_times(claude, session)
         .into_iter()
+        .map(|(path, _)| path)
+        .collect()
+}
+
+/// The time of the last write to a transcript of `session` in the Claude
+/// folder `claude` ([`transcripts_in`]), if it has one.
+///
+/// ```
+/// let claude = tempfile::tempdir()?;
+/// let project = claude.path().join("projects/-data-clone");
+/// std::fs::create_dir_all(&project)?;
+/// assert_eq!(riff::usage::written_in(claude.path(), "a6cf"), None);
+/// std::fs::write(project.join("a6cf.jsonl"), "")?;
+/// assert!(riff::usage::written_in(claude.path(), "a6cf").is_some());
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn written_in(claude: &Path, session: &str) -> Option<SystemTime> {
+    transcripts_with_times(claude, session)
+        .into_iter()
+        .map(|(_, time)| time)
+        .max()
+}
+
+/// Each transcript of `session` in the Claude folder `claude`, in the
+/// order of the paths, with the time of its last write. The session
+/// writes that folder, so riff looks through [`crate::host_file`]: a
+/// link there counts as no transcript (01M7FE5FYFAR92PM3EJJ211VM2).
+fn transcripts_with_times(claude: &Path, session: &str) -> Vec<(PathBuf, SystemTime)> {
+    let name = format!("{}.jsonl", riff_core::name::sanitize(session));
+    let projects = Path::new(PROJECTS);
+    crate::host_file::list(claude, projects)
+        .ok()
         .flatten()
-        .flatten()
-        .map(|entry| entry.path().join(&name))
-        .filter(|path| path.is_file())
-        .collect();
-    found.sort();
-    found
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(_, kind)| *kind == crate::host_file::Kind::Folder)
+        .filter_map(|(project, _)| {
+            let path = projects.join(project).join(&name);
+            let time = crate::host_file::modified(claude, &path).ok()??;
+            Some((claude.join(path), time))
+        })
+        .collect()
+}
+
+/// The folder of the projects in a Claude folder: `projects/P/S.jsonl`
+/// is the transcript of the session `S`.
+pub const PROJECTS: &str = "projects";
+
+/// The folder of the helper agents of a transcript `S.jsonl`, in the
+/// folder `S` beside it.
+pub const SUBAGENTS: &str = "subagents";
+
+/// The Claude folder of the transcript `path`, `CLAUDE/projects/P/S.jsonl`,
+/// and the name of `path` in it: [`crate::host_file`] opens each part of
+/// that name with no follow of a link. A path of another form gives the
+/// folder of the file.
+///
+/// ```
+/// use std::path::Path;
+///
+/// assert_eq!(
+///     riff::usage::in_claude(Path::new("/s/claude/projects/-clone/a.jsonl")),
+///     Some((Path::new("/s/claude"), Path::new("projects/-clone/a.jsonl")))
+/// );
+/// assert_eq!(
+///     riff::usage::in_claude(Path::new("/tmp/a.jsonl")),
+///     Some((Path::new("/tmp"), Path::new("a.jsonl")))
+/// );
+/// ```
+pub fn in_claude(path: &Path) -> Option<(&Path, &Path)> {
+    let file = path.parent()?;
+    let claude = match file.parent() {
+        Some(projects) if projects.file_name().is_some_and(|n| n == PROJECTS) => {
+            projects.parent()?
+        }
+        _ => file,
+    };
+    Some((claude, path.strip_prefix(claude).ok()?))
 }
 
 /// The line after riff wrote the total comment of `issue`.
@@ -1852,6 +1933,48 @@ mod tests {
         let gone = dir.path().join("gone.jsonl");
         let models = Replies::read(&[main, gone]).sum(&[(0, u64::MAX)]);
         assert_eq!((models["opus"].output, models["haiku"].output), (1, 2));
+    }
+
+    /// 01M7FE5FYFAR92PM3EJJ211VM2: a container session writes its Claude
+    /// folder. A link there to a transcript of the person, to a folder of
+    /// the person or to a FIFO counts as no transcript.
+    #[test]
+    fn a_link_in_the_claude_folder_of_a_session_counts_as_no_transcript() {
+        let root = tempfile::tempdir().unwrap();
+        let person = root.path().join("person/.claude/projects/-home-mike-src");
+        write(&person.join("s1.jsonl"), &[reply(NINE, "p1", "opus", 7)]);
+        write(
+            &person.join("s1/subagents/agent-p.jsonl"),
+            &[reply(NINE, "p2", "opus", 70)],
+        );
+        let claude = root.path().join("sessions/issue-12-1a2b3c4d/claude");
+        let projects = claude.join(PROJECTS);
+        std::fs::create_dir_all(projects.join("-data-clone/s1")).unwrap();
+        std::os::unix::fs::symlink(&person, projects.join("-linked")).unwrap();
+        let main = projects.join("-data-clone/s1.jsonl");
+        write(&main, &[reply(NINE, "m1", "opus", 1)]);
+        std::os::unix::fs::symlink(
+            person.join("s1/subagents"),
+            projects.join("-data-clone/s1/subagents"),
+        )
+        .unwrap();
+        assert_eq!(transcripts_in(&claude, "s1"), std::slice::from_ref(&main));
+        let models = Replies::read(std::slice::from_ref(&main)).sum(&[(0, u64::MAX)]);
+        assert_eq!(models["opus"].output, 1);
+
+        // The transcript itself as a link, or as a FIFO.
+        std::fs::remove_file(&main).unwrap();
+        std::os::unix::fs::symlink(person.join("s1.jsonl"), &main).unwrap();
+        assert!(transcripts_in(&claude, "s1").is_empty());
+        assert!(
+            Replies::read(std::slice::from_ref(&main))
+                .sum(&[(0, u64::MAX)])
+                .is_empty()
+        );
+        std::fs::remove_file(&main).unwrap();
+        nix::unistd::mkfifo(&main, nix::sys::stat::Mode::S_IRWXU).unwrap();
+        assert!(transcripts_in(&claude, "s1").is_empty());
+        assert!(Replies::read(&[main]).sum(&[(0, u64::MAX)]).is_empty());
     }
 
     #[test]

@@ -726,18 +726,17 @@ fn of_riff(group: &Value) -> bool {
     })
 }
 
-/// Gives the settings file `path` the hooks of [`session_hooks`]. A group
-/// of riff that is not one of them goes, as the hook of an older riff:
-/// the new group takes its place (01M6WFN93ZDCSAVRTNYDX4MRJR). Each other
-/// key and each other hook stays. True when it wrote the file.
+/// The settings text `text` with the hooks of [`session_hooks`], or
+/// `None` when it has them. A group of riff that is not one of them goes,
+/// as the hook of an older riff: the new group takes its place
+/// (01M6WFN93ZDCSAVRTNYDX4MRJR). Each other key and each other hook
+/// stays.
 ///
 /// ```
-/// let dir = tempfile::tempdir()?;
-/// let path = dir.path().join("settings.json");
-/// std::fs::write(&path, r#"{"model":"opus","hooks":{"SessionEnd":[]}}"#)?;
-/// assert!(riff::run::add_session_hooks(&path)?);
-/// assert!(!riff::run::add_session_hooks(&path)?, "the hooks are there");
-/// let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+/// let text = r#"{"model":"opus","hooks":{"SessionEnd":[]}}"#;
+/// let new = riff::run::with_session_hooks(text)?.expect("the hooks are new");
+/// assert_eq!(riff::run::with_session_hooks(&new)?, None, "the hooks are there");
+/// let settings: serde_json::Value = serde_json::from_str(&new)?;
 /// assert_eq!(settings["model"], "opus");
 /// assert_eq!(settings["hooks"]["SessionEnd"], serde_json::json!([]));
 /// let hooks = riff::run::session_hooks();
@@ -747,22 +746,19 @@ fn of_riff(group: &Value) -> bool {
 ///
 /// // The hook of an older riff gets the new command.
 /// let old = r#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"/opt/riff/riff relay idle"}]}]}}"#;
-/// std::fs::write(&path, old)?;
-/// assert!(riff::run::add_session_hooks(&path)?);
-/// let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+/// let new = riff::run::with_session_hooks(old)?.expect("the hook is old");
+/// let settings: serde_json::Value = serde_json::from_str(&new)?;
 /// assert_eq!(settings["hooks"]["Stop"], hooks["Stop"]);
 /// # Ok::<(), anyhow::Error>(())
 /// ```
-pub fn add_session_hooks(path: &Path) -> Result<bool> {
-    let text = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    let mut settings: Value =
-        serde_json::from_str(&text).with_context(|| format!("{} is no JSON", path.display()))?;
+pub fn with_session_hooks(text: &str) -> Result<Option<String>> {
+    let mut settings: Value = serde_json::from_str(text).context("the settings are no JSON")?;
     let Some(root) = settings.as_object_mut() else {
-        bail!("{} is no JSON object", path.display());
+        bail!("the settings are no JSON object");
     };
     let hooks = root.entry("hooks").or_insert_with(|| json!({}));
     let Some(hooks) = hooks.as_object_mut() else {
-        bail!("`hooks` in {} is no object", path.display());
+        bail!("`hooks` in the settings is no object");
     };
     let mut changed = false;
     let Value::Object(wanted) = session_hooks() else {
@@ -771,7 +767,7 @@ pub fn add_session_hooks(path: &Path) -> Result<bool> {
     for (event, list) in wanted {
         let have = hooks.entry(event.as_str()).or_insert_with(|| json!([]));
         let Some(have) = have.as_array_mut() else {
-            bail!("`hooks.{event}` in {} is no list", path.display());
+            bail!("`hooks.{event}` in the settings is no list");
         };
         let list = list.as_array().cloned().unwrap_or_default();
         let before = have.len();
@@ -785,11 +781,9 @@ pub fn add_session_hooks(path: &Path) -> Result<bool> {
         }
     }
     if !changed {
-        return Ok(false);
+        return Ok(None);
     }
-    std::fs::write(path, serde_json::to_string_pretty(&settings)?)
-        .with_context(|| format!("cannot write {}", path.display()))?;
-    Ok(true)
+    Ok(Some(serde_json::to_string_pretty(&settings)?))
 }
 
 /// The renderer of `claude` in each session, the key `tui` of its
@@ -805,42 +799,38 @@ pub fn add_session_hooks(path: &Path) -> Result<bool> {
 /// mouse as text. The classic renderer turns on no mouse report.
 pub const TUI: &str = "default";
 
-/// Gives the settings file `path` the key `tui` of [`TUI`] when it has
-/// no `tui`. A `tui` that is there stays: the person chose it, for
-/// example with `/tui fullscreen` in a takeover. True when it wrote the
-/// file.
+/// The settings text `text` with the key `tui` of [`TUI`], or `None`
+/// when it has a `tui`. A `tui` that is there stays: the person chose it,
+/// for example with `/tui fullscreen` in a takeover.
 ///
 /// ```
-/// let dir = tempfile::tempdir()?;
-/// let path = dir.path().join("settings.json");
-/// std::fs::write(&path, r#"{"model":"opus"}"#)?;
-/// assert!(riff::run::add_tui(&path)?);
-/// assert!(!riff::run::add_tui(&path)?, "the key is there");
-/// let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+/// let new = riff::run::with_tui(r#"{"model":"opus"}"#)?.expect("no key");
+/// assert_eq!(riff::run::with_tui(&new)?, None, "the key is there");
+/// let settings: serde_json::Value = serde_json::from_str(&new)?;
 /// assert_eq!(settings["tui"], "default");
 /// assert_eq!(settings["model"], "opus");
 ///
 /// // The choice of the person stays.
-/// std::fs::write(&path, r#"{"tui":"fullscreen"}"#)?;
-/// assert!(!riff::run::add_tui(&path)?);
-/// assert_eq!(std::fs::read_to_string(&path)?, r#"{"tui":"fullscreen"}"#);
+/// assert_eq!(riff::run::with_tui(r#"{"tui":"fullscreen"}"#)?, None);
 /// # Ok::<(), anyhow::Error>(())
 /// ```
-pub fn add_tui(path: &Path) -> Result<bool> {
-    let text = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    let mut settings: Value =
-        serde_json::from_str(&text).with_context(|| format!("{} is no JSON", path.display()))?;
+pub fn with_tui(text: &str) -> Result<Option<String>> {
+    let mut settings: Value = serde_json::from_str(text).context("the settings are no JSON")?;
     let Some(root) = settings.as_object_mut() else {
-        bail!("{} is no JSON object", path.display());
+        bail!("the settings are no JSON object");
     };
     if root.contains_key("tui") {
-        return Ok(false);
+        return Ok(None);
     }
     root.insert("tui".into(), json!(TUI));
-    std::fs::write(path, serde_json::to_string_pretty(&settings)?)
-        .with_context(|| format!("cannot write {}", path.display()))?;
-    Ok(true)
+    Ok(Some(serde_json::to_string_pretty(&settings)?))
 }
+
+/// The name of the Claude config in the Claude folder of a session.
+pub const CLAUDE_JSON: &str = ".claude.json";
+
+/// The name of the settings in the Claude folder of a session.
+pub const SETTINGS_JSON: &str = "settings.json";
 
 /// Writes the own Claude folder `dir` of a session: the lead, a session
 /// of `riff run` and a session of the daemon (01M51JACH6TQP318ZFG6NQ9GRM).
@@ -859,8 +849,12 @@ pub fn add_tui(path: &Path) -> Result<bool> {
 /// (01M5084K4YQCZF20XA0P2485SG, 01M6FZXZ9267YKMH97E6A2Y2EP), and the auto
 /// mode settings of `auto` that it lacks
 /// ([`crate::permissions::with_auto_mode`], 01M516HEX3GVTN9K2QS12A4PG3),
-/// the hooks of riff ([`add_session_hooks`]), and the key `tui` when it
-/// has none ([`add_tui`], 01M6XVBRT2T838TX53SSXR6HRH).
+/// the hooks of riff ([`with_session_hooks`]), and the key `tui` when it
+/// has none ([`with_tui`], 01M6XVBRT2T838TX53SSXR6HRH).
+///
+/// The session writes `dir`, so each read and write there goes through
+/// [`crate::host_file`]: a link there gives an error that names it, and
+/// the host reads and writes no file of the person through it.
 ///
 /// ```
 /// use riff::permissions::{Role, Trust};
@@ -897,6 +891,15 @@ pub fn add_tui(path: &Path) -> Result<bool> {
 /// assert_eq!(settings["autoMode"], riff::run::settings(&auto, Role::Worker)["autoMode"]);
 /// assert_eq!(settings["hooks"], riff::run::session_hooks());
 /// assert_eq!(settings["tui"], riff::run::TUI);
+///
+/// // A link that the session made: an error that names it, and the file
+/// // of the person stays as it was.
+/// std::fs::remove_file(claude.join("settings.json"))?;
+/// std::os::unix::fs::symlink(&person, claude.join("settings.json"))?;
+/// let error = riff::run::claude_folder(&claude, "/data/clone".as_ref(), &person, &auto, Role::Worker)
+///     .unwrap_err();
+/// assert_eq!(format!("{error:#}"), riff::text::host_file_link(&claude.join("settings.json")));
+/// assert_eq!(std::fs::read_to_string(&person)?, r#"{"theme":"dark"}"#);
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn claude_folder(
@@ -906,16 +909,19 @@ pub fn claude_folder(
     auto: &crate::permissions::Trust,
     role: crate::permissions::Role,
 ) -> Result<()> {
-    let read =
-        |path: &Path| -> Option<Value> { serde_json::from_slice(&std::fs::read(path).ok()?).ok() };
     std::fs::create_dir_all(dir).with_context(|| format!("cannot make {}", dir.display()))?;
-    let file = dir.join(".claude.json");
-    let mut root = match read(&file) {
+    let config = Path::new(CLAUDE_JSON);
+    let mut root = match crate::host_file::read(dir, config)?
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+    {
         Some(Value::Object(map)) => map,
         _ => serde_json::Map::new(),
     };
     root.entry("hasCompletedOnboarding").or_insert(json!(true));
-    let theme = read(person)
+    // The config of the person is out of each folder of a session.
+    let theme = std::fs::read(person)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
         .and_then(|p| p.get("theme").cloned())
         .unwrap_or_else(|| json!("auto"));
     root.entry("theme").or_insert(theme);
@@ -932,24 +938,44 @@ pub fn claude_folder(
             .entry("hasTrustDialogAccepted")
             .or_insert(json!(true));
     }
-    let tmp = dir.join(".claude.json.riff");
-    std::fs::write(&tmp, serde_json::to_vec_pretty(&Value::Object(root))?)
-        .with_context(|| format!("cannot write {}", tmp.display()))?;
-    std::fs::rename(&tmp, &file).with_context(|| format!("cannot write {}", file.display()))?;
-    let settings_file = dir.join("settings.json");
-    if settings_file.exists() {
-        crate::permissions::add(&settings_file, &crate::permissions::session_rules(role))?;
-        crate::permissions::add_auto_mode(&settings_file, auto)?;
-        add_session_hooks(&settings_file)?;
-        add_tui(&settings_file)?;
-    } else {
-        std::fs::write(
-            &settings_file,
-            serde_json::to_string_pretty(&settings(auto, role))?,
-        )
-        .with_context(|| format!("cannot write {}", settings_file.display()))?;
+    crate::host_file::write(
+        dir,
+        config,
+        &serde_json::to_vec_pretty(&Value::Object(root))?,
+    )?;
+    let name = Path::new(SETTINGS_JSON);
+    let new = match crate::host_file::read_to_string(dir, name)? {
+        Some(text) => session_settings(&text, auto, role)
+            .with_context(|| dir.join(name).display().to_string())?,
+        None => Some(serde_json::to_string_pretty(&settings(auto, role))?),
+    };
+    if let Some(new) = new {
+        crate::host_file::write(dir, name, new.as_bytes())?;
     }
     Ok(())
+}
+
+/// The settings text `text` of an earlier start with what
+/// [`claude_folder`] adds, or `None` when it has each part.
+fn session_settings(
+    text: &str,
+    auto: &crate::permissions::Trust,
+    role: crate::permissions::Role,
+) -> Result<Option<String>> {
+    let rules = crate::permissions::session_rules(role);
+    let missing = crate::permissions::missing(&rules, &[text]);
+    let mut new = crate::permissions::with_rules(text, &missing)?;
+    if let Some(changed) = crate::permissions::with_auto_mode(new.as_deref().unwrap_or(text), auto)?
+    {
+        new = Some(changed);
+    }
+    if let Some(changed) = with_session_hooks(new.as_deref().unwrap_or(text))? {
+        new = Some(changed);
+    }
+    if let Some(changed) = with_tui(new.as_deref().unwrap_or(text))? {
+        new = Some(changed);
+    }
+    Ok(new)
 }
 
 /// The sign-in of `claude` in its `.credentials.json`.
@@ -3179,8 +3205,6 @@ mod tests {
     /// A hook of the person stays.
     #[test]
     fn the_hooks_of_an_older_claude_folder_get_the_new_command() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("settings.json");
         let group = |command: &str| json!({"hooks": [{"type": "command", "command": command}]});
         let own = group("notify-send done");
         let old = json!({
@@ -3194,11 +3218,10 @@ mod tests {
                 "Stop": [group("/opt/riff/riff relay idle"), own.clone()],
             },
         });
-        std::fs::write(&path, old.to_string()).unwrap();
-        assert!(add_session_hooks(&path).unwrap());
-        assert!(!add_session_hooks(&path).unwrap(), "the hooks are new");
+        let new = with_session_hooks(&old.to_string()).unwrap().unwrap();
+        assert_eq!(with_session_hooks(&new).unwrap(), None, "the hooks are new");
 
-        let settings: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let settings: Value = serde_json::from_str(&new).unwrap();
         let hooks = session_hooks();
         assert_eq!(settings["model"], "opus");
         assert_eq!(
