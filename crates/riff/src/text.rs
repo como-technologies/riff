@@ -7202,8 +7202,9 @@ pub fn no_program(program: &str) -> String {
     format!("riff cannot start {program}. Install it, or put it on PATH.")
 }
 
-/// The error of the guard of git on the host (01M7DZ429QFWTSEA6JH1DVZJM0):
-/// `dir` is under the folder of the sessions `folder`.
+/// The error of the guard of git on the host (01M7DZ429QFWTSEA6JH1DVZJM0,
+/// 01M7E7ACTYP4RX8TCJ9XSYMMPM): `dir` is under `folder`, the folder of
+/// the sessions or of the leads.
 ///
 /// ```
 /// use std::path::Path;
@@ -7211,16 +7212,16 @@ pub fn no_program(program: &str) -> String {
 /// let text = riff::text::host_git_refused(Path::new("/s/issue-12-1a2b3c4d/clone"), Path::new("/s"));
 /// assert_eq!(
 ///     text,
-///     "riff runs no git on the host in /s/issue-12-1a2b3c4d/clone: it is in the folder of the \
-///      sessions /s, and a session can write the git config there. Run git in the container \
-///      of the session, or in a clone of your own."
+///     "riff runs no git on the host in /s/issue-12-1a2b3c4d/clone: it is in /s, the folder of \
+///      the sessions or of the leads, and a session can write the git config there. Run git in \
+///      the container of the session, or in a clone of your own."
 /// );
 /// ```
 pub fn host_git_refused(dir: &Path, folder: &Path) -> String {
     format!(
-        "riff runs no git on the host in {}: it is in the folder of the sessions {}, and a \
-         session can write the git config there. Run git in the container of the session, or in \
-         a clone of your own.",
+        "riff runs no git on the host in {}: it is in {}, the folder of the sessions or of the \
+         leads, and a session can write the git config there. Run git in the container of the \
+         session, or in a clone of your own.",
         dir.display(),
         folder.display()
     )
@@ -14631,34 +14632,22 @@ pub fn lead_runs(repo: &str, name: &str) -> String {
     format!("The lead of {repo} runs in the container {name}. riff attaches to it.")
 }
 
-/// `riff lead start`: the clone of the lead has a change that is not
-/// committed.
-pub const LEAD_CLONE_CHANGED: &str = "it has a change that is not committed";
-
-/// `riff lead start`: the branch of the clone of the lead has no
-/// upstream.
-pub const LEAD_CLONE_NO_UPSTREAM: &str = "its branch has no upstream";
-
-/// `riff lead start`: the branch of the clone of the lead has a commit
-/// that is not on its upstream.
-pub const LEAD_CLONE_AHEAD: &str = "its branch has a commit that is not on its upstream";
-
-/// `riff lead start`: git cannot fast-forward the branch of the clone of
-/// the lead, with the error `error` of git.
+/// The start of a new lead: the new clone of the lead failed with the
+/// error `why`, so the old clone at `clone` stays as it is
+/// (01M7E7A8QM8SRPQN3G1BXVJW1R).
 ///
 /// ```
-/// let why = riff::text::lead_clone_no_forward("untracked file b");
-/// assert_eq!(why, "git cannot fast-forward its branch (untracked file b)");
+/// let note = riff::text::lead_clone_kept("/d/leads/o-r/clone".as_ref(), "no network");
+/// assert_eq!(
+///     note,
+///     "riff did not make a new clone for the lead: no network. The lead will start with its \
+///      old clone at /d/leads/o-r/clone, which does not have the new commits of origin."
+/// );
 /// ```
-pub fn lead_clone_no_forward(error: &str) -> String {
-    format!("git cannot fast-forward its branch ({error})")
-}
-
-/// `riff lead start`: the clone of the lead at `clone` stays as it is,
-/// for the reason `why`.
 pub fn lead_clone_kept(clone: &Path, why: &str) -> String {
     format!(
-        "The clone of the lead at {} stays as it is: {why}. It does not get the new commits of origin.",
+        "riff did not make a new clone for the lead: {why}. The lead will start with its old \
+         clone at {}, which does not have the new commits of origin.",
         clone.display()
     )
 }

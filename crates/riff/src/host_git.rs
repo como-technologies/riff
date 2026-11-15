@@ -1,5 +1,5 @@
-//! The git of riff on the host, and its one guard (#2138,
-//! 01M7DZ429QFWTSEA6JH1DVZJM0).
+//! The git of riff on the host, and its one guard (#2138, #2140,
+//! 01M7DZ429QFWTSEA6JH1DVZJM0, 01M7E7ACTYP4RX8TCJ9XSYMMPM).
 //!
 //! # Design
 //!
@@ -8,20 +8,24 @@
 //! `git status`, `credential.helper` for a fetch, `core.sshCommand` for a
 //! fetch over SSH, and a hook for a commit. In the container that program
 //! runs in the container. On the host it runs as the person, out of each
-//! container. So the host runs no git in a folder that a session wrote:
+//! container. So the host runs no git in a folder that a session wrote.
+//! The lead is a session too: it writes its clone in the folder of the
+//! leads.
 //!
 //! - Each git call of riff goes through [`guard`]: [`git`], [`output`]
 //!   and [`within`] call it. No other code of riff starts `git`, and a
 //!   test of this module reads the code of riff to check it.
 //! - [`guard`] refuses a folder under a folder of [`guarded`]: the folder
 //!   of the sessions, `sessions` in the data folder of riff
-//!   ([`crate::run::sessions_dir`]), and each folder that a daemon gave
+//!   ([`crate::run::sessions_dir`]), the folder of the leads, `leads`
+//!   there ([`crate::lead::LEADS`]), and each folder that a daemon gave
 //!   with [`guard_also`]. A link counts as the folder that it names
 //!   ([`real`]). The error names the folder ([`text::host_git_refused`]).
 //! - A container session sees its clone at the path of the host, under
-//!   the folder of the sessions. Its git runs in the container. So in a
-//!   container session (`RIFF_SOCKET`, [`crate::cycle::in_container`])
-//!   the folder of the sessions is not in [`guarded`].
+//!   the folder of the sessions or of the leads. Its git runs in the
+//!   container. So in a container session (`RIFF_SOCKET`,
+//!   [`crate::cycle::in_container`]) these two folders are not in
+//!   [`guarded`].
 //!
 //! ```mermaid
 //! flowchart LR
@@ -36,7 +40,9 @@
 //! looks into no clone ([`crate::daemon::sweep`],
 //! 01M7DZ4E02PX5Y0WMHFCJ9KS14). The look for earlier work and the council
 //! of a verify read the main clone ([`crate::council::pick::of_pull`],
-//! 01M7DZ4E5BZAD38E3K9A3N277E).
+//! 01M7DZ4E5BZAD38E3K9A3N277E). The new clone of a lead is made in a
+//! folder of its own, then takes the place of the old clone
+//! ([`crate::lead::fresh_clone`], 01M7E7A8QM8SRPQN3G1BXVJW1R).
 //!
 //! ```
 //! use riff::host_git::refused;
@@ -80,16 +86,14 @@ pub fn guard_also(folder: &Path) {
     }
 }
 
-/// The folders where the host runs no git: the folder of the sessions
-/// of riff when this process is no container session, and each folder
-/// of [`guard_also`].
+/// The folders where the host runs no git: [`guarded_in`] of the data
+/// folder of riff when this process is no container session, and each
+/// folder of [`guard_also`].
 pub fn guarded() -> Vec<PathBuf> {
-    let mut folders = Vec::new();
-    if !crate::cycle::in_container()
-        && let Ok(sessions) = crate::run::sessions_dir()
-    {
-        folders.push(sessions);
-    }
+    let data = (!crate::cycle::in_container())
+        .then(crate::run::data_dir)
+        .and_then(Result::ok);
+    let mut folders = data.as_deref().map(guarded_in).unwrap_or_default();
     folders.extend(
         ALSO.lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -97,6 +101,21 @@ pub fn guarded() -> Vec<PathBuf> {
             .cloned(),
     );
     folders
+}
+
+/// The folders of the data folder `data` of riff where a session writes:
+/// the folder of the sessions and the folder of the leads.
+///
+/// ```
+/// use std::path::Path;
+///
+/// assert_eq!(
+///     riff::host_git::guarded_in(Path::new("/d/riff")),
+///     [Path::new("/d/riff/sessions"), Path::new("/d/riff/leads")]
+/// );
+/// ```
+pub fn guarded_in(data: &Path) -> Vec<PathBuf> {
+    vec![data.join("sessions"), data.join(crate::lead::LEADS)]
 }
 
 /// The path of `path` with each link followed: the real path of the
@@ -356,6 +375,27 @@ mod tests {
                 "{error}"
             );
         }
+        assert!(!mark.exists(), "the program of the config ran");
+    }
+
+    /// 01M7E7ACTYP4RX8TCJ9XSYMMPM: the clone of a lead is in the folder of
+    /// the leads, where the guard refuses git, and the program of its git
+    /// config does not run. The new clone of a lead is in no such folder.
+    #[test]
+    fn the_guard_refuses_a_git_call_in_the_clone_of_a_lead() {
+        let root = tempfile::tempdir().unwrap();
+        let leads = root.path().join(crate::lead::LEADS);
+        let clone = leads.join("o-r/clone");
+        let mark = root.path().join("mark");
+        hostile_clone(&clone, &mark);
+        let guarded = guarded_in(root.path());
+        assert_eq!(refused(&guarded, &clone), Some(real(&leads)));
+        let new = crate::lead::new_clone_of(&clone).unwrap();
+        assert_eq!(refused(&guarded, &new), None);
+
+        guard_also(&leads);
+        let error = output(&clone, &["status"]).unwrap_err().to_string();
+        assert_eq!(error, text::host_git_refused(&clone, &real(&leads)));
         assert!(!mark.exists(), "the program of the config ran");
     }
 }

@@ -352,7 +352,7 @@ pub fn linked_clones(data: &Path, main: &Path) -> usize {
     };
     folders(data.join("sessions"))
         .into_iter()
-        .chain(folders(data.join("leads")))
+        .chain(folders(data.join(crate::lead::LEADS)))
         .filter(|clone| links_to(clone, main))
         .count()
 }

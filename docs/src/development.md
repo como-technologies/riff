@@ -5026,6 +5026,48 @@ The command claude --resume that claude shows works only in the container of the
 
 `riff lead start` attaches to the lead that started again.
 
+#### The clone of the lead at each start
+
+The lead has a folder of its own: `leads/OWNER-REPO` in the data folder
+of riff, with a clone of the repository and a Claude folder. The Claude
+folder stays between the starts of the lead, so the lead keeps the
+history of its conversations. When `claude` asks a question at its
+first start, answer it once: the Claude folder keeps the answer. The
+lead does not count in the limit of the host.
+
+The lead writes its clone, and so the git config of its clone. A git
+config can name a program that git runs. So your machine runs no git in
+the clone of a lead. At each start of a new lead, the riff daemon gives
+the lead a new clone:
+
+```mermaid
+flowchart TD
+    S["a new lead starts"] --> C["git clone --reference MAIN<br/>in new-clones/lead-OWNER-REPO"]
+    C -- "the clone failed" --> K["the old clone stays as it is,<br/>and riff shows a note"]
+    C -- "done" --> M["the new clone takes the place of<br/>leads/OWNER-REPO/clone"]
+    M --> R["the old clone goes,<br/>with each change in it"]
+    K --> L["the lead starts"]
+    R --> L
+```
+
+The new clone is on the default branch of `origin`, at its last commit.
+A change that the old lead did not push goes with the old clone. So
+tell the lead to push each change that you want to keep. A start again
+of the same lead, after `riff update` or after `/exit`, keeps its clone.
+When riff cannot make the new clone, for example with no network, the
+old clone stays as it is, and the lead starts with it. The note gives
+the error of git.
+
+Run no git on your machine in the clone of the lead: the lead wrote its
+git config. riff runs no git there either: it refuses, and the error
+names the folder. To give the lead a new clone
+at the last commit of `origin`, end the lead with its notes. Then a host
+that joined the project starts a new lead, with a new clone:
+
+```sh
+riff lead restart
+```
+
 #### See what started the lead
 
 Each start of a lead writes one line in the log of the riff daemon of
@@ -5091,30 +5133,6 @@ token.
 The lead runs `claude` with `--dangerously-skip-permissions`. The
 container is the sandbox, so the auto mode checker of Claude Code does
 not stop the lead. A worker and a verify keep auto mode.
-
-The lead has a folder of its own: `leads/OWNER-REPO` in the data folder
-of riff, with a clone of the repository and a Claude folder. Both stay
-between the starts of the lead, so the lead keeps the history of its
-conversations. When `claude` asks a question at its first start, answer
-it once: the Claude folder keeps the answer. The lead does not count in
-the limit of the host.
-
-Each start brings the clone of the lead up to date: riff fetches
-`origin`, and fast-forwards the branch of the clone to its upstream.
-When the clone has a local change, it stays as it is, and riff shows a
-note that says why. A local change is a change that is not committed,
-a commit that is not on the upstream, or a branch with no upstream.
-
-When riff cannot bring the clone up to date, the clone also stays as
-it is, and the lead starts. The fetch can fail, or git can refuse the
-fast-forward, for example when an untracked file has the path of a new
-file of `origin`. The note gives the error of git. To bring the clone
-up to date, move or remove that file, then start the lead again. The
-clone is in the data folder of riff, for example:
-
-```sh
-git -C ~/.local/share/riff/leads/OWNER-REPO/clone status
-```
 
 The lead gets the riff tools that talk, and the tools of a lead:
 `hold`, `free`, `notes`, `pause` and `resume`. They act on your

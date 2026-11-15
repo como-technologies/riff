@@ -549,7 +549,7 @@ fn no_prompt_git(keyring: &Keyring) {
     let prompter = silent_prompter();
     keyring.lock();
     let start = Instant::now();
-    let lead = dir.path().join("lead");
+    let lead = dir.path().join("leads/o-r/clone");
     let error = riff::lead::fresh_clone(&main, &lead).unwrap_err();
     assert!(secrets::is_locked(&error), "{error:#}");
     let said = format!("{error:#}");
@@ -579,7 +579,7 @@ fn no_prompt_git(keyring: &Keyring) {
     // The push did not run.
     assert_eq!(head(), before);
     // A local remote needs no credential: its git runs.
-    let fresh = riff::lead::fresh_clone(&local, &dir.path().join("local-lead")).unwrap();
+    let fresh = riff::lead::fresh_clone(&local, &dir.path().join("leads/o-local/clone")).unwrap();
     assert_eq!(fresh, riff::lead::Fresh::Made);
     assert!(start.elapsed() < secrets::KEYRING_WAIT);
     assert!(
