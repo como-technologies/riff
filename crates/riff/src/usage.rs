@@ -66,6 +66,13 @@
 //!   [`MAX_COUNT_BYTES`] and [`MAX_COUNT_ENTRIES`] in all, also of a file
 //!   that it skips, and stops there, with at most one byte or one entry
 //!   past it (01M7FX6SWN3DGZMH5HS9BWEBY7).
+//! - Each reply that a count keeps has a fixed size: a hash of its id, and
+//!   the index of the name of its model. One count keeps at most
+//!   [`MAX_COUNT_REPLIES`] replies and [`MAX_COUNT_MODELS`] models, and
+//!   no line of its log. A process reads the transcripts of one count at
+//!   a time. So the memory of the counts of the riff daemon does not grow
+//!   with the number of sessions that end at once
+//!   (01M7GF9G7ZNJD2SXZZ62XKJYBG).
 //! - A reply counts for a claim when its time is from the start of the
 //!   claim to before its end.
 //! - Tokens in a time with two claims of one session count for the
@@ -152,7 +159,7 @@
 //! ]
 //! .join("\n");
 //! let mut replies = Replies::default();
-//! replies.add(&transcript);
+//! replies.add(&transcript).unwrap();
 //!
 //! // 09:00:00 to 10:00:00.
 //! let models = replies.sum(&[(1_790_931_600_000, 1_790_935_200_000)]);
@@ -164,6 +171,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write as _;
+use std::hash::BuildHasher as _;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -358,43 +366,150 @@ struct Used {
     cache_read_input_tokens: u64,
 }
 
+/// One reply of the model, as a count keeps it: a fixed size, whatever
+/// the size of its line (01M7GF9G7ZNJD2SXZZ62XKJYBG).
+#[derive(Clone, Copy, Debug)]
+struct Kept {
+    /// Its time, in milliseconds since the Unix epoch.
+    at_ms: u64,
+    /// The index of its model in [`Replies::models`].
+    model: usize,
+    /// Its tokens.
+    tokens: Tokens,
+}
+
+/// Each reply in the text of a transcript: its id, the name of its model
+/// as a report has it ([`name`]), its time and its tokens. A line that is
+/// no reply with a time, a model and a usage is skipped.
+fn replies_in(transcript: &str) -> impl Iterator<Item = (String, String, u64, Tokens)> + '_ {
+    transcript.lines().filter_map(|line| {
+        let Ok(Line {
+            timestamp: Some(at),
+            message: Some(reply),
+        }) = serde_json::from_str::<Line>(line)
+        else {
+            return None;
+        };
+        let (Some(model), Some(used)) = (reply.model, reply.usage) else {
+            return None;
+        };
+        let at = chrono::DateTime::parse_from_rfc3339(&at).ok()?;
+        let at_ms = u64::try_from(at.timestamp_millis()).unwrap_or(0);
+        let tokens = Tokens {
+            input: used.input_tokens,
+            output: used.output_tokens,
+            cache_write: used.cache_creation_input_tokens,
+            cache_read: used.cache_read_input_tokens,
+        };
+        let id = reply.id.unwrap_or_else(|| format!("{at_ms} {model}"));
+        Some((id, name(&model, NAME_CHARS), at_ms, tokens))
+    })
+}
+
+/// One read of the transcripts of a count at a time in a process of riff
+/// (01M7GF9G7ZNJD2SXZZ62XKJYBG): [`Replies::read`] holds it.
+static ONE_COUNT: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// The replies of the model in the transcripts of a session, each one
-/// time (01M3Y1YP0QY11VR28RF9MKPN0G).
-#[derive(Debug, Default)]
+/// time (01M3Y1YP0QY11VR28RF9MKPN0G). A session writes its transcripts,
+/// so the replies keep a fixed size of memory each, and have limits
+/// (01M7GF9G7ZNJD2SXZZ62XKJYBG): a reply keeps a hash of 64 bits of its
+/// id, and the index of the name of its model. The name of a model is
+/// the name of a report: at most 100 characters, with `-` for each
+/// character that a name cannot hold. A count keeps at most
+/// [`MAX_COUNT_REPLIES`] replies and [`MAX_COUNT_MODELS`] models.
+#[derive(Debug)]
 pub struct Replies {
-    replies: HashMap<String, (u64, String, Tokens)>,
-    skipped: Vec<String>,
+    /// Each reply, by the hash of its id.
+    replies: HashMap<u64, Kept>,
+    /// The name of each model, at the index of [`Kept::model`].
+    models: Vec<String>,
+    /// The hash of the ids, with a key of its own.
+    ids: std::hash::RandomState,
+    /// The limits of the count.
+    limits: Limits,
+    /// What the count read: each byte and each entry, also of a file or
+    /// a folder that it skipped, and of the file or the folder where it
+    /// stopped.
+    taken: Taken,
+}
+
+impl Default for Replies {
+    fn default() -> Replies {
+        Replies::within(Limits::COUNT)
+    }
 }
 
 impl Replies {
+    /// No replies yet, with the limits `limits`.
+    fn within(limits: Limits) -> Replies {
+        Replies {
+            replies: HashMap::new(),
+            models: Vec::new(),
+            ids: std::hash::RandomState::new(),
+            limits,
+            taken: Taken::default(),
+        }
+    }
+
     /// Adds each reply in the text of one transcript. A line that is no
     /// reply with a time, a model and a usage is skipped. A later line
-    /// of the same reply replaces the earlier one.
-    pub fn add(&mut self, transcript: &str) {
-        for line in transcript.lines() {
-            let Ok(Line {
-                timestamp: Some(at),
-                message: Some(reply),
-            }) = serde_json::from_str::<Line>(line)
-            else {
-                continue;
-            };
-            let (Some(model), Some(used)) = (reply.model, reply.usage) else {
-                continue;
-            };
-            let Ok(at) = chrono::DateTime::parse_from_rfc3339(&at) else {
-                continue;
-            };
-            let at_ms = u64::try_from(at.timestamp_millis()).unwrap_or(0);
-            let tokens = Tokens {
-                input: used.input_tokens,
-                output: used.output_tokens,
-                cache_write: used.cache_creation_input_tokens,
-                cache_read: used.cache_read_input_tokens,
-            };
-            let id = reply.id.unwrap_or_else(|| format!("{at_ms} {model}"));
-            self.replies.insert(id, (at_ms, model, tokens));
+    /// of the same reply replaces the earlier one. A text with more new
+    /// replies or models than the limits of the count leave adds none,
+    /// and the error is that limit (01M7GF9G7ZNJD2SXZZ62XKJYBG).
+    ///
+    /// ```
+    /// use riff::usage::Replies;
+    ///
+    /// let line = |id: &str, model: &str| format!(
+    ///     r#"{{"timestamp":"2026-10-02T09:00:00Z","message":{{"id":"{id}","model":"{model}","usage":{{"output_tokens":1}}}}}}"#
+    /// );
+    /// let mut replies = Replies::default();
+    /// // The name of a model is the name of a report: `-` for a `/`.
+    /// replies.add(&line("m1", "opus/5")).unwrap();
+    /// assert_eq!(replies.sum(&[(0, u64::MAX)])["opus-5"].output, 1);
+    ///
+    /// // A count keeps at most 32 models: a text with more adds none.
+    /// let more: Vec<String> = (0..32).map(|n| line(&format!("x{n}"), &format!("model-{n}"))).collect();
+    /// assert_eq!(replies.add(&more.join("\n")), Err(riff::text::CountLimit::Models(32)));
+    /// assert_eq!(replies.sum(&[(0, u64::MAX)]).len(), 1);
+    /// ```
+    pub fn add(&mut self, transcript: &str) -> std::result::Result<(), text::CountLimit> {
+        // First the new replies and the new models of the text: a text
+        // over a limit adds none.
+        let (mut ids, mut models) = (std::collections::HashSet::new(), Vec::new());
+        for (id, model, _, _) in replies_in(transcript) {
+            let id = self.ids.hash_one(&id);
+            if !self.replies.contains_key(&id)
+                && ids.insert(id)
+                && self.replies.len() + ids.len() > self.limits.replies
+            {
+                return Err(text::CountLimit::Replies(self.limits.replies));
+            }
+            if !self.models.contains(&model) && !models.contains(&model) {
+                models.push(model);
+                if self.models.len() + models.len() > self.limits.models {
+                    return Err(text::CountLimit::Models(self.limits.models));
+                }
+            }
         }
+        drop(ids);
+        for (id, model, at_ms, tokens) in replies_in(transcript) {
+            let model = match self.models.iter().position(|known| *known == model) {
+                Some(at) => at,
+                None => {
+                    self.models.push(model);
+                    self.models.len() - 1
+                }
+            };
+            let kept = Kept {
+                at_ms,
+                model,
+                tokens,
+            };
+            self.replies.insert(self.ids.hash_one(&id), kept);
+        }
+        Ok(())
     }
 
     /// The replies of each transcript of `paths`, and of the helper
@@ -410,26 +525,37 @@ impl Replies {
     /// is a link or no plain file, a transcript over its limit or with no
     /// text, and a folder of helpers that is a link or over its limit are
     /// skipped too, and the log names each one with no step
-    /// ([`Replies::skipped`], [`text::transcript_skipped`]). The count
-    /// reads at most [`MAX_COUNT_BYTES`] and [`MAX_COUNT_ENTRIES`] in all
+    /// ([`text::transcript_skipped`]). The count reads at most
+    /// [`MAX_COUNT_BYTES`] and [`MAX_COUNT_ENTRIES`] in all
     /// (01M7FX6SWN3DGZMH5HS9BWEBY7): each byte and each entry that it
     /// reads counts, also of a file or a folder that it skips, and an entry
-    /// that riff cannot stat. It stops at the file or the folder where one
-    /// runs out, with at most one byte or one entry past it, and the log
-    /// names it ([`text::transcripts_stopped`]).
+    /// that riff cannot stat. It reads at most the bytes that are left of
+    /// a transcript. It keeps at most [`MAX_COUNT_REPLIES`] replies and
+    /// [`MAX_COUNT_MODELS`] models ([`Replies::add`],
+    /// 01M7GF9G7ZNJD2SXZZ62XKJYBG). It stops at the file or the folder
+    /// where a limit runs out, with at most one byte or one entry past it,
+    /// and the log names it ([`text::transcripts_stopped`]). Each line of
+    /// the log goes to stderr, and the count keeps none. A process reads
+    /// the transcripts of one count at a time: a count waits for the end
+    /// of the read before it. The read of a transcript holds its bytes in
+    /// memory one time.
     pub fn read(paths: &[PathBuf]) -> Replies {
-        Replies::read_within(paths, Budget::COUNT)
+        Replies::read_within(paths, Limits::COUNT, &mut |line| eprintln!("{line}"))
     }
 
-    /// [`Replies::read`] with the budget `budget`.
-    fn read_within(paths: &[PathBuf], budget: Budget) -> Replies {
-        let (mut replies, mut left) = (Replies::default(), budget);
+    /// [`Replies::read`] with the limits `limits`, and each line of the
+    /// log to `log`.
+    fn read_within(paths: &[PathBuf], limits: Limits, log: &mut dyn FnMut(String)) -> Replies {
+        let _one = ONE_COUNT
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut replies = Replies::within(limits);
         for path in paths {
             let Some((claude, name)) = in_claude(path) else {
                 continue;
             };
-            if let Err(at) = replies.read_transcript(claude, name, &mut left) {
-                replies.log(text::transcripts_stopped(&at, budget.bytes, budget.entries));
+            if let Err((at, limit)) = replies.read_transcript(claude, name, log) {
+                log(text::transcripts_stopped(&at, limit));
                 break;
             }
         }
@@ -437,110 +563,115 @@ impl Replies {
     }
 
     /// Adds the replies of the transcript `CLAUDE/NAME`, then of the
-    /// transcript of each of its helper agents, and takes what it reads
-    /// from `left`. The error is the file or the folder where `left` ran
-    /// out.
+    /// transcript of each of its helper agents. The error is the file or
+    /// the folder where a limit of the count ran out, and that limit.
     fn read_transcript(
         &mut self,
         claude: &Path,
         name: &Path,
-        left: &mut Budget,
-    ) -> std::result::Result<(), PathBuf> {
-        left.entries = left
-            .entries
-            .checked_sub(1)
-            .ok_or_else(|| claude.join(name))?;
-        self.read_replies(claude, name, left)?;
+        log: &mut dyn FnMut(String),
+    ) -> std::result::Result<(), (PathBuf, text::CountLimit)> {
+        self.take_entries(1, || claude.join(name))?;
+        self.read_replies(claude, name, log)?;
         let subagents = name.with_extension("").join(SUBAGENTS);
-        let most = MAX_ENTRIES.min(left.entries);
+        let most = MAX_ENTRIES.min(self.limits.entries - self.taken.entries);
         let listed = match crate::host_file::list(claude, &subagents, most) {
             Ok(listed) => listed.unwrap_or_default(),
             Err(e) if e.is::<crate::host_file::TooMany>() => {
                 // The list took `most` and one entry.
-                left.entries = left
-                    .entries
-                    .checked_sub(most + 1)
-                    .ok_or_else(|| claude.join(&subagents))?;
-                self.skip(&e);
+                self.take_entries(most + 1, || claude.join(&subagents))?;
+                Replies::skip(&e, log);
                 Vec::new()
             }
             Err(e) => {
-                self.skip(&e);
+                Replies::skip(&e, log);
                 Vec::new()
             }
         };
-        left.entries -= listed.len();
+        self.take_entries(listed.len(), || claude.join(&subagents))?;
         let helpers = listed.into_iter().filter(|(file, kind)| {
             *kind == crate::host_file::Kind::File
                 && Path::new(file).extension().is_some_and(|e| e == "jsonl")
         });
         for (file, _) in helpers {
-            self.read_replies(claude, &subagents.join(file), left)?;
+            self.read_replies(claude, &subagents.join(file), log)?;
         }
         Ok(())
     }
 
-    /// Adds the replies of the transcript `CLAUDE/FILE`, and takes the
-    /// bytes that it read from `left`, also of a file that it skips, for
-    /// example a file that is no text. The error is `CLAUDE/FILE` when it
-    /// has more bytes than `left`.
+    /// Takes `entries` entries that the count read: the error is the file
+    /// or the folder `at` when they run out its limit.
+    fn take_entries(
+        &mut self,
+        entries: usize,
+        at: impl FnOnce() -> PathBuf,
+    ) -> std::result::Result<(), (PathBuf, text::CountLimit)> {
+        self.taken.entries = self.taken.entries.saturating_add(entries);
+        if self.taken.entries > self.limits.entries {
+            return Err((at(), text::CountLimit::Entries(self.limits.entries)));
+        }
+        Ok(())
+    }
+
+    /// Adds the replies of the transcript `CLAUDE/FILE`. It reads at most
+    /// the bytes that are left, and takes each byte that it read, also of
+    /// a file that it skips, for example a file that is no text. The error
+    /// is `CLAUDE/FILE` when it has more bytes than are left, or more new
+    /// replies or models than the limits leave.
     fn read_replies(
         &mut self,
         claude: &Path,
         file: &Path,
-        left: &mut Budget,
-    ) -> std::result::Result<(), PathBuf> {
-        let most = MAX_TRANSCRIPT.min(left.bytes);
+        log: &mut dyn FnMut(String),
+    ) -> std::result::Result<(), (PathBuf, text::CountLimit)> {
+        let left = self.limits.bytes.saturating_sub(self.taken.bytes);
+        let most = self.limits.transcript.min(left);
         let read = crate::host_file::read(claude, file, most);
         let large = read
             .as_ref()
             .is_err_and(|e| e.is::<crate::host_file::TooLarge>());
-        // A file over `left` runs out the count, and so does a file that
-        // grew past it in the read.
-        let taken = crate::host_file::taken(&read);
-        if (large && most < MAX_TRANSCRIPT) || taken > left.bytes {
-            return Err(claude.join(file));
+        self.taken.bytes = self
+            .taken
+            .bytes
+            .saturating_add(crate::host_file::taken(&read));
+        // A file over what is left runs out the count, and so does a file
+        // that grew past it in the read.
+        if (large && most < self.limits.transcript) || self.taken.bytes > self.limits.bytes {
+            return Err((
+                claude.join(file),
+                text::CountLimit::Bytes(self.limits.bytes),
+            ));
         }
-        left.bytes -= taken;
         let text = read.and_then(|bytes| {
             bytes
                 .map(|bytes| crate::host_file::text_of(claude, file, bytes))
                 .transpose()
         });
         match text {
-            Ok(Some(text)) => self.add(&text),
+            Ok(Some(text)) => self
+                .add(&text)
+                .map_err(|limit| (claude.join(file), limit))?,
             Ok(None) => {}
-            Err(e) => self.skip(&e),
+            Err(e) => Replies::skip(&e, log),
         }
         Ok(())
     }
 
-    /// Skips a file whose read failed with `cause`: a line of the log
-    /// names it.
-    fn skip(&mut self, cause: &anyhow::Error) {
-        self.log(text::transcript_skipped(&format!("{cause:#}")));
-    }
-
-    /// Puts `line` in the log, and keeps it ([`Replies::skipped`]).
-    fn log(&mut self, line: String) {
-        eprintln!("{line}");
-        self.skipped.push(line);
-    }
-
-    /// The line of the log of each file that [`Replies::read`] skipped,
-    /// and of the file where it stopped, in the order of the reads.
-    pub fn skipped(&self) -> &[String] {
-        &self.skipped
+    /// Skips a file whose read failed with `cause`: a line of `log` names
+    /// it.
+    fn skip(cause: &anyhow::Error, log: &mut dyn FnMut(String)) {
+        log(text::transcript_skipped(&format!("{cause:#}")));
     }
 
     /// The tokens of each model in the replies whose time is in one of
     /// `windows`. A model with no tokens is left out.
     pub fn sum(&self, windows: &[Window]) -> Models {
         let mut models = Models::new();
-        for (at_ms, model, tokens) in self.replies.values() {
+        for kept in self.replies.values() {
+            let at_ms = &kept.at_ms;
             let counts = windows.iter().any(|(from, to)| from <= at_ms && at_ms < to);
-            if counts && tokens.total() > 0 {
-                *models.entry(model.clone()).or_default() += *tokens;
+            if counts && kept.tokens.total() > 0 {
+                *models.entry(self.models[kept.model].clone()).or_default() += kept.tokens;
             }
         }
         models
@@ -1620,7 +1751,7 @@ impl Meter {
                 .iter()
                 .map(|claim| reported(claim, &report(&self.gh, session, claim)))
                 .collect(),
-            Err(e) => vec![format!("riff cannot count the tokens of the claims: {e}.")],
+            Err(e) => vec![text::tokens_uncounted(text::THE_CLAIMS, &e.to_string())],
         }
     }
 
@@ -1774,20 +1905,47 @@ pub const MAX_COUNT_BYTES: u64 = 1 << 30;
 /// helpers ([`Replies::read`], 01M7FX6SWN3DGZMH5HS9BWEBY7).
 pub const MAX_COUNT_ENTRIES: usize = 100_000;
 
-/// What one count of the tokens of a session can still read: bytes of
-/// transcripts, and entries ([`MAX_COUNT_BYTES`], [`MAX_COUNT_ENTRIES`]).
+/// The most replies of the model that one count of the tokens of a
+/// session keeps ([`Replies::add`], 01M7GF9G7ZNJD2SXZZ62XKJYBG).
+pub const MAX_COUNT_REPLIES: usize = 1_000_000;
+
+/// The most models that one count of the tokens of a session keeps: the
+/// most models of a report ([`Replies::add`], 01M7GF9G7ZNJD2SXZZ62XKJYBG).
+pub const MAX_COUNT_MODELS: usize = MODELS;
+
+/// The limits of one count of the tokens of a session
+/// (01M7FNTSHXPQXXKZF761V0NN9Z, 01M7FX6SWN3DGZMH5HS9BWEBY7,
+/// 01M7GF9G7ZNJD2SXZZ62XKJYBG).
 #[derive(Clone, Copy, Debug)]
-struct Budget {
+struct Limits {
+    /// The most bytes of one transcript.
+    transcript: u64,
+    /// The most bytes of transcripts in all.
     bytes: u64,
+    /// The most entries in all.
     entries: usize,
+    /// The most replies.
+    replies: usize,
+    /// The most models.
+    models: usize,
 }
 
-impl Budget {
-    /// The budget of one count.
-    const COUNT: Budget = Budget {
+impl Limits {
+    /// The limits of a count of riff.
+    const COUNT: Limits = Limits {
+        transcript: MAX_TRANSCRIPT,
         bytes: MAX_COUNT_BYTES,
         entries: MAX_COUNT_ENTRIES,
+        replies: MAX_COUNT_REPLIES,
+        models: MAX_COUNT_MODELS,
     };
+}
+
+/// What one count read: bytes of transcripts, and entries.
+#[derive(Clone, Copy, Debug, Default)]
+struct Taken {
+    bytes: u64,
+    entries: usize,
 }
 
 /// The Claude folder of the transcript `path`, `CLAUDE/projects/P/S.jsonl`,
@@ -2025,6 +2183,15 @@ pub fn machine_text(dir: &Path, now: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::text::CountLimit;
+
+    /// [`Replies::read_within`] of `paths` with the limits `limits`, and
+    /// each line of its log, in the order of the log.
+    fn logged(paths: &[PathBuf], limits: Limits) -> (Replies, Vec<String>) {
+        let mut log = Vec::new();
+        let replies = Replies::read_within(paths, limits, &mut |line| log.push(line));
+        (replies, log)
+    }
 
     const HOUR: u64 = 3_600_000;
     /// 2026-10-02 09:00 UTC.
@@ -2047,14 +2214,16 @@ mod tests {
     #[test]
     fn a_reply_on_three_lines_counts_one_time_with_its_last_line() {
         let mut replies = Replies::default();
-        replies.add(
-            &[
-                reply(NINE, "m1", "opus", 1),
-                reply(NINE + 1, "m1", "opus", 4),
-                reply(NINE + 2, "m1", "opus", 9),
-            ]
-            .join("\n"),
-        );
+        replies
+            .add(
+                &[
+                    reply(NINE, "m1", "opus", 1),
+                    reply(NINE + 1, "m1", "opus", 4),
+                    reply(NINE + 2, "m1", "opus", 9),
+                ]
+                .join("\n"),
+            )
+            .unwrap();
         let models = replies.sum(&[(0, u64::MAX)]);
         assert_eq!(models["opus"].output, 9);
         assert_eq!(models["opus"].input, 1);
@@ -2072,22 +2241,25 @@ mod tests {
                 r#"{"type":"assistant","timestamp":"2026-10-02T09:00:00Z","message":{"id":"s","model":"<synthetic>","usage":{"output_tokens":0}}}"#,
             ]
             .join("\n"),
-        );
+        )
+        .unwrap();
         assert!(replies.sum(&[(0, u64::MAX)]).is_empty());
     }
 
     #[test]
     fn only_a_reply_from_the_start_to_before_the_end_counts() {
         let mut replies = Replies::default();
-        replies.add(
-            &[
-                reply(NINE - 1, "before", "opus", 1),
-                reply(NINE, "first", "opus", 10),
-                reply(NINE + HOUR - 1, "last", "opus", 100),
-                reply(NINE + HOUR, "after", "opus", 1_000),
-            ]
-            .join("\n"),
-        );
+        replies
+            .add(
+                &[
+                    reply(NINE - 1, "before", "opus", 1),
+                    reply(NINE, "first", "opus", 10),
+                    reply(NINE + HOUR - 1, "last", "opus", 100),
+                    reply(NINE + HOUR, "after", "opus", 1_000),
+                ]
+                .join("\n"),
+            )
+            .unwrap();
         assert_eq!(replies.sum(&[(NINE, NINE + HOUR)])["opus"].output, 110);
     }
 
@@ -2136,23 +2308,23 @@ mod tests {
             transcripts_in(&claude, "s1").unwrap(),
             std::slice::from_ref(&main)
         );
-        let replies = Replies::read(std::slice::from_ref(&main));
+        let (replies, log) = logged(std::slice::from_ref(&main), Limits::COUNT);
         assert_eq!(replies.sum(&[(0, u64::MAX)])["opus"].output, 1);
         // The line of the link at the folder of the helpers gives no step:
         // riff goes on (01M7FNTSHXPQXXKZF761V0NN9Z).
         let subagents = projects.join("-data-clone/s1/subagents");
         let linked = text::transcript_skipped(&text::host_file_link(&subagents));
-        assert_eq!(replies.skipped(), std::slice::from_ref(&linked));
+        assert_eq!(log, std::slice::from_ref(&linked));
         assert!(!linked.contains(text::REMOVE_IT), "{linked}");
 
         // The transcript itself as a link, or as a FIFO.
         std::fs::remove_file(&main).unwrap();
         std::os::unix::fs::symlink(person.join("s1.jsonl"), &main).unwrap();
         assert!(transcripts_in(&claude, "s1").unwrap().is_empty());
-        let replies = Replies::read(std::slice::from_ref(&main));
+        let (replies, log) = logged(std::slice::from_ref(&main), Limits::COUNT);
         assert!(replies.sum(&[(0, u64::MAX)]).is_empty());
         assert_eq!(
-            replies.skipped(),
+            log,
             [
                 text::transcript_skipped(&text::host_file_link(&main)),
                 linked.clone()
@@ -2161,10 +2333,10 @@ mod tests {
         std::fs::remove_file(&main).unwrap();
         nix::unistd::mkfifo(&main, nix::sys::stat::Mode::S_IRWXU).unwrap();
         assert!(transcripts_in(&claude, "s1").unwrap().is_empty());
-        let replies = Replies::read(std::slice::from_ref(&main));
+        let (replies, log) = logged(std::slice::from_ref(&main), Limits::COUNT);
         assert!(replies.sum(&[(0, u64::MAX)]).is_empty());
         assert_eq!(
-            replies.skipped(),
+            log,
             [
                 text::transcript_skipped(&text::host_file_not_plain(&main)),
                 linked
@@ -2197,11 +2369,11 @@ mod tests {
             transcripts_in(claude.path(), "s1").unwrap(),
             std::slice::from_ref(&main)
         );
-        let replies = Replies::read(&[main.clone(), other]);
+        let (replies, log) = logged(&[main.clone(), other], Limits::COUNT);
         let models = replies.sum(&[(0, u64::MAX)]);
         assert_eq!((models["opus"].output, models["haiku"].output), (3, 2));
         assert_eq!(
-            replies.skipped(),
+            log,
             [text::transcript_skipped(&text::host_file_too_large(
                 &main,
                 MAX_TRANSCRIPT
@@ -2233,12 +2405,12 @@ mod tests {
             &subagents.join("agent-a.jsonl"),
             &[reply(NINE, "h1", "haiku", 2)],
         );
-        let replies = Replies::read(std::slice::from_ref(&main));
+        let (replies, log) = logged(std::slice::from_ref(&main), Limits::COUNT);
         let models = replies.sum(&[(0, u64::MAX)]);
         assert_eq!(models["opus"].output, 1);
         assert!(!models.contains_key("haiku"), "{models:?}");
         assert_eq!(
-            replies.skipped(),
+            log,
             [text::transcript_skipped(&text::host_file_too_many(
                 &subagents,
                 MAX_ENTRIES
@@ -2254,39 +2426,39 @@ mod tests {
         let third = project.join("s3.jsonl");
         write(&third, &[reply(NINE, "m3", "opus", 8)]);
         let all = [main.clone(), other, third.clone()];
-        let budget = |entries| Budget {
+        let budget = |entries| Limits {
             bytes: MAX_COUNT_BYTES,
             entries,
+            ..Limits::COUNT
         };
-        let replies = Replies::read_within(&all, budget(1 + MAX_ENTRIES + 1 + 1));
+        let (replies, log) = logged(&all, budget(1 + MAX_ENTRIES + 1 + 1));
         assert_eq!(replies.sum(&[(0, u64::MAX)])["opus"].output, 1 + 4);
         assert_eq!(
-            replies.skipped(),
+            log,
             [
                 text::transcript_skipped(&text::host_file_too_many(&subagents, MAX_ENTRIES)),
-                text::transcripts_stopped(&third, MAX_COUNT_BYTES, 1 + MAX_ENTRIES + 2)
+                text::transcripts_stopped(&third, CountLimit::Entries(1 + MAX_ENTRIES + 2))
             ]
         );
 
         // With room for the transcript and the limit of the folder only,
         // the entry one past the limit runs out the count: it stops at the
         // folder.
-        let replies = Replies::read_within(&all, budget(1 + MAX_ENTRIES));
+        let (replies, log) = logged(&all, budget(1 + MAX_ENTRIES));
         assert_eq!(replies.sum(&[(0, u64::MAX)])["opus"].output, 1);
         assert_eq!(
-            replies.skipped(),
+            log,
             [text::transcripts_stopped(
                 &subagents,
-                MAX_COUNT_BYTES,
-                1 + MAX_ENTRIES
+                CountLimit::Entries(1 + MAX_ENTRIES)
             )]
         );
 
         // At the limit, each helper counts.
         std::fs::remove_file(subagents.join("agent-0.jsonl")).unwrap();
-        let replies = Replies::read(std::slice::from_ref(&main));
+        let (replies, log) = logged(std::slice::from_ref(&main), Limits::COUNT);
         assert_eq!(replies.sum(&[(0, u64::MAX)])["haiku"].output, 2);
-        assert!(replies.skipped().is_empty());
+        assert!(log.is_empty());
     }
 
     /// 01M7FX6SWN3DGZMH5HS9BWEBY7: a container session makes helpers
@@ -2302,14 +2474,15 @@ mod tests {
         for helper in [&a, &b, &helpers.join("agent-c.jsonl")] {
             std::fs::write(helper, [0xff; 100]).unwrap();
         }
-        let budget = Budget {
+        let budget = Limits {
             bytes: 250,
             entries: 100,
+            ..Limits::COUNT
         };
-        let replies = Replies::read_within(&[main, other], budget);
+        let (replies, log) = logged(&[main, other], budget);
         assert!(replies.sum(&[(0, u64::MAX)]).is_empty());
-        let [first, second, stopped] = replies.skipped() else {
-            panic!("{:?}", replies.skipped())
+        let [first, second, stopped] = &log[..] else {
+            panic!("{log:?}")
         };
         for (line, helper) in [(first, &a), (second, &b)] {
             let no_text = format!("{} is no text", helper.display());
@@ -2317,7 +2490,7 @@ mod tests {
         }
         assert_eq!(
             *stopped,
-            text::transcripts_stopped(&helpers.join("agent-c.jsonl"), 250, 100)
+            text::transcripts_stopped(&helpers.join("agent-c.jsonl"), CountLimit::Bytes(250))
         );
     }
 
@@ -2350,9 +2523,9 @@ mod tests {
         let main = root
             .path()
             .join("sessions/issue-7-1a2b3c4d/claude/projects/-data-clone/s1.jsonl");
-        let replies = Replies::read(&[main]);
+        let (replies, log) = logged(&[main], Limits::COUNT);
         assert!(replies.sum(&[(0, u64::MAX)]).is_empty());
-        assert!(replies.skipped().is_empty(), "{:?}", replies.skipped());
+        assert!(log.is_empty(), "{log:?}");
     }
 
     /// The transcript `s1` of the project `-data-clone` in `claude`, its
@@ -2389,41 +2562,50 @@ mod tests {
         let [main, a, b, other] = transcripts_with_helpers(claude.path());
         let size = |path: &PathBuf| std::fs::metadata(path).unwrap().len();
         let all = [main.clone(), other.clone()];
-        let budget = Budget {
+        let budget = Limits {
             bytes: size(&main) + size(&a),
             entries: 100,
+            ..Limits::COUNT
         };
-        let replies = Replies::read_within(&all, budget);
+        let (replies, log) = logged(&all, budget);
         let models = replies.sum(&[(0, u64::MAX)]);
         assert_eq!((models["opus"].output, models["haiku"].output), (1, 2));
         assert_eq!(
-            replies.skipped(),
-            [text::transcripts_stopped(&b, budget.bytes, 100)]
+            log,
+            [text::transcripts_stopped(
+                &b,
+                CountLimit::Bytes(budget.bytes)
+            )]
         );
 
         // With room for each byte but one, it stops at the next transcript.
         let each: u64 = [&main, &a, &b, &other].into_iter().map(size).sum();
-        let budget = Budget {
+        let budget = Limits {
             bytes: each - 1,
             entries: 100,
+            ..Limits::COUNT
         };
-        let replies = Replies::read_within(&all, budget);
+        let (replies, log) = logged(&all, budget);
         let models = replies.sum(&[(0, u64::MAX)]);
         assert_eq!((models["opus"].output, models["haiku"].output), (1, 6));
         assert_eq!(
-            replies.skipped(),
-            [text::transcripts_stopped(&other, budget.bytes, 100)]
+            log,
+            [text::transcripts_stopped(
+                &other,
+                CountLimit::Bytes(budget.bytes)
+            )]
         );
 
         // With room for each byte, each file counts.
-        let budget = Budget {
+        let budget = Limits {
             bytes: each,
             entries: 100,
+            ..Limits::COUNT
         };
-        let replies = Replies::read_within(&all, budget);
+        let (replies, log) = logged(&all, budget);
         let models = replies.sum(&[(0, u64::MAX)]);
         assert_eq!((models["opus"].output, models["haiku"].output), (9, 6));
-        assert!(replies.skipped().is_empty(), "{:?}", replies.skipped());
+        assert!(log.is_empty(), "{log:?}");
     }
 
     /// 01M7FX6SWN3DGZMH5HS9BWEBY7: a count with room for 2 entries: a
@@ -2436,26 +2618,27 @@ mod tests {
         let claude = tempfile::tempdir().unwrap();
         let [main, a, _, other] = transcripts_with_helpers(claude.path());
         let all = [main.clone(), other.clone()];
-        let budget = |entries| Budget {
+        let budget = |entries| Limits {
             bytes: MAX_COUNT_BYTES,
             entries,
+            ..Limits::COUNT
         };
-        let replies = Replies::read_within(&all, budget(2));
+        let (replies, log) = logged(&all, budget(2));
         let models = replies.sum(&[(0, u64::MAX)]);
         assert_eq!(models["opus"].output, 1);
         assert!(!models.contains_key("haiku"), "{models:?}");
         let folder = a.parent().unwrap();
         assert_eq!(
-            replies.skipped(),
-            [text::transcripts_stopped(folder, MAX_COUNT_BYTES, 2)]
+            log,
+            [text::transcripts_stopped(folder, CountLimit::Entries(2))]
         );
 
-        let replies = Replies::read_within(&all, budget(3));
+        let (replies, log) = logged(&all, budget(3));
         let models = replies.sum(&[(0, u64::MAX)]);
         assert_eq!((models["opus"].output, models["haiku"].output), (1, 6));
         assert_eq!(
-            replies.skipped(),
-            [text::transcripts_stopped(&other, MAX_COUNT_BYTES, 3)]
+            log,
+            [text::transcripts_stopped(&other, CountLimit::Entries(3))]
         );
     }
 
@@ -2473,16 +2656,20 @@ mod tests {
         write(&helpers.join("agent-c.jsonl"), &[]);
         let mode = |mode| std::fs::Permissions::from_mode(mode);
         std::fs::set_permissions(helpers, mode(0o444)).unwrap();
-        let budget = Budget {
+        let budget = Limits {
             bytes: MAX_COUNT_BYTES,
             entries: 1 + 3,
+            ..Limits::COUNT
         };
-        let replies = Replies::read_within(&[main, other.clone()], budget);
+        let (replies, log) = logged(&[main, other.clone()], budget);
         std::fs::set_permissions(helpers, mode(0o700)).unwrap();
         assert_eq!(replies.sum(&[(0, u64::MAX)])["opus"].output, 1);
         assert_eq!(
-            replies.skipped(),
-            [text::transcripts_stopped(&other, MAX_COUNT_BYTES, 1 + 3)]
+            log,
+            [text::transcripts_stopped(
+                &other,
+                CountLimit::Entries(1 + 3)
+            )]
         );
     }
 
@@ -2504,16 +2691,189 @@ mod tests {
             helper.set_len(MAX_TRANSCRIPT).unwrap();
         }
         std::fs::write(&main, "").unwrap();
-        let replies = Replies::read(&[main, other]);
+        let (replies, log) = logged(&[main, other], Limits::COUNT);
         assert!(replies.sum(&[(0, u64::MAX)]).is_empty());
         assert_eq!(
-            replies.skipped(),
+            log,
             [text::transcripts_stopped(
                 &helpers.join("agent-4.jsonl"),
-                MAX_COUNT_BYTES,
-                MAX_COUNT_ENTRIES
+                CountLimit::Bytes(MAX_COUNT_BYTES)
             )]
         );
+        // The fifth is over what is left: the count read none of it.
+        assert_eq!(replies.taken.bytes, MAX_COUNT_BYTES);
+    }
+
+    /// 01M7FX6SWN3DGZMH5HS9BWEBY7: a count with room for 10 bytes, and a
+    /// transcript of 100 bytes. Its size is over what is left, so the
+    /// count reads none of it, and stops there.
+    #[test]
+    fn a_count_reads_no_more_of_a_transcript_than_the_bytes_that_are_left() {
+        let claude = tempfile::tempdir().unwrap();
+        let [main, _, _, other] = transcripts_with_helpers(claude.path());
+        std::fs::write(&main, [b'x'; 100]).unwrap();
+        let limits = Limits {
+            bytes: 10,
+            ..Limits::COUNT
+        };
+        let (replies, log) = logged(&[main.clone(), other], limits);
+        assert_eq!(replies.taken.bytes, 0);
+        assert_eq!(
+            log,
+            [text::transcripts_stopped(&main, CountLimit::Bytes(10))]
+        );
+    }
+
+    /// 01M7FX6SWN3DGZMH5HS9BWEBY7: `/proc/self/status` has the size 0, and
+    /// more bytes when riff reads it, as a file that grows in the read.
+    /// With a limit of 10 bytes for one transcript, the count takes the
+    /// limit and one byte of it, skips it, and goes on: with room for
+    /// those 11 bytes and 5 more, it stops at the next transcript, of 6
+    /// bytes. With room for 10 bytes in all, it reads 11 bytes of the file
+    /// that grew, and stops there.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_count_takes_the_bytes_of_a_file_that_grew_in_the_read() {
+        let status = PathBuf::from("/proc/self/status");
+        let claude = tempfile::tempdir().unwrap();
+        let next = claude.path().join("next.jsonl");
+        std::fs::write(&next, "abcdef").unwrap();
+        let limits = Limits {
+            transcript: 10,
+            bytes: 11 + 5,
+            ..Limits::COUNT
+        };
+        let (replies, log) = logged(&[status.clone(), next.clone()], limits);
+        assert_eq!(replies.taken.bytes, 11);
+        let grew = text::transcript_skipped(&text::host_file_too_large(&status, 10));
+        assert_eq!(log.first(), Some(&grew), "{log:?}");
+        let stopped = text::transcripts_stopped(&next, CountLimit::Bytes(11 + 5));
+        assert_eq!(log.last(), Some(&stopped), "{log:?}");
+
+        let limits = Limits {
+            bytes: 10,
+            ..Limits::COUNT
+        };
+        let (replies, log) = logged(&[status.clone(), next], limits);
+        assert_eq!(replies.taken.bytes, 11);
+        assert_eq!(
+            log,
+            [text::transcripts_stopped(&status, CountLimit::Bytes(10))]
+        );
+    }
+
+    /// 01M7GF9G7ZNJD2SXZZ62XKJYBG: a count that keeps at most 2 replies.
+    /// The first transcript has 2, one of them on 2 lines, and counts. The
+    /// second has a reply of the first and a new one: the count stops
+    /// there, counts no tokens of it or of the files after it, and the log
+    /// names it. With room for 3 replies, each one counts: a reply of an
+    /// earlier transcript is no new reply.
+    #[test]
+    fn a_count_keeps_at_most_its_replies_and_stops_at_the_file_with_more() {
+        let dir = tempfile::tempdir().unwrap();
+        let [one, two, three] =
+            ["one", "two", "three"].map(|name| dir.path().join(format!("{name}.jsonl")));
+        let m = |id, output| reply(NINE, id, "opus", output);
+        write(&one, &[m("m1", 1), m("m1", 2), m("m2", 4)]);
+        write(&two, &[m("m1", 8), m("m3", 16)]);
+        write(&three, &[m("m1", 32)]);
+        let all = [one, two.clone(), three];
+        let limits = Limits {
+            replies: 2,
+            ..Limits::COUNT
+        };
+        let (replies, log) = logged(&all, limits);
+        assert_eq!(replies.sum(&[(0, u64::MAX)])["opus"].output, 2 + 4);
+        assert_eq!(
+            log,
+            [text::transcripts_stopped(&two, CountLimit::Replies(2))]
+        );
+
+        let limits = Limits {
+            replies: 3,
+            ..Limits::COUNT
+        };
+        let (replies, log) = logged(&all, limits);
+        assert_eq!(replies.sum(&[(0, u64::MAX)])["opus"].output, 32 + 4 + 16);
+        assert!(log.is_empty(), "{log:?}");
+        assert_eq!(MAX_COUNT_REPLIES, 1_000_000);
+    }
+
+    /// 01M7GF9G7ZNJD2SXZZ62XKJYBG: the name of a model is the name of a
+    /// report: `a/b` counts as `a-b`, and a name of 300 characters as its
+    /// first 100. A count that keeps at most 1 model stops at the
+    /// transcript with a second model.
+    #[test]
+    fn a_count_keeps_at_most_its_models_with_the_names_of_a_report() {
+        let dir = tempfile::tempdir().unwrap();
+        let [one, two] = ["one", "two"].map(|name| dir.path().join(format!("{name}.jsonl")));
+        let long = "m".repeat(300);
+        write(
+            &one,
+            &[reply(NINE, "m1", "a/b", 1), reply(NINE, "m2", "a-b", 2)],
+        );
+        write(&two, &[reply(NINE, "m3", &long, 4)]);
+        let all = [one, two.clone()];
+        let limits = Limits {
+            models: 1,
+            ..Limits::COUNT
+        };
+        let (replies, log) = logged(&all, limits);
+        let a_b = Tokens {
+            input: 2,
+            output: 3,
+            ..Tokens::default()
+        };
+        assert_eq!(
+            replies.sum(&[(0, u64::MAX)]),
+            Models::from([("a-b".to_owned(), a_b)])
+        );
+        assert_eq!(
+            log,
+            [text::transcripts_stopped(&two, CountLimit::Models(1))]
+        );
+
+        let (replies, log) = logged(&all, Limits::COUNT);
+        let models = replies.sum(&[(0, u64::MAX)]);
+        assert_eq!(models["m".repeat(NAME_CHARS).as_str()].output, 4);
+        assert!(log.is_empty(), "{log:?}");
+        assert_eq!(MAX_COUNT_MODELS, 32);
+    }
+
+    /// 01M7GF9G7ZNJD2SXZZ62XKJYBG: a reply that a count keeps has a fixed
+    /// size: the hash of its id, its time, the index of its model and its
+    /// tokens. A reply with an id of 1 MiB on 2 lines is one reply.
+    #[test]
+    fn a_reply_keeps_a_fixed_size() {
+        assert_eq!(std::mem::size_of::<(u64, Kept)>(), 56);
+        let id = "i".repeat(1 << 20);
+        let mut replies = Replies::default();
+        let lines = [reply(NINE, &id, "opus", 1), reply(NINE, &id, "opus", 2)];
+        replies.add(&lines.join("\n")).unwrap();
+        assert_eq!(replies.replies.len(), 1);
+        assert_eq!(replies.sum(&[(0, u64::MAX)])["opus"].output, 2);
+    }
+
+    /// 01M7GF9G7ZNJD2SXZZ62XKJYBG: a count waits for the end of the read
+    /// before it: here the test holds the lock of the counts.
+    #[test]
+    fn one_count_reads_at_a_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("s1.jsonl");
+        write(&main, &[reply(NINE, "m1", "opus", 1)]);
+        let held = ONE_COUNT
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (send, done) = std::sync::mpsc::channel();
+        let count = std::thread::spawn(move || {
+            let models = Replies::read(&[main]).sum(&[(0, u64::MAX)]);
+            send.send(models).unwrap();
+        });
+        let waited = done.recv_timeout(std::time::Duration::from_millis(300));
+        drop(held);
+        assert!(waited.is_err(), "the count did not wait: {waited:?}");
+        assert_eq!(done.recv().unwrap()["opus"].output, 1);
+        count.join().unwrap();
     }
 
     /// 01M7FX6SZ88S06N1AT6WJHKNMX: a container session names a folder of
@@ -2531,10 +2891,8 @@ mod tests {
             .unwrap()
             .set_len(MAX_TRANSCRIPT + 1)
             .unwrap();
-        let replies = Replies::read(std::slice::from_ref(&main));
-        let [line] = replies.skipped() else {
-            panic!("{:?}", replies.skipped())
-        };
+        let (_, log) = logged(std::slice::from_ref(&main), Limits::COUNT);
+        let [line] = &log[..] else { panic!("{log:?}") };
         assert_eq!(line.lines().count(), 1, "{line}");
         assert!(
             line.contains(r"/x\nriff daemon: lead-acme-app: forged line/s1.jsonl is larger"),

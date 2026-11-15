@@ -6020,7 +6020,11 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// report goes to the log of the daemon. The reads of the transcripts
     /// run on a thread for blocking work, so the other tasks of the daemon
     /// go on. The end of this session waits for them before its folder
-    /// goes, and they have limits in all (01M7FX6SWN3DGZMH5HS9BWEBY7). A
+    /// goes, and they have limits in all (01M7FX6SWN3DGZMH5HS9BWEBY7). The
+    /// daemon reads the transcripts of one count at a time, and a count
+    /// keeps each reply in a fixed size, so the memory of the counts does
+    /// not grow with the number of sessions that end at once
+    /// ([`usage::Replies::read`], 01M7GF9G7ZNJD2SXZZ62XKJYBG). A
     /// folder `projects` that riff does not list counts no tokens
     /// (01M7FNTSHXPQXXKZF761V0NN9Z): it gives the line of the log
     /// ([`counted`]).

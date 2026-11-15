@@ -7268,9 +7268,18 @@ pub fn host_git_refused(dir: &Path, folder: &Path) -> String {
 /// The step at the end of an error of the guard of the files of the host
 /// ([`host_file_link`], [`host_file_not_plain`], [`config_too_large`]):
 /// the start of a session stops there, and the person removes the file.
-/// A line of the log where riff goes on drops it
-/// ([`transcript_skipped`]).
+/// A line of the log where riff goes on drops it ([`transcript_skipped`],
+/// [`lead_turns_unseen`]).
 pub const REMOVE_IT: &str = "Remove it, and start again.";
+
+/// The fact of `cause`, an error of the guard of the files of the host,
+/// for a line of the log where riff goes on: with no step [`REMOVE_IT`],
+/// and through [`escaped`] (01M7FNTSHXPQXXKZF761V0NN9Z,
+/// 01M7FX6SZ88S06N1AT6WJHKNMX). [`transcript_skipped`] and
+/// [`lead_turns_unseen`] take it.
+fn without_step(cause: &str) -> String {
+    escaped(cause.strip_suffix(REMOVE_IT).map_or(cause, str::trim_end))
+}
 
 /// The error of the guard of the files of the host in a folder that a
 /// container writes ([`crate::host_file`]): `path` is a link there, and
@@ -7432,37 +7441,66 @@ pub fn escaped(text: &str) -> String {
 /// assert!(riff::text::transcript_skipped("/s/x\nforged").ends_with(r"/s/x\nforged"));
 /// ```
 pub fn transcript_skipped(cause: &str) -> String {
-    let fact = cause.strip_suffix(REMOVE_IT).map_or(cause, str::trim_end);
     format!(
         "riff counts no tokens of a transcript, and goes on. {}",
-        escaped(fact)
+        without_step(cause)
     )
 }
 
+/// A limit of one count of the tokens of a session that ran out
+/// ([`transcripts_stopped`], 01M7FX6SWN3DGZMH5HS9BWEBY7,
+/// 01M7GF9G7ZNJD2SXZZ62XKJYBG).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CountLimit {
+    /// The most bytes of transcripts in all.
+    Bytes(u64),
+    /// The most entries in all: each transcript, and each entry of the
+    /// folder of its helpers.
+    Entries(usize),
+    /// The most replies of the model.
+    Replies(usize),
+    /// The most models.
+    Models(usize),
+}
+
 /// The line of the log when one count of the tokens of a session stops
-/// at the file or the folder `path`: the count read `bytes` bytes and
-/// `entries` entries of its transcripts ([`crate::usage::Replies::read`],
-/// 01M7FX6SWN3DGZMH5HS9BWEBY7). `path` goes through [`escaped`].
+/// at the file or the folder `path`, where its limit `limit` ran out
+/// ([`crate::usage::Replies::read`], 01M7FX6SWN3DGZMH5HS9BWEBY7,
+/// 01M7GF9G7ZNJD2SXZZ62XKJYBG). `path` goes through [`escaped`].
 ///
 /// ```
 /// use std::path::Path;
+/// use riff::text::{CountLimit, transcripts_stopped};
 ///
+/// let helper = Path::new("/s/s1/subagents/agent-a.jsonl");
 /// assert_eq!(
-///     riff::text::transcripts_stopped(Path::new("/s/s1/subagents/agent-a.jsonl"), 1 << 30, 100_000),
-///     "riff reads at most 1.0GB and 100000 entries of the transcripts of a session in one \
-///      count: the count stops at /s/s1/subagents/agent-a.jsonl, and riff counts no tokens of \
-///      it or of the files after it."
+///     transcripts_stopped(helper, CountLimit::Bytes(1 << 30)),
+///     "riff reads at most 1.0GB of the transcripts of a session in one count: the count stops \
+///      at /s/s1/subagents/agent-a.jsonl, and riff counts no tokens of it or of the files after \
+///      it."
 /// );
+/// for (limit, words) in [
+///     (CountLimit::Entries(100_000), "at most 100000 entries of"),
+///     (CountLimit::Replies(1_000_000), "at most 1000000 replies of"),
+///     (CountLimit::Models(32), "at most 32 models of"),
+/// ] {
+///     assert!(transcripts_stopped(helper, limit).contains(words), "{words}");
+/// }
 /// let forged = Path::new("/s/x\nriff daemon: forged/s1.jsonl");
-/// let line = riff::text::transcripts_stopped(forged, 1 << 30, 100_000);
+/// let line = transcripts_stopped(forged, CountLimit::Bytes(1 << 30));
 /// assert_eq!(line.lines().count(), 1, "{line}");
 /// assert!(line.contains(r"/s/x\nriff daemon: forged/s1.jsonl"), "{line}");
 /// ```
-pub fn transcripts_stopped(path: &Path, bytes: u64, entries: usize) -> String {
+pub fn transcripts_stopped(path: &Path, limit: CountLimit) -> String {
+    let most = match limit {
+        CountLimit::Bytes(bytes) => limit_words(bytes),
+        CountLimit::Entries(entries) => format!("{entries} entries"),
+        CountLimit::Replies(replies) => format!("{replies} replies"),
+        CountLimit::Models(models) => format!("{models} models"),
+    };
     format!(
-        "riff reads at most {} and {entries} entries of the transcripts of a session in one \
-         count: the count stops at {}, and riff counts no tokens of it or of the files after it.",
-        limit_words(bytes),
+        "riff reads at most {most} of the transcripts of a session in one count: the count stops \
+         at {}, and riff counts no tokens of it or of the files after it.",
         escaped(&path.display().to_string())
     )
 }
@@ -7470,37 +7508,55 @@ pub fn transcripts_stopped(path: &Path, bytes: u64, entries: usize) -> String {
 /// The line of the log of the daemon when it cannot list the transcripts
 /// of a lead to see its turns ([`crate::lead::idle`],
 /// 01M7FX6YQKTN9EVPTZJ9XB8PM4): `cause` names the folder, through
-/// [`escaped`].
+/// [`escaped`]. riff goes on, so the line gives no step: it drops the
+/// step [`REMOVE_IT`] of `cause`, for example of a link at the folder.
 ///
 /// ```
+/// use std::path::Path;
+///
 /// assert_eq!(
 ///     riff::text::lead_turns_unseen("riff lists at most 10000 entries of a folder that a \
 ///         session can write: /l/o-r/claude/projects has more."),
 ///     "riff sees no turn of the lead in its transcripts, and goes on. riff lists at most 10000 \
 ///      entries of a folder that a session can write: /l/o-r/claude/projects has more."
 /// );
+/// assert_eq!(
+///     riff::text::lead_turns_unseen(&riff::text::host_file_link(Path::new("/l/o-r/claude/projects"))),
+///     "riff sees no turn of the lead in its transcripts, and goes on. riff follows no link in a \
+///      folder that a session can write: /l/o-r/claude/projects is a link."
+/// );
 /// assert!(riff::text::lead_turns_unseen("/l/x\nforged").ends_with(r"/l/x\nforged"));
 /// ```
 pub fn lead_turns_unseen(cause: &str) -> String {
     format!(
         "riff sees no turn of the lead in its transcripts, and goes on. {}",
-        escaped(cause)
+        without_step(cause)
     )
 }
 
 /// The line when riff cannot count the tokens of the claim of `item`,
 /// for the error `why` ([`crate::usage::Meter::release`],
-/// 01M588N85Z94PX1ZP0BDXTPX83).
+/// 01M588N85Z94PX1ZP0BDXTPX83). `item` is [`THE_CLAIMS`] for each claim
+/// of a session ([`crate::usage::Meter::release_all`]).
 ///
 /// ```
+/// use riff::text::{THE_CLAIMS, tokens_uncounted};
+///
 /// assert_eq!(
-///     riff::text::tokens_uncounted("issue-12", "the marks are busy"),
+///     tokens_uncounted("issue-12", "the marks are busy"),
 ///     "riff cannot count the tokens of issue-12: the marks are busy."
+/// );
+/// assert_eq!(
+///     tokens_uncounted(THE_CLAIMS, "the marks are busy"),
+///     "riff cannot count the tokens of the claims: the marks are busy."
 /// );
 /// ```
 pub fn tokens_uncounted(item: &str, why: &str) -> String {
     format!("riff cannot count the tokens of {item}: {why}.")
 }
+
+/// The words of [`tokens_uncounted`] for each claim of a session.
+pub const THE_CLAIMS: &str = "the claims";
 
 /// `riff run` on a host that is not Linux (01M4ZBGK7SFEXE1AGH6Z0YQHJP).
 pub const RUN_LINUX_ONLY: &str = "riff run needs Linux: riff starts no session on this OS. The \
@@ -15443,6 +15499,109 @@ pub fn takeover_session_ended(name: &str) -> String {
 pub fn lead_runs(repo: &str, name: &str) -> String {
     format!("The lead of {repo} runs in the container {name}. riff attaches to it.")
 }
+
+/// The line of `riff lead clean` (01M7GF9QGV86BENYWT1TDJPM64): riff
+/// moved `moved` entries of the folder `projects` of the lead into the
+/// folder `left` ([`crate::lead::clean_projects`]).
+///
+/// ```
+/// use std::path::Path;
+///
+/// let projects = Path::new("/d/leads/o-r/claude/projects");
+/// let left = Path::new("/d/leads/o-r/projects-left/7");
+/// assert_eq!(
+///     riff::text::lead_cleaned(projects, 9_999, left),
+///     "riff moved 9999 entries of /d/leads/o-r/claude/projects to \
+///      /d/leads/o-r/projects-left/7. riff will see the turns of the lead again at its next look."
+/// );
+/// assert!(riff::text::lead_cleaned(projects, 1, left).starts_with("riff moved 1 entry of "));
+/// assert_eq!(
+///     riff::text::lead_cleaned(projects, 0, left),
+///     "riff moved no entry of /d/leads/o-r/claude/projects: it holds only the conversations of \
+///      the lead."
+/// );
+/// ```
+pub fn lead_cleaned(projects: &Path, moved: usize, left: &Path) -> String {
+    let entries = match moved {
+        0 => {
+            return format!(
+                "riff moved no entry of {}: it holds only the conversations of the lead.",
+                projects.display()
+            );
+        }
+        1 => "1 entry".to_owned(),
+        n => format!("{n} entries"),
+    };
+    format!(
+        "riff moved {entries} of {} to {}. riff will see the turns of the lead again at its next \
+         look.",
+        projects.display(),
+        left.display()
+    )
+}
+
+/// The error of `riff lead clean` when `stayed` entries of the folder
+/// `projects` of the lead did not move, for the error `why` of the first
+/// one (01M7GF9QGV86BENYWT1TDJPM64). The lead chose the names of the
+/// entries, so `why` goes through [`escaped`].
+///
+/// ```
+/// use std::path::Path;
+///
+/// let projects = Path::new("/d/leads/o-r/claude/projects");
+/// let left = Path::new("/d/leads/o-r/projects-left/7");
+/// let why = "move /d/leads/o-r/claude/projects/x\ny: Permission denied (os error 13)";
+/// assert_eq!(
+///     riff::text::lead_clean_stayed(projects, 5, left, 2, why),
+///     "riff moved 5 entries of /d/leads/o-r/claude/projects to /d/leads/o-r/projects-left/7. \
+///      riff cannot move 2 more: move /d/leads/o-r/claude/projects/x\\ny: Permission denied (os \
+///      error 13)."
+/// );
+/// ```
+pub fn lead_clean_stayed(
+    projects: &Path,
+    moved: usize,
+    left: &Path,
+    stayed: usize,
+    why: &str,
+) -> String {
+    let entries = match moved {
+        0 => "no entry".to_owned(),
+        1 => "1 entry".to_owned(),
+        n => format!("{n} entries"),
+    };
+    format!(
+        "riff moved {entries} of {} to {}. riff cannot move {stayed} more: {}.",
+        projects.display(),
+        left.display(),
+        escaped(why)
+    )
+}
+
+/// The error of `riff lead clean` when the lead of `repo` has no folder
+/// `projects` on this host (01M7GF9QGV86BENYWT1TDJPM64).
+///
+/// ```
+/// use std::path::Path;
+///
+/// assert_eq!(
+///     riff::text::lead_no_projects("o/r", Path::new("/d/leads/o-r/claude/projects")),
+///     "riff finds no folder /d/leads/o-r/claude/projects on this host. Run riff lead clean on \
+///      the host of the lead of o/r."
+/// );
+/// ```
+pub fn lead_no_projects(repo: &str, projects: &Path) -> String {
+    format!(
+        "riff finds no folder {} on this host. Run riff lead clean on the host of the lead of \
+         {repo}.",
+        projects.display()
+    )
+}
+
+/// `riff lead clean` out of a clone of a repository
+/// (01M7GF9QGV86BENYWT1TDJPM64).
+pub const LEAD_CLEAN_NO_REPO: &str =
+    "riff lead clean works only in a clone of the repository of the lead.";
 
 /// The start of a new lead: the new clone of the lead failed with the
 /// error `why`, so the old clone at `clone` stays as it is

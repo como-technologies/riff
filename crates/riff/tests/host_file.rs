@@ -189,12 +189,14 @@ fn a_sparse_config_over_the_limit_gives_an_error_that_names_it() {
 
 /// The how-to "When a session makes a large file in its folder" in the
 /// book (01M7FNTSHXPQXXKZF761V0NN9Z, 01M7FX6SWN3DGZMH5HS9BWEBY7,
-/// 01M7FX6SZ88S06N1AT6WJHKNMX, 01M7FX6YQKTN9EVPTZJ9XB8PM4): the row of
+/// 01M7FX6SZ88S06N1AT6WJHKNMX, 01M7FX6YQKTN9EVPTZJ9XB8PM4,
+/// 01M7GF9G7ZNJD2SXZZ62XKJYBG, 01M7GF9QGV86BENYWT1TDJPM64): the row of
 /// the files of the machine points to it, it names each limit of riff
 /// and the escape of a name in the log, and its command finds each line
 /// of a limit. Its two parts show the error and the line of riff, and
-/// their commands find the file or the folder. Only the error of a start
-/// gives a step.
+/// their commands find the file, or move the entries of the folder. Only
+/// the error of a start gives a step: the line of the lead gives none,
+/// also for a link.
 #[test]
 fn the_book_says_what_to_do_with_a_large_file_in_the_folder_of_the_lead() {
     let page = crate::book::page("how-it-works.md");
@@ -223,8 +225,20 @@ fn the_book_says_what_to_do_with_a_large_file_in_the_folder_of_the_lead() {
     );
     assert!(unseen.contains(&line), "{unseen}");
     assert!(!line.contains("Remove"), "{line}");
-    // A line of a count of tokens gives no step, also for a link.
-    let skipped = riff::text::transcript_skipped(&riff::text::host_file_link(&projects));
+    // A line of the lead and a line of a count of tokens give no step,
+    // also for a link.
+    let link = riff::text::host_file_link(&projects);
+    let unseen_link = riff::text::lead_turns_unseen(&link);
+    assert!(!unseen_link.contains("Remove"), "{unseen_link}");
+    assert!(
+        unseen.contains("When the line says that `projects` is a link"),
+        "{unseen}"
+    );
+    assert!(
+        unseen.contains("(#when-a-session-puts-a-link-in-its-folder)"),
+        "{unseen}"
+    );
+    let skipped = riff::text::transcript_skipped(&link);
     assert!(skipped.starts_with("riff counts no tokens"), "{skipped}");
     assert!(!skipped.contains("Remove"), "{skipped}");
     assert!(
@@ -243,11 +257,20 @@ fn the_book_says_what_to_do_with_a_large_file_in_the_folder_of_the_lead() {
     assert_eq!(riff::usage::MAX_ENTRIES, 10_000);
     assert!(how_to.contains("| 10,000 entries |"), "{how_to}");
     assert_eq!(
-        (riff::usage::MAX_COUNT_BYTES, riff::usage::MAX_COUNT_ENTRIES),
-        (1 << 30, 100_000)
+        (
+            riff::usage::MAX_COUNT_BYTES,
+            riff::usage::MAX_COUNT_ENTRIES,
+            riff::usage::MAX_COUNT_REPLIES,
+            riff::usage::MAX_COUNT_MODELS
+        ),
+        (1 << 30, 100_000, 1_000_000, 32)
     );
     assert!(
-        how_to.contains("| 1 GB and 100,000 entries in all |"),
+        how_to.contains("| 1 GB, 100,000 entries, 1,000,000 replies and 32 models in all |"),
+        "{how_to}"
+    );
+    assert!(
+        how_to.contains("It reads the\ntranscripts of one count at a time"),
         "{how_to}"
     );
     assert!(
@@ -256,12 +279,16 @@ fn the_book_says_what_to_do_with_a_large_file_in_the_folder_of_the_lead() {
     );
     let too_many = riff::text::host_file_too_many(Path::new("/p"), riff::usage::MAX_ENTRIES);
     assert!(too_many.starts_with("riff lists at most"), "{too_many}");
-    let stopped = riff::text::transcripts_stopped(
-        Path::new("/p/a.jsonl"),
-        riff::usage::MAX_COUNT_BYTES,
-        riff::usage::MAX_COUNT_ENTRIES,
-    );
-    assert!(stopped.starts_with("riff reads at most"), "{stopped}");
+    use riff::text::CountLimit;
+    for limit in [
+        CountLimit::Bytes(riff::usage::MAX_COUNT_BYTES),
+        CountLimit::Entries(riff::usage::MAX_COUNT_ENTRIES),
+        CountLimit::Replies(riff::usage::MAX_COUNT_REPLIES),
+        CountLimit::Models(riff::usage::MAX_COUNT_MODELS),
+    ] {
+        let stopped = riff::text::transcripts_stopped(Path::new("/p/a.jsonl"), limit);
+        assert!(stopped.starts_with("riff reads at most"), "{stopped}");
+    }
     assert!(error.starts_with("riff reads at most"), "{error}");
     assert_eq!(
         crate::book::commands_in(how_to),
@@ -274,18 +301,8 @@ fn the_book_says_what_to_do_with_a_large_file_in_the_folder_of_the_lead() {
             "rm ~/.local/share/riff/leads/OWNER-REPO/claude/.claude.json",
         ]
     );
-    let left = "find \"$lead/claude/projects\" -mindepth 1 -maxdepth 1 ! -name \"$keep\" \
-                -exec sh -c 'mv \"$@\" ~/riff-projects-left' sh {} +";
-    assert_eq!(
-        crate::book::commands_in(unseen),
-        [
-            "lead=~/.local/share/riff/leads/OWNER-REPO",
-            "keep=$(printf %s \"$lead/clone\" | sed 's/[^A-Za-z0-9]/-/g')",
-            "find \"$lead/claude/projects\" -mindepth 1 -maxdepth 1 ! -name \"$keep\" | wc -l",
-            "mkdir -p ~/riff-projects-left",
-            left,
-        ]
-    );
+    assert_eq!(crate::book::commands_in(unseen), ["riff lead clean"]);
+    assert!(unseen.contains("`projects-left/TIME`"), "{unseen}");
     for anchor in [
         "(#when-a-session-makes-a-large-file-in-its-folder)",
         "(#when-the-start-of-the-lead-stops-at-a-large-file)",
@@ -295,65 +312,159 @@ fn the_book_says_what_to_do_with_a_large_file_in_the_folder_of_the_lead() {
     }
 }
 
-/// The steps of the how-to "When riff sees no turn of the lead", as one
-/// script: they count each entry of `projects` that the session made,
-/// also a hidden one and one whose name ends with `-clone`, and move
-/// each one. They keep the folder of the clone of the lead, which holds
-/// its conversation: `claude` names it from the path of the clone, with
-/// `-` for each character that is no letter and no digit. Then riff sees
-/// the turns of the lead again (01M7FX6YQKTN9EVPTZJ9XB8PM4). The
-/// commands use no `mv -t`: the `mv` of macOS has no `-t`.
-#[test]
-fn the_move_of_the_book_keeps_the_conversation_of_the_lead() {
+/// A clone of the repository `acme/app` in the environment `env`, as
+/// the person has it.
+fn acme_clone(env: &isolated::Isolated) -> PathBuf {
+    let clone = env.path().join("src/app");
+    std::fs::create_dir_all(&clone).unwrap();
+    for args in [
+        &["init", "-q"][..],
+        &["remote", "add", "origin", "https://github.com/acme/app.git"],
+    ] {
+        let git = env.command("git").args(args).current_dir(&clone).output();
+        assert!(git.unwrap().status.success(), "git {args:?}");
+    }
+    clone
+}
+
+/// The command of the how-to "When riff sees no turn of the lead", in
+/// the clone `clone` of the environment `env`: its exit code, stdout and
+/// stderr.
+fn run_the_book(env: &isolated::Isolated, clone: &Path) -> (i32, String, String) {
     let unseen = &crate::book::how_to(
         "how-it-works.md",
         "##### When riff sees no turn of the lead",
     );
-    let home = tempfile::tempdir().unwrap();
-    let lead = home.path().join(".local/share/riff/leads/OWNER-REPO");
-    let projects = lead.join("claude").join(riff::usage::PROJECTS);
+    let commands = crate::book::commands_in(unseen);
+    let [command] = &commands[..] else {
+        panic!("{commands:?}")
+    };
+    let args: Vec<&str> = command.split_whitespace().collect();
+    assert_eq!(args[0], "riff");
+    let out = env
+        .riff()
+        .args(&args[1..])
+        .current_dir(clone)
+        .output()
+        .unwrap();
+    let text = |bytes: Vec<u8>| String::from_utf8(bytes).unwrap().trim().to_owned();
+    (
+        out.status.code().unwrap(),
+        text(out.stdout),
+        text(out.stderr),
+    )
+}
+
+/// 01M7GF9QGV86BENYWT1TDJPM64, 01M7FX6YQKTN9EVPTZJ9XB8PM4: the command of
+/// the how-to "When riff sees no turn of the lead", as the person runs it
+/// in a clone of the repository. The lead made more entries than the
+/// limit in its folder `projects`, also a hidden one, two with the name
+/// of its folder of conversations and more at the end, and a link to a
+/// folder of the person. riff moves each one into a new folder of the
+/// lead, and keeps the folder of the conversations, which `claude` names
+/// from the path of the clone of the lead. riff follows no link. Then
+/// riff sees the turns of the lead again.
+#[test]
+fn the_command_of_the_book_keeps_the_conversation_of_the_lead() {
+    let env = isolated::Isolated::new();
+    let clone = acme_clone(&env);
+    let lead = riff::lead::folder_of(&env.riff_home(), "acme/app");
+    let claude = lead.join("claude");
+    let projects = claude.join(riff::usage::PROJECTS);
     let name: String = lead
         .join("clone")
         .to_string_lossy()
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect();
-    let own = projects.join(name);
+    let own = projects.join(&name);
     std::fs::create_dir_all(&own).unwrap();
     std::fs::write(own.join("s1.jsonl"), "").unwrap();
     let made = riff::usage::MAX_ENTRIES;
-    for n in 3..made {
+    for n in 4..made {
         std::fs::write(projects.join(format!("{n}.jsonl")), "").unwrap();
     }
     std::fs::write(projects.join(".hidden"), "").unwrap();
-    for other in ["s1-clone", "s2-clone"] {
+    for other in [format!("{name}-2"), format!("x{name}")] {
         std::fs::create_dir(projects.join(other)).unwrap();
     }
-    let claude = lead.join("claude");
+    let person = env.home().join("person");
+    std::fs::create_dir_all(&person).unwrap();
+    std::fs::write(person.join("id_ed25519"), "SECRET").unwrap();
+    std::os::unix::fs::symlink(&person, projects.join("home")).unwrap();
     assert!(riff::usage::written_in(&claude, "s1").is_err());
-    let commands = crate::book::commands_in(unseen);
-    assert!(
-        commands.iter().all(|c| !c.contains("mv -t")),
-        "{commands:?}"
-    );
-    let out = std::process::Command::new("sh")
-        .args(["-e", "-c", &commands.join("\n")])
-        .env("HOME", home.path())
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "{out:?}");
-    assert_eq!(
-        String::from_utf8_lossy(&out.stdout).trim(),
-        made.to_string()
-    );
+
+    let (code, out, err) = run_the_book(&env, &clone);
+    assert_eq!(code, 0, "{err}");
+    let left = std::fs::read_dir(lead.join(riff::lead::PROJECTS_LEFT))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect::<Vec<_>>();
+    let [left] = &left[..] else {
+        panic!("{left:?}")
+    };
+    assert_eq!(out, riff::text::lead_cleaned(&projects, made, left));
     assert!(riff::usage::written_in(&claude, "s1").unwrap().is_some());
     let kept: Vec<_> = std::fs::read_dir(&projects)
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .collect();
     assert_eq!(kept, [own]);
-    let left = home.path().join("riff-projects-left");
     assert_eq!(std::fs::read_dir(left).unwrap().count(), made);
+    assert!(left.join("home").symlink_metadata().unwrap().is_symlink());
+    assert_eq!(
+        std::fs::read_to_string(person.join("id_ed25519")).unwrap(),
+        "SECRET"
+    );
+    assert_eq!(std::fs::read_dir(&person).unwrap().count(), 1);
+
+    // Nothing more to move: riff says so, and makes no new folder.
+    let (code, out, _) = run_the_book(&env, &clone);
+    assert_eq!(code, 0);
+    assert!(out.starts_with("riff moved no entry of "), "{out}");
+    let runs = std::fs::read_dir(lead.join(riff::lead::PROJECTS_LEFT));
+    assert_eq!(runs.unwrap().count(), 1);
+}
+
+/// 01M7GF9QGV86BENYWT1TDJPM64: the lead put a link at its folder
+/// `projects`, to a folder of the person. The command of the book
+/// refuses it with the error that names the link, and moves nothing:
+/// each file of the person stays, and riff makes no folder for the
+/// entries. Out of a clone, the command names the step.
+#[test]
+fn the_command_of_the_book_moves_nothing_through_a_link_at_projects() {
+    let env = isolated::Isolated::new();
+    let clone = acme_clone(&env);
+    let lead = riff::lead::folder_of(&env.riff_home(), "acme/app");
+    let claude = lead.join("claude");
+    std::fs::create_dir_all(&claude).unwrap();
+    let person = env.home().join(".ssh");
+    std::fs::create_dir_all(&person).unwrap();
+    std::fs::write(person.join("id_ed25519"), "SECRET").unwrap();
+    std::fs::write(person.join("config"), "Host *").unwrap();
+    let projects = claude.join(riff::usage::PROJECTS);
+    std::os::unix::fs::symlink(&person, &projects).unwrap();
+
+    let (code, out, err) = run_the_book(&env, &clone);
+    assert_eq!(code, 1, "{out}");
+    assert_eq!(err, riff::text::host_file_link(&projects));
+    assert_eq!(std::fs::read_dir(&person).unwrap().count(), 2);
+    assert_eq!(
+        std::fs::read_to_string(person.join("id_ed25519")).unwrap(),
+        "SECRET"
+    );
+    assert!(!lead.join(riff::lead::PROJECTS_LEFT).exists());
+
+    // No folder `projects`: riff names the host of the lead.
+    std::fs::remove_file(&projects).unwrap();
+    let (code, _, err) = run_the_book(&env, &clone);
+    assert_eq!(code, 1);
+    assert_eq!(err, riff::text::lead_no_projects("acme/app", &projects));
+
+    // Out of a clone of a repository.
+    let (code, _, err) = run_the_book(&env, &env.home());
+    assert_eq!(code, 1);
+    assert_eq!(err, riff::text::LEAD_CLEAN_NO_REPO);
 }
 
 /// The how-to "When a session puts a link in its folder" in the book: the

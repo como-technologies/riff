@@ -1995,6 +1995,17 @@ enum LeadCommand {
         #[arg(long)]
         history: bool,
     },
+    /// Move the entries that the lead made out of projects
+    ///
+    /// The Claude folder of the lead keeps the conversations of the lead
+    /// in one entry of its folder projects, which claude names from the
+    /// path of the clone of the lead. riff moves each other entry into a
+    /// new folder projects-left/TIME in the folder of the lead on this
+    /// host, and names it. No session writes there. riff follows no link:
+    /// a link moves as a link, and a link at projects stops the command
+    /// before it moves an entry. Run it on the host of the lead, when the
+    /// log of the riff daemon says that riff sees no turn of the lead.
+    Clean,
 }
 
 #[derive(Subcommand)]
@@ -2580,6 +2591,12 @@ async fn cli() -> Result<()> {
     {
         return lead_restart_command(&here, &reach, api.base()).await;
     }
+    if let Command::Lead {
+        command: LeadCommand::Clean,
+    } = &command
+    {
+        lead_clean_command(&here);
+    }
     if let Command::Host { command } = &command {
         return match command {
             HostCommand::Join { host, no_lead } => {
@@ -2967,6 +2984,9 @@ fn needs_the_host(command: &Command) -> Option<&'static str> {
         Command::Lead {
             command: LeadCommand::Notes { .. },
         } => "riff lead notes",
+        Command::Lead {
+            command: LeadCommand::Clean,
+        } => "riff lead clean",
         Command::Questions {
             answered: Some(_), ..
         } => "riff questions --answered",
@@ -4615,6 +4635,29 @@ async fn join_command(
         (None, Reach::Direct(_)) => {
             riff::wave::ask_join(&riff::daemon::dir()?, here, server, no_lead).await?;
             Ok(())
+        }
+    }
+}
+
+/// `riff lead clean` for the repository of `here`
+/// (01M7GF9QGV86BENYWT1TDJPM64): it prints the line of
+/// [`riff::lead::clean_projects`], or its error, and exits with 1 on an
+/// error.
+fn lead_clean_command(here: &Place) -> ! {
+    let cleaned = match here.default_thread() {
+        Some(_) => riff::run::data_dir().and_then(|data| {
+            riff::lead::clean_projects(&data, &here.repo_text(), riff::usage::now_ms())
+        }),
+        None => Err(anyhow::anyhow!("{}", text::LEAD_CLEAN_NO_REPO)),
+    };
+    match cleaned {
+        Ok(line) => {
+            println!("{line}");
+            std::process::exit(0)
+        }
+        Err(e) => {
+            eprintln!("{e:#}");
+            std::process::exit(1)
         }
     }
 }

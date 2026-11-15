@@ -1088,6 +1088,7 @@ pub const COMMANDS: &[InContainer] = &[
     host(&["lead", "move", "thelio"]),
     host(&["lead", "notes"]),
     host(&["lead", "notes", "edit"]),
+    host(&["lead", "clean"]),
     host(&["host", "leave"]),
     host(&["questions", "--answered", "12"]),
     host(&["server"]),

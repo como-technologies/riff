@@ -45,11 +45,12 @@
 //! | The attach | [`crate::runtime::Runtime::redraw`], then [`crate::runtime::Runtime::attach`] ([`attach`]): `claude` draws its screen at each attach | 01M51PD7M04HZR2PVVJA4WCBK5 |
 //! | After the attach | [`Left`]: a detach, or the end of the lead when its container does not run; the line says which. First riff writes the reset of the modes of the terminal ([`crate::runtime::reset_terminal`]) | 01M51PD7Q24N252V66NFEHY49N, 01M6XVBRQMBMK68K8GCDRZ5GJ5 |
 //! | The sign-in of `claude` | the token of `riff claude-token` only ([`needs_token`]); a lead from an older riff with the sign-in file of the host gets a word when the host replaced that file ([`stale`], [`crate::daemon::Daemon::stale_leads`]) | 01M77Y6ZQ76DTX470STN8ATTA9, 01M5NJ87YEHHGJBANM7CRYV56Z |
-//! | A new riff | after `riff update`, the daemon stops an old lead (the bind of its riff has no link: [`old`]) when it is idle ([`idle`]: the `Stop` hook ended its turn, and riff sees no write to its transcript after the tail of the turn, [`between_turns`]; or riff sees no write to its transcript for 5 minutes, [`quiet`]) and the daemon itself runs the riff on disk, and starts it again with `claude --resume ID` ([`spec_again`], [`again`]): the same session, clone and Claude folder, no new session on riff-server; the main clone is the one in the records of the daemon: that of the wave, and with no wave the one that the daemon serves for the repository, never one that a file of the clone names ([`main_of`]); the person gets one line in riff chat ([`crate::daemon::Daemon::leads_again`]), and an attached terminal one line, then the attach to the new container ([`attach`], [`Again`]) | 01M5TC24PB3YC2CC8BA275WSEN, 01M6XTS7V47RFX1G37FRGRBWCY, 01M6WBX2FQEHW92Y1A5HM4H8BM, 01M6WBX2FT7Y9FV9VGGPDBKAHM, 01M5TC2919TB9XPF42YFNJBP79, 01M5TC29A4Q94NJP7HFC75XCF3, 01M6QB89JJEM9Z1V3RVZYHKYT0, 01M7EAZ9N9DY7JPXZP1V8JY01E |
+//! | A new riff | after `riff update`, the daemon stops an old lead (the bind of its riff has no link: [`old`]) when it is idle ([`idle`]: the `Stop` hook ended its turn, and riff sees no write to its transcript after the tail of the turn, [`between_turns`]; or riff sees no write to its transcript for 5 minutes, [`quiet`]) and the daemon itself runs the riff on disk, and starts it again with `claude --resume ID` ([`spec_again`], [`again`]): the same session, clone and Claude folder, no new session on riff-server; the main clone is the one in the records of the daemon: that of the wave, and with no wave the one that the daemon serves for the repository, never one that a file of the clone names ([`main_of`]); the person gets one line in riff chat ([`crate::daemon::Daemon::leads_again`]), and an attached terminal one line, then the attach to the new container ([`attach`], [`Again`]) | 01M5TC24PB3YC2CC8BA275WSEN, 01M6XTS7V47RFX1G37FRGRBWCY, 01M6WBX2FQEHW92Y1A5HM4H8BM, 01M6WBX2FT7Y9FV9VGGPDBKAHM, 01M5TC2919TB9XPF42YFNJBP79, 01M5TC29A4Q94NJP7HFC75XCF3, 01M6QB89JJEM9Z1V3RVZYHKYT0, 01M7EAZ9N9DY7JPXZP1V8JY01E, 01M7FX6YQKTN9EVPTZJ9XB8PM4 |
 //! | The project | `riff lead move` and the daemon start a lead only for a project of the riff ([`crate::project::lead_refused`], #1863): else riff names the fix, `riff project init`, and starts no session and no container | 01M77FHTT8BZ2YN1SV7H1X3NG8, 01M77FHTXBCWA4FG793TEB5XCY |
 //! | The start | `riff lead start` starts no lead (#1793): it attaches to the lead of the project when its container runs on this host. Else it names the host of the lead and the step there, or says that the daemon of a host that joined the project starts the lead ([`start`], [`text::lead_not_here`]) | 01M77Y6ZBV7C8Z332SAFKQCZ5A |
 //! | The repository | the daemon serves it while the lead runs, so `riff who` and the commands with `--host` reach the host, with the main clone of the wave ([`main_of`], `Daemon::serve_lead`) | 01M6QVSWQZE41BMQ6YN2963C4V, 01M7EAZ9N9DY7JPXZP1V8JY01E |
 //! | The restart | `riff lead restart`: riff finds the lead of the project ([`to_restart`]), the lead writes its notes ([`restart_notes`]), then the daemon of its host ends its container ([`crate::daemon::Daemon::stop_lead`]); the host loses the part lead, an update starts the old lead no more, and a host that joined the project starts a new lead ([`crate::lead_host`]) | 01M77Y6ZEQ4A6C6E0XZ56WRE89, 01M6QVSWWM3EA4ZS47XCKV38D0 |
+//! | The folder `projects` | riff sees the turns of the lead in the folder `projects` of its Claude folder; with a link there, or with more than [`crate::usage::MAX_ENTRIES`] entries, riff sees no write, and the log names the folder ([`idle`]). `riff lead clean` on the host of the lead moves each entry of `projects` but the conversations of the lead ([`holds_conversations`]) into a new folder `projects-left/TIME` of the folder of the lead, with no follow of a link ([`clean_projects`]) | 01M7FX6YQKTN9EVPTZJ9XB8PM4, 01M7GF9QGV86BENYWT1TDJPM64 |
 //!
 //! The Claude folder stays between the starts of the lead: the lead
 //! keeps the history of its conversations, and a dialog of `claude` that
@@ -694,6 +695,120 @@ fn last_write(record: &daemon::Record) -> Result<Option<std::time::SystemTime>, 
         let line = text::lead_turns_unseen(&format!("{e:#}"));
         format!("riff daemon: {}: {line}", record.live.name)
     })
+}
+
+/// The folder of the lead with the entries that `riff lead clean` moved
+/// out of its folder `projects`, one new folder for each run
+/// ([`clean_projects`]). No session binds it.
+pub const PROJECTS_LEFT: &str = "projects-left";
+
+/// The most characters of the name that `claude` gives a folder of
+/// conversations in the folder `projects`. A longer name is its first
+/// characters, `-` and a hash ([`holds_conversations`]).
+const CLAUDE_NAME: usize = 200;
+
+/// True when `name`, an entry of the folder `projects` of a Claude
+/// folder, is the folder of the conversations that `claude` keeps for the
+/// working folder `dir` (01M7GF9QGV86BENYWT1TDJPM64). `claude` names it
+/// from the path of `dir`, with `-` for each character that is no ASCII
+/// letter and no digit, as JavaScript counts characters. A name over
+/// 200 characters is its first 200 characters, `-` and a hash that riff
+/// does not know: so a name with that start counts.
+///
+/// ```
+/// use std::ffi::OsStr;
+/// use std::path::Path;
+/// use riff::lead::holds_conversations;
+///
+/// let clone = Path::new("/home/mike/.local/share/riff/leads/acme-app/clone");
+/// assert!(holds_conversations(clone, OsStr::new("-home-mike--local-share-riff-leads-acme-app-clone")));
+/// assert!(!holds_conversations(clone, OsStr::new("-home-mike--local-share-riff-leads-acme-app-clone-2")));
+/// // A character out of the BMP is two characters of JavaScript.
+/// assert!(holds_conversations(Path::new("/a/😀"), OsStr::new("-a---")));
+///
+/// // A path of 300 characters: its first 200, `-` and a hash.
+/// let long = Path::new("/h").join("a".repeat(297));
+/// let start = format!("-h-{}", "a".repeat(197));
+/// assert!(holds_conversations(&long, OsStr::new(&format!("{start}-1k2j3h"))));
+/// assert!(!holds_conversations(&long, OsStr::new(&start)));
+/// assert!(!holds_conversations(&long, OsStr::new(&format!("{start}x1k2j3h"))));
+/// ```
+pub fn holds_conversations(dir: &Path, name: &std::ffi::OsStr) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let full: String = dir
+        .to_string_lossy()
+        .encode_utf16()
+        .map(|unit| match char::from_u32(u32::from(unit)) {
+            Some(c) if c.is_ascii_alphanumeric() => c,
+            _ => '-',
+        })
+        .collect();
+    let (full, name) = (full.as_bytes(), name.as_bytes());
+    if full.len() <= CLAUDE_NAME {
+        return name == full;
+    }
+    name.len() > CLAUDE_NAME + 1
+        && name.starts_with(&full[..CLAUDE_NAME])
+        && name[CLAUDE_NAME] == b'-'
+}
+
+/// `riff lead clean` (01M7GF9QGV86BENYWT1TDJPM64): moves each entry of
+/// the folder `projects` of the Claude folder of the lead of `repo`, in
+/// the data folder `data` of riff, out of it, apart from the folder of
+/// the conversations of the lead ([`holds_conversations`]). The entries
+/// go into the new folder `projects-left/NOW` of the folder of the lead
+/// ([`PROJECTS_LEFT`]), where `NOW` is `now_ms`. The lead writes its
+/// Claude folder, so the move goes through
+/// [`crate::host_file::move_out`], with no follow of a link: a link at
+/// `projects` gives the error [`text::host_file_link`], and nothing
+/// moves. It gives the line for the person ([`text::lead_cleaned`]), and
+/// an error when an entry stayed ([`text::lead_clean_stayed`]) or when
+/// the lead has no folder `projects` on this host
+/// ([`text::lead_no_projects`]).
+///
+/// ```
+/// use std::path::Path;
+///
+/// let data = tempfile::tempdir()?;
+/// let lead = riff::lead::folder_of(data.path(), "acme/app");
+/// let projects = lead.join("claude/projects");
+/// let own: String = lead.join("clone").to_string_lossy().chars()
+///     .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+///     .collect();
+/// std::fs::create_dir_all(projects.join(&own))?;
+/// std::fs::write(projects.join(".hidden"), "")?;
+/// std::fs::create_dir(projects.join(format!("{own}-2")))?;
+/// let line = riff::lead::clean_projects(data.path(), "acme/app", 7)?;
+/// let left = lead.join("projects-left/7");
+/// assert_eq!(line, riff::text::lead_cleaned(&projects, 2, &left));
+/// assert_eq!(std::fs::read_dir(&projects)?.count(), 1);
+/// assert_eq!(std::fs::read_dir(&left)?.count(), 2);
+///
+/// // Nothing more to move: riff makes no new folder.
+/// let line = riff::lead::clean_projects(data.path(), "acme/app", 8)?;
+/// assert_eq!(line, riff::text::lead_cleaned(&projects, 0, &lead.join("projects-left/8")));
+/// assert!(!lead.join("projects-left/8").exists());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn clean_projects(data: &Path, repo: &str, now_ms: u64) -> Result<String> {
+    let folder = folder_of(data, repo);
+    let claude = folder.join("claude");
+    let clone = folder.join("clone");
+    let projects = claude.join(crate::usage::PROJECTS);
+    let left = folder.join(PROJECTS_LEFT).join(now_ms.to_string());
+    let keep = |name: &std::ffi::OsStr| holds_conversations(&clone, name);
+    let name = Path::new(crate::usage::PROJECTS);
+    let Some(moved) = crate::host_file::move_out(&claude, name, &left, keep)? else {
+        bail!("{}", text::lead_no_projects(repo, &projects));
+    };
+    if let Some(first) = moved.first {
+        let why = format!("{first:#}");
+        bail!(
+            "{}",
+            text::lead_clean_stayed(&projects, moved.moved, &left, moved.stayed, &why)
+        );
+    }
+    Ok(text::lead_cleaned(&projects, moved.moved, &left))
 }
 
 /// The file of the end of the last turn of a lead, in the folder of the
@@ -2443,6 +2558,110 @@ mod tests {
         assert!(between_turns(&record));
         // The container started long ago: `since_ms` is 0.
         assert!(quiet(&record, quiet_for));
+    }
+
+    /// The name that `claude` gives the folder of the conversations of
+    /// the lead in `folder`, for a path of at most 200 characters.
+    fn conversations(folder: &Path) -> String {
+        let clone = folder.join("clone").to_string_lossy().into_owned();
+        let name: String = clone
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+            .collect();
+        assert!(name.len() <= CLAUDE_NAME, "{name}");
+        name
+    }
+
+    /// 01M7GF9QGV86BENYWT1TDJPM64, 01M7FX6YQKTN9EVPTZJ9XB8PM4: the lead
+    /// made more entries than the limit in its folder `projects`, so riff
+    /// sees no write after the end of its turn. After `riff lead clean`,
+    /// riff sees the write 59 s after the end again: the lead is in a turn.
+    #[test]
+    fn after_the_clean_riff_sees_the_turns_of_the_lead_again() {
+        use std::time::{Duration, UNIX_EPOCH};
+        let data = tempfile::tempdir().unwrap();
+        let folder = folder_of(data.path(), "acme/app");
+        let record = record_in(&folder);
+        let projects = folder.join("claude/projects");
+        let own = projects.join(conversations(&folder));
+        std::fs::create_dir_all(&own).unwrap();
+        let ended = UNIX_EPOCH + Duration::from_secs(4_000_000_000);
+        ended_at(&record, ended);
+        let file = std::fs::File::create(own.join("s1.jsonl")).unwrap();
+        file.set_modified(ended + Duration::from_secs(59)).unwrap();
+        for n in 0..crate::usage::MAX_ENTRIES {
+            std::fs::write(projects.join(format!("{n}.jsonl")), "").unwrap();
+        }
+        assert!(last_write(&record).is_err());
+        assert!(between_turns(&record));
+        let line = clean_projects(data.path(), "acme/app", 1).unwrap();
+        let left = folder.join(PROJECTS_LEFT).join("1");
+        let made = crate::usage::MAX_ENTRIES;
+        assert_eq!(line, text::lead_cleaned(&projects, made, &left));
+        assert_eq!(
+            last_write(&record),
+            Ok(Some(ended + Duration::from_secs(59)))
+        );
+        assert!(!between_turns(&record));
+    }
+
+    /// 01M7FX6YQKTN9EVPTZJ9XB8PM4, 01M7GF9QGV86BENYWT1TDJPM64: the lead put
+    /// a link at its folder `projects`, to a folder of the person. The
+    /// line of the log names the link with no step, as riff goes on.
+    /// `riff lead clean` refuses the link with the error that names it,
+    /// and moves nothing.
+    #[test]
+    fn a_link_at_projects_gives_a_line_with_no_step_and_the_clean_moves_nothing() {
+        let data = tempfile::tempdir().unwrap();
+        let folder = folder_of(data.path(), "acme/app");
+        let record = record_in(&folder);
+        let person = data.path().join("person");
+        std::fs::create_dir_all(person.join("-d-clone")).unwrap();
+        std::fs::write(person.join("-d-clone/s1.jsonl"), "").unwrap();
+        std::fs::write(person.join("id_ed25519"), "SECRET").unwrap();
+        std::fs::create_dir_all(folder.join("claude")).unwrap();
+        let projects = folder.join("claude/projects");
+        std::os::unix::fs::symlink(&person, &projects).unwrap();
+        let link = text::host_file_link(&projects);
+        let line = last_write(&record).unwrap_err();
+        let unseen = text::lead_turns_unseen(&link);
+        assert_eq!(line, format!("riff daemon: {NAME}: {unseen}"));
+        assert!(!line.contains(text::REMOVE_IT), "{line}");
+        let error = clean_projects(data.path(), "acme/app", 1).unwrap_err();
+        assert_eq!(error.to_string(), link);
+        assert_eq!(std::fs::read_dir(&person).unwrap().count(), 2);
+        assert!(!folder.join(PROJECTS_LEFT).exists());
+    }
+
+    /// 01M7GF9QGV86BENYWT1TDJPM64: the path of the clone of the lead has
+    /// more than 200 characters, so `claude` names the folder of the
+    /// conversations with its first 200 characters, `-` and a hash. `riff
+    /// lead clean` keeps that folder, and moves an entry with the same
+    /// first 200 characters and no `-` after them.
+    #[test]
+    fn the_clean_keeps_the_conversations_of_a_clone_with_a_long_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("d".repeat(200));
+        let folder = folder_of(&data, "acme/app");
+        let full: String = folder
+            .join("clone")
+            .to_string_lossy()
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+            .collect();
+        assert!(full.len() > CLAUDE_NAME, "{full}");
+        let projects = folder.join("claude/projects");
+        let start = &full[..CLAUDE_NAME];
+        let own = projects.join(format!("{start}-1k2j3h"));
+        let other = projects.join(format!("{start}x"));
+        for entry in [&own, &other] {
+            std::fs::create_dir_all(entry).unwrap();
+        }
+        let line = clean_projects(&data, "acme/app", 5).unwrap();
+        let left = folder.join(PROJECTS_LEFT).join("5");
+        assert_eq!(line, text::lead_cleaned(&projects, 1, &left));
+        assert!(own.is_dir());
+        assert!(left.join(other.file_name().unwrap()).is_dir());
     }
 
     /// 01M7E7A8QM8SRPQN3G1BXVJW1R: the new clone takes the place of the

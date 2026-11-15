@@ -8113,6 +8113,17 @@ of this part when they merge.
   supersedes 01M6WBX2FQEHW92Y1A5HM4H8BM in part: the writes that riff
   sees, and 01M5TC24PB3YC2CC8BA275WSEN in part: the wait for the end of
   a turn.
+- **01M7GF9QGV86BENYWT1TDJPM64** `riff lead clean` moves each entry of
+  the folder `projects` of the Claude folder of the lead out of it, on
+  the host of the lead, apart from the folder of the conversations of
+  the lead. That folder has the name that `claude` gives the path of the
+  clone of the lead: `-` for each character that is no ASCII letter and
+  no digit, and for a name over 200 characters, its first 200
+  characters, `-` and a hash. riff moves each entry with no follow of a
+  link, as one entry, into a new folder `projects-left/TIME` in the
+  folder of the lead, which no session writes, and names that folder. A
+  link at `projects` gives the error that names the link, and riff moves
+  nothing. In a container, the command refuses.
 
 ### The first run
 
@@ -8936,6 +8947,18 @@ of this part when they merge.
   control character of the name as its escape, for example `\n` for a
   line break. So a name that a container chose makes no second line in
   the log.
+- **01M7GF9G7ZNJD2SXZZ62XKJYBG** One count of the tokens of a session
+  keeps each reply in a fixed size: a hash of 64 bits of its id, its
+  time, its tokens, and the index of the name of its model. The name of
+  a model is the name that a report has: its first 100 characters, with
+  `-` for each character that a name cannot hold. The count keeps at
+  most 1,000,000 replies and 32 models. A transcript with more stops the
+  count there, as a limit of 01M7FX6SWN3DGZMH5HS9BWEBY7 does: riff
+  counts no tokens of it or of the files after it, and the log names it.
+  A count keeps no line of its log in memory. A process of riff reads
+  the transcripts of one count at a time, and holds the bytes of each
+  read in memory one time. So the memory of the counts of the riff
+  daemon does not grow with the number of sessions that end at once.
 
 ### Process
 

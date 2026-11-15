@@ -13,10 +13,10 @@
 //!
 //! - Each read and write of the host in a folder that a container writes
 //!   goes through this module: [`read()`], [`write()`], [`list`],
-//!   [`modified`] and [`set_mode`]. Each one takes that folder, `root`,
-//!   and a name in it. riff made `root`, and a container cannot change
-//!   it: it is the source of a bind. So a link above `root` counts, for
-//!   example a data folder of riff on another disk.
+//!   [`move_out`], [`modified`] and [`set_mode`]. Each one takes that
+//!   folder, `root`, and a name in it. riff made `root`, and a container
+//!   cannot change it: it is the source of a bind. So a link above `root`
+//!   counts, for example a data folder of riff on another disk.
 //! - Each part of the name below `root` opens from the folder above it
 //!   (`openat`), with no follow of a link (`O_NOFOLLOW`). So a link in the
 //!   middle of the name counts as a link too. A link gives the error
@@ -41,9 +41,10 @@
 //!   ([`crate::run::claude_folder`]), the transcripts
 //!   ([`crate::usage::transcripts_in`], [`crate::usage::written_in`],
 //!   [`crate::usage::Replies::read`]), the file `alternates` of a clone
-//!   ([`crate::lead::linked_main`]), and the mode of the socket of a
-//!   session. The host takes the path that the file `alternates` names
-//!   as it is, and follows no link in it
+//!   ([`crate::lead::linked_main`]), the move of the entries of the folder
+//!   `projects` of the lead ([`crate::lead::clean_projects`]), and the
+//!   mode of the socket of a session. The host takes the path that the
+//!   file `alternates` names as it is, and follows no link in it
 //!   ([`crate::daemon::remote::linked_clones`]). The host reads no file
 //!   in a volume: it only measures and clears the cache of sccache, with
 //!   no follow of a link ([`crate::compile_cache`]).
@@ -154,7 +155,7 @@ impl Kind {
 pub struct TooLarge {
     /// The file.
     pub path: PathBuf,
-    /// The most bytes that the read took.
+    /// The limit of the read: the most bytes of a file that it gives.
     pub most: u64,
     /// The bytes that the read took: none when the size of the file was
     /// over `most`, else `most` and one, from a file that grew in the
@@ -187,7 +188,8 @@ impl std::error::Error for TooLarge {}
 pub struct TooMany {
     /// The folder.
     pub path: PathBuf,
-    /// The most entries that the list took.
+    /// The limit of the list: the most entries of a folder that it gives.
+    /// The list took `most` and one entry.
     pub most: usize,
 }
 
@@ -330,12 +332,15 @@ pub fn read(root: &Path, name: &Path, most: u64) -> Result<Option<Vec<u8>>> {
 /// The bytes of `from`, a file of `len` bytes, or the count of the bytes
 /// that it read when it has more than `most`. When `len` is over `most`,
 /// it reads none of it. Else it reads at most `most` and one byte, also
-/// from a file that grows in the read.
+/// from a file that grows in the read. It makes room for `len` and one
+/// byte first, so a read of a file that does not grow holds its bytes in
+/// memory one time, with no copy for more room.
 fn read_most(from: impl Read, len: u64, most: u64) -> std::io::Result<Result<Vec<u8>, u64>> {
     if len > most {
         return Ok(Err(0));
     }
-    let mut bytes = Vec::new();
+    let room = usize::try_from(len).map_or(0, |len| len.saturating_add(1));
+    let mut bytes = Vec::with_capacity(room);
     from.take(most.saturating_add(1)).read_to_end(&mut bytes)?;
     let read = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
     Ok(if read <= most { Ok(bytes) } else { Err(read) })
@@ -557,6 +562,96 @@ pub fn list(root: &Path, name: &Path, most: usize) -> Result<Option<Vec<(OsStrin
     Ok(Some(entries))
 }
 
+/// What [`move_out`] did.
+#[derive(Debug, Default)]
+pub struct Moved {
+    /// The entries that moved.
+    pub moved: usize,
+    /// The entries that the host could not move.
+    pub stayed: usize,
+    /// The error of the first entry that stayed.
+    pub first: Option<anyhow::Error>,
+}
+
+/// Moves each entry of the folder `ROOT/NAME` for which `keep` is false
+/// into the folder `to` (01M7GF9QGV86BENYWT1TDJPM64): `to` is a new
+/// folder of riff that no container writes, on the same file system, and
+/// the host makes it at the first move. Each entry moves as one entry
+/// with `renameat`, from the folder that the host opened with no follow
+/// of a link: a link moves as a link, and the host follows none. A link
+/// at `NAME` or in its folders gives the error [`text::host_file_link`],
+/// and nothing moves. `None` when the folder is not there. The host
+/// reads the entries one at a time, so a folder with millions of entries
+/// moves with no list of them in memory. An entry that the host cannot
+/// move stays, and the others move.
+///
+/// ```
+/// use std::path::Path;
+///
+/// let root = tempfile::tempdir()?;
+/// let projects = root.path().join("projects");
+/// std::fs::create_dir_all(projects.join("-data-clone"))?;
+/// std::fs::write(projects.join("a.jsonl"), "")?;
+/// std::os::unix::fs::symlink("/etc", projects.join("etc"))?;
+/// let to = root.path().join("left");
+/// let keep = |name: &std::ffi::OsStr| name == "-data-clone";
+/// let moved = riff::host_file::move_out(root.path(), Path::new("projects"), &to, keep)?.unwrap();
+/// assert_eq!((moved.moved, moved.stayed), (2, 0));
+/// assert!(projects.join("-data-clone").is_dir());
+/// assert!(to.join("etc").symlink_metadata()?.file_type().is_symlink());
+/// assert!(std::path::Path::new("/etc/passwd").exists());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn move_out(
+    root: &Path,
+    name: &Path,
+    to: &Path,
+    keep: impl Fn(&OsStr) -> bool,
+) -> Result<Option<Moved>> {
+    let parts = parts(root, name)?;
+    let Some((dir, at)) = open_folder(root, &parts)? else {
+        return Ok(None);
+    };
+    let listed = nix::dir::Dir::from_fd(
+        dir.try_clone()
+            .with_context(|| format!("list {}", at.display()))?,
+    )
+    .map_err(std::io::Error::from)
+    .with_context(|| format!("list {}", at.display()))?;
+    let (mut moved, mut into) = (Moved::default(), None);
+    for entry in listed {
+        let entry = entry
+            .map_err(std::io::Error::from)
+            .with_context(|| format!("list {}", at.display()))?;
+        let entry = OsStr::from_bytes(entry.file_name().to_bytes()).to_owned();
+        if entry == "." || entry == ".." || keep(&entry) {
+            continue;
+        }
+        if into.is_none() {
+            std::fs::create_dir_all(to).with_context(|| format!("make {}", to.display()))?;
+            let flags = OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_CLOEXEC;
+            let opened = nix::fcntl::open(to, flags, Mode::empty())
+                .map_err(std::io::Error::from)
+                .with_context(|| format!("open {}", to.display()))?;
+            into = Some(opened);
+        }
+        let into = into.as_ref().expect("the folder `to` is open");
+        match renameat(&dir, entry.as_os_str(), into, entry.as_os_str()) {
+            Ok(()) => moved.moved += 1,
+            // The session removed it.
+            Err(Errno::ENOENT) => {}
+            Err(errno) => {
+                moved.stayed += 1;
+                let path = at.join(&entry);
+                let error = anyhow::Error::new(std::io::Error::from(errno))
+                    .context(format!("move {}", path.display()));
+                moved.first.get_or_insert(error);
+            }
+        }
+    }
+    Ok(Some(moved))
+}
+
 /// The items of `items`, or `None` when it has more than `most`: it takes
 /// the item one past `most`, and no item after it. The first error stops
 /// it.
@@ -771,6 +866,15 @@ mod tests {
         assert_eq!(read_most(&b"12345"[..], 4, 4).unwrap(), Err(5));
     }
 
+    /// 01M7GF9G7ZNJD2SXZZ62XKJYBG: the read makes room for the size of the
+    /// file and one byte first, so it copies no byte for more room.
+    #[test]
+    fn a_read_makes_room_for_the_file_one_time() {
+        let text = vec![b'x'; 100_000];
+        let bytes = read_most(&text[..], 100_000, 1 << 20).unwrap().unwrap();
+        assert_eq!((bytes.len(), bytes.capacity()), (100_000, 100_001));
+    }
+
     /// 01M7FX6SWN3DGZMH5HS9BWEBY7: a plain file that gives more bytes than
     /// its size, as a file that grows in the read: the size of
     /// `/proc/self/status` is 0. The read takes the limit and one byte, and
@@ -894,7 +998,96 @@ mod tests {
         for name in ["", "/etc/passwd", "../person", "a/../b", "./a"] {
             assert!(read(&claude, Path::new(name), 1024).is_err(), "{name}");
             assert!(write(&claude, Path::new(name), b"x").is_err(), "{name}");
+            assert!(
+                move_out(&claude, Path::new(name), &claude, |_| false).is_err(),
+                "{name}"
+            );
         }
+    }
+
+    /// 01M7GF9QGV86BENYWT1TDJPM64: a link at the folder, or above it in
+    /// the name: the error names the link, nothing moves, and the host
+    /// makes no folder `to`.
+    #[test]
+    fn a_move_through_a_link_moves_nothing() {
+        let (root, claude, person) = folders();
+        let outside = root.path().join("outside");
+        std::fs::create_dir_all(outside.join("projects")).unwrap();
+        std::fs::write(outside.join("a.jsonl"), "x").unwrap();
+        std::fs::write(outside.join("projects/b.jsonl"), "x").unwrap();
+        let to = root.path().join("left");
+        std::os::unix::fs::symlink(&outside, claude.join("projects")).unwrap();
+        std::os::unix::fs::symlink(&outside, claude.join("up")).unwrap();
+        for (name, link) in [("projects", "projects"), ("up/projects", "up")] {
+            let error = move_out(&claude, Path::new(name), &to, |_| false).unwrap_err();
+            assert_eq!(error.to_string(), text::host_file_link(&claude.join(link)));
+        }
+        assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 2);
+        assert_eq!(
+            std::fs::read_dir(outside.join("projects")).unwrap().count(),
+            1
+        );
+        assert!(!to.exists());
+        assert_eq!(std::fs::read_to_string(person).unwrap(), "SECRET");
+    }
+
+    /// 01M7GF9QGV86BENYWT1TDJPM64: a move takes each entry, also of a
+    /// folder with more entries than a list gives, and keeps each entry
+    /// for which `keep` is true. A folder that is not there moves nothing.
+    #[test]
+    fn a_move_takes_more_entries_than_a_list_gives() {
+        let (root, claude, _person) = folders();
+        let projects = claude.join("projects");
+        std::fs::create_dir(&projects).unwrap();
+        for n in 0..=100 {
+            std::fs::write(projects.join(n.to_string()), "").unwrap();
+        }
+        assert!(list(&claude, Path::new("projects"), 100).is_err());
+        let to = root.path().join("left");
+        let moved = move_out(&claude, Path::new("projects"), &to, |name| name == "7")
+            .unwrap()
+            .unwrap();
+        assert_eq!((moved.moved, moved.stayed), (100, 0));
+        assert!(moved.first.is_none());
+        let kept: Vec<_> = std::fs::read_dir(&projects)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(kept, ["7"]);
+        assert_eq!(std::fs::read_dir(&to).unwrap().count(), 100);
+        let none = move_out(&claude, Path::new("none"), &to, |_| false).unwrap();
+        assert!(none.is_none());
+    }
+
+    /// 01M7GF9QGV86BENYWT1TDJPM64: a folder of the session with no write
+    /// for the host cannot move to another folder (its `..` changes). It
+    /// stays, the error names it, and the other entries move. As root, the
+    /// host moves it too.
+    #[test]
+    fn an_entry_that_the_host_cannot_move_stays() {
+        use std::os::unix::fs::PermissionsExt;
+        let (root, claude, _person) = folders();
+        let projects = claude.join("projects");
+        let locked = projects.join("locked");
+        std::fs::create_dir_all(&locked).unwrap();
+        std::fs::write(projects.join("a"), "").unwrap();
+        let mode = |mode| std::fs::Permissions::from_mode(mode);
+        std::fs::set_permissions(&locked, mode(0o500)).unwrap();
+        let to = root.path().join("left");
+        let moved = move_out(&claude, Path::new("projects"), &to, |_| false)
+            .unwrap()
+            .unwrap();
+        if nix::unistd::geteuid().is_root() {
+            assert_eq!((moved.moved, moved.stayed), (2, 0));
+            return;
+        }
+        std::fs::set_permissions(&locked, mode(0o700)).unwrap();
+        assert_eq!((moved.moved, moved.stayed), (1, 1));
+        let first = format!("{:#}", moved.first.unwrap());
+        let start = format!("move {}: ", locked.display());
+        assert!(first.starts_with(&start), "{first}");
+        assert!(locked.is_dir());
+        assert!(to.join("a").is_file());
     }
 }
 
@@ -963,6 +1156,9 @@ mod scan {
         ("lead.rs", "clone: self.folder.join(\"clone\"),"),
         ("lead.rs", "let claude = folder.join(\"claude\");"),
         ("lead.rs", "let clone = folder.join(\"clone\");"),
+        // The folder `projects` of the lead ([`crate::lead::clean_projects`]).
+        ("lead.rs", "let claude = folder.join(\"claude\");"),
+        ("lead.rs", "let clone = folder.join(\"clone\");"),
         ("run.rs", "let claude = folder.join(\"claude\");"),
         ("run.rs", "let clone = folder.join(\"clone\");"),
         ("wave.rs", "let claude = folder.join(\"claude\");"),
@@ -985,13 +1181,14 @@ mod scan {
         ("usage.rs", "fn read_replies("),
         ("lead.rs", "pub fn linked_main("),
         ("daemon.rs", "fn bind_in("),
+        ("lead.rs", "pub fn clean_projects("),
     ];
 
     /// The calls that take a path in such a folder: the guard, and each
     /// function of riff that calls it. A function with one of them gets
     /// the path from a line of [`NAMED`] or from its caller, so it follows
     /// no link, as a function with a line of [`NAMED`].
-    const GUARDED: [&str; 10] = [
+    const GUARDED: [&str; 11] = [
         "host_file::",
         "claude_folder(",
         "read_config(",
@@ -1002,6 +1199,7 @@ mod scan {
         "read_replies(",
         "linked_main(",
         "bind_in(",
+        "clean_projects(",
     ];
 
     /// The calls that read or write a file, or look at it, with each link
