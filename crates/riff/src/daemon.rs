@@ -1736,6 +1736,22 @@ pub struct Status {
     /// ([`crate::hooks::Shown`], #1656). An old daemon gives none.
     #[serde(default)]
     pub events: Vec<crate::hooks::Shown>,
+    /// The folders of the podman volumes that the daemon cannot read: no
+    /// session with a volume starts (`Daemon::guard_volumes`,
+    /// 01M7EW2106JGGTSZKMRG4N9SH0). An old daemon gives none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub volumes: Option<VolumesUnread>,
+}
+
+/// The folders of the volumes of the runtime that the daemon could not
+/// read ([`Status::volumes`], 01M7EW2106JGGTSZKMRG4N9SH0).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VolumesUnread {
+    /// The first look of the row that failed, in milliseconds since the
+    /// epoch.
+    pub since_ms: i64,
+    /// The cause of the last look that failed, in one line.
+    pub cause: String,
 }
 
 /// A repository whose sessions get no token of a GitHub App
@@ -2751,6 +2767,10 @@ pub struct Daemon<R> {
     /// the new verify requests of its last look ([`Daemon::verified`],
     /// [`crate::wave::Verdicts`], #1960, #2019).
     verdicts: Mutex<BTreeMap<String, crate::wave::Verdicts>>,
+    /// Why the last look at the folders of the volumes failed
+    /// ([`Daemon::guard_volumes`], 01M7EW2106JGGTSZKMRG4N9SH0), or `None`
+    /// when it read each folder.
+    volumes_unread: Mutex<Option<VolumesUnread>>,
 }
 
 /// A pull of the session image that failed. [`Daemon::have_image`] gives
@@ -2902,6 +2922,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             renews: Mutex::default(),
             told: Mutex::default(),
             verdicts: Mutex::default(),
+            volumes_unread: Mutex::default(),
         };
         crate::host_git::guard_also(&daemon.sessions_dir());
         Ok(daemon)
@@ -4463,6 +4484,11 @@ impl<R: Runtime + 'static> Daemon<R> {
                 let told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
                 told.values().filter_map(|t| t.shown(now)).collect()
             },
+            volumes: self
+                .volumes_unread
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone(),
         }
     }
 
@@ -5297,8 +5323,10 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// host ([`crate::host_git::guard_also`]) gets the source of each bind
     /// with write, and with a volume, the folders of the volumes
     /// ([`Daemon::guard_volumes`]). The daemon calls it before the start
-    /// of each container.
-    async fn guard_writes(&self, spec: &SessionSpec) {
+    /// of each container. It fails when the spec binds a volume with write
+    /// and the runtime cannot say each folder of the volumes: the
+    /// container does not start (01M7EW2106JGGTSZKMRG4N9SH0).
+    async fn guard_writes(&self, spec: &SessionSpec) -> Result<()> {
         let mut volume = false;
         for bind in spec.binds.iter().filter(|b| b.write) {
             match &bind.source {
@@ -5307,25 +5335,49 @@ impl<R: Runtime + 'static> Daemon<R> {
             }
         }
         if volume {
-            self.guard_volumes().await;
+            self.guard_volumes().await?;
         }
+        Ok(())
     }
 
     /// The guard of the git of the host gets the folders of the volumes of
     /// the runtime ([`Runtime::volume_folders`],
     /// 01M7EAZ9JS8K3TBWG8ZXKV00J9): a `riff.toml` can bind each volume
     /// with write. The daemon calls it at its start ([`Daemon::recover`]),
-    /// and before the start of each container with a volume. A fault shows
-    /// in the log of the daemon.
-    async fn guard_volumes(&self) {
-        match self.runtime.volume_folders().await {
-            Ok(folders) => {
-                for folder in &folders {
-                    crate::host_git::guard_also(folder);
-                }
-            }
-            Err(e) => eprintln!("riff daemon: {e:#}"),
+    /// and before the start of each container with a volume.
+    ///
+    /// The guard gets each folder that the runtime said, also with a fault
+    /// (01M7EW2106JGGTSZKMRG4N9SH0). A fault fails it: the log of the
+    /// daemon gets the cause, and [`Status::volumes`] keeps it until a look
+    /// reads each folder.
+    ///
+    /// ```mermaid
+    /// flowchart LR
+    ///     L["podman info<br/>podman volume inspect --all"] --> G[the guard gets each folder said]
+    ///     G --> F{a fault?}
+    ///     F -- no --> S[the container starts]
+    ///     F -- yes --> N["no container with a volume starts<br/>the log and riff daemon status say why"]
+    /// ```
+    async fn guard_volumes(&self) -> Result<()> {
+        let said = self.runtime.volume_folders().await;
+        for folder in &said.folders {
+            crate::host_git::guard_also(folder);
         }
+        let mut unread = self
+            .volumes_unread
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let Some(cause) = said.fault() else {
+            if unread.take().is_some() {
+                println!("{}", text::DAEMON_VOLUMES_READ);
+            }
+            return Ok(());
+        };
+        let why = text::daemon_volumes_unread(&cause);
+        eprintln!("riff daemon: {why}");
+        let since_ms = unread.as_ref().map_or_else(now_ms, |u| u.since_ms);
+        *unread = Some(VolumesUnread { since_ms, cause });
+        bail!("{why}")
     }
 
     /// Owns the session of `record`: its log, its record on disk, and
@@ -5630,7 +5682,10 @@ impl<R: Runtime + 'static> Daemon<R> {
             self.start_failed(&owned, out, format!("{e:#}"));
             return record;
         }
-        self.guard_writes(&spec).await;
+        if let Err(e) = self.guard_writes(&spec).await {
+            self.start_failed(&owned, out, format!("{e:#}"));
+            return record;
+        }
         // The line of a lead names what started it (#2099). The lines of
         // the session keep it for a later follower, as `riff daemon
         // events`. The follower of the start gets no copy: in the daemon,
@@ -6517,7 +6572,8 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// the container reaches the network (`lost_network`). First the guard
     /// of the git of the host gets the folders of the volumes
     /// (`Daemon::guard_volumes`, 01M7EAZ9JS8K3TBWG8ZXKV00J9): a session
-    /// that ran before wrote them.
+    /// that ran before wrote them. A fault shows in the log and in the
+    /// status (01M7EW2106JGGTSZKMRG4N9SH0).
     ///
     /// The job of a wave whose container does not run, for example after a
     /// restart of the host, gets its steps after the end
@@ -6542,7 +6598,8 @@ impl<R: Runtime + 'static> Daemon<R> {
     ///     W->>S: claim issue-12: granted, one new start
     /// ```
     pub async fn recover(self: &Arc<Self>) {
-        self.guard_volumes().await;
+        // A fault is in the log and in the status: the recover goes on.
+        let _ = self.guard_volumes().await;
         let Ok(entries) = std::fs::read_dir(self.dir.join(LIVE)) else {
             return;
         };
@@ -8817,6 +8874,90 @@ mod tests {
         assert!(crate::host_git::output(&clone, &["status"]).is_err());
         assert!(here.fake.calls().is_empty(), "{:?}", here.fake.calls());
         assert!(!mark.exists(), "the program of a git config ran");
+    }
+
+    /// 01M7EW2106JGGTSZKMRG4N9SH0 (#2158): `podman info` and `podman volume
+    /// inspect --all` fail. The daemon starts no container that binds a
+    /// volume with write: the start fails with both causes, and the status
+    /// keeps them, with the time of the first look that failed. The guard
+    /// still gets the folder that podman said. A session with no volume
+    /// starts. When podman says each folder again, a session with a volume
+    /// starts, and the status shows no fault.
+    #[tokio::test]
+    async fn the_daemon_starts_no_session_with_a_volume_while_podman_cannot_say_its_folders() {
+        let root = tempfile::tempdir().unwrap();
+        let said = root.path().join("volumes/riff-cargo/_data");
+        let info = "podman info --format {{.Store.VolumePath}}: Error: no store";
+        let inspect = "podman volume inspect --all: Error: no store";
+        let fake = Fake::default()
+            .with_image(IMAGE)
+            .with_volume_folder(&said)
+            .with_volume_fault(info)
+            .with_volume_fault(inspect);
+        let here = Here::new(fake).await;
+        let volume = Bind {
+            source: Source::Volume("riff-cargo".into()),
+            target: "/home/mike/.cargo".into(),
+            write: true,
+        };
+        /// The error of a start with `volume`.
+        async fn refused(here: &Here, volume: &Bind) -> String {
+            let mut start = here.start("riff-issue-2-bbbbbbbb", "issue-2");
+            start.spec.binds.push(volume.clone());
+            let mut client = Client::connect(&here.dir).await.unwrap();
+            client.ask(Ask::Start(Box::new(start))).await.unwrap();
+            match client.next().await.unwrap() {
+                Some(Say::Failed { error }) => error,
+                other => panic!("{other:?}"),
+            }
+        }
+        let error = refused(&here, &volume).await;
+        assert_eq!(
+            error,
+            text::daemon_volumes_unread(&format!("{info}; {inspect}"))
+        );
+        assert!(here.fake.calls().is_empty(), "{:?}", here.fake.calls());
+        assert!(crate::host_git::guard(&said).is_err());
+        let unread = here.daemon.status().await.volumes.unwrap();
+        assert_eq!(unread.cause, format!("{info}; {inspect}"));
+        let status = text::daemon_status(&here.daemon.status().await, now_ms());
+        assert!(
+            status.contains("Volumes: riff cannot read the folders of the podman volumes"),
+            "{status}"
+        );
+        // A second look that fails keeps the time of the first.
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        refused(&here, &volume).await;
+        let again = here.daemon.status().await.volumes.unwrap();
+        assert_eq!(again.since_ms, unread.since_ms);
+        assert!(here.fake.calls().is_empty(), "{:?}", here.fake.calls());
+
+        // A session with no volume starts.
+        let (_three, name) = here
+            .started(here.start("riff-issue-3-cccccccc", "issue-3"))
+            .await;
+        assert_eq!(here.fake.calls(), [format!("start {name}")]);
+
+        // podman says each folder again.
+        here.fake.volumes_heal();
+        let mut start = here.start("riff-issue-4-dddddddd", "issue-4");
+        start.spec.binds.push(volume.clone());
+        let (_four, four) = here.started(start).await;
+        assert_eq!(here.fake.calls().last(), Some(&format!("start {four}")));
+        assert_eq!(here.daemon.status().await.volumes, None);
+    }
+
+    /// 01M7EW2106JGGTSZKMRG4N9SH0: at the start of the daemon, podman cannot
+    /// say the folders of its volumes. The daemon goes on with its start,
+    /// and the status shows the cause.
+    #[tokio::test]
+    async fn at_its_start_the_daemon_shows_why_it_cannot_read_the_folders_of_the_volumes() {
+        let info = "podman info --format {{.Store.VolumePath}}: Error: no store";
+        let fake = Fake::default().with_image(IMAGE).with_volume_fault(info);
+        let here = Here::new(fake).await;
+        here.daemon.recover().await;
+        let unread = here.daemon.status().await.volumes.unwrap();
+        assert_eq!(unread.cause, info);
     }
 
     /// A path through a link, also one that does not exist yet, resolves to
@@ -16319,6 +16460,10 @@ mod tests {
                     at_ms: 14,
                 }),
             }],
+            volumes: Some(VolumesUnread {
+                since_ms: 16,
+                cause: "podman info: Error: no store".into(),
+            }),
         };
         for waves in [
             vec![wave("o/r", &[])],

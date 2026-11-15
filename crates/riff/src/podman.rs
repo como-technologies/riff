@@ -130,6 +130,7 @@ use crate::platform::systemd::set_cpu_weight;
 use crate::ps::Proc;
 use crate::runtime::{
     Bind, End, Env, Exit, HOME_TMPFS_GIB, REACH_HOST, Running, Runtime, SessionSpec, Source,
+    VolumeFolders,
 };
 use crate::text;
 
@@ -989,14 +990,25 @@ impl Runtime for Podman {
 
     /// The folder of the volumes of podman ([`STORE_ARGS`]), then the
     /// folders of each volume ([`VOLUMES_ARGS`], [`volume_folders_of`]).
-    async fn volume_folders(&self) -> Result<Vec<PathBuf>> {
-        let store = printed(&STORE_ARGS).await?;
-        let mut folders: Vec<PathBuf> =
+    /// The second look-up runs also when the first one fails. An `info`
+    /// with no folder is a fault.
+    async fn volume_folders(&self) -> VolumeFolders {
+        let mut said = VolumeFolders::default();
+        match printed(&STORE_ARGS).await.and_then(|store| {
             crate::compile_cache::folder_of(&String::from_utf8_lossy(&store))
-                .into_iter()
-                .collect();
-        folders.extend(volume_folders_of(&printed(&VOLUMES_ARGS).await?)?);
-        Ok(folders)
+                .ok_or_else(|| anyhow!("podman info prints no folder of the volumes"))
+        }) {
+            Ok(store) => said.folders.push(store),
+            Err(e) => said.faults.push(format!("{e:#}")),
+        }
+        match printed(&VOLUMES_ARGS)
+            .await
+            .and_then(|printed| volume_folders_of(&printed))
+        {
+            Ok(folders) => said.folders.extend(folders),
+            Err(e) => said.faults.push(format!("{e:#}")),
+        }
+        said
     }
 }
 

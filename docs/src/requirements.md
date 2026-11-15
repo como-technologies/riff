@@ -6683,6 +6683,13 @@ of this part when they merge.
   the guard the folders of the volumes of the runtime: the folder of the
   volumes of podman, the folder of each volume, and the folder of the
   host that a volume binds.
+- **01M7EW2106JGGTSZKMRG4N9SH0** When podman cannot say the folders of
+  its volumes, the daemon starts no container that binds a volume with
+  write. Each look-up of 01M7EAZ9JS8K3TBWG8ZXKV00J9 runs, also after one
+  that failed, and the guard gets each folder that podman said. The
+  daemon writes the cause to its log, and `riff daemon status` shows it
+  until a look gives each folder. The daemon looks again before the
+  start of each container with a volume.
 
 ### riff relay
 

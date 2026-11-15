@@ -43,6 +43,7 @@
 //! | Find out if a live session reaches the network | [`Runtime::reaches`] | `podman exec NAME nice -n 19 getent hosts api.anthropic.com` |
 //! | Find the image digest of a live session | [`Runtime::digest`] | `podman container inspect --format {{.ImageDigest}} NAME` |
 //! | List the processes of a live session | [`Runtime::processes`] | `podman top NAME pid ppid etime args` ([`crate::podman::top_args`]) |
+//! | Find the folders of the volumes | [`Runtime::volume_folders`] | `podman info --format {{.Store.VolumePath}}` and `podman volume inspect --all` ([`crate::podman::STORE_ARGS`], [`crate::podman::VOLUMES_ARGS`]) |
 //!
 //! A session with a terminal is the lead (01M4Z60B81RTZT71PN5HV0GZHX).
 //! The runtime holds its terminal: conmon on podman. A person attaches to
@@ -513,9 +514,44 @@ pub trait Runtime: Send + Sync {
     /// named volume: the folder of the volumes of the runtime, the folder
     /// of each volume, and the folder of the host that a volume binds. A
     /// `riff.toml` can name each volume, so the host runs no git in them
-    /// ([`crate::host_git`], 01M7EAZ9JS8K3TBWG8ZXKV00J9). Fails when the
-    /// runtime cannot say.
-    fn volume_folders(&self) -> impl Future<Output = Result<Vec<PathBuf>>> + Send;
+    /// ([`crate::host_git`], 01M7EAZ9JS8K3TBWG8ZXKV00J9). Each look-up
+    /// runs, also after one that failed: the folders that the runtime
+    /// said come with the fault of each look-up that failed
+    /// ([`VolumeFolders`]).
+    fn volume_folders(&self) -> impl Future<Output = VolumeFolders> + Send;
+}
+
+/// The folders of the volumes that the runtime said
+/// ([`Runtime::volume_folders`]), and the fault of each look-up that
+/// failed. With a fault, the list can miss a folder: the daemon starts no
+/// container that binds a volume with write (01M7EW2106JGGTSZKMRG4N9SH0).
+///
+/// ```
+/// use riff::runtime::VolumeFolders;
+///
+/// let said = VolumeFolders { folders: vec!["/v".into()], faults: vec![] };
+/// assert_eq!(said.fault(), None);
+/// let faults = vec!["podman info: no store".into(), "podman volume inspect --all: no".into()];
+/// let unread = VolumeFolders { folders: vec![], faults };
+/// assert_eq!(
+///     unread.fault().as_deref(),
+///     Some("podman info: no store; podman volume inspect --all: no")
+/// );
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct VolumeFolders {
+    /// The folders that the runtime said.
+    pub folders: Vec<PathBuf>,
+    /// The fault of each look-up that failed, in one line each.
+    pub faults: Vec<String>,
+}
+
+impl VolumeFolders {
+    /// The faults in one line, or `None` when each look-up gave its
+    /// folders.
+    pub fn fault(&self) -> Option<String> {
+        (!self.faults.is_empty()).then(|| self.faults.join("; "))
+    }
 }
 
 /// The host that [`Runtime::reaches`] looks up: the API of `claude`.
@@ -634,8 +670,8 @@ impl Runtime for NoSessions {
     }
 
     /// No session runs here, so no session writes a volume.
-    async fn volume_folders(&self) -> Result<Vec<PathBuf>> {
-        Ok(Vec::new())
+    async fn volume_folders(&self) -> VolumeFolders {
+        VolumeFolders::default()
     }
 }
 
@@ -769,6 +805,9 @@ struct Book {
     screen: Vec<u8>,
     /// The folders of the volumes ([`Fake::with_volume_folder`]).
     volumes: Vec<PathBuf>,
+    /// The faults of the look-ups of the folders of the volumes
+    /// ([`Fake::with_volume_fault`]).
+    volume_faults: Vec<String>,
 }
 
 /// The terminal of this process for a [`Fake`] ([`Fake::terminal`]): it
@@ -985,12 +1024,14 @@ impl Fake {
     /// [`Runtime::volume_folders`] says it.
     ///
     /// ```
-    /// use riff::runtime::{Fake, Runtime};
+    /// use riff::runtime::{Fake, Runtime, VolumeFolders};
     ///
     /// let fake = Fake::default().with_volume_folder("/v/riff-cargo/_data");
     /// tokio::runtime::Builder::new_current_thread().build()?.block_on(async {
-    ///     assert_eq!(fake.volume_folders().await?, [std::path::Path::new("/v/riff-cargo/_data")]);
-    ///     assert!(Fake::default().volume_folders().await?.is_empty());
+    ///     let said = fake.volume_folders().await;
+    ///     assert_eq!(said.folders, [std::path::Path::new("/v/riff-cargo/_data")]);
+    ///     assert_eq!(said.fault(), None);
+    ///     assert_eq!(Fake::default().volume_folders().await, VolumeFolders::default());
     ///     Ok::<(), anyhow::Error>(())
     /// })?;
     /// # Ok::<(), anyhow::Error>(())
@@ -998,6 +1039,38 @@ impl Fake {
     pub fn with_volume_folder(self, folder: impl Into<PathBuf>) -> Self {
         self.lock().volumes.push(folder.into());
         self
+    }
+
+    /// A look-up of [`Runtime::volume_folders`] fails with `fault`, as
+    /// `podman info` does when podman cannot read its store. The folders
+    /// of [`Fake::with_volume_folder`] still come. [`Fake::volumes_heal`]
+    /// ends each fault.
+    ///
+    /// ```
+    /// use riff::runtime::{Fake, Runtime};
+    ///
+    /// let fake = Fake::default()
+    ///     .with_volume_folder("/v")
+    ///     .with_volume_fault("podman info: no store");
+    /// tokio::runtime::Builder::new_current_thread().build()?.block_on(async {
+    ///     let said = fake.volume_folders().await;
+    ///     assert_eq!(said.folders, [std::path::Path::new("/v")]);
+    ///     assert_eq!(said.fault().as_deref(), Some("podman info: no store"));
+    ///     fake.volumes_heal();
+    ///     assert_eq!(fake.volume_folders().await.fault(), None);
+    ///     Ok::<(), anyhow::Error>(())
+    /// })?;
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn with_volume_fault(self, fault: &str) -> Self {
+        self.lock().volume_faults.push(fault.to_owned());
+        self
+    }
+
+    /// Each look-up of [`Runtime::volume_folders`] gives its folders again,
+    /// as podman does when it reads its store again.
+    pub fn volumes_heal(&self) {
+        self.lock().volume_faults.clear();
     }
 
     /// [`Runtime::processes`] of the session `name` never answers, as
@@ -1318,8 +1391,12 @@ impl Runtime for Fake {
         }))
     }
 
-    async fn volume_folders(&self) -> Result<Vec<PathBuf>> {
-        Ok(self.lock().volumes.clone())
+    async fn volume_folders(&self) -> VolumeFolders {
+        let book = self.lock();
+        VolumeFolders {
+            folders: book.volumes.clone(),
+            faults: book.volume_faults.clone(),
+        }
     }
 }
 

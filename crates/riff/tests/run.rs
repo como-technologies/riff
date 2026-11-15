@@ -136,7 +136,9 @@ esac
 /// on the mouse reports of the terminal ([`MOUSE_ON`]). `volume inspect`
 /// of `riff-sccache` gives the folder `bin/volume` when it is there.
 /// `info` gives `bin/volumes` as the folder of the volumes, and `volume
-/// inspect --all` gives no volume. With `bin/no-network`, the
+/// inspect --all` gives no volume. `info` fails when `bin/no-info` is
+/// there, and `volume inspect --all` when `bin/no-volumes` is there. With
+/// `bin/no-network`, the
 /// look-up of `exec ... getent` fails: the container has no network. With
 /// `bin/exit-in-attach`, `attach`
 /// first ends the `run`, as `/exit` in the lead does. A zombie counts as
@@ -196,11 +198,16 @@ case "$1" in
       echo false
     fi
     exit 0 ;;
-  # The folder of the volumes, and no volume.
+  # The folder of the volumes, and no volume. Each fails while the file
+  # `no-info` or `no-volumes` is there.
   info) [ "$*" = "info --format {{.Store.VolumePath}}" ] || exit 2
+    if [ -f "$dir/no-info" ]; then echo 'Error: cannot read the store' >&2; exit 125; fi
     echo "$dir/volumes"; exit 0 ;;
   volume)
-    if [ "$*" = "volume inspect --all" ]; then echo "[]"; exit 0; fi
+    if [ "$*" = "volume inspect --all" ]; then
+      if [ -f "$dir/no-volumes" ]; then echo 'Error: cannot list the volumes' >&2; exit 125; fi
+      echo "[]"; exit 0
+    fi
     [ "$*" = "volume inspect --format {{.Mountpoint}} riff-sccache" ] || exit 2
     [ -d "$dir/volume" ] || exit 125
     echo "$dir/volume"; exit 0 ;;
@@ -930,6 +937,58 @@ async fn the_env_and_the_volumes_of_a_session_are_the_ones_of_the_merged_riff_to
     assert!(!args.contains("NOT_MERGED"), "{args}");
     assert!(!args.contains("RUSTC_WRAPPER"), "{args}");
     assert!(!args.contains("riff-cargo"), "{args}");
+}
+
+/// 01M7EW2106JGGTSZKMRG4N9SH0 (#2158): `podman info` and `podman volume
+/// inspect --all` fail, and the `riff.toml` binds two volumes with write.
+/// No container starts, and `riff run` says why. `riff daemon status`
+/// shows both causes: the volume inspect ran after the failed info. When
+/// podman lists its volumes again, the item starts, and the line goes.
+#[tokio::test]
+async fn no_session_with_a_volume_starts_while_podman_cannot_list_its_volumes() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    let (no_info, no_volumes) = (
+        machine.bin.path().join("no-info"),
+        machine.bin.path().join("no-volumes"),
+    );
+    std::fs::write(&no_info, "").unwrap();
+    std::fs::write(&no_volumes, "").unwrap();
+
+    let out = machine
+        .run(None, &["run", "issue-12", "--image", IMAGE])
+        .await;
+    let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
+    assert!(!out.status.success(), "{stdout}\n{stderr}");
+    let why = "riff cannot read the folders of the podman volumes, so it starts no container \
+               that binds a volume with write: podman info --format {{.Store.VolumePath}}: \
+               Error: cannot read the store; podman volume inspect --all: Error: cannot list \
+               the volumes";
+    assert!(stderr.contains(why), "{stderr}");
+    assert!(machine.read("run.args").is_empty());
+    let status = machine.ok(None, &["daemon", "status"]).await;
+    let line = "Volumes: riff cannot read the folders of the podman volumes, for ";
+    assert!(status.contains(line), "{status}");
+    assert!(
+        status.contains(
+            "No session with a volume starts. The last cause: podman info --format \
+             {{.Store.VolumePath}}: Error: cannot read the store; podman volume inspect --all: \
+             Error: cannot list the volumes. riff reads them again at the next start of a \
+             session with a volume.\n"
+        ),
+        "{status}"
+    );
+
+    std::fs::remove_file(&no_info).unwrap();
+    std::fs::remove_file(&no_volumes).unwrap();
+    let out = machine
+        .run(None, &["run", "issue-12", "--image", IMAGE])
+        .await;
+    let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
+    assert!(out.status.success(), "{stdout}\n{stderr}");
+    assert!(machine.read("run.args").contains("riff-cargo:"));
+    let status = machine.ok(None, &["daemon", "status"]).await;
+    assert!(!status.contains("Volumes:"), "{status}");
 }
 
 /// 01M6VAQWECJ6N6VJF66KCMNYD1: a new item starts with `claude --model
