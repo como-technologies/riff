@@ -70,6 +70,8 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
+use std::num::NonZeroUsize;
+use std::ops::RangeInclusive;
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -354,25 +356,28 @@ pub const LINE_CHARS: usize = 1000;
 /// [`SERVER_BYTES`], 898,779 bytes. 768 KiB leaves room for the other
 /// fields of the post. A line with `"`, `\` or a control character has
 /// more bytes in JSON than in the log, so the cap counts the bytes in
-/// JSON.
+/// JSON. The newest line always fits: a character has at most 6 bytes
+/// in JSON.
 pub const MOST_BYTES: usize = 768 * 1024;
+
+const _: () = assert!(LINE_CHARS * 6 + 2 <= MOST_BYTES);
 
 /// The most bytes of one call that riff-server reads: the body limit of
 /// axum, which riff-server keeps. A larger call gets 413, and no post.
 pub const SERVER_BYTES: usize = 2 * 1024 * 1024;
 
-/// The last time of `--since`, 9999-12-31T23:59:59Z, in seconds since
-/// the epoch. The first one is 0, 1970-01-01T00:00:00Z. Each time from
-/// the one to the other has 4 digits in its year: the request of
-/// `--host` writes it, and the daemon of the host reads it again.
-pub const LAST_SINCE: i64 = 253_402_300_799;
+/// The times of `--since`, in seconds since the epoch: from
+/// 1970-01-01T00:00:00Z to 9999-12-31T23:59:59Z. Each one has 4 digits
+/// in its year: the request of `--host` writes it, and the daemon of the
+/// host reads it again.
+pub const SINCE: RangeInclusive<i64> = 0..=253_402_300_799;
 
 /// What `riff daemon log` asks for (#2156, 01M7F0HE514TQMGQJKH8CVYY52).
 /// Only [`Query::new`] makes one, also from the JSON of a socket and
 /// from the text of a request of `--host`: no query is out of its range.
 ///
 /// ```
-/// use riff::daemon::log::{LAST_SINCE, LINES, Query};
+/// use riff::daemon::log::{LINES, Query, SINCE};
 ///
 /// let query = Query::new(Some(1_794_640_320), None, vec!["issue-12".into()])?;
 /// assert_eq!((query.since(), query.lines(), query.grep()), (Some(1_794_640_320), LINES, &["issue-12".to_owned()][..]));
@@ -382,8 +387,8 @@ pub const LAST_SINCE: i64 = 253_402_300_799;
 /// assert!(Query::new(None, None, vec!["a\nb".into()]).is_err());
 /// assert!(Query::new(None, None, vec!["a\rb".into()]).is_err());
 /// assert!(Query::new(Some(-1), None, vec![]).is_err());
-/// assert!(Query::new(Some(LAST_SINCE + 1), None, vec![]).is_err());
-/// assert!(Query::new(Some(LAST_SINCE), None, vec![]).is_ok());
+/// assert!(Query::new(Some(SINCE.end() + 1), None, vec![]).is_err());
+/// assert!(Query::new(Some(*SINCE.end()), None, vec![]).is_ok());
 /// // The JSON of a socket gets the same checks.
 /// let json = serde_json::to_string(&query)?;
 /// assert_eq!(json, r#"{"since":1794640320,"lines":200,"grep":["issue-12"]}"#);
@@ -481,12 +486,12 @@ impl FromStr for Query {
 }
 
 impl Query {
-    /// The query of `--since`, `--lines` and each `--grep`. `since` is 0
-    /// to [`LAST_SINCE`]. `lines` is 1 to [`MOST_LINES`], with [`LINES`]
-    /// for `None`. Each text has a character, and no line break.
+    /// The query of `--since`, `--lines` and each `--grep`. `since` is in
+    /// [`SINCE`]. `lines` is 1 to [`MOST_LINES`], with [`LINES`] for
+    /// `None`. Each text has a character, and no line break.
     pub fn new(since: Option<i64>, lines: Option<usize>, grep: Vec<String>) -> Result<Query> {
-        if since.is_some_and(|at| !(0..=LAST_SINCE).contains(&at)) {
-            bail!("{}", text::DAEMON_LOG_SINCE_RANGE);
+        if since.is_some_and(|at| !SINCE.contains(&at)) {
+            bail!("{}", text::daemon_log_since_range());
         }
         let lines = lines.unwrap_or(LINES);
         if !(1..=MOST_LINES).contains(&lines) {
@@ -519,20 +524,56 @@ impl Query {
     }
 }
 
-/// The lines that `riff daemon log` shows.
+/// The lines that `riff daemon log` shows. Only [`pick`] makes them, so
+/// a line shows when a line matches. The default has no line.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Found {
+    lines: Vec<String>,
+    more: Option<More>,
+}
+
+impl Found {
     /// The newest lines that the query picks, the oldest first, with no
     /// secret.
-    pub lines: Vec<String>,
+    pub fn lines(&self) -> &[String] {
+        &self.lines
+    }
+
     /// The older lines that the query picks too, which do not show.
-    pub more: usize,
+    /// `None`: each line that the query picks shows.
+    pub fn more(&self) -> Option<More> {
+        self.more
+    }
+}
+
+/// The older lines of a [`Found`] that do not show.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct More {
+    /// How many lines.
+    pub count: NonZeroUsize,
+    /// The limit that keeps them out.
+    pub limit: Limit,
+}
+
+/// The limit of one `riff daemon log` that keeps the older lines out
+/// (01M7F7GWP88VC0QETN4GNTTJEV).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Limit {
+    /// The `--lines` of the query, under [`MOST_LINES`]: a larger
+    /// `--lines` shows more.
+    Lines,
+    /// [`MOST_LINES`]: no `--lines` shows more.
+    MostLines,
+    /// [`MOST_BYTES`]: no `--lines` shows more.
+    MostBytes,
 }
 
 /// The time of `--since` in `text`, in seconds since the epoch, at the
 /// time `now`. A time of the day, `HH:MM` or `HH:MM:SS`, is in the time
-/// zone of `now`: the last one at or before `now`. A date and a time
-/// has its zone: `Z` or an offset, with or without the seconds.
+/// zone of `now`: the last one at or before `now`. At a change of the
+/// clock, it can come two times on a day, or not at all
+/// (01M7F7GWKP5EQ9SWNKZ6VX3VX8). A date and a time has its zone: `Z` or
+/// an offset, with or without the seconds.
 ///
 /// ```
 /// use chrono::{FixedOffset, TimeZone, Utc};
@@ -565,9 +606,16 @@ pub fn since_at<Tz: TimeZone>(text: &str, now: &DateTime<Tz>) -> Result<i64> {
         .find_map(|form| NaiveTime::parse_from_str(text, form).ok());
     if let Some(time) = of_day {
         let (zone, today) = (now.timezone(), now.date_naive());
+        // From today back, the later one of a day first. Today can come
+        // after now, and the day before can skip the time: three days
+        // hold the last one.
         let last = (0..3)
             .filter_map(|back| today.checked_sub_days(chrono::Days::new(back)))
-            .filter_map(|day| zone.from_local_datetime(&day.and_time(time)).earliest())
+            .flat_map(|day| {
+                let at = zone.from_local_datetime(&day.and_time(time));
+                [at.clone().latest(), at.earliest()]
+            })
+            .flatten()
             .find(|at| at <= now);
         if let Some(at) = last {
             return Ok(at.timestamp());
@@ -747,15 +795,22 @@ impl Picker<'_> {
     }
 
     fn found(mut self) -> Found {
+        let mut limit = if self.query.lines() < MOST_LINES {
+            Limit::Lines
+        } else {
+            Limit::MostLines
+        };
         let mut bytes: usize = self.kept.iter().map(|l| json_bytes(l)).sum();
         while bytes > MOST_BYTES
             && let Some(old) = self.kept.pop_front()
         {
             bytes -= json_bytes(&old);
+            limit = Limit::MostBytes;
         }
+        let more = NonZeroUsize::new(self.picked - self.kept.len());
         Found {
-            more: self.picked - self.kept.len(),
             lines: self.kept.into(),
+            more: more.map(|count| More { count, limit }),
         }
     }
 }
@@ -765,7 +820,7 @@ impl Picker<'_> {
 /// no UTF-8 is read as `\u{fffd}`.
 ///
 /// ```
-/// use riff::daemon::log::{Query, pick};
+/// use riff::daemon::log::{Limit, Query, pick};
 /// use riff::run::Scrub;
 ///
 /// let log = "2026-11-14T07:00:00Z riff daemon: o/r: claims issue-11\n\
@@ -776,19 +831,21 @@ impl Picker<'_> {
 /// let query = Query::new(since, None, vec!["issue-12".into()])?;
 /// let found = pick([log.as_bytes()], &query, &Scrub::default())?;
 /// assert_eq!(
-///     found.lines,
+///     found.lines(),
 ///     [
 ///         "2026-11-14T07:12:00Z riff daemon: o/r: claims issue-12",
 ///         "2026-11-14T07:13:00Z riff daemon: issue-12 pushes with [secret]",
 ///     ]
 /// );
+/// assert_eq!(found.more(), None);
 /// let newest = Query::new(None, Some(1), vec!["claims".into()])?;
 /// let found = pick([log.as_bytes()], &newest, &Scrub::default())?;
-/// assert_eq!(found.lines, ["2026-11-14T07:14:00Z riff daemon: o/r: claims issue-13"]);
-/// assert_eq!(found.more, 2);
+/// assert_eq!(found.lines(), ["2026-11-14T07:14:00Z riff daemon: o/r: claims issue-13"]);
+/// let more = found.more().unwrap();
+/// assert_eq!((more.count.get(), more.limit), (2, Limit::Lines));
 /// // No part of a secret is found.
 /// let probe = Query::new(None, None, vec!["ghs_abc".into()])?;
-/// assert!(pick([log.as_bytes()], &probe, &Scrub::default())?.lines.is_empty());
+/// assert!(pick([log.as_bytes()], &probe, &Scrub::default())?.lines().is_empty());
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn pick(
@@ -932,27 +989,27 @@ mod tests {
         let query = Query::new(Some(AT_0712), None, vec!["issue-12".into()]).unwrap();
         let found = read(dir.path(), &query, Some("journalctl --user -u riff")).unwrap();
         assert_eq!(
-            found.lines,
+            found.lines(),
             [
                 "2026-11-14T07:12:00Z riff daemon: o/r: claims issue-12 again",
                 "2026-11-14T07:13:00Z riff daemon: issue-12 \u{fffd} [secret]",
                 "the rest of the line of issue-12 before",
             ]
         );
-        assert_eq!(found.more, 0);
+        assert_eq!(found.more(), None);
         // With no --since, the line of 07:00 matches too: the newest two
         // of the five lines show, and three more match.
         let newest = Query::new(None, Some(2), vec!["issue-1".into()]).unwrap();
         let found = read(dir.path(), &newest, None).unwrap();
-        assert_eq!(found.more, 3);
+        assert_eq!(more(&found), 3);
         assert_eq!(
-            found.lines[1],
+            found.lines()[1],
             "2026-11-14T07:14:00Z riff daemon: o/r: claims issue-13"
         );
         // With one file only, riff reads that one.
         std::fs::remove_file(dir.path().join(OLD)).unwrap();
         let all = Query::new(None, None, vec![]).unwrap();
-        assert_eq!(read(dir.path(), &all, None).unwrap().lines.len(), 3);
+        assert_eq!(read(dir.path(), &all, None).unwrap().lines().len(), 3);
     }
 
     /// #2156: with no log file, for example on a Mac, the error names the
@@ -990,7 +1047,7 @@ mod tests {
         .unwrap();
         let all = Query::new(None, None, vec![]).unwrap();
         assert_eq!(
-            read(dir.path(), &all, None).unwrap().lines,
+            read(dir.path(), &all, None).unwrap().lines(),
             [
                 "2026-11-14T07:12:00Z riff daemon: docs said [secret]",
                 "2026-11-14T07:13:00Z riff daemon: db said X=[secret]",
@@ -999,7 +1056,7 @@ mod tests {
         for probe in ["docs-header", "db-env"] {
             let query = Query::new(None, None, vec![probe.into()]).unwrap();
             assert!(
-                read(dir.path(), &query, None).unwrap().lines.is_empty(),
+                read(dir.path(), &query, None).unwrap().lines().is_empty(),
                 "{probe}"
             );
         }
@@ -1026,11 +1083,11 @@ mod tests {
         .unwrap();
         let all = Query::new(None, None, vec![]).unwrap();
         assert_eq!(
-            read(dir.path(), &all, None).unwrap().lines,
+            read(dir.path(), &all, None).unwrap().lines(),
             ["2026-11-14T07:12:00Z riff daemon: claude refused [secret]"]
         );
         let probe = Query::new(None, None, vec!["keyring-token".into()]).unwrap();
-        assert!(read(dir.path(), &probe, None).unwrap().lines.is_empty());
+        assert!(read(dir.path(), &probe, None).unwrap().lines().is_empty());
 
         crate::claude_token::test_lock();
         let error = read(dir.path(), &all, None).unwrap_err();
@@ -1063,19 +1120,41 @@ mod tests {
         assert!(error.starts_with(&want), "{error}");
     }
 
-    /// #2156, 01M7EX1PVSG64G8EE5SNDRHM7G, 01M7F3YFHRQ54RKN9SBJGYWGYY: a
-    /// line of [`LINE_CHARS`] characters stays whole, and a longer one is
-    /// cut to [`LINE_CHARS`] characters with its `…`. When the lines have
-    /// more than [`MOST_BYTES`] in JSON, the oldest go first, and each line
-    /// that fits stays: they count as more lines. A `"` has 2 bytes in
-    /// JSON.
+    /// The count of the older lines of `found` that do not show.
+    fn more(found: &Found) -> usize {
+        found.more().map_or(0, |more| more.count.get())
+    }
+
+    /// The number after the time of each line of `found`.
+    fn numbers(found: &Found) -> Vec<usize> {
+        let number = |l: &String| l[21..25].parse().unwrap();
+        found.lines().iter().map(number).collect()
+    }
+
+    /// #2156, 01M7EX1PVSG64G8EE5SNDRHM7G: a line of [`LINE_CHARS`]
+    /// characters stays whole, and a longer one is cut to [`LINE_CHARS`]
+    /// characters with its `…`, also with characters of more than one
+    /// byte.
     #[test]
-    fn a_long_line_is_cut_and_the_answer_keeps_its_byte_cap() {
+    fn a_long_line_is_cut_to_its_characters() {
         let whole = "x".repeat(LINE_CHARS);
         assert_eq!(cut(whole.clone()), whole);
         let long = format!("{whole}é");
         assert_eq!(cut(long), format!("{}…", &whole[1..]));
+        // Each `é` has 2 bytes: the cut is at a character, not at a byte.
+        let wide = "é".repeat(LINE_CHARS);
+        assert_eq!(cut(wide.clone()), wide);
+        let cut_wide = cut(format!("x{wide}"));
+        assert_eq!(cut_wide, format!("x{}…", "é".repeat(LINE_CHARS - 2)));
+        assert_eq!(cut_wide.chars().count(), LINE_CHARS);
+    }
 
+    /// #2156, 01M7F3YFHRQ54RKN9SBJGYWGYY, 01M7F7GWP88VC0QETN4GNTTJEV: when
+    /// the lines have more than [`MOST_BYTES`] in JSON, the oldest go
+    /// first, and each line that fits stays. They count as more lines,
+    /// and no `--lines` shows them. A `"` has 2 bytes in JSON.
+    #[test]
+    fn the_answer_keeps_its_byte_cap() {
         let lines: Vec<String> = (0..MOST_LINES)
             .map(|n| format!("2026-11-14T07:12:00Z {n:04} {}", "\"".repeat(LINE_CHARS)))
             .collect();
@@ -1084,26 +1163,77 @@ mod tests {
         let found = pick([log.as_bytes()], &query, &Scrub::default()).unwrap();
         assert!(
             found
-                .lines
+                .lines()
                 .iter()
                 .all(|l| l.chars().count() == LINE_CHARS && l.ends_with('…'))
         );
         // Each line has the same bytes in JSON, so the cap keeps the most
         // lines of that size that fit.
-        let size = json_bytes(&found.lines[0]);
+        let size = json_bytes(&found.lines()[0]);
         assert_eq!(size, 1977);
-        assert_eq!(found.lines.len(), MOST_BYTES / size);
-        let bytes: usize = found.lines.iter().map(|l| json_bytes(l)).sum();
+        assert_eq!(found.lines().len(), MOST_BYTES / size);
+        let bytes: usize = found.lines().iter().map(|l| json_bytes(l)).sum();
         assert!(bytes <= MOST_BYTES && bytes + size > MOST_BYTES, "{bytes}");
-        assert_eq!(found.more + found.lines.len(), MOST_LINES);
+        assert_eq!(more(&found) + found.lines().len(), MOST_LINES);
+        assert_eq!(found.more().unwrap().limit, Limit::MostBytes);
         // The newest lines stay, in their order.
-        let numbers: Vec<usize> = found
-            .lines
-            .iter()
-            .map(|l| l[21..25].parse().unwrap())
+        let want: Vec<usize> = (more(&found)..MOST_LINES).collect();
+        assert_eq!(numbers(&found), want);
+        // Under 2000 --lines, the cap is the limit too.
+        let fewer = Query::new(None, Some(MOST_LINES - 1), vec![]).unwrap();
+        let found = pick([log.as_bytes()], &fewer, &Scrub::default()).unwrap();
+        assert_eq!(found.more().unwrap().limit, Limit::MostBytes);
+    }
+
+    /// #2156, 01M7F3YFHRQ54RKN9SBJGYWGYY: lines of exactly [`MOST_BYTES`]
+    /// in JSON each stay. With one byte more, the oldest goes.
+    #[test]
+    fn lines_of_exactly_the_byte_cap_stay() {
+        // 1024 lines of 766 bytes, and 768 bytes in JSON with the `\n`.
+        let count = 1024;
+        let line = |n: usize, extra: &str| {
+            format!("2026-11-14T07:12:00Z {n:04} {}{extra}", "x".repeat(740))
+        };
+        let lines: Vec<String> = (0..count).map(|n| line(n, "")).collect();
+        assert_eq!(
+            lines.iter().map(|l| json_bytes(l)).sum::<usize>(),
+            MOST_BYTES
+        );
+        let query = Query::new(None, Some(count), vec![]).unwrap();
+        let found = pick([lines.join("\n").as_bytes()], &query, &Scrub::default()).unwrap();
+        assert_eq!(found.lines(), lines);
+        assert_eq!(found.more(), None);
+
+        let mut over = lines.clone();
+        over[0] = line(0, "x");
+        let found = pick([over.join("\n").as_bytes()], &query, &Scrub::default()).unwrap();
+        assert_eq!(found.lines(), &lines[1..]);
+        let more = found.more().unwrap();
+        assert_eq!((more.count.get(), more.limit), (1, Limit::MostBytes));
+    }
+
+    /// #2156, 01M7F7GWP88VC0QETN4GNTTJEV: under 2000 `--lines`, the
+    /// older lines that match stay out by `--lines`. At 2000, they stay
+    /// out by the most lines of an answer.
+    #[test]
+    fn the_older_lines_name_the_limit_of_the_lines() {
+        let log: String = (0..=MOST_LINES)
+            .map(|n| format!("2026-11-14T07:12:00Z {n:04} a line\n"))
             .collect();
-        let want: Vec<usize> = (found.more..MOST_LINES).collect();
-        assert_eq!(numbers, want);
+        for (lines, limit) in [
+            (MOST_LINES - 1, Limit::Lines),
+            (MOST_LINES, Limit::MostLines),
+        ] {
+            let query = Query::new(None, Some(lines), vec![]).unwrap();
+            let found = pick([log.as_bytes()], &query, &Scrub::default()).unwrap();
+            let want: Vec<usize> = (MOST_LINES + 1 - lines..=MOST_LINES).collect();
+            assert_eq!(numbers(&found), want, "{lines}");
+            let more = found.more().unwrap();
+            assert_eq!(
+                (more.count.get(), more.limit),
+                (MOST_LINES + 1 - lines, limit)
+            );
+        }
     }
 
     /// #2156, 01M7F0HE7JY09V4XA2KMKPX2P6: with --since, a line with no
@@ -1114,10 +1244,10 @@ mod tests {
         let log = "a line with no time\n2026-11-14T07:12:00Z a line\n";
         let since = Query::new(Some(AT_0712), None, vec![]).unwrap();
         let found = pick([log.as_bytes()], &since, &Scrub::default()).unwrap();
-        assert_eq!(found.lines, ["2026-11-14T07:12:00Z a line"]);
+        assert_eq!(found.lines(), ["2026-11-14T07:12:00Z a line"]);
         let all = Query::new(None, None, vec![]).unwrap();
         let found = pick([log.as_bytes()], &all, &Scrub::default()).unwrap();
-        assert_eq!(found.lines.len(), 2);
+        assert_eq!(found.lines().len(), 2);
     }
 
     /// #2156: a line that ends with `\r\n` shows with no `\r`, also the
@@ -1128,7 +1258,7 @@ mod tests {
         let all = Query::new(None, None, vec![]).unwrap();
         let found = pick([log.as_bytes()], &all, &Scrub::default()).unwrap();
         assert_eq!(
-            found.lines,
+            found.lines(),
             [
                 "2026-11-14T07:12:00Z a line",
                 "2026-11-14T07:13:00Z the last"
@@ -1136,27 +1266,34 @@ mod tests {
         );
     }
 
-    /// A time zone of a test with a change of the clock: UTC-4 up to
-    /// [`Fold::CHANGE`], then UTC-5. So each time from 01:00 to 02:00 of
-    /// 2026-11-01 comes two times.
+    /// 2026-11-01T06:00:00Z: the change of the clock of [`Change`].
+    const CHANGE: i64 = 1_793_512_800;
+
+    /// A time zone of a test with a change of the clock at [`CHANGE`]:
+    /// `BEFORE` hours west of UTC up to it, then `AFTER` hours.
     #[derive(Debug, Clone, Copy)]
-    struct Fold;
+    struct Change<const BEFORE: i32, const AFTER: i32>;
 
-    impl Fold {
-        /// 2026-11-01T06:00:00Z: 02:00 at UTC-4 is 01:00 at UTC-5.
-        const CHANGE: i64 = 1_793_512_800;
+    /// The clock goes back from 02:00 at UTC-4 to 01:00 at UTC-5: each
+    /// time from 01:00 to 02:00 of 2026-11-01 comes two times.
+    const FOLD: Change<4, 5> = Change;
 
+    /// The clock skips from 01:00 at UTC-5 to 02:00 at UTC-4: no time
+    /// from 01:00 to 02:00 of 2026-11-01 comes.
+    const GAP: Change<5, 4> = Change;
+
+    impl<const BEFORE: i32, const AFTER: i32> Change<BEFORE, AFTER> {
         fn at(utc: i64) -> chrono::FixedOffset {
-            let hours = if utc < Fold::CHANGE { 4 } else { 5 };
+            let hours = if utc < CHANGE { BEFORE } else { AFTER };
             chrono::FixedOffset::west_opt(hours * 3600).unwrap()
         }
     }
 
-    impl TimeZone for Fold {
+    impl<const BEFORE: i32, const AFTER: i32> TimeZone for Change<BEFORE, AFTER> {
         type Offset = chrono::FixedOffset;
 
-        fn from_offset(_: &chrono::FixedOffset) -> Fold {
-            Fold
+        fn from_offset(_: &chrono::FixedOffset) -> Self {
+            Change
         }
 
         fn offset_from_local_date(
@@ -1174,9 +1311,11 @@ mod tests {
             let fits = |hours| {
                 let offset = chrono::FixedOffset::west_opt(hours * 3600).unwrap();
                 let utc = local - i64::from(offset.local_minus_utc());
-                (Fold::at(utc) == offset).then_some(offset)
+                (Self::at(utc) == offset).then_some(offset)
             };
-            match (fits(4), fits(5)) {
+            // Both fit only when the clock goes back: the time before the
+            // change is the first one.
+            match (fits(BEFORE), fits(AFTER)) {
                 (Some(first), Some(last)) => chrono::MappedLocalTime::Ambiguous(first, last),
                 (Some(one), None) | (None, Some(one)) => chrono::MappedLocalTime::Single(one),
                 (None, None) => chrono::MappedLocalTime::None,
@@ -1184,27 +1323,50 @@ mod tests {
         }
 
         fn offset_from_utc_date(&self, utc: &chrono::NaiveDate) -> chrono::FixedOffset {
-            Fold::at(utc.and_time(NaiveTime::MIN).and_utc().timestamp())
+            Self::at(utc.and_time(NaiveTime::MIN).and_utc().timestamp())
         }
 
         fn offset_from_utc_datetime(&self, utc: &NaiveDateTime) -> chrono::FixedOffset {
-            Fold::at(utc.and_utc().timestamp())
+            Self::at(utc.and_utc().timestamp())
         }
     }
 
-    /// #2156, 01M7EX1PVSG64G8EE5SNDRHM7G: a time of the day that comes two
-    /// times at a change of the clock is the first one. A time equal to
-    /// now is now, and a time just after now is on the day before.
+    /// #2156, 01M7F7GWKP5EQ9SWNKZ6VX3VX8: a time of the day that comes two
+    /// times on a day when the clock goes back is the last one at or before
+    /// now. A time equal to now is now, and a time just after now is on
+    /// the day before.
     #[test]
-    fn a_time_of_the_day_at_a_change_of_the_clock_is_the_first_one() {
+    fn a_time_of_the_day_when_the_clock_goes_back_is_the_last_one() {
         // 03:00 at UTC-5, after the change.
-        let now = Fold.timestamp_opt(Fold::CHANGE + 2 * 3600, 0).unwrap();
+        let now = FOLD.timestamp_opt(CHANGE + 2 * 3600, 0).unwrap();
         // 01:30 comes at 05:30Z, then at 06:30Z.
-        assert_eq!(since_at("01:30", &now).unwrap(), Fold::CHANGE - 1800);
+        assert_eq!(since_at("01:30", &now).unwrap(), CHANGE + 1800);
         assert_eq!(since_at("03:00", &now).unwrap(), now.timestamp());
         // 03:00:01 of 2026-10-31 at UTC-4 is 07:00:01Z.
-        let day_before = Fold::CHANGE - 23 * 3600 + 1;
+        let day_before = CHANGE - 23 * 3600 + 1;
         assert_eq!(since_at("03:00:01", &now).unwrap(), day_before);
+
+        // 01:10 at UTC-5: the second 01:30 comes after now, and the second
+        // 01:05 before it.
+        let now = FOLD.timestamp_opt(CHANGE + 600, 0).unwrap();
+        assert_eq!(since_at("01:30", &now).unwrap(), CHANGE - 1800);
+        assert_eq!(since_at("01:05", &now).unwrap(), CHANGE + 300);
+    }
+
+    /// #2156, 01M7F7GWKP5EQ9SWNKZ6VX3VX8: a time of the day that the clock
+    /// skips does not come on that day: it is on the day before, or two
+    /// days before when today it comes after now.
+    #[test]
+    fn a_time_of_the_day_that_the_clock_skips_is_on_a_day_before() {
+        // 01:30 of 2026-10-31 at UTC-5 is 06:30Z.
+        let day_before = CHANGE - 24 * 3600 + 1800;
+        // 03:00 of 2026-11-01 at UTC-4, after the change.
+        let now = GAP.timestamp_opt(CHANGE + 3600, 0).unwrap();
+        assert_eq!(since_at("01:30", &now).unwrap(), day_before);
+        assert_eq!(since_at("02:30", &now).unwrap(), CHANGE + 1800);
+        // 01:00 of 2026-11-02 at UTC-4: today 01:30 comes after now.
+        let now = GAP.timestamp_opt(CHANGE + 23 * 3600, 0).unwrap();
+        assert_eq!(since_at("01:30", &now).unwrap(), day_before);
     }
 
     /// #2156: each key of Anthropic goes, also inside a word, with each

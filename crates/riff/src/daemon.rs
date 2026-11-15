@@ -14921,7 +14921,9 @@ mod tests {
         let wait = Duration::from_secs(60);
         let reply = remote::ask(&h.api, &h.lead, "b", &request, wait).await;
         let found = log::pick([log.as_bytes()], &query, &Scrub::default()).unwrap();
-        assert!(found.more > 0 && !found.lines.is_empty(), "{}", found.more);
+        let more = found.more().map(|more| more.limit);
+        assert_eq!(more, Some(log::Limit::MostBytes));
+        assert!(!found.lines().is_empty());
         let reply = reply.unwrap();
         assert_eq!(reply, text::daemon_log(&found));
 

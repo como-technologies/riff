@@ -1717,16 +1717,21 @@ riff daemon log --since 02:12 --grep issue-12
 
 riff reads the files itself, so it works also while the daemon is down.
 It takes each secret out of each line first, as from the events of a
-session: a token of GitHub, a key of Anthropic, the value of
-`NAME=value` when NAME names a token, a key, a secret or a password, a
-bearer token, the secrets in the environment of riff and in the sign-in
-file of claude, the token of `riff claude-token`, and each value of the
-`env` and the `headers` of the MCP servers of the host (`riff daemon mcp
-add`). So `--grep` finds no part of a secret. When riff cannot read the
-file of the MCP servers, it shows no line: fix the file, or remove it.
-When riff cannot read the OS keyring, it shows no line too: unlock the
-keyring. On a Mac, launchd writes the log of the daemon: `riff daemon
-log` names that file.
+session. So `--grep` finds no part of a secret. riff takes out:
+
+- a token of GitHub, a key of Anthropic and a bearer token;
+- the value of `NAME=value` when NAME names a token, a key, a secret or
+  a password;
+- the secrets in the environment of riff, and in the sign-in file of
+  claude;
+- the token of `riff claude-token`;
+- each value of the `env` and the `headers` of the MCP servers of the
+  host (`riff daemon mcp add`).
+
+When riff cannot read the file of the MCP servers, it shows no line:
+fix the file, or remove it. When riff cannot read the OS keyring, it
+shows no line too: unlock the keyring. On a Mac, launchd writes the log
+of the daemon: `riff daemon log` names that file.
 
 ### See more lines of the log of the daemon
 
@@ -1742,6 +1747,22 @@ The lines of one answer have at most 768 KiB as JSON text, so that the
 answer of another host fits in one post on riff-server: the oldest
 lines go first. In JSON, a `"`, a `\` or a control character has more
 bytes than in the log.
+
+### Find an older line of the log of the daemon
+
+At 2000 lines, or at 768 KiB, a larger `--lines` shows no more lines.
+The first line then names the limit, for example:
+
+```text
+riff daemon log: 1603 older lines match too, but one answer holds at most 768 KiB of lines. Ask for fewer with --since or --grep.
+```
+
+Ask for fewer lines: give the text of the line that you look for to
+`--grep`. In `"` or `'`, a text can have spaces:
+
+```sh
+riff daemon log --lines 2000 --grep "claims issue-12"
+```
 
 ### Read the log of the daemon from the lead
 

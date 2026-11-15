@@ -8756,9 +8756,29 @@ pub const DAEMON_EVENTS_ONLY_LEAD: &str =
 pub const DAEMON_LOG_ONLY_LEAD: &str =
     "Only the lead can read the log of the riff daemon through the riff daemon.";
 
-/// `riff daemon log --since` with a time out of its range (#2156).
-pub const DAEMON_LOG_SINCE_RANGE: &str =
-    "riff daemon log: --since takes a time from 1970-01-01T00:00Z to 9999-12-31T23:59Z.";
+/// `riff daemon log --since` with a time out of its range
+/// ([`crate::daemon::log::SINCE`], #2156).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::daemon_log_since_range(),
+///     "riff daemon log: --since takes a time from 1970-01-01T00:00Z to 9999-12-31T23:59Z."
+/// );
+/// ```
+pub fn daemon_log_since_range() -> String {
+    let range = crate::daemon::log::SINCE;
+    let at = |secs: i64| {
+        DateTime::from_timestamp(secs, 0).map_or_else(
+            || secs.to_string(),
+            |t| t.format("%Y-%m-%dT%H:%MZ").to_string(),
+        )
+    };
+    format!(
+        "riff daemon log: --since takes a time from {} to {}.",
+        at(*range.start()),
+        at(*range.end())
+    )
+}
 
 /// `riff daemon log` cannot read the MCP servers of the host, so it
 /// cannot know their secrets (#2156).
@@ -8772,46 +8792,80 @@ pub const DAEMON_LOG_NO_KEYRING: &str = "riff daemon log: riff shows no line, be
      read the OS keyring, and so it cannot take the token of riff claude-token out";
 
 /// The text of `riff daemon log` for `found` (#2156): a first line when
-/// older lines match too, then each line. With no line, one line that
-/// says so (01M7F0HEA4GVKQ47Q5GN29FQ22).
+/// older lines match too, with the limit that keeps them out
+/// (01M7F7GWP88VC0QETN4GNTTJEV), then each line. With no line, one line
+/// that says so (01M7F0HEA4GVKQ47Q5GN29FQ22).
 ///
 /// ```
-/// use riff::daemon::log::Found;
+/// use riff::daemon::log::{Found, MOST_LINES, Query, pick};
+/// use riff::run::Scrub;
 ///
-/// let found = Found { lines: vec!["2026-11-14T07:12:00Z riff daemon: a line".into()], more: 0 };
-/// assert_eq!(riff::text::daemon_log(&found), "2026-11-14T07:12:00Z riff daemon: a line");
-/// let more = Found { more: 3, ..found };
+/// // The text of the newest `lines` of `count` lines, each one with
+/// // `quotes` quotes at its end.
+/// let shown = |count: usize, quotes: usize, lines: usize| {
+///     let log: String = (0..count)
+///         .map(|n| format!("2026-11-14T07:12:00Z line {n}{}\n", "\"".repeat(quotes)))
+///         .collect();
+///     let query = Query::new(None, Some(lines), vec![]).unwrap();
+///     riff::text::daemon_log(&pick([log.as_bytes()], &query, &Scrub::default()).unwrap())
+/// };
+/// assert_eq!(shown(1, 0, 1), "2026-11-14T07:12:00Z line 0");
 /// assert_eq!(
-///     riff::text::daemon_log(&more),
+///     shown(4, 0, 1),
 ///     "riff daemon log: 3 older lines match too. Ask for more with --lines, up to 2000, or for \
-///      fewer with --since or --grep.\n2026-11-14T07:12:00Z riff daemon: a line"
+///      fewer with --since or --grep.\n2026-11-14T07:12:00Z line 3"
 /// );
-/// let one = Found { more: 1, ..more };
-/// assert!(riff::text::daemon_log(&one).starts_with("riff daemon log: 1 older line matches too."));
+/// assert!(shown(2, 0, 1).starts_with("riff daemon log: 1 older line matches too. Ask for more"));
+/// assert!(shown(MOST_LINES + 1, 0, MOST_LINES).starts_with(
+///     "riff daemon log: 1 older line matches too, but one answer holds at most 2000 lines. Ask \
+///      for fewer with --since or --grep.\n2026-11-14T07:12:00Z line 1\n"
+/// ));
+/// let full = shown(MOST_LINES, 1000, MOST_LINES);
+/// let first = full.lines().next().unwrap();
+/// assert!(first.starts_with("riff daemon log: "), "{first}");
+/// assert!(
+///     first.ends_with(
+///         " older lines match too, but one answer holds at most 768 KiB of lines. Ask for fewer \
+///          with --since or --grep."
+///     ),
+///     "{first}"
+/// );
 /// assert_eq!(
 ///     riff::text::daemon_log(&Found::default()),
 ///     "riff daemon log: no line of the log of the riff daemon matches."
 /// );
 /// ```
 pub fn daemon_log(found: &crate::daemon::log::Found) -> String {
-    if found.lines.is_empty() {
+    use crate::daemon::log::{Limit, MOST_BYTES, MOST_LINES};
+    if found.lines().is_empty() {
         return "riff daemon log: no line of the log of the riff daemon matches.".to_owned();
     }
-    let mut lines = Vec::with_capacity(found.lines.len() + 1);
-    if found.more > 0 {
-        lines.push(format!(
-            "riff daemon log: {} older {} too. Ask for more with --lines, up to {}, or for fewer \
-             with --since or --grep.",
-            found.more,
-            if found.more == 1 {
-                "line matches"
-            } else {
-                "lines match"
-            },
-            crate::daemon::log::MOST_LINES
-        ));
+    let mut lines = Vec::with_capacity(found.lines().len() + 1);
+    if let Some(more) = found.more() {
+        let count = more.count.get();
+        let matches = if count == 1 {
+            "line matches"
+        } else {
+            "lines match"
+        };
+        let ask = match more.limit {
+            Limit::Lines => format!(
+                ". Ask for more with --lines, up to {MOST_LINES}, or for fewer with --since or \
+                 --grep."
+            ),
+            Limit::MostLines => format!(
+                ", but one answer holds at most {MOST_LINES} lines. Ask for fewer with --since or \
+                 --grep."
+            ),
+            Limit::MostBytes => format!(
+                ", but one answer holds at most {} KiB of lines. Ask for fewer with --since or \
+                 --grep.",
+                MOST_BYTES / 1024
+            ),
+        };
+        lines.push(format!("riff daemon log: {count} older {matches} too{ask}"));
     }
-    lines.extend(found.lines.iter().cloned());
+    lines.extend(found.lines().iter().cloned());
     lines.join("\n")
 }
 

@@ -47,10 +47,10 @@ fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
-/// #2156, 01M7EX1PVSG64G8EE5SNDRHM7G: `--since` with a time of the day
-/// or with a date and its zone, and `--grep`, pick the known lines of
-/// both files, in their order. `--lines` keeps the newest, and says how
-/// many more match.
+/// #2156, 01M7EX1PVSG64G8EE5SNDRHM7G, 01M7F7GWP88VC0QETN4GNTTJEV:
+/// `--since` with a time of the day or with a date and its zone, and
+/// `--grep`, pick the known lines of both files, in their order.
+/// `--lines` keeps the newest, and says how many more match.
 #[test]
 fn since_and_grep_pick_the_known_lines_of_the_log() {
     let env = Isolated::new();
@@ -86,18 +86,13 @@ fn since_and_grep_pick_the_known_lines_of_the_log() {
 
     // The newest line, and the count of the older ones.
     let out = daemon_log(&env, &["--lines", "1"]);
-    let found = riff::daemon::log::Found {
-        lines: vec![new[2].clone()],
-        more: 4,
-    };
     assert_eq!(
         text(&out.stdout),
-        format!("{}\n", riff::text::daemon_log(&found))
-    );
-    assert!(
-        text(&out.stdout).starts_with("riff daemon log: 4 older lines match too."),
-        "{}",
-        text(&out.stdout)
+        format!(
+            "riff daemon log: 4 older lines match too. Ask for more with --lines, up to 2000, or \
+             for fewer with --since or --grep.\n{}\n",
+            new[2]
+        )
     );
 
     // No line matches (01M7F0HEA4GVKQ47Q5GN29FQ22).
@@ -109,9 +104,9 @@ fn since_and_grep_pick_the_known_lines_of_the_log() {
     );
 }
 
-/// #2156, 01M7EX1PVSG64G8EE5SNDRHM7G: with no `--lines`, riff shows the
-/// newest 200 lines, and its first line says that one older line
-/// matches too.
+/// #2156, 01M7EX1PVSG64G8EE5SNDRHM7G, 01M7F7GWP88VC0QETN4GNTTJEV: with no
+/// `--lines`, riff shows the newest 200 lines, and its first line says
+/// that one older line matches too.
 #[test]
 fn with_no_lines_flag_riff_shows_the_newest_200_lines() {
     let env = Isolated::new();
@@ -132,6 +127,49 @@ fn with_no_lines_flag_riff_shows_the_newest_200_lines() {
         )
     );
     assert_eq!(shown.collect::<Vec<_>>(), lines[1..]);
+}
+
+/// #2156, 01M7F3YFHRQ54RKN9SBJGYWGYY, 01M7F7GWP88VC0QETN4GNTTJEV: when the
+/// byte cap drops lines, the first line names the cap, and asks for no
+/// larger `--lines`, as the book shows it. A `--grep` then shows an older
+/// line.
+#[test]
+fn at_the_byte_cap_riff_asks_for_fewer_lines() {
+    let env = Isolated::new();
+    let at = Utc::now() - Duration::minutes(5);
+    let quotes = "\"".repeat(1000);
+    let lines: Vec<String> = (0..2000)
+        .map(|n| line(at, &format!("riff daemon: line-{n:04} {quotes}")))
+        .collect();
+    write_log(&env, &[], &lines);
+    let out = daemon_log(&env, &["--lines", "2000"]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let stdout = text(&out.stdout);
+    let mut shown = stdout.lines();
+    let first = shown.next().unwrap();
+    let count = shown.count();
+    assert!(count < 2000 / 2, "{count}");
+    assert_eq!(
+        first,
+        format!(
+            "riff daemon log: {} older lines match too, but one answer holds at most 768 KiB of \
+             lines. Ask for fewer with --since or --grep.",
+            2000 - count
+        )
+    );
+    let older = &first[first.find(" older").unwrap()..];
+    let how_to = book::page("development.md");
+    let example = how_to
+        .lines()
+        .find(|l| l.starts_with("riff daemon log: ") && l.ends_with(older));
+    assert!(
+        example.is_some(),
+        "the book has no line that ends with {older:?}"
+    );
+    let out = daemon_log(&env, &["--grep", "line-0007 "]);
+    let shown = text(&out.stdout);
+    assert_eq!(shown.lines().count(), 1, "{shown}");
+    assert!(shown.contains(" riff daemon: line-0007 \""), "{shown}");
 }
 
 /// #2156, 01M7EX1PVSG64G8EE5SNDRHM7G: a time of the day is in the local
@@ -287,7 +325,7 @@ fn with_no_log_file_riff_names_the_file_and_exits_with_1() {
         ),
         (
             &["--since", "+10000-01-01T00:00Z"],
-            riff::text::DAEMON_LOG_SINCE_RANGE.to_owned(),
+            riff::text::daemon_log_since_range(),
         ),
         (&["--lines", "2001"], riff::text::daemon_log_bad_lines(2001)),
         (&["--grep", ""], riff::text::daemon_log_bad_grep("")),
@@ -310,6 +348,7 @@ fn the_book_shows_how_to_read_the_log_of_the_daemon_from_the_lead() {
         "### Read the log of the daemon",
         "### Read the log of the daemon from the lead",
         "### See more lines of the log of the daemon",
+        "### Find an older line of the log of the daemon",
     ] {
         assert!(page.lines().any(|l| l == heading), "{heading}");
     }
@@ -323,7 +362,7 @@ fn the_book_shows_how_to_read_the_log_of_the_daemon_from_the_lead() {
             let journal = command.starts_with("journalctl") && command.contains("grep");
             assert!(!journal, "{name}: {command}");
             if command.starts_with("riff daemon log") {
-                steps.push(book::words(&command));
+                steps.push(book::shell_words(&command));
             }
         }
     }

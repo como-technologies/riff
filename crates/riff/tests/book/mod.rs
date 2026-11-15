@@ -93,12 +93,8 @@ pub fn pages() -> Vec<String> {
 }
 
 /// The words of the shell command `command`: a text in `'` or `"` is one
-/// word, with no quote.
-///
-/// ```text
-/// riff daemon log --grep 'a b' --grep "c"  ->  riff, daemon, log, --grep, a b, --grep, c
-/// ```
-pub fn words(command: &str) -> Vec<String> {
+/// word, with its spaces and with no quote.
+pub fn shell_words(command: &str) -> Vec<String> {
     let (mut words, mut word, mut quote) = (Vec::new(), None::<String>, None);
     for c in command.chars() {
         match quote {
@@ -115,4 +111,13 @@ pub fn words(command: &str) -> Vec<String> {
     assert!(quote.is_none(), "a quote has no end: {command}");
     words.extend(word);
     words
+}
+
+#[test]
+fn shell_words_keep_the_spaces_of_a_quoted_word() {
+    assert_eq!(
+        shell_words(r#"gh api  -f a="b c" 'd e'"#),
+        ["gh", "api", "-f", "a=b c", "d e"]
+    );
+    assert_eq!(shell_words(r#"x """#), ["x", ""]);
 }

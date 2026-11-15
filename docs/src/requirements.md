@@ -6699,15 +6699,13 @@ of this part when they merge.
   the log files of the daemon of the host: `daemon.log.1`, then
   `daemon.log`, in the folder of the daemon. `--since TIME` shows only
   the lines at or after TIME: a time of the day, `HH:MM` or `HH:MM:SS`,
-  in the local time of the machine where riff runs, the last one before
-  now, or a date and a time with its zone, with or without the seconds.
-  `--grep TEXT` shows only the lines that have TEXT. With more than one
-  `--grep`, a line shows when it has one of the texts. `--lines N` shows
-  at most N lines, the newest ones: 1 to 2000, and 200 with no
-  `--lines`. When more lines match, the first line says how many. A line
-  shows with at most 1000 characters. With no log file, riff names the
-  file and the command that shows the log of the daemon, and exits with
-  1.
+  in the local time of the machine where riff runs, or a date and a time
+  with its zone, with or without the seconds. `--grep TEXT` shows only
+  the lines that have TEXT. With more than one `--grep`, a line shows
+  when it has one of the texts. `--lines N` shows at most N lines, the
+  newest ones: 1 to 2000, and 200 with no `--lines`. A line shows with
+  at most 1000 characters. With no log file, riff names the file and the
+  command that shows the log of the daemon, and exits with 1.
 - **01M7EX1PYJ99BDSVJK7MAPDFD0** Only the riff of the host reads the log
   files for `riff daemon log`, in the folder of the daemon: no session
   can write there. On the host, riff reads the files itself, also while
@@ -6744,6 +6742,17 @@ of this part when they merge.
 - **01M7F3YFMAJNJX5YKXB8T54KHV** When riff cannot read the OS keyring
   for `riff daemon log`, it cannot know the token of `riff
   claude-token`: it shows no line, says why, and exits with 1.
+- **01M7F7GWKP5EQ9SWNKZ6VX3VX8** For `--since` of `riff daemon log`, a
+  time of the day comes each time that the clock of the machine shows
+  it: two times on a day when the clock goes back, and not at all on a
+  day when the clock skips it. riff takes the last one at or before now.
+  Supersedes 01M7EX1PVSG64G8EE5SNDRHM7G in part.
+- **01M7F7GWP88VC0QETN4GNTTJEV** When older lines match, the first line
+  of `riff daemon log` says how many, and what to ask for. Under 2000
+  `--lines`, it asks for a larger `--lines`. At 2000 lines, or when the
+  byte cap drops lines, it names that limit, and asks for fewer lines
+  with `--since` or `--grep`. Supersedes 01M7EX1PVSG64G8EE5SNDRHM7G in
+  part.
 
 ### riff relay
 

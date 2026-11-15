@@ -172,15 +172,10 @@ fn part(page: &str, heading: &str) -> String {
 /// The names of the book pages, `requirements.md` and its history apart:
 /// they keep the superseded decisions.
 fn pages() -> Vec<String> {
-    let mut names: Vec<String> = fs::read_dir(book())
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-        .filter(|name| {
-            name.ends_with(".md") && name != "requirements.md" && name != "requirements-history.md"
-        })
-        .collect();
-    names.sort();
-    names
+    crate::book::pages()
+        .into_iter()
+        .filter(|name| name != "requirements.md" && name != "requirements-history.md")
+        .collect()
 }
 
 /// 01M5QV9STQF1P9GN65P35E0FJH: the lead has no Remote Control. "Start

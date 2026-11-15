@@ -680,7 +680,7 @@ async fn daemon_log_in_a_container_shows_a_refusal_of_the_daemon() {
     let out = container.riff(&socket, &args).await;
     assert_eq!(out.status.code(), Some(1));
     assert!(
-        text(&out.stderr).contains(riff::text::DAEMON_LOG_SINCE_RANGE),
+        text(&out.stderr).contains(&riff::text::daemon_log_since_range()),
         "{}",
         text(&out.stderr)
     );
