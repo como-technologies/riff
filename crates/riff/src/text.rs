@@ -12817,6 +12817,12 @@ pub fn wave_host_word(why: &str) -> String {
 pub const WAVE_NO_TOKEN: &str =
     "waits: no token of a GitHub App for its sessions. See riff daemon status";
 
+/// The word of a wave that starts no item for one look: riff cannot read
+/// the folders of the podman volumes of its sessions
+/// (01M7EZCTKYFPS4QDQ1N3K3BT23).
+pub const WAVE_VOLUMES_UNREAD: &str =
+    "waits: riff cannot read the folders of the podman volumes. See riff daemon status";
+
 /// The message to the lead when a worker or a verify of the wave of
 /// `repo` got no token of a GitHub App, for the reason `why` with its fix
 /// and the prompt for `claude` on the host (01M6Z87A04EXTT1FFJSJ1EM6TB,

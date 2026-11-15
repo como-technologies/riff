@@ -1750,7 +1750,8 @@ pub struct VolumesUnread {
     /// The first look of the row that failed, in milliseconds since the
     /// epoch.
     pub since_ms: i64,
-    /// The cause of the last look that failed, in one line.
+    /// The cause of the last look that failed, in one line
+    /// ([`crate::runtime::VolumeFolders::failed`]).
     pub cause: String,
 }
 
@@ -2771,6 +2772,10 @@ pub struct Daemon<R> {
     /// ([`Daemon::guard_volumes`], 01M7EW2106JGGTSZKMRG4N9SH0), or `None`
     /// when it read each folder.
     volumes_unread: Mutex<Option<VolumesUnread>>,
+    /// The wave of each repository whose job found no folders of the
+    /// volumes before its claim, with the time of that job
+    /// ([`Daemon::volumes_refused`], 01M7EZCTKYFPS4QDQ1N3K3BT23).
+    volume_waits: Mutex<BTreeMap<String, std::time::Instant>>,
 }
 
 /// A pull of the session image that failed. [`Daemon::have_image`] gives
@@ -2923,6 +2928,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             told: Mutex::default(),
             verdicts: Mutex::default(),
             volumes_unread: Mutex::default(),
+            volume_waits: Mutex::default(),
         };
         crate::host_git::guard_also(&daemon.sessions_dir());
         Ok(daemon)
@@ -5248,6 +5254,40 @@ impl<R: Runtime + 'static> Daemon<R> {
         })
     }
 
+    /// A job of the wave of `repo` found no folders of the volumes before
+    /// its claim ([`Daemon::guard_volumes`]): the wave waits for
+    /// [`Daemon::look_every`], then tries again
+    /// (01M7EZCTKYFPS4QDQ1N3K3BT23).
+    pub(crate) fn volumes_refused(&self, repo: &str) {
+        let now = std::time::Instant::now();
+        self.volume_waits_lock().insert(repo.to_owned(), now);
+    }
+
+    /// True while the wave of `repo` waits after
+    /// [`Daemon::volumes_refused`]. A look that reads each folder ends each
+    /// wait.
+    pub(crate) fn volumes_wait(&self, repo: &str) -> bool {
+        self.volume_waits_lock()
+            .get(repo)
+            .is_some_and(|at| at.elapsed() < self.look_every)
+    }
+
+    /// Makes the wait of the wave of `repo` for the folders of the volumes
+    /// older `by`, for a test of the wait of the wave.
+    #[cfg(test)]
+    pub(crate) fn age_volume_wait(&self, repo: &str, by: Duration) {
+        if let Some(at) = self.volume_waits_lock().get_mut(repo) {
+            *at = at.checked_sub(by).expect("the clock runs long enough");
+        }
+    }
+
+    /// The waves that wait for the folders of the volumes.
+    fn volume_waits_lock(&self) -> MutexGuard<'_, BTreeMap<String, std::time::Instant>> {
+        self.volume_waits
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
     /// At the first job of a wave of a repository with the image `image`
     /// after the daemon starts, reads the version of each tool of
     /// [`crate::image_tools::Tool::ALL`] in the image. When one is older
@@ -5344,12 +5384,16 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// the runtime ([`Runtime::volume_folders`],
     /// 01M7EAZ9JS8K3TBWG8ZXKV00J9): a `riff.toml` can bind each volume
     /// with write. The daemon calls it at its start ([`Daemon::recover`]),
-    /// and before the start of each container with a volume.
+    /// before the claim of an item of a wave with a volume
+    /// (01M7EZCTKYFPS4QDQ1N3K3BT23), and before the start of each
+    /// container with a volume.
     ///
     /// The guard gets each folder that the runtime said, also with a fault
     /// (01M7EW2106JGGTSZKMRG4N9SH0). A fault fails it: the log of the
     /// daemon gets the cause, and [`Status::volumes`] keeps it until a look
-    /// reads each folder.
+    /// reads each folder. That look writes a line to the log, and ends
+    /// each wait of a wave ([`Daemon::volumes_wait`],
+    /// 01M7EZCTGNFJ4CWN0WYXKJKRYV).
     ///
     /// ```mermaid
     /// flowchart LR
@@ -5358,25 +5402,30 @@ impl<R: Runtime + 'static> Daemon<R> {
     ///     F -- no --> S[the container starts]
     ///     F -- yes --> N["no container with a volume starts<br/>the log and riff daemon status say why"]
     /// ```
-    async fn guard_volumes(&self) -> Result<()> {
+    pub(crate) async fn guard_volumes(&self) -> Result<()> {
         let said = self.runtime.volume_folders().await;
         for folder in &said.folders {
             crate::host_git::guard_also(folder);
         }
-        let mut unread = self
-            .volumes_unread
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let Some(cause) = said.fault() else {
-            if unread.take().is_some() {
+        let cause = said.fault();
+        let before = {
+            let mut unread = self
+                .volumes_unread
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let since_ms = unread.as_ref().map_or_else(now_ms, |u| u.since_ms);
+            let now = cause.clone().map(|cause| VolumesUnread { since_ms, cause });
+            std::mem::replace(&mut *unread, now)
+        };
+        let Some(cause) = cause else {
+            if before.is_some() {
+                self.volume_waits_lock().clear();
                 println!("{}", text::DAEMON_VOLUMES_READ);
             }
             return Ok(());
         };
         let why = text::daemon_volumes_unread(&cause);
         eprintln!("riff daemon: {why}");
-        let since_ms = unread.as_ref().map_or_else(now_ms, |u| u.since_ms);
-        *unread = Some(VolumesUnread { since_ms, cause });
         bail!("{why}")
     }
 
@@ -8925,11 +8974,16 @@ mod tests {
             status.contains("Volumes: riff cannot read the folders of the podman volumes"),
             "{status}"
         );
-        // A second look that fails keeps the time of the first.
-        tokio::time::sleep(Duration::from_millis(5)).await;
+        // A second look that fails keeps the time of the first, and the
+        // new cause.
+        let first = VolumesUnread {
+            since_ms: 1,
+            cause: "an old cause".into(),
+        };
+        *here.daemon.volumes_unread.lock().unwrap() = Some(first);
         refused(&here, &volume).await;
         let again = here.daemon.status().await.volumes.unwrap();
-        assert_eq!(again.since_ms, unread.since_ms);
+        assert_eq!((again.since_ms, again.cause), (1, unread.cause));
         assert!(here.fake.calls().is_empty(), "{:?}", here.fake.calls());
 
         // A session with no volume starts.
@@ -8938,13 +8992,17 @@ mod tests {
             .await;
         assert_eq!(here.fake.calls(), [format!("start {name}")]);
 
-        // podman says each folder again.
+        // podman says each folder again: the wait of a wave ends
+        // (01M7EZCTKYFPS4QDQ1N3K3BT23).
+        here.daemon.volumes_refused("o/r");
+        assert!(here.daemon.volumes_wait("o/r"));
         here.fake.volumes_heal();
         let mut start = here.start("riff-issue-4-dddddddd", "issue-4");
         start.spec.binds.push(volume.clone());
         let (_four, four) = here.started(start).await;
         assert_eq!(here.fake.calls().last(), Some(&format!("start {four}")));
         assert_eq!(here.daemon.status().await.volumes, None);
+        assert!(!here.daemon.volumes_wait("o/r"));
     }
 
     /// 01M7EW2106JGGTSZKMRG4N9SH0: at the start of the daemon, podman cannot

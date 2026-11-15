@@ -332,7 +332,11 @@
 //!   in the line of the wave until a pull works. The lead gets one message
 //!   for each image, with the fix: make the package public, or run
 //!   `podman login REGISTRY` on each host of the wave
-//!   (01M5SMSB3H1E9NXMBDN8ZDJ6CD).
+//!   (01M5SMSB3H1E9NXMBDN8ZDJ6CD);
+//! - any item for one look after a job found no folders of the podman
+//!   volumes that the `riff.toml` of the wave names (`NoVolumes`,
+//!   `Daemon::volumes_wait`). The job claims nothing, and the start does
+//!   not count (01M7EZCTKYFPS4QDQ1N3K3BT23).
 //!
 //! # A look that does not see the verdict yet
 //!
@@ -2939,10 +2943,15 @@ pub(crate) async fn run<R: Runtime + 'static>(
                 let no_token = fault.is_none()
                     && next.is_some()
                     && daemon.no_start_waits(&wave.repo).is_some();
+                // riff cannot read the folders of the volumes of the
+                // sessions of the wave: the wave waits for the next look,
+                // and no start counts (01M7EZCTKYFPS4QDQ1N3K3BT23).
+                let unread = fault.is_none() && next.is_some() && daemon.volumes_wait(&wave.repo);
                 say(match (&next, &fault) {
                     _ if look.paused => text::WAVE_PAUSED.into(),
                     _ if look.no_lead => text::wave_no_lead(&wave.repo),
                     (Some(_), None) if no_token => text::WAVE_NO_TOKEN.into(),
+                    (Some(_), None) if unread => text::WAVE_VOLUMES_UNREAD.into(),
                     (Some(_), Some(fault)) => text::wave_host_word(&fault.wave_text()),
                     (Some(work), None) => text::wave_started(&work.item()),
                     (None, _) => text::WAVE_NO_WORK.into(),
@@ -2955,7 +2964,7 @@ pub(crate) async fn run<R: Runtime + 'static>(
                     events.on(crate::daemon::now_ms()),
                 );
                 last = Some(look);
-                next.filter(|_| fault.is_none() && !pulling && !no_token)
+                next.filter(|_| fault.is_none() && !pulling && !no_token && !unread)
             }
             Err(e) => {
                 say(text::wave_no_look(&format!("{e:#}")));
@@ -3104,6 +3113,8 @@ fn take_back(starts: &Starts, work: &Work) {
 /// `starts`, and tells the lead nothing (01M558EYCXPFW8CJV3XJ7HK3NR). So
 /// does a fault of the host that came after the look of the loop
 /// (01M57A7A1W2K9440WZA1QZ3M9T): the next look waits for it. So does a
+/// look at the folders of the volumes that failed ([`NoVolumes`]): the
+/// wave waits for one look ([`Daemon::volumes_wait`]). So does a
 /// claim that another session holds, or that a hold keeps (#2114): the
 /// wave claims the item again after [`Daemon::retry_every`]
 /// ([`Daemon::claim_refused`]).
@@ -3177,6 +3188,12 @@ pub(crate) async fn job<R: Runtime + 'static>(
             println!("{}", text::wave_host_fault(&wave.repo, &item, &why));
             take_back(&starts, &work);
             Some(why)
+        }
+        Err(ref e) if let Some(NoVolumes(why)) = e.downcast_ref::<NoVolumes>() => {
+            println!("{}", text::wave_host_fault(&wave.repo, &item, why));
+            daemon.volumes_refused(&wave.repo);
+            take_back(&starts, &work);
+            Some(why.clone())
         }
         Err(ref e) if let Some(pull) = e.downcast_ref::<PullFailed>() => {
             let error = format!("{e:#}");
@@ -3257,6 +3274,22 @@ impl std::fmt::Display for NoBuild {
 
 impl std::error::Error for NoBuild {}
 
+/// The look at the folders of the volumes before the claim of an item of
+/// a wave whose `riff.toml` names a volume failed, with the cause
+/// ([`Daemon::guard_volumes`], 01M7EZCTKYFPS4QDQ1N3K3BT23). No claim and
+/// no session, the start does not count, and the wave waits for the next
+/// look ([`Daemon::volumes_wait`]).
+#[derive(Debug)]
+pub(crate) struct NoVolumes(String);
+
+impl std::fmt::Display for NoVolumes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for NoVolumes {}
+
 /// The wait before the claim of `work` (#1729): the host with the most
 /// free room claims first. The host waits [`claim_wait`] for its live
 /// sessions and its limit now: an empty host does not wait. After a
@@ -3316,7 +3349,8 @@ async fn read_before_build<R: Runtime + 'static>(
 /// the job (`asked`), the read of the status `riff/verify` of the head of a
 /// verify ([`World::verdict`]: a verdict that stops the verify,
 /// [`Verdicts::stops`], is the error [`Verified`]), the image that the
-/// wave pins, the steps before the start, and the session.
+/// wave pins, the folders of its volumes (a fault is the error
+/// [`NoVolumes`]), the steps before the start, and the session.
 /// `None` when the claim failed. Hold [`Daemon::in_job`]
 /// of the item from before the call to the end of [`finish`]: the sweep
 /// then keeps the folder.
@@ -3353,6 +3387,13 @@ async fn start_job<R: Runtime + 'static>(
         .await?;
     daemon.pull_worked(&wave.repo);
     daemon.check_tools(wave, &pinned.image).await;
+    // No claim while riff cannot read the folders of the volumes that the
+    // session binds (01M7EZCTKYFPS4QDQ1N3K3BT23).
+    if !pinned.setup.volumes.is_empty()
+        && let Err(e) = daemon.guard_volumes().await
+    {
+        return Err(NoVolumes(format!("{e:#}")).into());
+    }
     let Some(start) = world.begin(wave, work, &pinned).await? else {
         return Ok(None);
     };
@@ -6024,6 +6065,9 @@ mod tests {
         checked: bool,
         /// The image that the wave pins, else [`IMAGE`].
         image: Option<String>,
+        /// The volumes that the `riff.toml` of the wave names: the name
+        /// and the path in the container.
+        volumes: Vec<(String, String)>,
         /// A `gh` that the look calls, with its own count of calls: the look
         /// fails when it fails (#1557). Else the look calls no `gh`.
         limit_gh: Option<Arc<pr::Gh>>,
@@ -6315,11 +6359,16 @@ mod tests {
         }
 
         fn pinned<'a>(&'a self, _: &'a Wave) -> BoxFuture<'a, Result<Pinned>> {
-            let image = lock(&self.forge).image.clone();
+            let forge = lock(&self.forge);
+            let image = forge.image.clone();
+            let setup = Setup {
+                volumes: forge.volumes.clone(),
+                ..Setup::default()
+            };
             Box::pin(async move {
                 Ok(Pinned {
                     image: image.unwrap_or_else(|| IMAGE.into()),
-                    setup: Setup::default(),
+                    setup,
                 })
             })
         }
@@ -9682,6 +9731,39 @@ esac
         assert!(!here.daemon.pull_failed("o/r", &failed("b")));
         here.daemon.pull_worked("o/r");
         assert!(here.daemon.pull_failed("o/r", &failed("c")));
+    }
+
+    /// 01M7EZCTKYFPS4QDQ1N3K3BT23: podman cannot say the folders of its
+    /// volumes, and the `riff.toml` of the wave names a volume. More times
+    /// than [`STARTS`], the job claims nothing, no start counts, and the
+    /// lead hears nothing. After each try, the wave waits for the next
+    /// look. When podman says the folders again, the item starts.
+    #[tokio::test]
+    async fn a_wave_claims_no_item_while_podman_cannot_say_the_folders_of_its_volumes() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 3, free).await;
+        here.forge().volumes = vec![("riff-cargo".into(), "$HOME/.cargo".into())];
+        let fake = here
+            .fake
+            .clone()
+            .with_volume_fault("podman info: Error: no store");
+        here.run();
+        for tries in 1..=STARTS as usize + 1 {
+            here.until(0, |h| h.fake.volume_looks() == tries).await;
+            // The wave waits for the next look: no new try comes.
+            here.idle(0).await;
+            assert_eq!(here.fake.volume_looks(), tries);
+            assert_eq!(here.daemon.waves_shown()[0].word, text::WAVE_VOLUMES_UNREAD);
+            here.daemon.age_volume_wait("o/r", crate::look::LOOK_EVERY);
+        }
+        {
+            let forge = here.forge();
+            assert!(forge.starts.is_empty(), "{forge:?}");
+            assert!(forge.told.is_empty(), "{:?}", forge.told);
+        }
+
+        fake.volumes_heal();
+        here.until(3, |h| h.running("issue-1").is_some()).await;
     }
 
     /// The output of `claude --version` and `gh --version` in a fake

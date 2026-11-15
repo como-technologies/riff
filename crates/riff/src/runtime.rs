@@ -525,17 +525,21 @@ pub trait Runtime: Send + Sync {
 /// ([`Runtime::volume_folders`]), and the fault of each look-up that
 /// failed. With a fault, the list can miss a folder: the daemon starts no
 /// container that binds a volume with write (01M7EW2106JGGTSZKMRG4N9SH0).
+/// Each fault is one line ([`VolumeFolders::failed`]), so the line of
+/// `riff daemon status` stays one line.
 ///
 /// ```
 /// use riff::runtime::VolumeFolders;
 ///
-/// let said = VolumeFolders { folders: vec!["/v".into()], faults: vec![] };
+/// let mut said = VolumeFolders::default();
+/// said.folders.push("/v".into());
 /// assert_eq!(said.fault(), None);
-/// let faults = vec!["podman info: no store".into(), "podman volume inspect --all: no".into()];
-/// let unread = VolumeFolders { folders: vec![], faults };
+/// let mut unread = VolumeFolders::default();
+/// unread.failed("podman info: level=warning msg=\"old\"\nError: no store\n");
+/// unread.failed("podman volume inspect --all: no");
 /// assert_eq!(
 ///     unread.fault().as_deref(),
-///     Some("podman info: no store; podman volume inspect --all: no")
+///     Some("podman info: level=warning msg=\"old\" Error: no store; podman volume inspect --all: no")
 /// );
 /// ```
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -543,10 +547,17 @@ pub struct VolumeFolders {
     /// The folders that the runtime said.
     pub folders: Vec<PathBuf>,
     /// The fault of each look-up that failed, in one line each.
-    pub faults: Vec<String>,
+    faults: Vec<String>,
 }
 
 impl VolumeFolders {
+    /// A look-up failed with `fault`. Its lines become one line: podman
+    /// can print a warning line before its error.
+    pub fn failed(&mut self, fault: &str) {
+        let fault = fault.split_whitespace().collect::<Vec<_>>().join(" ");
+        self.faults.push(fault);
+    }
+
     /// The faults in one line, or `None` when each look-up gave its
     /// folders.
     pub fn fault(&self) -> Option<String> {
@@ -808,6 +819,8 @@ struct Book {
     /// The faults of the look-ups of the folders of the volumes
     /// ([`Fake::with_volume_fault`]).
     volume_faults: Vec<String>,
+    /// The looks of [`Runtime::volume_folders`] ([`Fake::volume_looks`]).
+    volume_looks: usize,
 }
 
 /// The terminal of this process for a [`Fake`] ([`Fake::terminal`]): it
@@ -1058,6 +1071,7 @@ impl Fake {
     ///     assert_eq!(said.fault().as_deref(), Some("podman info: no store"));
     ///     fake.volumes_heal();
     ///     assert_eq!(fake.volume_folders().await.fault(), None);
+    ///     assert_eq!(fake.volume_looks(), 2);
     ///     Ok::<(), anyhow::Error>(())
     /// })?;
     /// # Ok::<(), anyhow::Error>(())
@@ -1071,6 +1085,11 @@ impl Fake {
     /// as podman does when it reads its store again.
     pub fn volumes_heal(&self) {
         self.lock().volume_faults.clear();
+    }
+
+    /// The number of the looks of [`Runtime::volume_folders`].
+    pub fn volume_looks(&self) -> usize {
+        self.lock().volume_looks
     }
 
     /// [`Runtime::processes`] of the session `name` never answers, as
@@ -1392,11 +1411,16 @@ impl Runtime for Fake {
     }
 
     async fn volume_folders(&self) -> VolumeFolders {
-        let book = self.lock();
-        VolumeFolders {
+        let mut book = self.lock();
+        book.volume_looks += 1;
+        let mut said = VolumeFolders {
             folders: book.volumes.clone(),
-            faults: book.volume_faults.clone(),
+            ..VolumeFolders::default()
+        };
+        for fault in &book.volume_faults {
+            said.failed(fault);
         }
+        said
     }
 }
 

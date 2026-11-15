@@ -540,6 +540,51 @@ pub fn volume_folders_of(printed: &[u8]) -> Result<Vec<PathBuf>> {
         .collect())
 }
 
+/// The folders of the volumes from what `podman` printed for
+/// [`STORE_ARGS`] (`store`) and for [`VOLUMES_ARGS`] (`volumes`), and the
+/// fault of each that failed ([`Runtime::volume_folders`],
+/// 01M7EW2106JGGTSZKMRG4N9SH0). An `info` with no folder is a fault.
+///
+/// ```
+/// use anyhow::anyhow;
+/// use riff::podman::volume_folders_said;
+/// use std::path::Path;
+///
+/// let volumes = br#"[{"Name": "riff-cargo", "Mountpoint": "/v/riff-cargo/_data"}]"#;
+/// let said = volume_folders_said(Ok(b"/v\n".to_vec()), Ok(volumes.to_vec()));
+/// assert_eq!(said.folders, [Path::new("/v"), Path::new("/v/riff-cargo/_data")]);
+/// assert_eq!(said.fault(), None);
+///
+/// // podman info prints no folder.
+/// let said = volume_folders_said(Ok(b"\n".to_vec()), Ok(volumes.to_vec()));
+/// assert_eq!(said.folders, [Path::new("/v/riff-cargo/_data")]);
+/// assert_eq!(said.fault().as_deref(), Some("podman info prints no folder of the volumes"));
+///
+/// // podman info works, and the volume inspect fails.
+/// let error = anyhow!("podman volume inspect --all: level=warning msg=\"old\"\nError: no store");
+/// let said = volume_folders_said(Ok(b"/v\n".to_vec()), Err(error));
+/// assert_eq!(said.folders, [Path::new("/v")]);
+/// assert_eq!(
+///     said.fault().as_deref(),
+///     Some("podman volume inspect --all: level=warning msg=\"old\" Error: no store")
+/// );
+/// ```
+pub fn volume_folders_said(store: Result<Vec<u8>>, volumes: Result<Vec<u8>>) -> VolumeFolders {
+    let mut said = VolumeFolders::default();
+    match store.and_then(|store| {
+        crate::compile_cache::folder_of(&String::from_utf8_lossy(&store))
+            .ok_or_else(|| anyhow!("podman info prints no folder of the volumes"))
+    }) {
+        Ok(store) => said.folders.push(store),
+        Err(e) => said.failed(&format!("{e:#}")),
+    }
+    match volumes.and_then(|printed| volume_folders_of(&printed)) {
+        Ok(folders) => said.folders.extend(folders),
+        Err(e) => said.failed(&format!("{e:#}")),
+    }
+    said
+}
+
 /// What `podman ARGS` prints, or an error with its stderr.
 async fn printed(args: &[&str]) -> Result<Vec<u8>> {
     let out = podman()
@@ -989,26 +1034,11 @@ impl Runtime for Podman {
     }
 
     /// The folder of the volumes of podman ([`STORE_ARGS`]), then the
-    /// folders of each volume ([`VOLUMES_ARGS`], [`volume_folders_of`]).
-    /// The second look-up runs also when the first one fails. An `info`
-    /// with no folder is a fault.
+    /// folders of each volume ([`VOLUMES_ARGS`], [`volume_folders_said`]).
+    /// The second look-up runs also when the first one fails.
     async fn volume_folders(&self) -> VolumeFolders {
-        let mut said = VolumeFolders::default();
-        match printed(&STORE_ARGS).await.and_then(|store| {
-            crate::compile_cache::folder_of(&String::from_utf8_lossy(&store))
-                .ok_or_else(|| anyhow!("podman info prints no folder of the volumes"))
-        }) {
-            Ok(store) => said.folders.push(store),
-            Err(e) => said.faults.push(format!("{e:#}")),
-        }
-        match printed(&VOLUMES_ARGS)
-            .await
-            .and_then(|printed| volume_folders_of(&printed))
-        {
-            Ok(folders) => said.folders.extend(folders),
-            Err(e) => said.faults.push(format!("{e:#}")),
-        }
-        said
+        let store = printed(&STORE_ARGS).await;
+        volume_folders_said(store, printed(&VOLUMES_ARGS).await)
     }
 }
 

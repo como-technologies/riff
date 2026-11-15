@@ -380,10 +380,11 @@ hold each decision of the design.
 
 #### When podman cannot list its volumes
 
-At its start, and before each start of a session with a volume of
-`riff.toml`, the daemon asks podman for the folders of its volumes. It
-runs two commands, and the second one runs also when the first one
-fails. The host runs no git in each folder that podman names.
+The daemon asks podman for the folders of its volumes at its start,
+before the claim of an item of a wave whose `riff.toml` names a volume,
+and before each start of a session with a volume. It runs two
+commands, and the second one runs also when the first one fails. The
+host runs no git in each folder that podman names.
 
 ```mermaid
 flowchart LR
@@ -397,10 +398,16 @@ When one of the commands fails, riff cannot know each folder that a
 session can write. So the daemon starts no session that binds a volume
 with write. `riff run` and the log of the daemon say why. A session with
 no volume starts, and a session that runs goes on. `riff daemon status`
-shows the cause until a look reads each folder:
+shows the cause until a look reads each folder. In that time, a wave
+whose `riff.toml` names a volume claims no item, and no start of an
+item counts. The wave tries again after one minute, and its line says
+that it waits:
 
 ```text
 Volumes: riff cannot read the folders of the podman volumes, for 4m. No session with a volume starts. The last cause: podman info --format {{.Store.VolumePath}}: Error: cannot read the store. riff reads them again at the next start of a session with a volume.
+...
+Waves:
+  acme/app  waits: riff cannot read the folders of the podman volumes. See riff daemon status
 ```
 
 See the cause, and see whether podman lists its volumes:
@@ -412,7 +419,8 @@ podman volume inspect --all
 ```
 
 Repair podman. The next start of a session with a volume reads the
-folders again: you run no other command.
+folders again: you run no other command. The log of the daemon then
+says `riff reads the folders of the podman volumes again`.
 
 ### The home of a session is in memory
 
