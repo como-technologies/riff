@@ -13405,7 +13405,7 @@ pub fn wave_wip_head(item: &str, number: u64, branch: &str, commit: &str, sessio
 
 /// A build of a wave ended with no open pull request. riff pushes
 /// nothing (01M7DZ4E2P5RJMQE0W9K1AAA4P), and the clone went with the
-/// container (#2139).
+/// container (01M7EY51KJR7RT5TZJ4FX558NP).
 ///
 /// ```
 /// let text = riff::text::wave_no_pull("issue-12", "worktree-issue-12");

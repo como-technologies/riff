@@ -4230,6 +4230,25 @@ async fn a_default_branch_that_does_not_read_starts_no_work_and_the_next_look_re
     }
 }
 
+/// 01M7EY3WM6XYQR3CXNMM6MFA5C: `riff run` names the default branch from
+/// `origin/HEAD` of the main clone, here `master`: the host has no clone
+/// of the session to read it from.
+#[tokio::test]
+async fn riff_run_names_the_default_branch_of_the_main_clone() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    git(&machine.main, &["push", "-q", "origin", "HEAD:master"]);
+    git(&machine.main, &["remote", "set-head", "origin", "master"]);
+
+    let out = machine
+        .run(None, &["run", "issue-12", "--image", IMAGE])
+        .await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let start = machine.read("run.stdin");
+    assert!(start.contains("Never push to master."), "{start}");
+    assert!(!start.contains("Never push to main."), "{start}");
+}
+
 /// 01M5QYBWPAJ219BE8QKVKG1TWW (#1352): the start text of a build of a
 /// wave names the default branch of the repository, `master`, in the
 /// rule not to push to it.

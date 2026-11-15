@@ -2433,7 +2433,7 @@ pub fn pull_body(issue: u64) -> String {
 /// Step 8: the session had no GitHub, so it committed and pushed nothing
 /// (01M6Z87SDSYDTFHMPKGNX74SMC). Its clone went with its container: the
 /// relay wrote the commits of the branch in a bundle in `out/` of the
-/// folder of the session in `sessions` (#2139). The test fetches the
+/// folder of the session in `sessions` (01M7EY51P291VZ9YM414Z2Z1MR). The test fetches the
 /// branch from the bundle into its own clone, with the git of the person
 /// on the host, pushes it, and opens its pull request with `gh pr
 /// create`. It runs no git in a folder of the session: a bundle is a file

@@ -546,12 +546,12 @@ fn a_pass_runs_each_step_in_order_and_cleans_up() {
     assert_clean(&fake);
 }
 
-/// 01M6Z87SDSYDTFHMPKGNX74SMC: the session of the test has no GitHub,
-/// never the token of the person: `riff run --no-github`. Its clone goes
-/// with its container, and its commits are in a bundle in the folder of
-/// the session (#2139). Step 8 fetches the branch from the bundle into the
-/// clone of the test, with the git of the person on the host, pushes it,
-/// and opens its pull request with `gh pr create`.
+/// 01M6Z87SDSYDTFHMPKGNX74SMC, 01M7EY51P291VZ9YM414Z2Z1MR: the session of
+/// the test has no GitHub, never the token of the person: `riff run
+/// --no-github`. Its clone goes with its container, and its commits are in
+/// a bundle in the folder of the session. Step 8 fetches the branch from
+/// the bundle into the clone of the test, with the git of the person on the
+/// host, pushes it, and opens its pull request with `gh pr create`.
 #[test]
 fn the_session_has_no_github_and_the_test_pushes_its_branch() {
     let fake = Fake::new();

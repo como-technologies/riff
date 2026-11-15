@@ -318,7 +318,7 @@ pub async fn end_served(dir: PathBuf, served: Served) {
 /// its folder `dir`: the clone of a person stays. The daemon calls it when
 /// no session of the repository runs ([`super::Daemon::retire`]): each
 /// session clones in its container, so no clone of the host needs the
-/// objects of the main clone (#2139).
+/// objects of the main clone (#2139, 01M7EY51H3YVDJTWC25WZA46EF).
 ///
 /// ```
 /// use riff::daemon::remote::{CLONES, remove_clone};

@@ -12003,8 +12003,9 @@ esac
         assert!(shown.contains("ended: exit code 1."), "{shown}");
     }
 
-    /// 01M7DZ4E2P5RJMQE0W9K1AAA4P: a build that pushed nothing gives the
-    /// lead one note with the branch. riff runs no git in a clone in the
+    /// 01M7DZ4E2P5RJMQE0W9K1AAA4P, 01M7EY51KJR7RT5TZJ4FX558NP: a build that
+    /// pushed nothing gives the lead one note with the branch, and says that
+    /// the clone went with the container. riff runs no git in a clone in the
     /// folder of the session, as an older riff left it there: its git
     /// config names a program, and that program does not run.
     #[tokio::test]
