@@ -3868,7 +3868,9 @@ has no line for a member of the council (see
 [The findings of the council](how-it-works.md#the-findings-of-the-council)).
 Such a PASS counts as no PASS or FAIL, and its session leaves a record
 too. This is also true when riff kept the PASS for a limit of GitHub
-and refuses it after the reset.
+and refuses it after the reset (see
+[Know what the daemon does when the GitHub limit runs out](#know-what-the-daemon-does-when-the-github-limit-runs-out)).
+Then the message "started 3 times" names the reason of that record.
 
 ```mermaid
 flowchart TD

@@ -7547,7 +7547,9 @@ of this part when they merge.
   member of the council with no line (01M7CFBZSQEEZNZBR9H1S54GS1). After
   another fault of the report, it says nothing of a result. It names the
   denied tool calls of the session, also when a step after the end
-  removes the folder of the session.
+  removes the folder of the session. When riff refuses a kept PASS after
+  the reset of a limit of GitHub, the daemon keeps the reason of its
+  record in the thread `ends` (`kept::Reports::ends`).
 - **01M7G6H601C6NYC7ACSF6GVW50** A verify session of a wave whose PASS
   riff refuses for a member of the council with no line
   (01M7CFBZSQEEZNZBR9H1S54GS1) leaves one record in the thread `ends`,

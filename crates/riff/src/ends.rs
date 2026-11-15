@@ -193,48 +193,90 @@ pub struct End {
     pub tail: Vec<String>,
 }
 
-impl End {
-    /// The end of the session of `record`, as it `ended`, with what the
-    /// steps after the end `found` ([`Found::said`]). It reads the events
-    /// of the session, and replaces each secret of `scrub`.
-    pub fn of(record: &crate::daemon::Record, ended: Ended, found: Found, scrub: &Scrub) -> End {
-        let commit = record.job.as_ref().and_then(|job| job.work.commit());
-        let session = (record.live.item.as_str(), record.live.session.as_str());
-        End::in_folder(session, commit, &record.folder, ended, found, scrub)
+/// A session that ended, as its record names it: the session of a job of
+/// a wave ([`Session::of`]), or the verify of a kept result
+/// ([`crate::kept::Kept::session`]).
+#[derive(Debug, Clone, Copy)]
+pub struct Session<'a> {
+    /// The item.
+    pub item: &'a str,
+    /// The session ID.
+    pub id: &'a str,
+    /// The head commit of the work of a verify, a rebase, a fix of the
+    /// checks or a fix after a FAIL: none for a build (#1651).
+    pub commit: Option<&'a str>,
+    /// The folder of the session, with its events.
+    pub folder: &'a Path,
+    /// How it ended.
+    pub ended: Ended,
+}
+
+impl<'a> Session<'a> {
+    /// The session of `record`, as it `ended`.
+    pub fn of(record: &'a crate::daemon::Record, ended: Ended) -> Session<'a> {
+        Session {
+            item: &record.live.item,
+            id: &record.live.session,
+            commit: record.job.as_ref().and_then(|job| job.work.commit()),
+            folder: &record.folder,
+            ended,
+        }
     }
 
-    /// [`End::of`] for the session `(item, session ID)`, whose work is for
-    /// the head commit `commit`, with its events in `folder`: the end of a
-    /// verify whose kept result riff reports after the reset of a limit of
-    /// GitHub ([`crate::kept`]).
+    /// The end of the session, with what the steps after the end `found`
+    /// ([`Found::said`]). It reads the events in its folder, and replaces
+    /// each secret of `scrub`.
     ///
     /// ```
     /// use riff::daemon::{EVENTS, Ended};
-    /// use riff::ends::{End, Found};
+    /// use riff::ends::{Found, Session};
     /// use riff::run::Scrub;
     ///
     /// let folder = tempfile::tempdir()?;
     /// std::fs::write(folder.path().join(EVENTS), "the result\n")?;
-    /// let clean = Ended { code: Some(0), failed: false };
-    /// let session = ("verify-issue-7", "1a2b3c4d5e6f");
-    /// let end = End::in_folder(session, Some("988cb7b1"), folder.path(), clean, Found::NoVerdict, &Scrub::new([]));
+    /// let session = Session {
+    ///     item: "verify-issue-7",
+    ///     id: "1a2b3c4d5e6f",
+    ///     commit: Some("988cb7b1"),
+    ///     folder: folder.path(),
+    ///     ended: Ended { code: Some(0), failed: false },
+    /// };
+    /// let end = session.end(Found::NoVerdict, &Scrub::new([]));
     /// assert_eq!(end.body(), "ended item=verify-issue-7 session=1a2b3c4d head=988cb7b code=0 failed=no denied=0: exit code 0, and no PASS or FAIL\nthe result");
     /// # Ok::<(), std::io::Error>(())
     /// ```
-    pub fn in_folder(
-        (item, session): (&str, &str),
-        commit: Option<&str>,
-        folder: &Path,
-        ended: Ended,
-        found: Found,
-        scrub: &Scrub,
-    ) -> End {
-        let events = std::fs::read_to_string(folder.join(EVENTS)).unwrap_or_default();
+    pub fn end(&self, found: Found, scrub: &Scrub) -> End {
+        let events = std::fs::read_to_string(self.folder.join(EVENTS)).unwrap_or_default();
         End {
-            head: commit.map(|commit| commit.get(..7).unwrap_or(commit).to_owned()),
+            head: self
+                .commit
+                .map(|commit| commit.get(..7).unwrap_or(commit).to_owned()),
             said: found.said(),
-            ..End::from_events(item, session, ended, &events, scrub)
+            ..End::from_events(self.item, self.id, self.ended, &events, scrub)
         }
+    }
+
+    /// Posts the end of the session, with what the steps after the end
+    /// `found`, in the thread [`THREAD`], as `me` ([`post`]), and gives
+    /// it. It replaces each secret of the host
+    /// ([`crate::session_relay::secrets_here`]). It reads the folder of
+    /// the session, so it comes before the folder goes. A fault of the
+    /// post goes to the log of the daemon, and stops no step after it.
+    pub async fn post_end(&self, api: &Api, me: &SessionUri, found: Found) -> End {
+        let scrub = Scrub::new(crate::session_relay::secrets_here());
+        let end = self.end(found, &scrub);
+        if let Err(e) = post(api, me, &end).await {
+            eprintln!("riff daemon: {}: {e:#}", self.item);
+        }
+        end
+    }
+}
+
+impl End {
+    /// The end of the session of `record`, as it `ended`, with what the
+    /// steps after the end `found` ([`Session::end`]).
+    pub fn of(record: &crate::daemon::Record, ended: Ended, found: Found, scrub: &Scrub) -> End {
+        Session::of(record, ended).end(found, scrub)
     }
 
     /// [`End::of`] for the text `events` of the events file, with no step
