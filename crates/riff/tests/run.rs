@@ -3953,6 +3953,18 @@ async fn a_failed_clone_of_a_wave_session_logs_no_token_of_the_origin() {
 
     let log = bin.join("daemon.out");
     wait_for(&log, "riff daemon: como-technologies/riff: issue-12: ").await;
+    let started = Instant::now();
+    let thread = loop {
+        let thread = machine.ok(Some("lead1"), &["read", "--all"]).await;
+        if thread.contains("could not start issue-12") {
+            break thread;
+        }
+        assert!(
+            started.elapsed() < isolated::HANG,
+            "no message to the lead: {thread}"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
     machine.ok(None, &["host", "leave"]).await;
     let log = machine.read("daemon.out");
     let line = log
@@ -3964,8 +3976,6 @@ async fn a_failed_clone_of_a_wave_session_logs_no_token_of_the_origin() {
         "{line}"
     );
     assert!(!log.contains("USER:") && !log.contains("KEN@"), "{log}");
-    let thread = machine.ok(Some("lead1"), &["read", "--all"]).await;
-    assert!(thread.contains("could not start issue-12"), "{thread}");
     assert!(
         thread.contains(" -- https://127.0.0.1:1/como-technologies/riff.git "),
         "{thread}"

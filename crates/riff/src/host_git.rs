@@ -270,9 +270,12 @@ pub fn within(dir: &Path, args: &[&str], limit: Duration) -> Result<String> {
 
 /// `text` with no user info in a URL: `SCHEME://USER:TOKEN@HOST/PATH`
 /// is `SCHEME://HOST/PATH` (01M7G1J1F1QWT4S45CDMMXP6J5). The user info
-/// ends at the last `@` before the end of the host, as git reads it: the
-/// first `/`, `?` or `#`, or the end of the text. A quote, a space or a
-/// tab does not end it. Each git call of riff on the host with a URL in
+/// ends at the last `@` before the first `/` after the `://`, or before
+/// the end of the text. Each other sign is part of it: for example a
+/// quote, a space, a tab, a `?` or a `#`. Git hides the user info in its
+/// own texts up to the first `@` before that `/`, so riff takes out at
+/// least as much as git. After a URL with no path, the text up to that
+/// last `@` goes out too. Each git call of riff on the host with a URL in
 /// its words runs through [`output`] and
 /// [`crate::git_credential::keyring_open`]. The error texts of these two
 /// and of [`within`] go through it. So a token in the URL of the origin
@@ -289,19 +292,22 @@ pub fn within(dir: &Path, args: &[&str], limit: Duration) -> Result<String> {
 ///     no_user_info("'http://a@b@127.0.0.1:8080' and ssh://git@github.com/o/r.git"),
 ///     "'http://127.0.0.1:8080' and ssh://github.com/o/r.git"
 /// );
-/// // A quote, a space or a tab in the password.
+/// // A quote, a space, a tab, a `?` or a `#` in the password.
 /// assert_eq!(
 ///     no_user_info("git ls-remote -- https://U:T'O\"K E\tN@h/o/r.git: fatal"),
 ///     "git ls-remote -- https://h/o/r.git: fatal"
 /// );
-/// // The host ends at a `?`, a `#` or the end of the text.
+/// assert_eq!(
+///     no_user_info("git clone -q -- https://U:T?O#K@h/o/r.git /c: fatal"),
+///     "git clone -q -- https://h/o/r.git /c: fatal"
+/// );
+/// // A URL with no path.
 /// assert_eq!(no_user_info("git fetch https://U:T@h"), "git fetch https://h");
 /// assert_eq!(no_user_info("https://U:T@h?a=b"), "https://h?a=b");
 /// assert_eq!(no_user_info("https://U:T@h#a"), "https://h#a");
+/// assert_eq!(no_user_info("git fetch https://h: no a@b/c"), "git fetch https://b/c");
 /// // No user info: the text stays as it is.
 /// let plain = "git@github.com:o/r.git, https://github.com/o/r@v1, file:///tmp/a@b";
-/// assert_eq!(no_user_info(plain), plain);
-/// let plain = "https://h?a@b and https://h#a@b";
 /// assert_eq!(no_user_info(plain), plain);
 /// ```
 pub fn no_user_info(text: &str) -> String {
@@ -310,7 +316,7 @@ pub fn no_user_info(text: &str) -> String {
     while let Some(at) = rest.find("://") {
         let (head, after) = rest.split_at(at + "://".len());
         out.push_str(head);
-        let host_end = after.find(['/', '?', '#']).unwrap_or(after.len());
+        let host_end = after.find('/').unwrap_or(after.len());
         let host = after[..host_end].rfind('@').map_or(0, |user| user + 1);
         rest = &after[host..];
     }
@@ -602,12 +608,13 @@ pub(crate) mod tests {
     }
 
     /// 01M7G1J1F1QWT4S45CDMMXP6J5: a git call with a URL with user info
-    /// fails, with a quote and a space in the password. The error of
-    /// [`output`] and of [`within`] names the URL with no user info.
+    /// fails, with a quote, a space, a `?` and a `#` in the password. The
+    /// error of [`output`] and of [`within`] names the URL with no user
+    /// info.
     #[test]
     fn an_error_of_git_shows_no_user_info_of_a_url() {
         let root = tempfile::tempdir().unwrap();
-        let url = "https://USER:TO'K EN@127.0.0.1:1/o/r.git";
+        let url = "https://USER:TO'K E?N#@127.0.0.1:1/o/r.git";
         let args = ["ls-remote", "--", url, "refs/heads/main"];
         for error in [
             output(root.path(), &args).unwrap_err(),
@@ -618,7 +625,7 @@ pub(crate) mod tests {
                 error.contains("ls-remote -- https://127.0.0.1:1/o/r.git refs/heads/main: "),
                 "{error}"
             );
-            assert!(!error.contains("EN@") && !error.contains("USER"), "{error}");
+            assert!(!error.contains("N#@") && !error.contains("USER"), "{error}");
         }
     }
 
