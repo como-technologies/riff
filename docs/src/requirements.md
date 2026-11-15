@@ -8894,6 +8894,15 @@ of this part when they merge.
   ends in the last token of the same start that they found. So the time
   to scrub a line grows with its length, not with its square, and a
   long line from a session holds the daemon for no long time.
+- **01M7FNTSHXPQXXKZF761V0NN9Z** The host reads at most a limit of each
+  file in a folder that a container writes, and at most a limit of the
+  entries of each folder there: 256 MB of a transcript, 16 MB of
+  `.claude.json` and of `settings.json`, 1 MB of the file `alternates`
+  of a clone, and 10,000 entries of a folder. The read stops at the
+  limit, also when the file grows in the read. A file over its limit
+  gives an error that names it, and a folder with more entries gives an
+  error that names the folder. A transcript over its limit counts as no
+  transcript, and the log names it.
 
 ### Process
 

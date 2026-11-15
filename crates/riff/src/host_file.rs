@@ -28,6 +28,15 @@
 //!   it to `NAME`. A rename replaces a link and never writes through it.
 //!   All the same, [`write()`] refuses a link at either name, so that the
 //!   person sees it.
+//! - A container can make a large file there, for example a sparse file
+//!   of 64 GiB, or millions of entries in a folder. So [`read()`] takes
+//!   the most bytes that it reads, and [`list`] the most entries
+//!   (01M7FNTSHXPQXXKZF761V0NN9Z). A file over the limit gives the error
+//!   [`text::host_file_too_large`], which names it. [`read()`] reads at
+//!   most one byte past the limit, also from a file that grows in the
+//!   read. A folder with more entries gives the error
+//!   [`text::host_file_too_many`], which names the folder: [`list`] reads
+//!   no entry past the limit.
 //! - The steps of the host there: the Claude folder of each start
 //!   ([`crate::run::claude_folder`]), the transcripts
 //!   ([`crate::usage::transcripts_in`], [`crate::usage::written_in`],
@@ -60,8 +69,8 @@
 //! let root = dir.path().join("claude");
 //! std::fs::create_dir(&root)?;
 //! riff::host_file::write(&root, Path::new("settings.json"), b"{}")?;
-//! assert_eq!(riff::host_file::read(&root, Path::new("settings.json"))?, Some(b"{}".to_vec()));
-//! assert_eq!(riff::host_file::read(&root, Path::new("none.json"))?, None);
+//! assert_eq!(riff::host_file::read(&root, Path::new("settings.json"), 1024)?, Some(b"{}".to_vec()));
+//! assert_eq!(riff::host_file::read(&root, Path::new("none.json"), 1024)?, None);
 //!
 //! // A link that the container made: the host neither reads nor writes
 //! // the file that it names.
@@ -70,8 +79,13 @@
 //! std::os::unix::fs::symlink(&person, root.join(".claude.json"))?;
 //! let error = riff::host_file::write(&root, Path::new(".claude.json"), b"{}").unwrap_err();
 //! assert!(error.to_string().contains(&root.join(".claude.json").display().to_string()), "{error}");
-//! assert!(riff::host_file::read(&root, Path::new(".claude.json")).is_err());
+//! assert!(riff::host_file::read(&root, Path::new(".claude.json"), 1024).is_err());
 //! assert_eq!(std::fs::read_to_string(&person)?, "the file of the person");
+//!
+//! // A sparse file of 64 GiB: the host reads none of it.
+//! std::fs::File::create(root.join("big.jsonl"))?.set_len(64 << 30)?;
+//! let error = riff::host_file::read(&root, Path::new("big.jsonl"), 1024).unwrap_err();
+//! assert_eq!(error.to_string(), riff::text::host_file_too_large(&root.join("big.jsonl"), 1024));
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
@@ -190,7 +204,9 @@ fn open_parent(root: &Path, name: &Path) -> Result<Option<(OwnedFd, OsString, Pa
 /// The bytes of the plain file `ROOT/NAME`, or `None` when it is not
 /// there. A link in `NAME` gives the error [`text::host_file_link`]. A
 /// file that is no plain file, for example a FIFO, gives the error
-/// [`text::host_file_not_plain`].
+/// [`text::host_file_not_plain`]. A file with more than `most` bytes
+/// gives the error [`text::host_file_too_large`]: the read stops at
+/// `most` and one byte.
 ///
 /// ```
 /// use std::path::Path;
@@ -198,19 +214,23 @@ fn open_parent(root: &Path, name: &Path) -> Result<Option<(OwnedFd, OsString, Pa
 /// let root = tempfile::tempdir()?;
 /// std::fs::create_dir(root.path().join("projects"))?;
 /// std::fs::write(root.path().join("projects/a.jsonl"), "line")?;
-/// assert_eq!(riff::host_file::read(root.path(), Path::new("projects/a.jsonl"))?, Some(b"line".to_vec()));
-/// assert_eq!(riff::host_file::read(root.path(), Path::new("none/a.jsonl"))?, None);
+/// assert_eq!(riff::host_file::read(root.path(), Path::new("projects/a.jsonl"), 4)?, Some(b"line".to_vec()));
+/// assert_eq!(riff::host_file::read(root.path(), Path::new("none/a.jsonl"), 4)?, None);
 ///
 /// // A link in the middle of the name counts.
 /// let other = tempfile::tempdir()?;
 /// std::fs::write(other.path().join("a.jsonl"), "secret")?;
 /// std::os::unix::fs::symlink(other.path(), root.path().join("linked"))?;
-/// let error = riff::host_file::read(root.path(), Path::new("linked/a.jsonl")).unwrap_err();
+/// let error = riff::host_file::read(root.path(), Path::new("linked/a.jsonl"), 4).unwrap_err();
 /// assert_eq!(error.to_string(), riff::text::host_file_link(&root.path().join("linked")));
-/// assert!(riff::host_file::read(root.path(), Path::new("../a.jsonl")).is_err());
+/// assert!(riff::host_file::read(root.path(), Path::new("../a.jsonl"), 4).is_err());
+///
+/// // One byte over the limit.
+/// let error = riff::host_file::read(root.path(), Path::new("projects/a.jsonl"), 3).unwrap_err();
+/// assert_eq!(error.to_string(), riff::text::host_file_too_large(&root.path().join("projects/a.jsonl"), 3));
 /// # Ok::<(), anyhow::Error>(())
 /// ```
-pub fn read(root: &Path, name: &Path) -> Result<Option<Vec<u8>>> {
+pub fn read(root: &Path, name: &Path, most: u64) -> Result<Option<Vec<u8>>> {
     let Some((dir, last, at)) = open_parent(root, name)? else {
         return Ok(None);
     };
@@ -222,17 +242,28 @@ pub fn read(root: &Path, name: &Path) -> Result<Option<Vec<u8>>> {
         Err(errno) => return Err(fault(&dir, &at, &last, errno)),
     };
     let path = at.join(&last);
-    let mut file = File::from(fd);
+    let file = File::from(fd);
     let meta = file
         .metadata()
         .with_context(|| format!("read {}", path.display()))?;
     if !meta.is_file() {
         bail!("{}", text::host_file_not_plain(&path));
     }
+    if meta.len() > most {
+        bail!("{}", text::host_file_too_large(&path, most));
+    }
+    match read_most(file, most).with_context(|| format!("read {}", path.display()))? {
+        Some(bytes) => Ok(Some(bytes)),
+        None => bail!("{}", text::host_file_too_large(&path, most)),
+    }
+}
+
+/// The bytes of `from`, or `None` when it has more than `most`: it reads
+/// at most `most` and one byte, also from a file that grows in the read.
+fn read_most(from: impl Read, most: u64) -> std::io::Result<Option<Vec<u8>>> {
     let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)
-        .with_context(|| format!("read {}", path.display()))?;
-    Ok(Some(bytes))
+    from.take(most.saturating_add(1)).read_to_end(&mut bytes)?;
+    Ok((u64::try_from(bytes.len()).unwrap_or(u64::MAX) <= most).then_some(bytes))
 }
 
 /// The text of [`read()`]: an error when it is no UTF-8.
@@ -242,11 +273,11 @@ pub fn read(root: &Path, name: &Path) -> Result<Option<Vec<u8>>> {
 ///
 /// let root = tempfile::tempdir()?;
 /// std::fs::write(root.path().join("a"), "text")?;
-/// assert_eq!(riff::host_file::read_to_string(root.path(), Path::new("a"))?.as_deref(), Some("text"));
+/// assert_eq!(riff::host_file::read_to_string(root.path(), Path::new("a"), 4)?.as_deref(), Some("text"));
 /// # Ok::<(), anyhow::Error>(())
 /// ```
-pub fn read_to_string(root: &Path, name: &Path) -> Result<Option<String>> {
-    read(root, name)?
+pub fn read_to_string(root: &Path, name: &Path, most: u64) -> Result<Option<String>> {
+    read(root, name, most)?
         .map(|bytes| {
             String::from_utf8(bytes)
                 .with_context(|| format!("{} is no text", root.join(name).display()))
@@ -345,7 +376,9 @@ pub fn write(root: &Path, name: &Path, bytes: &[u8]) -> Result<()> {
 /// Each entry of the folder `ROOT/NAME` with its kind, with no follow of
 /// a link, in the order of the names. `None` when the folder is not
 /// there. A link at `NAME` or in its folders gives the error
-/// [`text::host_file_link`].
+/// [`text::host_file_link`]. A folder with more than `most` entries
+/// gives the error [`text::host_file_too_many`]: the list stops at
+/// `most` and one entry.
 ///
 /// ```
 /// use std::path::Path;
@@ -357,17 +390,21 @@ pub fn write(root: &Path, name: &Path, bytes: &[u8]) -> Result<()> {
 /// std::fs::write(projects.join("a.jsonl"), "")?;
 /// std::os::unix::fs::symlink("/etc", projects.join("etc"))?;
 /// assert_eq!(
-///     riff::host_file::list(root.path(), Path::new("projects"))?,
+///     riff::host_file::list(root.path(), Path::new("projects"), 3)?,
 ///     Some(vec![
 ///         ("-data-clone".into(), Kind::Folder),
 ///         ("a.jsonl".into(), Kind::File),
 ///         ("etc".into(), Kind::Link),
 ///     ])
 /// );
-/// assert_eq!(riff::host_file::list(root.path(), Path::new("none"))?, None);
+/// assert_eq!(riff::host_file::list(root.path(), Path::new("none"), 3)?, None);
+///
+/// // One entry over the limit.
+/// let error = riff::host_file::list(root.path(), Path::new("projects"), 2).unwrap_err();
+/// assert_eq!(error.to_string(), riff::text::host_file_too_many(&projects, 2));
 /// # Ok::<(), anyhow::Error>(())
 /// ```
-pub fn list(root: &Path, name: &Path) -> Result<Option<Vec<(OsString, Kind)>>> {
+pub fn list(root: &Path, name: &Path, most: usize) -> Result<Option<Vec<(OsString, Kind)>>> {
     let parts = parts(root, name)?;
     let Some((dir, at)) = open_folder(root, &parts)? else {
         return Ok(None);
@@ -379,6 +416,7 @@ pub fn list(root: &Path, name: &Path) -> Result<Option<Vec<(OsString, Kind)>>> {
     .map_err(std::io::Error::from)
     .with_context(|| format!("list {}", at.display()))?;
     let mut entries = Vec::new();
+    let mut seen = 0_usize;
     for entry in listed {
         let entry = entry
             .map_err(std::io::Error::from)
@@ -386,6 +424,10 @@ pub fn list(root: &Path, name: &Path) -> Result<Option<Vec<(OsString, Kind)>>> {
         let name = OsStr::from_bytes(entry.file_name().to_bytes());
         if name == "." || name == ".." {
             continue;
+        }
+        seen += 1;
+        if seen > most {
+            bail!("{}", text::host_file_too_many(&at, most));
         }
         if let Some(kind) = kind_at(&dir, name) {
             entries.push((name.to_owned(), kind));
@@ -539,7 +581,7 @@ mod tests {
         let (root, claude, _person) = folders();
         let gone = root.path().join("gone");
         std::os::unix::fs::symlink(&gone, claude.join(".claude.json")).unwrap();
-        let error = read(&claude, Path::new(".claude.json")).unwrap_err();
+        let error = read(&claude, Path::new(".claude.json"), 1024).unwrap_err();
         assert_eq!(
             error.to_string(),
             text::host_file_link(&claude.join(".claude.json"))
@@ -552,7 +594,7 @@ mod tests {
     fn a_list_through_a_linked_folder_is_an_error() {
         let (root, claude, _person) = folders();
         std::os::unix::fs::symlink(root.path(), claude.join("projects")).unwrap();
-        let error = list(&claude, Path::new("projects")).unwrap_err();
+        let error = list(&claude, Path::new("projects"), 16).unwrap_err();
         assert_eq!(
             error.to_string(),
             text::host_file_link(&claude.join("projects"))
@@ -568,16 +610,74 @@ mod tests {
         write(&data, Path::new("a.json"), b"{}").unwrap();
         assert_eq!(std::fs::read(claude.join("a.json")).unwrap(), b"{}");
         assert_eq!(
-            read(&data, Path::new("a.json")).unwrap(),
+            read(&data, Path::new("a.json"), 1024).unwrap(),
             Some(b"{}".to_vec())
         );
+    }
+
+    /// A reader that counts the bytes that it gives, with no end.
+    struct Endless(u64);
+
+    impl Read for Endless {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            buf.fill(b'x');
+            self.0 += buf.len() as u64;
+            Ok(buf.len())
+        }
+    }
+
+    /// 01M7FNTSHXPQXXKZF761V0NN9Z: a file that grows in the read with no
+    /// end: the read stops at the limit and one byte.
+    #[test]
+    fn a_read_stops_one_byte_past_the_limit() {
+        let mut endless = Endless(0);
+        assert_eq!(read_most(&mut endless, 1000).unwrap(), None);
+        assert_eq!(endless.0, 1001);
+        assert_eq!(read_most(&b"1234"[..], 4).unwrap(), Some(b"1234".to_vec()));
+        assert_eq!(read_most(&b"12345"[..], 4).unwrap(), None);
+    }
+
+    /// 01M7FNTSHXPQXXKZF761V0NN9Z: a sparse file far over the limit gives
+    /// at once an error that names it.
+    #[test]
+    fn a_sparse_file_over_the_limit_is_an_error_that_names_it() {
+        let (_root, claude, _person) = folders();
+        std::fs::create_dir(claude.join("projects")).unwrap();
+        let big = claude.join("projects/s1.jsonl");
+        File::create(&big).unwrap().set_len(64 << 30).unwrap();
+        let name = Path::new("projects/s1.jsonl");
+        let error = read_to_string(&claude, name, 1 << 20).unwrap_err();
+        assert_eq!(error.to_string(), text::host_file_too_large(&big, 1 << 20));
+        std::fs::write(&big, "x".repeat(1 << 20)).unwrap();
+        assert_eq!(
+            read(&claude, name, 1 << 20).unwrap().unwrap().len(),
+            1 << 20
+        );
+    }
+
+    /// 01M7FNTSHXPQXXKZF761V0NN9Z: a folder with more entries than the
+    /// limit is an error that names the folder.
+    #[test]
+    fn a_folder_with_more_entries_than_the_limit_is_an_error() {
+        let (_root, claude, _person) = folders();
+        let subagents = claude.join("projects/s1/subagents");
+        std::fs::create_dir_all(&subagents).unwrap();
+        for n in 0..100 {
+            std::fs::write(subagents.join(format!("agent-{n:03}.jsonl")), "").unwrap();
+        }
+        let name = Path::new("projects/s1/subagents");
+        let listed = list(&claude, name, 100).unwrap().unwrap();
+        assert_eq!(listed.len(), 100);
+        assert_eq!(listed[0], ("agent-000.jsonl".into(), Kind::File));
+        let error = list(&claude, name, 99).unwrap_err();
+        assert_eq!(error.to_string(), text::host_file_too_many(&subagents, 99));
     }
 
     #[test]
     fn a_name_must_go_down_from_the_root() {
         let (_root, claude, _person) = folders();
         for name in ["", "/etc/passwd", "../person", "a/../b", "./a"] {
-            assert!(read(&claude, Path::new(name)).is_err(), "{name}");
+            assert!(read(&claude, Path::new(name), 1024).is_err(), "{name}");
             assert!(write(&claude, Path::new(name), b"x").is_err(), "{name}");
         }
     }

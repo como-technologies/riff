@@ -621,6 +621,40 @@ async fn usage_shows_the_claim_of_a_container_session_with_its_session() {
     );
 }
 
+/// 01M7FNTSHXPQXXKZF761V0NN9Z: a container session makes its transcript
+/// a sparse file of 64 GiB. At the end of the session, the daemon reads
+/// none of it and goes on: the claim counts the transcript of its
+/// helper agent.
+#[test]
+fn the_end_of_a_container_session_skips_a_transcript_over_the_limit() {
+    let (folder, marks) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let session = "ed2b8396-0d6a-4f4e-9f00-5b7c1d2e3f40";
+    let project = folder.path().join("claude/projects/-data-clone");
+    let helpers = project.join(session).join("subagents");
+    std::fs::create_dir_all(&helpers).unwrap();
+    let main = project.join(format!("{session}.jsonl"));
+    std::fs::File::create(&main)
+        .unwrap()
+        .set_len(64 << 30)
+        .unwrap();
+    std::fs::write(
+        helpers.join("agent-a.jsonl"),
+        reply(&now(), "h1", OPUS, [1, 20, 300, 4000]),
+    )
+    .unwrap();
+    let meter = Meter {
+        dir: marks.path().to_owned(),
+        gh: Gh::at(marks.path().join("no-gh")),
+    };
+    let transcripts = riff::usage::transcripts_in(&folder.path().join("claude"), session);
+    assert_eq!(transcripts, std::slice::from_ref(&main));
+    let start = riff::usage::now_ms() - 60_000;
+    let claim = ("como-technologies/riff", "issue-12");
+    let ended = meter.session_ended(session, claim, start, &transcripts, start + 120_000);
+    let claim = ended.expect("a transcript").unwrap();
+    assert_eq!(riff::usage::total(&claim.models).total(), 4321);
+}
+
 /// Makes the fake `gh` of `machine` also know pull request 40 of the
 /// issue 12, merged.
 fn knows_pr_40(machine: &Machine) {

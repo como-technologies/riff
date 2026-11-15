@@ -360,7 +360,7 @@ hold each decision of the design.
 
 | What sessions share | How riff keeps them apart | What a session can still do to another |
 |---|---|---|
-| The files of your machine | Each session is a rootless podman container (`--userns=keep-id`). It writes only its binds: its own clone, its own Claude folder, the folder of its socket and the volumes that `riff.toml` names. Each other write goes to the copy-on-write layer of the container, and goes when the session ends. riff on your machine follows no link in a folder that a session can write: its clone, its Claude folder and the folder of its socket. A link there gives an error, and riff reads and writes no file of yours through it: see [When a session puts a link in its folder](#when-a-session-puts-a-link-in-its-folder). | Nothing outside its binds. See the rows of git and of the caches. |
+| The files of your machine | Each session is a rootless podman container (`--userns=keep-id`). It writes only its binds: its own clone, its own Claude folder, the folder of its socket and the volumes that `riff.toml` names. Each other write goes to the copy-on-write layer of the container, and goes when the session ends. riff on your machine follows no link in a folder that a session can write: its clone, its Claude folder and the folder of its socket. A link there gives an error, and riff reads and writes no file of yours through it: see [When a session puts a link in its folder](#when-a-session-puts-a-link-in-its-folder). riff on your machine reads at most a limit of each file that a session writes there, and at most a limit of the entries of each folder there. So a large file of a session does not fill the memory of the riff daemon: see [When a session makes a large file in its folder](#when-a-session-makes-a-large-file-in-its-folder). | Nothing outside its binds. See the rows of git and of the caches. |
 | git: the clone and its alternates | Each session has its own clone, made with `git clone --reference MAIN` in a folder of riff, `new-clones/ITEM-ID8`, and then moved into the folder of the session. The lead gets a new clone in the same way at each start of a new lead, in `new-clones/lead-OWNER-REPO`, and its old clone goes (see [The clone of the lead at each start](development.md#the-clone-of-the-lead-at-each-start)). The container sees the objects of the main clone at the same path, with no write. No session writes the git dir of the main clone or of another session. The host runs no git in a folder that a session can write: the session writes the git config there, and a git config can name a program that git runs. One guard of riff refuses each git call on your machine in the folder of the sessions, in the folder of the leads, in each bind of a session with write, and in the folders of the podman volumes. When podman cannot list its volumes, no session with a volume starts: see [When podman cannot list its volumes](#when-podman-cannot-list-its-volumes). The daemon knows the main clone of a lead from its own records: the main clone of the wave of the repository, else the main clone that it serves for the repository. It never takes it from the file `.git/objects/info/alternates` of the clone of the lead: the lead writes that file. The sweep reads only GitHub and the file `repo` of the folder, and the council of a verify reads the main clone. The clone goes when its item ends. | Nothing in the clone of another session. A `git gc` of the main clone can remove an object that a session clone reads. |
 | git: the config | `~/.gitconfig` is bound with no write, or as an overlay whose changes go when the session ends. riff writes no git config of yours. A session writes only the config of its own clone. | Nothing. |
 | git: the commit | A commit has the bot of the GitHub App of the session as its author, for example `riff-como-technologies[bot]`, with the noreply email of the bot, and a `Riff-Session:` trailer that names the session. Where the Apps are not on the repository, it has your git identity. A session commits with no signature: riff sets `commit.gpgsign=false` in the environment of the container, so it applies to each git call of the session. The squash merge on GitHub makes the commit on `main` from the message that `riff verify pass` gives: the body of the pull request, which ends with `Riff-Session:` and `Co-authored-by:` you. No gpg agent goes into a container. See [Find the commits of a session](development.md#find-the-commits-of-a-session). | Nothing. The trailer `Riff-Session:` tells the commits of two sessions apart. |
@@ -481,6 +481,49 @@ rm ~/.local/share/riff/leads/OWNER-REPO/claude/settings.json
 The daemon starts the lead at the end of its wait. To start the lead at
 once, see
 [When the lead fails to start](#when-the-lead-fails-to-start).
+
+#### When a session makes a large file in its folder
+
+A session can make a large file in its clone or in its Claude folder,
+for example a sparse file of 64 GiB with `truncate -s 64G`. riff on
+your machine reads some files there: the transcripts at the end of each
+session, `.claude.json` and `settings.json` at each start of the lead,
+and the file `.git/objects/info/alternates` of each clone. So riff
+reads at most a limit of each one:
+
+| What riff reads | Its limit | Over the limit |
+|---|---|---|
+| A transcript, and the transcript of each helper agent | 256 MB | riff counts no tokens of it, and goes on. The log of the daemon names the file. |
+| `.claude.json` and `settings.json` of a Claude folder | 16 MB | The start stops. The error names the file. |
+| `.git/objects/info/alternates` of a clone | 1 MB | riff counts no main clone for the clone. |
+| The entries of the folder `projects` of a Claude folder, and of the folder of the helper agents of a transcript | 10,000 entries | riff counts no tokens of the transcripts there, and goes on. The log of the daemon names the folder. |
+
+The read stops at the limit, also when the file grows in the read. So
+the riff daemon takes no more memory for the file, and each other
+session goes on.
+
+```mermaid
+flowchart LR
+    R["riff reads a file<br/>that a session writes"] --> L{"over its limit?"}
+    L -- no --> G["riff reads it"]
+    L -- yes --> E["riff reads no more of it<br/>the error names the file<br/>the daemon goes on"]
+```
+
+The error names the file:
+
+```text
+riff reads at most 16MB of a file in a folder that a session can write: /home/mike/.local/share/riff/leads/acme-app/claude/.claude.json is larger. Remove it, and start again.
+```
+
+Find the error in the log of the daemon, and each large file in the
+Claude folder of the lead. Then remove the file that the error names.
+At the next start, riff writes a new `.claude.json`:
+
+```sh
+journalctl --user -u riff | grep -E 'reads at most|lists at most'
+find ~/.local/share/riff/leads/OWNER-REPO/claude -size +16M
+rm ~/.local/share/riff/leads/OWNER-REPO/claude/.claude.json
+```
 
 ### The home of a session is in memory
 

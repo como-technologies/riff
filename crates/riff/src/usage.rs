@@ -58,6 +58,11 @@
 //!   `message.id`. The sum counts each reply one time ([`Replies`]).
 //! - A helper agent has transcripts of its own, in the directory
 //!   `SESSION/subagents` next to `SESSION.jsonl`. They count too.
+//! - A container session writes its transcripts. So riff reads at most
+//!   [`MAX_TRANSCRIPT`] of each one, and at most [`MAX_ENTRIES`] entries
+//!   of each folder of them (01M7FNTSHXPQXXKZF761V0NN9Z). A transcript
+//!   or a folder over its limit counts no tokens, and the log names it
+//!   ([`crate::text::transcript_skipped`]).
 //! - A reply counts for a claim when its time is from the start of the
 //!   claim to before its end.
 //! - Tokens in a time with two claims of one session count for the
@@ -353,7 +358,10 @@ struct Used {
 /// The replies of the model in the transcripts of a session, each one
 /// time (01M3Y1YP0QY11VR28RF9MKPN0G).
 #[derive(Debug, Default)]
-pub struct Replies(HashMap<String, (u64, String, Tokens)>);
+pub struct Replies {
+    replies: HashMap<String, (u64, String, Tokens)>,
+    skipped: Vec<String>,
+}
 
 impl Replies {
     /// Adds each reply in the text of one transcript. A line that is no
@@ -382,16 +390,19 @@ impl Replies {
                 cache_read: used.cache_read_input_tokens,
             };
             let id = reply.id.unwrap_or_else(|| format!("{at_ms} {model}"));
-            self.0.insert(id, (at_ms, model, tokens));
+            self.replies.insert(id, (at_ms, model, tokens));
         }
     }
 
     /// The replies of each transcript of `paths`, and of the helper
-    /// agents of each one. A file that cannot be read is skipped: the
+    /// agents of each one. A file that is not there is skipped: the
     /// agent tool can remove an old transcript. A container session
     /// writes its transcripts, so each read goes through
     /// [`crate::host_file`] from the Claude folder of the transcript
-    /// ([`in_claude`]): a link there is skipped too.
+    /// ([`in_claude`]), with the limits [`MAX_TRANSCRIPT`] and
+    /// [`MAX_ENTRIES`] (01M7FNTSHXPQXXKZF761V0NN9Z). A link there, a
+    /// transcript over its limit and a folder of helpers over its limit
+    /// are skipped too, and the log names each one ([`Replies::skipped`]).
     pub fn read(paths: &[PathBuf]) -> Replies {
         let mut replies = Replies::default();
         for path in paths {
@@ -399,30 +410,49 @@ impl Replies {
                 continue;
             };
             let subagents = name.with_extension("").join(SUBAGENTS);
-            let helpers = crate::host_file::list(claude, &subagents)
-                .ok()
-                .flatten()
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|(file, kind)| {
-                    *kind == crate::host_file::Kind::File
-                        && Path::new(file).extension().is_some_and(|e| e == "jsonl")
-                })
-                .map(|(file, _)| subagents.join(file));
+            let helpers = match crate::host_file::list(claude, &subagents, MAX_ENTRIES) {
+                Ok(listed) => listed.unwrap_or_default(),
+                Err(e) => {
+                    replies.skip(&e);
+                    Vec::new()
+                }
+            }
+            .into_iter()
+            .filter(|(file, kind)| {
+                *kind == crate::host_file::Kind::File
+                    && Path::new(file).extension().is_some_and(|e| e == "jsonl")
+            })
+            .map(|(file, _)| subagents.join(file));
             for file in std::iter::once(name.to_owned()).chain(helpers) {
-                if let Ok(Some(text)) = crate::host_file::read_to_string(claude, &file) {
-                    replies.add(&text);
+                match crate::host_file::read_to_string(claude, &file, MAX_TRANSCRIPT) {
+                    Ok(Some(text)) => replies.add(&text),
+                    Ok(None) => {}
+                    Err(e) => replies.skip(&e),
                 }
             }
         }
         replies
     }
 
+    /// Skips a file whose read failed with `cause`: a line of the log
+    /// names it.
+    fn skip(&mut self, cause: &anyhow::Error) {
+        let line = text::transcript_skipped(&format!("{cause:#}"));
+        eprintln!("{line}");
+        self.skipped.push(line);
+    }
+
+    /// The line of the log of each file that [`Replies::read`] skipped,
+    /// in the order of the reads.
+    pub fn skipped(&self) -> &[String] {
+        &self.skipped
+    }
+
     /// The tokens of each model in the replies whose time is in one of
     /// `windows`. A model with no tokens is left out.
     pub fn sum(&self, windows: &[Window]) -> Models {
         let mut models = Models::new();
-        for (at_ms, model, tokens) in self.0.values() {
+        for (at_ms, model, tokens) in self.replies.values() {
             let counts = windows.iter().any(|(from, to)| from <= at_ms && at_ms < to);
             if counts && tokens.total() > 0 {
                 *models.entry(model.clone()).or_default() += *tokens;
@@ -1546,7 +1576,9 @@ impl Meter {
 
 /// The transcripts of the session `session` in the Claude folder
 /// `claude` of a container session: `projects/*/SESSION.jsonl`. `claude`
-/// takes the riff session ID as its own (01M588N8AYSGVWFW05A5RV976H).
+/// takes the riff session ID as its own (01M588N8AYSGVWFW05A5RV976H). A
+/// link at `projects`, or more than [`MAX_ENTRIES`] entries in it, gives
+/// no transcript, and the log names it (01M7FNTSHXPQXXKZF761V0NN9Z).
 ///
 /// ```
 /// let claude = tempfile::tempdir()?;
@@ -1562,10 +1594,13 @@ impl Meter {
 /// # Ok::<(), std::io::Error>(())
 /// ```
 pub fn transcripts_in(claude: &Path, session: &str) -> Vec<PathBuf> {
-    transcripts_with_times(claude, session)
-        .into_iter()
-        .map(|(path, _)| path)
-        .collect()
+    match transcripts_with_times(claude, session) {
+        Ok(found) => found.into_iter().map(|(path, _)| path).collect(),
+        Err(e) => {
+            eprintln!("{}", text::transcript_skipped(&format!("{e:#}")));
+            Vec::new()
+        }
+    }
 }
 
 /// The time of the last write to a transcript of `session` in the Claude
@@ -1582,6 +1617,7 @@ pub fn transcripts_in(claude: &Path, session: &str) -> Vec<PathBuf> {
 /// ```
 pub fn written_in(claude: &Path, session: &str) -> Option<SystemTime> {
     transcripts_with_times(claude, session)
+        .ok()?
         .into_iter()
         .map(|(_, time)| time)
         .max()
@@ -1590,13 +1626,14 @@ pub fn written_in(claude: &Path, session: &str) -> Option<SystemTime> {
 /// Each transcript of `session` in the Claude folder `claude`, in the
 /// order of the paths, with the time of its last write. The session
 /// writes that folder, so riff looks through [`crate::host_file`]: a
-/// link there counts as no transcript (01M7FE5FYFAR92PM3EJJ211VM2).
-fn transcripts_with_times(claude: &Path, session: &str) -> Vec<(PathBuf, SystemTime)> {
+/// link there counts as no transcript (01M7FE5FYFAR92PM3EJJ211VM2). A
+/// link at the folder of the projects, and a folder of the projects with
+/// more than [`MAX_ENTRIES`] entries, give an error that names it
+/// (01M7FNTSHXPQXXKZF761V0NN9Z).
+fn transcripts_with_times(claude: &Path, session: &str) -> Result<Vec<(PathBuf, SystemTime)>> {
     let name = format!("{}.jsonl", riff_core::name::sanitize(session));
     let projects = Path::new(PROJECTS);
-    crate::host_file::list(claude, projects)
-        .ok()
-        .flatten()
+    Ok(crate::host_file::list(claude, projects, MAX_ENTRIES)?
         .unwrap_or_default()
         .into_iter()
         .filter(|(_, kind)| *kind == crate::host_file::Kind::Folder)
@@ -1605,7 +1642,7 @@ fn transcripts_with_times(claude: &Path, session: &str) -> Vec<(PathBuf, SystemT
             let time = crate::host_file::modified(claude, &path).ok()??;
             Some((claude.join(path), time))
         })
-        .collect()
+        .collect())
 }
 
 /// The folder of the projects in a Claude folder: `projects/P/S.jsonl`
@@ -1615,6 +1652,15 @@ pub const PROJECTS: &str = "projects";
 /// The folder of the helper agents of a transcript `S.jsonl`, in the
 /// folder `S` beside it.
 pub const SUBAGENTS: &str = "subagents";
+
+/// The most bytes that riff reads of one transcript
+/// (01M7FNTSHXPQXXKZF761V0NN9Z): a session writes it, and a larger one
+/// counts no tokens.
+pub const MAX_TRANSCRIPT: u64 = 256 << 20;
+
+/// The most entries that riff reads of the folder of the projects or of
+/// the helpers of a transcript (01M7FNTSHXPQXXKZF761V0NN9Z).
+pub const MAX_ENTRIES: usize = 10_000;
 
 /// The Claude folder of the transcript `path`, `CLAUDE/projects/P/S.jsonl`,
 /// and the name of `path` in it: [`crate::host_file`] opens each part of
@@ -1975,6 +2021,43 @@ mod tests {
         nix::unistd::mkfifo(&main, nix::sys::stat::Mode::S_IRWXU).unwrap();
         assert!(transcripts_in(&claude, "s1").is_empty());
         assert!(Replies::read(&[main]).sum(&[(0, u64::MAX)]).is_empty());
+    }
+
+    /// 01M7FNTSHXPQXXKZF761V0NN9Z: a container session makes a sparse
+    /// transcript of 64 GiB. riff reads none of it, the log names it,
+    /// and the other transcripts count.
+    #[test]
+    fn a_transcript_over_the_limit_is_skipped_and_the_log_names_it() {
+        let claude = tempfile::tempdir().unwrap();
+        let project = claude.path().join(PROJECTS).join("-data-clone");
+        let main = project.join("s1.jsonl");
+        write(&main, &[]);
+        std::fs::File::options()
+            .write(true)
+            .open(&main)
+            .unwrap()
+            .set_len(64 << 30)
+            .unwrap();
+        write(
+            &project.join("s1/subagents/agent-a.jsonl"),
+            &[reply(NINE, "h1", "haiku", 2)],
+        );
+        let other = project.join("s2.jsonl");
+        write(&other, &[reply(NINE, "m2", "opus", 3)]);
+        assert_eq!(
+            transcripts_in(claude.path(), "s1"),
+            std::slice::from_ref(&main)
+        );
+        let replies = Replies::read(&[main.clone(), other]);
+        let models = replies.sum(&[(0, u64::MAX)]);
+        assert_eq!((models["opus"].output, models["haiku"].output), (3, 2));
+        assert_eq!(
+            replies.skipped(),
+            [text::transcript_skipped(&text::host_file_too_large(
+                &main,
+                MAX_TRANSCRIPT
+            ))]
+        );
     }
 
     #[test]

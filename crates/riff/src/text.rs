@@ -7307,6 +7307,70 @@ pub fn host_file_not_plain(path: &Path) -> String {
     )
 }
 
+/// The error of the guard of the files of the host when the file `path`,
+/// in a folder that a container writes, has more than `most` bytes
+/// ([`crate::host_file::read`], 01M7FNTSHXPQXXKZF761V0NN9Z).
+///
+/// ```
+/// use std::path::Path;
+///
+/// assert_eq!(
+///     riff::text::host_file_too_large(Path::new("/l/o-r/claude/.claude.json"), 16 << 20),
+///     "riff reads at most 16MB of a file in a folder that a session can write: \
+///      /l/o-r/claude/.claude.json is larger. Remove it, and start again."
+/// );
+/// assert!(riff::text::host_file_too_large(Path::new("/a"), 1024).contains(" 1024 bytes "));
+/// ```
+pub fn host_file_too_large(path: &Path, most: u64) -> String {
+    let most = if most < 1 << 20 {
+        format!("{most} bytes")
+    } else {
+        size_words(most)
+    };
+    format!(
+        "riff reads at most {most} of a file in a folder that a session can write: {} is larger. \
+         Remove it, and start again.",
+        path.display()
+    )
+}
+
+/// The error of the guard of the files of the host when the folder
+/// `path`, in a folder that a container writes, has more than `most`
+/// entries ([`crate::host_file::list`], 01M7FNTSHXPQXXKZF761V0NN9Z).
+///
+/// ```
+/// use std::path::Path;
+///
+/// assert_eq!(
+///     riff::text::host_file_too_many(Path::new("/l/o-r/claude/projects"), 10_000),
+///     "riff lists at most 10000 entries of a folder that a session can write: \
+///      /l/o-r/claude/projects has more. Remove some, and start again."
+/// );
+/// ```
+pub fn host_file_too_many(path: &Path, most: usize) -> String {
+    format!(
+        "riff lists at most {most} entries of a folder that a session can write: {} has more. \
+         Remove some, and start again.",
+        path.display()
+    )
+}
+
+/// The line of the log for a transcript, or a folder of transcripts,
+/// whose tokens riff does not count ([`crate::usage::Replies::read`],
+/// [`crate::usage::transcripts_in`]): `cause` names it.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::transcript_skipped("riff reads at most 256MB of a file in a folder that a \
+///         session can write: /s/a.jsonl is larger. Remove it, and start again."),
+///     "riff counts no tokens of a transcript, and goes on. riff reads at most 256MB of a file \
+///      in a folder that a session can write: /s/a.jsonl is larger. Remove it, and start again."
+/// );
+/// ```
+pub fn transcript_skipped(cause: &str) -> String {
+    format!("riff counts no tokens of a transcript, and goes on. {cause}")
+}
+
 /// `riff run` on a host that is not Linux (01M4ZBGK7SFEXE1AGH6Z0YQHJP).
 pub const RUN_LINUX_ONLY: &str = "riff run needs Linux: riff starts no session on this OS. The \
      sessions on a Mac come with #1649.";

@@ -143,6 +143,102 @@ fn a_fifo_in_the_claude_folder_gives_an_error_at_once() {
     assert_eq!(format!("{error:#}"), riff::text::host_file_not_plain(&fifo));
 }
 
+/// A sparse file of 64 GiB in the place of `.claude.json` or of
+/// `settings.json` (01M7FNTSHXPQXXKZF761V0NN9Z): the start reads none of
+/// it, gives an error that names it at once, and writes nothing. With the
+/// file gone, the next start writes the folder.
+#[test]
+fn a_sparse_config_over_the_limit_gives_an_error_that_names_it() {
+    for name in [".claude.json", "settings.json"] {
+        let root = tempfile::tempdir().unwrap();
+        let hostile = hostile(root.path(), &[]);
+        let claude = &hostile.claude;
+        claude_folder(claude).unwrap();
+        let big = claude.join(name);
+        std::fs::File::create(&big)
+            .unwrap()
+            .set_len(64 << 30)
+            .unwrap();
+        let other = if name == "settings.json" {
+            ".claude.json"
+        } else {
+            "settings.json"
+        };
+        let before = std::fs::read(claude.join(other)).unwrap();
+        let error = claude_folder(claude).unwrap_err();
+        assert_eq!(
+            format!("{error:#}"),
+            riff::text::host_file_too_large(&big, riff::run::MAX_CONFIG),
+            "{name}"
+        );
+        assert_eq!(std::fs::metadata(&big).unwrap().len(), 64 << 30, "{name}");
+        assert!(!claude.join(format!("{name}.riff")).exists(), "{name}");
+        std::fs::remove_file(&big).unwrap();
+        claude_folder(claude).unwrap();
+        assert!(std::fs::metadata(&big).unwrap().len() < 1 << 20, "{name}");
+        if name == ".claude.json" {
+            assert_eq!(std::fs::read(claude.join(other)).unwrap(), before);
+        }
+    }
+}
+
+/// The text of the how-to with the heading `heading` in `page`, up to the
+/// next heading of its level or above.
+fn how_to<'a>(page: &'a str, heading: &str) -> &'a str {
+    let start = page.find(heading).expect("the how-to is in the book");
+    let rest = &page[start + heading.len()..];
+    let end = ["\n### ", "\n#### "]
+        .iter()
+        .filter_map(|next| rest.find(next))
+        .min()
+        .unwrap_or(rest.len());
+    &rest[..end]
+}
+
+/// The how-to "When a session makes a large file in its folder" in the
+/// book (01M7FNTSHXPQXXKZF761V0NN9Z): the row of the files of the
+/// machine points to it, it names each limit of riff, its error is the
+/// error of riff, and its commands find the error and the file.
+#[test]
+fn the_book_says_what_to_do_with_a_large_file_in_the_folder_of_the_lead() {
+    let page = crate::book::page("how-it-works.md");
+    let how_to = how_to(
+        &page,
+        "#### When a session makes a large file in its folder",
+    );
+    let error = riff::text::host_file_too_large(
+        Path::new("/home/mike/.local/share/riff/leads/acme-app/claude/.claude.json"),
+        riff::run::MAX_CONFIG,
+    );
+    assert!(how_to.contains(&error), "{how_to}");
+    for (limit, words) in [
+        (riff::usage::MAX_TRANSCRIPT, "| 256 MB |"),
+        (riff::run::MAX_CONFIG, "| 16 MB |"),
+        (riff::lead::MAX_ALTERNATES, "| 1 MB |"),
+    ] {
+        let mb = words.trim_matches(['|', ' ']).trim_end_matches(" MB");
+        assert_eq!(limit, mb.parse::<u64>().unwrap() << 20, "{words}");
+        assert!(how_to.contains(words), "{words}");
+    }
+    assert_eq!(riff::usage::MAX_ENTRIES, 10_000);
+    assert!(how_to.contains("| 10,000 entries |"), "{how_to}");
+    let too_many = riff::text::host_file_too_many(Path::new("/p"), riff::usage::MAX_ENTRIES);
+    assert!(too_many.starts_with("riff lists at most"), "{too_many}");
+    assert!(error.starts_with("riff reads at most"), "{error}");
+    assert_eq!(
+        crate::book::commands_in(how_to),
+        [
+            "journalctl --user -u riff | grep -E 'reads at most|lists at most'",
+            "find ~/.local/share/riff/leads/OWNER-REPO/claude -size +16M",
+            "rm ~/.local/share/riff/leads/OWNER-REPO/claude/.claude.json",
+        ]
+    );
+    assert!(
+        page.contains("(#when-a-session-makes-a-large-file-in-its-folder)"),
+        "the row of the files of the machine points to the how-to"
+    );
+}
+
 /// The how-to "When a session puts a link in its folder" in the book: the
 /// row of the files of the machine points to it, its error is the error
 /// of riff, it finds the error in the log of the daemon, and its commands
@@ -153,10 +249,7 @@ fn a_fifo_in_the_claude_folder_gives_an_error_at_once() {
 #[test]
 fn the_book_says_what_to_do_with_a_link_in_the_folder_of_the_lead() {
     let page = crate::book::page("how-it-works.md");
-    let heading = "#### When a session puts a link in its folder";
-    let start = page.find(heading).expect("the how-to is in the book");
-    let rest = &page[start + heading.len()..];
-    let how_to = &rest[..rest.find("\n### ").unwrap_or(rest.len())];
+    let how_to = how_to(&page, "#### When a session puts a link in its folder");
     let error = riff::text::host_file_link(Path::new(
         "/home/mike/.local/share/riff/leads/acme-app/claude/settings.json",
     ));

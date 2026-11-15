@@ -833,6 +833,11 @@ pub const CLAUDE_JSON: &str = ".claude.json";
 /// The name of the settings in the Claude folder of a session.
 pub const SETTINGS_JSON: &str = "settings.json";
 
+/// The most bytes that riff reads of [`CLAUDE_JSON`] and of
+/// [`SETTINGS_JSON`] in the Claude folder of a session
+/// (01M7FNTSHXPQXXKZF761V0NN9Z).
+pub const MAX_CONFIG: u64 = 16 << 20;
+
 /// Writes the own Claude folder `dir` of a session: the lead, a session
 /// of `riff run` and a session of the daemon (01M51JACH6TQP318ZFG6NQ9GRM).
 ///
@@ -855,7 +860,9 @@ pub const SETTINGS_JSON: &str = "settings.json";
 ///
 /// The session writes `dir`, so each read and write there goes through
 /// [`crate::host_file`]: a link there gives an error that names it, and
-/// the host reads and writes no file of the person through it.
+/// the host reads and writes no file of the person through it. A file
+/// over [`MAX_CONFIG`] gives an error that names it, and riff reads no
+/// more of it and writes nothing (01M7FNTSHXPQXXKZF761V0NN9Z).
 ///
 /// ```
 /// use riff::permissions::{Role, Trust};
@@ -901,6 +908,15 @@ pub const SETTINGS_JSON: &str = "settings.json";
 ///     .unwrap_err();
 /// assert_eq!(format!("{error:#}"), riff::text::host_file_link(&claude.join("settings.json")));
 /// assert_eq!(std::fs::read_to_string(&person)?, r#"{"theme":"dark"}"#);
+///
+/// // A sparse `.claude.json` of 64 GiB: riff reads none of it, and
+/// // gives an error that names it.
+/// let config = claude.join(".claude.json");
+/// std::fs::File::create(&config)?.set_len(64 << 30)?;
+/// let error = riff::run::claude_folder(&claude, "/data/clone".as_ref(), &person, &auto, Role::Worker)
+///     .unwrap_err();
+/// assert_eq!(format!("{error:#}"), riff::text::host_file_too_large(&config, riff::run::MAX_CONFIG));
+/// assert_eq!(std::fs::metadata(&config)?.len(), 64 << 30);
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn claude_folder(
@@ -912,7 +928,7 @@ pub fn claude_folder(
 ) -> Result<()> {
     std::fs::create_dir_all(dir).with_context(|| format!("cannot make {}", dir.display()))?;
     let config = Path::new(CLAUDE_JSON);
-    let mut root = match crate::host_file::read(dir, config)?
+    let mut root = match crate::host_file::read(dir, config, MAX_CONFIG)?
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
     {
         Some(Value::Object(map)) => map,
@@ -945,7 +961,7 @@ pub fn claude_folder(
         &serde_json::to_vec_pretty(&Value::Object(root))?,
     )?;
     let name = Path::new(SETTINGS_JSON);
-    let new = match crate::host_file::read_to_string(dir, name)? {
+    let new = match crate::host_file::read_to_string(dir, name, MAX_CONFIG)? {
         Some(text) => session_settings(&text, auto, role)
             .with_context(|| dir.join(name).display().to_string())?,
         None => Some(serde_json::to_string_pretty(&settings(auto, role))?),

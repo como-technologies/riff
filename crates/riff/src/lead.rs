@@ -1294,6 +1294,10 @@ const OBJECTS: &str = ".git/objects";
 /// the clone links to.
 const ALTERNATES: &str = "info/alternates";
 
+/// The most bytes that riff reads of the file `alternates` of a clone
+/// (01M7FNTSHXPQXXKZF761V0NN9Z).
+pub const MAX_ALTERNATES: u64 = 1 << 20;
+
 /// The main clone that the clone at `clone` links to: `git clone
 /// --reference MAIN` ([`fresh_clone`]) writes `MAIN/.git/objects` in the
 /// file `.git/objects/info/alternates` of the clone. The session writes
@@ -1302,7 +1306,9 @@ const ALTERNATES: &str = "info/alternates";
 /// the folder that it names: the main clone of a lead comes from
 /// [`main_of`] (01M7EAZ9N9DY7JPXZP1V8JY01E). It reads the file through
 /// [`crate::host_file`]: a link in the clone gives an error, as no file
-/// does (01M7FE5FYFAR92PM3EJJ211VM2).
+/// does (01M7FE5FYFAR92PM3EJJ211VM2). So does a file over
+/// [`MAX_ALTERNATES`]: riff reads no more of it
+/// (01M7FNTSHXPQXXKZF761V0NN9Z).
 ///
 /// ```
 /// let dir = tempfile::tempdir()?;
@@ -1319,12 +1325,21 @@ const ALTERNATES: &str = "info/alternates";
 /// std::fs::write(dir.path().join("person"), "/src/riff/.git/objects\n")?;
 /// std::os::unix::fs::symlink(dir.path().join("person"), info.join("alternates"))?;
 /// assert!(riff::lead::linked_main(&clone).is_err());
+///
+/// // A sparse file of 64 GiB: riff reads none of it.
+/// std::fs::remove_file(info.join("alternates"))?;
+/// std::fs::File::create(info.join("alternates"))?.set_len(64 << 30)?;
+/// let error = riff::lead::linked_main(&clone).unwrap_err();
+/// assert_eq!(
+///     error.to_string(),
+///     riff::text::host_file_too_large(&info.join("alternates"), riff::lead::MAX_ALTERNATES)
+/// );
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn linked_main(clone: &Path) -> Result<PathBuf> {
     let name = Path::new(OBJECTS).join(ALTERNATES);
     let (objects, file) = (clone.join(OBJECTS), clone.join(&name));
-    let text = crate::host_file::read_to_string(clone, &name)?
+    let text = crate::host_file::read_to_string(clone, &name, MAX_ALTERNATES)?
         .with_context(|| format!("cannot read {}", file.display()))?;
     let line = text
         .lines()
