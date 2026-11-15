@@ -815,6 +815,7 @@ async fn riff_daemon_limit_shows_and_sets_the_limit_of_the_host() {
     assert_eq!(
         text(&out.stdout),
         "The limit of this host: 3 live sessions, and 8 GB of free memory or more for a start.\n\
+         A start also needs 20 GB of free disk or more.\n\
          Each new container: 8 CPUs and 8 GB of memory.\n\
          Effort of the lead xhigh, of a work item xhigh, of a verify xhigh.\n"
     );
@@ -831,12 +832,17 @@ async fn riff_daemon_limit_shows_and_sets_the_limit_of_the_host() {
     assert_eq!(
         text(&out.stdout),
         format!(
-            "{set}\nEach new container: 8 CPUs and 8 GB of memory.\n\
+            "{set}\nA start also needs 20 GB of free disk or more.\n\
+             Each new container: 8 CPUs and 8 GB of memory.\n\
              Effort of the lead xhigh, of a work item xhigh, of a verify xhigh.\n"
         )
     );
     let out = here.run(false, &["daemon", "limit", "--floor", "6"]).await;
     assert!(text(&out.stdout).contains("5 live sessions, and 6 GB"));
+    // The floor of free disk (01M7G43090V1F263GYK3GQEXCZ).
+    let out = here.run(false, &["daemon", "limit", "--disk", "40"]).await;
+    let disk = "A start also needs 40 GB of free disk or more.";
+    assert!(text(&out.stdout).contains(disk), "{}", text(&out.stdout));
     let out = here
         .run(false, &["daemon", "limit", "--cpus", "6", "--memory", "12"])
         .await;
@@ -898,6 +904,11 @@ async fn riff_daemon_limit_shows_and_sets_the_limit_of_the_host() {
     let status = text(&out.stdout);
     assert!(status.contains("5 live sessions, and 6 GB"), "{status}");
     assert!(status.contains(caps), "{status}");
+    // The free disk: the fake disk of each test (01M7G430CFEK4B0FDG1552G8VE).
+    assert!(status.contains(disk), "{status}");
+    let free = "Disk: 400 GB free of 500 GB, at ";
+    assert!(status.contains(free), "{status}");
+    assert!(status.contains(". The floor is 40 GB.\n"), "{status}");
     term(daemon.id());
     tokio::task::spawn_blocking(move || daemon.wait().unwrap())
         .await

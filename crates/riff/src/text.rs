@@ -9515,6 +9515,7 @@ const LIMIT_GUESS: &str = " riff cannot read the reset: this time is the end of 
 ///     sends: vec![],
 ///     events: vec![],
 ///     volumes: None,
+///     disk: None,
 /// };
 /// let text = riff::text::daemon_status(&status, 300_000);
 /// assert!(text.starts_with("The riff daemon runs: pid 42, build 1.3.1 06a0ae03be98, for 5m.\n"));
@@ -9548,6 +9549,7 @@ const LIMIT_GUESS: &str = " riff cannot read the reset: this time is the end of 
 ///     "  riff-issue-12-1a2b3c4d  issue-12  session 1a2b3c4d-0000  for 1m  works: > Bash: just check\n"
 /// ));
 /// assert!(text.contains("The limit of this host: 3 live sessions, and 8 GB"));
+/// assert!(!text.contains("Disk:"), "{text}");
 /// assert!(text.contains("The MCP servers of each new session: riff, docs.\n"));
 /// assert!(text.contains("Wait for room:\n  the wave of o/r\n"));
 /// assert!(text.contains("Waves:\n  o/r  starts issue-12\n"));
@@ -9679,6 +9681,16 @@ const LIMIT_GUESS: &str = " riff cannot read the reset: this time is the end of 
 /// let line = "Volumes: riff cannot read the folders of the podman volumes, for 5m.";
 /// assert!(text.contains(line), "{text}");
 /// assert!(text.find(line) < text.find("Sessions:\n"), "{text}");
+/// // The free disk, after the limit (01M7G430CFEK4B0FDG1552G8VE).
+/// let disk = riff_client::machines::Disk { free_gb: 5, total_gb: 915 };
+/// status.disk = Some(riff::room::Space { folder: "/h".into(), disk });
+/// let text = riff::text::daemon_status(&status, 300_000);
+/// let line = "A start also needs 20 GB of free disk or more.\n\
+///             Each new container: 8 CPUs and 8 GB of memory.\n\
+///             Effort of the lead xhigh, of a work item xhigh, of a verify xhigh.\n\
+///             Disk: 5 GB free of 915 GB, at /h. It is below the floor of 20 GB: the daemon \
+///             starts no session.";
+/// assert!(text.contains(line), "{text}");
 /// ```
 pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
     let age = |since: i64| ago(u64::try_from((now_ms - since) / 1000).unwrap_or(0));
@@ -9691,6 +9703,9 @@ pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
     );
     if let Some(limit) = &status.limit {
         let _ = writeln!(out, "{}", daemon_limit(limit));
+        if let Some(space) = &status.disk {
+            let _ = writeln!(out, "{}", daemon_disk(space, limit));
+        }
     }
     let token = daemon_claude_token(status.claude_token);
     if !token.is_empty() {
@@ -11600,6 +11615,7 @@ pub const INIT_CONTAINER_DONE: &str =
 ///     sends: vec![],
 ///     events: vec![],
 ///     volumes: None,
+///     disk: None,
 /// };
 /// let same = riff::text::init_daemon_kept(&status, "1.3.1 aaa");
 /// assert_eq!(same, "The riff daemon of this riff runs already: pid 42. riff init keeps it.");
@@ -11652,6 +11668,10 @@ pub fn unit_bad_text(text: &str) -> String {
 ///     riff::text::daemon_waits("riff-issue-12-1a2b3c4d", Full::Memory { free_gb: 5, floor_gb: 8 }),
 ///     "riff-issue-12-1a2b3c4d waits for room: 5 GB of memory is free, and the floor is 8 GB."
 /// );
+/// assert_eq!(
+///     riff::text::daemon_waits("riff-issue-12-1a2b3c4d", Full::Disk { free_gb: 5, floor_gb: 20 }),
+///     "riff-issue-12-1a2b3c4d waits for room: 5 GB of disk is free, and the floor is 20 GB."
+/// );
 /// ```
 pub fn daemon_waits(name: &str, full: crate::room::Full) -> String {
     format!("{name} waits for room: {}.", full_text(full))
@@ -11666,7 +11686,162 @@ fn full_text(full: crate::room::Full) -> String {
         crate::room::Full::Memory { free_gb, floor_gb } => {
             format!("{free_gb} GB of memory is free, and the floor is {floor_gb} GB")
         }
+        crate::room::Full::Disk { free_gb, floor_gb } => {
+            format!("{free_gb} GB of disk is free, and the floor is {floor_gb} GB")
+        }
     }
+}
+
+/// The free disk of the host, as `riff daemon status` shows it
+/// (01M7G430CFEK4B0FDG1552G8VE): the disk with the least free space of
+/// the folders of the daemon and of the storage of podman, and a folder
+/// on it. Below the floor of `limit`, it says that the daemon starts no
+/// session, and how to make room.
+///
+/// ```
+/// use riff::room::{Limit, Space};
+/// use riff_client::machines::Disk;
+///
+/// let space = |free_gb| Space {
+///     folder: "/h/.local/share/containers/storage".into(),
+///     disk: Disk { free_gb, total_gb: 915 },
+/// };
+/// assert_eq!(
+///     riff::text::daemon_disk(&space(47), &Limit::default()),
+///     "Disk: 47 GB free of 915 GB, at /h/.local/share/containers/storage. The floor is 20 GB."
+/// );
+/// assert_eq!(
+///     riff::text::daemon_disk(&space(5), &Limit::default()),
+///     "Disk: 5 GB free of 915 GB, at /h/.local/share/containers/storage. It is below the floor \
+///      of 20 GB: the daemon starts no session. Make room: riff daemon cache --clear, riff daemon \
+///      sweep."
+/// );
+/// ```
+pub fn daemon_disk(space: &crate::room::Space, limit: &crate::room::Limit) -> String {
+    let head = format!(
+        "Disk: {} GB free of {} GB, at {}.",
+        space.disk.free_gb,
+        space.disk.total_gb,
+        safe(&space.folder.display().to_string())
+    );
+    let floor = limit.disk_gb;
+    if space.low(limit) {
+        format!(
+            "{head} It is below the floor of {floor} GB: the daemon starts no session. Make \
+             room: riff daemon cache --clear, riff daemon sweep."
+        )
+    } else {
+        format!("{head} The floor is {floor} GB.")
+    }
+}
+
+/// The most folders that [`disk_low_note`] names.
+pub const DISK_NOTE_FOLDERS: usize = 20;
+
+/// The note to the lead when the free disk of the host `host` fell below
+/// the floor of `limit` (01M7G430FB68R1322AT8H94KYR): the free disk, the
+/// compile cache (`cache`, the text of [`daemon_cache`]), and the folders
+/// of the sessions that do not run, which `riff daemon sweep` can remove.
+/// It names at most [`DISK_NOTE_FOLDERS`] of them.
+///
+/// ```
+/// use riff::room::{Limit, Space};
+/// use riff_client::machines::Disk;
+///
+/// let space = Space { folder: "/h/.local/share/riff/daemon".into(), disk: Disk { free_gb: 5, total_gb: 915 } };
+/// let cache = riff::text::daemon_cache(Some(Ok(40 << 30)));
+/// let folders = ["issue-12-1a2b3c4d".to_owned(), "verify-issue-12-5e6f7a8b".to_owned()];
+/// let note = riff::text::disk_low_note("thelio", &space, &Limit::default(), &cache, &folders);
+/// assert_eq!(
+///     note,
+///     "The disk of thelio is almost full: 5 GB free of 915 GB, at /h/.local/share/riff/daemon. \
+///      The riff daemon of thelio starts no session while less than 20 GB is free.\n\
+///      The compile cache of the container sessions: 40.0GB now, in the volume riff-sccache.\n\
+///      Empty it with: riff daemon cache --clear\n\
+///      The folders of 2 sessions that do not run: issue-12-1a2b3c4d, verify-issue-12-5e6f7a8b. \
+///      riff daemon sweep removes each one whose work is over, and riff daemon sweep --remove \
+///      NAME removes one.\n\
+///      Add --host thelio to each command."
+/// );
+/// let many: Vec<String> = (0..25).map(|n| format!("issue-{n}-00000000")).collect();
+/// let note = riff::text::disk_low_note("thelio", &space, &Limit::default(), &cache, &many);
+/// assert!(note.contains("issue-19-00000000, and 5 more."), "{note}");
+/// let note = riff::text::disk_low_note("thelio", &space, &Limit::default(), &cache, &[]);
+/// assert!(note.contains("No folder of a session that does not run.\n"), "{note}");
+/// ```
+pub fn disk_low_note(
+    host: &str,
+    space: &crate::room::Space,
+    limit: &crate::room::Limit,
+    cache: &str,
+    folders: &[String],
+) -> String {
+    let host = safe(host);
+    let shown: Vec<String> = folders
+        .iter()
+        .take(DISK_NOTE_FOLDERS)
+        .map(|f| safe(f))
+        .collect();
+    let more = folders.len().saturating_sub(DISK_NOTE_FOLDERS);
+    let more = if more == 0 {
+        String::new()
+    } else {
+        format!(", and {more} more")
+    };
+    let folders = if folders.is_empty() {
+        "No folder of a session that does not run.".to_owned()
+    } else {
+        format!(
+            "The folders of {} sessions that do not run: {}{more}. riff daemon sweep removes \
+             each one whose work is over, and riff daemon sweep --remove NAME removes one.",
+            folders.len(),
+            shown.join(", ")
+        )
+    };
+    format!(
+        "The disk of {host} is almost full: {} GB free of {} GB, at {}. The riff daemon of \
+         {host} starts no session while less than {} GB is free.\n{cache}\n{folders}\n\
+         Add --host {host} to each command.",
+        space.disk.free_gb,
+        space.disk.total_gb,
+        safe(&space.folder.display().to_string()),
+        limit.disk_gb
+    )
+}
+
+/// The line of the log when a look sees the free disk at or above its
+/// floor again (01M7G430FB68R1322AT8H94KYR).
+///
+/// ```
+/// use riff::room::{Limit, Space};
+/// use riff_client::machines::Disk;
+///
+/// let space = Space { folder: "/h".into(), disk: Disk { free_gb: 47, total_gb: 915 } };
+/// assert_eq!(
+///     riff::text::disk_room_again(&space, &Limit::default()),
+///     "The disk has room again: 47 GB free at /h, and the floor is 20 GB. The daemon starts \
+///      sessions again."
+/// );
+/// ```
+pub fn disk_room_again(space: &crate::room::Space, limit: &crate::room::Limit) -> String {
+    format!(
+        "The disk has room again: {} GB free at {}, and the floor is {} GB. The daemon starts \
+         sessions again.",
+        space.disk.free_gb,
+        safe(&space.folder.display().to_string()),
+        limit.disk_gb
+    )
+}
+
+/// The line of the log when the runtime does not say the folder of its
+/// storage ([`crate::runtime::Runtime::storage`]): the floor of free disk
+/// counts the folders of the daemon only, until the runtime says it.
+pub fn daemon_no_storage(why: &str) -> String {
+    format!(
+        "riff cannot find the folder of the storage of podman: {}. The floor of free disk counts \
+         the disk of the folders of the daemon only. riff tries again at each look of the disk.",
+        safe(why)
+    )
 }
 
 /// A start that waited for room ended: `riff run` stopped it, or left.
@@ -11682,6 +11857,7 @@ pub fn daemon_no_start(name: &str) -> String {
 /// assert_eq!(
 ///     riff::text::daemon_limit(&Limit::default()),
 ///     "The limit of this host: 3 live sessions, and 8 GB of free memory or more for a start.\n\
+///      A start also needs 20 GB of free disk or more.\n\
 ///      Each new container: 8 CPUs and 8 GB of memory.\n\
 ///      Effort of the lead xhigh, of a work item xhigh, of a verify xhigh."
 /// );
@@ -11689,10 +11865,12 @@ pub fn daemon_no_start(name: &str) -> String {
 pub fn daemon_limit(limit: &crate::room::Limit) -> String {
     format!(
         "The limit of this host: {} live sessions, and {} GB of free memory or more for a start.\n\
+         A start also needs {} GB of free disk or more.\n\
          Each new container: {} CPUs and {} GB of memory.\n\
          Effort of the lead {}, of a work item {}, of a verify {}.",
         limit.sessions,
         limit.floor_gb,
+        limit.disk_gb,
         limit.cpus,
         limit.memory_gb,
         limit.effort_lead,

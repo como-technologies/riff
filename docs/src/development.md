@@ -1614,7 +1614,16 @@ launchctl print gui/$(id -u)/io.github.como-technologies.riff
 riff daemon status
 ```
 
-It shows the process ID, the build and the sessions of the daemon.
+It shows the process ID, the build and the sessions of the daemon. It
+also shows the limit of the host and the free disk, with a folder on
+that disk:
+
+```text
+Disk: 47 GB free of 915 GB, at /home/mike/.local/share/riff/daemon. The floor is 20 GB.
+```
+
+Below the floor, the daemon starts no session, and the line says so:
+see [Set the floor of free disk](#set-the-floor-of-free-disk).
 Just after a start or a restart, the daemon does not listen yet: while
 systemd says that the unit is active, riff tries again for 5 s. When
 no daemon answers, it shows the state of the unit, and exits with 1.
@@ -4504,11 +4513,12 @@ sequenceDiagram
 Each container has its own caps: `--cpus` and `--memory` (see
 [Set the caps of a container](#set-the-caps-of-a-container)). These do
 not limit the sum. So the daemon keeps one limit for the whole host:
-the number of live sessions, and a floor of free memory. The daemon
-starts a session only when fewer sessions than the limit live, and the
-free memory is at or above the floor. Each other start waits for room,
-in order, also a start of `riff run`. The default is 3 sessions and a
-floor of 8 GB.
+the number of live sessions, a floor of free memory and a floor of
+free disk. The daemon starts a session only when fewer sessions than
+the limit live, and the free memory and the free disk are at or above
+their floors. Each other start waits for room, in order, also a start
+of `riff run`. The default is 3 sessions, a floor of 8 GB of memory
+and a floor of 20 GB of disk.
 
 To see the limit:
 
@@ -4523,6 +4533,56 @@ riff daemon limit --sessions 2 --floor 12
 ```
 
 The daemon reads the limit at each start: a change counts at once.
+
+### Set the floor of free disk
+
+A build in a session writes its clone, and podman writes the layers of
+each container and its volumes. On a full disk, these writes fail with
+"No space left on device", and a verify can give a wrong result. So the
+daemon starts no session while the free disk is below a floor: 20 GB
+by default. The free disk is the free space of the disk of the folders
+of riff, `~/.local/share/riff`, and of the storage of podman. When they
+are on two disks, the disk with less free space counts. The lead waits
+for no room: it starts also on a full disk.
+
+To set the floor, for example 40 GB:
+
+```sh
+riff daemon limit --disk 40
+```
+
+`riff daemon status` shows the free disk. Below the floor:
+
+```text
+Disk: 5 GB free of 915 GB, at /home/mike/.local/share/riff/daemon. It is below the floor of 20 GB: the daemon starts no session. Make room: riff daemon cache --clear, riff daemon sweep.
+```
+
+The line of each wave that waits says why, for example `waits for
+room: 5 GB of disk is free, and the floor is 20 GB`. The daemon looks
+at the disk each 30 seconds. When the free disk falls below the floor,
+the lead of each repository of the host gets one note: the size of the
+compile cache, and the folders of the sessions that do not run. To make
+room:
+
+```sh
+riff daemon cache --clear
+riff daemon sweep
+```
+
+See [Show or empty the compile cache of the container
+sessions](#show-or-empty-the-compile-cache-of-the-container-sessions)
+and [Remove one folder on purpose](#remove-one-folder-on-purpose). For
+another host, add `--host HOST` to each command. When the free disk is
+at or above the floor again, the starts go on.
+
+```mermaid
+flowchart LR
+    S["a start"] --> D{"free disk >= its floor?"}
+    D -- no --> W["it waits: the line of the wave says why"]
+    D -- yes --> R["the limit of the sessions<br/>and the floor of memory"]
+    L["each 30 s: a look at the disk"] --> F{"it fell below the floor?"}
+    F -- yes --> N["one note to the lead:<br/>the compile cache, the folders"]
+```
 
 ### Set the caps of a container
 

@@ -12,8 +12,9 @@ session_env := (
 )
 
 # 01M3MY2KWKBJCQ0BCNC6533RBW: no test reaches the shared riff, the local riff or the OS keyring.
-# The environment of each test run: a RIFF_SERVER where nothing listens, a D-Bus that fails each call, and the session_env.
-test_env := "RIFF_SERVER=http://127.0.0.1:9 DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent/riff-test-bus " + session_env
+# The environment of each test run: a RIFF_SERVER where nothing listens, a D-Bus that fails each call, the session_env,
+# and a disk with room for the floor of free disk of the daemon (01M7G43090V1F263GYK3GQEXCZ).
+test_env := "RIFF_SERVER=http://127.0.0.1:9 DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent/riff-test-bus RIFF_DISK='disk 400GB free of 500GB' " + session_env
 
 # Default: list available recipes
 default:

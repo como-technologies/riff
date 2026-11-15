@@ -484,6 +484,10 @@ pub fn top_args(name: &str) -> [&str; 6] {
 /// ([`Runtime::volume_folders`]).
 pub const STORE_ARGS: [&str; 3] = ["info", "--format", "{{.Store.VolumePath}}"];
 
+/// The arguments of `podman` for the folder of its images and of the
+/// layers of its containers ([`Runtime::storage`]).
+pub const GRAPH_ARGS: [&str; 3] = ["info", "--format", "{{.Store.GraphRoot}}"];
+
 /// The arguments of `podman` for each volume ([`Runtime::volume_folders`],
 /// [`volume_folders_of`]).
 pub const VOLUMES_ARGS: [&str; 3] = ["volume", "inspect", "--all"];
@@ -1039,6 +1043,13 @@ impl Runtime for Podman {
     async fn volume_folders(&self) -> VolumeFolders {
         let store = printed(&STORE_ARGS).await;
         volume_folders_said(store, printed(&VOLUMES_ARGS).await)
+    }
+
+    /// The `GraphRoot` of the store of podman ([`GRAPH_ARGS`]).
+    async fn storage(&self) -> Result<PathBuf> {
+        let printed = printed(&GRAPH_ARGS).await?;
+        crate::compile_cache::folder_of(&String::from_utf8_lossy(&printed))
+            .ok_or_else(|| anyhow!("podman info prints no folder of its storage"))
     }
 }
 

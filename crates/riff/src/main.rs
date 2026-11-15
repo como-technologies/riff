@@ -1600,9 +1600,11 @@ enum DaemonCommand {
     /// Show or set the limit of this host
     ///
     /// The daemon starts a session only when fewer sessions than the
-    /// limit live, and the free memory is at or above the floor. Each
-    /// other start waits for room, in order. With no flag, it shows the
-    /// limit. The default is 3 sessions and a floor of 8 GB.
+    /// limit live, the free memory is at or above the floor, and the free
+    /// disk is at or above the floor of the disk. Each other start waits
+    /// for room, in order. With no flag, it shows the limit. The default
+    /// is 3 sessions, a floor of 8 GB of memory and a floor of 20 GB of
+    /// disk.
     ///
     /// The limit also holds the caps of each new container: its CPUs and
     /// its memory. The default is 8 CPUs and 8 GB. A session that runs
@@ -1619,6 +1621,10 @@ enum DaemonCommand {
         /// The floor of free memory for a start, in GB.
         #[arg(long, value_name = "GB")]
         floor: Option<u64>,
+        /// The floor of free disk for a start, in GB: the disk of the
+        /// folders of riff and of the podman storage.
+        #[arg(long, value_name = "GB")]
+        disk: Option<u64>,
         /// The CPUs of each new container, 1 or more.
         #[arg(long, value_name = "N")]
         cpus: Option<u32>,
@@ -3296,6 +3302,7 @@ fn limit_change(command: &DaemonCommand) -> Option<riff::room::Change> {
     let DaemonCommand::Limit {
         sessions,
         floor,
+        disk,
         cpus,
         memory,
         effort,
@@ -3309,6 +3316,7 @@ fn limit_change(command: &DaemonCommand) -> Option<riff::room::Change> {
     Some(riff::room::Change {
         sessions: *sessions,
         floor_gb: *floor,
+        disk_gb: *disk,
         cpus: *cpus,
         memory_gb: *memory,
         effort: *effort,

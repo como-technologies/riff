@@ -1041,6 +1041,30 @@ impl<R: Runtime + 'static> Daemon<R> {
         Ok(text::folder_removed(&folder, &why))
     }
 
+    /// The names of the folders of the sessions that do not run, in order
+    /// (01M7G430FB68R1322AT8H94KYR): `riff daemon sweep` removes each one
+    /// whose work is over, and `riff daemon sweep --remove NAME` removes
+    /// one.
+    pub(crate) fn idle_folders(&self) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(self.sessions_dir())
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.is_dir())
+            .filter(|path| {
+                let item = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .and_then(item_of_folder);
+                item.is_some_and(|item| !self.runs(path, item))
+            })
+            .filter_map(|path| Some(path.file_name()?.to_str()?.to_owned()))
+            .collect();
+        names.sort();
+        names
+    }
+
     /// True when the session of the folder `folder` of `item` runs: see
     /// the design. A record names its folder by the path of the host of
     /// `riff run`, so the name `ITEM-ID8` of the folder counts, not its

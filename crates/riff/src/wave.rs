@@ -6792,6 +6792,8 @@ mod tests {
         fake: Fake,
         world: Arc<Fakes>,
         daemon: Arc<Daemon<Fake>>,
+        /// The free disk of each folder, in GB: 400 of 500 at the start.
+        disk: Arc<AtomicU64>,
     }
 
     impl Here {
@@ -6852,11 +6854,23 @@ mod tests {
             });
             let memory: crate::room::Memory =
                 Arc::new(move || Some(free.load(Ordering::SeqCst) * GB));
+            let disk = Arc::new(AtomicU64::new(400));
+            let disk_of: crate::room::DiskOf = {
+                let disk = disk.clone();
+                Arc::new(move |_: &std::path::Path| {
+                    Some(riff_client::machines::Disk {
+                        free_gb: disk.load(Ordering::SeqCst),
+                        total_gb: 500,
+                    })
+                })
+            };
             let relay = root.path().join("static-riff");
             riff_client::secrets::mock_store();
             let daemon = Daemon::new(fake.clone(), dir.clone())
                 .unwrap()
                 .with_memory(memory)
+                .with_disk(disk_of)
+                .with_cache(Arc::new(|| text::daemon_cache(Some(Ok(40 << 30)))))
                 .with_world(world.clone())
                 .with_look_every(every)
                 .with_claim_wait(claim_wait)
@@ -6874,6 +6888,7 @@ mod tests {
                 fake,
                 world,
                 daemon: Arc::new(daemon),
+                disk,
             }
         }
 
@@ -6928,6 +6943,80 @@ mod tests {
                 assert!(self.daemon.live_count() <= limit, "more than {limit} live");
             }
         }
+    }
+
+    /// 01M7G43090V1F263GYK3GQEXCZ, 01M7G430CFEK4B0FDG1552G8VE,
+    /// 01M7G430FB68R1322AT8H94KYR: while the free disk is below its floor,
+    /// the wave starts no session, and its word and `riff daemon status`
+    /// say why. The lead gets one note, with the compile cache and the
+    /// folders that `riff daemon sweep` can remove. Over the floor again,
+    /// the starts go on, and the next fall gives a new note.
+    #[tokio::test]
+    async fn a_wave_starts_no_session_while_the_disk_is_almost_full() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 2, free).await;
+        let wave = Wave {
+            repo: "o/r".into(),
+            main: "/src/r".into(),
+            server: "http://127.0.0.1:1".into(),
+            host: "thelio".into(),
+        };
+        crate::daemon::remote::serve_in_file(here.daemon.dir(), &wave).unwrap();
+        let idle = here.daemon.sessions_dir().join("issue-9-1a2b3c4d");
+        std::fs::create_dir_all(&idle).unwrap();
+        here.disk.store(5, Ordering::SeqCst);
+        here.daemon.look_disk().await;
+        here.run();
+
+        let word = text::wave_full(crate::room::Full::Disk {
+            free_gb: 5,
+            floor_gb: 20,
+        });
+        here.until(2, |h| h.daemon.waves_shown()[0].word == word)
+            .await;
+        here.idle(2).await;
+        assert!(here.forge().starts.is_empty(), "no start");
+        let status = text::daemon_status(&here.daemon.status().await, crate::run::now_ms());
+        let line = "It is below the floor of 20 GB: the daemon starts no session.";
+        assert!(
+            status.contains("Disk: 5 GB free of 500 GB, at "),
+            "{status}"
+        );
+        assert!(status.contains(line), "{status}");
+        here.daemon.look_disk().await;
+        let notes = here.daemon.news().take("o/r");
+        assert_eq!(notes.len(), 1, "one note: {notes:?}");
+        let note = &notes[0];
+        assert!(
+            note.starts_with("The disk of thelio is almost full: 5 GB free of 500 GB"),
+            "{note}"
+        );
+        assert!(
+            note.contains("compile cache of the container sessions: 40.0GB"),
+            "{note}"
+        );
+        assert!(
+            note.contains(": issue-9-1a2b3c4d. riff daemon sweep"),
+            "{note}"
+        );
+
+        // Over the floor again: the wave starts its item.
+        here.disk.store(20, Ordering::SeqCst);
+        here.daemon.look_disk().await;
+        here.daemon.room().ended();
+        here.until(2, |h| h.forge().starts.len() == 1).await;
+        let status = text::daemon_status(&here.daemon.status().await, crate::run::now_ms());
+        assert!(
+            status.contains("Disk: 20 GB free of 500 GB, at "),
+            "{status}"
+        );
+        assert!(status.contains("The floor is 20 GB."), "{status}");
+        assert!(here.daemon.news().take("o/r").is_empty());
+
+        // A new fall: a new note.
+        here.disk.store(19, Ordering::SeqCst);
+        here.daemon.look_disk().await;
+        assert_eq!(here.daemon.news().take("o/r").len(), 1);
     }
 
     #[tokio::test]

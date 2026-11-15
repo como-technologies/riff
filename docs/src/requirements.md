@@ -7511,6 +7511,29 @@ of this part when they merge.
   the podman volumes (01M7EZCTKYFPS4QDQ1N3K3BT23), the line of the wave
   in `riff daemon status` says that it waits for them, and names `riff
   daemon status`. The lead gets no message.
+- **01M7G43090V1F263GYK3GQEXCZ** The limit of the host
+  (01M4Z60B7Y4XD6TJCYEYJT2R4S) also has a floor of free disk: 20 GB by
+  default. The free disk is the free space of the disk of the folders of
+  the daemon and of its sessions, and of the disk of the storage of
+  podman (`podman info`, `Store.GraphRoot`). When they are on more than
+  one disk, the disk with the least free space counts. The daemon starts
+  no session while the free disk is below the floor. The lead waits for
+  no room, so it starts. `riff daemon limit --disk GB` sets the floor in
+  `limit.json`.
+- **01M7G430CFEK4B0FDG1552G8VE** `riff daemon status` shows the free
+  space and the size of the disk of the floor of free disk, and a folder
+  on it. While the free disk is below the floor, the line says that the
+  daemon starts no session, and names `riff daemon cache --clear` and
+  `riff daemon sweep`. A start that waits for room names the free disk
+  and the floor: the word of the wave, and the line of `riff run`. When
+  the reason of a wait changes, the start says the new reason.
+- **01M7G430FB68R1322AT8H94KYR** The daemon looks at the free disk each
+  30 seconds. When the free disk falls below the floor, the daemon posts
+  one note to the lead of each repository that it serves: the free disk,
+  the floor, the size of the compile cache, and the folders of the
+  sessions that do not run, which `riff daemon sweep` can remove. It
+  posts a new note only after a look that saw the free disk at or above
+  the floor.
 
 ### The lead, the view and the takeover
 

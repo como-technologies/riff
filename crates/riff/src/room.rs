@@ -6,9 +6,19 @@
 //! Each container has its own `--memory` and `--cpus`. They do not limit
 //! the sum: three builds of 6 GB each fill a host of 30 GB with no swap.
 //! So the daemon keeps one limit for the whole host ([`Limit`]): the
-//! number of live sessions, and a floor of free memory. A host has room
-//! when fewer sessions than the limit live, and the free memory
-//! ([`crate::platform::Memory::available`]) is at or above the floor.
+//! number of live sessions, a floor of free memory and a floor of free
+//! disk. A host has room when the free disk ([`Room::space`]) is at or
+//! above its floor, fewer sessions than the limit live, and the free
+//! memory ([`crate::platform::Memory::available`]) is at or above its
+//! floor.
+//!
+//! The free disk is the free space of the disk of each folder that the
+//! room watches ([`Room::watch`], 01M7G43090V1F263GYK3GQEXCZ): the folder
+//! of the daemon, the folder of its sessions, and the storage of the
+//! runtime ([`crate::runtime::Runtime::storage`]). A build in a session
+//! writes its clone, and podman writes the layers of each container and
+//! its volumes. When the folders are on more than one disk, the disk with
+//! the least free space counts.
 //!
 //! Each start of a session takes a [`Slot`] first ([`Room::admit`]). The
 //! starts wait in order: the first that asks is the first that starts. A
@@ -20,7 +30,7 @@
 //! ```mermaid
 //! flowchart LR
 //!     A["a start asks"] --> G["the gate: one start at a time, in order"]
-//!     G --> R{"room? live + slots < sessions,<br/>free memory >= floor"}
+//!     G --> R{"room? free disk >= its floor,<br/>live + slots < sessions,<br/>free memory >= its floor"}
 //!     R -- no --> W["wait: a session ends, or LOOK_EVERY"] --> R
 //!     R -- yes --> S["a slot: the start goes on"]
 //!     S --> O["the daemon owns the session:<br/>the slot goes"]
@@ -31,7 +41,8 @@
 //! `riff daemon limit` writes the limit to [`LIMIT_FILE`] in the folder
 //! of the daemon. The daemon reads the file at each look for room, so a
 //! change counts at once, with no restart. With no file, the limit is
-//! [`Limit::default`]: 3 sessions and a floor of 8 GB.
+//! [`Limit::default`]: 3 sessions, a floor of 8 GB of memory and a floor
+//! of 20 GB of disk.
 //!
 //! # The caps of a container
 //!
@@ -53,6 +64,8 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
+use riff_client::machines::Disk;
+
 use crate::runtime::SessionSpec;
 
 /// The default number of live sessions of a host
@@ -61,6 +74,9 @@ pub const SESSIONS: u32 = 3;
 
 /// The default floor of free memory, in GB (01M4Z60B7Y4XD6TJCYEYJT2R4S).
 pub const FLOOR_GB: u64 = 8;
+
+/// The default floor of free disk, in GB (01M7G43090V1F263GYK3GQEXCZ).
+pub const DISK_GB: u64 = 20;
 
 /// The default CPUs of each container
 /// (01M56Q4AQ86V99RC8CA1KGCMSZ).
@@ -160,8 +176,9 @@ impl Role {
     }
 }
 
-/// The limit of the host: at most `sessions` live sessions, and no start
-/// while the free memory is below `floor_gb`. Each new container gets
+/// The limit of the host: at most `sessions` live sessions, no start
+/// while the free memory is below `floor_gb`, and no start while the free
+/// disk is below `disk_gb`. Each new container gets
 /// `cpus` CPUs, and `memory_gb` GB of memory. It also
 /// holds the effort of the three roles: the daemon starts each new
 /// session with `claude --effort LEVEL` ([`Limit::effort`]), `xhigh` by
@@ -172,10 +189,11 @@ impl Role {
 /// use riff::room::Limit;
 ///
 /// let limit = Limit::default();
-/// assert_eq!((limit.sessions, limit.floor_gb, limit.cpus, limit.memory_gb), (3, 8, 8, 8));
+/// assert_eq!((limit.sessions, limit.floor_gb, limit.disk_gb), (3, 8, 20));
+/// assert_eq!((limit.cpus, limit.memory_gb), (8, 8));
 /// assert_eq!(
 ///     serde_json::to_string(&limit).unwrap(),
-///     r#"{"sessions":3,"floor_gb":8,"cpus":8,"memory_gb":8,"effort":"xhigh","effort_lead":"xhigh","effort_verify":"xhigh"}"#
+///     r#"{"sessions":3,"floor_gb":8,"disk_gb":20,"cpus":8,"memory_gb":8,"effort":"xhigh","effort_lead":"xhigh","effort_verify":"xhigh"}"#
 /// );
 /// let old: Limit = serde_json::from_str(r#"{"sessions":2,"floor_gb":4}"#).unwrap();
 /// assert_eq!(old, Limit { sessions: 2, floor_gb: 4, ..Limit::default() });
@@ -187,6 +205,8 @@ pub struct Limit {
     pub sessions: u32,
     /// The floor of free memory, in GB.
     pub floor_gb: u64,
+    /// The floor of free disk, in GB.
+    pub disk_gb: u64,
     /// The CPUs of each new container.
     pub cpus: u32,
     /// The memory cap of each new container, in GB.
@@ -204,6 +224,7 @@ impl Default for Limit {
         Limit {
             sessions: SESSIONS,
             floor_gb: FLOOR_GB,
+            disk_gb: DISK_GB,
             cpus: CPUS,
             memory_gb: MEMORY_GB,
             effort: Effort::default(),
@@ -220,6 +241,8 @@ pub struct Change {
     pub sessions: Option<u32>,
     /// `--floor`, in GB.
     pub floor_gb: Option<u64>,
+    /// `--disk`, in GB.
+    pub disk_gb: Option<u64>,
     /// `--cpus`.
     pub cpus: Option<u32>,
     /// `--memory`, in GB.
@@ -239,6 +262,36 @@ pub enum Full {
     Sessions { live: usize, limit: u32 },
     /// The free memory is `free_gb`, below the floor `floor_gb`.
     Memory { free_gb: u64, floor_gb: u64 },
+    /// The free disk is `free_gb`, below the floor `floor_gb`.
+    Disk { free_gb: u64, floor_gb: u64 },
+}
+
+/// The free disk of the host ([`Room::space`]): the disk with the least
+/// free space of the folders that the room watches, and one of its
+/// folders (01M7G430CFEK4B0FDG1552G8VE).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Space {
+    /// A folder on the disk.
+    pub folder: PathBuf,
+    /// The free space and the size of the disk.
+    pub disk: Disk,
+}
+
+impl Space {
+    /// True when the free space is below the floor of `limit`.
+    ///
+    /// ```
+    /// use riff::room::{Limit, Space};
+    /// use riff_client::machines::Disk;
+    ///
+    /// let space = |free_gb| Space { folder: "/h".into(), disk: Disk { free_gb, total_gb: 915 } };
+    /// let limit = Limit { disk_gb: 20, ..Limit::default() };
+    /// assert!(space(19).low(&limit));
+    /// assert!(!space(20).low(&limit));
+    /// ```
+    pub fn low(&self, limit: &Limit) -> bool {
+        self.disk.free_gb < limit.disk_gb
+    }
 }
 
 impl Limit {
@@ -335,22 +388,32 @@ impl Limit {
     }
 
     /// Has the host room for one more session, with `live` sessions and
-    /// slots, and `free` bytes of free memory? With no number for the
-    /// free memory, only the sessions count.
+    /// slots, `free` bytes of free memory, and `disk` GB of free disk?
+    /// With no number for the free memory or for the free disk, that one
+    /// does not count. The free disk counts first: the end of a session
+    /// does not make room on the disk.
     ///
     /// ```
     /// use riff::room::{Full, Limit};
     ///
     /// let gb = 1u64 << 30;
-    /// let limit = Limit { sessions: 2, floor_gb: 8, ..Limit::default() };
-    /// assert_eq!(limit.room(1, Some(9 * gb)), Ok(()));
-    /// assert_eq!(limit.room(2, Some(9 * gb)), Err(Full::Sessions { live: 2, limit: 2 }));
-    /// assert_eq!(limit.room(0, Some(7 * gb)), Err(Full::Memory { free_gb: 7, floor_gb: 8 }));
-    /// assert_eq!(limit.room(0, Some(8 * gb)), Ok(()));
-    /// assert_eq!(limit.room(0, None), Ok(()));
-    /// assert_eq!(Limit { sessions: 0, floor_gb: 0, ..Limit::default() }.room(0, None), Err(Full::Sessions { live: 0, limit: 0 }));
+    /// let limit = Limit { sessions: 2, floor_gb: 8, disk_gb: 20, ..Limit::default() };
+    /// assert_eq!(limit.room(1, Some(9 * gb), Some(20)), Ok(()));
+    /// assert_eq!(limit.room(2, Some(9 * gb), Some(50)), Err(Full::Sessions { live: 2, limit: 2 }));
+    /// assert_eq!(limit.room(0, Some(7 * gb), Some(50)), Err(Full::Memory { free_gb: 7, floor_gb: 8 }));
+    /// assert_eq!(limit.room(0, Some(8 * gb), Some(50)), Ok(()));
+    /// assert_eq!(limit.room(2, Some(9 * gb), Some(5)), Err(Full::Disk { free_gb: 5, floor_gb: 20 }));
+    /// assert_eq!(limit.room(0, None, None), Ok(()));
+    /// let none = Limit { sessions: 0, floor_gb: 0, ..Limit::default() };
+    /// assert_eq!(none.room(0, None, None), Err(Full::Sessions { live: 0, limit: 0 }));
     /// ```
-    pub fn room(&self, live: usize, free: Option<u64>) -> Result<(), Full> {
+    pub fn room(&self, live: usize, free: Option<u64>, disk: Option<u64>) -> Result<(), Full> {
+        if let Some(free_gb) = disk.filter(|free| *free < self.disk_gb) {
+            return Err(Full::Disk {
+                free_gb,
+                floor_gb: self.disk_gb,
+            });
+        }
         if live >= usize::try_from(self.sessions).unwrap_or(usize::MAX) {
             return Err(Full::Sessions {
                 live,
@@ -381,6 +444,8 @@ impl Limit {
 /// assert!(!dir.path().join(riff::room::LIMIT_FILE).exists());
 /// let limit = set(dir.path(), Change { sessions: Some(5), ..Change::default() })?;
 /// assert_eq!((limit.sessions, limit.floor_gb), (5, 8));
+/// let limit = set(dir.path(), Change { disk_gb: Some(40), ..Change::default() })?;
+/// assert_eq!((limit.sessions, limit.disk_gb), (5, 40));
 /// let limit = set(dir.path(), Change { cpus: Some(6), memory_gb: Some(12), ..Change::default() })?;
 /// assert_eq!((limit.sessions, limit.cpus, limit.memory_gb), (5, 6, 12));
 /// assert!(set(dir.path(), Change { cpus: Some(0), ..Change::default() }).is_err());
@@ -404,6 +469,7 @@ pub fn set(dir: &Path, change: Change) -> Result<Limit> {
     let Change {
         sessions,
         floor_gb,
+        disk_gb,
         cpus,
         memory_gb,
         effort,
@@ -412,6 +478,7 @@ pub fn set(dir: &Path, change: Change) -> Result<Limit> {
     } = change;
     limit.sessions = sessions.unwrap_or(limit.sessions);
     limit.floor_gb = floor_gb.unwrap_or(limit.floor_gb);
+    limit.disk_gb = disk_gb.unwrap_or(limit.disk_gb);
     limit.cpus = cpus.unwrap_or(limit.cpus);
     limit.memory_gb = memory_gb.unwrap_or(limit.memory_gb);
     limit.effort = effort.unwrap_or(limit.effort);
@@ -430,11 +497,19 @@ pub fn free_memory() -> Option<u64> {
 /// The source of the free memory: [`free_memory`], or a fake in a test.
 pub type Memory = Arc<dyn Fn() -> Option<u64> + Send + Sync>;
 
+/// The source of the free disk of the file system of a folder:
+/// [`crate::disk::here`], or a fake in a test.
+pub type DiskOf = Arc<dyn Fn(&Path) -> Option<Disk> + Send + Sync>;
+
 /// The line of starts that wait for room, and the slots that they took.
 pub struct Room {
     /// The folder of the daemon: the limit is there.
     dir: PathBuf,
     memory: Memory,
+    disk: DiskOf,
+    /// The folders whose disk counts for the floor of free disk
+    /// ([`Room::watch`]).
+    folders: Mutex<Vec<PathBuf>>,
     /// One start at a time looks for room, in the order of the asks.
     gate: tokio::sync::Mutex<()>,
     /// A slot went, or a session ended.
@@ -477,17 +552,80 @@ impl Drop for Waiting<'_> {
 
 impl Room {
     /// The room of the daemon in the folder `dir`, with the free memory
-    /// of `memory`.
-    pub fn new(dir: PathBuf, memory: Memory) -> Arc<Room> {
+    /// of `memory` and the free disk of `disk`. It watches the disk of
+    /// `dir`.
+    pub fn new(dir: PathBuf, memory: Memory, disk: DiskOf) -> Arc<Room> {
         Arc::new(Room {
+            folders: Mutex::new(vec![dir.clone()]),
             dir,
             memory,
+            disk,
             gate: tokio::sync::Mutex::new(()),
             changed: Notify::new(),
             slots: AtomicU64::new(0),
             waiting: Mutex::new(BTreeMap::new()),
             asks: AtomicU64::new(0),
         })
+    }
+
+    /// A new room with the free memory of `memory`, and the folder, the
+    /// disk and the watched folders of this one, for a test.
+    pub fn with_memory(&self, memory: Memory) -> Arc<Room> {
+        let room = Room::new(self.dir.clone(), memory, self.disk.clone());
+        *room.folders_lock() = self.folders_lock().clone();
+        room
+    }
+
+    /// A new room with the free disk of `disk`, and the folder, the
+    /// memory and the watched folders of this one, for a test.
+    pub fn with_disk(&self, disk: DiskOf) -> Arc<Room> {
+        let room = Room::new(self.dir.clone(), self.memory.clone(), disk);
+        *room.folders_lock() = self.folders_lock().clone();
+        room
+    }
+
+    fn folders_lock(&self) -> std::sync::MutexGuard<'_, Vec<PathBuf>> {
+        self.folders.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The disk of `folder` counts for the floor of free disk from now on
+    /// (01M7G43090V1F263GYK3GQEXCZ). A folder that the room watches
+    /// already changes nothing.
+    pub fn watch(&self, folder: PathBuf) {
+        let mut folders = self.folders_lock();
+        if !folders.contains(&folder) {
+            folders.push(folder);
+        }
+    }
+
+    /// The free disk now: the disk with the least free space of the
+    /// folders that the room watches, and the first such folder. `None`
+    /// when riff cannot measure the disk of any of them.
+    ///
+    /// ```
+    /// use std::path::Path;
+    /// use std::sync::Arc;
+    /// use riff::room::Room;
+    /// use riff_client::machines::Disk;
+    ///
+    /// let disk = Arc::new(|folder: &Path| match folder.to_str() {
+    ///     Some("/d") => Some(Disk { free_gb: 40, total_gb: 900 }),
+    ///     Some("/s") => Some(Disk { free_gb: 12, total_gb: 500 }),
+    ///     _ => None,
+    /// });
+    /// let room = Room::new("/d".into(), Arc::new(|| None), disk);
+    /// assert_eq!(room.space().unwrap().disk.free_gb, 40);
+    /// room.watch("/none".into());
+    /// room.watch("/s".into());
+    /// let space = room.space().unwrap();
+    /// assert_eq!((space.folder.to_str(), space.disk.free_gb), (Some("/s"), 12));
+    /// ```
+    pub fn space(&self) -> Option<Space> {
+        let folders = self.folders_lock().clone();
+        folders
+            .into_iter()
+            .filter_map(|folder| (self.disk)(&folder).map(|disk| Space { folder, disk }))
+            .min_by_key(|space| space.disk.free_gb)
     }
 
     /// The limit now: the file in the folder of the daemon. A file that
@@ -516,7 +654,10 @@ impl Room {
 
     /// Waits for room for the start `name`, in order, and gives its slot.
     /// `live` counts the sessions that the daemon owns. The first time
-    /// that the host has no room, it gives `full` the reason.
+    /// that the host has no room, it gives `full` the reason, and again
+    /// each time that the kind of the reason changes
+    /// (01M7G430CFEK4B0FDG1552G8VE): for example a session ended, and the
+    /// disk is full now.
     pub async fn admit(
         self: &Arc<Self>,
         name: &str,
@@ -530,20 +671,22 @@ impl Room {
             .insert(ask, name.to_owned());
         let _waiting = Waiting { room: self, ask };
         let _gate = self.gate.lock().await;
-        let mut told = false;
+        let mut told = None;
         loop {
             let changed = self.changed.notified();
             tokio::pin!(changed);
             changed.as_mut().enable();
             let slots = usize::try_from(self.slots.load(Ordering::SeqCst)).unwrap_or(usize::MAX);
-            match self.limit().room(live() + slots, (self.memory)()) {
+            let disk = self.space().map(|space| space.disk.free_gb);
+            match self.limit().room(live() + slots, (self.memory)(), disk) {
                 Ok(()) => {
                     self.slots.fetch_add(1, Ordering::SeqCst);
                     return Slot { room: self.clone() };
                 }
                 Err(why) => {
-                    if !told {
-                        told = true;
+                    let kind = std::mem::discriminant(&why);
+                    if told != Some(kind) {
+                        told = Some(kind);
                         full(why);
                     }
                     tokio::select! {
@@ -560,11 +703,68 @@ impl Room {
 mod tests {
     use super::*;
 
+    /// A room with `free_gb` GB of free memory, and no number for the
+    /// disk.
     fn room(dir: &Path, free_gb: Arc<AtomicU64>) -> Arc<Room> {
         Room::new(
             dir.to_owned(),
             Arc::new(move || Some(free_gb.load(Ordering::SeqCst) * GB)),
+            Arc::new(|_| None),
         )
+    }
+
+    /// 01M7G43090V1F263GYK3GQEXCZ, 01M7G430CFEK4B0FDG1552G8VE: a start
+    /// waits while the free disk is below its floor, also after the end of
+    /// a session, and it says the new reason. Over the floor, it starts.
+    #[tokio::test]
+    async fn a_start_waits_while_the_free_disk_is_below_the_floor() {
+        let dir = tempfile::tempdir().unwrap();
+        Limit {
+            sessions: 1,
+            floor_gb: 0,
+            disk_gb: 20,
+            ..Limit::default()
+        }
+        .write(dir.path())
+        .unwrap();
+        let free_disk = Arc::new(AtomicU64::new(100));
+        let disk = {
+            let free_disk = free_disk.clone();
+            Arc::new(move |_: &Path| {
+                Some(Disk {
+                    free_gb: free_disk.load(Ordering::SeqCst),
+                    total_gb: 915,
+                })
+            })
+        };
+        let room = room(dir.path(), Arc::new(AtomicU64::new(64))).with_disk(disk);
+        let first = room.admit("a", || 0, |_| panic!("room")).await;
+        let said = Arc::new(Mutex::new(Vec::new()));
+        let second = {
+            let (room, said) = (room.clone(), said.clone());
+            tokio::spawn(async move { room.admit("b", || 0, |why| lock(&said).push(why)).await })
+        };
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        free_disk.store(5, Ordering::SeqCst);
+        drop(first);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!second.is_finished());
+        let disk = Full::Disk {
+            free_gb: 5,
+            floor_gb: 20,
+        };
+        assert_eq!(*lock(&said), [Full::Sessions { live: 1, limit: 1 }, disk]);
+        free_disk.store(20, Ordering::SeqCst);
+        room.ended();
+        let _slot = tokio::time::timeout(LOOK_EVERY * 2, second)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(lock(&said).len(), 2);
+    }
+
+    fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+        mutex.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     #[test]

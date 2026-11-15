@@ -562,6 +562,10 @@ pub const LEAD_STOP_WAIT: Duration = Duration::from_secs(30);
 /// ([`Daemon::stale_leads`]).
 pub const STALE_EVERY: Duration = Duration::from_secs(60);
 
+/// The time between two looks at the free disk of the host
+/// ([`Daemon::disk_every`], 01M7G430FB68R1322AT8H94KYR).
+pub const DISK_EVERY: Duration = Duration::from_secs(30);
+
 /// How many times the daemon tries to start a lead again after it stopped
 /// the old container ([`Daemon::lead_again`]).
 const LEAD_STARTS: u32 = 3;
@@ -1744,6 +1748,11 @@ pub struct Status {
     /// 01M7EW2106JGGTSZKMRG4N9SH0). An old daemon gives none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub volumes: Option<VolumesUnread>,
+    /// The free disk of the host ([`crate::room::Room::space`],
+    /// 01M7G430CFEK4B0FDG1552G8VE). `None` when riff cannot measure it. An
+    /// old daemon gives none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disk: Option<crate::room::Space>,
 }
 
 /// The folders of the volumes of the runtime that the daemon could not
@@ -2779,6 +2788,23 @@ pub struct Daemon<R> {
     /// volumes before its claim, with the time of that job
     /// ([`Daemon::volumes_refused`], 01M7EZCTKYFPS4QDQ1N3K3BT23).
     volume_waits: Mutex<BTreeMap<String, std::time::Instant>>,
+    /// The looks at the free disk of the host ([`Daemon::look_disk`],
+    /// 01M7G430FB68R1322AT8H94KYR).
+    disk_looks: Mutex<DiskLooks>,
+    /// The text of the compile cache for the note of a low disk:
+    /// [`crate::compile_cache::shown`], or a fake in a test.
+    cache: Arc<dyn Fn() -> String + Send + Sync>,
+}
+
+/// What the looks at the free disk saw ([`Daemon::look_disk`]).
+#[derive(Debug, Default)]
+struct DiskLooks {
+    /// The last look saw the free disk below its floor.
+    low: bool,
+    /// The room watches the storage of the runtime.
+    storage: bool,
+    /// The log has the fault of the storage of the runtime.
+    told: bool,
 }
 
 /// A pull of the session image that failed. [`Daemon::have_image`] gives
@@ -2878,7 +2904,11 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// 01M7DZ429QFWTSEA6JH1DVZJM0).
     pub fn new(runtime: R, dir: PathBuf) -> Result<Self> {
         private_dir(&dir)?;
-        let room = Room::new(dir.clone(), Arc::new(crate::room::free_memory));
+        let room = Room::new(
+            dir.clone(),
+            Arc::new(crate::room::free_memory),
+            Arc::new(crate::disk::here),
+        );
         let daemon = Daemon {
             runtime,
             dir,
@@ -2932,8 +2962,13 @@ impl<R: Runtime + 'static> Daemon<R> {
             verdicts: Mutex::default(),
             volumes_unread: Mutex::default(),
             volume_waits: Mutex::default(),
+            disk_looks: Mutex::default(),
+            cache: Arc::new(crate::compile_cache::shown),
         };
         crate::host_git::guard_also(&daemon.sessions_dir());
+        // The disk of the folder of the sessions counts for the floor of
+        // free disk (01M7G43090V1F263GYK3GQEXCZ).
+        daemon.room.watch(daemon.sessions_dir());
         Ok(daemon)
     }
 
@@ -2989,7 +3024,22 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// The daemon with the free memory of `memory`, for a test.
     #[must_use]
     pub fn with_memory(mut self, memory: crate::room::Memory) -> Self {
-        self.room = Room::new(self.dir.clone(), memory);
+        self.room = self.room.with_memory(memory);
+        self
+    }
+
+    /// The daemon with the free disk of `disk`, for a test.
+    #[must_use]
+    pub fn with_disk(mut self, disk: crate::room::DiskOf) -> Self {
+        self.room = self.room.with_disk(disk);
+        self
+    }
+
+    /// The daemon whose note of a low disk has the text `cache` for the
+    /// compile cache, for a test.
+    #[must_use]
+    pub fn with_cache(mut self, cache: Arc<dyn Fn() -> String + Send + Sync>) -> Self {
+        self.cache = cache;
         self
     }
 
@@ -3311,6 +3361,13 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// riff-server ([`crate::wave::Live`]), or the world of a test.
     pub(crate) fn world(&self) -> Arc<dyn World> {
         self.world.clone()
+    }
+
+    /// The notes of the daemon for the lead of each repository, until the
+    /// session of the daemon for that repository sends them
+    /// ([`facts::News`]).
+    pub fn news(&self) -> &facts::News {
+        &self.news
     }
 
     /// The events of the GitHub App of `repo` ([`crate::hooks::Told`],
@@ -4498,6 +4555,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .clone(),
+            disk: self.room.space(),
         }
     }
 
@@ -5427,6 +5485,86 @@ impl<R: Runtime + 'static> Daemon<R> {
         let why = text::daemon_volumes_unread(cause.as_str());
         eprintln!("riff daemon: {why}");
         bail!("{why}")
+    }
+
+    fn disk_looks(&self) -> MutexGuard<'_, DiskLooks> {
+        self.disk_looks
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// One look at the free disk of the host (01M7G430FB68R1322AT8H94KYR).
+    /// From the first look that the runtime says the folder of its
+    /// storage, the room watches it ([`Runtime::storage`],
+    /// 01M7G43090V1F263GYK3GQEXCZ). The first fault of the storage goes
+    /// to the log.
+    ///
+    /// When the free disk falls below its floor, the log gets a line, and
+    /// the lead of each repository that the daemon serves gets one note
+    /// ([`text::disk_low_note`]): the size of the compile cache, and the
+    /// folders that `riff daemon sweep` can remove. A look that sees the
+    /// free disk at or above the floor again writes a line to the log, and
+    /// the next fall posts a new note. The room refuses each start below
+    /// the floor ([`Room::admit`]): the look only tells.
+    ///
+    /// ```mermaid
+    /// flowchart LR
+    ///     L["each DISK_EVERY: the free disk"] --> F{"below the floor?"}
+    ///     F -- "yes, and the last look was not" --> N["one note to each lead,<br/>a line in the log"]
+    ///     F -- "no, and the last look was" --> A["a line in the log"]
+    ///     F -- "same as the last look" --> Q["nothing"]
+    /// ```
+    pub async fn look_disk(&self) {
+        if !self.disk_looks().storage {
+            match self.runtime.storage().await {
+                Ok(folder) => {
+                    self.room.watch(folder);
+                    self.disk_looks().storage = true;
+                }
+                Err(e) => {
+                    if !std::mem::replace(&mut self.disk_looks().told, true) {
+                        let line = text::daemon_no_storage(&format!("{e:#}"));
+                        eprintln!("riff daemon: {line}");
+                    }
+                }
+            }
+        }
+        let limit = self.room.limit();
+        let Some(space) = self.room.space() else {
+            return;
+        };
+        let low = space.low(&limit);
+        let was = std::mem::replace(&mut self.disk_looks().low, low);
+        match (was, low) {
+            (false, true) => {}
+            (true, false) => {
+                println!("{}", text::disk_room_again(&space, &limit));
+                return;
+            }
+            _ => return,
+        }
+        println!("{}", text::daemon_disk(&space, &limit));
+        let cache = self.cache.clone();
+        let cache = tokio::task::spawn_blocking(move || cache())
+            .await
+            .unwrap_or_default();
+        let folders = self.idle_folders();
+        for (repo, served) in remote::read_served(&self.dir).unwrap_or_default() {
+            let note = text::disk_low_note(&served.wave.host, &space, &limit, &cache, &folders);
+            self.news.push(&repo, note);
+        }
+    }
+
+    /// Looks at the free disk at once, then each [`DISK_EVERY`], until the
+    /// daemon stops ([`Daemon::look_disk`]).
+    pub fn disk_every(self: &Arc<Self>) {
+        let daemon = self.clone();
+        tokio::spawn(async move {
+            loop {
+                daemon.look_disk().await;
+                tokio::time::sleep(DISK_EVERY).await;
+            }
+        });
     }
 
     /// Owns the session of `record`: its log, its record on disk, and
@@ -7326,6 +7464,7 @@ async fn serve_on(dir: PathBuf, listener: UnixListener) -> Result<()> {
     daemon.run_waves();
     daemon.serve_repos();
     daemon.sweep_every();
+    daemon.disk_every();
     daemon.stale_every();
     daemon.leads_again_every();
     daemon.watch_every(crate::watches::every());
@@ -16537,6 +16676,13 @@ mod tests {
             volumes: Some(VolumesUnread {
                 since_ms: 16,
                 cause: "podman info: Error: no store".into(),
+            }),
+            disk: Some(crate::room::Space {
+                folder: "/h/.local/share/containers/storage".into(),
+                disk: riff_client::machines::Disk {
+                    free_gb: 5,
+                    total_gb: 915,
+                },
             }),
         };
         for waves in [

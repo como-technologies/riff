@@ -438,6 +438,7 @@ pub fn remove_clone(dir: &Path, data: &Path, wave: &Wave) -> Vec<String> {
 ///     "daemon status",
 ///     "daemon limit",
 ///     "daemon limit --sessions 4 --floor 8 --cpus 6 --memory 12",
+///     "daemon limit --disk 40",
 ///     "daemon limit --effort high --effort-lead max --effort-verify low",
 ///     "daemon cache",
 ///     "daemon cache --clear",
@@ -675,6 +676,7 @@ fn limit_of(flags: &[&str]) -> Result<Change, ()> {
         match *flag {
             "--sessions" => change.sessions = Some(value.parse().map_err(|_| ())?),
             "--floor" => change.floor_gb = Some(value.parse().map_err(|_| ())?),
+            "--disk" => change.disk_gb = Some(value.parse().map_err(|_| ())?),
             "--cpus" => change.cpus = Some(value.parse().map_err(|_| ())?),
             "--memory" => change.memory_gb = Some(value.parse().map_err(|_| ())?),
             "--effort" => change.effort = Some(value.parse().map_err(|_| ())?),
@@ -695,6 +697,7 @@ impl fmt::Display for Request {
                 let flags = [
                     ("--sessions", change.sessions.map(u64::from)),
                     ("--floor", change.floor_gb),
+                    ("--disk", change.disk_gb),
                     ("--cpus", change.cpus.map(u64::from)),
                     ("--memory", change.memory_gb),
                 ];
