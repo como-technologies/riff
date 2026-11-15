@@ -603,9 +603,8 @@ fn git_line(dir: &Path, args: &[&str]) -> Option<String> {
 /// run, or a signal ends it.
 fn git_first(dir: &Path, args: &[&str]) -> Option<(i32, String)> {
     const TIME: &str = "1700000000 +0000";
-    let out = std::process::Command::new("git")
-        .arg("-C")
-        .arg(dir)
+    let out = crate::host_git::git(dir)
+        .ok()?
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_AUTHOR_DATE", TIME)
