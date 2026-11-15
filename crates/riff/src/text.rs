@@ -10158,6 +10158,63 @@ pub const INIT_FIX_DELEGATE: &str = "let systemd give them to your user: sudo mk
      pids\\n' | sudo tee /etc/systemd/system/user@.service.d/delegate.conf && sudo systemctl \
      daemon-reload, then log out and in again";
 
+/// `git --version` did not start.
+pub const INIT_NO_GIT: &str = "riff cannot start git";
+
+/// `git --version` ended with an error.
+pub fn init_git_failed(stderr: &str) -> String {
+    if stderr.is_empty() {
+        "git --version failed".into()
+    } else {
+        format!("git --version failed: {stderr}")
+    }
+}
+
+/// riff finds no version of git in the first line `line` of `git
+/// --version`.
+pub fn init_git_unread(line: &str) -> String {
+    format!("riff finds no version of git in \"{line}\"")
+}
+
+/// The git of the first line `line` of `git --version` has no fix of May
+/// 2024 ([`crate::host_git::Version::fixed`]).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_git_old("git version 2.43.0"),
+///     "git version 2.43.0 has no fix of May 2024 (CVE-2024-32004), so a git fetch from the \
+///      clone of a session can run a program that its config names"
+/// );
+/// ```
+pub fn init_git_old(line: &str) -> String {
+    format!(
+        "{line} has no fix of May 2024 (CVE-2024-32004), so a git fetch from the clone of a \
+         session can run a program that its config names"
+    )
+}
+
+/// The fix of a git with no fix of May 2024: each first release with the
+/// fixes ([`crate::host_git::FIXED`]).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_fix_git(),
+///     "install git 2.45.1 or later, or in an older line 2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4 \
+///      or 2.44.1 or later, for example on Ubuntu: sudo add-apt-repository ppa:git-core/ppa && \
+///      sudo apt install git"
+/// );
+/// ```
+pub fn init_fix_git() -> String {
+    let fixed = crate::host_git::FIXED.map(|v| v.to_string());
+    let (last, older) = fixed.split_last().expect("a fixed release");
+    let (newest_older, rest) = older.split_last().expect("an older line");
+    format!(
+        "install git {last} or later, or in an older line {} or {newest_older} or later, for \
+         example on Ubuntu: sudo add-apt-repository ppa:git-core/ppa && sudo apt install git",
+        rest.join(", ")
+    )
+}
+
 /// The fix when the repository pins no session image
 /// (01M76SHAZK2PSMET0HRYM0J7VN).
 pub const INIT_FIX_IMAGE: &str = "run riff init in a clone of a repository whose riff.toml pins \

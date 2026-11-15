@@ -366,6 +366,7 @@ flowchart LR
 | The init of podman | `catatonit` is in a folder of podman, for example `/usr/libexec/podman`. Each session runs it as its first process. |
 | `/etc/subuid`, `/etc/subgid` | Each gives you 65536 IDs or more. The fix adds a free range: it starts after the end of each range in the file, and at 100000 or more. |
 | cgroup v2 | Your user gets `cpu` and `memory`. |
+| git | `git --version` names a git with the fixes of May 2024: 2.45.1 or later, or in an older line 2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4 or 2.44.1 or later. See [Get a git with the fixes of May 2024](#get-a-git-with-the-fixes-of-may-2024). |
 | The session image | `riff.toml` of the project pins it. When the project has no `riff.toml`, run `riff project init`: see [Set up your project](#set-up-your-project). |
 | The riff binary | It is static, so `riff relay` starts in each session image. |
 
@@ -376,6 +377,24 @@ each fix, then run `riff init` again. When each check passes,
 session image. A riff daemon that runs already stays. Then do one item:
 see
 [Run one item in a container](development.md#run-one-item-in-a-container).
+
+### Get a git with the fixes of May 2024
+
+riff needs a git with the fixes of May 2024 (CVE-2024-32004) on your
+machine. With an older git, a `git fetch` from the clone of a session
+can run a program that the config of that clone names. riff reads only
+the version that `git --version` prints. A distribution can put the
+fixes into an older version, but riff cannot see them, so such a git
+fails the check too. For example, the git of Ubuntu 24.04 is 2.43.0.
+On Ubuntu, get a newer git from the PPA of git:
+
+```sh
+sudo add-apt-repository ppa:git-core/ppa
+sudo apt install git
+git --version
+```
+
+Then run `riff init` again.
 
 ### Let the lead start the work
 
