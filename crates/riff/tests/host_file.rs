@@ -223,6 +223,14 @@ fn the_book_says_what_to_do_with_a_large_file_in_the_folder_of_the_lead() {
     );
     assert!(unseen.contains(&line), "{unseen}");
     assert!(!line.contains("Remove"), "{line}");
+    // A line of a count of tokens gives no step, also for a link.
+    let skipped = riff::text::transcript_skipped(&riff::text::host_file_link(&projects));
+    assert!(skipped.starts_with("riff counts no tokens"), "{skipped}");
+    assert!(!skipped.contains("Remove"), "{skipped}");
+    assert!(
+        how_to.contains("A line that says \"riff counts no tokens\" needs no step"),
+        "{how_to}"
+    );
     for (limit, words) in [
         (riff::usage::MAX_TRANSCRIPT, "| 256 MB |"),
         (riff::run::MAX_CONFIG, "| 16 MB |"),
@@ -266,12 +274,14 @@ fn the_book_says_what_to_do_with_a_large_file_in_the_folder_of_the_lead() {
             "rm ~/.local/share/riff/leads/OWNER-REPO/claude/.claude.json",
         ]
     );
-    let left = "find ~/.local/share/riff/leads/OWNER-REPO/claude/projects -mindepth 1 -maxdepth 1 \
-                ! -name '*-clone' -exec sh -c 'mv \"$@\" ~/riff-projects-left' sh {} +";
+    let left = "find \"$lead/claude/projects\" -mindepth 1 -maxdepth 1 ! -name \"$keep\" \
+                -exec sh -c 'mv \"$@\" ~/riff-projects-left' sh {} +";
     assert_eq!(
         crate::book::commands_in(unseen),
         [
-            "ls ~/.local/share/riff/leads/OWNER-REPO/claude/projects | grep -cv -- '-clone$'",
+            "lead=~/.local/share/riff/leads/OWNER-REPO",
+            "keep=$(printf %s \"$lead/clone\" | sed 's/[^A-Za-z0-9]/-/g')",
+            "find \"$lead/claude/projects\" -mindepth 1 -maxdepth 1 ! -name \"$keep\" | wc -l",
             "mkdir -p ~/riff-projects-left",
             left,
         ]
@@ -285,10 +295,13 @@ fn the_book_says_what_to_do_with_a_large_file_in_the_folder_of_the_lead() {
     }
 }
 
-/// The move of the how-to "When riff sees no turn of the lead": it moves
-/// each entry of `projects` that the session made, and keeps the folder
-/// of the clone of the lead, which holds its conversation. Then riff
-/// sees the turns of the lead again (01M7FX6YQKTN9EVPTZJ9XB8PM4). The
+/// The steps of the how-to "When riff sees no turn of the lead", as one
+/// script: they count each entry of `projects` that the session made,
+/// also a hidden one and one whose name ends with `-clone`, and move
+/// each one. They keep the folder of the clone of the lead, which holds
+/// its conversation: `claude` names it from the path of the clone, with
+/// `-` for each character that is no letter and no digit. Then riff sees
+/// the turns of the lead again (01M7FX6YQKTN9EVPTZJ9XB8PM4). The
 /// commands use no `mv -t`: the `mv` of macOS has no `-t`.
 #[test]
 fn the_move_of_the_book_keeps_the_conversation_of_the_lead() {
@@ -299,30 +312,48 @@ fn the_move_of_the_book_keeps_the_conversation_of_the_lead() {
     let home = tempfile::tempdir().unwrap();
     let lead = home.path().join(".local/share/riff/leads/OWNER-REPO");
     let projects = lead.join("claude").join(riff::usage::PROJECTS);
-    let own = projects.join("-home-mike--local-share-riff-leads-OWNER-REPO-clone");
+    let name: String = lead
+        .join("clone")
+        .to_string_lossy()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    let own = projects.join(name);
     std::fs::create_dir_all(&own).unwrap();
     std::fs::write(own.join("s1.jsonl"), "").unwrap();
-    for n in 0..riff::usage::MAX_ENTRIES {
+    let made = riff::usage::MAX_ENTRIES;
+    for n in 3..made {
         std::fs::write(projects.join(format!("{n}.jsonl")), "").unwrap();
+    }
+    std::fs::write(projects.join(".hidden"), "").unwrap();
+    for other in ["s1-clone", "s2-clone"] {
+        std::fs::create_dir(projects.join(other)).unwrap();
     }
     let claude = lead.join("claude");
     assert!(riff::usage::written_in(&claude, "s1").is_err());
-    for command in crate::book::commands_in(unseen) {
-        assert!(!command.contains("mv -t"), "{command}");
-        let out = std::process::Command::new("sh")
-            .args(["-c", &command])
-            .env("HOME", home.path())
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "{command}: {out:?}");
-    }
-    assert!(riff::usage::written_in(&claude, "s1").unwrap().is_some());
-    assert_eq!(std::fs::read_dir(&projects).unwrap().count(), 1);
-    let left = home.path().join("riff-projects-left");
-    assert_eq!(
-        std::fs::read_dir(left).unwrap().count(),
-        riff::usage::MAX_ENTRIES
+    let commands = crate::book::commands_in(unseen);
+    assert!(
+        commands.iter().all(|c| !c.contains("mv -t")),
+        "{commands:?}"
     );
+    let out = std::process::Command::new("sh")
+        .args(["-e", "-c", &commands.join("\n")])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        made.to_string()
+    );
+    assert!(riff::usage::written_in(&claude, "s1").unwrap().is_some());
+    let kept: Vec<_> = std::fs::read_dir(&projects)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    assert_eq!(kept, [own]);
+    let left = home.path().join("riff-projects-left");
+    assert_eq!(std::fs::read_dir(left).unwrap().count(), made);
 }
 
 /// The how-to "When a session puts a link in its folder" in the book: the

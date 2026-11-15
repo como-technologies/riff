@@ -352,12 +352,15 @@
 //! `Stop` hook runs `riff relay idle` ([`SessionAsk::Idle`]): the daemon
 //! writes the end in the folder of the lead ([`crate::lead::end_turn`]),
 //! and looks again [`TURN_SETTLE`] later ([`Daemon::turn_ended`],
-//! 01M6WBX2FQEHW92Y1A5HM4H8BM). The lead is idle while its transcript got
-//! no write after the tail of that turn ([`crate::lead::between_turns`]):
-//! each message and each tool call of a new turn writes the transcript.
-//! A lead with no hook, for example of an older riff, is idle when its
-//! transcript got no write in [`LEAD_IDLE`] ([`crate::lead::quiet`]). A
-//! lead in a turn waits for the next look. While `riff update` replaced
+//! 01M6WBX2FQEHW92Y1A5HM4H8BM). The lead is idle while riff sees no write
+//! to its transcript after the tail of that turn
+//! ([`crate::lead::between_turns`]): each message and each tool call of a
+//! new turn writes the transcript. A lead with no hook, for example of an
+//! older riff, is idle when riff sees no write to its transcript in
+//! [`LEAD_IDLE`] ([`crate::lead::quiet`]). A lead in a turn that riff sees
+//! waits for the next look. When riff cannot list the folder of its
+//! transcripts, riff sees no turn, and the lead does not wait
+//! (01M7FX6YQKTN9EVPTZJ9XB8PM4). While `riff update` replaced
 //! the binary of the daemon itself, the daemon starts no lead: the bind
 //! would hold a newer riff than the daemon. The new daemon starts it
 //! (01M6WBX2FT7Y9FV9VGGPDBKAHM).
@@ -370,7 +373,7 @@
 //!     D -- yes --> N
 //!     D -- no --> O{old: the bind has no link?}
 //!     O -- no --> N[nothing to do]
-//!     O -- yes --> I{idle: no write after the end of the turn,<br/>or no write in 5 minutes?}
+//!     O -- yes --> I{idle: riff sees no write after the end of the turn,<br/>or no write in 5 minutes?}
 //!     I -- no --> W[wait for the next look]
 //!     I -- yes --> P[make the start: wave, host, image, relay]
 //!     P -- fault --> F[one line in chat, try again at the next look]
@@ -579,7 +582,7 @@ pub const LEAD_SHORT: Duration = Duration::from_secs(60);
 /// ([`Daemon::leads_again`]).
 pub const AGAIN_EVERY: Duration = Duration::from_secs(60);
 
-/// A lead is idle when its transcript got no write for this long
+/// A lead is idle when riff sees no write to its transcript for this long
 /// ([`crate::lead::quiet`], 01M5TC24PB3YC2CC8BA275WSEN). A turn writes the
 /// transcript at each message and each tool call.
 pub const LEAD_IDLE: Duration = Duration::from_secs(5 * 60);
@@ -3512,12 +3515,13 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// daemon, when the lead is idle (01M5TC24PB3YC2CC8BA275WSEN). A lead
     /// runs an old riff when `riff update` replaced the file that its
     /// container binds at [`RELAY_BIN`] ([`crate::lead::old`]). It is idle
-    /// at the end of its turn, or when its transcript got no write in
-    /// [`LEAD_IDLE`] ([`crate::lead::idle`], 01M6WBX2FQEHW92Y1A5HM4H8BM): a
-    /// lead in a turn that riff sees waits for the next look. When riff
-    /// cannot list the folder of its transcripts, riff sees no turn, and
-    /// the lead does not wait (01M7FX6YQKTN9EVPTZJ9XB8PM4). While `riff
-    /// update` replaced the binary of the daemon itself, it starts no
+    /// at the end of its turn, or when riff sees no write to its
+    /// transcript in [`LEAD_IDLE`] ([`crate::lead::idle`],
+    /// 01M6WBX2FQEHW92Y1A5HM4H8BM): a lead in a turn that riff sees waits
+    /// for the next look. When riff cannot list the folder of its
+    /// transcripts, riff sees no turn, and the lead does not wait
+    /// (01M7FX6YQKTN9EVPTZJ9XB8PM4). While `riff update` replaced the
+    /// binary of the daemon itself, it starts no
     /// lead: the new daemon does (01M6WBX2FT7Y9FV9VGGPDBKAHM). It gives
     /// one line for each lead that it started again, or that it first told
     /// the person of: the line is in riff chat too.

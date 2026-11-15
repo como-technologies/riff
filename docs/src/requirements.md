@@ -8916,18 +8916,21 @@ of this part when they merge.
   limit, and the log names it. A start with a `.claude.json` or a
   `settings.json` over its limit writes neither file, and its error
   tells the person to remove the file. A line of the log where riff
-  goes on past a limit gives the person no step.
+  goes on past a limit, or counts no tokens of a transcript, gives the
+  person no step.
 - **01M7FX6SWN3DGZMH5HS9BWEBY7** One count of the tokens of a session
   reads at most 1 GB of transcripts in all, with the transcripts of its
   helper agents, and at most 100,000 entries in all: each transcript
   counts one, and each entry of the folder of its helpers counts one.
   Each byte and each entry that the count reads counts, also of a file
-  or a folder that it skips. The count stops at the file or the folder
-  where a limit runs out. It counts the tokens of the files before it,
-  and no tokens of it or of the files after it, and the log names it.
-  The daemon reads the transcripts of an ended session on a thread for
-  blocking work, so the other tasks of the daemon go on. The end of that
-  session waits for the count before its folder goes.
+  or a folder that it skips, and an entry that riff cannot stat. The
+  count stops at the file or the folder where a limit runs out, and
+  reads at most one byte or one entry past the limit there. It counts
+  the tokens of the files before it, and no tokens of it or of the
+  files after it, and the log names it. The daemon reads the
+  transcripts of an ended session on a thread for blocking work, so the
+  other tasks of the daemon go on. The end of that session waits for
+  the count before its folder goes.
 - **01M7FX6SZ88S06N1AT6WJHKNMX** Each line of the log of riff that names
   a file or a folder in a folder that a container writes shows each
   control character of the name as its escape, for example `\n` for a

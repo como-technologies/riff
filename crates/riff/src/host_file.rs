@@ -118,7 +118,8 @@ pub enum Kind {
     Folder,
     /// A link: the host does not follow it.
     Link,
-    /// Something else, for example a FIFO or a socket.
+    /// Something else, for example a FIFO or a socket, or an entry that
+    /// the host cannot stat.
     Other,
 }
 
@@ -136,7 +137,7 @@ impl Kind {
 /// The error of [`read()`] for the file `path` with more than `most`
 /// bytes: its text is [`text::host_file_too_large`]. A caller with a
 /// limit of its own tells it from the other errors, and counts the bytes
-/// that the read took ([`crate::usage::Replies::read`]).
+/// that the read took ([`taken`], [`crate::usage::Replies::read`]).
 ///
 /// ```
 /// use std::path::Path;
@@ -340,6 +341,34 @@ fn read_most(from: impl Read, len: u64, most: u64) -> std::io::Result<Result<Vec
     Ok(if read <= most { Ok(bytes) } else { Err(read) })
 }
 
+/// The bytes that `read`, a result of [`read()`], took from its file:
+/// each byte that it gave, or [`TooLarge::read`]. Another error took
+/// none. A caller with a limit of its own takes them from it
+/// ([`crate::usage::Replies::read`], 01M7FX6SWN3DGZMH5HS9BWEBY7).
+///
+/// ```
+/// use std::path::Path;
+/// use riff::host_file::{TooLarge, read, taken};
+///
+/// let root = tempfile::tempdir()?;
+/// std::fs::write(root.path().join("a"), "four")?;
+/// assert_eq!(taken(&read(root.path(), Path::new("a"), 4)), 4);
+/// assert_eq!(taken(&read(root.path(), Path::new("none"), 4)), 0);
+/// // The size of the file is over the limit: the read took none of it.
+/// assert_eq!(taken(&read(root.path(), Path::new("a"), 3)), 0);
+/// // A file that grew in the read: the limit and one byte.
+/// let grew = TooLarge { path: root.path().join("a"), most: 3, read: 4 };
+/// assert_eq!(taken(&Err(grew.into())), 4);
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn taken(read: &Result<Option<Vec<u8>>>) -> u64 {
+    match read {
+        Ok(Some(bytes)) => u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+        Ok(None) => 0,
+        Err(e) => e.downcast_ref::<TooLarge>().map_or(0, |large| large.read),
+    }
+}
+
 /// The text of [`read()`]: an error when it is no UTF-8 ([`text_of`]).
 ///
 /// ```
@@ -466,7 +495,9 @@ pub fn write(root: &Path, name: &Path, bytes: &[u8]) -> Result<()> {
 /// folders gives the error
 /// [`text::host_file_link`]. A folder with more than `most` entries
 /// gives the error [`text::host_file_too_many`]: the list stops at
-/// `most` and one entry.
+/// `most` and one entry. It gives each entry that it read, also one
+/// that the host cannot stat, as [`Kind::Other`]: so a caller counts
+/// each entry that the list read (01M7FX6SWN3DGZMH5HS9BWEBY7).
 ///
 /// ```
 /// use std::path::Path;
@@ -504,26 +535,40 @@ pub fn list(root: &Path, name: &Path, most: usize) -> Result<Option<Vec<(OsStrin
     )
     .map_err(std::io::Error::from)
     .with_context(|| format!("list {}", at.display()))?;
-    let mut entries = Vec::new();
-    let mut seen = 0_usize;
-    for entry in listed {
-        let entry = entry
-            .map_err(std::io::Error::from)
-            .with_context(|| format!("list {}", at.display()))?;
-        let name = OsStr::from_bytes(entry.file_name().to_bytes());
-        if name == "." || name == ".." {
-            continue;
+    let names = listed.into_iter().filter_map(|entry| match entry {
+        Ok(entry) => {
+            let name = OsStr::from_bytes(entry.file_name().to_bytes());
+            (name != "." && name != "..").then(|| Ok(name.to_owned()))
         }
-        seen += 1;
-        if seen > most {
-            return Err(TooMany { path: at, most }.into());
+        Err(errno) => {
+            Some(Err(std::io::Error::from(errno)).with_context(|| format!("list {}", at.display())))
         }
-        if let Some(kind) = kind_at(&dir, name) {
-            entries.push((name.to_owned(), kind));
-        }
-    }
+    });
+    let entries = names.map(|name| {
+        name.map(|name| {
+            let kind = kind_at(&dir, &name).unwrap_or(Kind::Other);
+            (name, kind)
+        })
+    });
+    let Some(mut entries) = at_most(entries, most)? else {
+        return Err(TooMany { path: at, most }.into());
+    };
     entries.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(Some(entries))
+}
+
+/// The items of `items`, or `None` when it has more than `most`: it takes
+/// the item one past `most`, and no item after it. The first error stops
+/// it.
+fn at_most<T>(items: impl Iterator<Item = Result<T>>, most: usize) -> Result<Option<Vec<T>>> {
+    let mut kept = Vec::new();
+    for item in items {
+        if kept.len() == most {
+            return Ok(None);
+        }
+        kept.push(item?);
+    }
+    Ok(Some(kept))
 }
 
 /// Sets the mode `mode` of the entry `ROOT/NAME`, for example a socket,
@@ -726,6 +771,22 @@ mod tests {
         assert_eq!(read_most(&b"12345"[..], 4, 4).unwrap(), Err(5));
     }
 
+    /// 01M7FX6SWN3DGZMH5HS9BWEBY7: a plain file that gives more bytes than
+    /// its size, as a file that grows in the read: the size of
+    /// `/proc/self/status` is 0. The read takes the limit and one byte, and
+    /// they count.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_file_that_grew_in_the_read_takes_the_limit_and_one_byte() {
+        let root = Path::new("/proc/self");
+        let read = read(root, Path::new("status"), 10);
+        assert_eq!(taken(&read), 11);
+        assert_eq!(
+            read.unwrap_err().to_string(),
+            text::host_file_too_large(&root.join("status"), 10)
+        );
+    }
+
     /// 01M7FNTSHXPQXXKZF761V0NN9Z: a file whose size is over the limit
     /// gives no bytes, and the host reads none of it.
     #[test]
@@ -783,6 +844,48 @@ mod tests {
         assert_eq!(listed[0], ("agent-000.jsonl".into(), Kind::File));
         let error = list(&claude, name, 99).unwrap_err();
         assert_eq!(error.to_string(), text::host_file_too_many(&subagents, 99));
+    }
+
+    /// 01M7FNTSHXPQXXKZF761V0NN9Z: a list over the limit takes the entry
+    /// one past the limit, and no entry after it.
+    #[test]
+    fn a_list_stops_at_the_entry_one_past_the_limit() {
+        let mut taken = 0;
+        let items = (0..1000).map(Ok).inspect(|_| taken += 1);
+        assert_eq!(at_most(items, 10).unwrap(), None);
+        assert_eq!(taken, 11);
+        let items = (0..10).map(Ok);
+        assert_eq!(at_most(items, 10).unwrap(), Some((0..10).collect()));
+        let items = [Ok(1), Err(anyhow::anyhow!("list /s")), Ok(3)].into_iter();
+        assert_eq!(at_most(items, 10).unwrap_err().to_string(), "list /s");
+    }
+
+    /// 01M7FX6SWN3DGZMH5HS9BWEBY7: a session makes its folder of helpers
+    /// with no search for the host (mode 0444), so the host cannot stat
+    /// its entries. The list gives each entry all the same: a caller counts
+    /// each entry that the list read. As root, the host can stat them.
+    #[test]
+    fn a_list_gives_each_entry_that_the_host_cannot_stat() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_root, claude, _person) = folders();
+        let subagents = claude.join("projects/s1/subagents");
+        std::fs::create_dir_all(&subagents).unwrap();
+        for n in 0..3 {
+            std::fs::write(subagents.join(format!("agent-{n}.jsonl")), "").unwrap();
+        }
+        let mode = |mode| std::fs::Permissions::from_mode(mode);
+        std::fs::set_permissions(&subagents, mode(0o444)).unwrap();
+        let listed = list(&claude, Path::new("projects/s1/subagents"), 3);
+        std::fs::set_permissions(&subagents, mode(0o700)).unwrap();
+        let listed = listed.unwrap().unwrap();
+        let names: Vec<_> = listed.iter().map(|(name, _)| name.clone()).collect();
+        assert_eq!(names, ["agent-0.jsonl", "agent-1.jsonl", "agent-2.jsonl"]);
+        if !nix::unistd::geteuid().is_root() {
+            assert!(
+                listed.iter().all(|(_, kind)| *kind == Kind::Other),
+                "{listed:?}"
+            );
+        }
     }
 
     #[test]

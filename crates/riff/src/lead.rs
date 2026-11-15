@@ -45,7 +45,7 @@
 //! | The attach | [`crate::runtime::Runtime::redraw`], then [`crate::runtime::Runtime::attach`] ([`attach`]): `claude` draws its screen at each attach | 01M51PD7M04HZR2PVVJA4WCBK5 |
 //! | After the attach | [`Left`]: a detach, or the end of the lead when its container does not run; the line says which. First riff writes the reset of the modes of the terminal ([`crate::runtime::reset_terminal`]) | 01M51PD7Q24N252V66NFEHY49N, 01M6XVBRQMBMK68K8GCDRZ5GJ5 |
 //! | The sign-in of `claude` | the token of `riff claude-token` only ([`needs_token`]); a lead from an older riff with the sign-in file of the host gets a word when the host replaced that file ([`stale`], [`crate::daemon::Daemon::stale_leads`]) | 01M77Y6ZQ76DTX470STN8ATTA9, 01M5NJ87YEHHGJBANM7CRYV56Z |
-//! | A new riff | after `riff update`, the daemon stops an old lead (the bind of its riff has no link: [`old`]) when it is idle ([`idle`]: the `Stop` hook ended its turn, and its transcript got no write after the tail of the turn, [`between_turns`]; or its transcript got no write for 5 minutes, [`quiet`]) and the daemon itself runs the riff on disk, and starts it again with `claude --resume ID` ([`spec_again`], [`again`]): the same session, clone and Claude folder, no new session on riff-server; the main clone is the one in the records of the daemon: that of the wave, and with no wave the one that the daemon serves for the repository, never one that a file of the clone names ([`main_of`]); the person gets one line in riff chat ([`crate::daemon::Daemon::leads_again`]), and an attached terminal one line, then the attach to the new container ([`attach`], [`Again`]) | 01M5TC24PB3YC2CC8BA275WSEN, 01M6XTS7V47RFX1G37FRGRBWCY, 01M6WBX2FQEHW92Y1A5HM4H8BM, 01M6WBX2FT7Y9FV9VGGPDBKAHM, 01M5TC2919TB9XPF42YFNJBP79, 01M5TC29A4Q94NJP7HFC75XCF3, 01M6QB89JJEM9Z1V3RVZYHKYT0, 01M7EAZ9N9DY7JPXZP1V8JY01E |
+//! | A new riff | after `riff update`, the daemon stops an old lead (the bind of its riff has no link: [`old`]) when it is idle ([`idle`]: the `Stop` hook ended its turn, and riff sees no write to its transcript after the tail of the turn, [`between_turns`]; or riff sees no write to its transcript for 5 minutes, [`quiet`]) and the daemon itself runs the riff on disk, and starts it again with `claude --resume ID` ([`spec_again`], [`again`]): the same session, clone and Claude folder, no new session on riff-server; the main clone is the one in the records of the daemon: that of the wave, and with no wave the one that the daemon serves for the repository, never one that a file of the clone names ([`main_of`]); the person gets one line in riff chat ([`crate::daemon::Daemon::leads_again`]), and an attached terminal one line, then the attach to the new container ([`attach`], [`Again`]) | 01M5TC24PB3YC2CC8BA275WSEN, 01M6XTS7V47RFX1G37FRGRBWCY, 01M6WBX2FQEHW92Y1A5HM4H8BM, 01M6WBX2FT7Y9FV9VGGPDBKAHM, 01M5TC2919TB9XPF42YFNJBP79, 01M5TC29A4Q94NJP7HFC75XCF3, 01M6QB89JJEM9Z1V3RVZYHKYT0, 01M7EAZ9N9DY7JPXZP1V8JY01E |
 //! | The project | `riff lead move` and the daemon start a lead only for a project of the riff ([`crate::project::lead_refused`], #1863): else riff names the fix, `riff project init`, and starts no session and no container | 01M77FHTT8BZ2YN1SV7H1X3NG8, 01M77FHTXBCWA4FG793TEB5XCY |
 //! | The start | `riff lead start` starts no lead (#1793): it attaches to the lead of the project when its container runs on this host. Else it names the host of the lead and the step there, or says that the daemon of a host that joined the project starts the lead ([`start`], [`text::lead_not_here`]) | 01M77Y6ZBV7C8Z332SAFKQCZ5A |
 //! | The repository | the daemon serves it while the lead runs, so `riff who` and the commands with `--host` reach the host, with the main clone of the wave ([`main_of`], `Daemon::serve_lead`) | 01M6QVSWQZE41BMQ6YN2963C4V, 01M7EAZ9N9DY7JPXZP1V8JY01E |
@@ -717,9 +717,11 @@ pub fn end_turn(folder: &Path) -> Result<()> {
 
 /// True when the lead of `record` is between two turns
 /// (01M6WBX2FQEHW92Y1A5HM4H8BM): a turn of its container ended
-/// ([`end_turn`]), and its transcript got no write later than
-/// [`TURN_TAIL`] after that end. A lead from a riff with no `Stop` hook
-/// never is: [`quiet`] holds for it.
+/// ([`end_turn`]), and riff sees no write to its transcript later than
+/// [`TURN_TAIL`] after that end. When riff cannot list the folder
+/// `projects` of the lead, it sees no write (01M7FX6YQKTN9EVPTZJ9XB8PM4).
+/// A lead from a riff with no `Stop` hook never is: [`quiet`] holds for
+/// it.
 pub fn between_turns(record: &daemon::Record) -> bool {
     let Ok(ended) = std::fs::metadata(record.folder.join(TURN_ENDED)).and_then(|m| m.modified())
     else {
@@ -728,9 +730,10 @@ pub fn between_turns(record: &daemon::Record) -> bool {
     ended >= started(record) && written(record).is_none_or(|written| written <= ended + TURN_TAIL)
 }
 
-/// True when no turn of the lead of `record` runs: it is between two
-/// turns ([`between_turns`]), or its transcript got no write in `quiet`
-/// ([`quiet`], 01M6WBX2FQEHW92Y1A5HM4H8BM).
+/// True when no turn of the lead of `record` runs, as far as riff can
+/// see: it is between two turns ([`between_turns`]), or riff sees no
+/// write to its transcript in `quiet` ([`quiet`],
+/// 01M6WBX2FQEHW92Y1A5HM4H8BM, 01M7FX6YQKTN9EVPTZJ9XB8PM4).
 pub fn idle(record: &daemon::Record, quiet: std::time::Duration) -> bool {
     between_turns(record) || self::quiet(record, quiet)
 }

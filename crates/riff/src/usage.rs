@@ -64,7 +64,8 @@
 //!   or a folder over its limit counts no tokens, and the log names it
 //!   ([`crate::text::transcript_skipped`]). One count reads at most
 //!   [`MAX_COUNT_BYTES`] and [`MAX_COUNT_ENTRIES`] in all, also of a file
-//!   that it skips, and stops there (01M7FX6SWN3DGZMH5HS9BWEBY7).
+//!   that it skips, and stops there, with at most one byte or one entry
+//!   past it (01M7FX6SWN3DGZMH5HS9BWEBY7).
 //! - A reply counts for a claim when its time is from the start of the
 //!   claim to before its end.
 //! - Tokens in a time with two claims of one session count for the
@@ -406,14 +407,16 @@ impl Replies {
     /// [`MAX_ENTRIES`] (01M7FNTSHXPQXXKZF761V0NN9Z). A helper that is a
     /// link, or no plain file, counts as no transcript, with no line of
     /// the log (01M7FE5FYFAR92PM3EJJ211VM2). A transcript of `paths` that
-    /// is a link, a transcript over its limit or with no text, and a
-    /// folder of helpers over its limit are skipped too, and the log
-    /// names each one ([`Replies::skipped`]). The count reads at most
-    /// [`MAX_COUNT_BYTES`] and [`MAX_COUNT_ENTRIES`] in all
+    /// is a link or no plain file, a transcript over its limit or with no
+    /// text, and a folder of helpers that is a link or over its limit are
+    /// skipped too, and the log names each one with no step
+    /// ([`Replies::skipped`], [`text::transcript_skipped`]). The count
+    /// reads at most [`MAX_COUNT_BYTES`] and [`MAX_COUNT_ENTRIES`] in all
     /// (01M7FX6SWN3DGZMH5HS9BWEBY7): each byte and each entry that it
-    /// reads counts, also of a file or a folder that it skips. It stops at
-    /// the file or the folder where one runs out, and the log names it
-    /// ([`text::transcripts_stopped`]).
+    /// reads counts, also of a file or a folder that it skips, and an entry
+    /// that riff cannot stat. It stops at the file or the folder where one
+    /// runs out, with at most one byte or one entry past it, and the log
+    /// names it ([`text::transcripts_stopped`]).
     pub fn read(paths: &[PathBuf]) -> Replies {
         Replies::read_within(paths, Budget::COUNT)
     }
@@ -453,11 +456,11 @@ impl Replies {
         let listed = match crate::host_file::list(claude, &subagents, most) {
             Ok(listed) => listed.unwrap_or_default(),
             Err(e) if e.is::<crate::host_file::TooMany>() => {
-                if most < MAX_ENTRIES {
-                    return Err(claude.join(&subagents));
-                }
                 // The list took `most` and one entry.
-                left.entries = left.entries.saturating_sub(most + 1);
+                left.entries = left
+                    .entries
+                    .checked_sub(most + 1)
+                    .ok_or_else(|| claude.join(&subagents))?;
                 self.skip(&e);
                 Vec::new()
             }
@@ -491,17 +494,14 @@ impl Replies {
         let read = crate::host_file::read(claude, file, most);
         let large = read
             .as_ref()
-            .err()
-            .and_then(|e| e.downcast_ref::<crate::host_file::TooLarge>());
-        if large.is_some() && most < MAX_TRANSCRIPT {
+            .is_err_and(|e| e.is::<crate::host_file::TooLarge>());
+        // A file over `left` runs out the count, and so does a file that
+        // grew past it in the read.
+        let taken = crate::host_file::taken(&read);
+        if (large && most < MAX_TRANSCRIPT) || taken > left.bytes {
             return Err(claude.join(file));
         }
-        let taken = match (&read, large) {
-            (Ok(Some(bytes)), _) => u64::try_from(bytes.len()).unwrap_or(u64::MAX),
-            (_, Some(large)) => large.read,
-            _ => 0,
-        };
-        left.bytes = left.bytes.saturating_sub(taken);
+        left.bytes -= taken;
         let text = read.and_then(|bytes| {
             bytes
                 .map(|bytes| crate::host_file::text_of(claude, file, bytes))
@@ -2136,22 +2136,40 @@ mod tests {
             transcripts_in(&claude, "s1").unwrap(),
             std::slice::from_ref(&main)
         );
-        let models = Replies::read(std::slice::from_ref(&main)).sum(&[(0, u64::MAX)]);
-        assert_eq!(models["opus"].output, 1);
+        let replies = Replies::read(std::slice::from_ref(&main));
+        assert_eq!(replies.sum(&[(0, u64::MAX)])["opus"].output, 1);
+        // The line of the link at the folder of the helpers gives no step:
+        // riff goes on (01M7FNTSHXPQXXKZF761V0NN9Z).
+        let subagents = projects.join("-data-clone/s1/subagents");
+        let linked = text::transcript_skipped(&text::host_file_link(&subagents));
+        assert_eq!(replies.skipped(), std::slice::from_ref(&linked));
+        assert!(!linked.contains(text::REMOVE_IT), "{linked}");
 
         // The transcript itself as a link, or as a FIFO.
         std::fs::remove_file(&main).unwrap();
         std::os::unix::fs::symlink(person.join("s1.jsonl"), &main).unwrap();
         assert!(transcripts_in(&claude, "s1").unwrap().is_empty());
-        assert!(
-            Replies::read(std::slice::from_ref(&main))
-                .sum(&[(0, u64::MAX)])
-                .is_empty()
+        let replies = Replies::read(std::slice::from_ref(&main));
+        assert!(replies.sum(&[(0, u64::MAX)]).is_empty());
+        assert_eq!(
+            replies.skipped(),
+            [
+                text::transcript_skipped(&text::host_file_link(&main)),
+                linked.clone()
+            ]
         );
         std::fs::remove_file(&main).unwrap();
         nix::unistd::mkfifo(&main, nix::sys::stat::Mode::S_IRWXU).unwrap();
         assert!(transcripts_in(&claude, "s1").unwrap().is_empty());
-        assert!(Replies::read(&[main]).sum(&[(0, u64::MAX)]).is_empty());
+        let replies = Replies::read(std::slice::from_ref(&main));
+        assert!(replies.sum(&[(0, u64::MAX)]).is_empty());
+        assert_eq!(
+            replies.skipped(),
+            [
+                text::transcript_skipped(&text::host_file_not_plain(&main)),
+                linked
+            ]
+        );
     }
 
     /// 01M7FNTSHXPQXXKZF761V0NN9Z: a container session makes a sparse
@@ -2229,21 +2247,39 @@ mod tests {
 
         // 01M7FX6SWN3DGZMH5HS9BWEBY7: the folder costs the entries that
         // the list took, its limit and one. A count with room for them and
-        // for the transcript stops at the next transcript.
+        // for 2 transcripts counts the next transcript, and stops at the
+        // third.
         let other = project.join("s2.jsonl");
         write(&other, &[reply(NINE, "m2", "opus", 4)]);
-        let budget = Budget {
+        let third = project.join("s3.jsonl");
+        write(&third, &[reply(NINE, "m3", "opus", 8)]);
+        let all = [main.clone(), other, third.clone()];
+        let budget = |entries| Budget {
             bytes: MAX_COUNT_BYTES,
-            entries: 1 + MAX_ENTRIES + 1,
+            entries,
         };
-        let replies = Replies::read_within(&[main.clone(), other.clone()], budget);
-        assert_eq!(replies.sum(&[(0, u64::MAX)])["opus"].output, 1);
+        let replies = Replies::read_within(&all, budget(1 + MAX_ENTRIES + 1 + 1));
+        assert_eq!(replies.sum(&[(0, u64::MAX)])["opus"].output, 1 + 4);
         assert_eq!(
             replies.skipped(),
             [
                 text::transcript_skipped(&text::host_file_too_many(&subagents, MAX_ENTRIES)),
-                text::transcripts_stopped(&other, MAX_COUNT_BYTES, budget.entries)
+                text::transcripts_stopped(&third, MAX_COUNT_BYTES, 1 + MAX_ENTRIES + 2)
             ]
+        );
+
+        // With room for the transcript and the limit of the folder only,
+        // the entry one past the limit runs out the count: it stops at the
+        // folder.
+        let replies = Replies::read_within(&all, budget(1 + MAX_ENTRIES));
+        assert_eq!(replies.sum(&[(0, u64::MAX)])["opus"].output, 1);
+        assert_eq!(
+            replies.skipped(),
+            [text::transcripts_stopped(
+                &subagents,
+                MAX_COUNT_BYTES,
+                1 + MAX_ENTRIES
+            )]
         );
 
         // At the limit, each helper counts.
@@ -2365,9 +2401,23 @@ mod tests {
             [text::transcripts_stopped(&b, budget.bytes, 100)]
         );
 
+        // With room for each byte but one, it stops at the next transcript.
+        let each: u64 = [&main, &a, &b, &other].into_iter().map(size).sum();
+        let budget = Budget {
+            bytes: each - 1,
+            entries: 100,
+        };
+        let replies = Replies::read_within(&all, budget);
+        let models = replies.sum(&[(0, u64::MAX)]);
+        assert_eq!((models["opus"].output, models["haiku"].output), (1, 6));
+        assert_eq!(
+            replies.skipped(),
+            [text::transcripts_stopped(&other, budget.bytes, 100)]
+        );
+
         // With room for each byte, each file counts.
         let budget = Budget {
-            bytes: [&main, &a, &b, &other].into_iter().map(size).sum(),
+            bytes: each,
             entries: 100,
         };
         let replies = Replies::read_within(&all, budget);
@@ -2406,6 +2456,33 @@ mod tests {
         assert_eq!(
             replies.skipped(),
             [text::transcripts_stopped(&other, MAX_COUNT_BYTES, 3)]
+        );
+    }
+
+    /// 01M7FX6SWN3DGZMH5HS9BWEBY7: a session makes its folder of helpers
+    /// with no search for the host (mode 0444): riff cannot stat its 3
+    /// entries, and they count all the same. A count with room for the
+    /// transcript and the 3 entries stops at the next transcript. As root,
+    /// riff can stat them, and they count too.
+    #[test]
+    fn a_count_takes_each_entry_that_riff_cannot_stat() {
+        use std::os::unix::fs::PermissionsExt;
+        let claude = tempfile::tempdir().unwrap();
+        let [main, a, _, other] = transcripts_with_helpers(claude.path());
+        let helpers = a.parent().unwrap();
+        write(&helpers.join("agent-c.jsonl"), &[]);
+        let mode = |mode| std::fs::Permissions::from_mode(mode);
+        std::fs::set_permissions(helpers, mode(0o444)).unwrap();
+        let budget = Budget {
+            bytes: MAX_COUNT_BYTES,
+            entries: 1 + 3,
+        };
+        let replies = Replies::read_within(&[main, other.clone()], budget);
+        std::fs::set_permissions(helpers, mode(0o700)).unwrap();
+        assert_eq!(replies.sum(&[(0, u64::MAX)])["opus"].output, 1);
+        assert_eq!(
+            replies.skipped(),
+            [text::transcripts_stopped(&other, MAX_COUNT_BYTES, 1 + 3)]
         );
     }
 

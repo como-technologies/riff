@@ -3423,4 +3423,40 @@ mod tests {
             "{settings}"
         );
     }
+
+    /// 01M7FNTSHXPQXXKZF761V0NN9Z: a `settings.json` of an earlier start
+    /// that is no text, or no JSON, stops the start before each write:
+    /// riff writes no `.claude.json`, and the file stays as it was.
+    #[test]
+    fn a_settings_file_that_is_no_json_stops_the_start_before_each_write() {
+        let root = tempfile::tempdir().unwrap();
+        let claude = root.path().join("claude");
+        std::fs::create_dir(&claude).unwrap();
+        let auto = crate::permissions::Trust {
+            owner: Some("acme"),
+            server: Some("http://h:7878"),
+            sources: &[],
+        };
+        let (config, settings) = (claude.join(CLAUDE_JSON), claude.join(SETTINGS_JSON));
+        for (bytes, error) in [
+            (&b"\xff{}"[..], format!("{} is no text", settings.display())),
+            (
+                &b"{"[..],
+                format!("{}: the settings are not valid JSON", settings.display()),
+            ),
+        ] {
+            std::fs::write(&settings, bytes).unwrap();
+            let start = claude_folder(
+                &claude,
+                Path::new("/data/clone"),
+                &root.path().join("none"),
+                &auto,
+                crate::permissions::Role::Worker,
+            );
+            let start = format!("{:#}", start.unwrap_err());
+            assert!(start.starts_with(&error), "{start}");
+            assert!(!config.exists());
+            assert_eq!(std::fs::read(&settings).unwrap(), bytes);
+        }
+    }
 }

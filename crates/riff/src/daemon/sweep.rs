@@ -526,6 +526,21 @@ fn remove_folder(folder: &Path) -> Result<()> {
     Ok(())
 }
 
+/// The line of the log for the fault `e` of the sweep of a folder. The
+/// fault can name a file that the session made, so each control
+/// character of it is its escape ([`text::escaped`],
+/// 01M7FX6SZ88S06N1AT6WJHKNMX).
+///
+/// ```
+/// let fault = anyhow::anyhow!("cannot remove /s/x\nriff daemon: forged");
+/// let line = riff::daemon::sweep::fault_line(&fault.context("sweep /s"));
+/// assert_eq!(line, r"riff daemon: sweep /s: cannot remove /s/x\nriff daemon: forged");
+/// assert_eq!(line.lines().count(), 1);
+/// ```
+pub fn fault_line(e: &anyhow::Error) -> String {
+    format!("riff daemon: {}", text::escaped(&format!("{e:#}")))
+}
+
 /// A branch of [`KEPT_PREFIX`] of `origin` with the date of its tip, as
 /// seconds since 1970.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -841,9 +856,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             match self.sweep_folder(&folder, repo, &mut repos).await {
                 Ok(Some(line)) => swept.push(line),
                 Ok(None) => {}
-                // The error can name a file of the session
-                // (01M7FX6SZ88S06N1AT6WJHKNMX).
-                Err(e) => eprintln!("riff daemon: {}", text::escaped(&format!("{e:#}"))),
+                Err(e) => eprintln!("{}", fault_line(&e)),
             }
         }
         // An old clone of a lead that a start of the lead could not remove

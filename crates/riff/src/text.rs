@@ -7265,6 +7265,13 @@ pub fn host_git_refused(dir: &Path, folder: &Path) -> String {
     )
 }
 
+/// The step at the end of an error of the guard of the files of the host
+/// ([`host_file_link`], [`host_file_not_plain`], [`config_too_large`]):
+/// the start of a session stops there, and the person removes the file.
+/// A line of the log where riff goes on drops it
+/// ([`transcript_skipped`]).
+pub const REMOVE_IT: &str = "Remove it, and start again.";
+
 /// The error of the guard of the files of the host in a folder that a
 /// container writes ([`crate::host_file`]): `path` is a link there, and
 /// the host follows no link.
@@ -7280,8 +7287,7 @@ pub fn host_git_refused(dir: &Path, folder: &Path) -> String {
 /// ```
 pub fn host_file_link(path: &Path) -> String {
     format!(
-        "riff follows no link in a folder that a session can write: {} is a link. Remove it, and \
-         start again.",
+        "riff follows no link in a folder that a session can write: {} is a link. {REMOVE_IT}",
         path.display()
     )
 }
@@ -7302,7 +7308,7 @@ pub fn host_file_link(path: &Path) -> String {
 pub fn host_file_not_plain(path: &Path) -> String {
     format!(
         "riff reads only a plain file in a folder that a session can write: {} is no plain file. \
-         Remove it, and start again.",
+         {REMOVE_IT}",
         path.display()
     )
 }
@@ -7346,10 +7352,7 @@ pub fn host_file_too_large(path: &Path, most: u64) -> String {
 /// );
 /// ```
 pub fn config_too_large(path: &Path, most: u64) -> String {
-    format!(
-        "{} Remove it, and start again.",
-        host_file_too_large(path, most)
-    )
+    format!("{} {REMOVE_IT}", host_file_too_large(path, most))
 }
 
 /// The words of a limit of `most` bytes: bytes below 1 MB, else
@@ -7409,21 +7412,30 @@ pub fn escaped(text: &str) -> String {
 /// The line of the log for a transcript, or a folder of transcripts,
 /// whose tokens riff does not count ([`crate::usage::Replies::read`],
 /// [`crate::usage::transcripts_in`]): `cause` names it, through
-/// [`escaped`].
+/// [`escaped`]. riff goes on, so the line gives no step: it drops the
+/// step [`REMOVE_IT`] of `cause` (01M7FNTSHXPQXXKZF761V0NN9Z).
 ///
 /// ```
+/// use std::path::Path;
+///
 /// assert_eq!(
 ///     riff::text::transcript_skipped("riff reads at most 256MB of a file in a folder that a \
 ///         session can write: /s/a.jsonl is larger."),
 ///     "riff counts no tokens of a transcript, and goes on. riff reads at most 256MB of a file \
 ///      in a folder that a session can write: /s/a.jsonl is larger."
 /// );
+/// assert_eq!(
+///     riff::text::transcript_skipped(&riff::text::host_file_link(Path::new("/s/s1/subagents"))),
+///     "riff counts no tokens of a transcript, and goes on. riff follows no link in a folder \
+///      that a session can write: /s/s1/subagents is a link."
+/// );
 /// assert!(riff::text::transcript_skipped("/s/x\nforged").ends_with(r"/s/x\nforged"));
 /// ```
 pub fn transcript_skipped(cause: &str) -> String {
+    let fact = cause.strip_suffix(REMOVE_IT).map_or(cause, str::trim_end);
     format!(
         "riff counts no tokens of a transcript, and goes on. {}",
-        escaped(cause)
+        escaped(fact)
     )
 }
 

@@ -495,14 +495,15 @@ reads at most a limit of each one:
 |---|---|---|
 | A transcript, and the transcript of each helper agent | 256 MB | riff counts no tokens of it, and goes on. The log of the daemon names the file. |
 | `.claude.json` and `settings.json` of a Claude folder | 16 MB | The start stops, and riff writes neither file. The error names the file. See [When the start of the lead stops at a large file](#when-the-start-of-the-lead-stops-at-a-large-file). |
-| `.git/objects/info/alternates` of a clone | 1 MB | riff counts no main clone for the clone. |
+| `.git/objects/info/alternates` of a clone | 1 MB | riff counts no main clone for the clone. The log has no line for it. |
 | The entries of the folder `projects` of a Claude folder, and of the folder of the helper agents of a transcript | 10,000 entries | riff counts no tokens of the transcripts there, and sees no write of the lead there: after an update, riff can start the lead again in the middle of a turn. riff goes on, and the log of the daemon names the folder. See [When riff sees no turn of the lead](#when-riff-sees-no-turn-of-the-lead). |
 | All the transcripts of a session, at each count of its tokens | 1 GB and 100,000 entries in all | riff counts the tokens of the files before the limit, and no tokens of the rest. The log of the daemon names the file or the folder where riff stopped. |
 
 When the size of a file is over its limit, riff reads none of it. When
 the file grows in the read, riff stops one byte past the limit. Each
 byte and each entry that a count of tokens reads counts, also of a file
-that riff skips. The daemon reads the transcripts of an ended session
+that riff skips. A count stops at most one byte or one entry past its
+limit in all. The daemon reads the transcripts of an ended session
 on a thread of its own, so each other session goes on. The end of that
 session waits for the count, which has the limits in all. So a large
 file of a session does not fill the memory of the riff daemon.
@@ -518,16 +519,15 @@ flowchart LR
     L -- yes --> E["riff reads no more of it<br/>the error names the file<br/>the daemon goes on"]
 ```
 
-To find each limit that riff met, read the log of the daemon:
+To find each other limit that riff met, read the log of the daemon:
 
 ```sh
 journalctl --user -u riff | grep -E 'reads at most|lists at most'
 ```
 
-A line that says "riff counts no tokens" needs no step: riff goes on,
-and the folder of a worker session goes at its end. Do not remove a
-transcript of a session that runs: it holds the conversation that
-`claude --resume` reads.
+A line that says "riff counts no tokens" needs no step: riff goes on.
+Do not remove a transcript of a session that runs: it holds the
+conversation that `claude --resume` reads.
 
 ##### When the start of the lead stops at a large file
 
@@ -555,14 +555,18 @@ riff daemon: riff-lead-acme-app: riff sees no turn of the lead in its transcript
 ```
 
 riff goes on, but after an update it can start the lead again in the
-middle of a turn. The conversation of the lead is in the folder of its
-clone in `projects`: its name ends with `-clone`. The session made the
-other entries. Count them, then move them out of `projects`:
+middle of a turn. The conversation of the lead is in one entry of
+`projects`: the path of the clone of the lead, with `-` for each
+character that is no letter and no digit. The session made each other
+entry, also each hidden one. Count them, then move them out of
+`projects`:
 
 ```sh
-ls ~/.local/share/riff/leads/OWNER-REPO/claude/projects | grep -cv -- '-clone$'
+lead=~/.local/share/riff/leads/OWNER-REPO
+keep=$(printf %s "$lead/clone" | sed 's/[^A-Za-z0-9]/-/g')
+find "$lead/claude/projects" -mindepth 1 -maxdepth 1 ! -name "$keep" | wc -l
 mkdir -p ~/riff-projects-left
-find ~/.local/share/riff/leads/OWNER-REPO/claude/projects -mindepth 1 -maxdepth 1 ! -name '*-clone' -exec sh -c 'mv "$@" ~/riff-projects-left' sh {} +
+find "$lead/claude/projects" -mindepth 1 -maxdepth 1 ! -name "$keep" -exec sh -c 'mv "$@" ~/riff-projects-left' sh {} +
 ```
 
 At the next look, riff will see the turns of the lead again.
@@ -1345,7 +1349,7 @@ idle, so no work stops:
 | `riff relay watch`, `riff tail`, `riff top` | runs the new `riff` in its place | at once |
 | `riff chat` | runs the new `riff` in its place | between two lines |
 | The riff daemon | starts again on the `riff` on `PATH`, or on its unit after it wrote the unit again (see [Each step of an update](#each-step-of-an-update)) | when it runs no session and no real-session test, else after its last session |
-| The lead in a container | the daemon stops its container and starts it again on the new `riff` with `claude --resume`; the lead goes on with its conversation (see [The lead starts again on the new riff](#the-lead-starts-again-on-the-new-riff)) | after the daemon started again on the new riff, at the first end of a turn of the lead; a lead of an older riff, when its transcript got no write for 5 minutes |
+| The lead in a container | the daemon stops its container and starts it again on the new `riff` with `claude --resume`; the lead goes on with its conversation (see [The lead starts again on the new riff](#the-lead-starts-again-on-the-new-riff)) | after the daemon started again on the new riff, at the first end of a turn of the lead; a lead of an older riff, when riff sees no write to its transcript for 5 minutes |
 
 You still start `riff-server` again yourself. `riff update` tells you
 when it runs the old build.
@@ -2835,8 +2839,8 @@ cat ~/.local/share/riff/leads/OWNER-REPO/turn-ended
 ```
 
 A lead that started on an older riff has no hook. It counts as idle
-when its transcript got no write for 5 minutes. A tool call that runs
-for more than 5 minutes with no output counts as idle too.
+when riff sees no write to its transcript for 5 minutes. A tool call
+that runs for more than 5 minutes with no output counts as idle too.
 
 The new container has the same session, the same clone and the same
 Claude folder. So the lead goes on with its conversation and its notes.
