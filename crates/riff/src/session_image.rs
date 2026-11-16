@@ -41,7 +41,9 @@
 //!
 //! The pin that counts is the merged pin ([`merged`],
 //! 01M51STPHXSSZMHF9T7Z85097R): [`FILE`] on the default branch of
-//! `origin`, after a fetch of that branch in the main clone. The wave of
+//! `origin`, after a fetch of that branch in the main clone. riff asks
+//! `origin` for that branch first, and sets `origin/HEAD` of the main
+//! clone to it ([`follow_origin`], 01M7G81XGBPP23H9T7V0WX87QZ). The wave of
 //! the daemon, `riff host join`, `riff run`, `riff lead start` and the
 //! image step of an update use only it. So an edit of [`FILE`] that is
 //! not merged, in the main clone or on a branch that is checked out
@@ -54,7 +56,8 @@
 //!
 //! ```mermaid
 //! flowchart TD
-//!     M["the main clone"] -- "git fetch origin BRANCH" --> O["origin/HEAD, for example origin/main"]
+//!     G["origin on GitHub"] -- "git ls-remote --symref origin HEAD" --> M
+//!     M["the main clone"] -- "git fetch, git remote set-head origin BRANCH" --> O["origin/HEAD, for example origin/main"]
 //!     O -- "git show origin/main:riff.toml" --> P["the merged pin"]
 //!     M -- "riff.toml on disk" --> L["the pin of the working tree"]
 //!     P --> U["the wave, riff host join, riff run,<br/>riff lead start, the update step"]
@@ -115,6 +118,7 @@ use std::str::FromStr;
 
 use anyhow::{Context, Result, anyhow, bail};
 
+use crate::session_clone::Branch;
 use crate::session_setup::Setup;
 use crate::text;
 
@@ -275,13 +279,18 @@ pub fn merged(main: &Path, say: impl FnMut(&str)) -> Result<Image> {
 
 /// What the merged [`FILE`] gives a session (01M5SMVVC4GQS310CVK3H9CMQ7):
 /// the pinned image, and the env and the volumes of the tables
-/// `[session.env]` and `[session.volumes]` ([`Setup`]).
+/// `[session.env]` and `[session.volumes]` ([`Setup`]), with the default
+/// branch that holds the file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Merged {
     /// The pinned image.
     pub image: Image,
     /// The env and the volumes.
     pub setup: Setup,
+    /// The default branch of `origin` ([`follow_origin`]): the start text
+    /// and the plan of the clone of `riff run` and of the lead name it
+    /// (01M7G81XGBPP23H9T7V0WX87QZ).
+    pub base: Branch,
 }
 
 /// [`merged`] with the env and the volumes of the merged [`FILE`] too. A
@@ -319,24 +328,24 @@ pub struct Merged {
 /// let merged = merged_config(&main, |_| {})?;
 /// assert_eq!(merged.image.to_string(), image);
 /// assert_eq!(merged.setup.env, [("A".to_owned(), "$HOME".to_owned())]);
+/// assert_eq!(merged.base.as_str(), "main");
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn merged_config(main: &Path, mut say: impl FnMut(&str)) -> Result<Merged> {
-    let head = git(
-        main,
-        &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
-    )
-    .map_err(|_| anyhow!("{}", text::image_no_origin_head(main)))?;
-    let branch = head.strip_prefix("origin/").unwrap_or(&head);
-    let fetch = ["fetch", "--quiet", "origin", branch];
-    let fetched = crate::git_credential::keyring_open(main, "origin", &fetch)
-        .and_then(|()| git(main, &fetch));
-    if let Err(e) = fetched {
-        say(&text::image_no_fetch(&head, &format!("{e:#}")));
-    }
-    let config = match git(main, &["show", &format!("{head}:{FILE}")]) {
+    let base = follow_origin(main, &mut say)?;
+    merged_config_on(main, base, say)
+}
+
+/// [`merged_config`] on the default branch `base` that
+/// [`follow_origin`] gave: so a caller can say the line of `origin` and
+/// not the lines about the pin, as `riff run --image` does. `say` gets
+/// each line about the pin.
+pub fn merged_config_on(main: &Path, base: Branch, mut say: impl FnMut(&str)) -> Result<Merged> {
+    let head = format!("origin/{base}");
+    let rev = base.of_origin();
+    let config = match git(main, &["show", &format!("{rev}:{FILE}")]) {
         Ok(config) => config,
-        Err(_) if lacks_config(main, &head) => bail!("{}", text::image_no_config(&head)),
+        Err(_) if lacks_config(main, &rev) => bail!("{}", text::image_no_config(&head)),
         Err(e) => return Err(e),
     };
     let place = format!("{FILE} of {head}");
@@ -356,7 +365,182 @@ pub fn merged_config(main: &Path, mut say: impl FnMut(&str)) -> Result<Merged> {
             &head,
         )),
     }
-    Ok(Merged { image, setup })
+    Ok(Merged { image, setup, base })
+}
+
+/// The default branch of `origin` of the main clone `main`, in one place
+/// (01M7G81XGBPP23H9T7V0WX87QZ): riff asks `origin` for the branch of
+/// its `HEAD` with one `git ls-remote --symref`, fetches that branch into
+/// `refs/remotes/origin` of the main clone, and sets `origin/HEAD` there
+/// to it. So a rename of the default branch on GitHub needs no step of
+/// the person, and each later read of `origin/HEAD` ([`merged_sources`],
+/// [`merged_here`]) names the same branch. When the look or the fetch
+/// fails, it says so with `say` ([`text::image_no_fetch`]), and gives the
+/// branch of `origin/HEAD` as the clone has it
+/// (01M51STPPWYFKQ1ESCNA6V3WV2). A clone with no `origin/HEAD` then has
+/// no default branch: the error gives the fix.
+///
+/// ```
+/// use riff::session_image::follow_origin;
+///
+/// let dir = tempfile::tempdir()?;
+/// let git = |dir: &std::path::Path, args: &[&str]| {
+///     let out = std::process::Command::new("git")
+///         .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
+///         .arg("-C")
+///         .arg(dir)
+///         .args(args)
+///         .env("GIT_CONFIG_GLOBAL", "/dev/null")
+///         .output()
+///         .unwrap();
+///     assert!(out.status.success(), "git {args:?}");
+///     String::from_utf8_lossy(&out.stdout).trim().to_owned()
+/// };
+/// let (origin, main) = (dir.path().join("origin.git"), dir.path().join("main"));
+/// git(dir.path(), &["init", "-q", "--bare", "-b", "main", origin.to_str().unwrap()]);
+/// git(dir.path(), &["clone", "-q", origin.to_str().unwrap(), main.to_str().unwrap()]);
+/// git(&main, &["commit", "-q", "--allow-empty", "-m", "one"]);
+/// git(&main, &["push", "-q", "origin", "HEAD:main"]);
+/// git(&main, &["remote", "set-head", "origin", "main"]);
+///
+/// // The default branch moves to trunk on origin, and the clone fetches
+/// // nothing: its origin/HEAD still names main.
+/// git(&origin, &["branch", "-m", "main", "trunk"]);
+/// let mut said = Vec::new();
+/// let base = follow_origin(&main, |line| said.push(line.to_owned()))?;
+/// assert_eq!(base.as_str(), "trunk");
+/// assert!(said.is_empty(), "{said:?}");
+/// let head = git(&main, &["symbolic-ref", "refs/remotes/origin/HEAD"]);
+/// assert_eq!(head, "refs/remotes/origin/trunk");
+/// assert_eq!(git(&main, &["rev-parse", "origin/trunk"]), git(&origin, &["rev-parse", "trunk"]));
+///
+/// // With no origin, it says why, and the clone keeps its origin/HEAD.
+/// std::fs::remove_dir_all(&origin)?;
+/// let base = follow_origin(&main, |line| said.push(line.to_owned()))?;
+/// assert_eq!(base.as_str(), "trunk");
+/// assert_eq!(said.len(), 1, "{said:?}");
+/// assert!(said[0].starts_with("riff cannot fetch origin/trunk: "), "{said:?}");
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn follow_origin(main: &Path, mut say: impl FnMut(&str)) -> Result<Branch> {
+    let followed = (|| {
+        let look = ["ls-remote", "--symref", "origin", "HEAD"];
+        crate::git_credential::keyring_open(main, "origin", &look)?;
+        let base = origin_head(&git(main, &look)?)?;
+        fetch_origin(main, &base)?;
+        git(main, &["remote", "set-head", "origin", base.as_str()])?;
+        anyhow::Ok(base)
+    })();
+    followed.or_else(|e| {
+        let base = head_here(main)?;
+        say(&text::image_no_fetch(
+            &format!("origin/{base}"),
+            &format!("{e:#}"),
+        ));
+        Ok(base)
+    })
+}
+
+/// The refspec of riff that fetches the branch `name` of `origin` into
+/// `refs/remotes/origin` of a clone, with force: the one place of it.
+/// [`fetch_origin`] fetches with it, and so do the merges of the order
+/// ([`crate::order::merges`]) and the council of a pull request
+/// ([`crate::council::pick::of_pull`]).
+///
+/// ```
+/// assert_eq!(
+///     riff::session_image::refspec("main"),
+///     "+refs/heads/main:refs/remotes/origin/main"
+/// );
+/// ```
+pub fn refspec(name: &str) -> String {
+    format!("+refs/heads/{name}:refs/remotes/origin/{name}")
+}
+
+/// Fetches the branch `branch` from `origin` into `refs/remotes/origin`
+/// of the main clone `main`, with no tag ([`refspec`]). Before the
+/// `git`, it checks the keyring
+/// ([`crate::git_credential::keyring_open`]). The default branch comes
+/// this way ([`follow_origin`]), and the branch of the item of `riff run
+/// --no-github` ([`crate::run::fetch_for_no_github`]).
+///
+/// ```
+/// use riff::session_image::fetch_origin;
+///
+/// let dir = tempfile::tempdir()?;
+/// let git = |dir: &std::path::Path, args: &[&str]| {
+///     let out = std::process::Command::new("git")
+///         .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
+///         .arg("-C")
+///         .arg(dir)
+///         .args(args)
+///         .env("GIT_CONFIG_GLOBAL", "/dev/null")
+///         .output()
+///         .unwrap();
+///     assert!(out.status.success(), "git {args:?}");
+///     String::from_utf8_lossy(&out.stdout).trim().to_owned()
+/// };
+/// let (origin, main) = (dir.path().join("origin.git"), dir.path().join("main"));
+/// git(dir.path(), &["init", "-q", "--bare", "-b", "main", origin.to_str().unwrap()]);
+/// git(dir.path(), &["clone", "-q", origin.to_str().unwrap(), main.to_str().unwrap()]);
+/// git(&main, &["commit", "-q", "--allow-empty", "-m", "one"]);
+/// git(&main, &["tag", "v1"]);
+/// git(&main, &["push", "-q", "origin", "HEAD:main", "HEAD:work", "v1"]);
+/// git(&main, &["tag", "-d", "v1"]);
+///
+/// fetch_origin(&main, &"work".parse()?)?;
+/// assert_eq!(git(&main, &["rev-parse", "origin/work"]), git(&origin, &["rev-parse", "work"]));
+/// assert_eq!(git(&main, &["tag"]), "");
+/// // A branch that origin does not have: the error names the fetch.
+/// let error = fetch_origin(&main, &"gone".parse()?).unwrap_err();
+/// assert!(format!("{error:#}").starts_with("git fetch "), "{error:#}");
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn fetch_origin(main: &Path, branch: &Branch) -> Result<()> {
+    let spec = refspec(branch.as_str());
+    let fetch = ["fetch", "--quiet", "--no-tags", "origin", &spec];
+    crate::git_credential::keyring_open(main, "origin", &fetch)?;
+    git(main, &fetch).map(drop)
+}
+
+/// The branch of the `HEAD` of `origin` in `listed`, the output of `git
+/// ls-remote --symref URL HEAD` ([`follow_origin`]). A `HEAD` that names
+/// no branch, as on an empty repository, is the error
+/// [`text::ORIGIN_NO_DEFAULT`].
+///
+/// ```
+/// use riff::session_image::origin_head;
+///
+/// let listed = "ref: refs/heads/trunk\tHEAD\n1a2b\tHEAD\n";
+/// assert_eq!(origin_head(listed)?.as_str(), "trunk");
+/// assert!(origin_head("1a2b\tHEAD\n").is_err());
+/// assert!(origin_head("").is_err());
+/// // A name that is no name of a git branch is no default branch.
+/// assert!(origin_head("ref: refs/heads/a..b\tHEAD\n").is_err());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn origin_head(listed: &str) -> Result<Branch> {
+    listed
+        .lines()
+        .find_map(|line| {
+            let (target, name) = line.split_once('\t')?;
+            target
+                .strip_prefix("ref: refs/heads/")
+                .filter(|_| name == "HEAD")
+        })
+        .ok_or_else(|| anyhow!("{}", text::ORIGIN_NO_DEFAULT))?
+        .parse()
+}
+
+/// The branch of `origin/HEAD` of the main clone `main`, as the clone has
+/// it. With no `origin/HEAD`, the error gives the fix
+/// ([`text::image_no_origin_head`]).
+fn head_here(main: &Path) -> Result<Branch> {
+    let no_head = || anyhow!("{}", text::image_no_origin_head(main));
+    let head = git(main, &["symbolic-ref", "refs/remotes/origin/HEAD"]).map_err(|_| no_head())?;
+    head.strip_prefix("refs/remotes/origin/")
+        .ok_or_else(no_head)?
+        .parse()
 }
 
 /// The package sources that the riff config `text` names
@@ -466,16 +650,14 @@ fn is_host(text: &str) -> bool {
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn merged_sources(main: &Path) -> Result<Vec<String>> {
-    let Ok(head) = git(
-        main,
-        &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
-    ) else {
+    let Ok(base) = head_here(main) else {
         return Ok(Vec::new());
     };
-    let Ok(config) = git(main, &["show", &format!("{head}:{FILE}")]) else {
+    let show = format!("{}:{FILE}", base.of_origin());
+    let Ok(config) = git(main, &["show", &show]) else {
         return Ok(Vec::new());
     };
-    sources_of_config(&config, &format!("{FILE} of {head}"))
+    sources_of_config(&config, &format!("{FILE} of origin/{base}"))
 }
 
 /// The merged pin of the main clone `main` as the clone has it now
@@ -521,13 +703,9 @@ pub fn merged_sources(main: &Path) -> Result<Vec<String>> {
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn merged_here(main: &Path) -> Result<Image> {
-    let head = git(
-        main,
-        &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
-    )
-    .map_err(|_| anyhow!("{}", text::image_no_origin_head(main)))?;
-    let config = git(main, &["show", &format!("{head}:{FILE}")])?;
-    Image::of_config(&config, &format!("{FILE} of {head}"))
+    let base = head_here(main)?;
+    let config = git(main, &["show", &format!("{}:{FILE}", base.of_origin())])?;
+    Image::of_config(&config, &format!("{FILE} of origin/{base}"))
 }
 
 /// True when the branch `head` is there, and has no [`FILE`].
@@ -823,15 +1001,48 @@ mod tests {
         );
     }
 
-    /// 01M51STPPWYFKQ1ESCNA6V3WV2: a clone with no `origin/HEAD` has no
-    /// merged pin. The error gives the fix.
+    /// 01M51STPPWYFKQ1ESCNA6V3WV2: after a failed fetch, a clone with no
+    /// `origin/HEAD` has no merged pin. The error gives the fix.
     #[test]
     fn a_clone_with_no_origin_head_has_no_merged_pin() {
-        let (_dir, main, _origin) = test_clone(&config("0"));
+        let (_dir, main, origin) = test_clone(&config("0"));
         test_git(&main, &["remote", "set-head", "origin", "--delete"]);
+        std::fs::remove_dir_all(&origin).unwrap();
         let error = format!("{:#}", merged_lines(&main).0.unwrap_err());
         assert_eq!(error, text::image_no_origin_head(&main));
         assert!(error.ends_with("remote set-head origin --auto"), "{error}");
+    }
+
+    /// 01M7G81XGBPP23H9T7V0WX87QZ: the step of the image sets
+    /// `origin/HEAD` of the main clone from `origin`. A clone with no
+    /// `origin/HEAD` gets it, and a rename on `origin` moves it: the pin,
+    /// the sources and the pin of the facts ([`merged_here`]) come from
+    /// the new default branch, and the merged config names it.
+    #[test]
+    fn the_step_of_the_image_sets_origin_head_from_origin() {
+        let (dir, main, origin) = test_clone(&config("0"));
+        test_git(&main, &["remote", "set-head", "origin", "--delete"]);
+        let (image, lines) = merged_lines(&main);
+        assert_eq!(image.unwrap().to_string(), pin("0"));
+        assert!(lines.is_empty(), "{lines:?}");
+
+        // Another clone puts a new pin and a source on trunk, and the
+        // default branch moves there. The main clone fetches nothing.
+        let other = dir.path().join("other");
+        let url = origin.to_str().unwrap();
+        test_git(dir.path(), &["clone", "-q", url, other.to_str().unwrap()]);
+        let trunk = format!("{}sources = [\"pypi.org\"]\n", config("1"));
+        std::fs::write(other.join(FILE), &trunk).unwrap();
+        test_git(&other, &["commit", "-q", "-am", "a new pin"]);
+        test_git(&other, &["push", "-q", "origin", "HEAD:trunk"]);
+        test_git(&origin, &["symbolic-ref", "HEAD", "refs/heads/trunk"]);
+        std::fs::write(main.join(FILE), &trunk).unwrap();
+
+        let found = merged_config(&main, |_| {}).unwrap();
+        assert_eq!(found.base.as_str(), "trunk");
+        assert_eq!(found.image.to_string(), pin("1"));
+        assert_eq!(merged_here(&main).unwrap().to_string(), pin("1"));
+        assert_eq!(merged_sources(&main).unwrap(), ["pypi.org"]);
     }
 
     /// 01M5QY976MTPRX5J4N1MKXAGDK: an `origin` with no `riff.toml` on its
@@ -864,10 +1075,11 @@ mod tests {
     }
 
     /// 01M5QY976MTPRX5J4N1MKXAGDK: a branch that git cannot find is no
-    /// branch with no `riff.toml`: the error stays the error of git.
+    /// branch with no `riff.toml`: the error stays the error of git. With
+    /// no origin, the clone keeps its `origin/HEAD`.
     #[test]
     fn a_branch_that_is_not_there_keeps_the_error_of_git() {
-        let (_dir, main, _origin) = test_clone(&config("0"));
+        let (_dir, main, origin) = test_clone(&config("0"));
         test_git(
             &main,
             &[
@@ -876,10 +1088,11 @@ mod tests {
                 "refs/remotes/origin/nope",
             ],
         );
+        std::fs::remove_dir_all(&origin).unwrap();
         let (image, _) = merged_lines(&main);
         let error = format!("{:#}", image.unwrap_err());
         assert!(
-            error.starts_with("git show origin/nope:riff.toml: "),
+            error.starts_with("git show refs/remotes/origin/nope:riff.toml: "),
             "{error}"
         );
     }

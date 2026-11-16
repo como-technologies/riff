@@ -549,12 +549,13 @@ fn no_prompt_git(keyring: &Keyring) {
     let prompter = silent_prompter();
     keyring.lock();
     let start = Instant::now();
-    let lead = dir.path().join("leads/o-r/clone");
-    let error = riff::lead::fresh_clone(&main, &lead).unwrap_err();
+    let url = private.url();
+    let ask = |at: &Path, url: &str| riff::git_credential::run(at, url, &["ls-remote", "--", url]);
+    let error = ask(&main, &url).unwrap_err();
     assert!(secrets::is_locked(&error), "{error:#}");
     let said = format!("{error:#}");
     assert!(
-        said.starts_with("riff did not run git clone -q --reference ")
+        said.starts_with("riff did not run git ls-remote -- ")
             && said.contains("unlock it at the desktop"),
         "{said}"
     );
@@ -579,8 +580,7 @@ fn no_prompt_git(keyring: &Keyring) {
     // The push did not run.
     assert_eq!(head(), before);
     // A local remote needs no credential: its git runs.
-    let fresh = riff::lead::fresh_clone(&local, &dir.path().join("leads/o-local/clone")).unwrap();
-    assert_eq!(fresh, riff::lead::Fresh::Made);
+    ask(&local, "origin").unwrap();
     assert!(start.elapsed() < secrets::KEYRING_WAIT);
     assert!(
         !log.exists(),
@@ -593,7 +593,7 @@ fn no_prompt_git(keyring: &Keyring) {
     // a service. The same git runs, and asks gh for the credential. The
     // fake repository refuses it.
     keyring.unlock();
-    let error = riff::lead::fresh_clone(&main, &lead).unwrap_err();
+    let error = ask(&main, &url).unwrap_err();
     assert!(!secrets::is_locked(&error), "{error:#}");
     assert!(private.requests() > 0, "git did not run: {error:#}");
     let asked = std::fs::read_to_string(&log).unwrap();

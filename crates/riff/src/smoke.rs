@@ -55,10 +55,7 @@ pub fn body(mark: &str) -> String {
 /// 8 random hex digits: the session ID of one run, and the mark of its
 /// message.
 fn mark() -> String {
-    let mut bytes = [0u8; 4];
-    // The OS random source fails only when the OS is broken.
-    getrandom::fill(&mut bytes).expect("the OS gives random bytes");
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    crate::identity::random_hex::<4>()
 }
 
 /// Runs the smoke test against the server of `api`, signed in with the

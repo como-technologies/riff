@@ -35,9 +35,9 @@
 //! - The daemon takes no folder for git from a file that a session
 //!   wrote: the main clone of a lead comes from the records of the daemon
 //!   ([`crate::lead::main_of`], 01M7EAZ9N9DY7JPXZP1V8JY01E).
-//! - A container session sees its clone at the path of the host, under
-//!   the folder of the sessions or of the leads. Its git runs in the
-//!   container. So in a container session (`RIFF_SOCKET`,
+//! - A container session has its clone at a path under the folder of the
+//!   sessions or of the leads, in its container only. Its git runs in
+//!   the container. So in a container session (`RIFF_SOCKET`,
 //!   [`crate::cycle::in_container`]) these two folders are not in
 //!   [`guarded`].
 //!
@@ -48,20 +48,23 @@
 //!     G -- no --> X["git -C DIR runs"]
 //! ```
 //!
-//! The steps of the host that need git for a session use other folders:
-//! the clone of a session is made in a folder of its own, then moved
-//! ([`crate::run::new_clone_of`], 01M7DZ42C8SY2GV5ZQJZHM2VTV). The sweep
-//! looks into no clone ([`crate::daemon::sweep`],
-//! 01M7DZ4E02PX5Y0WMHFCJ9KS14). The look for earlier work and the council
-//! of a verify read the main clone ([`crate::council::pick::of_pull`],
-//! 01M7DZ4E5BZAD38E3K9A3N277E). The new clone of a lead is made in a
-//! folder of its own, then takes the place of the old clone
-//! ([`crate::lead::fresh_clone`], 01M7E7A8QM8SRPQN3G1BXVJW1R).
+//! The host makes no clone of a session: each session clones in its
+//! container, and the host binds no git tree with write into a container
+//! ([`crate::session_clone`], 01M7EY3P0Q8TQF5QRTRDWCYCTQ). The steps of
+//! the host that need git for a session use other folders: the look for
+//! the branch of the item and for earlier work, and the council of a
+//! verify, read the main clone ([`crate::run::earlier`],
+//! [`crate::council::pick::of_pull`], 01M7DZ42C8SY2GV5ZQJZHM2VTV,
+//! 01M7DZ4E5BZAD38E3K9A3N277E). The sweep looks into no clone
+//! ([`crate::daemon::sweep`], 01M7DZ4E02PX5Y0WMHFCJ9KS14). A clone that an
+//! older riff made in the folder of a lead goes with no git
+//! ([`crate::lead::remove_host_clone`]).
 //!
 //! # The git that the host needs
 //!
-//! A person can still fetch the work of a session from its clone: see
-//! "Get back the work of a clone" in the book. That `git fetch` runs
+//! A person can still fetch the work of a session from a clone that an
+//! older riff made on the host: see "Get back the work of a clone of an
+//! older riff" in the book. That `git fetch` runs
 //! `git upload-pack` in the clone. Only a git with the fixes of May 2024
 //! (CVE-2024-32004) runs no program there that the config of the clone
 //! names: the first release of each line in [`FIXED`], or a later one.
@@ -239,8 +242,16 @@ pub fn git(dir: &Path) -> Result<Command> {
 /// with no space at the ends. An error names the command and its
 /// stderr.
 pub fn output(dir: &Path, args: &[&str]) -> Result<String> {
+    output_with(dir, args, &[])
+}
+
+/// [`output`] with the variables `vars` of git, for example
+/// `GIT_OBJECT_DIRECTORY` for a folder of objects that goes after
+/// ([`crate::run::take_bundle`]).
+pub fn output_with(dir: &Path, args: &[&str], vars: &[(&str, &Path)]) -> Result<String> {
     let out = git(dir)?
         .args(args)
+        .envs(vars.iter().copied())
         .stdin(Stdio::null())
         .output()
         .with_context(|| text::no_program("git"))?;
@@ -547,9 +558,9 @@ pub(crate) mod tests {
         assert!(!mark.exists(), "the program of the config ran");
     }
 
-    /// 01M7E7ACTYP4RX8TCJ9XSYMMPM: the clone of a lead is in the folder of
-    /// the leads, where the guard refuses git, and the program of its git
-    /// config does not run. The new clone of a lead is in no such folder.
+    /// 01M7E7ACTYP4RX8TCJ9XSYMMPM: a clone in the folder of a lead, as an
+    /// older riff made it there, is in the folder of the leads, where the
+    /// guard refuses git, and the program of its git config does not run.
     #[test]
     fn the_guard_refuses_a_git_call_in_the_clone_of_a_lead() {
         let root = tempfile::tempdir().unwrap();
@@ -559,8 +570,6 @@ pub(crate) mod tests {
         hostile_clone(&clone, &mark);
         let guarded = guarded_in(root.path());
         assert_eq!(refused(&guarded, &clone), Some(real(&leads)));
-        let new = crate::lead::new_clone_of(&clone).unwrap();
-        assert_eq!(refused(&guarded, &new), None);
 
         guard_also(&leads);
         let error = output(&clone, &["status"]).unwrap_err().to_string();

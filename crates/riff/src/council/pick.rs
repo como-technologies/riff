@@ -460,7 +460,7 @@ pub fn of_pull(
     let branch = format!("origin/{}", pull.base);
     // Full names: no name of a branch reads as an option of git.
     let tracking = format!("refs/remotes/{branch}");
-    let refspec = format!("+refs/heads/{}:{tracking}", pull.base);
+    let refspec = crate::session_image::refspec(&pull.base);
     let fetch = ["fetch", "--quiet", "origin", &refspec];
     if let Err(e) = crate::git_credential::run(main, "origin", &fetch) {
         say(&text::council_no_fetch(&branch, &format!("{e:#}")));

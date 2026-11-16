@@ -45,6 +45,67 @@
 //!     Note over R: the relay ends with the exit code of claude
 //! ```
 //!
+//! # The clone
+//!
+//! Before it starts `claude`, also with a terminal, the relay makes the
+//! clone of the session in its container from the plan in
+//! [`crate::session_clone::VAR`] ([`clone_here`], #2139). When the clone
+//! fails, `claude` does not start: the relay says the note
+//! [`text::relay_clone_failed`], which names the step, and exits with 1
+//! ([`NoClone`]). `claude` does not get the variable. For a session with
+//! no GitHub, the end of `claude` comes after the bundle of its branch
+//! ([`crate::session_clone::Plan::bundle`]): so the bundle is there when
+//! the daemon gets the exit. When the bundle fails, the note says why,
+//! and the exit code is 1 also after a `claude` that ended with 0.
+//!
+//! # The notes
+//!
+//! The relay says each note of its own, the clone, why it failed and the
+//! bundle, to the daemon on the socket of the session ([`say_note`],
+//! [`SessionAsk::Note`], 01M7G824SYKB3BN2MN9A9JKAG0). The daemon keeps a
+//! few of them as lines of the session, and writes them to its log
+//! ([`daemon::kept_note`]). So `riff daemon events NAME` shows why a clone
+//! failed, also after the end of the session, and also for the lead,
+//! whose output the daemon does not read. No line of the output of the
+//! container is a note: the relay copies the stderr of `claude`, and
+//! `claude` can write any line there.
+//!
+//! `claude` and its tools have the socket too, so each note has the key
+//! of the relay ([`NoteTo`], 01M7GE3KYR7JZHDV5S7PKAZX57). At its start,
+//! before the clone and before `claude`, the relay makes itself not
+//! dumpable, makes a new key, gives it to the daemon, and waits for the
+//! answer. While the daemon is away, or gives no answer, the relay gives
+//! the same key again ([`NoteTo::give`], 01M7GJBESDBCHWB7SAT60JETEJ). So
+//! no other process of the container runs before the daemon has the key.
+//! The daemon takes only the first key of the container, as its first
+//! ask, and that key again, and keeps only its seal
+//! ([`daemon::NoteKey::seal`], 01M7GXY2PHRN2RHVC3HW8FMAWT). Each other
+//! ask first shuts the key. It keeps no note with another key. The
+//! socket is in a folder with no write
+//! ([`daemon::IN_SESSION`]): no process of the container can take the
+//! place of the socket, and get the key of a note.
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant R as riff relay
+//!     participant D as riff daemon
+//!     participant C as claude
+//!     R->>D: the key of the notes
+//!     Note over R: no answer: the same key again
+//!     R->>D: the key of the notes
+//!     D-->>R: done: the first key of the container
+//!     R->>R: the clone, in the volume of the clone
+//!     R->>D: note with the key: riff relay: cloned ...
+//!     D-->>R: done
+//!     Note over D: a line of the session, and a line of its log
+//!     R->>C: start claude, with no key
+//!     C->>D: a key, or a note with no key of the relay (a fake)
+//!     D-->>C: failed: no line
+//!     C-->>R: stderr: riff relay: cloned ... (a fake)
+//!     R->>D: the stderr of the container
+//!     Note over D: a line for the followers of now only
+//! ```
+//!
 //! # The protocol
 //!
 //! JSON, one message on each line, on the socket of the session
@@ -195,7 +256,7 @@ use tokio::net::unix::OwnedWriteHalf;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 
-use crate::daemon::{self, PROTOCOL, Say, SessionAsk};
+use crate::daemon::{self, NoteKey, PROTOCOL, Say, SessionAsk};
 use crate::run::Scrub;
 use crate::text;
 
@@ -466,6 +527,55 @@ async fn connect(socket: &Path) -> std::io::Result<UnixStream> {
     daemon::connect_in(dir, &name.to_string_lossy()).await
 }
 
+/// The daemon refused an ask of the relay: [`Say::Failed`], with its
+/// text. Each other error of such an ask means no answer: the daemon was
+/// away, or went away before its answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Refused(pub String);
+
+impl std::fmt::Display for Refused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Refused {}
+
+/// Asks `ask` on a new connection to the daemon on the socket at
+/// `socket`, and gives the first answer that `answer` takes: the one
+/// place of the loop of each ask of the relay that waits for one answer.
+/// [`Say::Failed`] is the error [`Refused`]. The end of the connection
+/// before an answer is the error "the daemon went away". It skips each
+/// other line, also a line of a newer daemon that it does not know.
+async fn ask_for<T>(
+    socket: &Path,
+    ask: &SessionAsk,
+    answer: impl Fn(Say) -> Option<T>,
+) -> Result<T> {
+    let conn = connect(socket).await?;
+    let (read, mut write) = conn.into_split();
+    let mut lines = BufReader::new(read).lines();
+    send(&mut write, ask).await?;
+    while let Some(line) = lines.next_line().await? {
+        match serde_json::from_str::<Say>(&line) {
+            Ok(Say::Failed { error }) => return Err(Refused(error).into()),
+            Ok(say) => {
+                if let Some(taken) = answer(say) {
+                    return Ok(taken);
+                }
+            }
+            Err(_) => {}
+        }
+    }
+    anyhow::bail!("the daemon went away")
+}
+
+/// [`Say::Done`]: the answer of each ask of [`ask_for`] that gives no
+/// data.
+fn done(say: Say) -> Option<()> {
+    matches!(say, Say::Done).then_some(())
+}
+
 /// What the relay knows of `claude` across its connections.
 struct Link {
     /// The stdin of `claude`, until the close.
@@ -577,7 +687,7 @@ impl Link {
                 None
             }
             Err(e) => {
-                let _ = self.notes.send(format!("{e:#}"));
+                let _ = self.notes.send(text::relay(&format!("{e:#}")));
                 take(
                     self,
                     Some(Up::Exit {
@@ -648,7 +758,7 @@ pub async fn relay(
     loop {
         if let Ok(conn) = connect(socket).await {
             if away {
-                let _ = notes.send(text::RELAY_BACK.into());
+                let _ = notes.send(text::relay(text::RELAY_BACK));
                 away = false;
             }
             if let Some(code) = connected(conn, &mut link, &mut from_claude, wait, &notes).await {
@@ -656,7 +766,7 @@ pub async fn relay(
             }
         }
         if !away {
-            let _ = notes.send(text::RELAY_AWAY.into());
+            let _ = notes.send(text::relay(text::RELAY_AWAY));
             away = true;
         }
         // While the daemon is away, take the lines of claude, and try
@@ -670,7 +780,7 @@ pub async fn relay(
                     take(&mut link, up, wait);
                 }
                 () = until(link.deadline) => {
-                    let _ = notes.send(text::RELAY_GAVE_UP.into());
+                    let _ = notes.send(text::relay(text::RELAY_GAVE_UP));
                     return link.exit.and_then(|(_, code)| code);
                 }
             }
@@ -731,7 +841,7 @@ async fn connected(
     match serde_json::from_str::<Say>(&lines.next_line().await.ok()??) {
         Ok(Say::Resume { events }) => link.kept.taken(events),
         Ok(Say::Failed { error }) => {
-            let _ = notes.send(error);
+            let _ = notes.send(text::relay(&error));
             return None;
         }
         _ => return None,
@@ -768,7 +878,7 @@ async fn connected(
                 }
             }
             () = until(link.deadline) => {
-                let _ = notes.send(text::RELAY_GAVE_UP.into());
+                let _ = notes.send(text::relay(text::RELAY_GAVE_UP));
                 return Some(link.exit.and_then(|(_, code)| code));
             }
         }
@@ -784,13 +894,22 @@ pub fn socket_here() -> Result<PathBuf> {
 }
 
 /// Starts `command` with pipes for its stdin, stdout and stderr, and
-/// keeps its process ID in `pid`.
-fn spawn_claude(command: &[String], pid: &Arc<AtomicU32>) -> Result<Child> {
+/// keeps its process ID in `pid`. With the plan `plan` of a session with
+/// no GitHub, its end comes after the bundle of the branch
+/// ([`bundle_after`]) and its note to the daemon through `to`
+/// ([`say_note`]): so the bundle is there when the daemon gets the exit.
+fn spawn_claude(
+    command: &[String],
+    pid: &Arc<AtomicU32>,
+    plan: Option<&crate::session_clone::Plan>,
+    to: Option<&NoteTo>,
+) -> Result<Child> {
     let (program, args) = command
         .split_first()
         .ok_or_else(|| anyhow!("{}", text::RELAY_NO_COMMAND))?;
     let mut child = tokio::process::Command::new(program)
         .env_remove(crate::session_mcp::VAR)
+        .env_remove(crate::session_clone::VAR)
         .args(args)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -803,19 +922,214 @@ fn spawn_claude(command: &[String], pid: &Arc<AtomicU32>) -> Result<Child> {
         child.stdout.take().context("the stdout of claude")?,
         child.stderr.take().context("the stderr of claude")?,
     );
+    let plan = plan.filter(|p| p.bundle_file().is_some()).cloned();
+    let to = to.cloned();
     Ok(Child {
         stdin: Box::new(stdin),
         stdout: Box::new(stdout),
         stderr: Box::new(stderr),
-        end: Box::pin(async move { child.wait().await.ok().and_then(|s| s.code()) }),
+        end: Box::pin(async move {
+            let code = child.wait().await.ok().and_then(|s| s.code());
+            let Some(plan) = plan else {
+                return code;
+            };
+            let (code, note) = tokio::task::spawn_blocking(move || bundle_after(&plan, code))
+                .await
+                .unwrap_or((Some(1), None));
+            if let Some(note) = note {
+                say_note(to.as_ref(), &note, false).await;
+            }
+            code
+        }),
     })
+}
+
+/// Writes the bundle of the plan `plan` of a session with no GitHub
+/// after `claude` ended with `code` ([`crate::session_clone::Plan::bundle`]).
+/// It gives the exit code of the session, and the note of the bundle
+/// ([`text::relay_bundled`], [`text::relay_bundle_failed`]), one line.
+/// The code is `code`, or 1 when the bundle failed and `claude` ended
+/// with 0 or with no code. So the error of a bundle is not lost.
+fn bundle_after(
+    plan: &crate::session_clone::Plan,
+    code: Option<i32>,
+) -> (Option<i32>, Option<String>) {
+    match plan.bundle() {
+        Ok(bundle) => (code, bundle.map(|bundle| text::relay_bundled(&bundle))),
+        Err(e) => {
+            let code = match code {
+                Some(code) if code != 0 => Some(code),
+                _ => Some(1),
+            };
+            (code, Some(text::relay_bundle_failed(&format!("{e:#}"))))
+        }
+    }
+}
+
+/// The longest wait of the relay for the answer of the daemon to a note
+/// or to its key ([`NoteTo`]).
+pub const NOTE_WAIT: Duration = Duration::from_secs(5);
+
+/// Where the relay says its notes (01M7G824SYKB3BN2MN9A9JKAG0): the
+/// socket of the session, with the key of the relay ([`NoteKey`],
+/// 01M7GE3KYR7JZHDV5S7PKAZX57). Only the relay has the key, in its
+/// memory, and the relay is not dumpable: `claude` does not get it.
+#[derive(Debug, Clone)]
+pub struct NoteTo {
+    socket: PathBuf,
+    key: NoteKey,
+    /// The longest wait for each answer of the daemon: [`NOTE_WAIT`].
+    wait: Duration,
+}
+
+impl NoteTo {
+    /// Makes a new key, and gives it to the daemon on the socket at
+    /// `socket` ([`SessionAsk::NoteKey`]). The relay does it at its
+    /// start, before the clone and before `claude`, and waits for the
+    /// answer (01M7GJBESDBCHWB7SAT60JETEJ): while the daemon is away, goes
+    /// away before its answer, or gives no answer in [`NOTE_WAIT`], it
+    /// gives the same key again each [`RETRY`]. So no other process of the
+    /// container can give a key first. `None` when the daemon refuses the
+    /// key: then the relay says each note on its stderr only
+    /// ([`say_note`]).
+    pub async fn give(socket: &Path) -> Option<NoteTo> {
+        NoteTo {
+            socket: socket.to_owned(),
+            key: NoteKey::random(),
+            wait: NOTE_WAIT,
+        }
+        .given()
+        .await
+    }
+
+    /// Gives the key to the daemon, and waits for its answer. While the
+    /// daemon is away, goes away before its answer, or gives no answer in
+    /// [`NoteTo::wait`], it gives the same key again each [`RETRY`]: the
+    /// daemon takes that key again too. It gives `self` when the daemon
+    /// took the key, and `None` when the daemon refused it ([`Refused`]).
+    async fn given(self) -> Option<NoteTo> {
+        self.given_after(|| tokio::time::sleep(RETRY)).await
+    }
+
+    /// [`NoteTo::given`], with `pause` in place of the wait of [`RETRY`]
+    /// before each give again: a test waits for its own sign there.
+    async fn given_after<F: Future<Output = ()>>(
+        self,
+        mut pause: impl FnMut() -> F,
+    ) -> Option<NoteTo> {
+        let key = SessionAsk::NoteKey {
+            protocol: PROTOCOL,
+            key: self.key.clone(),
+        };
+        loop {
+            match self.ask(&key).await {
+                Ok(()) => return Some(self),
+                Err(e) if e.is::<Refused>() => return None,
+                Err(_) => pause().await,
+            }
+        }
+    }
+
+    /// Sends the note `line` of the relay itself to the daemon, with the
+    /// key ([`SessionAsk::Note`]). The daemon keeps it as a line of the
+    /// session, and writes it to its log. An error when the daemon kept
+    /// no note, or gave no answer in time.
+    pub async fn send(&self, line: &str) -> Result<()> {
+        let note = SessionAsk::Note {
+            protocol: PROTOCOL,
+            line: line.to_owned(),
+            key: self.key.clone(),
+        };
+        self.ask(&note).await
+    }
+
+    /// Asks `ask` ([`ask_for`]), and waits for [`Say::Done`] at most
+    /// [`NoteTo::wait`].
+    async fn ask(&self, ask: &SessionAsk) -> Result<()> {
+        tokio::time::timeout(self.wait, ask_for(&self.socket, ask, done))
+            .await
+            .map_err(|_| anyhow!("the daemon did not answer in time"))?
+    }
+}
+
+/// Makes the relay not dumpable (01M7GE3KYR7JZHDV5S7PKAZX57): no other
+/// process of the container, `claude` and its tools too, can read the
+/// memory of the relay, and so its key of the notes ([`NoteTo`]). A
+/// program that the relay starts is dumpable again.
+fn not_dumpable() {
+    // The call fails only for a bad value.
+    #[cfg(target_os = "linux")]
+    let _ = nix::sys::prctl::set_dumpable(false);
+}
+
+/// Says the note `line` of the relay: to the daemon through `to`
+/// ([`NoteTo::send`]), and on stderr with a terminal (`terminal`), or
+/// when the daemon did not take it (01M7G824SYKB3BN2MN9A9JKAG0). So a
+/// note never goes twice to the daemon: the daemon reads the stderr of a
+/// session with no terminal. It gives true when the daemon took it.
+pub async fn say_note(to: Option<&NoteTo>, line: &str, terminal: bool) -> bool {
+    let taken = match to {
+        Some(to) => to.send(line).await.is_ok(),
+        None => false,
+    };
+    if terminal || !taken {
+        eprintln!("{line}");
+    }
+    taken
+}
+
+/// The clone of the session failed: the relay said why in one note
+/// ([`clone_here`]), and `claude` does not start. The relay exits with 1,
+/// and prints no other text of the fault.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NoClone;
+
+/// Makes the clone of this session in its container from the plan in
+/// [`crate::session_clone::VAR`] ([`crate::session_clone::Plan::make_line`],
+/// #2139), and says its note through `to` ([`say_note`]), with
+/// `terminal` for a session with a terminal. It gives the plan, or
+/// `None` with no plan. Both paths of the relay call it before `claude`
+/// starts: [`main`] and [`terminal`]. The relay of a takeover finds the
+/// clone there, and says no note. When the clone fails, the note is
+/// [`text::relay_clone_failed`], which names the step, and the error is
+/// [`NoClone`].
+pub async fn clone_here(
+    to: Option<&NoteTo>,
+    terminal: bool,
+) -> std::result::Result<Option<crate::session_clone::Plan>, NoClone> {
+    let made = tokio::task::spawn_blocking(|| {
+        let Some(plan) = crate::session_clone::Plan::here()? else {
+            return anyhow::Ok(None);
+        };
+        let line = plan.make_line()?;
+        Ok(Some((plan, line)))
+    })
+    .await
+    .map_err(anyhow::Error::from)
+    .and_then(|made| made);
+    match made {
+        Ok(None) => Ok(None),
+        Ok(Some((plan, line))) => {
+            if let Some(line) = line {
+                say_note(to, &line, terminal).await;
+            }
+            Ok(Some(plan))
+        }
+        Err(e) => {
+            let note = text::relay_clone_failed(&format!("{e:#}"));
+            say_note(to, &note, terminal).await;
+            Err(NoClone)
+        }
+    }
 }
 
 /// `riff relay -- COMMAND`: starts `COMMAND` with the riff tools, and
 /// relays it on the socket of `RIFF_SOCKET` ([`relay`]). After a
 /// takeover, it starts the [`resumed`] command. A SIGTERM or a SIGINT
-/// goes to `claude`. It gives the exit code of `claude`, or 1 after a
-/// signal.
+/// goes to `claude`. Before `claude` starts, one ends the relay with 1 at
+/// once: also while it waits for the daemon, and while it clones
+/// (01M7GXY2SAK89TEQVP72764DR4). It gives the exit code of `claude`, or 1
+/// after a signal, and 1 when the clone failed ([`NoClone`]).
 pub async fn main(command: Vec<String>) -> Result<i32> {
     use tokio::signal::unix::{SignalKind, signal};
     let socket = socket_here()?;
@@ -826,8 +1140,26 @@ pub async fn main(command: Vec<String>) -> Result<i32> {
     // not claude.
     let mut term = signal(SignalKind::terminate())?;
     let mut int = signal(SignalKind::interrupt())?;
+    // The key of the notes comes before the clone and before claude: the
+    // relay waits for the answer (01M7GE3KYR7JZHDV5S7PKAZX57,
+    // 01M7GJBESDBCHWB7SAT60JETEJ). A signal before claude ends the relay
+    // at once (01M7GXY2SAK89TEQVP72764DR4).
+    not_dumpable();
+    let ready = async {
+        let to = NoteTo::give(&socket).await;
+        let plan = clone_here(to.as_ref(), false).await;
+        (to, plan)
+    };
+    let (to, plan) = tokio::select! {
+        ready = ready => ready,
+        _ = term.recv() => return Ok(1),
+        _ = int.recv() => return Ok(1),
+    };
+    let Ok(plan) = plan else {
+        return Ok(1);
+    };
     let pid = Arc::new(AtomicU32::new(0));
-    let child = spawn_claude(&command, &pid)?;
+    let child = spawn_claude(&command, &pid, plan.as_ref(), to.as_ref())?;
     {
         let pid = pid.clone();
         tokio::spawn(async move {
@@ -857,7 +1189,8 @@ pub async fn main(command: Vec<String>) -> Result<i32> {
             let _ = stderr.write_all(format!("{line}\n").as_bytes()).await;
         }
     });
-    let again: Again = Box::new(move || spawn_claude(&again_command, &pid));
+    let again: Again =
+        Box::new(move || spawn_claude(&again_command, &pid, plan.as_ref(), to.as_ref()));
     let code = relay(
         child,
         again,
@@ -902,23 +1235,33 @@ pub fn riff_first(path: Option<&OsStr>) -> OsString {
 /// tools in the place of this process, so it keeps the terminal: the
 /// lead, and the `claude` of a takeover (01M4Z60B81RTZT71PN5HV0GZHX). Its
 /// `PATH` has the riff of the container first ([`riff_first`]). It
-/// gives an error only when the command does not start.
-pub fn terminal(command: &[String]) -> anyhow::Error {
+/// gives 1 when the clone failed ([`NoClone`]): the note said why. It
+/// gives an error when the command does not start.
+pub async fn terminal(command: &[String]) -> Result<i32> {
     use std::os::unix::process::CommandExt;
-    let bin = match std::env::current_exe() {
-        Ok(bin) => bin,
-        Err(e) => return anyhow!(e).context("cannot find the path of riff"),
-    };
+    let bin = std::env::current_exe().context("cannot find the path of riff")?;
     let command = with_tools(command, &bin, &more_here());
     let Some((program, args)) = command.split_first() else {
-        return anyhow!("{}", text::RELAY_NO_COMMAND);
+        anyhow::bail!("{}", text::RELAY_NO_COMMAND);
     };
+    // The key of the notes comes before the clone and before claude: the
+    // relay waits for the answer (01M7GE3KYR7JZHDV5S7PKAZX57,
+    // 01M7GJBESDBCHWB7SAT60JETEJ). The exec drops it.
+    not_dumpable();
+    let to = match socket_here() {
+        Ok(socket) => NoteTo::give(&socket).await,
+        Err(_) => None,
+    };
+    if clone_here(to.as_ref(), true).await.is_err() {
+        return Ok(1);
+    }
     let error = std::process::Command::new(program)
         .args(args)
         .env_remove(crate::session_mcp::VAR)
+        .env_remove(crate::session_clone::VAR)
         .env("PATH", riff_first(std::env::var_os("PATH").as_deref()))
         .exec();
-    anyhow!(error).context(text::no_program(program))
+    Err(anyhow!(error).context(text::no_program(program)))
 }
 
 /// `riff relay watch`: waits for the next wake of the session through
@@ -1005,22 +1348,15 @@ pub async fn send_denials(socket: &Path, queue: &crate::denied::Queue) -> Result
 
 /// Gives `denials` to the daemon, and gives the number that it posted.
 async fn ask_denied(socket: &Path, denials: &[crate::denied::Denial]) -> Result<usize> {
-    let conn = connect(socket).await?;
-    let (read, mut write) = conn.into_split();
-    let mut lines = BufReader::new(read).lines();
     let ask = SessionAsk::Denied {
         protocol: PROTOCOL,
         denials: denials.to_vec(),
     };
-    send(&mut write, &ask).await?;
-    while let Some(line) = lines.next_line().await? {
-        match serde_json::from_str::<Say>(&line) {
-            Ok(Say::Posted { count }) => return Ok(count),
-            Ok(Say::Failed { error }) => anyhow::bail!("{error}"),
-            _ => {}
-        }
-    }
-    anyhow::bail!("the daemon went away")
+    ask_for(socket, &ask, |say| match say {
+        Say::Posted { count } => Some(count),
+        _ => None,
+    })
+    .await
 }
 
 /// `riff relay prompt` (01M5GVQQ8NK3RD9CM3VTGXEHZQ): tells the daemon
@@ -1028,18 +1364,7 @@ async fn ask_denied(socket: &Path, denials: &[crate::denied::Denial]) -> Result<
 /// prompt ([`SessionAsk::Prompt`]). The daemon ends the block of the
 /// lead, and says [`Say::Done`].
 pub async fn prompt(socket: &Path) -> Result<()> {
-    let conn = connect(socket).await?;
-    let (read, mut write) = conn.into_split();
-    let mut lines = BufReader::new(read).lines();
-    send(&mut write, &SessionAsk::Prompt { protocol: PROTOCOL }).await?;
-    while let Some(line) = lines.next_line().await? {
-        match serde_json::from_str::<Say>(&line) {
-            Ok(Say::Done) => return Ok(()),
-            Ok(Say::Failed { error }) => anyhow::bail!("{error}"),
-            _ => {}
-        }
-    }
-    anyhow::bail!("the daemon went away")
+    ask_for(socket, &SessionAsk::Prompt { protocol: PROTOCOL }, done).await
 }
 
 /// `riff relay idle` (01M6WBX2FQEHW92Y1A5HM4H8BM): tells the daemon on
@@ -1047,18 +1372,7 @@ pub async fn prompt(socket: &Path) -> Result<()> {
 /// hook ([`SessionAsk::Idle`]). The daemon keeps the end for the lead,
 /// and says [`Say::Done`].
 pub async fn idle(socket: &Path) -> Result<()> {
-    let conn = connect(socket).await?;
-    let (read, mut write) = conn.into_split();
-    let mut lines = BufReader::new(read).lines();
-    send(&mut write, &SessionAsk::Idle { protocol: PROTOCOL }).await?;
-    while let Some(line) = lines.next_line().await? {
-        match serde_json::from_str::<Say>(&line) {
-            Ok(Say::Done) => return Ok(()),
-            Ok(Say::Failed { error }) => anyhow::bail!("{error}"),
-            _ => {}
-        }
-    }
-    anyhow::bail!("the daemon went away")
+    ask_for(socket, &SessionAsk::Idle { protocol: PROTOCOL }, done).await
 }
 
 /// The line on stderr of `riff relay` that runs as a hook of `claude`
@@ -1104,40 +1418,27 @@ pub fn unknown_hook(args: &[OsString], input: impl FnOnce() -> String) -> Option
 /// the release cycle ([`SessionAsk::Caller`]). The answer is
 /// [`Say::Caller`].
 pub async fn ask_caller(socket: &Path) -> Result<Say> {
-    let conn = connect(socket).await?;
-    let (read, mut write) = conn.into_split();
-    let mut lines = BufReader::new(read).lines();
-    send(&mut write, &SessionAsk::Caller { protocol: PROTOCOL }).await?;
-    while let Some(line) = lines.next_line().await? {
-        match serde_json::from_str::<Say>(&line) {
-            Ok(say @ Say::Caller { .. }) => return Ok(say),
-            Ok(Say::Failed { error }) => anyhow::bail!("{error}"),
-            _ => {}
-        }
-    }
-    anyhow::bail!("the daemon went away")
+    let ask = SessionAsk::Caller { protocol: PROTOCOL };
+    ask_for(socket, &ask, |say| match say {
+        Say::Caller { .. } => Some(say),
+        _ => None,
+    })
+    .await
 }
 
 /// Asks the daemon on the socket at `socket` to make `call` on the
 /// riff-server of this session ([`SessionAsk::Server`]). The answer is
 /// the JSON of [`Say::Served`].
 pub async fn ask_server(socket: &Path, call: &daemon::ServerCall) -> Result<Value> {
-    let conn = connect(socket).await?;
-    let (read, mut write) = conn.into_split();
-    let mut lines = BufReader::new(read).lines();
     let ask = SessionAsk::Server {
         protocol: PROTOCOL,
         call: call.clone(),
     };
-    send(&mut write, &ask).await?;
-    while let Some(line) = lines.next_line().await? {
-        match serde_json::from_str::<Say>(&line) {
-            Ok(Say::Served { reply }) => return Ok(reply),
-            Ok(Say::Failed { error }) => anyhow::bail!("{error}"),
-            _ => {}
-        }
-    }
-    anyhow::bail!("the daemon went away")
+    ask_for(socket, &ask, |say| match say {
+        Say::Served { reply } => Some(reply),
+        _ => None,
+    })
+    .await
 }
 
 /// The error answer to the request `id` of `claude`: `message`.
@@ -1294,6 +1595,304 @@ mod tests {
         );
     }
 
+    /// #2139, 01M7EY3WHQQP9330CZ736HK0FJ, 01M7G824SYKB3BN2MN9A9JKAG0: for
+    /// a session with no GitHub, the end of `claude` comes after the bundle
+    /// of its branch and its note to the daemon, so the daemon gets the
+    /// exit when the bundle is there. When the bundle fails, the note says
+    /// why in one line, and the end is 1, also after a `claude` that ended
+    /// with 0.
+    #[tokio::test]
+    async fn the_end_of_claude_with_no_github_comes_after_the_bundle() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let git = |at: &Path, args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+                .args(["-c", "commit.gpgsign=false"])
+                .args(args)
+                .current_dir(at)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}: {out:?}");
+        };
+        git(root, &["init", "-q", "--bare", "-b", "main", "origin.git"]);
+        let url = format!("file://{}", root.join("origin.git").display());
+        git(root, &["clone", "-q", "--", &url, "main"]);
+        let main = root.join("main");
+        git(&main, &["commit", "-q", "--allow-empty", "-m", "one"]);
+        git(&main, &["push", "-q", "origin", "HEAD:main"]);
+        let refs = root.join(crate::session_clone::REFS);
+        crate::session_clone::write_refs(&main.join(".git"), root).unwrap();
+        let plan = |name: &str| crate::session_clone::Plan {
+            path: root.join(name).join("clone"),
+            origin: url.parse().unwrap(),
+            main: main.join(".git"),
+            refs: refs.clone(),
+            base: "main".parse().unwrap(),
+            checkout: crate::session_clone::Checkout::Branch {
+                name: "worktree-issue-12".parse().unwrap(),
+                earlier: false,
+                no_github: true,
+            },
+        };
+        let daemon = Daemon::new();
+        // A long wait: the end waits for the answer of the test.
+        let to = daemon.to(Duration::from_secs(60));
+        let end = |plan: &crate::session_clone::Plan, code: i32| {
+            plan.make(false).unwrap();
+            let script = format!(
+                "cd {} && git -c user.name=w -c user.email=w@w commit -q --allow-empty -m two \
+                 && exit {code}",
+                plan.path.display()
+            );
+            let command: Vec<String> = ["sh", "-c", &script].map(String::from).into();
+            let pid = Arc::new(AtomicU32::new(0));
+            let end = spawn_claude(&command, &pid, Some(plan), Some(&to))
+                .unwrap()
+                .end;
+            tokio::spawn(end)
+        };
+        let note = || async {
+            let (ask, _, write) = daemon.accept().await;
+            let SessionAsk::Note { line, key, .. } = ask else {
+                panic!("{ask:?}");
+            };
+            assert_eq!(key, to.key);
+            (line, write)
+        };
+        // The daemon takes the note before the end: the end waits for the
+        // answer to the note.
+        let answer = |ended: &tokio::task::JoinHandle<Option<i32>>, mut write: OwnedWriteHalf| {
+            assert!(
+                !ended.is_finished(),
+                "the end came before the answer to the note"
+            );
+            async move { say(&mut write, &Say::Done).await }
+        };
+        let done = plan("s");
+        let ended = end(&done, 0);
+        let bundle = root.join("s/out/worktree-issue-12.bundle");
+        let (line, write) = note().await;
+        assert_eq!(line, text::relay_bundled(&bundle));
+        answer(&ended, write).await;
+        assert_eq!(ended.await.unwrap(), Some(0));
+        assert_eq!(done.bundle_file(), Some(bundle.clone()));
+        assert!(bundle.is_file(), "no bundle at the end of claude");
+        // The folder of the bundle is a file: the bundle fails. The end
+        // is 1 after a `claude` that ended with 0, and the code of a
+        // `claude` that failed stays.
+        for (name, code, want) in [("t", 0, 1), ("u", 3, 3)] {
+            let fails = plan(name);
+            std::fs::create_dir_all(root.join(name)).unwrap();
+            std::fs::write(root.join(name).join("out"), "").unwrap();
+            let ended = end(&fails, code);
+            let (line, write) = note().await;
+            let failed = text::relay_bundle_failed("");
+            assert!(line.starts_with(failed.trim_end()), "{line}");
+            assert!(!line.contains('\n'), "{line}");
+            answer(&ended, write).await;
+            assert_eq!(ended.await.unwrap(), Some(want), "{name}");
+        }
+    }
+
+    /// 01M7EY3WHQQP9330CZ736HK0FJ: the end of a `claude` that ended with no
+    /// code (a signal) and a bundle that fails is 1, and the note says why.
+    /// With no bundle to write, the end is the code of `claude`, with no
+    /// note.
+    #[test]
+    fn a_bundle_that_fails_after_a_signal_ends_with_1() {
+        let dir = tempfile::tempdir().unwrap();
+        let plan = crate::session_clone::Plan {
+            path: dir.path().join("s/clone"),
+            origin: crate::session_clone::Origin::github("o/r").unwrap(),
+            main: dir.path().join("main/.git"),
+            refs: dir.path().join("s/origin-refs"),
+            base: "main".parse().unwrap(),
+            checkout: crate::session_clone::Checkout::Branch {
+                name: "worktree-issue-12".parse().unwrap(),
+                earlier: false,
+                no_github: true,
+            },
+        };
+        // No clone at the path: git fails in the bundle step.
+        std::fs::create_dir_all(dir.path().join("s/out/worktree-issue-12.bundle")).unwrap();
+        let (code, note) = bundle_after(&plan, None);
+        assert_eq!(code, Some(1));
+        let failed = text::relay_bundle_failed("");
+        assert!(note.is_some_and(|n| n.starts_with(failed.trim_end())));
+        let with_github = crate::session_clone::Plan {
+            checkout: crate::session_clone::Checkout::Default,
+            ..plan
+        };
+        assert_eq!(bundle_after(&with_github, Some(5)), (Some(5), None));
+    }
+
+    /// 01M7G824SYKB3BN2MN9A9JKAG0, 01M7GE3KYR7JZHDV5S7PKAZX57: the relay
+    /// gives a new key to the daemon on the socket of the session, then
+    /// says each note with it. With no daemon, the send fails, and
+    /// [`say_note`] says that the daemon did not take it: the note goes
+    /// to stderr.
+    #[tokio::test]
+    async fn the_relay_gives_its_key_and_says_a_note_to_the_daemon_on_the_socket() {
+        let daemon = Daemon::new();
+        let socket = daemon.socket.clone();
+        let given = tokio::spawn(async move { NoteTo::give(&socket).await });
+        let (ask, _, mut write) = daemon.accept().await;
+        let SessionAsk::NoteKey { protocol, key } = ask else {
+            panic!("{ask:?}");
+        };
+        assert_eq!(protocol, PROTOCOL);
+        say(&mut write, &Say::Done).await;
+        let to = given.await.unwrap().unwrap();
+        assert_eq!(to.key, key);
+        assert_eq!(to.wait, NOTE_WAIT);
+        // Each relay has its own key.
+        assert_ne!(daemon.to(NOTE_WAIT).key, key);
+
+        let said = {
+            let to = to.clone();
+            tokio::spawn(async move { say_note(Some(&to), "riff relay: cloned.", false).await })
+        };
+        let (ask, _, mut write) = daemon.accept().await;
+        let want = SessionAsk::Note {
+            protocol: PROTOCOL,
+            line: "riff relay: cloned.".into(),
+            key: key.clone(),
+        };
+        assert_eq!(ask, want);
+        say(&mut write, &Say::Done).await;
+        assert!(said.await.unwrap());
+
+        let mut gone = daemon;
+        gone.stop();
+        assert!(!say_note(Some(&to), "riff relay: cloned.", false).await);
+        assert!(!say_note(None, "riff relay: cloned.", true).await);
+    }
+
+    /// 01M7GJBESDBCHWB7SAT60JETEJ: the relay waits for the answer of the
+    /// daemon to its key. The daemon is away at first, then it goes away
+    /// before its answer, then it gives no answer in time: each time, the
+    /// relay waits, and gives the same key again. The give ends when the
+    /// daemon takes the key. When the daemon refuses the key, the relay
+    /// has none.
+    #[tokio::test]
+    async fn the_relay_gives_its_key_again_until_the_daemon_answers() {
+        let key_of = |ask: SessionAsk| match ask {
+            SessionAsk::NoteKey { key, .. } => key,
+            ask => panic!("{ask:?}"),
+        };
+        let mut daemon = Daemon::new();
+        daemon.stop();
+        let to = daemon.to(Duration::from_millis(50));
+        let key = to.key.clone();
+        // Each wait of the relay before it gives the key again says so,
+        // and ends at the sign of the test.
+        let (waits, mut waited) = mpsc::unbounded_channel();
+        let go = Arc::new(tokio::sync::Notify::new());
+        let mut given = {
+            let go = go.clone();
+            tokio::spawn(to.given_after(move || {
+                let _ = waits.send(());
+                let go = go.clone();
+                async move { go.notified().await }
+            }))
+        };
+        async fn wait(waited: &mut mpsc::UnboundedReceiver<()>) {
+            tokio::time::timeout(Duration::from_secs(30), waited.recv())
+                .await
+                .expect("the relay did not wait in 30 seconds")
+                .unwrap();
+        }
+        // The daemon is away: the relay waits.
+        wait(&mut waited).await;
+        daemon.start();
+        go.notify_one();
+        // The daemon goes away before its answer.
+        let (ask, lines, write) = daemon.accept().await;
+        assert_eq!(key_of(ask), key);
+        drop((lines, write));
+        wait(&mut waited).await;
+        go.notify_one();
+        // The daemon gives no answer: the relay waits after its limit.
+        let (ask, _lines, _write) = daemon.accept().await;
+        assert_eq!(key_of(ask), key);
+        wait(&mut waited).await;
+        assert!(!given.is_finished(), "the give ended with no answer");
+        go.notify_one();
+        // The daemon takes the key. A slow test can answer after the limit
+        // of the relay: then the relay gives the key again, and the daemon
+        // answers again.
+        let answered = async {
+            loop {
+                tokio::select! {
+                    to = &mut given => return to.unwrap(),
+                    Some(()) = waited.recv() => go.notify_one(),
+                    (ask, _, mut write) = daemon.accept() => {
+                        assert_eq!(key_of(ask), key);
+                        say(&mut write, &Say::Done).await;
+                    }
+                }
+            }
+        };
+        let to = tokio::time::timeout(Duration::from_secs(30), answered)
+            .await
+            .expect("the give did not end in 30 seconds")
+            .unwrap();
+        assert_eq!(to.key, key);
+
+        let refused = tokio::spawn(daemon.to(NOTE_WAIT).given());
+        let (_, _, mut write) = daemon.accept().await;
+        let taken = Say::Failed {
+            error: text::DAEMON_NOTE_KEY_TAKEN.into(),
+        };
+        say(&mut write, &taken).await;
+        assert!(refused.await.unwrap().is_none());
+    }
+
+    /// 01M7GE3KYR7JZHDV5S7PKAZX57: a note that the daemon refuses, a
+    /// daemon that goes away before its answer, and a daemon that gives no
+    /// answer in time: each is an error, so [`say_note`] prints the note
+    /// on stderr. Only the first is [`Refused`]. A line that the relay does
+    /// not know is no answer.
+    #[tokio::test]
+    async fn a_note_with_no_answer_of_done_is_an_error() {
+        let daemon = Daemon::new();
+        let to = daemon.to(NOTE_WAIT);
+        let sent = |to: &NoteTo| {
+            let to = to.clone();
+            tokio::spawn(async move { to.send("riff relay: cloned.").await })
+        };
+
+        let refused = sent(&to);
+        let (_, _, mut write) = daemon.accept().await;
+        say(&mut write, &Say::Ack { seq: 1 }).await;
+        let error = text::DAEMON_NOTE_REFUSED.to_owned();
+        say(
+            &mut write,
+            &Say::Failed {
+                error: error.clone(),
+            },
+        )
+        .await;
+        let refused = refused.await.unwrap().unwrap_err();
+        assert_eq!(refused.to_string(), error);
+        assert!(refused.is::<Refused>());
+
+        let closed = sent(&to);
+        let (_, lines, write) = daemon.accept().await;
+        drop((lines, write));
+        let error = closed.await.unwrap().unwrap_err();
+        assert_eq!(error.to_string(), "the daemon went away");
+        assert!(!error.is::<Refused>());
+
+        // The daemon holds the connection, and never answers.
+        let late = sent(&daemon.to(Duration::from_millis(50)));
+        let (_, _lines, _write) = daemon.accept().await;
+        let error = late.await.unwrap().unwrap_err();
+        assert_eq!(error.to_string(), "the daemon did not answer in time");
+        assert!(!error.is::<Refused>());
+    }
+
     /// A fake daemon on a socket in a temp folder.
     struct Daemon {
         _dir: tempfile::TempDir,
@@ -1313,13 +1912,29 @@ mod tests {
             }
         }
 
-        /// Takes the next connection, and reads its hello.
+        /// Takes the next connection, and reads its hello, in at most 30
+        /// seconds.
         async fn accept(&self) -> (SessionAsk, Lines, OwnedWriteHalf) {
-            let (conn, _) = self.listener.as_ref().unwrap().accept().await.unwrap();
-            let (read, write) = conn.into_split();
-            let mut lines = BufReader::new(read).lines();
-            let hello = lines.next_line().await.unwrap().unwrap();
-            (serde_json::from_str(&hello).unwrap(), lines, write)
+            let accepted = async {
+                let (conn, _) = self.listener.as_ref().unwrap().accept().await.unwrap();
+                let (read, write) = conn.into_split();
+                let mut lines = BufReader::new(read).lines();
+                let hello = lines.next_line().await.unwrap().unwrap();
+                (serde_json::from_str(&hello).unwrap(), lines, write)
+            };
+            tokio::time::timeout(Duration::from_secs(30), accepted)
+                .await
+                .expect("no ask of the relay in 30 seconds")
+        }
+
+        /// Where a relay with a new key says its notes to this daemon,
+        /// with the longest wait `wait`.
+        fn to(&self, wait: Duration) -> NoteTo {
+            NoteTo {
+                socket: self.socket.clone(),
+                key: NoteKey::random(),
+                wait,
+            }
         }
 
         /// Stops listening, as a daemon that stops.
@@ -1583,7 +2198,7 @@ mod tests {
 
         // claude goes on while the daemon is away.
         claude.print("e3").await;
-        assert_eq!(noted.recv().await.unwrap(), text::RELAY_AWAY);
+        assert_eq!(noted.recv().await.unwrap(), text::relay(text::RELAY_AWAY));
 
         // A new daemon has the first event only: the relay sends 2 and
         // 3 again, and gives no input twice.
@@ -1625,7 +2240,7 @@ mod tests {
         );
         say(&mut write, &Say::Ack { seq: 4 }).await;
         assert_eq!(relay.await.unwrap(), Some(0));
-        assert_eq!(noted.recv().await.unwrap(), text::RELAY_BACK);
+        assert_eq!(noted.recv().await.unwrap(), text::relay(text::RELAY_BACK));
     }
 
     #[tokio::test]
@@ -1682,8 +2297,52 @@ mod tests {
         });
         claude.end(0).await;
         assert_eq!(relay.await.unwrap(), Some(0));
-        assert_eq!(noted.recv().await.unwrap(), text::RELAY_AWAY);
-        assert_eq!(noted.recv().await.unwrap(), text::RELAY_GAVE_UP);
+        assert_eq!(noted.recv().await.unwrap(), text::relay(text::RELAY_AWAY));
+        assert_eq!(
+            noted.recv().await.unwrap(),
+            text::relay(text::RELAY_GAVE_UP)
+        );
+    }
+
+    /// Each line of the relay itself starts with [`text::RELAY`]
+    /// ([`text::relay`]): here a daemon that refuses the hello, and a
+    /// `claude` that does not start again after a takeover.
+    #[tokio::test]
+    async fn each_line_of_the_relay_itself_starts_with_riff_relay() {
+        let daemon = Daemon::new();
+        let (mut claude, child) = claude();
+        let (notes, mut noted) = mpsc::unbounded_channel();
+        let socket = daemon.socket.clone();
+        let relay = tokio::spawn(async move {
+            relay(child, no_again(), &socket, Scrub::default(), WAIT, notes).await
+        });
+        let (_, _lines, mut write) = daemon.accept().await;
+        let error = text::daemon_protocol(9, PROTOCOL);
+        say(
+            &mut write,
+            &Say::Failed {
+                error: error.clone(),
+            },
+        )
+        .await;
+        assert_eq!(noted.recv().await.unwrap(), text::relay(&error));
+        assert_eq!(noted.recv().await.unwrap(), text::relay(text::RELAY_AWAY));
+
+        let (_, mut lines, mut write) = daemon.accept().await;
+        assert_eq!(noted.recv().await.unwrap(), text::relay(text::RELAY_BACK));
+        say(&mut write, &Say::Resume { events: 0 }).await;
+        say(&mut write, &Say::Hold { interrupt: false }).await;
+        assert_eq!(claude.read().await, None);
+        claude.end(0).await;
+        assert_eq!(up(&mut lines).await, Up::Held);
+        say(&mut write, &Say::GoOn).await;
+        assert_eq!(
+            noted.recv().await.unwrap(),
+            text::relay("no takeover in this test")
+        );
+        assert_eq!(up(&mut lines).await, Up::Exit { seq: 1, code: None });
+        say(&mut write, &Say::Ack { seq: 1 }).await;
+        assert_eq!(relay.await.unwrap(), None);
     }
 
     #[tokio::test]

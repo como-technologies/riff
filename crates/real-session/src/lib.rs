@@ -27,7 +27,7 @@
 //!     T->>D: riff daemon with RIFF_DATA, in a process group of its own
 //!     T->>R: riff run issue-N --image IMAGE --no-github, with RIFF_DATA
 //!     R->>D: run the session in a container, with no GitHub
-//!     Note over D: the session commits, and pushes nothing
+//!     Note over D: the session commits, and pushes nothing: the relay writes its branch in a bundle
 //!     T->>T: list the home again: no new path, no changed file
 //!     T->>G: push the branch of the session, open the pull request (the git and the gh of the person)
 //!     T->>G: the pull request adds the line, and its Gate starts
@@ -48,7 +48,7 @@
 //! | 5. start the daemon | no daemon of the test answers before, and `riff daemon` of the tree answers in [`DAEMON_WAIT`] (see below) |
 //! | 6. run the item | `riff run issue-N --image IMAGE --no-github` ends with 0, and its line `start: model ...` names the model of step 1 ([`check_model`], 01M6VAQWQ1D95TPKYE360KC3QR) |
 //! | 7. check the home | the home has no new path and no changed file that riff must not write (see below) |
-//! | 8. push the branch | the session made a commit on `worktree-issue-N`, and `git push` and `gh pr create` on the host pass (see below) |
+//! | 8. push the branch | the session made a commit on `worktree-issue-N`, the relay wrote it in a bundle, `riff run` took a copy with its checks, and `git fetch`, `git push` and `gh pr create` in the clone of the test pass (see below) |
 //! | 9. find the pull request | the branch `worktree-issue-N` has an open pull request |
 //! | 10. check the change | its diff adds the line of the item to [`BOOK_FILE`] |
 //! | 11. wait for the Gate | the head commit has a check run [`GATE`] in [`GATE_WAIT`] |
@@ -99,16 +99,22 @@
 //! gives its session no token of an App. So step 6 runs `riff run
 //! --no-github` (01M6Z87SDSYDTFHMPKGNX74SMC): the start text holds the
 //! issue, and the session commits on its branch and pushes nothing. Its
-//! container gets no `GH_TOKEN` and no `hosts.yml`. Step 8 then pushes the
-//! branch from the clone of the session, with the git of the person on
-//! the host, and opens the pull request with `gh pr create`
-//! ([`pull_body`]). The test is a program of the person on the host, not
+//! container gets no `GH_TOKEN` and no `hosts.yml`. Its clone goes with
+//! its container (#2139): when `claude` ends, the relay writes the commits
+//! of the branch in a bundle in `out/` of the folder of the session, and
+//! `riff run` copies it with its checks into the folder of the session.
+//! Step 8 then fetches the branch from the copy into the clone of the test,
+//! with the git of the person on the host, pushes it, and opens the pull
+//! request with `gh pr create` ([`pull_body`]). It runs no git in a folder
+//! of the session. The test is a program of the person on the host, not
 //! a session: its own steps keep the `gh` of the person.
 //!
 //! ```mermaid
 //! flowchart LR
 //!     R["riff run issue-N --no-github"] --> S["the session: no GitHub<br/>it commits on worktree-issue-N"]
-//!     S --> P["step 8, on the host:<br/>git push, gh pr create"]
+//!     S --> B["the relay: out/worktree-issue-N.bundle"]
+//!     B --> T["riff run: the copy worktree-issue-N.bundle, with its checks"]
+//!     T --> P["step 8, in the clone of the test:<br/>git fetch COPY, git push, gh pr create"]
 //!     P --> G["steps 9 to 11: the pull request, its change, the Gate"]
 //! ```
 //!
@@ -2426,11 +2432,34 @@ pub fn pull_body(issue: u64) -> String {
     )
 }
 
+/// The copy of the bundle of the branch `branch` that `riff run` checked,
+/// in the folder `folder` of the session: `BRANCH.bundle`, as
+/// `riff::run::bundle_copy` names it. The test
+/// `flow::the_test_fetches_from_the_copy_that_riff_run_names` checks that
+/// both agree.
+///
+/// ```
+/// let folder = std::path::Path::new("/d/riff/sessions/issue-801-1a2b3c4d");
+/// assert_eq!(
+///     real_session::bundle_copy(folder, "worktree-issue-801"),
+///     folder.join("worktree-issue-801.bundle")
+/// );
+/// ```
+pub fn bundle_copy(folder: &Path, branch: &str) -> PathBuf {
+    folder.join(format!("{branch}.bundle"))
+}
+
 /// Step 8: the session had no GitHub, so it committed and pushed nothing
-/// (01M6Z87SDSYDTFHMPKGNX74SMC). The test pushes the branch of the item
-/// from the clone of the session in `sessions`, with the git of the
-/// person on the host, and opens its pull request with `gh pr create`.
-/// The step fails when the session made no commit on the branch.
+/// (01M6Z87SDSYDTFHMPKGNX74SMC). Its clone went with its container: the
+/// relay wrote the commits of the branch in a bundle in `out/` of the
+/// folder of the session in `sessions`, and `riff run` copied it into the
+/// folder of the session with the checks of `riff::run::take_bundle`
+/// (01M7EY51P291VZ9YM414Z2Z1MR). The test fetches the branch from that
+/// copy into its own clone, with the git of the person on the host,
+/// pushes it, and opens its pull request with `gh pr create`. It runs
+/// no git on a file that the session can write: the session never sees
+/// the copy. The step fails with no copy: the session made no commit on
+/// the branch, or riff refused its bundle.
 fn push_branch(sessions: &Path, issue: u64, stamp: u64, stop: &AtomicBool) -> Result<(), String> {
     let branch = branch(issue);
     let folders = session_folders(sessions, issue);
@@ -2441,14 +2470,34 @@ fn push_branch(sessions: &Path, issue: u64, stamp: u64, stop: &AtomicBool) -> Re
             folders.len()
         ));
     };
-    let clone = folder.join("clone");
-    let at = clone.to_string_lossy();
-    let range = format!("origin/HEAD..{branch}");
-    let commits = output("git", &["-C", &at, "log", "--format=%h", &range], stop)?;
+    let bundle = bundle_copy(folder, &branch);
+    if !bundle.is_file() {
+        return Err(format!(
+            "riff run took no bundle of {branch}: the session made no commit on it, or riff \
+             refused its bundle. {} is not there",
+            bundle.display()
+        ));
+    }
+    let at = bundle.to_string_lossy();
+    // The prerequisites of the bundle: the default branch of origin.
+    output("git", &["fetch", "-q", "origin"], stop)?;
+    output("git", &["fetch", "-q", &at, &branch], stop)?;
+    let commits = output(
+        "git",
+        &[
+            "log",
+            "--format=%h",
+            "FETCH_HEAD",
+            "--not",
+            "--remotes=origin",
+        ],
+        stop,
+    )?;
     if commits.is_empty() {
         return Err(format!("the session made no commit on {branch} in {at}"));
     }
-    output("git", &["-C", &at, "push", "-q", "origin", &branch], stop)?;
+    let to = format!("FETCH_HEAD:refs/heads/{branch}");
+    output("git", &["push", "-q", "origin", &to], stop)?;
     let title = format!("Real-session test {stamp}");
     let url = output(
         "gh",

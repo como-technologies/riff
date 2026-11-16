@@ -3,8 +3,13 @@
 //!
 //! # Design
 //!
-//! A container writes each bind with write: its clone, its Claude folder,
-//! the folder of its socket and its volumes. It can put a link there, for
+//! A container writes each bind with write: its Claude folder, its
+//! volumes, and the folder `out/` of the bundle of a session with no
+//! GitHub (01M7EY3WHQQP9330CZ736HK0FJ). Its clone is a volume of its own
+//! container, which the host does not see. It sees the folder of its
+//! socket with no write (01M7GJBEG0S8N30EXD7DWYTKK8), and the host keeps
+//! the guard there too.
+//! A container can put a link in a folder that it writes, for
 //! example `.claude.json -> ~/.bashrc`, and the paths are the same in the
 //! container and on the host. A write of the host that follows the link
 //! writes over a file of the person. A read that follows it can bring a
@@ -12,8 +17,8 @@
 //! folder that the container reads. So the host follows no link there.
 //!
 //! - Each read and write of the host in a folder that a container writes
-//!   goes through this module: [`read()`], [`write()`], [`list`],
-//!   [`modified`] and [`set_mode`]. Each one takes that folder, `root`,
+//!   goes through this module: [`read()`], [`open()`], [`write()`],
+//!   [`list`], [`modified`] and [`set_mode`]. Each one takes that folder, `root`,
 //!   and a name in it. riff made `root`, and a container cannot change
 //!   it: it is the source of a bind. So a link above `root` counts, for
 //!   example a data folder of riff on another disk.
@@ -31,13 +36,15 @@
 //! - The steps of the host there: the Claude folder of each start
 //!   ([`crate::run::claude_folder`]), the transcripts
 //!   ([`crate::usage::transcripts_in`], [`crate::usage::written_in`],
-//!   [`crate::usage::Replies::read`]), the file `alternates` of a clone
-//!   ([`crate::lead::linked_main`]), and the mode of the socket of a
-//!   session. The host takes the path that the file `alternates` names
-//!   as it is, and follows no link in it
-//!   ([`crate::daemon::remote::linked_clones`]). The host reads no file
-//!   in a volume: it only measures and clears the cache of sccache, with
-//!   no follow of a link ([`crate::compile_cache`]).
+//!   [`crate::usage::Replies::read`]), the mode of the socket of a
+//!   session, and the bundle in `out/` ([`crate::run::take_bundle`]). The
+//!   host also writes the list of the branches of `origin`
+//!   of the main clone through it, in the folder of a session or a lead,
+//!   which no container writes ([`crate::session_clone::write_refs`]).
+//!   The host makes no clone of a session, and reads no file in a clone
+//!   ([`crate::session_clone`]). The host reads no file in a volume: it
+//!   only measures and clears the cache of sccache, with no follow of a
+//!   link ([`crate::compile_cache`]).
 //! - A test of this module reads the code of riff. It finds each
 //!   production line that names the clone, the Claude folder or the
 //!   folder of the socket of a session or a lead. It finds each function
@@ -211,6 +218,44 @@ fn open_parent(root: &Path, name: &Path) -> Result<Option<(OwnedFd, OsString, Pa
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn read(root: &Path, name: &Path) -> Result<Option<Vec<u8>>> {
+    let Some((mut file, _)) = open(root, name)? else {
+        return Ok(None);
+    };
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .with_context(|| format!("read {}", root.join(name).display()))?;
+    Ok(Some(bytes))
+}
+
+/// The plain file `ROOT/NAME`, open to read, and its length in bytes, or
+/// `None` when it is not there: the open of [`read()`], for a read in
+/// parts, for example of a large file with a limit
+/// ([`crate::run::take_bundle`]). It has the same errors as [`read()`]. A
+/// new file in the place of `NAME` after the open does not change what
+/// the open file reads.
+///
+/// ```
+/// use std::io::Read;
+/// use std::path::Path;
+///
+/// let root = tempfile::tempdir()?;
+/// std::fs::write(root.path().join("a.bundle"), "bytes")?;
+/// let (mut file, len) = riff::host_file::open(root.path(), Path::new("a.bundle"))?.unwrap();
+/// assert_eq!(len, 5);
+/// std::fs::write(root.path().join("a.bundle.new"), "other")?;
+/// std::fs::rename(root.path().join("a.bundle.new"), root.path().join("a.bundle"))?;
+/// let mut text = String::new();
+/// file.read_to_string(&mut text)?;
+/// assert_eq!(text, "bytes");
+/// assert!(riff::host_file::open(root.path(), Path::new("none.bundle"))?.is_none());
+///
+/// // A folder is no plain file.
+/// std::fs::create_dir(root.path().join("b.bundle"))?;
+/// let error = riff::host_file::open(root.path(), Path::new("b.bundle")).unwrap_err();
+/// assert_eq!(error.to_string(), riff::text::host_file_not_plain(&root.path().join("b.bundle")));
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn open(root: &Path, name: &Path) -> Result<Option<(File, u64)>> {
     let Some((dir, last, at)) = open_parent(root, name)? else {
         return Ok(None);
     };
@@ -222,17 +267,14 @@ pub fn read(root: &Path, name: &Path) -> Result<Option<Vec<u8>>> {
         Err(errno) => return Err(fault(&dir, &at, &last, errno)),
     };
     let path = at.join(&last);
-    let mut file = File::from(fd);
+    let file = File::from(fd);
     let meta = file
         .metadata()
         .with_context(|| format!("read {}", path.display()))?;
     if !meta.is_file() {
         bail!("{}", text::host_file_not_plain(&path));
     }
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)
-        .with_context(|| format!("read {}", path.display()))?;
-    Ok(Some(bytes))
+    Ok(Some((file, meta.len())))
 }
 
 /// The text of [`read()`]: an error when it is no UTF-8.
@@ -594,14 +636,16 @@ mod scan {
 
     use crate::host_git::tests::{production, sources};
 
-    /// The words of a production line that names a folder that a
-    /// container writes in a folder of a session or a lead: its clone, its
-    /// Claude folder, and the folder of its socket.
-    const NAMES: [&str; 6] = [
+    /// The words of a production line that names a folder of a session or
+    /// a lead that a container sees: its clone, its Claude folder, and the
+    /// folder of its socket.
+    const NAMES: [&str; 8] = [
         "join(\"claude\")",
         "join(\"clone\")",
         "\"claude/",
         "\"clone/",
+        "claude_in(",
+        "clone_in(",
         "owned.socket",
         "session_dir(",
     ];
@@ -630,63 +674,67 @@ mod scan {
         ("daemon.rs", "let dir = &owned.socket;"),
         ("daemon.rs", "socket: owned.socket.clone(),"),
         ("daemon.rs", "source: Source::Path(owned.socket.clone()),"),
+        // The paths of the clone and of the Claude folder in the folder of
+        // a session or a lead ([`crate::run::clone_in`],
+        // [`crate::run::claude_in`]).
+        ("run.rs", "pub fn clone_in(folder: &Path) -> PathBuf {"),
+        ("run.rs", "folder.join(\"clone\")"),
+        ("run.rs", "pub fn claude_in(folder: &Path) -> PathBuf {"),
+        ("run.rs", "folder.join(\"claude\")"),
         // The transcripts of a session and of a lead
         // ([`crate::usage::transcripts_in`], [`crate::usage::written_in`]).
         (
             "daemon.rs",
-            "let transcripts = usage::transcripts_in(&record.folder.join(\"claude\"), &live.session);",
+            "usage::transcripts_in(&crate::run::claude_in(&record.folder), &live.session);",
         ),
         (
             "lead.rs",
-            "crate::usage::written_in(&record.folder.join(\"claude\"), &record.live.session)",
+            "crate::usage::written_in(&run::claude_in(&record.folder), &record.live.session)",
         ),
-        // The clones that link to a main clone
-        // ([`crate::lead::linked_main`]).
-        (
-            "daemon/remote.rs",
-            ".map(|entries| entries.flatten().map(|e| e.path().join(\"clone\")).collect())",
-        ),
-        // The start of a session and of a lead: the clone, the Claude
-        // folder ([`crate::run::claude_folder`]) and the binds.
-        ("lead.rs", "&folder.join(\"claude\"),"),
-        ("lead.rs", "&folder.join(\"clone\"),"),
-        ("lead.rs", "claude: self.folder.join(\"claude\"),"),
-        ("lead.rs", "clone: self.folder.join(\"clone\"),"),
-        ("lead.rs", "let claude = folder.join(\"claude\");"),
-        ("lead.rs", "let clone = folder.join(\"clone\");"),
-        ("run.rs", "let claude = folder.join(\"claude\");"),
-        ("run.rs", "let clone = folder.join(\"clone\");"),
-        ("wave.rs", "let claude = folder.join(\"claude\");"),
-        ("wave.rs", "let clone = folder.join(\"clone\");"),
-        // A text that names the clone.
-        (
-            "wave.rs",
-            "text::wave_no_pull(item, &branch, &record.folder.join(\"clone\")),",
-        ),
+        // The clone of an older riff in the folder of a lead: it goes with
+        // no git ([`crate::lead::remove_host_clone`]).
+        ("lead.rs", "let clone = run::clone_in(folder);"),
+        // The start of a session and of a lead: the Claude folder
+        // ([`crate::run::claude_folder`]), and the paths of the spec. The
+        // clone is a volume of the container: the host has no folder there.
+        ("lead.rs", "&run::claude_in(folder),"),
+        ("lead.rs", "&run::clone_in(folder),"),
+        ("lead.rs", "&run::claude_in(&folder),"),
+        ("lead.rs", "&run::clone_in(&folder),"),
+        ("lead.rs", "path: run::clone_in(folder),"),
+        ("lead.rs", "claude: run::claude_in(folder),"),
+        ("run.rs", "let clone = clone_in(&folder);"),
+        ("run.rs", "let claude = claude_in(&folder);"),
+        ("wave.rs", "path: run::clone_in(folder),"),
+        ("wave.rs", "claude: run::claude_in(folder),"),
     ];
 
     /// The steps of the host that read or write a file in such a folder,
     /// each one through [`super`]: the file and the start of the
-    /// function.
+    /// function. The bundle in `out/` goes through it too
+    /// ([`crate::run::take_bundle`]). The list of the refs of `origin`
+    /// goes through it too, in a folder that no container writes.
     const STEPS: &[(&str, &str)] = &[
         ("run.rs", "pub fn claude_folder("),
+        ("run.rs", "fn of(out: &Path, limit: u64)"),
         ("usage.rs", "fn transcripts_with_times("),
         ("usage.rs", "pub fn read(paths: &[PathBuf]) -> Replies {"),
-        ("lead.rs", "pub fn linked_main("),
         ("daemon.rs", "fn bind_in("),
+        ("session_clone.rs", "pub fn write_refs("),
     ];
 
     /// The calls that take a path in such a folder: the guard, and each
     /// function of riff that calls it. A function with one of them gets
     /// the path from a line of [`NAMED`] or from its caller, so it follows
     /// no link, as a function with a line of [`NAMED`].
-    const GUARDED: [&str; 6] = [
+    const GUARDED: [&str; 7] = [
         "host_file::",
         "claude_folder(",
+        "Opened::of(",
         "transcripts_with_times(",
         "Replies::read(",
-        "linked_main(",
         "bind_in(",
+        "write_refs(",
     ];
 
     /// The calls that read or write a file, or look at it, with each link
@@ -747,10 +795,6 @@ mod scan {
             "let Ok(entries) = std::fs::read_dir(self.dir.join(LIVE)) else {",
         ),
         ("daemon.rs", "let record = std::fs::read_to_string(&path)"),
-        // The folder of the sessions and the folder of the leads.
-        ("daemon/remote.rs", "std::fs::read_dir(root)"),
-        // The main clone in the records of the daemon.
-        ("daemon/remote.rs", "let real = main.canonicalize().ok();"),
     ];
 
     /// The code of riff: each file `.rs` of `src`, with its name in `src`
@@ -977,18 +1021,19 @@ mod scan {
         );
     }
 
-    /// A function that gets the path of a clone from its caller names no
-    /// folder, but its call of the guard shows it: the scan checks it.
+    /// A function that gets the path of a Claude folder from its caller
+    /// names no folder, but its call of the guard shows it: the scan
+    /// checks it.
     #[test]
     fn the_scan_checks_a_function_that_gets_the_path_from_its_caller() {
-        let file = "fn links(clone: &Path) -> bool {\n    \
-                    linked_main(clone).is_ok_and(|p| p.canonicalize().is_ok())\n}\n\
-                    fn other(clone: &Path) -> bool {\n    clone.exists()\n}\n";
+        let file = "fn seen(claude: &Path) -> bool {\n    \
+                    transcripts_with_times(claude).is_empty() && claude.canonicalize().is_ok()\n}\n\
+                    fn other(claude: &Path) -> bool {\n    claude.exists()\n}\n";
         let (found, follow) = scan("x.rs", file);
         assert!(found.is_empty(), "{found:?}");
         assert_eq!(
             follow,
-            ["x.rs:2: linked_main(clone).is_ok_and(|p| p.canonicalize().is_ok())"]
+            ["x.rs:2: transcripts_with_times(claude).is_empty() && claude.canonicalize().is_ok()"]
         );
     }
 

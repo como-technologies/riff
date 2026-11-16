@@ -140,6 +140,7 @@ pub mod run;
 pub mod runtime;
 pub mod sccache;
 pub mod service;
+pub mod session_clone;
 pub mod session_image;
 pub mod session_mcp;
 pub mod session_relay;

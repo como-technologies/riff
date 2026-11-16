@@ -5789,8 +5789,8 @@ of this part when they merge.
   one line, and uses the merged pin.
 - **01M51STPPWYFKQ1ESCNA6V3WV2** When the fetch of the default branch
   fails, riff says so in one line, and reads the branch that the clone
-  has. A main clone with no `origin/HEAD` has no merged pin: riff stops,
-  and gives the fix `git remote set-head origin --auto`.
+  has. A main clone with no `origin/HEAD` then has no merged pin: riff
+  stops, and gives the fix `git remote set-head origin --auto`.
 - **01M51SVXQK037E20R7WAY66532** `riff image`, `riff init` and the image
   of this folder in `riff update --check` read `riff.toml` of the
   working tree. So a person can try the pin of a branch before its
@@ -6046,22 +6046,16 @@ of this part when they merge.
 - **01M4Z60B7NW4GHKGCYZZDG26R6** Each work item has one session. The
   session starts, does the item and ends. No session waits idle, and no
   session clears its context between items. A verify is an item too.
-- **01M4Z60B7PTJMB37578K8FV22Q** Each session has its own clone:
-  `git clone --reference MAIN` into a folder of riff, bound into the
-  container with write. The session reads the objects of the main clone
-  through the alternates, and pushes from its own clone. No session
-  writes the git dir of the main clone or of another session. The clone
-  of a session goes when its item ends, after its push.
-- **01M4Z60B7PQ07HRJBXS1TA73PX** The container sees the objects of the
-  main clone (`MAIN/.git/objects`) at the same path, with no write. So
-  git reads the alternates of the clone of the session.
+- **01M4Z60B7PTJMB37578K8FV22Q** Each session has its own clone. The
+  session reads the objects of the main clone through the alternates,
+  and pushes from its own clone. No session writes the git dir of the
+  main clone or of another session.
 - **01M4Z60B7QDWEFQ96H448RE9N2** Each session is a rootless podman
   container (`podman run --rm --userns=keep-id`) from the image of its
-  repository. riff binds with write only: the clone of the session, its
-  Claude folder, the folder of its socket, and the volumes that
-  `riff.toml` names (01M5SMVVC4GQS310CVK3H9CMQ7). riff binds
-  `~/.gitconfig` with no write, or as an overlay (`:O`) whose changes
-  go when the session ends. Each other write goes to the copy-on-write
+  repository. riff binds with write: its Claude folder, and the volumes
+  that `riff.toml` names (01M5SMVVC4GQS310CVK3H9CMQ7). riff binds
+  `~/.gitconfig` with no write, or as an overlay (`:O`) whose changes go
+  when the session ends. Each other write goes to the copy-on-write
   layer of the container, and goes when the session ends.
 - **01M4Z60B7SHAMXXFK15BE3KZSP** The home of the person is a tmpfs in
   the container, at the same path, with `HOME` set. The binds of
@@ -6165,8 +6159,8 @@ of this part when they merge.
   `riff daemon uninstall` removes nothing, and `riff update` does no
   step for the daemon.
 - **01M4ZDTVSP0T1YENKAWGKA114D** The daemon binds the folder of the
-  socket of a session at `/run/riff` in its container, with write, and
-  sets `RIFF_SOCKET=/run/riff/riff.sock`. Each session has its own
+  socket of a session at `/run/riff` in its container, and sets
+  `RIFF_SOCKET=/run/riff/riff.sock`. Each session has its own
   listener. So the listener tells the daemon which session asks: a
   hello on the socket gets the session ID, the item and the name of the
   container. The folder goes at the end of the session.
@@ -6179,13 +6173,13 @@ of this part when they merge.
   one rootless podman container, through the daemon. It asks the daemon
   for the image (the daemon pulls it when it must), then for the
   session. The host does each riff step: it checks the facts, starts a
-  worker session, claims the item, makes the clone, sends the verify
-  request and releases the item. In the container, `riff relay` starts
-  `claude` (01M4ZHSZZDH0C01A5EVD0KFY14). The daemon writes
-  `events.jsonl`, and sends each event, with no secret, to `riff run`.
-  With no daemon, `riff run` stops before the claim, and says how to
-  start the daemon. Ctrl-C asks the daemon to stop the container. When
-  `riff run` ends with no stop, the session goes on in the daemon.
+  worker session, claims the item, sends the verify request and releases
+  the item. In the container, `riff relay` starts `claude`
+  (01M4ZHSZZDH0C01A5EVD0KFY14). The daemon writes `events.jsonl`, and
+  sends each event, with no secret, to `riff run`. With no daemon, `riff
+  run` stops before the claim, and says how to start the daemon. Ctrl-C
+  asks the daemon to stop the container. When `riff run` ends with no
+  stop, the session goes on in the daemon.
 - **01M4ZDTW00B7N6T9P3MK066KA7** A stop or a restart of the daemon stops
   no container. The daemon starts each `podman` with no
   `INVOCATION_ID`, so podman puts conmon in a scope of its own, not in
@@ -6474,9 +6468,8 @@ of this part when they merge.
   session on riff-server ends at its second look after that, so the
   reply to a leave goes out first. The daemon removes the main clone
   that it made in `clones/OWNER/REPO` in its folder. It removes no other
-  clone, and it keeps the clone while the clone of a session folder or
-  of a lead links to it. The end of a session and the end of a lead make
-  the daemon look again, and so does its start.
+  clone. The end of a session and the end of a lead make the daemon look
+  again, and so does its start.
 - **01M6WJYQJ58MHQF1XPXXZW2ET6** After `riff host leave`, the facts of a
   host name each repository where the host gives no workers and still
   runs sessions, with the names of the containers of those sessions:
@@ -6642,16 +6635,12 @@ of this part when they merge.
   it names. The error names the folder. In a container session, where
   `RIFF_SOCKET` is set, git runs in the container: there the guard
   refuses only the folders that a daemon in that process gave it.
-- **01M7DZ42C8SY2GV5ZQJZHM2VTV** The host makes the clone of a session
-  in a folder of its own, `new-clones/ITEM-ID8` in the data folder of
-  riff, with each git step of the clone: the clone, the branch of the
-  item, and for a verify the fetch of the head of the pull request and
-  its checkout. Then it moves the clone into the folder of the session.
-  The host runs no git in the folder of a session. A build looks for its
-  branch on `origin` from the main clone, with `git ls-remote`.
+- **01M7DZ42C8SY2GV5ZQJZHM2VTV** The host runs no git in the folder of a
+  session. A build looks for its branch on `origin` from the main clone,
+  with `git ls-remote`.
 - **01M7DZ42EVHAT8N5MZEV97G3DW** The host writes the repository
   `OWNER/REPO` of a session in the file `repo` of the folder of the
-  session, before the clone. The container does not see that file.
+  session. The container does not see that file.
 - **01M7DZ4E02PX5Y0WMHFCJ9KS14** The sweep of 01M53NJ5V27BCHDNHK2THQQZZQ
   looks into no clone. It reads the repository of a folder from its file
   `repo` (01M7DZ42EVHAT8N5MZEV97G3DW), and asks the forge for the pull
@@ -6780,6 +6769,17 @@ of this part when they merge.
   word that starts like a token of GitHub or with `sk-` goes whole, also
   when it has a `NAME=` in it. So the filter can hide more than a
   secret, and never less.
+- **01M7EY51H3YVDJTWC25WZA46EF** The daemon removes the main clone that
+  it made for a repository when no session of the repository runs: each
+  session clones in its container, so no clone of the host needs the
+  objects of the main clone. This supersedes 01M6QRDBG1JTX5NV1C8TB7AG36
+  in part: the clones that link to it.
+- **01M7GJBEG0S8N30EXD7DWYTKK8** The daemon binds the folder of the
+  socket of a session at /run/riff with no write. A connect to the
+  socket needs no write of its folder. So no process of the container
+  can rename the socket, or put another socket in its place. This
+  supersedes 01M4ZDTVSP0T1YENKAWGKA114D and 01M4Z60B7QDWEFQ96H448RE9N2
+  in part: the bind with write of the folder of the socket.
 
 ### riff relay
 
@@ -6846,6 +6846,54 @@ of this part when they merge.
   stdin, and cannot read its arguments, it prints one line on stderr and
   exits with 0. The Claude folder of an earlier start gets the new
   command in the place of the hook of the older riff.
+- **01M7EY3P0Q8TQF5QRTRDWCYCTQ** Each session clones in its container,
+  and pushes from there with its own token. The host makes no clone of
+  a session, and binds no git tree with write into a container. The
+  spec of a session has an empty volume of its container at the path
+  of its clone, on the disk and not in the tmpfs of the home: podman
+  run --rm removes it with the container. The spec gives the plan
+  of the clone to the relay in the variable RIFF_CLONE, and claude
+  does not get it. Before claude starts, also with a terminal, the
+  relay makes the clone in that folder: git init, MAIN/.git/objects
+  in its alternates, origin on the repository on GitHub, and the
+  branches of origin as the main clone has them, with no object
+  copied. With the token of the session, it then fetches origin,
+  and gets only the objects that the main clone does not have. With
+  no token, a lead with no token of an App or a session of riff run
+  --no-github, it fetches nothing from GitHub, and starts from the
+  main clone. Then it checks out the branch of the item for a build,
+  a rebase and a fix of the checks: the branch of origin when the one
+  look of the host found it there, else a new branch from the default
+  branch. For a verify, with the token it fetches refs/pull/N/head,
+  and checks out the head commit of the look, detached. The lead
+  gets the default branch. Each start point is explicit, so no git
+  config of the person changes the branch. A clone that is there
+  stays. When a step of the clone fails, claude does not start, the
+  error names the step, and the folder is empty again. This supersedes
+  01M7E7A8QM8SRPQN3G1BXVJW1R and 01M4Z60B7PQ07HRJBXS1TA73PX in full,
+  and in part 01M4Z60B7PTJMB37578K8FV22Q, 01M4Z60B7QDWEFQ96H448RE9N2,
+  01M7DZ42C8SY2GV5ZQJZHM2VTV, 01M7DZ42EVHAT8N5MZEV97G3DW,
+  01M5QVARWYFHTQV5THNRB09SZA, 01M4ZKX0NXN7E33VC3PSFGSPDT,
+  01M4ZV3B6Q0Y6AX0KSKC55S31R, 01M501P9Q51AYN9GBPWKVHA229 and
+  01M4Z81ARSTAK8HR96S084SDFD: the clone of the host.
+- **01M7FMJJB0TZM8875T7GQZAJEA** Of the git dir of the main clone, the
+  container of a session sees only objects/, at the same path with no
+  write: no config, no ref, no hook, no log and no worktree. The same
+  rule holds for riff run, a wave and the lead. Before each start of a
+  container, the host writes the branches of origin of the main clone,
+  with one git for-each-ref, in the new file origin-refs of the folder
+  of the session or of the lead, in the form of packed-refs and with no
+  symbolic ref. No container can write that folder. The host writes the
+  file through the guard of 01M7FE5FYFAR92PM3EJJ211VM2: a new file with
+  create_new, then a rename, with no follow of a link. A link or a
+  folder at its path is an error, and the host writes nothing through
+  it. A plain file of an earlier start goes. The container sees the file
+  at the same path with no write. Before its fetch from the main clone,
+  the relay makes the git dir riff-main in the .git of the new clone,
+  with its own HEAD, an empty refs/, a link to objects/ and a link to
+  that file as its packed-refs, and fetches the branches of origin from
+  it. Then that git dir goes. This supersedes 01M7FDN1Y2EQC56748V6P366NT
+  in full.
 
 ### The waves of the daemon
 
@@ -6930,17 +6978,16 @@ of this part when they merge.
   most 3 times in a run of the wave. Then the lead gets one message,
   and the wave leaves the item. A verify has its own count
   for each head commit (01M6QQ7H2B88AT3KS8NGM3DKCZ).
-- **01M4ZV3B6Q0Y6AX0KSKC55S31R** For each item, the daemon does the
-  host steps of `riff run` itself: the checks, a new worker session,
-  the claim, the keep-alive, the clone and the start. After the end of
-  a build, it sends a verify request for the open pull request of the
-  branch to the lead (but see 01M51KH0H7J35PEKMHP5KQB84T), then
-  releases the item and ends the session. The
-  record of the session holds the job of the wave, with no secret. So a
-  new daemon goes on with the keep-alive, and does the steps after the
-  end. When the session ended while no daemon ran, the new daemon does
-  them at its start. The daemon runs `gh` with `GH_REPO`: it runs in no
-  clone.
+- **01M4ZV3B6Q0Y6AX0KSKC55S31R** For each item, the daemon does the host
+  steps of `riff run` itself: the checks, a new worker session, the
+  claim, the keep-alive and the start. After the end of a build, it
+  sends a verify request for the open pull request of the branch to the
+  lead (but see 01M51KH0H7J35PEKMHP5KQB84T), then releases the item and
+  ends the session. The record of the session holds the job of the wave,
+  with no secret. So a new daemon goes on with the keep-alive, and does
+  the steps after the end. When the session ended while no daemon ran,
+  the new daemon does them at its start. The daemon runs `gh` with
+  `GH_REPO`: it runs in no clone.
 - **01M4ZV3B6R4WSEJXYT7QPRWT6X** A verify session has a clone at the
   head commit of the pull request, detached. Its start text says to
   check the work and to change nothing. Its last reply is the result:
@@ -6983,11 +7030,9 @@ of this part when they merge.
   first checks that the work of the folder is on a merged branch, or
   that the person gave --force. The lead can run it with --host.
 - **01M5QVARWYFHTQV5THNRB09SZA** The clone of a verify session has the
-  head commit of a pull request from a fork too. After the clone, the
-  daemon fetches refs/pull/N/head from origin, with N the number of the
-  pull request, then checks out the head commit, detached. It checks out
-  the commit, not the ref, so a push to the pull request after the look
-  does not change what the verify reads.
+  head commit of a pull request from a fork too. It checks out the
+  commit, not the ref, so a push to the pull request after the look does
+  not change what the verify reads.
 - **01M5QVH3MAEPPJN9PPVDX6N2EY** The riff daemon runs the look of the
   repository of each wave that it runs until `riff host leave`: it reads
   the open pull requests and `main` with "gh", and posts as the person.
@@ -7051,8 +7096,7 @@ of this part when they merge.
   the default branch, not `main`: `git diff origin/BRANCH...HEAD`, `git
   rebase origin/BRANCH`, and "Never push to BRANCH". The look reads the
   full check of the head of the default branch
-  (01M5R13DGMTNWPY88A3EG49WWS). `riff run` names the branch of
-  `origin/HEAD` of its clone.
+  (01M5R13DGMTNWPY88A3EG49WWS).
 - **01M5R0J131464KZX180BW2AK98** A default branch that does not read
   stops no look at the blocks. The look of the lead reads the default
   branch of the repository at each look, after the look at the blocks,
@@ -7583,19 +7627,28 @@ of this part when they merge.
   before the start of the daemon.
 - **01M7DZ4E2P5RJMQE0W9K1AAA4P** When a build of a wave ends and its
   branch has no pushed commit, the daemon commits nothing and pushes
-  nothing: it runs no git in the clone. The lead gets one note with the
-  branch and the clone. This supersedes 01M5P26VSA7AA99K1RYG83R8J9 and
-  01M5TKETGZP9NTHBXFBP1RM1HP.
-- **01M7EZCTKYFPS4QDQ1N3K3BT23** Before the claim of an item of a wave
-  whose `riff.toml` names a volume, the job asks podman for the folders
-  of the volumes. When podman cannot say them
-  (01M7EW2106JGGTSZKMRG4N9SH0), the job claims nothing, and the start
-  does not count. The wave starts no item for one minute, then tries
-  again.
+  nothing. The lead gets one note with the branch. This supersedes
+  01M5P26VSA7AA99K1RYG83R8J9 and 01M5TKETGZP9NTHBXFBP1RM1HP.
+- **01M7EZCTKYFPS4QDQ1N3K3BT23** When podman cannot say the folders of
+  the volumes (01M7EW2106JGGTSZKMRG4N9SH0) before the claim of an item
+  of a wave, the job claims nothing, and the start does not count. The
+  wave starts no item for one minute, then tries again.
 - **01M7F29TEWNHPR79RB6BT8C8SS** While a wave waits for the folders of
   the podman volumes (01M7EZCTKYFPS4QDQ1N3K3BT23), the line of the wave
   in `riff daemon status` says that it waits for them, and names `riff
   daemon status`. The lead gets no message.
+- **01M7EY51KJR7RT5TZJ4FX558NP** When a build of a wave ends and its
+  branch has no pushed commit, the note to the lead names the branch,
+  and says that the clone went with the container: only the work that
+  the session pushed stays. This supersedes 01M7DZ4E2P5RJMQE0W9K1AAA4P
+  in part: the clone.
+- **01M7FAQJXE54J7K8CR9DX2EVCX** The clone of each session is a volume
+  of its container (01M7EY3P0Q8TQF5QRTRDWCYCTQ). So the job of each wave
+  asks podman for the folders of the volumes before the claim of each
+  item, also when its `riff.toml` names no volume. While podman cannot
+  say them (01M7EW2106JGGTSZKMRG4N9SH0), no session starts. This
+  supersedes 01M7EZCTKYFPS4QDQ1N3K3BT23 in part: the waves whose
+  `riff.toml` names a volume.
 
 ### The lead, the view and the takeover
 
@@ -7615,10 +7668,10 @@ of this part when they merge.
   ended and how to start it again, and that the `claude --resume` line
   of `claude` works only in the container.
 - **01M501P9Q51AYN9GBPWKVHA229** The folder of the lead is
-  `leads/OWNER-REPO` in the data folder of riff, with the clone `clone/`
-  of 01M7E7A8QM8SRPQN3G1BXVJW1R. At the first start, riff makes the
-  Claude folder `claude/`. It stays between the starts of the lead. Each
-  new lead is a new session of riff-server and of `claude`.
+  `leads/OWNER-REPO` in the data folder of riff. At the first start,
+  riff makes the Claude folder `claude/`. It stays between the starts of
+  the lead. Each new lead is a new session of riff-server and of
+  `claude`.
 - **01M501P9SDGVWG3MTVCW5BDRQQ** The Claude folder of the lead gets the
   first-run answers of `claude`: `hasCompletedOnboarding`, the `theme`
   of the `.claude.json` of the person (else `auto`), and the trust of
@@ -7774,13 +7827,12 @@ of this part when they merge.
   of the turn. Supersedes in part 01M4Z60B800BH5BHX0H9JVDG6A and
   01M5SNV7H3739PXW73H14XM4B8.
 - **01M5TC2919TB9XPF42YFNJBP79** The daemon stops the container of an
-  old lead and starts it again with the same session, the same clone and
-  the same Claude folder. The new container binds the riff on disk. Its
-  command is `claude --resume ID` of the conversation of the lead, and
-  its first prompt tells the lead to start its Monitor again. The
-  session of the lead on riff-server stays: the daemon does not end it.
-  The person gets one line in riff chat for each lead that started
-  again.
+  old lead and starts it again with the same session and the same Claude
+  folder. The new container binds the riff on disk. Its command is
+  `claude --resume ID` of the conversation of the lead, and its first
+  prompt tells the lead to start its Monitor again. The session of the
+  lead on riff-server stays: the daemon does not end it. The person gets
+  one line in riff chat for each lead that started again.
 - **01M5TC29A4Q94NJP7HFC75XCF3** When the daemon cannot start a lead
   again, it tells the person one time in riff chat. A fault before the
   stop leaves the lead on the old riff, and the daemon tries again at
@@ -8072,26 +8124,14 @@ of this part when they merge.
   person, with the command and who ran it. The daemon keeps the cause
   with the lead, and `riff daemon status` shows it on the line of the
   lead, also with `--host` (#2099).
-- **01M7E7A8QM8SRPQN3G1BXVJW1R** At each start of a new lead, the host
-  makes a new clone of the lead in a folder of its own,
-  `new-clones/lead-OWNER-REPO` in the data folder of riff, with `git
-  clone --reference MAIN` on the default branch of `origin`. Then it
-  puts the new clone in the place of the old clone `clone/`, and removes
-  the old clone, with each change in it. The host runs no git in the old
-  clone. When the new clone fails, the old clone stays as it is, riff
-  shows a note with the error, and the lead starts. A start again of the
-  same session of the lead keeps its clone. This supersedes
-  01M50RRQ9DT0JPSB358EAZRP8Z and 01M51JYDHAQDJ3GH2J8DT3AZQS in full, and
-  01M501P9Q51AYN9GBPWKVHA229 in part: the clone.
 - **01M7EBBVE6WYKT5JDVASFCYPQQ** At each start of a new lead, riff
-  removes each old clone of the lead (01M7E7A8QM8SRPQN3G1BXVJW1R) as the
-  person first, then with podman unshare. When an old clone stays, for
-  example for a file that riff cannot remove, the new lead starts with
-  its new clone, and the log of the riff daemon gets one line that names
-  the old clone and the error. The next old clone then gets the first
-  free name of old-clone-2, old-clone-3 and so on. The sweep of the riff
-  daemon removes each old clone that stayed, but not while a start of
-  the lead runs (#2153).
+  removes each old clone of the lead as the person first, then with
+  podman unshare. When an old clone stays, for example for a file that
+  riff cannot remove, the new lead starts, and the log of the riff
+  daemon gets one line that names the old clone and the error. The next
+  old clone then gets the first free name of old-clone-2, old-clone-3
+  and so on. The sweep of the riff daemon removes each old clone that
+  stayed, but not while a start of the lead runs (#2153).
 - **01M7EAZ9N9DY7JPXZP1V8JY01E** The daemon knows the main clone of a
   lead from its own records: the main clone of the wave of its
   repository, else the main clone that the daemon serves for the
@@ -8103,6 +8143,19 @@ of this part when they merge.
   (#1606). When the daemon starts to serve the repository of a lead, the
   main clone is the main clone of the wave. This supersedes
   01M6QB89JJEM9Z1V3RVZYHKYT0 and 01M6QVSWQZE41BMQ6YN2963C4V in part.
+- **01M7EY51EMJ6ZEGNW7H852PEGR** The lead clones in its container at
+  each start of its container (01M7EY3P0Q8TQF5QRTRDWCYCTQ), also at a
+  start again with claude --resume: the lead keeps its Claude folder,
+  and no clone of the host. At each start of a new lead, riff removes
+  the clone clone/ that an older riff made in the folder of the lead on
+  the host, with each change in it and with no git: it moves to the name
+  of an old clone of 01M7EBBVE6WYKT5JDVASFCYPQQ, and goes as an old
+  clone goes. This supersedes 01M5TC2919TB9XPF42YFNJBP79 and
+  01M7EBBVE6WYKT5JDVASFCYPQQ in part: the clone of the host.
+- **01M7FTWWAJB8B09S89VY8XA8RQ** When the clone clone/ that an older
+  riff made in the folder of the lead cannot move to the name of an old
+  clone (01M7EY51EMJ6ZEGNW7H852PEGR), the new lead does not start. riff
+  says why, and the error names the move.
 
 ### The first run
 
@@ -8529,9 +8582,8 @@ of this part when they merge.
 - **01M4Z81ARSTAK8HR96S084SDFD** Each session of `riff run` has a folder
   of its own, `sessions/ITEM-ID8` in the data folder of riff, where
   `ID8` is the start of the session ID. With `RIFF_HOME`, the folder is
-  `RIFF_HOME/sessions/ITEM-ID8`. It holds the clone, the own Claude
-  folder and `events.jsonl`, each event with no secret. The clone stays
-  until the work of its branch is over (01M53NJ5V27BCHDNHK2THQQZZQ).
+  `RIFF_HOME/sessions/ITEM-ID8`. It holds the own Claude folder and
+  `events.jsonl`, each event with no secret.
 - **01M53NJ5V27BCHDNHK2THQQZZQ** The riff daemon removes the folder of
   each session of `riff run` and of a wave that does not run, also when
   no wave runs: at its start, then each 10 minutes, and before each look
@@ -8666,16 +8718,82 @@ of this part when they merge.
   no `hosts.yml` and with no `GH_TOKEN`, and renews nothing. The start
   text has the body of the issue, and tells the session to commit and to
   push nothing. At the end, `riff run` does its steps as for each
-  session. With no pull request of the branch, it names the clone and
-  the command to push the branch, and exits with 0 when `claude` ended
-  with 0. `riff whoami` in the session shows `none`. In the container of
-  the lead, `riff run` takes no `--no-github`.
+  session. With no pull request of the branch, it exits with 0 when
+  `claude` ended with 0. `riff whoami` in the session shows `none`. In
+  the container of the lead, `riff run` takes no `--no-github`.
 - **01M7DYRDPST1Z3CB37GR3ZPQ5B** The start texts of a build, a rebase, a
   fix of checks and a verify tell the session to make a second worktree
   or another large build tree in `/tmp`, on the disk, and not in its
   home. They say that the home is in memory, in folders of 1 GiB each
   (01M7DYR99QK609NF61GGCN75QQ), and that a larger write there fails with
   "No space left on device".
+- **01M7EY3WHQQP9330CZ736HK0FJ** A session of riff run --no-github
+  pushes nothing. When claude ends, before the relay gives the daemon
+  the exit, the relay writes the commits of the branch that the default
+  branch of origin does not have in the git bundle out/BRANCH.bundle
+  of the folder of the session, with no git tree of the host. riff
+  binds that folder out/ with write for such a session only. With
+  no such commit, or with no branch, it writes no bundle. When the
+  bundle fails, the exit is 1. riff run takes the bundle: it opens
+  the file with no link, and copies it to BRANCH.bundle in the folder
+  of the session, which no session sees. It runs no git on the file in
+  out/. Then it names the copy and the commands that push the branch
+  from a clone of the person, or says that the session made no commit.
+  When the file is no git bundle, riff run says why, and ends with 1.
+  This supersedes 01M6Z87JY83V3KR72E2AG8V8KG and
+  01M4Z60B7QDWEFQ96H448RE9N2 in part: the clone and the command to push
+  the branch, and the binds with write.
+- **01M7EY3WPK3D9HXVM3DHYH5EF0** The start text of a build says that the
+  clone of the session goes with its container, and that only the
+  commits that it pushes stay.
+- **01M7FDN99KZE54CX17DDEP787V** Before the start of a session of riff
+  run --no-github, riff run fetches the default branch, and the branch
+  of the item when the look on origin found it, from origin into
+  refs/remotes/origin of the main clone, with the git of the person. The
+  clone of the session fetches nothing from GitHub, so it goes on from
+  the branch on origin too.
+- **01M7FDN9C91TDYPQSFBRHVHRAC** riff run --no-github takes the bundle
+  of the session also when the branch has an open pull request, and
+  names the copy. With an open pull request, it also sends the verify
+  request, as for each session. When riff run refuses the bundle, it
+  ends with 1. This supersedes 01M7EY3WHQQP9330CZ736HK0FJ in part: the
+  case of no pull request.
+- **01M7FDN9EWZ28AQS4CKJQD3A3B** riff run takes at most 1 GiB of the
+  bundle of a session with no GitHub. It reads the first line from the
+  first bytes of the open file, and refuses a file whose first line is
+  not that of a git bundle of version 2 or 3 before it copies the rest.
+  It refuses a larger file, also one that grows during the copy, and the
+  copy goes. This supersedes 01M7EY3WHQQP9330CZ736HK0FJ in part: the
+  check of the first line of the copy.
+- **01M7FMJJDJN9Q5ZPA7ECTGK1MD** riff run checks the copy of the bundle
+  of a session with no GitHub with git bundle unbundle in the main
+  clone, into a new folder of objects beside the copy, with the objects
+  of the main clone as its alternates. git checks the refs and the
+  prerequisites of the bundle, and each object of its pack: a pack that
+  is cut or zeroed is refused. The main clone gets no object, and the
+  folder of objects goes. This supersedes 01M7EY3WHQQP9330CZ736HK0FJ in
+  part: git bundle verify.
+- **01M7G81XGBPP23H9T7V0WX87QZ** Before each read of the merged pin with
+  a fetch, riff asks origin for the branch of its HEAD with one git
+  ls-remote --symref from the main clone, fetches that branch into
+  refs/remotes/origin of the main clone, and sets origin/HEAD of the
+  main clone to it. So a rename of the default branch on GitHub needs no
+  step of the person, and the pin, the setup, the sources, the start
+  text and the plan of the clone of riff run and of the lead name one
+  branch. When the look or the fetch fails, or the HEAD of origin names
+  no branch, riff says so in one line, and reads origin/HEAD as the
+  clone has it. This supersedes 01M7G29PSP7X56X8E60A3KRV4V in full, and
+  01M51STPPWYFKQ1ESCNA6V3WV2 in part: a main clone with no origin/HEAD.
+- **01M7GDKF8RED15C1ZXCS8F4VMG** The branch of an item is on origin only
+  when git ls-remote lists the ref refs/heads/BRANCH itself. A ref whose
+  name only ends with that name does not count, so no other person can
+  stop the sessions of an item with such a ref. The same look holds for
+  a wave.
+- **01M7GJBE6N1ZPDBZWRYQP1GY2F** The clone of a session names each start
+  point with its full name: refs/remotes/origin/BRANCH for the default
+  branch and for the branch of the item. So a tag or a branch of origin
+  whose short name is origin/BRANCH changes no start point, and stops no
+  session.
 - **01M7GCESN7RY3GW6ZPP9PBM87D** A job of the daemon keeps only the
   folder of its own session: each folder of its item that was not there
   at the start of the job, and the folder of the session that a new
@@ -8720,6 +8838,54 @@ of this part when they merge.
 - **01M4Z60B84FTGMXDZ1F52DC98C** riff keeps the MCP servers of the
   claude.ai account of the person in a session, as a plain `claude` has
   them.
+- **01M7G824SYKB3BN2MN9A9JKAG0** The relay says each note of its own to
+  the daemon on the socket of the session, also with a terminal: the
+  line of the clone, why the clone failed, and the bundle of a session
+  with no GitHub or why it failed, each in one line. The daemon keeps at
+  most 8 notes of each container of a session as lines of the session,
+  each with no control character and no secret, and cut to at most 500
+  characters after the scrub. It writes each kept note to its log. So
+  riff daemon events NAME shows them, also after the end of the session.
+  No line of the output of the container is a note. The relay also
+  prints a note on its stderr when it has a terminal, or when the daemon
+  did not take the note. When the clone of a session fails, the relay
+  says one note that names the step, prints no other text of it, and
+  claude does not start. This supersedes 01M7G39RG8TC27717MMT20FTSW in
+  full.
+- **01M7GE3KYR7JZHDV5S7PKAZX57** At its start, before the clone and
+  before claude, the relay makes a random key, and gives it to the
+  daemon on the socket of the session. The daemon takes one key for each
+  container: the first one. It keeps only the SHA-256 of the key, in the
+  record of the session. Each note of the relay has the key, and the
+  daemon keeps no note with another key or with none. Only the relay has
+  the key, in its memory: claude does not get it, and the relay makes
+  itself not dumpable, so no other process of the container can read its
+  memory. When the daemon keeps no note, for a bad key or past 8 notes,
+  it says so, and the relay prints the note on its stderr.
+- **01M7GJBESDBCHWB7SAT60JETEJ** The relay waits for the answer of the
+  daemon to its key before the clone and before claude. While the daemon
+  is away, or gives no answer, the relay gives the same key again each
+  250 ms. The daemon takes the same key again as done. When the daemon
+  refuses the key, the relay says each note on its stderr only. This
+  supersedes 01M7GE3KYR7JZHDV5S7PKAZX57 in part: the key only before the
+  first hello.
+- **01M7GJBFAJDCYCMRDSWSX3VNWX** Each line that riff relay -- COMMAND
+  itself prints on its stderr starts with `riff relay: `: also the error
+  when the command does not start, and the error when the relay has no
+  socket.
+- **01M7GXY2PHRN2RHVC3HW8FMAWT** The daemon takes the key of the notes
+  only as the first ask of a container. Each other ask that comes first
+  shuts the key: the daemon takes no key of that container from then on.
+  A new daemon that takes up a session whose record has no seal takes no
+  key for it: the relay of an older riff gives none. The daemon writes
+  the seal to the record of the session before its answer. When the
+  write fails, it answers failed, and takes no key of that container.
+  This supersedes 01M7GJBESDBCHWB7SAT60JETEJ in part: the first hello of
+  the relay that closes nothing.
+- **01M7GXY2SAK89TEQVP72764DR4** A SIGTERM or a SIGINT before claude
+  starts ends riff relay -- COMMAND with 1 at once: also while it waits
+  for the answer of the daemon to its key, and while it clones. After
+  claude starts, the signal goes to claude.
 
 ### The home of the person
 
@@ -9530,10 +9696,10 @@ of this part when they merge.
 - **01M6Z87SDSYDTFHMPKGNX74SMC** The real-session test runs `riff run
   issue-N --image IMAGE --no-github` (01M6Z87JY83V3KR72E2AG8V8KG): its
   session has no token on GitHub, and never the token of the person.
-  After the home check, the test pushes the branch from the clone of the
-  session with the git of the person on the host, and opens the pull
-  request with `gh pr create`. Then it finds the pull request, checks
-  its change and waits for the Gate, as before.
+  After the home check, the test pushes the branch with the git of the
+  person on the host, and opens the pull request with `gh pr create`.
+  Then it finds the pull request, checks its change and waits for the
+  Gate, as before.
 - **01M76428TRD7KWC4C8V5NNPNC7** `riff release test vX.Y.Z --host HOST`
   asks for the real-session test of the last commit of `origin/main`
   before the tag. It refuses, and changes nothing, unless X.Y.Z is the
@@ -9571,6 +9737,15 @@ of this part when they merge.
   same path in the home of HOST. riff refuses an empty path and a path
   with a space. `just real-session` gives its arguments to the test as
   they are: no shell reads them.
+- **01M7EY51P291VZ9YM414Z2Z1MR** Step 8 of the real-session test
+  fetches the branch of the item from the copy of the bundle of
+  its session that riff run checked (01M7EY3WHQQP9330CZ736HK0FJ)
+  into the clone of the test, after a fetch of origin, with the
+  git of the person on the host, and pushes it to origin. It runs
+  no git in a folder of the session, and no git on a file that the
+  session can write. With no copy, the step fails. This supersedes
+  01M6Z87SDSYDTFHMPKGNX74SMC in part: the push from the clone of the
+  session.
 
 ## The UIs
 

@@ -11,12 +11,15 @@
 //! `TERM riff daemon` to the log, and removes the file. With no
 //! `RIFF_DATA`, it fails: the daemon of the machine is not the daemon of
 //! the test. The fake `riff run` fails when no daemon of the test runs,
-//! makes its session folder in `RIFF_DATA` with a clone of the bare
-//! repository `origin.git` of the control folder, commits on the branch of
-//! the item there, and says that the session started on
-//! `claude-opus-5-5`. The clone of the test has a `riff.toml`
-//! with no `model`. A file in the control folder changes what a fake
-//! does:
+//! makes its session folder in `RIFF_DATA`, commits on the branch of the
+//! item in a clone of the bare repository `origin.git` of the control
+//! folder, out of the home, as a container does, and writes the commit in
+//! the bundle `out/BRANCH.bundle` of the session folder, and its copy
+//! `BRANCH.bundle`, as `riff run` takes it. Then the clone goes, as with
+//! its container. It says that the session started on
+//! `claude-opus-5-5`. The clone of the test has a `riff.toml` with no
+//! `model`, and `origin.git` as its `origin`. A file in the control
+//! folder changes what a fake does:
 //!
 //! | File | The fake |
 //! |---|---|
@@ -153,22 +156,24 @@ run)
   fi
   d="$RIFF_DATA/sessions/$2-ID8"
   mkdir -p "$d/claude"
-  # The clone of the session, of the bare origin of the control folder,
-  # on the branch of the item. The session commits, and pushes nothing.
+  # The clone of the session is in its container, of the bare origin of
+  # the control folder, on the branch of the item. The session commits,
+  # and pushes nothing: the relay writes its commits in a bundle in out/,
+  # and the clone goes with the container.
   o="$c/origin.git"
-  if [ ! -d "$o" ]; then
-    git init -q --bare -b main "$o"
-    git clone -q "$o" "$c/seed" 2>/dev/null
-    git -C "$c/seed" -c user.name=S -c user.email=s@example.com commit -q --allow-empty -m seed
-    git -C "$c/seed" push -q origin HEAD:main
-  fi
-  git clone -q "$o" "$d/clone"
-  git -C "$d/clone" checkout -q -b "worktree-$2"
-  echo work > "$d/clone/f"
+  w="$c/container/clone"
+  git clone -q "$o" "$w"
+  git -C "$w" checkout -q -b "worktree-$2"
+  echo work > "$w/f"
   if [ ! -f "$c/no-commit" ]; then
-    git -C "$d/clone" add f
-    git -C "$d/clone" -c user.name=W -c user.email=w@example.com commit -q -m work
+    git -C "$w" add f
+    git -C "$w" -c user.name=W -c user.email=w@example.com commit -q -m work
+    mkdir -p "$d/out"
+    git -C "$w" bundle create -q "$d/out/worktree-$2.bundle" "origin/HEAD..worktree-$2"
+    # riff run copies the bundle with its checks into the session folder.
+    cp "$d/out/worktree-$2.bundle" "$d/worktree-$2.bundle"
   fi
+  rm -rf "$c/container"
   if [ -f "$c/sonnet" ]; then model=claude-sonnet-5-5; else model=claude-opus-5-5; fi
   if [ ! -f "$c/no-start" ]; then echo "start: model $model, permission mode auto"; fi
   if [ -f "$c/stray" ]; then
@@ -267,14 +272,36 @@ impl Fake {
         ] {
             std::fs::write(env.home().join(name), text).unwrap();
         }
-        let git = Command::new("git")
-            .args(["init", "-q"])
-            .current_dir(&clone)
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .status()
-            .unwrap();
-        assert!(git.success());
+        let git = |at: &Path, args: &[&str]| {
+            let status = Command::new("git")
+                .args(["-c", "user.name=S", "-c", "user.email=s@example.com"])
+                .args(args)
+                .current_dir(at)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .status()
+                .unwrap();
+            assert!(status.success(), "git {args:?}");
+        };
+        // The bare origin of the control folder, with one commit on
+        // `main`: the origin of the clone of the test, and of the clone of
+        // the session.
+        let origin = ctl.join("origin.git");
+        git(&ctl, &["init", "-q", "--bare", "-b", "main", "origin.git"]);
+        git(&ctl, &["init", "-q", "-b", "main", "seed"]);
+        git(
+            &ctl.join("seed"),
+            &["commit", "-q", "--allow-empty", "-m", "seed"],
+        );
+        git(
+            &ctl.join("seed"),
+            &["push", "-q", "../origin.git", "HEAD:main"],
+        );
+        git(&clone, &["init", "-q"]);
+        git(
+            &clone,
+            &["remote", "add", "origin", &origin.to_string_lossy()],
+        );
         std::fs::write(
             clone.join("riff.toml"),
             "[session]\nimage = \"ghcr.io/o/riff-session@sha256:00ff\"\n",
@@ -522,11 +549,13 @@ fn a_pass_runs_each_step_in_order_and_cleans_up() {
     assert_clean(&fake);
 }
 
-/// 01M6Z87SDSYDTFHMPKGNX74SMC: the session of the test has no GitHub,
-/// never the token of the person: `riff run --no-github`. Step 8 pushes
-/// the branch of the item from the clone of the session with the git of
-/// the person on the host, and opens its pull request with `gh pr
-/// create`.
+/// 01M6Z87SDSYDTFHMPKGNX74SMC, 01M7EY51P291VZ9YM414Z2Z1MR: the session of
+/// the test has no GitHub, never the token of the person: `riff run
+/// --no-github`. Its clone goes with its container, and its commits are in
+/// a bundle in the folder of the session, and `riff run` copies it with its
+/// checks. Step 8 fetches the branch from the copy into the clone of the
+/// test, with the git of the person on the host, pushes it, and opens its
+/// pull request with `gh pr create`.
 #[test]
 fn the_session_has_no_github_and_the_test_pushes_its_branch() {
     let fake = Fake::new();
@@ -573,8 +602,8 @@ fn a_session_with_no_commit_fails_step_8_and_opens_no_pull_request() {
     let stderr = text(&out.stderr);
     assert!(
         stderr.contains(
-            "real-session: FAIL at step 8 of 11, push the branch: the session made no commit on \
-             worktree-issue-801 in "
+            "real-session: FAIL at step 8 of 11, push the branch: riff run took no bundle of \
+             worktree-issue-801: the session made no commit on it, or riff refused its bundle. "
         ),
         "{stderr}"
     );
@@ -1326,4 +1355,16 @@ fn no_riff_binary_is_a_usage_error() {
         .unwrap();
     assert_eq!(out.status.code(), Some(2));
     assert!(text(&out.stderr).contains("usage: real-session --riff PATH"));
+}
+
+/// 01M7EY51P291VZ9YM414Z2Z1MR: step 8 fetches from the copy of the bundle
+/// that `riff run` writes and names: both name the same path.
+#[test]
+fn the_test_fetches_from_the_copy_that_riff_run_names() {
+    let folder = Path::new("/d/riff/sessions/issue-801-1a2b3c4d");
+    let branch = "worktree-issue-801";
+    assert_eq!(
+        real_session::bundle_copy(folder, branch),
+        riff::run::bundle_copy(folder, &branch.parse().unwrap())
+    );
 }

@@ -2043,6 +2043,10 @@ page [Requirements](requirements.md) holds the rules of today.
   daemon gives the size to each new session in `SCCACHE_CACHE_SIZE`. A
   session that runs keeps the size of its start. Superseded by
   01M5SMW28KT5D5HPRH7KAZ8TVC.
+- **01M4Z60B7PQ07HRJBXS1TA73PX** The container sees the objects of the
+  main clone (`MAIN/.git/objects`) at the same path, with no write. So
+  git reads the alternates of the clone of the session. Superseded by
+  01M7EY3P0Q8TQF5QRTRDWCYCTQ.
 
 ### The riff daemon
 
@@ -2145,6 +2149,17 @@ page [Requirements](requirements.md) holds the rules of today.
   `tell`, `status` and `blocked`. The daemon refuses each other riff
   tool with a text that says why. Superseded by
   01M4ZV3B6T2KB09WJ59F07HXET.
+- **01M7FDN1Y2EQC56748V6P366NT** The container of a session sees three
+  parts of the git dir of the main clone, at the same path with no
+  write: objects/, refs/, and packed-refs when the main clone has it. It
+  sees no config, no hook, no log and no worktree of the main clone. The
+  same rule holds for riff run, a wave and the lead. Before its fetch
+  from the main clone, the relay makes the git dir riff-main in the .git
+  of the new clone, with its own HEAD and a link to each of those parts,
+  and fetches the branches of origin from it. Then that git dir goes.
+  This supersedes 01M7EY3P0Q8TQF5QRTRDWCYCTQ in part: the bind of the
+  whole git dir of the main clone. Superseded by
+  01M7FMJJB0TZM8875T7GQZAJEA.
 
 ### The waves of the daemon
 
@@ -2235,6 +2250,18 @@ page [Requirements](requirements.md) holds the rules of today.
   path of a new file of `origin`, the clone stays as it is. riff shows
   the note with the error of git, and starts the lead.
   Superseded by 01M7E7A8QM8SRPQN3G1BXVJW1R.
+- **01M7E7A8QM8SRPQN3G1BXVJW1R** At each start of a new lead, the host
+  makes a new clone of the lead in a folder of its own,
+  `new-clones/lead-OWNER-REPO` in the data folder of riff, with `git
+  clone --reference MAIN` on the default branch of `origin`. Then it
+  puts the new clone in the place of the old clone `clone/`, and removes
+  the old clone, with each change in it. The host runs no git in the old
+  clone. When the new clone fails, the old clone stays as it is, riff
+  shows a note with the error, and the lead starts. A start again of the
+  same session of the lead keeps its clone. This supersedes
+  01M50RRQ9DT0JPSB358EAZRP8Z and 01M51JYDHAQDJ3GH2J8DT3AZQS in full, and
+  01M501P9Q51AYN9GBPWKVHA229 in part: the clone.
+  Superseded by 01M7EY3P0Q8TQF5QRTRDWCYCTQ.
 
 ### The first run
 
@@ -2309,6 +2336,28 @@ page [Requirements](requirements.md) holds the rules of today.
   that stays because of its clone, with the reason. The log of the
   daemon gets that line one time, and again when the reason changes.
   Superseded by 01M7DZ4E02PX5Y0WMHFCJ9KS14.
+- **01M7EY3WM6XYQR3CXNMM6MFA5C** riff run names the default branch in
+  the start text from origin/HEAD of the main clone. This supersedes
+  01M5QYBWPAJ219BE8QKVKG1TWW in part: the clone. Superseded by
+  01M7G29PSP7X56X8E60A3KRV4V.
+- **01M7G29PSP7X56X8E60A3KRV4V** riff run and the lead take the default
+  branch of a session from origin, with one git ls-remote --symref from
+  the main clone: the branch of the HEAD of origin, not origin/HEAD of
+  the main clone, which a rename of the default branch on GitHub does
+  not change. The start text and the plan of the clone name that branch.
+  When the HEAD of origin names no branch, no session starts, and the
+  error says why. This supersedes 01M7EY3WM6XYQR3CXNMM6MFA5C. Superseded
+  by 01M7G81XGBPP23H9T7V0WX87QZ.
+
+### How the relay drives claude
+
+- **01M7G39RG8TC27717MMT20FTSW** The daemon keeps each note of the relay
+  in the output of the container of a session, a line that starts with
+  "riff relay: ", as a line of the session, and writes it to its log. So
+  riff daemon events NAME shows it, also after the end of the session.
+  When the clone of a session fails, the relay prints one such note that
+  names the step, and claude does not start. Superseded by
+  01M7G824SYKB3BN2MN9A9JKAG0.
 
 ### Data and peers
 

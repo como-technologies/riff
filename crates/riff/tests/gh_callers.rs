@@ -382,8 +382,8 @@ const GUARDS: [&str; 2] = ["git_credential::", "remote_git("];
 
 /// The places of a remote `git` that need no look at the keyring: a file,
 /// and a text of the line or of its function. Each runs only in a command
-/// that a person types, or starts no `git`.
-const NO_LOOK: [(&str, &str); 6] = [
+/// that a person types or in a container, or starts no `git`.
+const NO_LOOK: [(&str, &str); 7] = [
     // `riff claim` and `riff run`: the earlier work of an item.
     ("dropped.rs", "pub async fn fetch("),
     // `riff cloud create`.
@@ -396,6 +396,9 @@ const NO_LOOK: [(&str, &str); 6] = [
     ("ghcalls.rs", "(\"label\", &[\"clone\""),
     // `git ls-remote --get-url` reads the config, and talks to no remote.
     ("git_credential.rs", "pub fn urls("),
+    // The clone of a session: the relay runs it in the container, with the
+    // token of the session from `gh`, and no keyring (#2139).
+    ("session_clone.rs", "fn steps("),
 ];
 
 /// True when the line `line` starts a function.

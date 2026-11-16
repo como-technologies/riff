@@ -32,10 +32,10 @@
 //! | Part | Value | Requirement |
 //! |---|---|---|
 //! | The container | `riff-lead-OWNER-REPO` ([`name_of`]): one lead for each repository | 01M4Z60B81RTZT71PN5HV0GZHX, 01M501P9MXNAP5QXNVBVF5JJFN |
-//! | The folder | `leads/OWNER-REPO` in the data folder of riff ([`folder_of`]): `clone/` and `claude/` | 01M501P9Q51AYN9GBPWKVHA229 |
+//! | The folder | `leads/OWNER-REPO` in the data folder of riff ([`folder_of`]): `claude/`, and the file `origin-refs` of the branches of `origin` of the main clone, which the host writes before each start of the container (`facts`, [`crate::session_clone::write_refs`]). The clone of the lead is at `clone/` in its container only | 01M501P9Q51AYN9GBPWKVHA229, 01M7EY51EMJ6ZEGNW7H852PEGR |
 //! | The start | one start of the lead at a time on the host: each start holds the lock `start.lock` in the folder of the lead ([`start_lock`]), and under the lock a start that finds the lead running starts nothing ([`one_start`]) | 01M77Y2BG12SEVF4ZEZ673QBFZ |
 //! | The cause | each start gives the daemon its cause ([`LeadCause`], #2099): the lead loop ([`claim_start`]), `riff lead move` and who ran it ([`take`]), and in the daemon the start of the daemon, a fault and an update (`Daemon::lead_back`, `Daemon::leads_again`). The daemon writes the cause in the line of the start in its log ([`text::lead_starts`]), and keeps it in the record of the lead for `riff daemon status` | 01M7BNP4ZYJCCEK7ZHCJ3EX3SJ |
-//! | The clone | a new clone at each start of a new lead: `git clone --reference MAIN`, on the default branch of `origin`, in `new-clones/lead-OWNER-REPO` ([`new_clone_of`]); then it takes the place of the old clone, which goes with each change in it. The host runs no git in the old clone, and the guard of the host refuses git in the folder of the leads ([`crate::host_git`]). When the new clone fails, the old clone stays with a note. Each old clone goes as the person, then with `podman unshare` ([`crate::compile_cache::remove`]); an old clone that stays stops no start: one line in the log, and the sweep of the daemon removes it later ([`Fresh::Left`], [`sweep_old_clones`]). A start again of the same session keeps the clone ([`fresh_clone`]) | 01M501P9Q51AYN9GBPWKVHA229, 01M7E7A8QM8SRPQN3G1BXVJW1R, 01M7E7ACTYP4RX8TCJ9XSYMMPM, 01M7EBBVE6WYKT5JDVASFCYPQQ |
+//! | The clone | in the container, as for each session ([`crate::session_clone`], 01M7EY3P0Q8TQF5QRTRDWCYCTQ): a new clone of the git dir of the main clone, on the default branch of `origin`, at each start of the container, also at a start again, and no clone of the host. With no token of an App, the clone fetches nothing from GitHub, and the lead starts from the main clone. At each start of a new lead, the clone that an older riff made on the host, `clone/` in the folder of the lead, goes with no git ([`remove_host_clone`]): the guard of the host refuses git in the folder of the leads ([`crate::host_git`]). When it cannot move aside, the new lead does not start. Each old clone goes as the person, then with `podman unshare` ([`crate::compile_cache::remove`]); an old clone that stays stops no start: one line in the log, and the sweep of the daemon removes it later ([`sweep_old_clones`]) | 01M501P9Q51AYN9GBPWKVHA229, 01M7EY51EMJ6ZEGNW7H852PEGR, 01M7E7ACTYP4RX8TCJ9XSYMMPM, 01M7EBBVE6WYKT5JDVASFCYPQQ, 01M7FTWWAJB8B09S89VY8XA8RQ |
 //! | The Claude folder | the first-run answers of `claude`, as for each session ([`run::claude_folder`]), and `"tui": "default"`, so `claude` turns on no mouse reports ([`run::TUI`]) | 01M501P9SDGVWG3MTVCW5BDRQQ, 01M51JACH6TQP318ZFG6NQ9GRM, 01M6XVBRT2T838TX53SSXR6HRH |
 //! | The command | `claude --model MODEL --session-id ID --dangerously-skip-permissions START` ([`spec`]), with the model of the merged `riff.toml` ([`crate::session_setup::Setup::claude`]); the daemon runs it as `riff relay --terminal -- ...` | 01M501P9VN47QAKZ6B8P39ZSW4, 01M5GG2X5F1HXCQJ2JJWV6305K, 01M6VAQWECJ6N6VJF66KCMNYD1 |
 //! | The riff tools | [`crate::tools::LEAD_TOOLS`], on riff-server as the session of the lead | 01M501P9XWXWDBSXP4QRTHTZ4P |
@@ -45,7 +45,7 @@
 //! | The attach | [`crate::runtime::Runtime::redraw`], then [`crate::runtime::Runtime::attach`] ([`attach`]): `claude` draws its screen at each attach | 01M51PD7M04HZR2PVVJA4WCBK5 |
 //! | After the attach | [`Left`]: a detach, or the end of the lead when its container does not run; the line says which. First riff writes the reset of the modes of the terminal ([`crate::runtime::reset_terminal`]) | 01M51PD7Q24N252V66NFEHY49N, 01M6XVBRQMBMK68K8GCDRZ5GJ5 |
 //! | The sign-in of `claude` | the token of `riff claude-token` only ([`needs_token`]); a lead from an older riff with the sign-in file of the host gets a word when the host replaced that file ([`stale`], [`crate::daemon::Daemon::stale_leads`]) | 01M77Y6ZQ76DTX470STN8ATTA9, 01M5NJ87YEHHGJBANM7CRYV56Z |
-//! | A new riff | after `riff update`, the daemon stops an old lead (the bind of its riff has no link: [`old`]) when it is idle ([`idle`]: the `Stop` hook ended its turn, and its transcript got no write after the tail of the turn, [`between_turns`]; or its transcript got no write for 5 minutes, [`quiet`]) and the daemon itself runs the riff on disk, and starts it again with `claude --resume ID` ([`spec_again`], [`again`]): the same session, clone and Claude folder, no new session on riff-server; the main clone is the one in the records of the daemon: that of the wave, and with no wave the one that the daemon serves for the repository, never one that a file of the clone names ([`main_of`]); the person gets one line in riff chat ([`crate::daemon::Daemon::leads_again`]), and an attached terminal one line, then the attach to the new container ([`attach`], [`Again`]) | 01M5TC24PB3YC2CC8BA275WSEN, 01M6XTS7V47RFX1G37FRGRBWCY, 01M6WBX2FQEHW92Y1A5HM4H8BM, 01M6WBX2FT7Y9FV9VGGPDBKAHM, 01M5TC2919TB9XPF42YFNJBP79, 01M5TC29A4Q94NJP7HFC75XCF3, 01M6QB89JJEM9Z1V3RVZYHKYT0, 01M7EAZ9N9DY7JPXZP1V8JY01E |
+//! | A new riff | after `riff update`, the daemon stops an old lead (the bind of its riff has no link: [`old`]) when it is idle ([`idle`]: the `Stop` hook ended its turn, and its transcript got no write after the tail of the turn, [`between_turns`]; or its transcript got no write for 5 minutes, [`quiet`]) and the daemon itself runs the riff on disk, and starts it again with `claude --resume ID` ([`spec_again`], [`again`]): the same session and Claude folder, and a new clone in the new container, no new session on riff-server; the main clone is the one in the records of the daemon: that of the wave, and with no wave the one that the daemon serves for the repository, never one that a file of the lead names ([`main_of`]); the person gets one line in riff chat ([`crate::daemon::Daemon::leads_again`]), and an attached terminal one line, then the attach to the new container ([`attach`], [`Again`]) | 01M5TC24PB3YC2CC8BA275WSEN, 01M6XTS7V47RFX1G37FRGRBWCY, 01M6WBX2FQEHW92Y1A5HM4H8BM, 01M6WBX2FT7Y9FV9VGGPDBKAHM, 01M5TC2919TB9XPF42YFNJBP79, 01M5TC29A4Q94NJP7HFC75XCF3, 01M6QB89JJEM9Z1V3RVZYHKYT0, 01M7EAZ9N9DY7JPXZP1V8JY01E |
 //! | The project | `riff lead move` and the daemon start a lead only for a project of the riff ([`crate::project::lead_refused`], #1863): else riff names the fix, `riff project init`, and starts no session and no container | 01M77FHTT8BZ2YN1SV7H1X3NG8, 01M77FHTXBCWA4FG793TEB5XCY |
 //! | The start | `riff lead start` starts no lead (#1793): it attaches to the lead of the project when its container runs on this host. Else it names the host of the lead and the step there, or says that the daemon of a host that joined the project starts the lead ([`start`], [`text::lead_not_here`]) | 01M77Y6ZBV7C8Z332SAFKQCZ5A |
 //! | The repository | the daemon serves it while the lead runs, so `riff who` and the commands with `--host` reach the host, with the main clone of the wave ([`main_of`], `Daemon::serve_lead`) | 01M6QVSWQZE41BMQ6YN2963C4V, 01M7EAZ9N9DY7JPXZP1V8JY01E |
@@ -54,9 +54,10 @@
 //! The Claude folder stays between the starts of the lead: the lead
 //! keeps the history of its conversations, and a dialog of `claude` that
 //! the person answered once. Each start is a new session of riff-server
-//! and of `claude`, with a new clone. A start again after `riff update`
-//! keeps the session and its clone, and resumes the conversation. The
-//! other spec parts are those of a worker ([`crate::run::spec`]).
+//! and of `claude`. A start again after `riff update` keeps the session,
+//! and resumes the conversation. Each container clones anew: a change
+//! that the lead did not push goes with its container. The other spec
+//! parts are those of a worker ([`crate::run::spec`]).
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -68,7 +69,7 @@ use riff_core::wire::{SessionInfo, StartReason};
 use crate::daemon::{self, Ask, Say, Status};
 use crate::run::{self, Facts};
 use crate::runtime::{Runtime, SessionSpec};
-use crate::{git_credential, identity, session_image, text};
+use crate::{identity, session_image, text};
 use riff_client::api::Api;
 use riff_client::sessions::LeadCause;
 
@@ -135,16 +136,22 @@ pub fn folder_of_name(data: &Path, name: &str) -> PathBuf {
 ///     image: "img".into(),
 ///     home: "/home/mike".into(),
 ///     user: "mike".into(),
-///     clone: "/d/riff/leads/o-r/clone".into(),
-///     objects: "/src/r/.git/objects".into(),
+///     plan: riff::session_clone::Plan {
+///         path: "/d/riff/leads/o-r/clone".into(),
+///         origin: riff::session_clone::Origin::github("o/r").unwrap(),
+///         main: "/src/r/.git".into(),
+///         refs: "/d/riff/leads/o-r/origin-refs".into(),
+///         base: "main".parse().unwrap(),
+///         checkout: riff::session_clone::Checkout::Default,
+///     },
 ///     claude: "/d/riff/leads/o-r/claude".into(),
 ///     sign_in: riff::run::ClaudeSignIn::File("/home/mike/.claude/.credentials.json".into()),
 ///     gitconfig: None,
 ///     setup: Default::default(),
 /// };
-/// let spec = riff::lead::spec(&facts, "o/r", &riff::text::lead_start("o/r"));
+/// let spec = riff::lead::spec(&facts, "o/r", &riff::text::lead_start("o/r"))?;
 /// assert_eq!(spec.name, "riff-lead-o-r");
-/// assert_eq!(spec.workdir, facts.clone);
+/// assert_eq!(spec.workdir, facts.plan.path);
 /// assert_eq!(
 ///     spec.command[..6],
 ///     ["claude", "--model", "opus", "--session-id", facts.session.as_str(), "--dangerously-skip-permissions"]
@@ -156,8 +163,9 @@ pub fn folder_of_name(data: &Path, name: &str) -> PathBuf {
 /// // as it is. The relay puts `/opt/riff` first on it, so `! riff` in the
 /// // lead runs the riff of the container.
 /// assert!(!spec.env.iter().any(|e| matches!(e, riff::runtime::Env::Value(n, _) if n == "PATH")));
+/// # Ok::<(), anyhow::Error>(())
 /// ```
-pub fn spec(facts: &Facts, repo: &str, start: &str) -> SessionSpec {
+pub fn spec(facts: &Facts, repo: &str, start: &str) -> Result<SessionSpec> {
     spec_with(facts, repo, "--session-id", start)
 }
 
@@ -176,24 +184,32 @@ pub fn spec(facts: &Facts, repo: &str, start: &str) -> SessionSpec {
 ///     image: "img".into(),
 ///     home: "/home/mike".into(),
 ///     user: "mike".into(),
-///     clone: "/d/riff/leads/o-r/clone".into(),
-///     objects: "/src/r/.git/objects".into(),
+///     plan: riff::session_clone::Plan {
+///         path: "/d/riff/leads/o-r/clone".into(),
+///         origin: riff::session_clone::Origin::github("o/r").unwrap(),
+///         main: "/src/r/.git".into(),
+///         refs: "/d/riff/leads/o-r/origin-refs".into(),
+///         base: "main".parse().unwrap(),
+///         checkout: riff::session_clone::Checkout::Default,
+///     },
 ///     claude: "/d/riff/leads/o-r/claude".into(),
 ///     sign_in: riff::run::ClaudeSignIn::Token,
 ///     gitconfig: None,
 ///     setup: Default::default(),
 /// };
-/// let spec = riff::lead::spec_again(&facts, "o/r", &riff::text::lead_again("o/r"));
+/// let spec = riff::lead::spec_again(&facts, "o/r", &riff::text::lead_again("o/r"))?;
 /// assert_eq!(spec.name, "riff-lead-o-r");
 /// assert_eq!(
 ///     spec.command[..6],
 ///     ["claude", "--model", "opus", "--resume", facts.session.as_str(), "--dangerously-skip-permissions"]
 /// );
 /// assert!(!spec.command.iter().any(|a| a == "--session-id"));
-/// // The same clone and the same Claude folder: `claude` finds the conversation.
-/// assert_eq!(spec.workdir, facts.clone);
+/// // The same path of the clone, a new clone there, and the same Claude
+/// // folder: `claude` finds the conversation.
+/// assert_eq!(spec.workdir, facts.plan.path);
+/// # Ok::<(), anyhow::Error>(())
 /// ```
-pub fn spec_again(facts: &Facts, repo: &str, start: &str) -> SessionSpec {
+pub fn spec_again(facts: &Facts, repo: &str, start: &str) -> Result<SessionSpec> {
     spec_with(facts, repo, "--resume", start)
 }
 
@@ -228,8 +244,8 @@ pub fn tell_no_github(spec: &mut SessionSpec, why: &str) {
 }
 
 /// [`spec`], with the flag `session_flag` for the session ID of `claude`.
-fn spec_with(facts: &Facts, repo: &str, session_flag: &str, start: &str) -> SessionSpec {
-    let mut spec = run::spec(facts);
+fn spec_with(facts: &Facts, repo: &str, session_flag: &str, start: &str) -> Result<SessionSpec> {
+    let mut spec = run::spec(facts)?;
     spec.name = name_of(repo);
     // The folder `~/.cache` of the container can belong to root, when a
     // volume of `riff.toml` binds under it: `riff build` needs another
@@ -245,7 +261,7 @@ fn spec_with(facts: &Facts, repo: &str, session_flag: &str, start: &str) -> Sess
         "--dangerously-skip-permissions".into(),
         start.to_owned(),
     ]);
-    spec
+    Ok(spec)
 }
 
 /// True when the daemon of `status` runs the session `name`.
@@ -278,28 +294,11 @@ pub fn runs(status: &Status, name: &str) -> bool {
     status.sessions.iter().any(|s| s.name == name)
 }
 
-/// What [`fresh_clone`] did with the clone of the lead.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Fresh {
-    /// It made the clone: the lead had none.
-    Made,
-    /// It made a new clone, and put it in the place of the old clone,
-    /// which went.
-    New,
-    /// It made a new clone and put it in place, but an old clone stays:
-    /// riff cannot remove it. Each line names an old clone that stays,
-    /// and says why ([`text::lead_old_clone_stays`]). The sweep of the
-    /// daemon tries again ([`sweep_old_clones`]).
-    Left(Vec<String>),
-    /// The new clone failed: the old clone stays as it is. The text says
-    /// why.
-    Kept(String),
-}
-
-/// The folder of the old clone in the folder of the lead, while the new
-/// clone takes its place ([`fresh_clone`]). When an old clone of an
-/// earlier start stays there, the old clone gets the first free name of
-/// `old-clone-2`, `old-clone-3` and so on ([`old_clones`]).
+/// The folder of an old clone in the folder of the lead: a clone that an
+/// older riff made on the host, before it goes ([`remove_host_clone`]).
+/// When an old clone of an earlier start stays there, the next old clone
+/// gets the first free name of `old-clone-2`, `old-clone-3` and so on
+/// ([`old_clones`]).
 pub const OLD_CLONE: &str = "old-clone";
 
 /// The old clones in the folder `folder` of a lead: [`OLD_CLONE`] and
@@ -336,9 +335,8 @@ pub fn old_clones(folder: &Path) -> Vec<PathBuf> {
     all
 }
 
-/// The folder for the old clone of the clone `clone` of a lead while
-/// the new clone takes its place: [`OLD_CLONE`] beside it, else the
-/// first free `old-clone-N`.
+/// The folder for the old clone of the clone `clone` of a lead before
+/// it goes: [`OLD_CLONE`] beside it, else the first free `old-clone-N`.
 fn aside_of(clone: &Path) -> PathBuf {
     let mut aside = clone.with_file_name(OLD_CLONE);
     let mut n = 1;
@@ -425,101 +423,26 @@ pub fn sweep_old_clones(leads: &Path) -> Vec<(PathBuf, Result<()>)> {
     swept
 }
 
-/// The folder where the host makes the new clone of the lead whose
-/// clone is `clone`, `leads/OWNER-REPO/clone`:
-/// `new-clones/lead-OWNER-REPO` in the data folder of riff
-/// (01M7E7A8QM8SRPQN3G1BXVJW1R).
-///
-/// ```
-/// use std::path::Path;
-///
-/// let clone = Path::new("/d/riff/leads/o-r/clone");
-/// let new = riff::lead::new_clone_of(clone)?;
-/// assert_eq!(new, Path::new("/d/riff/new-clones/lead-o-r"));
-/// assert!(riff::lead::new_clone_of(Path::new("clone")).is_err());
-/// # Ok::<(), anyhow::Error>(())
-/// ```
-pub fn new_clone_of(clone: &Path) -> Result<PathBuf> {
-    let folder = clone.parent().filter(|f| !f.as_os_str().is_empty());
-    let name = folder.and_then(Path::file_name);
-    let leads = folder.and_then(Path::parent);
-    match (leads, name) {
-        (Some(leads), Some(name)) => {
-            let mut lead = std::ffi::OsString::from("lead-");
-            lead.push(name);
-            Ok(leads.with_file_name(run::NEW_CLONES).join(lead))
-        }
-        _ => bail!("the clone {} is in no folder of a lead", clone.display()),
-    }
-}
-
-/// Gives the lead a new clone at `clone` at each start of a new lead
-/// (01M501P9Q51AYN9GBPWKVHA229, 01M7E7A8QM8SRPQN3G1BXVJW1R). The host
-/// makes it from the main clone `main` with `git clone --reference MAIN`,
-/// on the default branch of `origin`, in a folder of its own
-/// ([`new_clone_of`]). Then the new clone takes the place of the old
-/// one, and the old clone goes, with each change in it
-/// (`put_in_place`). The host runs no git in the old clone: the lead
-/// wrote it, and so its git config ([`crate::host_git`]). When the new
-/// clone fails, an old clone stays as it is. With no old clone, the
-/// error stays. An old clone that riff cannot remove, also with `podman
-/// unshare`, stays for the sweep of the daemon, and the new lead starts
-/// ([`Fresh::Left`], 01M7EBBVE6WYKT5JDVASFCYPQQ).
-pub fn fresh_clone(main: &Path, clone: &Path) -> Result<Fresh> {
-    let new = new_clone_of(clone)?;
-    let made = run::clone_in(&new, |new| {
-        let remote = crate::host_git::output(main, &["remote", "get-url", "origin"])?;
-        let top = main.to_string_lossy();
-        let path = new.to_string_lossy();
-        git_credential::run(
-            main,
-            &remote,
-            &["clone", "-q", "--reference", &top, "--", &remote, &path],
-        )?;
-        Ok(())
-    });
-    let old = clone.symlink_metadata().is_ok();
-    match made {
-        Err(e) if old => return Ok(Fresh::Kept(format!("{e:#}"))),
-        Err(e) => return Err(e),
-        Ok(()) => {}
-    }
-    let stays = put_in_place(&new, clone, crate::compile_cache::remove)?;
-    Ok(match (stays.is_empty(), old) {
-        (false, _) => Fresh::Left(stays),
-        (true, true) => Fresh::New,
-        (true, false) => Fresh::Made,
-    })
-}
-
-/// Puts the new clone `new` in the place of the clone `clone` of the
-/// lead: the old clone moves aside ([`aside_of`]), the new clone moves
-/// in, and each old clone of the folder of the lead goes with `remove`
-/// ([`remove_old_clones`]). Each step moves or removes files, with no
-/// git. When the new clone cannot move in, the old clone moves back. It
-/// gives a line for each old clone that stays
-/// ([`text::lead_old_clone_stays`]): an old clone that riff cannot
-/// remove does not stop the start (01M7EBBVE6WYKT5JDVASFCYPQQ).
-fn put_in_place(
-    new: &Path,
-    clone: &Path,
+/// Removes the clone `clone/` that an older riff made on the host in the
+/// folder `folder` of a lead, and each old clone there, with `remove`
+/// ([`remove_old_clones`]): the clone of the lead is in its container
+/// now ([`crate::session_clone`], #2139). The clone moves aside first
+/// (`aside_of`), with no git: the lead wrote it, and so its git config
+/// ([`crate::host_git`]). The start of a new lead calls it with no lead
+/// that runs, and the sweep of the daemon removes an old clone that
+/// stays ([`sweep_old_clones`]). It gives a line for each old clone that
+/// stays ([`text::lead_old_clone_stays`]): it stops no start
+/// (01M7EBBVE6WYKT5JDVASFCYPQQ). When the clone cannot move aside, the
+/// error names the move, and the new lead does not start (`new_folder`).
+pub fn remove_host_clone(
+    folder: &Path,
     remove: impl Fn(&Path) -> Result<()>,
 ) -> Result<Vec<String>> {
-    let folder = clone
-        .parent()
-        .filter(|f| !f.as_os_str().is_empty())
-        .with_context(|| format!("the clone {} is in no folder of a lead", clone.display()))?;
-    let aside = aside_of(clone);
+    let clone = run::clone_in(folder);
     if clone.symlink_metadata().is_ok() {
-        std::fs::rename(clone, &aside)
+        let aside = aside_of(&clone);
+        std::fs::rename(&clone, &aside)
             .with_context(|| format!("cannot move {} to {}", clone.display(), aside.display()))?;
-    }
-    std::fs::create_dir_all(folder).with_context(|| format!("cannot make {}", folder.display()))?;
-    if let Err(e) = std::fs::rename(new, clone) {
-        let _ = std::fs::rename(&aside, clone);
-        let _ = std::fs::remove_dir_all(new);
-        return Err(e)
-            .with_context(|| format!("cannot move {} to {}", new.display(), clone.display()));
     }
     Ok(remove_old_clones(folder, remove)
         .into_iter()
@@ -528,6 +451,30 @@ fn put_in_place(
             Some(text::lead_old_clone_stays(&old, &format!("{why:#}")))
         })
         .collect())
+}
+
+/// The steps of the host in the folder `folder` of a new lead before its
+/// session starts ([`launch`]): the clone of an older riff goes
+/// ([`remove_host_clone`]), then the Claude folder of the lead gets its
+/// answers and its settings ([`run::claude_folder`]) from the config
+/// `person` of `claude` of the person, with the trust `trust`. It gives
+/// the line of each old clone that stays. When the clone of an older riff
+/// cannot move aside, it stops with that error: the Claude folder gets
+/// nothing, and the new lead does not start (01M7FTWWAJB8B09S89VY8XA8RQ).
+fn new_folder(
+    folder: &Path,
+    person: &Path,
+    trust: &crate::permissions::Trust,
+) -> Result<Vec<String>> {
+    let stays = remove_host_clone(folder, crate::compile_cache::remove)?;
+    run::claude_folder(
+        &run::claude_in(folder),
+        &run::clone_in(folder),
+        person,
+        trust,
+        crate::permissions::Role::Lead,
+    )?;
+    Ok(stays)
 }
 
 /// How an attach to the lead ended (01M51PD7Q24N252V66NFEHY49N).
@@ -651,6 +598,7 @@ pub async fn old(runtime: &impl Runtime, name: &str) -> bool {
 ///     interrupt: false,
 ///     model: Some("opus".into()),
 ///     github: None,
+///     notes_key: None,
 /// };
 /// let idle = Duration::from_secs(300);
 /// // A write now: a turn runs.
@@ -677,7 +625,7 @@ fn started(record: &daemon::Record) -> std::time::SystemTime {
 /// The last write to the transcript of the lead of `record`, if it has
 /// one.
 fn written(record: &daemon::Record) -> Option<std::time::SystemTime> {
-    crate::usage::written_in(&record.folder.join("claude"), &record.live.session)
+    crate::usage::written_in(&run::claude_in(&record.folder), &record.live.session)
 }
 
 /// The file of the end of the last turn of a lead, in the folder of the
@@ -1135,21 +1083,10 @@ async fn launch_new(
     let image = merged.image.to_string();
     daemon::image(dir, &image, |line| println!("{line}")).await?;
     let folder = folder_of(&run::data_dir()?, &repo);
-    let clone = folder.join("clone");
-    let claude = folder.join("claude");
-    match fresh_clone(main, &clone)? {
-        Fresh::Kept(why) => println!("{}", text::lead_clone_kept(&clone, &why)),
-        Fresh::Left(stays) => stays.iter().for_each(|line| println!("{line}")),
-        Fresh::Made | Fresh::New => {}
-    }
     let sources = session_image::merged_sources(main)?;
-    run::claude_folder(
-        &claude,
-        &clone,
-        &host.home.join(".claude.json"),
-        &crate::permissions::Trust::of(here.repo(), server, &sources),
-        crate::permissions::Role::Lead,
-    )?;
+    let trust = crate::permissions::Trust::of(here.repo(), server, &sources);
+    let lines = new_folder(&folder, &host.home.join(".claude.json"), &trust)?;
+    lines.iter().for_each(|line| println!("{line}"));
 
     let session = identity::new_session_id();
     let place = Place::new(here.host(), here.repo().clone(), None)?;
@@ -1177,7 +1114,7 @@ async fn launch_new(
         session: &session,
         me: &me,
     };
-    let mut start = parts.start(spec, new.start);
+    let mut start = or_end(&api, &me, parts.start(spec, new.start)).await?;
     start.cause = Some(new.cause);
     or_end(&api, &me, ask_start(dir, start).await).await?;
     Ok(session)
@@ -1203,7 +1140,7 @@ struct Parts<'a> {
     host: &'a run::Host,
     /// The image and the setup of the merged `riff.toml`.
     merged: &'a session_image::Merged,
-    /// The folder of the lead: `clone/` and `claude/`.
+    /// The folder of the lead: `claude/`. Its clone is in its container.
     folder: &'a Path,
     /// The git dir of the main clone.
     common: &'a Path,
@@ -1217,38 +1154,79 @@ struct Parts<'a> {
 
 impl Parts<'_> {
     /// The [`daemon::Start`] of the lead, with the spec that `spec`
-    /// makes ([`spec`], or [`spec_again`]) and the first prompt `prompt`.
-    fn start(&self, spec: fn(&Facts, &str, &str) -> SessionSpec, prompt: &str) -> daemon::Start {
+    /// makes ([`spec`], or [`spec_again`]) and the first prompt `prompt`:
+    /// the facts of [`facts`].
+    fn start(
+        &self,
+        spec: fn(&Facts, &str, &str) -> Result<SessionSpec>,
+        prompt: &str,
+    ) -> Result<daemon::Start> {
         let host = self.host;
-        let existing = |p: PathBuf| p.exists().then_some(p);
-        let facts = Facts {
-            session: self.session.to_owned(),
-            item: ITEM.into(),
-            image: self.merged.image.to_string(),
-            home: host.home.clone(),
-            user: host.user.clone(),
-            clone: self.folder.join("clone"),
-            objects: self.common.join("objects"),
-            claude: self.folder.join("claude"),
-            sign_in: host.claude.sign_in(),
-            gitconfig: existing(host.home.join(".gitconfig")),
-            setup: self.merged.setup.clone(),
-        };
-        daemon::Start {
+        let facts = facts(
+            self.repo,
+            host,
+            self.merged,
+            self.folder,
+            self.common,
+            self.session,
+        )?;
+        Ok(daemon::Start {
             session: self.session.to_owned(),
             item: ITEM.into(),
             folder: self.folder.to_owned(),
-            spec: spec(&facts, self.repo, prompt),
+            spec: spec(&facts, self.repo, prompt)?,
             start: prompt.to_owned(),
             values: host.values(),
             secrets: host.secrets(),
             server: self.server.to_owned(),
             me: self.me.clone(),
             terminal: true,
-            no_github: false,
             cause: None,
-        }
+        })
     }
+}
+
+/// The steps of the host before each start of the container of the lead
+/// of `repo`, with the session `session`, in the folder `folder` of the
+/// lead. It writes the list of the branches of `origin` of the main
+/// clone, its git dir `common`, in the folder of the lead
+/// ([`crate::session_clone::write_refs`]). It gives the facts of the
+/// spec ([`spec`], [`spec_again`]): the clone of the lead on the default
+/// branch (01M7EY51EMJ6ZEGNW7H852PEGR), with the image, the setup and the
+/// default branch of `merged`, and the facts of the host `host`. The step
+/// of the image fetched that branch into the main clone
+/// ([`session_image::follow_origin`], 01M7G81XGBPP23H9T7V0WX87QZ): so a
+/// lead with no token starts from it too.
+pub(crate) fn facts(
+    repo: &str,
+    host: &run::Host,
+    merged: &session_image::Merged,
+    folder: &Path,
+    common: &Path,
+    session: &str,
+) -> Result<Facts> {
+    let base = merged.base.clone();
+    crate::session_clone::write_refs(common, folder)?;
+    let existing = |p: PathBuf| p.exists().then_some(p);
+    Ok(Facts {
+        session: session.to_owned(),
+        item: ITEM.into(),
+        image: merged.image.to_string(),
+        home: host.home.clone(),
+        user: host.user.clone(),
+        plan: crate::session_clone::Plan {
+            path: run::clone_in(folder),
+            origin: crate::session_clone::Origin::github(repo)?,
+            main: common.to_owned(),
+            refs: run::refs_in(folder),
+            base,
+            checkout: crate::session_clone::Checkout::Default,
+        },
+        claude: run::claude_in(folder),
+        sign_in: host.claude.sign_in(),
+        gitconfig: existing(host.home.join(".gitconfig")),
+        setup: merged.setup.clone(),
+    })
 }
 
 /// The main clone of the lead of `repo` in the records of the daemon in
@@ -1256,8 +1234,8 @@ impl Parts<'_> {
 /// wave of the repository ([`crate::wave::WAVES_FILE`]), else the main
 /// clone that the daemon serves for it
 /// ([`daemon::remote::SERVED_FILE`]). `None` when the daemon has neither.
-/// It reads no file of the clone of the lead: the lead writes that clone,
-/// and a git config there can name a program for the host.
+/// It reads no file that the lead wrote: a git config there can name a
+/// program for the host.
 ///
 /// ```
 /// use riff::daemon::remote::serve_in_file;
@@ -1287,59 +1265,6 @@ pub fn main_of(dir: &Path, repo: &str) -> Result<Option<PathBuf>> {
     Ok(served.map(|served| served.wave.main))
 }
 
-/// The folder of the objects of a clone.
-const OBJECTS: &str = ".git/objects";
-
-/// The file in [`OBJECTS`] that names the folders of the objects that
-/// the clone links to.
-const ALTERNATES: &str = "info/alternates";
-
-/// The main clone that the clone at `clone` links to: `git clone
-/// --reference MAIN` ([`fresh_clone`]) writes `MAIN/.git/objects` in the
-/// file `.git/objects/info/alternates` of the clone. The session writes
-/// that file. So the daemon only counts with it the clones that need a
-/// main clone ([`daemon::remote::linked_clones`]), and runs no git in
-/// the folder that it names: the main clone of a lead comes from
-/// [`main_of`] (01M7EAZ9N9DY7JPXZP1V8JY01E). It reads the file through
-/// [`crate::host_file`]: a link in the clone gives an error, as no file
-/// does (01M7FE5FYFAR92PM3EJJ211VM2).
-///
-/// ```
-/// let dir = tempfile::tempdir()?;
-/// let clone = dir.path().join("clone");
-/// let info = clone.join(".git/objects/info");
-/// std::fs::create_dir_all(&info)?;
-/// std::fs::write(info.join("alternates"), "/src/riff/.git/objects\n")?;
-/// assert_eq!(riff::lead::linked_main(&clone)?, std::path::Path::new("/src/riff"));
-/// // A clone with no link names no main clone.
-/// assert!(riff::lead::linked_main(dir.path()).is_err());
-///
-/// // The host reads no file of the person through a link.
-/// std::fs::remove_file(info.join("alternates"))?;
-/// std::fs::write(dir.path().join("person"), "/src/riff/.git/objects\n")?;
-/// std::os::unix::fs::symlink(dir.path().join("person"), info.join("alternates"))?;
-/// assert!(riff::lead::linked_main(&clone).is_err());
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
-pub fn linked_main(clone: &Path) -> Result<PathBuf> {
-    let name = Path::new(OBJECTS).join(ALTERNATES);
-    let (objects, file) = (clone.join(OBJECTS), clone.join(&name));
-    let text = crate::host_file::read_to_string(clone, &name)?
-        .with_context(|| format!("cannot read {}", file.display()))?;
-    let line = text
-        .lines()
-        .map(str::trim)
-        .find(|l| !l.is_empty() && !l.starts_with('#'))
-        .ok_or_else(|| anyhow::anyhow!("{} names no folder", file.display()))?;
-    // A relative path is relative to the objects folder of the clone.
-    let linked = objects.join(line);
-    linked
-        .parent()
-        .and_then(Path::parent)
-        .map(Path::to_owned)
-        .ok_or_else(|| anyhow::anyhow!("{} has no main clone", linked.display()))
-}
-
 /// The daemon runs no wave of the repository of the lead, and serves no
 /// main clone of it: no step gives the main clone
 /// (01M7EAZ9N9DY7JPXZP1V8JY01E, [`main_of`]). The text names the step
@@ -1363,12 +1288,13 @@ impl std::fmt::Display for NoMain {
 impl std::error::Error for NoMain {}
 
 /// The [`daemon::Start`] of the lead of `record` for a start again on the
-/// riff of this daemon (01M5TC2919TB9XPF42YFNJBP79): the same session, the
-/// same clone and the same Claude folder, and `claude --resume ID`
+/// riff of this daemon (01M5TC2919TB9XPF42YFNJBP79): the same session and
+/// the same Claude folder, a new clone at the same path in the new
+/// container (01M7EY51EMJ6ZEGNW7H852PEGR), and `claude --resume ID`
 /// ([`spec_again`]) with the first prompt [`text::lead_again`]. The
 /// host facts, the image and the setup are those of now, as for a new
-/// lead. It makes no clone and no new session on riff-server. It reads
-/// the host, so call it off the async threads.
+/// lead. The host makes no clone and no new session on riff-server. It
+/// reads the host, so call it off the async threads.
 ///
 /// `main` is the main clone of the repository of the lead in the records
 /// of the daemon ([`main_of`], 01M7EAZ9N9DY7JPXZP1V8JY01E): that of its
@@ -1387,11 +1313,13 @@ pub fn again(main: Option<&Path>, record: &daemon::Record) -> Result<daemon::Sta
         fault => fault.into(),
     })?;
     needs_token(&host.claude.sign_in())?;
-    let merged = session_image::merged_config(&main, |_| {})?;
+    // The lines go to the log of the daemon, as those of a wave: also the
+    // line of an `origin` that riff cannot ask (01M7G81XGBPP23H9T7V0WX87QZ).
+    let merged = session_image::merged_config(&main, |line| println!("{repo}: {line}"))?;
     let sources = session_image::merged_sources(&main)?;
     run::claude_folder(
-        &folder.join("claude"),
-        &folder.join("clone"),
+        &run::claude_in(&folder),
+        &run::clone_in(&folder),
         &host.home.join(".claude.json"),
         &crate::permissions::Trust::of(here.repo(), &record.server, &sources),
         crate::permissions::Role::Lead,
@@ -1406,7 +1334,7 @@ pub fn again(main: Option<&Path>, record: &daemon::Record) -> Result<daemon::Sta
         session: &record.live.session,
         me: &record.me,
     };
-    Ok(parts.start(spec_again, &text::lead_again(&repo)))
+    parts.start(spec_again, &text::lead_again(&repo))
 }
 
 /// What the daemon in the folder `dir` does for `riff lead move`
@@ -1977,14 +1905,20 @@ mod tests {
             image: "img".into(),
             home: home.to_owned(),
             user: "mike".into(),
-            clone: home.join("clone"),
-            objects: home.join("objects"),
+            plan: crate::session_clone::Plan {
+                path: home.join("clone"),
+                origin: crate::session_clone::Origin::github("o/r").unwrap(),
+                main: home.join("main.git"),
+                refs: home.join("origin-refs"),
+                base: "main".parse().unwrap(),
+                checkout: crate::session_clone::Checkout::Default,
+            },
             claude: home.join("lead-claude"),
             sign_in: run::ClaudeSignIn::File(file.clone()),
             gitconfig: None,
             setup: Default::default(),
         };
-        let spec = spec(&facts, "como-technologies/riff", "start");
+        let spec = spec(&facts, "como-technologies/riff", "start").unwrap();
         (fake.start_terminal(&spec, &[]).await.unwrap(), file)
     }
 
@@ -2124,8 +2058,14 @@ mod tests {
             image: "img".into(),
             home: "/home/mike".into(),
             user: "mike".into(),
-            clone: "/d/riff/leads/o-r/clone".into(),
-            objects: "/src/r/.git/objects".into(),
+            plan: crate::session_clone::Plan {
+                path: "/d/riff/leads/o-r/clone".into(),
+                origin: crate::session_clone::Origin::github("o/r").unwrap(),
+                main: "/src/r/.git".into(),
+                refs: "/d/riff/leads/o-r/origin-refs".into(),
+                base: "main".parse().unwrap(),
+                checkout: crate::session_clone::Checkout::Default,
+            },
             claude: "/d/riff/leads/o-r/claude".into(),
             sign_in: run::ClaudeSignIn::Token,
             gitconfig: None,
@@ -2135,8 +2075,8 @@ mod tests {
             )
             .unwrap(),
         };
-        let first = spec(&facts, "o/r", "start");
-        let again = spec_again(&facts, "o/r", "go on");
+        let first = spec(&facts, "o/r", "start").unwrap();
+        let again = spec_again(&facts, "o/r", "go on").unwrap();
         // Only the session flag and the prompt differ.
         assert_eq!(again.binds, first.binds);
         assert_eq!(again.env, first.env);
@@ -2189,6 +2129,7 @@ mod tests {
             interrupt: false,
             model: None,
             github: None,
+            notes_key: None,
         }
     }
 
@@ -2367,32 +2308,68 @@ mod tests {
         assert!(idle(&record, quiet));
     }
 
-    /// 01M7E7A8QM8SRPQN3G1BXVJW1R: the new clone takes the place of the
-    /// old clone of the lead, and the old clone goes, with no git: the
+    /// #2139, 01M7EBBVE6WYKT5JDVASFCYPQQ: the clone that an older riff made
+    /// on the host goes at the start of a new lead, with no git: the
     /// program of its git config does not run. An old clone of an earlier
-    /// fault goes first. When the new clone cannot move in, the clone
-    /// stays.
+    /// fault goes too.
     #[test]
-    fn the_new_clone_takes_the_place_of_the_old_clone_with_no_git() {
+    fn the_clone_of_an_older_riff_goes_with_no_git() {
         let root = tempfile::tempdir().unwrap();
-        let clone = root.path().join("leads/o-r/clone");
-        let new = new_clone_of(&clone).unwrap();
+        let folder = root.path().join("leads/o-r");
+        let clone = folder.join("clone");
         let mark = root.path().join("mark");
         crate::host_git::hostile_clone(&clone, &mark);
-        let aside = clone.with_file_name(OLD_CLONE);
-        std::fs::create_dir_all(aside.join("earlier")).unwrap();
-        std::fs::create_dir_all(&new).unwrap();
-        std::fs::write(new.join("new"), "").unwrap();
+        std::fs::create_dir_all(folder.join(OLD_CLONE).join("earlier")).unwrap();
+        std::fs::create_dir_all(folder.join("claude")).unwrap();
 
-        let stays = put_in_place(&new, &clone, crate::compile_cache::remove).unwrap();
+        let stays = remove_host_clone(&folder, crate::compile_cache::remove).unwrap();
         assert_eq!(stays, Vec::<String>::new());
-        assert!(clone.join("new").exists() && !clone.join(".git").exists());
-        assert!(!new.exists() && old_clones(clone.parent().unwrap()).is_empty());
+        assert!(!clone.exists() && old_clones(&folder).is_empty());
+        assert!(folder.join("claude").exists(), "the Claude folder stays");
         assert!(!mark.exists(), "the program of the old clone ran");
+        // With no clone, nothing changes.
+        assert!(
+            remove_host_clone(&folder, crate::compile_cache::remove)
+                .unwrap()
+                .is_empty()
+        );
+    }
 
-        let error = put_in_place(&new, &clone, crate::compile_cache::remove).unwrap_err();
-        assert!(format!("{error:#}").contains("cannot move"), "{error:#}");
-        assert!(clone.join("new").exists() && !aside.exists());
+    /// 01M7EY51EMJ6ZEGNW7H852PEGR, 01M7FTWWAJB8B09S89VY8XA8RQ: when the
+    /// clone of an older riff cannot move aside, the steps of the host
+    /// before the session of a new lead stop with an error that names the
+    /// move. The clone stays as it is, and the Claude folder gets nothing:
+    /// here it is there, and riff could write it. With the clone gone, the
+    /// same steps write the Claude folder.
+    #[test]
+    fn a_clone_of_an_older_riff_that_cannot_move_stops_the_start_of_the_lead() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let folder = root.path().join("leads/o-r");
+        let clone = folder.join("clone");
+        let claude = folder.join("claude");
+        std::fs::create_dir_all(&clone).unwrap();
+        std::fs::create_dir_all(&claude).unwrap();
+        std::fs::write(clone.join("old"), "").unwrap();
+        let person = root.path().join("person.json");
+        std::fs::write(&person, "{}").unwrap();
+        let trust = crate::permissions::Trust {
+            owner: Some("o"),
+            server: None,
+            sources: &[],
+        };
+        std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let moved = new_folder(&folder, &person, &trust);
+        std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let error = format!("{:#}", moved.unwrap_err());
+        assert!(error.contains("cannot move"), "{error}");
+        assert!(clone.join("old").exists());
+        assert_eq!(std::fs::read_dir(&claude).unwrap().count(), 0);
+
+        std::fs::remove_dir_all(&clone).unwrap();
+        assert!(new_folder(&folder, &person, &trust).unwrap().is_empty());
+        assert!(claude.join("settings.json").exists());
     }
 
     /// Makes the folder `dir` and a read-only folder `dir/ro` with a file:
@@ -2421,28 +2398,24 @@ mod tests {
 
     /// 01M7EBBVE6WYKT5JDVASFCYPQQ (#2153): an old clone of an earlier start
     /// holds a read-only folder, and riff cannot remove it, also with
-    /// `podman unshare`. The new clone still takes its place: the start
-    /// goes on, and a line names each old clone that stays. The old clone
-    /// of this start moves to the next free name. When riff can remove
-    /// them, each goes.
+    /// `podman unshare`. The start still goes on, and a line names each
+    /// old clone that stays. The clone of this start moves to the next
+    /// free name. When riff can remove them, each goes.
     #[test]
     fn an_old_clone_that_riff_cannot_remove_stops_no_start() {
         let root = tempfile::tempdir().unwrap();
-        let clone = root.path().join("leads/o-r/clone");
-        let folder = clone.parent().unwrap().to_owned();
-        let new = new_clone_of(&clone).unwrap();
-        let stuck = clone.with_file_name(OLD_CLONE);
+        let folder = root.path().join("leads/o-r");
+        let clone = folder.join("clone");
+        let stuck = folder.join(OLD_CLONE);
         with_read_only_folder(&stuck);
         std::fs::create_dir_all(&clone).unwrap();
         std::fs::write(clone.join("old"), "").unwrap();
-        std::fs::create_dir_all(&new).unwrap();
-        std::fs::write(new.join("new"), "").unwrap();
         let cannot =
             |dir: &Path| -> Result<()> { bail!("podman unshare failed for {}", dir.display()) };
 
-        let stays = put_in_place(&new, &clone, cannot).unwrap();
-        assert!(clone.join("new").exists() && !new.exists());
-        let second = clone.with_file_name(format!("{OLD_CLONE}-2"));
+        let stays = remove_host_clone(&folder, cannot).unwrap();
+        assert!(!clone.exists());
+        let second = folder.join(format!("{OLD_CLONE}-2"));
         assert_eq!(old_clones(&folder), [stuck.clone(), second.clone()]);
         assert!(second.join("old").exists());
         assert_eq!(
@@ -2454,17 +2427,13 @@ mod tests {
         );
 
         // The remove of riff: as the person, then with `podman unshare`.
-        writable(&folder);
-        with_read_only_folder(&stuck);
-        std::fs::create_dir_all(&new).unwrap();
-        let stays = put_in_place(&new, &clone, crate::compile_cache::remove).unwrap();
-        writable(&folder);
         // With no `podman unshare`, the read-only folder stays, and the
         // start goes on.
+        let stays = remove_host_clone(&folder, crate::compile_cache::remove).unwrap();
+        writable(&folder);
         let left = old_clones(&folder);
         assert_eq!(stays.len(), left.len(), "{stays:?}");
         assert!(left.iter().all(|old| *old == stuck), "{left:?}");
-        assert!(clone.exists() && !new.exists());
         for gone in remove_old_clones(&folder, crate::compile_cache::remove) {
             gone.1.unwrap();
         }
@@ -2502,5 +2471,81 @@ mod tests {
         assert_eq!(swept.len(), 1, "{swept:?}");
         assert_eq!(swept[0].0, old);
         assert!(swept[0].1.is_ok() && !old.exists());
+    }
+
+    /// 01M7EY51EMJ6ZEGNW7H852PEGR, 01M7G81XGBPP23H9T7V0WX87QZ: the default
+    /// branch of the repository moved from `master` to `trunk` on `origin`
+    /// after the main clone, and the main clone fetched nothing since. The
+    /// step of the image of the start of the lead asks `origin`, fetches
+    /// `trunk` into the main clone and sets its `origin/HEAD`. The facts
+    /// take the base from the merged config, and the host writes the list
+    /// of the branches of `origin` in the folder of the lead
+    /// (01M7FMJJB0TZM8875T7GQZAJEA). The clone of the plan of a lead with
+    /// no token, which fetches nothing from GitHub, is on `trunk`, with its
+    /// upstream.
+    #[test]
+    fn the_lead_clones_on_the_default_branch_of_origin_after_a_rename() {
+        let git = |dir: &Path, args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+                .args(["-c", "commit.gpgsign=false"])
+                .args(args)
+                .current_dir(dir)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}: {out:?}");
+            String::from_utf8_lossy(&out.stdout).trim().to_owned()
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        git(
+            root,
+            &["init", "-q", "--bare", "-b", "master", "origin.git"],
+        );
+        let seed = root.join("seed");
+        std::fs::create_dir(&seed).unwrap();
+        git(&seed, &["init", "-q", "-b", "master"]);
+        let image = format!("ghcr.io/o/s@sha256:{}", "0".repeat(64));
+        let pin = format!("[session]\nimage = \"{image}\"\n");
+        std::fs::write(seed.join(session_image::FILE), &pin).unwrap();
+        git(&seed, &["add", session_image::FILE]);
+        git(&seed, &["commit", "-q", "-m", "one"]);
+        let url = format!("file://{}", root.join("origin.git").display());
+        git(&seed, &["push", "-q", &url, "master"]);
+        git(root, &["clone", "-q", "--", &url, "main"]);
+        let origin = root.join("origin.git");
+        git(&origin, &["branch", "-m", "master", "trunk"]);
+        let main = root.join("main");
+        let stale = git(&main, &["rev-parse", "--abbrev-ref", "origin/HEAD"]);
+        assert_eq!(stale, "origin/master");
+        let host = run::Host {
+            home: "/home/mike".into(),
+            user: "mike".into(),
+            claude: run::Claude::Token("t".into()),
+        };
+        let merged = session_image::merged_config(&main, |_| {}).unwrap();
+        assert_eq!(merged.image.to_string(), image);
+        assert_eq!(merged.base.as_str(), "trunk");
+        let folder = root.join("leads/o-r");
+        std::fs::create_dir_all(&folder).unwrap();
+        let session = "1a2b3c4d-0000-4000-8000-000000000000";
+        let common = main.join(".git");
+        let facts = facts("o/r", &host, &merged, &folder, &common, session).unwrap();
+        let plan =
+            crate::session_clone::Plan::of_spec(&spec(&facts, "o/r", "Start.").unwrap()).unwrap();
+        assert_eq!(plan.base.as_str(), "trunk");
+        assert_eq!(plan.checkout, crate::session_clone::Checkout::Default);
+        assert_eq!(plan.refs, run::refs_in(&folder));
+        assert!(plan.refs.is_file());
+        plan.make(false).unwrap();
+        assert_eq!(git(&plan.path, &["branch", "--show-current"]), "trunk");
+        assert_eq!(
+            git(&plan.path, &["rev-parse", "--abbrev-ref", "@{upstream}"]),
+            "origin/trunk"
+        );
+        assert_eq!(
+            git(&plan.path, &["rev-parse", "HEAD"]),
+            git(&origin, &["rev-parse", "trunk"])
+        );
     }
 }

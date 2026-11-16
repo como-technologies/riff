@@ -5,9 +5,11 @@
 //! # Design
 //!
 //! Each session of `riff run` and of a wave has a folder of its own,
-//! `ITEM-ID8` in [`crate::run::sessions_dir`]: the clone with its
-//! `target`, often some GB. The daemon removes the folder of each session
-//! that does not run when the work of its branch is over
+//! `ITEM-ID8` in [`crate::run::sessions_dir`]: its Claude folder and its
+//! events. The clone of the session is in its container, and goes with it
+//! ([`crate::session_clone`]): a folder of an older riff can still hold a
+//! clone with its `target`, often some GB. The daemon removes the folder
+//! of each session that does not run when the work of its branch is over
 //! ([`Daemon::sweep`]):
 //!
 //! - at its start, after it took up its sessions, and then each
@@ -18,14 +20,16 @@
 //!   (#1549);
 //! - at once, for `riff daemon sweep` ([`Ask::Sweep`](super::Ask::Sweep)).
 //!
-//! The sweep looks into no clone (#2138). A session writes its clone, and
-//! a git config can name a program that git runs on the host
-//! ([`crate::host_git`]). So the sweep decides from facts that no session
-//! can write:
+//! The sweep looks into no clone (#2138). A session writes its clone and
+//! each folder that it binds with write, and a git config can name a
+//! program that git runs on the host ([`crate::host_git`]). So the sweep
+//! decides from facts that no session can write:
 //!
 //! - the repository of the folder: its file [`REPO`], which the host
-//!   writes before the clone ([`note_repo`], 01M7DZ42EVHAT8N5MZEV97G3DW).
-//!   The container sees only `clone/` and `claude/` of the folder;
+//!   writes before the start ([`note_repo`], 01M7DZ42EVHAT8N5MZEV97G3DW).
+//!   Of the folder, the container sees `claude/`, `out/` with no GitHub,
+//!   and the file `origin-refs` with no write
+//!   ([`crate::session_clone::REFS`]);
 //! - the fate on the forge: the pull requests of the branch of its item
 //!   on `origin`, and the state of its issue ([`World::fate`],
 //!   [`Fate::of`]);
@@ -42,8 +46,8 @@
 //!
 //! A folder also goes when it is [`OLD_DAYS`] old, with each fate, and
 //! with no call to the forge. A folder with no file [`REPO`] stays until
-//! then, and riff says why. The work of the clone that is not on `origin`
-//! goes with the folder: riff pushes nothing from a clone. The sweep
+//! then, and riff says why. riff pushes nothing from a folder: the work
+//! of a session is what it pushed (#2139). The sweep
 //! deletes each branch `riff-kept/*` of an older sweep after
 //! [`KEPT_DAYS`] days, and posts one digest note to the lead of the
 //! repository (01M5NVKNPD938ASWY4TD5BGK67, 01M5NVKNS35SC8P514GYDJSRQM).
@@ -58,7 +62,7 @@
 //!
 //! - the daemon has the record of the session;
 //! - a job of the daemon runs for the session of the folder, from before
-//!   the clone of its session to its last step after the end, which reads
+//!   the start of its session to its last step after the end, which reads
 //!   `events.jsonl` in the folder (`Daemon::in_job`,
 //!   01M53S7WDPQ2GWHJWJ6SZXZ5PN). The daemon has no record of the
 //!   session after its end. A job keeps each folder of its item that was
@@ -66,7 +70,7 @@
 //!   daemon took up (01M7GCESN7RY3GW6ZPP9PBM87D). The folder of an older
 //!   session of the item, which ended, does not run;
 //! - the `riff run` that made the folder runs. It holds the lock
-//!   `ITEM-ID8.lock` beside the folder from before the clone to its own
+//!   `ITEM-ID8.lock` beside the folder from before the start to its own
 //!   end ([`hold`]): its start can wait long for room, and the daemon has
 //!   no record of the session in that time.
 //!
@@ -425,8 +429,9 @@ pub fn held(folder: &Path) -> bool {
 
 /// The file in the folder of a session that names its repository
 /// `OWNER/REPO` (01M7DZ42EVHAT8N5MZEV97G3DW). The host writes it before
-/// the clone. The container sees only `clone/` and `claude/` of the
-/// folder, so no session writes it.
+/// the start. Of the folder, the container sees `claude/`, `out/` with no
+/// GitHub, and the file `origin-refs` with no write
+/// ([`crate::session_clone::REFS`]), so no session writes it.
 pub const REPO: &str = "repo";
 
 /// Writes the repository `repo` (`OWNER/REPO`) of the session of the
@@ -782,7 +787,7 @@ impl<R: Runtime + 'static> Daemon<R> {
     }
 
     /// Keeps the folder of the session of a job of `item` while the job
-    /// runs: from before the clone of its session to its last step after
+    /// runs: from before the start of its session to its last step after
     /// the end, which reads the folder (01M53S7WDPQ2GWHJWJ6SZXZ5PN). Take
     /// it before the job starts, and keep it to the end of
     /// [`crate::wave::finish`]. `own` is the folder of the session that a
@@ -1046,8 +1051,9 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// (01M5P26VW5GBJDQZGEYW9A77Y0): it never removes a session that
     /// runs. The folder of an ended session of an item that runs again
     /// can go (01M7GCESN7RY3GW6ZPP9PBM87D). With no `force`, the pull
-    /// request of its work must have merged. The leftover work of the
-    /// clone goes with the folder.
+    /// request of its work must have merged. The work of a session is what
+    /// it pushed (#2139): a clone that an older riff left in the folder
+    /// goes with it.
     pub async fn remove_one(&self, name: &str, force: bool) -> Result<String> {
         let _one = self.folders.sweep.lock().await;
         let Some(item) = item_of_folder(name).filter(|_| !name.contains('/')) else {
@@ -1547,6 +1553,7 @@ esac
             interrupt: false,
             model: None,
             github: None,
+            notes_key: None,
         };
         let path = crate::daemon::record_path(&here.dir, name);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -1817,14 +1824,9 @@ esac
             line.contains("the pushed branch origin/worktree-issue-12"),
             "{line}"
         );
-        let next = here.daemon.sessions_dir().join("issue-12-2b3c4d5e/clone");
-        assert!(run::make_clone(&main, &next, "worktree-issue-12").unwrap());
-        assert_eq!(
-            git(&next, &["rev-parse", "--abbrev-ref", "HEAD"]),
-            "worktree-issue-12"
-        );
-        let new = run::new_clone_of(&next).unwrap();
-        assert!(!new.exists(), "the new clone moved into the folder");
+        // The next session goes on from the branch on origin: the host
+        // looks for it from the main clone, and makes no clone.
+        assert!(run::earlier(&main, &"worktree-issue-12".parse().unwrap()).unwrap());
 
         // The council of a verify reads the member files of `origin/main`
         // in the main clone.
