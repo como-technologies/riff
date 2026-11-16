@@ -58,6 +58,21 @@
 //!   `message.id`. The sum counts each reply one time ([`Replies`]).
 //! - A helper agent has transcripts of its own, in the directory
 //!   `SESSION/subagents` next to `SESSION.jsonl`. They count too.
+//! - A container session writes its transcripts. So riff reads at most
+//!   [`MAX_TRANSCRIPT`] of each one, and at most [`MAX_ENTRIES`] entries
+//!   of each folder of them (01M7FNTSHXPQXXKZF761V0NN9Z). A transcript
+//!   or a folder over its limit counts no tokens, and the log names it
+//!   ([`crate::text::transcript_skipped`]). One count reads at most
+//!   [`MAX_COUNT_BYTES`] and [`MAX_COUNT_ENTRIES`] in all, also of a file
+//!   that it skips, and stops there, with at most one byte or one entry
+//!   past it (01M7FX6SWN3DGZMH5HS9BWEBY7).
+//! - Each reply that a count keeps has a fixed size: a hash of its id, and
+//!   the index of the name of its model. One count keeps at most
+//!   [`MAX_COUNT_REPLIES`] replies and [`MAX_COUNT_MODELS`] models, and
+//!   no line of its log. A process reads the transcripts of one count at
+//!   a time. So the memory of the counts of the riff daemon does not grow
+//!   with the number of sessions that end at once
+//!   (01M7GF9G7ZNJD2SXZZ62XKJYBG).
 //! - A reply counts for a claim when its time is from the start of the
 //!   claim to before its end.
 //! - Tokens in a time with two claims of one session count for the
@@ -144,7 +159,7 @@
 //! ]
 //! .join("\n");
 //! let mut replies = Replies::default();
-//! replies.add(&transcript);
+//! replies.add(&transcript).unwrap();
 //!
 //! // 09:00:00 to 10:00:00.
 //! let models = replies.sum(&[(1_790_931_600_000, 1_790_935_200_000)]);
@@ -156,12 +171,14 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write as _;
+use std::hash::BuildHasher as _;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
 
 use crate::local;
 use crate::pr::Gh;
@@ -319,21 +336,22 @@ pub fn now_ms() -> u64 {
         .map_or(0, |d| d.as_millis() as u64)
 }
 
-/// The part of one line of a transcript that the sum reads.
+/// The part of one line of a transcript that the sum reads. Each text
+/// stays in the line as its JSON, with no copy (01M7GF9G7ZNJD2SXZZ62XKJYBG).
 #[derive(Deserialize)]
-struct Line {
-    #[serde(default)]
-    timestamp: Option<String>,
-    #[serde(default)]
-    message: Option<Reply>,
+struct Line<'a> {
+    #[serde(default, borrow)]
+    timestamp: Option<&'a RawValue>,
+    #[serde(default, borrow)]
+    message: Option<Reply<'a>>,
 }
 
 #[derive(Deserialize)]
-struct Reply {
-    #[serde(default)]
-    id: Option<String>,
-    #[serde(default)]
-    model: Option<String>,
+struct Reply<'a> {
+    #[serde(default, borrow)]
+    id: Option<&'a RawValue>,
+    #[serde(default, borrow)]
+    model: Option<&'a RawValue>,
     #[serde(default)]
     usage: Option<Used>,
 }
@@ -350,82 +368,378 @@ struct Used {
     cache_read_input_tokens: u64,
 }
 
+/// The id of a reply in a transcript, as JSON: its id, else its time and
+/// the name of its model.
+#[derive(Hash)]
+enum Id<'a> {
+    Given(&'a str),
+    Made(u64, &'a str),
+}
+
+/// The id of a reply in a count: a hash of 64 bits of its [`Id`]
+/// (01M7GF9G7ZNJD2SXZZ62XKJYBG).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct ReplyId(u64);
+
+/// One reply of the model, as a count keeps it: a fixed size, whatever
+/// the size of its line (01M7GF9G7ZNJD2SXZZ62XKJYBG).
+#[derive(Clone, Copy, Debug)]
+struct Kept {
+    /// Its time, in milliseconds since the Unix epoch.
+    at_ms: u64,
+    /// The index of its model in [`Replies::models`].
+    model: usize,
+    /// Its tokens.
+    tokens: Tokens,
+}
+
+/// Each reply in the text of a transcript: its id, the name of its model
+/// as a report has it ([`model_name`]), its time and its tokens. A line
+/// that is no reply with a time, a model and a usage is skipped: a time
+/// is a JSON string with no escape. It copies no text of a line, apart
+/// from the first [`NAME_CHARS`] characters of the name of a model.
+fn replies_in(transcript: &str) -> impl Iterator<Item = (Id<'_>, String, u64, Tokens)> + '_ {
+    transcript.lines().filter_map(|line| {
+        let Ok(Line {
+            timestamp: Some(at),
+            message: Some(reply),
+        }) = serde_json::from_str::<Line>(line)
+        else {
+            return None;
+        };
+        let (Some(model), Some(used)) = (reply.model, reply.usage) else {
+            return None;
+        };
+        let at: &str = serde_json::from_str(at.get()).ok()?;
+        let at = chrono::DateTime::parse_from_rfc3339(at).ok()?;
+        let at_ms = u64::try_from(at.timestamp_millis()).unwrap_or(0);
+        let name = model_name(model.get())?;
+        let tokens = Tokens {
+            input: used.input_tokens,
+            output: used.output_tokens,
+            cache_write: used.cache_creation_input_tokens,
+            cache_read: used.cache_read_input_tokens,
+        };
+        let id = match reply.id {
+            Some(id) => Id::Given(id.get()),
+            None => Id::Made(at_ms, model.get()),
+        };
+        Some((id, name, at_ms, tokens))
+    })
+}
+
+/// The name of a model as a report has it ([`name`]), from `json`, the
+/// name in a transcript as JSON. It reads at most the first
+/// [`NAME_CHARS`] characters of the name, so a long name makes no copy
+/// of its bytes (01M7GF9G7ZNJD2SXZZ62XKJYBG). `None` when `json` is no
+/// JSON string. A half of a pair of UTF-16 with no other half is a
+/// character that a name cannot hold.
+fn model_name(json: &str) -> Option<String> {
+    let mut chars = json.strip_prefix('"')?.chars();
+    let mut text = String::new();
+    for _ in 0..NAME_CHARS {
+        let c = match chars.next()? {
+            '"' => break,
+            '\\' => match chars.next()? {
+                'u' => {
+                    let unit = unit_of(&mut chars)?;
+                    if (0xD800..0xDC00).contains(&unit) {
+                        let mut low = chars.clone();
+                        let pair = low.next() == Some('\\')
+                            && low.next() == Some('u')
+                            && unit_of(&mut low).is_some_and(|low| (0xDC00..0xE000).contains(&low));
+                        if pair {
+                            chars = low;
+                        }
+                    }
+                    char::from_u32(unit).unwrap_or(char::REPLACEMENT_CHARACTER)
+                }
+                'b' => '\u{8}',
+                'f' => '\u{c}',
+                'n' => '\n',
+                'r' => '\r',
+                't' => '\t',
+                c => c,
+            },
+            c => c,
+        };
+        text.push(c);
+    }
+    Some(name(&text, NAME_CHARS))
+}
+
+/// The unit of UTF-16 of the 4 hex digits at the start of `chars`, after
+/// `\u` in a JSON string.
+fn unit_of(chars: &mut std::str::Chars) -> Option<u32> {
+    (0..4).try_fold(0, |unit, _| Some(unit * 16 + chars.next()?.to_digit(16)?))
+}
+
+/// One read of the transcripts of a count at a time in a process of riff
+/// (01M7GF9G7ZNJD2SXZZ62XKJYBG): [`Replies::read`] holds it.
+static ONE_COUNT: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// The replies of the model in the transcripts of a session, each one
-/// time (01M3Y1YP0QY11VR28RF9MKPN0G).
-#[derive(Debug, Default)]
-pub struct Replies(HashMap<String, (u64, String, Tokens)>);
+/// time (01M3Y1YP0QY11VR28RF9MKPN0G). A session writes its transcripts,
+/// so the replies keep a fixed size of memory each, and have limits
+/// (01M7GF9G7ZNJD2SXZZ62XKJYBG): a reply keeps a hash of 64 bits of its
+/// id, and the index of the name of its model. The name of a model is
+/// the name of a report: at most 100 characters, with `-` for each
+/// character that a name cannot hold. A count keeps at most
+/// [`MAX_COUNT_REPLIES`] replies and [`MAX_COUNT_MODELS`] models.
+#[derive(Debug)]
+pub struct Replies {
+    /// Each reply, by the hash of its id.
+    replies: HashMap<ReplyId, Kept>,
+    /// The name of each model, at the index of [`Kept::model`].
+    models: Vec<String>,
+    /// The hash of the ids, with a key of its own.
+    ids: std::hash::RandomState,
+    /// The limits of the count.
+    limits: Limits,
+    /// What the count read: each byte and each entry, also of a file or
+    /// a folder that it skipped, and of the file or the folder where it
+    /// stopped.
+    taken: Taken,
+}
+
+impl Default for Replies {
+    fn default() -> Replies {
+        Replies::within(Limits::COUNT)
+    }
+}
 
 impl Replies {
-    /// Adds each reply in the text of one transcript. A line that is no
-    /// reply with a time, a model and a usage is skipped. A later line
-    /// of the same reply replaces the earlier one.
-    pub fn add(&mut self, transcript: &str) {
-        for line in transcript.lines() {
-            let Ok(Line {
-                timestamp: Some(at),
-                message: Some(reply),
-            }) = serde_json::from_str::<Line>(line)
-            else {
-                continue;
-            };
-            let (Some(model), Some(used)) = (reply.model, reply.usage) else {
-                continue;
-            };
-            let Ok(at) = chrono::DateTime::parse_from_rfc3339(&at) else {
-                continue;
-            };
-            let at_ms = u64::try_from(at.timestamp_millis()).unwrap_or(0);
-            let tokens = Tokens {
-                input: used.input_tokens,
-                output: used.output_tokens,
-                cache_write: used.cache_creation_input_tokens,
-                cache_read: used.cache_read_input_tokens,
-            };
-            let id = reply.id.unwrap_or_else(|| format!("{at_ms} {model}"));
-            self.0.insert(id, (at_ms, model, tokens));
+    /// No replies yet, with the limits `limits`.
+    fn within(limits: Limits) -> Replies {
+        Replies {
+            replies: HashMap::new(),
+            models: Vec::new(),
+            ids: std::hash::RandomState::new(),
+            limits,
+            taken: Taken::default(),
         }
     }
 
+    /// Adds each reply in the text of one transcript. A line that is no
+    /// reply with a time, a model and a usage is skipped. A later line
+    /// of the same reply replaces the earlier one. A text with more new
+    /// replies or models than the limits of the count leave adds none,
+    /// and the error is that limit (01M7GF9G7ZNJD2SXZZ62XKJYBG).
+    ///
+    /// ```
+    /// use riff::usage::Replies;
+    ///
+    /// let line = |id: &str, model: &str| format!(
+    ///     r#"{{"timestamp":"2026-10-02T09:00:00Z","message":{{"id":"{id}","model":"{model}","usage":{{"output_tokens":1}}}}}}"#
+    /// );
+    /// let mut replies = Replies::default();
+    /// // The name of a model is the name of a report: `-` for a `/`.
+    /// replies.add(&line("m1", "opus/5")).unwrap();
+    /// assert_eq!(replies.sum(&[(0, u64::MAX)])["opus-5"].output, 1);
+    ///
+    /// // A count keeps at most 32 models: a text with more adds none.
+    /// let more: Vec<String> = (0..32).map(|n| line(&format!("x{n}"), &format!("model-{n}"))).collect();
+    /// assert_eq!(replies.add(&more.join("\n")), Err(riff::text::CountLimit::Models(32)));
+    /// assert_eq!(replies.sum(&[(0, u64::MAX)]).len(), 1);
+    /// ```
+    pub fn add(&mut self, transcript: &str) -> std::result::Result<(), text::CountLimit> {
+        // First the new replies and the new models of the text: a text
+        // over a limit adds none.
+        let (mut ids, mut models) = (std::collections::HashSet::new(), Vec::new());
+        for (id, model, _, _) in replies_in(transcript) {
+            let id = ReplyId(self.ids.hash_one(&id));
+            if !self.replies.contains_key(&id)
+                && ids.insert(id)
+                && self.replies.len() + ids.len() > self.limits.replies
+            {
+                return Err(text::CountLimit::Replies(self.limits.replies));
+            }
+            if !self.models.contains(&model) && !models.contains(&model) {
+                models.push(model);
+                if self.models.len() + models.len() > self.limits.models {
+                    return Err(text::CountLimit::Models(self.limits.models));
+                }
+            }
+        }
+        drop(ids);
+        for (id, model, at_ms, tokens) in replies_in(transcript) {
+            let model = match self.models.iter().position(|known| *known == model) {
+                Some(at) => at,
+                None => {
+                    self.models.push(model);
+                    self.models.len() - 1
+                }
+            };
+            let kept = Kept {
+                at_ms,
+                model,
+                tokens,
+            };
+            self.replies.insert(ReplyId(self.ids.hash_one(&id)), kept);
+        }
+        Ok(())
+    }
+
     /// The replies of each transcript of `paths`, and of the helper
-    /// agents of each one. A file that cannot be read is skipped: the
-    /// agent tool can remove an old transcript. A container session
+    /// agents of each one. A file that is not there is skipped with no
+    /// line of the log: the agent tool can remove an old transcript, and
+    /// the Claude folder of an ended session goes. A container session
     /// writes its transcripts, so each read goes through
     /// [`crate::host_file`] from the Claude folder of the transcript
-    /// ([`in_claude`]): a link there is skipped too.
+    /// ([`in_claude`]), with the limits [`MAX_TRANSCRIPT`] and
+    /// [`MAX_ENTRIES`] (01M7FNTSHXPQXXKZF761V0NN9Z). A helper that is a
+    /// link, or no plain file, counts as no transcript, with no line of
+    /// the log (01M7FE5FYFAR92PM3EJJ211VM2). A transcript of `paths` that
+    /// is a link or no plain file, a transcript over its limit or with no
+    /// text, and a folder of helpers that is a link or over its limit are
+    /// skipped too, and the log names each one with no step
+    /// ([`text::transcript_skipped`]). The count reads at most
+    /// [`MAX_COUNT_BYTES`] and [`MAX_COUNT_ENTRIES`] in all
+    /// (01M7FX6SWN3DGZMH5HS9BWEBY7): each byte and each entry that it
+    /// reads counts, also of a file or a folder that it skips, and an entry
+    /// that riff cannot stat. It reads at most the bytes that are left of
+    /// a transcript. It keeps at most [`MAX_COUNT_REPLIES`] replies and
+    /// [`MAX_COUNT_MODELS`] models ([`Replies::add`],
+    /// 01M7GF9G7ZNJD2SXZZ62XKJYBG). It stops at the file or the folder
+    /// where a limit runs out, with at most one byte or one entry past it,
+    /// and the log names it ([`text::transcripts_stopped`]). Each line of
+    /// the log goes to stderr, and the count keeps none. A process reads
+    /// the transcripts of one count at a time: a count waits for the end
+    /// of the read before it. The read of a transcript holds its bytes in
+    /// memory one time.
     pub fn read(paths: &[PathBuf]) -> Replies {
-        let mut replies = Replies::default();
+        Replies::read_within(paths, Limits::COUNT, &mut |line| eprintln!("{line}"))
+    }
+
+    /// [`Replies::read`] with the limits `limits`, and each line of the
+    /// log to `log`.
+    fn read_within(paths: &[PathBuf], limits: Limits, log: &mut dyn FnMut(String)) -> Replies {
+        let _one = ONE_COUNT
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut replies = Replies::within(limits);
         for path in paths {
             let Some((claude, name)) = in_claude(path) else {
                 continue;
             };
-            let subagents = name.with_extension("").join(SUBAGENTS);
-            let helpers = crate::host_file::list(claude, &subagents)
-                .ok()
-                .flatten()
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|(file, kind)| {
-                    *kind == crate::host_file::Kind::File
-                        && Path::new(file).extension().is_some_and(|e| e == "jsonl")
-                })
-                .map(|(file, _)| subagents.join(file));
-            for file in std::iter::once(name.to_owned()).chain(helpers) {
-                if let Ok(Some(text)) = crate::host_file::read_to_string(claude, &file) {
-                    replies.add(&text);
-                }
+            if let Err((at, limit)) = replies.read_transcript(claude, name, log) {
+                log(text::transcripts_stopped(&at, limit));
+                break;
             }
         }
         replies
+    }
+
+    /// Adds the replies of the transcript `CLAUDE/NAME`, then of the
+    /// transcript of each of its helper agents. The error is the file or
+    /// the folder where a limit of the count ran out, and that limit.
+    fn read_transcript(
+        &mut self,
+        claude: &Path,
+        name: &Path,
+        log: &mut dyn FnMut(String),
+    ) -> std::result::Result<(), (PathBuf, text::CountLimit)> {
+        self.take_entries(1, || claude.join(name))?;
+        self.read_replies(claude, name, log)?;
+        let subagents = name.with_extension("").join(SUBAGENTS);
+        let most = MAX_ENTRIES.min(self.limits.entries - self.taken.entries);
+        let listed = match crate::host_file::list(claude, &subagents, most) {
+            Ok(listed) => listed.unwrap_or_default(),
+            Err(e) if e.is::<crate::host_file::TooMany>() => {
+                // The list took `most` and one entry.
+                self.take_entries(most + 1, || claude.join(&subagents))?;
+                Replies::skip(&e, log);
+                Vec::new()
+            }
+            Err(e) => {
+                Replies::skip(&e, log);
+                Vec::new()
+            }
+        };
+        self.take_entries(listed.len(), || claude.join(&subagents))?;
+        let helpers = listed.into_iter().filter(|(file, kind)| {
+            *kind == crate::host_file::Kind::File
+                && Path::new(file).extension().is_some_and(|e| e == "jsonl")
+        });
+        for (file, _) in helpers {
+            self.read_replies(claude, &subagents.join(file), log)?;
+        }
+        Ok(())
+    }
+
+    /// Takes `entries` entries that the count read: the error is the file
+    /// or the folder `at` when they run out its limit.
+    fn take_entries(
+        &mut self,
+        entries: usize,
+        at: impl FnOnce() -> PathBuf,
+    ) -> std::result::Result<(), (PathBuf, text::CountLimit)> {
+        self.taken.entries = self.taken.entries.saturating_add(entries);
+        if self.taken.entries > self.limits.entries {
+            return Err((at(), text::CountLimit::Entries(self.limits.entries)));
+        }
+        Ok(())
+    }
+
+    /// Adds the replies of the transcript `CLAUDE/FILE`. It reads at most
+    /// the bytes that are left, and takes each byte that it read, also of
+    /// a file that it skips, for example a file that is no text. The error
+    /// is `CLAUDE/FILE` when it has more bytes than are left, or more new
+    /// replies or models than the limits leave.
+    fn read_replies(
+        &mut self,
+        claude: &Path,
+        file: &Path,
+        log: &mut dyn FnMut(String),
+    ) -> std::result::Result<(), (PathBuf, text::CountLimit)> {
+        let left = self.limits.bytes.saturating_sub(self.taken.bytes);
+        let most = self.limits.transcript.min(left);
+        let read = crate::host_file::read(claude, file, most);
+        let large = read
+            .as_ref()
+            .is_err_and(|e| e.is::<crate::host_file::TooLarge>());
+        self.taken.bytes = self
+            .taken
+            .bytes
+            .saturating_add(crate::host_file::taken(&read));
+        // A file over what is left runs out the count, and so does a file
+        // that grew past it in the read.
+        if (large && most < self.limits.transcript) || self.taken.bytes > self.limits.bytes {
+            return Err((
+                claude.join(file),
+                text::CountLimit::Bytes(self.limits.bytes),
+            ));
+        }
+        let text = read.and_then(|bytes| {
+            bytes
+                .map(|bytes| crate::host_file::text_of(claude, file, bytes))
+                .transpose()
+        });
+        match text {
+            Ok(Some(text)) => self
+                .add(&text)
+                .map_err(|limit| (claude.join(file), limit))?,
+            Ok(None) => {}
+            Err(e) => Replies::skip(&e, log),
+        }
+        Ok(())
+    }
+
+    /// Skips a file whose read failed with `cause`: a line of `log` names
+    /// it.
+    fn skip(cause: &anyhow::Error, log: &mut dyn FnMut(String)) {
+        log(text::transcript_skipped(&format!("{cause:#}")));
     }
 
     /// The tokens of each model in the replies whose time is in one of
     /// `windows`. A model with no tokens is left out.
     pub fn sum(&self, windows: &[Window]) -> Models {
         let mut models = Models::new();
-        for (at_ms, model, tokens) in self.0.values() {
+        for kept in self.replies.values() {
+            let at_ms = &kept.at_ms;
             let counts = windows.iter().any(|(from, to)| from <= at_ms && at_ms < to);
-            if counts && tokens.total() > 0 {
-                *models.entry(model.clone()).or_default() += *tokens;
+            if counts && kept.tokens.total() > 0 {
+                *models.entry(self.models[kept.model].clone()).or_default() += kept.tokens;
             }
         }
         models
@@ -565,31 +879,41 @@ fn change<T>(dir: &Path, session: &str, change: impl FnOnce(&mut Ledger) -> T) -
     let new = path.with_extension("new");
     local::write(&new, serde_json::to_string(&ledger)?)?;
     std::fs::rename(new, path)?;
+    #[cfg(test)]
+    WRITES.with(|writes| writes.set(writes.get() + 1));
     Ok(out)
 }
 
-/// Records `transcript` as a transcript of `session`.
+#[cfg(test)]
+thread_local! {
+    /// The writes of the marks by [`change`] on this thread: a unit test
+    /// counts them.
+    static WRITES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Records each of `transcripts` as a transcript of `session`, in one
+/// write of the marks: a session can have one transcript in each of
+/// [`MAX_ENTRIES`] folders of projects. A transcript that the marks have
+/// stays one time.
 ///
 /// ```
+/// use std::path::PathBuf;
+///
 /// let marks = tempfile::tempdir()?;
-/// riff::usage::saw(marks.path(), "a6cf", "/t/one.jsonl".as_ref())?;
-/// riff::usage::saw(marks.path(), "a6cf", "/t/one.jsonl".as_ref())?;
-/// riff::usage::saw(marks.path(), "a6cf", "/t/two.jsonl".as_ref())?;
+/// let [one, two] = ["/t/one.jsonl", "/t/two.jsonl"].map(PathBuf::from);
+/// riff::usage::saw(marks.path(), "a6cf", &[one.clone(), one.clone()])?;
+/// riff::usage::saw(marks.path(), "a6cf", &[one, two])?;
 /// assert_eq!(riff::usage::load(marks.path(), "a6cf").transcripts.len(), 2);
 /// assert_eq!(riff::usage::sessions(marks.path()), ["a6cf"]);
 /// # Ok::<(), std::io::Error>(())
 /// ```
-pub fn saw(dir: &Path, session: &str, transcript: &Path) -> io::Result<()> {
-    if load(dir, session)
-        .transcripts
-        .iter()
-        .any(|known| known == transcript)
-    {
-        return Ok(());
-    }
+pub fn saw(dir: &Path, session: &str, transcripts: &[PathBuf]) -> io::Result<()> {
     change(dir, session, |ledger| {
-        if !ledger.transcripts.iter().any(|known| known == transcript) {
-            ledger.transcripts.push(transcript.to_owned());
+        let mut known: BTreeSet<PathBuf> = ledger.transcripts.iter().cloned().collect();
+        for transcript in transcripts {
+            if known.insert(transcript.clone()) {
+                ledger.transcripts.push(transcript.clone());
+            }
         }
     })
 }
@@ -1438,13 +1762,6 @@ impl Meter {
         })
     }
 
-    /// Records the transcript of `session`. A failure goes to stderr.
-    pub fn saw(&self, session: &str, transcript: &Path) {
-        if let Err(e) = saw(&self.dir, session, transcript) {
-            eprintln!("riff: cannot record the transcript of the session: {e}");
-        }
-    }
-
     /// Records the claim of `item` in `thread` of `session`, from now.
     /// A failure goes to stderr.
     pub fn started(&self, session: &str, thread: &str, item: &str) {
@@ -1461,7 +1778,7 @@ impl Meter {
         match ended(&self.dir, session, thread, item, now_ms()) {
             Ok(Some(claim)) => Some(reported(&claim, &report(&self.gh, session, &claim))),
             Ok(None) => None,
-            Err(e) => Some(format!("riff cannot count the tokens of {item}: {e}.")),
+            Err(e) => Some(text::tokens_uncounted(item, &e.to_string())),
         }
     }
 
@@ -1482,7 +1799,7 @@ impl Meter {
                 .iter()
                 .map(|claim| reported(claim, &report(&self.gh, session, claim)))
                 .collect(),
-            Err(e) => vec![format!("riff cannot count the tokens of the claims: {e}.")],
+            Err(e) => vec![text::tokens_uncounted(text::THE_CLAIMS, &e.to_string())],
         }
     }
 
@@ -1503,9 +1820,7 @@ impl Meter {
         if transcripts.is_empty() {
             return None;
         }
-        transcripts
-            .iter()
-            .try_for_each(|t| saw(&self.dir, session, t))
+        saw(&self.dir, session, transcripts)
             .and_then(|()| started(&self.dir, session, thread, item, from_ms))
             .and_then(|()| ended(&self.dir, session, thread, item, now))
             .transpose()
@@ -1546,7 +1861,11 @@ impl Meter {
 
 /// The transcripts of the session `session` in the Claude folder
 /// `claude` of a container session: `projects/*/SESSION.jsonl`. `claude`
-/// takes the riff session ID as its own (01M588N8AYSGVWFW05A5RV976H).
+/// takes the riff session ID as its own (01M588N8AYSGVWFW05A5RV976H). A
+/// link at `projects`, or more than [`MAX_ENTRIES`] entries in it, gives
+/// an error that names the folder (01M7FNTSHXPQXXKZF761V0NN9Z): the
+/// daemon counts no tokens of the session, and its log has the line of
+/// [`text::transcript_skipped`].
 ///
 /// ```
 /// let claude = tempfile::tempdir()?;
@@ -1555,48 +1874,48 @@ impl Meter {
 /// std::fs::write(project.join("a6cf.jsonl"), "")?;
 /// std::fs::write(project.join("other.jsonl"), "")?;
 /// assert_eq!(
-///     riff::usage::transcripts_in(claude.path(), "a6cf"),
+///     riff::usage::transcripts_in(claude.path(), "a6cf")?,
 ///     [project.join("a6cf.jsonl")]
 /// );
-/// assert!(riff::usage::transcripts_in(&claude.path().join("none"), "a6cf").is_empty());
-/// # Ok::<(), std::io::Error>(())
+/// assert!(riff::usage::transcripts_in(&claude.path().join("none"), "a6cf")?.is_empty());
+/// # Ok::<(), anyhow::Error>(())
 /// ```
-pub fn transcripts_in(claude: &Path, session: &str) -> Vec<PathBuf> {
-    transcripts_with_times(claude, session)
-        .into_iter()
-        .map(|(path, _)| path)
-        .collect()
+pub fn transcripts_in(claude: &Path, session: &str) -> Result<Vec<PathBuf>> {
+    let found = transcripts_with_times(claude, session)?;
+    Ok(found.into_iter().map(|(path, _)| path).collect())
 }
 
 /// The time of the last write to a transcript of `session` in the Claude
-/// folder `claude` ([`transcripts_in`]), if it has one.
+/// folder `claude` ([`transcripts_in`]), if it has one. A folder
+/// `projects` that riff does not list gives the error of
+/// [`transcripts_in`]: the log of the daemon has the line of
+/// [`text::lead_turns_unseen`] (01M7FNTSHXPQXXKZF761V0NN9Z).
 ///
 /// ```
 /// let claude = tempfile::tempdir()?;
 /// let project = claude.path().join("projects/-data-clone");
 /// std::fs::create_dir_all(&project)?;
-/// assert_eq!(riff::usage::written_in(claude.path(), "a6cf"), None);
+/// assert_eq!(riff::usage::written_in(claude.path(), "a6cf")?, None);
 /// std::fs::write(project.join("a6cf.jsonl"), "")?;
-/// assert!(riff::usage::written_in(claude.path(), "a6cf").is_some());
-/// # Ok::<(), std::io::Error>(())
+/// assert!(riff::usage::written_in(claude.path(), "a6cf")?.is_some());
+/// # Ok::<(), anyhow::Error>(())
 /// ```
-pub fn written_in(claude: &Path, session: &str) -> Option<SystemTime> {
-    transcripts_with_times(claude, session)
-        .into_iter()
-        .map(|(_, time)| time)
-        .max()
+pub fn written_in(claude: &Path, session: &str) -> Result<Option<SystemTime>> {
+    let found = transcripts_with_times(claude, session)?;
+    Ok(found.into_iter().map(|(_, time)| time).max())
 }
 
 /// Each transcript of `session` in the Claude folder `claude`, in the
 /// order of the paths, with the time of its last write. The session
 /// writes that folder, so riff looks through [`crate::host_file`]: a
-/// link there counts as no transcript (01M7FE5FYFAR92PM3EJJ211VM2).
-fn transcripts_with_times(claude: &Path, session: &str) -> Vec<(PathBuf, SystemTime)> {
+/// link there counts as no transcript (01M7FE5FYFAR92PM3EJJ211VM2). A
+/// link at the folder of the projects, and a folder of the projects with
+/// more than [`MAX_ENTRIES`] entries, give an error that names it
+/// (01M7FNTSHXPQXXKZF761V0NN9Z).
+fn transcripts_with_times(claude: &Path, session: &str) -> Result<Vec<(PathBuf, SystemTime)>> {
     let name = format!("{}.jsonl", riff_core::name::sanitize(session));
     let projects = Path::new(PROJECTS);
-    crate::host_file::list(claude, projects)
-        .ok()
-        .flatten()
+    Ok(crate::host_file::list(claude, projects, MAX_ENTRIES)?
         .unwrap_or_default()
         .into_iter()
         .filter(|(_, kind)| *kind == crate::host_file::Kind::Folder)
@@ -1605,7 +1924,7 @@ fn transcripts_with_times(claude: &Path, session: &str) -> Vec<(PathBuf, SystemT
             let time = crate::host_file::modified(claude, &path).ok()??;
             Some((claude.join(path), time))
         })
-        .collect()
+        .collect())
 }
 
 /// The folder of the projects in a Claude folder: `projects/P/S.jsonl`
@@ -1615,6 +1934,67 @@ pub const PROJECTS: &str = "projects";
 /// The folder of the helper agents of a transcript `S.jsonl`, in the
 /// folder `S` beside it.
 pub const SUBAGENTS: &str = "subagents";
+
+/// The most bytes that riff reads of one transcript
+/// (01M7FNTSHXPQXXKZF761V0NN9Z): a session writes it, and a larger one
+/// counts no tokens.
+pub const MAX_TRANSCRIPT: u64 = 256 << 20;
+
+/// The most entries that riff reads of the folder of the projects or of
+/// the helpers of a transcript (01M7FNTSHXPQXXKZF761V0NN9Z).
+pub const MAX_ENTRIES: usize = 10_000;
+
+/// The most bytes of transcripts that one count of the tokens of a
+/// session reads in all ([`Replies::read`], 01M7FX6SWN3DGZMH5HS9BWEBY7).
+pub const MAX_COUNT_BYTES: u64 = 1 << 30;
+
+/// The most entries that one count of the tokens of a session reads in
+/// all: each transcript counts one, and each entry of the folder of its
+/// helpers ([`Replies::read`], 01M7FX6SWN3DGZMH5HS9BWEBY7).
+pub const MAX_COUNT_ENTRIES: usize = 100_000;
+
+/// The most replies of the model that one count of the tokens of a
+/// session keeps ([`Replies::add`], 01M7GF9G7ZNJD2SXZZ62XKJYBG).
+pub const MAX_COUNT_REPLIES: usize = 1_000_000;
+
+/// The most models that one count of the tokens of a session keeps: the
+/// most models of a report ([`Replies::add`], 01M7GF9G7ZNJD2SXZZ62XKJYBG).
+pub const MAX_COUNT_MODELS: usize = MODELS;
+
+/// The limits of one count of the tokens of a session
+/// (01M7FNTSHXPQXXKZF761V0NN9Z, 01M7FX6SWN3DGZMH5HS9BWEBY7,
+/// 01M7GF9G7ZNJD2SXZZ62XKJYBG).
+#[derive(Clone, Copy, Debug)]
+struct Limits {
+    /// The most bytes of one transcript.
+    transcript: u64,
+    /// The most bytes of transcripts in all.
+    bytes: u64,
+    /// The most entries in all.
+    entries: usize,
+    /// The most replies.
+    replies: usize,
+    /// The most models.
+    models: usize,
+}
+
+impl Limits {
+    /// The limits of a count of riff.
+    const COUNT: Limits = Limits {
+        transcript: MAX_TRANSCRIPT,
+        bytes: MAX_COUNT_BYTES,
+        entries: MAX_COUNT_ENTRIES,
+        replies: MAX_COUNT_REPLIES,
+        models: MAX_COUNT_MODELS,
+    };
+}
+
+/// What one count read: bytes of transcripts, and entries.
+#[derive(Clone, Copy, Debug, Default)]
+struct Taken {
+    bytes: u64,
+    entries: usize,
+}
 
 /// The Claude folder of the transcript `path`, `CLAUDE/projects/P/S.jsonl`,
 /// and the name of `path` in it: [`crate::host_file`] opens each part of
@@ -1851,6 +2231,15 @@ pub fn machine_text(dir: &Path, now: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::text::CountLimit;
+
+    /// [`Replies::read_within`] of `paths` with the limits `limits`, and
+    /// each line of its log, in the order of the log.
+    fn logged(paths: &[PathBuf], limits: Limits) -> (Replies, Vec<String>) {
+        let mut log = Vec::new();
+        let replies = Replies::read_within(paths, limits, &mut |line| log.push(line));
+        (replies, log)
+    }
 
     const HOUR: u64 = 3_600_000;
     /// 2026-10-02 09:00 UTC.
@@ -1873,14 +2262,16 @@ mod tests {
     #[test]
     fn a_reply_on_three_lines_counts_one_time_with_its_last_line() {
         let mut replies = Replies::default();
-        replies.add(
-            &[
-                reply(NINE, "m1", "opus", 1),
-                reply(NINE + 1, "m1", "opus", 4),
-                reply(NINE + 2, "m1", "opus", 9),
-            ]
-            .join("\n"),
-        );
+        replies
+            .add(
+                &[
+                    reply(NINE, "m1", "opus", 1),
+                    reply(NINE + 1, "m1", "opus", 4),
+                    reply(NINE + 2, "m1", "opus", 9),
+                ]
+                .join("\n"),
+            )
+            .unwrap();
         let models = replies.sum(&[(0, u64::MAX)]);
         assert_eq!(models["opus"].output, 9);
         assert_eq!(models["opus"].input, 1);
@@ -1898,22 +2289,25 @@ mod tests {
                 r#"{"type":"assistant","timestamp":"2026-10-02T09:00:00Z","message":{"id":"s","model":"<synthetic>","usage":{"output_tokens":0}}}"#,
             ]
             .join("\n"),
-        );
+        )
+        .unwrap();
         assert!(replies.sum(&[(0, u64::MAX)]).is_empty());
     }
 
     #[test]
     fn only_a_reply_from_the_start_to_before_the_end_counts() {
         let mut replies = Replies::default();
-        replies.add(
-            &[
-                reply(NINE - 1, "before", "opus", 1),
-                reply(NINE, "first", "opus", 10),
-                reply(NINE + HOUR - 1, "last", "opus", 100),
-                reply(NINE + HOUR, "after", "opus", 1_000),
-            ]
-            .join("\n"),
-        );
+        replies
+            .add(
+                &[
+                    reply(NINE - 1, "before", "opus", 1),
+                    reply(NINE, "first", "opus", 10),
+                    reply(NINE + HOUR - 1, "last", "opus", 100),
+                    reply(NINE + HOUR, "after", "opus", 1_000),
+                ]
+                .join("\n"),
+            )
+            .unwrap();
         assert_eq!(replies.sum(&[(NINE, NINE + HOUR)])["opus"].output, 110);
     }
 
@@ -1958,23 +2352,707 @@ mod tests {
             projects.join("-data-clone/s1/subagents"),
         )
         .unwrap();
-        assert_eq!(transcripts_in(&claude, "s1"), std::slice::from_ref(&main));
-        let models = Replies::read(std::slice::from_ref(&main)).sum(&[(0, u64::MAX)]);
-        assert_eq!(models["opus"].output, 1);
+        assert_eq!(
+            transcripts_in(&claude, "s1").unwrap(),
+            std::slice::from_ref(&main)
+        );
+        let (replies, log) = logged(std::slice::from_ref(&main), Limits::COUNT);
+        assert_eq!(replies.sum(&[(0, u64::MAX)])["opus"].output, 1);
+        // The line of the link at the folder of the helpers gives no step:
+        // riff goes on (01M7FNTSHXPQXXKZF761V0NN9Z).
+        let subagents = projects.join("-data-clone/s1/subagents");
+        let linked = text::transcript_skipped(&text::host_file_link(&subagents));
+        assert_eq!(log, std::slice::from_ref(&linked));
+        assert!(!linked.contains(text::REMOVE_IT), "{linked}");
 
         // The transcript itself as a link, or as a FIFO.
         std::fs::remove_file(&main).unwrap();
         std::os::unix::fs::symlink(person.join("s1.jsonl"), &main).unwrap();
-        assert!(transcripts_in(&claude, "s1").is_empty());
-        assert!(
-            Replies::read(std::slice::from_ref(&main))
-                .sum(&[(0, u64::MAX)])
-                .is_empty()
+        assert!(transcripts_in(&claude, "s1").unwrap().is_empty());
+        let (replies, log) = logged(std::slice::from_ref(&main), Limits::COUNT);
+        assert!(replies.sum(&[(0, u64::MAX)]).is_empty());
+        assert_eq!(
+            log,
+            [
+                text::transcript_skipped(&text::host_file_link(&main)),
+                linked.clone()
+            ]
         );
         std::fs::remove_file(&main).unwrap();
         nix::unistd::mkfifo(&main, nix::sys::stat::Mode::S_IRWXU).unwrap();
-        assert!(transcripts_in(&claude, "s1").is_empty());
-        assert!(Replies::read(&[main]).sum(&[(0, u64::MAX)]).is_empty());
+        assert!(transcripts_in(&claude, "s1").unwrap().is_empty());
+        let (replies, log) = logged(std::slice::from_ref(&main), Limits::COUNT);
+        assert!(replies.sum(&[(0, u64::MAX)]).is_empty());
+        assert_eq!(
+            log,
+            [
+                text::transcript_skipped(&text::host_file_not_plain(&main)),
+                linked
+            ]
+        );
+    }
+
+    /// 01M7FNTSHXPQXXKZF761V0NN9Z: a container session makes a sparse
+    /// transcript of 64 GiB. riff reads none of it, the log names it,
+    /// and the other transcripts count.
+    #[test]
+    fn a_transcript_over_the_limit_is_skipped_and_the_log_names_it() {
+        let claude = tempfile::tempdir().unwrap();
+        let project = claude.path().join(PROJECTS).join("-data-clone");
+        let main = project.join("s1.jsonl");
+        write(&main, &[]);
+        std::fs::File::options()
+            .write(true)
+            .open(&main)
+            .unwrap()
+            .set_len(64 << 30)
+            .unwrap();
+        write(
+            &project.join("s1/subagents/agent-a.jsonl"),
+            &[reply(NINE, "h1", "haiku", 2)],
+        );
+        let other = project.join("s2.jsonl");
+        write(&other, &[reply(NINE, "m2", "opus", 3)]);
+        assert_eq!(
+            transcripts_in(claude.path(), "s1").unwrap(),
+            std::slice::from_ref(&main)
+        );
+        let (replies, log) = logged(&[main.clone(), other], Limits::COUNT);
+        let models = replies.sum(&[(0, u64::MAX)]);
+        assert_eq!((models["opus"].output, models["haiku"].output), (3, 2));
+        assert_eq!(
+            log,
+            [text::transcript_skipped(&text::host_file_too_large(
+                &main,
+                MAX_TRANSCRIPT
+            ))]
+        );
+    }
+
+    /// Makes `n` empty files in the folder `dir`.
+    fn fill(dir: &Path, n: usize) {
+        std::fs::create_dir_all(dir).unwrap();
+        for i in 0..n {
+            std::fs::write(dir.join(format!("agent-{i}.jsonl")), "").unwrap();
+        }
+    }
+
+    /// 01M7FNTSHXPQXXKZF761V0NN9Z: a container session makes more
+    /// entries than the limit in the folder of the helpers of a
+    /// transcript. riff counts no tokens of the helpers, the log names
+    /// the folder, and the transcript counts.
+    #[test]
+    fn a_folder_of_helpers_over_the_limit_is_skipped_and_the_log_names_it() {
+        let claude = tempfile::tempdir().unwrap();
+        let project = claude.path().join(PROJECTS).join("-data-clone");
+        let main = project.join("s1.jsonl");
+        write(&main, &[reply(NINE, "m1", "opus", 1)]);
+        let subagents = project.join("s1").join(SUBAGENTS);
+        fill(&subagents, MAX_ENTRIES);
+        write(
+            &subagents.join("agent-a.jsonl"),
+            &[reply(NINE, "h1", "haiku", 2)],
+        );
+        let (replies, log) = logged(std::slice::from_ref(&main), Limits::COUNT);
+        let models = replies.sum(&[(0, u64::MAX)]);
+        assert_eq!(models["opus"].output, 1);
+        assert!(!models.contains_key("haiku"), "{models:?}");
+        assert_eq!(
+            log,
+            [text::transcript_skipped(&text::host_file_too_many(
+                &subagents,
+                MAX_ENTRIES
+            ))]
+        );
+
+        // 01M7FX6SWN3DGZMH5HS9BWEBY7: the folder costs the entries that
+        // the list took, its limit and one. A count with room for them and
+        // for 2 transcripts counts the next transcript, and stops at the
+        // third.
+        let other = project.join("s2.jsonl");
+        write(&other, &[reply(NINE, "m2", "opus", 4)]);
+        let third = project.join("s3.jsonl");
+        write(&third, &[reply(NINE, "m3", "opus", 8)]);
+        let all = [main.clone(), other, third.clone()];
+        let budget = |entries| Limits {
+            bytes: MAX_COUNT_BYTES,
+            entries,
+            ..Limits::COUNT
+        };
+        let (replies, log) = logged(&all, budget(1 + MAX_ENTRIES + 1 + 1));
+        assert_eq!(replies.sum(&[(0, u64::MAX)])["opus"].output, 1 + 4);
+        assert_eq!(
+            log,
+            [
+                text::transcript_skipped(&text::host_file_too_many(&subagents, MAX_ENTRIES)),
+                text::transcripts_stopped(&third, CountLimit::Entries(1 + MAX_ENTRIES + 2))
+            ]
+        );
+
+        // With room for the transcript and the limit of the folder only,
+        // the entry one past the limit runs out the count: it stops at the
+        // folder.
+        let (replies, log) = logged(&all, budget(1 + MAX_ENTRIES));
+        assert_eq!(replies.sum(&[(0, u64::MAX)])["opus"].output, 1);
+        assert_eq!(
+            log,
+            [text::transcripts_stopped(
+                &subagents,
+                CountLimit::Entries(1 + MAX_ENTRIES)
+            )]
+        );
+
+        // At the limit, each helper counts.
+        std::fs::remove_file(subagents.join("agent-0.jsonl")).unwrap();
+        let (replies, log) = logged(std::slice::from_ref(&main), Limits::COUNT);
+        assert_eq!(replies.sum(&[(0, u64::MAX)])["haiku"].output, 2);
+        assert!(log.is_empty());
+    }
+
+    /// 01M7FX6SWN3DGZMH5HS9BWEBY7: a container session makes helpers
+    /// that are no text. riff skips each one, and its bytes count: a
+    /// count with room for 2 of them stops at the third, and the next
+    /// transcript counts no tokens.
+    #[test]
+    fn a_count_takes_the_bytes_of_a_transcript_that_is_no_text() {
+        let claude = tempfile::tempdir().unwrap();
+        let [main, a, b, other] = transcripts_with_helpers(claude.path());
+        std::fs::write(&main, "").unwrap();
+        let helpers = a.parent().unwrap();
+        for helper in [&a, &b, &helpers.join("agent-c.jsonl")] {
+            std::fs::write(helper, [0xff; 100]).unwrap();
+        }
+        let budget = Limits {
+            bytes: 250,
+            entries: 100,
+            ..Limits::COUNT
+        };
+        let (replies, log) = logged(&[main, other], budget);
+        assert!(replies.sum(&[(0, u64::MAX)]).is_empty());
+        let [first, second, stopped] = &log[..] else {
+            panic!("{log:?}")
+        };
+        for (line, helper) in [(first, &a), (second, &b)] {
+            let no_text = format!("{} is no text", helper.display());
+            assert!(line.contains(&no_text), "{line}");
+        }
+        assert_eq!(
+            *stopped,
+            text::transcripts_stopped(&helpers.join("agent-c.jsonl"), CountLimit::Bytes(250))
+        );
+    }
+
+    /// 01M7FNTSHXPQXXKZF761V0NN9Z: a container session makes more
+    /// entries than the limit in its folder `projects`. riff finds no
+    /// transcript there, and the error names the folder.
+    #[test]
+    fn a_folder_of_projects_over_the_limit_gives_an_error_that_names_it() {
+        let claude = tempfile::tempdir().unwrap();
+        let projects = claude.path().join(PROJECTS);
+        write(&projects.join("-data-clone/s1.jsonl"), &[]);
+        fill(&projects, MAX_ENTRIES);
+        let error = text::host_file_too_many(&projects, MAX_ENTRIES);
+        let found = transcripts_in(claude.path(), "s1").unwrap_err();
+        assert_eq!(format!("{found:#}"), error);
+        let written = written_in(claude.path(), "s1").unwrap_err();
+        assert_eq!(format!("{written:#}"), error);
+
+        // At the limit, riff finds the transcript.
+        std::fs::remove_file(projects.join("agent-0.jsonl")).unwrap();
+        assert_eq!(transcripts_in(claude.path(), "s1").unwrap().len(), 1);
+        assert!(written_in(claude.path(), "s1").unwrap().is_some());
+    }
+
+    /// A transcript in a Claude folder that is gone: the folder of an
+    /// ended session goes. riff counts no tokens of it, and logs nothing.
+    #[test]
+    fn a_transcript_in_a_claude_folder_that_is_gone_is_skipped_with_no_log() {
+        let root = tempfile::tempdir().unwrap();
+        let main = root
+            .path()
+            .join("sessions/issue-7-1a2b3c4d/claude/projects/-data-clone/s1.jsonl");
+        let (replies, log) = logged(&[main], Limits::COUNT);
+        assert!(replies.sum(&[(0, u64::MAX)]).is_empty());
+        assert!(log.is_empty(), "{log:?}");
+    }
+
+    /// The transcript `s1` of the project `-data-clone` in `claude`, its
+    /// helpers `agent-a` and `agent-b`, and the transcript `s1` of the
+    /// project `-other`, in the order of the reads.
+    fn transcripts_with_helpers(claude: &Path) -> [PathBuf; 4] {
+        let project = claude.join(PROJECTS).join("-data-clone");
+        let helpers = project.join("s1").join(SUBAGENTS);
+        let paths = [
+            project.join("s1.jsonl"),
+            helpers.join("agent-a.jsonl"),
+            helpers.join("agent-b.jsonl"),
+            claude.join(PROJECTS).join("-other/s1.jsonl"),
+        ];
+        let replies = [
+            ("m1", "opus", 1),
+            ("h1", "haiku", 2),
+            ("h2", "haiku", 4),
+            ("m2", "opus", 8),
+        ];
+        for (path, (id, model, output)) in paths.iter().zip(replies) {
+            write(path, &[reply(NINE, id, model, output)]);
+        }
+        paths
+    }
+
+    /// 01M7FX6SWN3DGZMH5HS9BWEBY7: a count with room for the bytes of a
+    /// transcript and of its first helper. It counts both, and stops at
+    /// the second helper: the log names it, and the files after it count
+    /// no tokens.
+    #[test]
+    fn a_count_stops_where_its_bytes_run_out_and_the_log_names_it() {
+        let claude = tempfile::tempdir().unwrap();
+        let [main, a, b, other] = transcripts_with_helpers(claude.path());
+        let size = |path: &PathBuf| std::fs::metadata(path).unwrap().len();
+        let all = [main.clone(), other.clone()];
+        let budget = Limits {
+            bytes: size(&main) + size(&a),
+            entries: 100,
+            ..Limits::COUNT
+        };
+        let (replies, log) = logged(&all, budget);
+        let models = replies.sum(&[(0, u64::MAX)]);
+        assert_eq!((models["opus"].output, models["haiku"].output), (1, 2));
+        assert_eq!(
+            log,
+            [text::transcripts_stopped(
+                &b,
+                CountLimit::Bytes(budget.bytes)
+            )]
+        );
+
+        // With room for each byte but one, it stops at the next transcript.
+        let each: u64 = [&main, &a, &b, &other].into_iter().map(size).sum();
+        let budget = Limits {
+            bytes: each - 1,
+            entries: 100,
+            ..Limits::COUNT
+        };
+        let (replies, log) = logged(&all, budget);
+        let models = replies.sum(&[(0, u64::MAX)]);
+        assert_eq!((models["opus"].output, models["haiku"].output), (1, 6));
+        assert_eq!(
+            log,
+            [text::transcripts_stopped(
+                &other,
+                CountLimit::Bytes(budget.bytes)
+            )]
+        );
+
+        // With room for each byte, each file counts.
+        let budget = Limits {
+            bytes: each,
+            entries: 100,
+            ..Limits::COUNT
+        };
+        let (replies, log) = logged(&all, budget);
+        let models = replies.sum(&[(0, u64::MAX)]);
+        assert_eq!((models["opus"].output, models["haiku"].output), (9, 6));
+        assert!(log.is_empty(), "{log:?}");
+    }
+
+    /// 01M7FX6SWN3DGZMH5HS9BWEBY7: a count with room for 2 entries: a
+    /// transcript, and 1 entry of the folder of its 2 helpers. It counts
+    /// the transcript, and stops at the folder: the log names it. With
+    /// room for 3, it counts the helpers too, and stops at the next
+    /// transcript.
+    #[test]
+    fn a_count_stops_where_its_entries_run_out_and_the_log_names_it() {
+        let claude = tempfile::tempdir().unwrap();
+        let [main, a, _, other] = transcripts_with_helpers(claude.path());
+        let all = [main.clone(), other.clone()];
+        let budget = |entries| Limits {
+            bytes: MAX_COUNT_BYTES,
+            entries,
+            ..Limits::COUNT
+        };
+        let (replies, log) = logged(&all, budget(2));
+        let models = replies.sum(&[(0, u64::MAX)]);
+        assert_eq!(models["opus"].output, 1);
+        assert!(!models.contains_key("haiku"), "{models:?}");
+        let folder = a.parent().unwrap();
+        assert_eq!(
+            log,
+            [text::transcripts_stopped(folder, CountLimit::Entries(2))]
+        );
+
+        let (replies, log) = logged(&all, budget(3));
+        let models = replies.sum(&[(0, u64::MAX)]);
+        assert_eq!((models["opus"].output, models["haiku"].output), (1, 6));
+        assert_eq!(
+            log,
+            [text::transcripts_stopped(&other, CountLimit::Entries(3))]
+        );
+    }
+
+    /// 01M7FX6SWN3DGZMH5HS9BWEBY7: a session makes its folder of helpers
+    /// with no search for the host (mode 0444): riff cannot stat its 3
+    /// entries, and they count all the same. A count with room for the
+    /// transcript and the 3 entries stops at the next transcript. As root,
+    /// riff can stat them, and they count too.
+    #[test]
+    fn a_count_takes_each_entry_that_riff_cannot_stat() {
+        use std::os::unix::fs::PermissionsExt;
+        let claude = tempfile::tempdir().unwrap();
+        let [main, a, _, other] = transcripts_with_helpers(claude.path());
+        let helpers = a.parent().unwrap();
+        write(&helpers.join("agent-c.jsonl"), &[]);
+        let mode = |mode| std::fs::Permissions::from_mode(mode);
+        std::fs::set_permissions(helpers, mode(0o444)).unwrap();
+        let budget = Limits {
+            bytes: MAX_COUNT_BYTES,
+            entries: 1 + 3,
+            ..Limits::COUNT
+        };
+        let (replies, log) = logged(&[main, other.clone()], budget);
+        std::fs::set_permissions(helpers, mode(0o700)).unwrap();
+        assert_eq!(replies.sum(&[(0, u64::MAX)])["opus"].output, 1);
+        assert_eq!(
+            log,
+            [text::transcripts_stopped(
+                &other,
+                CountLimit::Entries(1 + 3)
+            )]
+        );
+    }
+
+    /// 01M7FX6SWN3DGZMH5HS9BWEBY7: a container session makes 5 sparse
+    /// helpers of [`MAX_TRANSCRIPT`] bytes each: no file is over its own
+    /// limit, and they cost no disk. One count reads 4 of them,
+    /// [`MAX_COUNT_BYTES`] in all, and stops at the fifth: the log names
+    /// it, and the next transcript counts no tokens.
+    #[test]
+    fn a_count_reads_at_most_its_bytes_in_all() {
+        assert_eq!(MAX_COUNT_BYTES, 4 * MAX_TRANSCRIPT);
+        let claude = tempfile::tempdir().unwrap();
+        let [main, a, b, other] = transcripts_with_helpers(claude.path());
+        std::fs::remove_file(&a).unwrap();
+        std::fs::remove_file(&b).unwrap();
+        let helpers = a.parent().unwrap();
+        for n in 0..5 {
+            let helper = std::fs::File::create(helpers.join(format!("agent-{n}.jsonl"))).unwrap();
+            helper.set_len(MAX_TRANSCRIPT).unwrap();
+        }
+        std::fs::write(&main, "").unwrap();
+        let (replies, log) = logged(&[main, other], Limits::COUNT);
+        assert!(replies.sum(&[(0, u64::MAX)]).is_empty());
+        assert_eq!(
+            log,
+            [text::transcripts_stopped(
+                &helpers.join("agent-4.jsonl"),
+                CountLimit::Bytes(MAX_COUNT_BYTES)
+            )]
+        );
+        // The fifth is over what is left: the count read none of it.
+        assert_eq!(replies.taken.bytes, MAX_COUNT_BYTES);
+    }
+
+    /// 01M7FX6SWN3DGZMH5HS9BWEBY7: a count with room for 10 bytes, and a
+    /// transcript of 100 bytes. Its size is over what is left, so the
+    /// count reads none of it, and stops there.
+    #[test]
+    fn a_count_reads_no_more_of_a_transcript_than_the_bytes_that_are_left() {
+        let claude = tempfile::tempdir().unwrap();
+        let [main, _, _, other] = transcripts_with_helpers(claude.path());
+        std::fs::write(&main, [b'x'; 100]).unwrap();
+        let limits = Limits {
+            bytes: 10,
+            ..Limits::COUNT
+        };
+        let (replies, log) = logged(&[main.clone(), other], limits);
+        assert_eq!(replies.taken.bytes, 0);
+        assert_eq!(
+            log,
+            [text::transcripts_stopped(&main, CountLimit::Bytes(10))]
+        );
+    }
+
+    /// 01M7FX6SWN3DGZMH5HS9BWEBY7: `/proc/self/status` has the size 0, and
+    /// more bytes when riff reads it, as a file that grows in the read.
+    /// With a limit of 10 bytes for one transcript, the count takes the
+    /// limit and one byte of it, skips it, and goes on: with room for
+    /// those 11 bytes and 5 more, it stops at the next transcript, of 6
+    /// bytes. With room for 10 bytes in all, it reads 11 bytes of the file
+    /// that grew, and stops there.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_count_takes_the_bytes_of_a_file_that_grew_in_the_read() {
+        let status = PathBuf::from("/proc/self/status");
+        let claude = tempfile::tempdir().unwrap();
+        let next = claude.path().join("next.jsonl");
+        std::fs::write(&next, "abcdef").unwrap();
+        let limits = Limits {
+            transcript: 10,
+            bytes: 11 + 5,
+            ..Limits::COUNT
+        };
+        let (replies, log) = logged(&[status.clone(), next.clone()], limits);
+        assert_eq!(replies.taken.bytes, 11);
+        let grew = text::transcript_skipped(&text::host_file_too_large(&status, 10));
+        assert_eq!(log.first(), Some(&grew), "{log:?}");
+        let stopped = text::transcripts_stopped(&next, CountLimit::Bytes(11 + 5));
+        assert_eq!(log.last(), Some(&stopped), "{log:?}");
+
+        let limits = Limits {
+            bytes: 10,
+            ..Limits::COUNT
+        };
+        let (replies, log) = logged(&[status.clone(), next], limits);
+        assert_eq!(replies.taken.bytes, 11);
+        assert_eq!(
+            log,
+            [text::transcripts_stopped(&status, CountLimit::Bytes(10))]
+        );
+    }
+
+    /// 01M7GF9G7ZNJD2SXZZ62XKJYBG: a count that keeps at most 2 replies.
+    /// The first transcript has 2, one of them on 2 lines, and counts. The
+    /// second has a reply of the first and a new one: the count stops
+    /// there, counts no tokens of it or of the files after it, and the log
+    /// names it. With room for 3 replies, each one counts: a reply of an
+    /// earlier transcript is no new reply.
+    #[test]
+    fn a_count_keeps_at_most_its_replies_and_stops_at_the_file_with_more() {
+        let dir = tempfile::tempdir().unwrap();
+        let [one, two, three] =
+            ["one", "two", "three"].map(|name| dir.path().join(format!("{name}.jsonl")));
+        let m = |id, output| reply(NINE, id, "opus", output);
+        write(&one, &[m("m1", 1), m("m1", 2), m("m2", 4)]);
+        write(&two, &[m("m1", 8), m("m3", 16)]);
+        write(&three, &[m("m1", 32)]);
+        let all = [one, two.clone(), three];
+        let limits = Limits {
+            replies: 2,
+            ..Limits::COUNT
+        };
+        let (replies, log) = logged(&all, limits);
+        assert_eq!(replies.sum(&[(0, u64::MAX)])["opus"].output, 2 + 4);
+        assert_eq!(
+            log,
+            [text::transcripts_stopped(&two, CountLimit::Replies(2))]
+        );
+
+        let limits = Limits {
+            replies: 3,
+            ..Limits::COUNT
+        };
+        let (replies, log) = logged(&all, limits);
+        assert_eq!(replies.sum(&[(0, u64::MAX)])["opus"].output, 32 + 4 + 16);
+        assert!(log.is_empty(), "{log:?}");
+        assert_eq!(MAX_COUNT_REPLIES, 1_000_000);
+    }
+
+    /// 01M7GF9G7ZNJD2SXZZ62XKJYBG: the name of a model is the name of a
+    /// report: `a/b` counts as `a-b`, and a name of 300 characters as its
+    /// first 100. A count that keeps at most 1 model stops at the
+    /// transcript with a second model.
+    #[test]
+    fn a_count_keeps_at_most_its_models_with_the_names_of_a_report() {
+        let dir = tempfile::tempdir().unwrap();
+        let [one, two] = ["one", "two"].map(|name| dir.path().join(format!("{name}.jsonl")));
+        let long = "m".repeat(300);
+        write(
+            &one,
+            &[reply(NINE, "m1", "a/b", 1), reply(NINE, "m2", "a-b", 2)],
+        );
+        write(&two, &[reply(NINE, "m3", &long, 4)]);
+        let all = [one, two.clone()];
+        let limits = Limits {
+            models: 1,
+            ..Limits::COUNT
+        };
+        let (replies, log) = logged(&all, limits);
+        let a_b = Tokens {
+            input: 2,
+            output: 3,
+            ..Tokens::default()
+        };
+        assert_eq!(
+            replies.sum(&[(0, u64::MAX)]),
+            Models::from([("a-b".to_owned(), a_b)])
+        );
+        assert_eq!(
+            log,
+            [text::transcripts_stopped(&two, CountLimit::Models(1))]
+        );
+
+        let (replies, log) = logged(&all, Limits::COUNT);
+        let models = replies.sum(&[(0, u64::MAX)]);
+        assert_eq!(models["m".repeat(NAME_CHARS).as_str()].output, 4);
+        assert!(log.is_empty(), "{log:?}");
+        assert_eq!(MAX_COUNT_MODELS, 32);
+    }
+
+    /// 01M7GF9G7ZNJD2SXZZ62XKJYBG: a reply that a count keeps has a fixed
+    /// size: the hash of its id, its time, the index of its model and its
+    /// tokens. A reply with an id of 1 MiB on 2 lines is one reply.
+    #[test]
+    fn a_reply_keeps_a_fixed_size() {
+        assert_eq!(std::mem::size_of::<(u64, Kept)>(), 56);
+        let id = "i".repeat(1 << 20);
+        let mut replies = Replies::default();
+        let lines = [reply(NINE, &id, "opus", 1), reply(NINE, &id, "opus", 2)];
+        replies.add(&lines.join("\n")).unwrap();
+        assert_eq!(replies.replies.len(), 1);
+        assert_eq!(replies.sum(&[(0, u64::MAX)])["opus"].output, 2);
+    }
+
+    /// 01M7GF9G7ZNJD2SXZZ62XKJYBG: a count holds the lock of the counts
+    /// in each read: in the read of a transcript that is no text, the log
+    /// of the count finds the lock taken. So a count waits for the end of
+    /// the read before it.
+    #[test]
+    fn one_count_reads_at_a_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("s1.jsonl");
+        std::fs::write(&main, [0xff]).unwrap();
+        let mut held = Vec::new();
+        Replies::read_within(&[main], Limits::COUNT, &mut |_| {
+            held.push(ONE_COUNT.try_lock().is_err());
+        });
+        assert_eq!(held, [true]);
+    }
+
+    /// 01M7FX6SWN3DGZMH5HS9BWEBY7: a count with room for 2 entries, and a
+    /// transcript with 10 helpers. The list of the helpers reads at most
+    /// the entry that is left and one more: the count reads one entry past
+    /// its limit, not the 10 helpers.
+    #[test]
+    fn a_count_lists_no_more_entries_than_are_left() {
+        let claude = tempfile::tempdir().unwrap();
+        let [main, a, _, _] = transcripts_with_helpers(claude.path());
+        let helpers = a.parent().unwrap();
+        for n in 0..8 {
+            write(&helpers.join(format!("agent-x{n}.jsonl")), &[]);
+        }
+        let budget = Limits {
+            entries: 2,
+            ..Limits::COUNT
+        };
+        let (replies, log) = logged(&[main], budget);
+        assert_eq!(
+            log,
+            [text::transcripts_stopped(helpers, CountLimit::Entries(2))]
+        );
+        assert_eq!(replies.taken.entries, 2 + 1);
+    }
+
+    /// 01M7GF9G7ZNJD2SXZZ62XKJYBG: the name of a model from its JSON: the
+    /// escapes of JSON, a pair of UTF-16 as one character, and at most the
+    /// first 100 characters. A value that is no string gives no name. A
+    /// name that `serde_json` writes reads as the name of a report.
+    #[test]
+    fn the_name_of_a_model_reads_only_its_first_characters() {
+        assert_eq!(model_name(r#""opus/5""#).as_deref(), Some("opus-5"));
+        assert_eq!(model_name(r#""op\/us\n\"\\""#).as_deref(), Some("op-us---"));
+        assert_eq!(model_name(r#""a😀b""#).as_deref(), Some("a-b"));
+        assert_eq!(model_name(r#""a\ud83db""#).as_deref(), Some("a-b"));
+        assert_eq!(model_name(r#""""#).as_deref(), Some("-"));
+        let long = format!("\"{}\"", r"m".repeat(300));
+        assert_eq!(model_name(&long), Some("m".repeat(NAME_CHARS)));
+        for json in ["5", "null", "{}", "[\"opus\"]"] {
+            assert_eq!(model_name(json), None, "{json}");
+        }
+        for text in [
+            "claude-opus-5-5",
+            "a\u{1}b\tc",
+            "😀x",
+            "é",
+            &"z".repeat(150),
+        ] {
+            let json = serde_json::to_string(text).unwrap();
+            assert_eq!(model_name(&json), Some(name(text, NAME_CHARS)), "{text}");
+        }
+    }
+
+    /// 01M7GF9G7ZNJD2SXZZ62XKJYBG: a reply with no id is its time and its
+    /// model: two lines with the same time and model are one reply, and a
+    /// line with another model is another reply. A time or a model that is
+    /// no string makes the line no reply.
+    #[test]
+    fn a_reply_with_no_id_is_its_time_and_its_model() {
+        let line = |at: &str, model: &str, output: u64| {
+            format!(
+                r#"{{"timestamp":{at},"message":{{"model":{model},"usage":{{"output_tokens":{output}}}}}}}"#
+            )
+        };
+        let at = r#""2026-10-02T09:00:00Z""#;
+        let lines = [
+            line(at, r#""opus""#, 1),
+            line(at, r#""opus""#, 2),
+            line(at, r#""haiku""#, 4),
+            line("5", r#""opus""#, 8),
+            line(at, "5", 16),
+        ];
+        let mut replies = Replies::default();
+        replies.add(&lines.join("\n")).unwrap();
+        let models = replies.sum(&[(0, u64::MAX)]);
+        assert_eq!((models["opus"].output, models["haiku"].output), (2, 4));
+        assert_eq!(models.len(), 2);
+    }
+
+    /// 01M7FX6SZ88S06N1AT6WJHKNMX: a container session names a folder of
+    /// a project with a line break and a forged line of the daemon. The
+    /// log names its transcript over the limit on one line.
+    #[test]
+    fn a_name_with_a_line_break_makes_one_line_of_the_log() {
+        let claude = tempfile::tempdir().unwrap();
+        let forged = "x\nriff daemon: lead-acme-app: forged line";
+        let main = claude.path().join(PROJECTS).join(forged).join("s1.jsonl");
+        write(&main, &[]);
+        std::fs::File::options()
+            .write(true)
+            .open(&main)
+            .unwrap()
+            .set_len(MAX_TRANSCRIPT + 1)
+            .unwrap();
+        let (_, log) = logged(std::slice::from_ref(&main), Limits::COUNT);
+        let [line] = &log[..] else { panic!("{log:?}") };
+        assert_eq!(line.lines().count(), 1, "{line}");
+        assert!(
+            line.contains(r"/x\nriff daemon: lead-acme-app: forged line/s1.jsonl is larger"),
+            "{line}"
+        );
+    }
+
+    /// The end of a container session records each of its transcripts
+    /// one time, in one write of the marks: a session can have one
+    /// transcript in each of [`MAX_ENTRIES`] folders of projects. The end
+    /// writes the marks 3 times: the transcripts, the start of the claim
+    /// and its end.
+    #[test]
+    fn the_end_of_a_session_records_each_transcript_one_time() {
+        let marks = tempfile::tempdir().unwrap();
+        let [one, two, three] =
+            ["one", "two", "three"].map(|name| marks.path().join(format!("{name}.jsonl")));
+        write(&one, &[reply(NINE + 1, "m1", "opus", 1)]);
+        write(&two, &[reply(NINE + 2, "m2", "opus", 2)]);
+        write(&three, &[reply(NINE + 3, "m3", "opus", 4)]);
+        saw(marks.path(), "a6cf", std::slice::from_ref(&one)).unwrap();
+        let meter = Meter {
+            dir: marks.path().to_owned(),
+            gh: Gh::at(marks.path().join("no-gh")),
+        };
+        let transcripts = [two.clone(), one.clone(), three.clone(), two.clone()];
+        let before = WRITES.with(std::cell::Cell::get);
+        let claim = meter
+            .session_ended(
+                "a6cf",
+                ("acme/app", "issue-7"),
+                NINE,
+                &transcripts,
+                NINE + HOUR,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(WRITES.with(std::cell::Cell::get) - before, 3);
+        assert_eq!(total(&claim.models).output, 7);
+        assert_eq!(load(marks.path(), "a6cf").transcripts, [one, two, three]);
     }
 
     #[test]
@@ -1986,10 +3064,10 @@ mod tests {
         );
         write(&one, &[reply(NINE + 1, "m1", "opus", 1)]);
         write(&two, &[reply(NINE + 2, "m2", "haiku", 2)]);
-        saw(marks.path(), "a6cf", &one).unwrap();
+        saw(marks.path(), "a6cf", std::slice::from_ref(&one)).unwrap();
         started(marks.path(), "a6cf", "acme/app", "issue-7", NINE).unwrap();
         // `/clear` starts a new transcript.
-        saw(marks.path(), "a6cf", &two).unwrap();
+        saw(marks.path(), "a6cf", std::slice::from_ref(&two)).unwrap();
         let claim = ended(marks.path(), "a6cf", "acme/app", "issue-7", NINE + HOUR)
             .unwrap()
             .unwrap();
@@ -2022,7 +3100,7 @@ mod tests {
             ],
         );
         let dir = marks.path();
-        saw(dir, "a6cf", &transcript).unwrap();
+        saw(dir, "a6cf", std::slice::from_ref(&transcript)).unwrap();
         started(dir, "a6cf", "acme/app", "issue-7", NINE).unwrap();
         started(dir, "a6cf", "acme/app", "verify-issue-9", NINE + HOUR).unwrap();
         let verify = ended(dir, "a6cf", "acme/app", "verify-issue-9", NINE + 2 * HOUR)
@@ -2064,7 +3142,7 @@ mod tests {
             ],
         );
         let dir = marks.path();
-        saw(dir, "a6cf", &transcript).unwrap();
+        saw(dir, "a6cf", std::slice::from_ref(&transcript)).unwrap();
         started(dir, "a6cf", "acme/app", "issue-7", NINE).unwrap();
         ended(dir, "a6cf", "acme/app", "issue-7", NINE + HOUR).unwrap();
         let no_issue = load(dir, "a6cf").no_issue(NINE + 2 * HOUR);
@@ -2084,7 +3162,7 @@ mod tests {
         let transcript = marks.path().join("t.jsonl");
         write(&transcript, &[reply(NINE + 1, "work", "opus", 70)]);
         let dir = marks.path();
-        saw(dir, "a6cf", &transcript).unwrap();
+        saw(dir, "a6cf", std::slice::from_ref(&transcript)).unwrap();
         started(dir, "a6cf", "acme/app", "issue-7", NINE).unwrap();
         let before = load(dir, "a6cf");
         let claim = so_far(dir, "a6cf", "issue-7", NINE + HOUR).unwrap();

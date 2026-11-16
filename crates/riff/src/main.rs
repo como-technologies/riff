@@ -1997,6 +1997,19 @@ enum LeadCommand {
         #[arg(long)]
         history: bool,
     },
+    /// Move the entries that the lead made out of projects
+    ///
+    /// The Claude folder of the lead keeps the conversations of the lead
+    /// in one entry of its folder projects, which claude names from the
+    /// path of the clone of the lead. riff moves each other entry into a
+    /// new folder projects-left/TIME in the folder of the lead on this
+    /// host, and names it. No session writes there. riff follows no link:
+    /// a link moves as a link, and a link at projects stops the command
+    /// before it moves an entry. riff reads at most 10000 entries of
+    /// projects at each run: when projects has more, run the command
+    /// again. Run it on the host of the lead, when the log of the riff
+    /// daemon says that riff sees no turn of the lead.
+    Clean,
 }
 
 #[derive(Subcommand)]
@@ -2582,6 +2595,12 @@ async fn cli() -> Result<()> {
     {
         return lead_restart_command(&here, &reach, api.base()).await;
     }
+    if let Command::Lead {
+        command: LeadCommand::Clean,
+    } = &command
+    {
+        lead_clean_command(&here);
+    }
     if let Command::Host { command } = &command {
         return match command {
             HostCommand::Join { host, no_lead } => {
@@ -2969,6 +2988,9 @@ fn needs_the_host(command: &Command) -> Option<&'static str> {
         Command::Lead {
             command: LeadCommand::Notes { .. },
         } => "riff lead notes",
+        Command::Lead {
+            command: LeadCommand::Clean,
+        } => "riff lead clean",
         Command::Questions {
             answered: Some(_), ..
         } => "riff questions --answered",
@@ -4621,6 +4643,29 @@ async fn join_command(
     }
 }
 
+/// `riff lead clean` for the repository of `here`
+/// (01M7GF9QGV86BENYWT1TDJPM64): it prints the line of
+/// [`riff::lead::clean_projects`], or its error, and exits with 1 on an
+/// error.
+fn lead_clean_command(here: &Place) -> ! {
+    let cleaned = match here.default_thread() {
+        Some(_) => riff::run::data_dir().and_then(|data| {
+            riff::lead::clean_projects(&data, &here.repo_text(), riff::usage::now_ms())
+        }),
+        None => Err(anyhow::anyhow!("{}", text::LEAD_CLEAN_NO_REPO)),
+    };
+    match cleaned {
+        Ok(line) => {
+            println!("{line}");
+            std::process::exit(0)
+        }
+        Err(e) => {
+            eprintln!("{e:#}");
+            std::process::exit(1)
+        }
+    }
+}
+
 /// `riff lead restart` (#1793, 01M77Y6ZEQ4A6C6E0XZ56WRE89): riff finds the
 /// lead of the project, the lead writes its notes, and the daemon of its
 /// host ends its container. Then a host that joined the project starts a
@@ -5071,6 +5116,32 @@ mod tests {
             let of_its_own = own.iter().any(|own| row.args.starts_with(own));
             let wanted = row.way == Way::Host && !of_its_own;
             assert_eq!(refuses, wanted, "riff {}", row.args.join(" "));
+        }
+    }
+
+    /// 01M74A8CXVRD352VRJ9FH54HJ1: the list of the book of the commands
+    /// that refuse in a container before each call names each command of
+    /// [`super::needs_the_host`].
+    #[test]
+    fn the_book_names_each_command_that_needs_the_host() {
+        use clap::Parser;
+        let book = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/src/how-it-works.md"
+        ))
+        .unwrap();
+        let book = book.split_whitespace().collect::<Vec<_>>().join(" ");
+        let start = book
+            .find("refuse in the container before each call:")
+            .expect("the list of the book");
+        let list = &book[start..];
+        let list = &list[..list.find("Run them in a terminal on the host").unwrap()];
+        for row in riff::reach::COMMANDS {
+            let words = std::iter::once("riff").chain(row.args.iter().copied());
+            let command = Cli::try_parse_from(words).unwrap().command.unwrap();
+            if let Some(words) = super::needs_the_host(&command) {
+                assert!(list.contains(&format!("`{words}`")), "{words}: {list}");
+            }
         }
     }
 

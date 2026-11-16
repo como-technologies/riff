@@ -227,6 +227,7 @@ use riff_core::name::{Place, SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::{HoldInfo, Kind, StartReason, WORKER_ALIVE_EVERY};
 use serde::Deserialize;
+use serde_json::value::RawValue;
 use serde_json::{Value, json};
 use tokio::signal::unix::{SignalKind, signal};
 
@@ -833,6 +834,16 @@ pub const CLAUDE_JSON: &str = ".claude.json";
 /// The name of the settings in the Claude folder of a session.
 pub const SETTINGS_JSON: &str = "settings.json";
 
+/// The most bytes that riff reads and writes of [`CLAUDE_JSON`] in the
+/// Claude folder of a session (01M7FNTSHXPQXXKZF761V0NN9Z).
+pub const MAX_CONFIG: u64 = 16 << 20;
+
+/// The most bytes that riff reads and writes of [`SETTINGS_JSON`] in the
+/// Claude folder of a session (01M7FNTSHXPQXXKZF761V0NN9Z). riff parses
+/// the settings into a tree of JSON, which takes far more memory than
+/// their text, so their limit is lower.
+pub const MAX_SETTINGS: u64 = 1 << 20;
+
 /// Writes the own Claude folder `dir` of a session: the lead, a session
 /// of `riff run` and a session of the daemon (01M51JACH6TQP318ZFG6NQ9GRM).
 ///
@@ -855,7 +866,14 @@ pub const SETTINGS_JSON: &str = "settings.json";
 ///
 /// The session writes `dir`, so each read and write there goes through
 /// [`crate::host_file`]: a link there gives an error that names it, and
-/// the host reads and writes no file of the person through it.
+/// the host reads and writes no file of the person through it. It reads
+/// both files, and makes both new texts, before it writes one
+/// (01M7FNTSHXPQXXKZF761V0NN9Z). A `.claude.json` over [`MAX_CONFIG`] or
+/// a `settings.json` over [`MAX_SETTINGS`] gives an error that names it,
+/// and riff reads no more of it. A new text over that limit gives an
+/// error that names its file too. Then riff writes no file. riff
+/// parses no value of `.claude.json` that it does not change, so its
+/// parse holds the text one time.
 ///
 /// ```
 /// use riff::permissions::{Role, Trust};
@@ -901,6 +919,26 @@ pub const SETTINGS_JSON: &str = "settings.json";
 ///     .unwrap_err();
 /// assert_eq!(format!("{error:#}"), riff::text::host_file_link(&claude.join("settings.json")));
 /// assert_eq!(std::fs::read_to_string(&person)?, r#"{"theme":"dark"}"#);
+///
+/// // A sparse `.claude.json` of 64 GiB: riff reads none of it, and
+/// // gives an error that names it.
+/// let config = claude.join(".claude.json");
+/// std::fs::File::create(&config)?.set_len(64 << 30)?;
+/// let error = riff::run::claude_folder(&claude, "/data/clone".as_ref(), &person, &auto, Role::Worker)
+///     .unwrap_err();
+/// assert_eq!(format!("{error:#}"), riff::text::config_too_large(&config, riff::run::MAX_CONFIG));
+/// assert_eq!(std::fs::metadata(&config)?.len(), 64 << 30);
+///
+/// // A sparse `settings.json` of 64 GiB: riff writes no `.claude.json`
+/// // either.
+/// let settings = claude.join("settings.json");
+/// std::fs::remove_file(&config)?;
+/// std::fs::remove_file(&settings)?;
+/// std::fs::File::create(&settings)?.set_len(64 << 30)?;
+/// let error = riff::run::claude_folder(&claude, "/data/clone".as_ref(), &person, &auto, Role::Worker)
+///     .unwrap_err();
+/// assert_eq!(format!("{error:#}"), riff::text::config_too_large(&settings, riff::run::MAX_SETTINGS));
+/// assert!(!config.exists());
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn claude_folder(
@@ -911,49 +949,214 @@ pub fn claude_folder(
     role: crate::permissions::Role,
 ) -> Result<()> {
     std::fs::create_dir_all(dir).with_context(|| format!("cannot make {}", dir.display()))?;
-    let config = Path::new(CLAUDE_JSON);
-    let mut root = match crate::host_file::read(dir, config)?
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-    {
-        Some(Value::Object(map)) => map,
-        _ => serde_json::Map::new(),
-    };
-    root.entry("hasCompletedOnboarding").or_insert(json!(true));
+    let (config, name) = (Path::new(CLAUDE_JSON), Path::new(SETTINGS_JSON));
+    // Both reads come before each write: an error writes no file.
+    let old_config = read_config(dir, config, MAX_CONFIG)?;
+    let old_settings = read_config(dir, name, MAX_SETTINGS)?
+        .map(|bytes| crate::host_file::text_of(dir, name, bytes))
+        .transpose()?;
     // The config of the person is out of each folder of a session.
-    let theme = std::fs::read(person)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-        .and_then(|p| p.get("theme").cloned())
-        .unwrap_or_else(|| json!("auto"));
-    root.entry("theme").or_insert(theme);
-    let projects = root
-        .entry("projects")
-        .or_insert_with(|| json!({}))
-        .as_object_mut()
-        .context("`projects` in the Claude config is not an object")?;
-    let project = projects
-        .entry(clone.to_string_lossy().into_owned())
-        .or_insert_with(|| json!({}));
-    if let Some(project) = project.as_object_mut() {
-        project
-            .entry("hasTrustDialogAccepted")
-            .or_insert(json!(true));
-    }
-    crate::host_file::write(
-        dir,
-        config,
-        &serde_json::to_vec_pretty(&Value::Object(root))?,
-    )?;
-    let name = Path::new(SETTINGS_JSON);
-    let new = match crate::host_file::read_to_string(dir, name)? {
+    let theme = || {
+        std::fs::read(person)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+            .and_then(|p| p.get("theme").cloned())
+            .unwrap_or_else(|| json!("auto"))
+    };
+    let old_config = old_config.and_then(|bytes| String::from_utf8(bytes).ok());
+    let new_config = with_config(old_config.as_deref(), &clone.to_string_lossy(), theme)?;
+    drop(old_config);
+    let new_settings = match old_settings {
         Some(text) => session_settings(&text, auto, role)
             .with_context(|| dir.join(name).display().to_string())?,
         None => Some(serde_json::to_string_pretty(&settings(auto, role))?),
     };
-    if let Some(new) = new {
+    fits(dir, config, new_config.len(), MAX_CONFIG)?;
+    if let Some(new) = &new_settings {
+        fits(dir, name, new.len(), MAX_SETTINGS)?;
+    }
+    crate::host_file::write(dir, config, &new_config)?;
+    if let Some(new) = new_settings {
         crate::host_file::write(dir, name, new.as_bytes())?;
     }
     Ok(())
+}
+
+/// The bytes of the file `NAME` of the Claude folder `dir`
+/// ([`crate::host_file::read`]), at most `most`. A larger file gives the
+/// error of [`text::config_too_large`]: the start stops, and the person
+/// removes it.
+fn read_config(dir: &Path, name: &Path, most: u64) -> Result<Option<Vec<u8>>> {
+    crate::host_file::read(dir, name, most).map_err(|e| {
+        match e.downcast::<crate::host_file::TooLarge>() {
+            Ok(large) => anyhow!("{}", text::config_too_large(&large.path, large.most)),
+            Err(e) => e,
+        }
+    })
+}
+
+/// An error when the new text of `len` bytes of the file `NAME` of the
+/// Claude folder `dir` is over `most`, the limit of its read
+/// ([`text::config_grows_too_large`]): riff writes no file that it
+/// cannot read again (01M7FNTSHXPQXXKZF761V0NN9Z).
+fn fits(dir: &Path, name: &Path, len: usize, most: u64) -> Result<()> {
+    if u64::try_from(len).map_or(true, |len| len > most) {
+        bail!("{}", text::config_grows_too_large(&dir.join(name), most));
+    }
+    Ok(())
+}
+
+/// The `.claude.json` text `old` of an earlier start with what
+/// [`claude_folder`] adds: `hasCompletedOnboarding`, the theme of
+/// `theme`, and the trust of the clone `clone` in `projects`, each one
+/// only when it is missing. Each other value stays as its text in `old`,
+/// with no parse of it, and in its place. So the memory holds the text
+/// of `old` and the new text, and the new text has about the bytes of
+/// `old` (01M7FNTSHXPQXXKZF761V0NN9Z). A text that is no JSON object, or
+/// no text, gives a new config. A `projects` that is no JSON object is
+/// an error.
+fn with_config(old: Option<&str>, clone: &str, theme: impl FnOnce() -> Value) -> Result<Vec<u8>> {
+    let old = old
+        .and_then(|old| serde_json::from_str::<&RawValue>(old).ok())
+        .filter(|old| old.get().starts_with('{'));
+    let mut out = Vec::new();
+    let mut root = Object::open(&mut out);
+    let (mut onboarding, mut themed, mut projects) = (false, false, false);
+    if let Some(old) = old {
+        each_entry(old, |key, value| {
+            match key {
+                "hasCompletedOnboarding" => onboarding = true,
+                "theme" => themed = true,
+                "projects" => {
+                    projects = true;
+                    root.key(key);
+                    return with_trust(Some(value), clone, root.out);
+                }
+                _ => {}
+            }
+            root.entry(key, value.get());
+            Ok(())
+        })?;
+    }
+    if !onboarding {
+        root.entry("hasCompletedOnboarding", "true");
+    }
+    if !themed {
+        root.entry("theme", &theme().to_string());
+    }
+    if !projects {
+        root.key("projects");
+        with_trust(None, clone, root.out)?;
+    }
+    root.close();
+    Ok(out)
+}
+
+/// Writes the `projects` of a Claude config into `out`, with the trust of
+/// the clone `clone`: `hasTrustDialogAccepted` in its project when the
+/// project is an object that lacks it, or a new project. `None` is a
+/// config with no `projects`. Each other value stays as its text.
+fn with_trust(projects: Option<&RawValue>, clone: &str, out: &mut Vec<u8>) -> Result<()> {
+    if projects.is_some_and(|projects| !projects.get().starts_with('{')) {
+        bail!("`projects` in the Claude config is not an object");
+    }
+    let mut object = Object::open(out);
+    let mut found = false;
+    if let Some(projects) = projects {
+        each_entry(projects, |key, project| {
+            if key != clone {
+                object.entry(key, project.get());
+            } else if !project.get().starts_with('{') {
+                found = true;
+                object.entry(key, project.get());
+            } else {
+                found = true;
+                object.key(key);
+                let mut project_object = Object::open(object.out);
+                let mut trusted = false;
+                each_entry(project, |key, value| {
+                    trusted |= key == "hasTrustDialogAccepted";
+                    project_object.entry(key, value.get());
+                    Ok(())
+                })?;
+                if !trusted {
+                    project_object.entry("hasTrustDialogAccepted", "true");
+                }
+                project_object.close();
+            }
+            Ok(())
+        })?;
+    }
+    if !found {
+        object.entry(clone, r#"{"hasTrustDialogAccepted":true}"#);
+    }
+    object.close();
+    Ok(())
+}
+
+/// Calls `each` with each key of the JSON object `object` and the JSON
+/// text of its value, in the order of `object`, with no parse of a value.
+fn each_entry<'a>(
+    object: &'a RawValue,
+    each: impl FnMut(&str, &'a RawValue) -> Result<()>,
+) -> Result<()> {
+    struct Entries<F>(F);
+    impl<'de, F: FnMut(&str, &'de RawValue) -> Result<()>> serde::de::Visitor<'de> for Entries<F> {
+        type Value = Result<()>;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a JSON object")
+        }
+        fn visit_map<A: serde::de::MapAccess<'de>>(
+            mut self,
+            mut map: A,
+        ) -> std::result::Result<Result<()>, A::Error> {
+            while let Some(key) = map.next_key::<String>()? {
+                let value: &'de RawValue = map.next_value()?;
+                if let Err(e) = (self.0)(&key, value) {
+                    return Ok(Err(e));
+                }
+            }
+            Ok(Ok(()))
+        }
+    }
+    let mut parts = serde_json::Deserializer::from_str(object.get());
+    serde::Deserializer::deserialize_map(&mut parts, Entries(each))
+        .context("the Claude config is no JSON object")?
+}
+
+/// A JSON object that riff writes into `out` one entry at a time, with
+/// no space.
+struct Object<'o> {
+    out: &'o mut Vec<u8>,
+    empty: bool,
+}
+
+impl<'o> Object<'o> {
+    /// The start of the object.
+    fn open(out: &'o mut Vec<u8>) -> Object<'o> {
+        out.push(b'{');
+        Object { out, empty: true }
+    }
+
+    /// The key `key` and its `:`: its value comes next in `out`.
+    fn key(&mut self, key: &str) {
+        if !std::mem::replace(&mut self.empty, false) {
+            self.out.push(b',');
+        }
+        serde_json::to_writer(&mut *self.out, key).expect("a JSON string writes to memory");
+        self.out.push(b':');
+    }
+
+    /// The key `key` with the JSON text `value`.
+    fn entry(&mut self, key: &str, value: &str) {
+        self.key(key);
+        self.out.extend_from_slice(value.as_bytes());
+    }
+
+    /// The end of the object.
+    fn close(self) {
+        self.out.push(b'}');
+    }
 }
 
 /// The settings text `text` of an earlier start with what
@@ -3379,5 +3582,167 @@ mod tests {
                 .all(|c| c.ends_with(" || true")),
             "{settings}"
         );
+    }
+
+    /// The `.claude.json` of [`with_config`] for the text `old` and the
+    /// clone `/c`, as text. The theme of the person is `auto`.
+    fn config_of(old: &str) -> String {
+        String::from_utf8(with_config(Some(old), "/c", || json!("auto")).unwrap()).unwrap()
+    }
+
+    /// 01M7FNTSHXPQXXKZF761V0NN9Z, 01M501P9SDGVWG3MTVCW5BDRQQ: the new
+    /// `.claude.json` keeps each value as its text, in its place, and adds
+    /// each answer of riff that is missing at the end. A key with an
+    /// escape keeps it. The theme of the person is read only when the
+    /// config has none.
+    #[test]
+    fn the_config_keeps_each_value_as_its_text_and_adds_the_answers() {
+        assert_eq!(
+            config_of(r#" {"a": [1, 2], "theme":"dark", "q\"é": {"x" : null}} "#),
+            concat!(
+                r#"{"a":[1, 2],"theme":"dark","q\"é":{"x" : null},"#,
+                r#""hasCompletedOnboarding":true,"#,
+                r#""projects":{"/c":{"hasTrustDialogAccepted":true}}}"#
+            )
+        );
+        let old = r#"{"hasCompletedOnboarding":false,"theme":"light","projects":{}}"#;
+        let new = with_config(Some(old), "/c", || panic!("the theme is there")).unwrap();
+        assert_eq!(
+            String::from_utf8(new).unwrap(),
+            r#"{"hasCompletedOnboarding":false,"theme":"light","projects":{"/c":{"hasTrustDialogAccepted":true}}}"#
+        );
+    }
+
+    /// 01M7FNTSHXPQXXKZF761V0NN9Z, 01M4Z60B874MBWZWDP8YDEM3HR: in
+    /// `projects`, the project of the clone gets the trust when it lacks
+    /// it, and keeps each other key. An answer of the person stays, and so
+    /// does each other project, and a project of the clone that is no
+    /// object.
+    #[test]
+    fn the_config_trusts_the_clone_and_keeps_each_other_project() {
+        let config = config_of(
+            r#"{"hasCompletedOnboarding":true,"theme":"auto","projects":{"/x":{"k":1},"/c":{"allowedTools":[]}}}"#,
+        );
+        assert!(
+            config.ends_with(
+                r#""projects":{"/x":{"k":1},"/c":{"allowedTools":[],"hasTrustDialogAccepted":true}}}"#
+            ),
+            "{config}"
+        );
+        let config = config_of(r#"{"projects":{"/c":{"hasTrustDialogAccepted":false}}}"#);
+        assert!(
+            config.starts_with(r#"{"projects":{"/c":{"hasTrustDialogAccepted":false}},"#),
+            "{config}"
+        );
+        let config = config_of(r#"{"projects":{"/c":7}}"#);
+        assert!(config.starts_with(r#"{"projects":{"/c":7},"#), "{config}");
+        for old in [
+            r#"{"projects":{"/c":{}}}"#,
+            r#"{"projects":{"/c":{"a":1}},"theme":"dark"}"#,
+        ] {
+            let config: Value = serde_json::from_str(&config_of(old)).unwrap();
+            assert_eq!(
+                config["projects"]["/c"]["hasTrustDialogAccepted"], true,
+                "{old}"
+            );
+        }
+    }
+
+    /// 01M501P9SDGVWG3MTVCW5BDRQQ: a `.claude.json` that is no JSON
+    /// object, or no text, gives a new config. A `projects` that is no
+    /// object is an error.
+    #[test]
+    fn a_config_that_is_no_object_gives_a_new_config() {
+        let new = config_of("{}");
+        for old in ["", "{", "[1]", "7", r#"{"a":1} x"#] {
+            assert_eq!(config_of(old), new, "{old}");
+        }
+        let none = with_config(None, "/c", || json!("auto")).unwrap();
+        assert_eq!(String::from_utf8(none).unwrap(), new);
+        let error = with_config(Some(r#"{"projects":[]}"#), "/c", || json!("auto")).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "`projects` in the Claude config is not an object"
+        );
+    }
+
+    /// 01M7FNTSHXPQXXKZF761V0NN9Z: a `.claude.json` of the limit, with no
+    /// answer of riff: its new text is over the limit, so the start gives
+    /// the error that names it, and writes no file. A `settings.json` of
+    /// the limit with no rule of riff does the same.
+    #[test]
+    fn a_new_config_over_the_limit_stops_the_start_before_each_write() {
+        let root = tempfile::tempdir().unwrap();
+        let claude = root.path().join("claude");
+        std::fs::create_dir(&claude).unwrap();
+        let auto = crate::permissions::Trust {
+            owner: Some("acme"),
+            server: Some("http://h:7878"),
+            sources: &[],
+        };
+        let start = || {
+            claude_folder(
+                &claude,
+                Path::new("/data/clone"),
+                &root.path().join("none"),
+                &auto,
+                crate::permissions::Role::Worker,
+            )
+        };
+        let (config, settings) = (claude.join(CLAUDE_JSON), claude.join(SETTINGS_JSON));
+        let full = |most: u64| {
+            let pad = usize::try_from(most).unwrap() - r#"{"a":""}"#.len();
+            format!(r#"{{"a":"{}"}}"#, "x".repeat(pad))
+        };
+        for (file, most, other) in [
+            (&config, MAX_CONFIG, &settings),
+            (&settings, MAX_SETTINGS, &config),
+        ] {
+            let _ = std::fs::remove_file(other);
+            std::fs::write(file, full(most)).unwrap();
+            assert_eq!(std::fs::metadata(file).unwrap().len(), most);
+            let error = format!("{:#}", start().unwrap_err());
+            assert_eq!(error, text::config_grows_too_large(file, most));
+            assert_eq!(std::fs::read_to_string(file).unwrap(), full(most));
+            assert!(!other.exists(), "riff wrote {}", other.display());
+            std::fs::remove_file(file).unwrap();
+        }
+        start().unwrap();
+    }
+
+    /// 01M7FNTSHXPQXXKZF761V0NN9Z: a `settings.json` of an earlier start
+    /// that is no text, or no JSON, stops the start before each write:
+    /// riff writes no `.claude.json`, and the file stays as it was.
+    #[test]
+    fn a_settings_file_that_is_no_json_stops_the_start_before_each_write() {
+        let root = tempfile::tempdir().unwrap();
+        let claude = root.path().join("claude");
+        std::fs::create_dir(&claude).unwrap();
+        let auto = crate::permissions::Trust {
+            owner: Some("acme"),
+            server: Some("http://h:7878"),
+            sources: &[],
+        };
+        let (config, settings) = (claude.join(CLAUDE_JSON), claude.join(SETTINGS_JSON));
+        for (bytes, error) in [
+            (&b"\xff{}"[..], format!("{} is no text", settings.display())),
+            (
+                &b"{"[..],
+                format!("{}: the settings are not valid JSON", settings.display()),
+            ),
+        ] {
+            std::fs::write(&settings, bytes).unwrap();
+            let start = claude_folder(
+                &claude,
+                Path::new("/data/clone"),
+                &root.path().join("none"),
+                &auto,
+                crate::permissions::Role::Worker,
+            );
+            let start = format!("{:#}", start.unwrap_err());
+            assert!(start.starts_with(&error), "{start}");
+            assert!(!config.exists());
+            assert_eq!(std::fs::read(&settings).unwrap(), bytes);
+        }
     }
 }

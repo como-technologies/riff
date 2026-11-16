@@ -45,11 +45,12 @@
 //! | The attach | [`crate::runtime::Runtime::redraw`], then [`crate::runtime::Runtime::attach`] ([`attach`]): `claude` draws its screen at each attach | 01M51PD7M04HZR2PVVJA4WCBK5 |
 //! | After the attach | [`Left`]: a detach, or the end of the lead when its container does not run; the line says which. First riff writes the reset of the modes of the terminal ([`crate::runtime::reset_terminal`]) | 01M51PD7Q24N252V66NFEHY49N, 01M6XVBRQMBMK68K8GCDRZ5GJ5 |
 //! | The sign-in of `claude` | the token of `riff claude-token` only ([`needs_token`]); a lead from an older riff with the sign-in file of the host gets a word when the host replaced that file ([`stale`], [`crate::daemon::Daemon::stale_leads`]) | 01M77Y6ZQ76DTX470STN8ATTA9, 01M5NJ87YEHHGJBANM7CRYV56Z |
-//! | A new riff | after `riff update`, the daemon stops an old lead (the bind of its riff has no link: [`old`]) when it is idle ([`idle`]: the `Stop` hook ended its turn, and its transcript got no write after the tail of the turn, [`between_turns`]; or its transcript got no write for 5 minutes, [`quiet`]) and the daemon itself runs the riff on disk, and starts it again with `claude --resume ID` ([`spec_again`], [`again`]): the same session, clone and Claude folder, no new session on riff-server; the main clone is the one in the records of the daemon: that of the wave, and with no wave the one that the daemon serves for the repository, never one that a file of the clone names ([`main_of`]); the person gets one line in riff chat ([`crate::daemon::Daemon::leads_again`]), and an attached terminal one line, then the attach to the new container ([`attach`], [`Again`]) | 01M5TC24PB3YC2CC8BA275WSEN, 01M6XTS7V47RFX1G37FRGRBWCY, 01M6WBX2FQEHW92Y1A5HM4H8BM, 01M6WBX2FT7Y9FV9VGGPDBKAHM, 01M5TC2919TB9XPF42YFNJBP79, 01M5TC29A4Q94NJP7HFC75XCF3, 01M6QB89JJEM9Z1V3RVZYHKYT0, 01M7EAZ9N9DY7JPXZP1V8JY01E |
+//! | A new riff | after `riff update`, the daemon stops an old lead (the bind of its riff has no link: [`old`]) when it is idle ([`idle`]: the `Stop` hook ended its turn, and riff sees no write to its transcript after the tail of the turn, [`between_turns`]; or riff sees no write to its transcript for 5 minutes, [`quiet`]) and the daemon itself runs the riff on disk, and starts it again with `claude --resume ID` ([`spec_again`], [`again`]): the same session, clone and Claude folder, no new session on riff-server; the main clone is the one in the records of the daemon: that of the wave, and with no wave the one that the daemon serves for the repository, never one that a file of the clone names ([`main_of`]); the person gets one line in riff chat ([`crate::daemon::Daemon::leads_again`]), and an attached terminal one line, then the attach to the new container ([`attach`], [`Again`]) | 01M5TC24PB3YC2CC8BA275WSEN, 01M6XTS7V47RFX1G37FRGRBWCY, 01M6WBX2FQEHW92Y1A5HM4H8BM, 01M6WBX2FT7Y9FV9VGGPDBKAHM, 01M5TC2919TB9XPF42YFNJBP79, 01M5TC29A4Q94NJP7HFC75XCF3, 01M6QB89JJEM9Z1V3RVZYHKYT0, 01M7EAZ9N9DY7JPXZP1V8JY01E, 01M7FX6YQKTN9EVPTZJ9XB8PM4 |
 //! | The project | `riff lead move` and the daemon start a lead only for a project of the riff ([`crate::project::lead_refused`], #1863): else riff names the fix, `riff project init`, and starts no session and no container | 01M77FHTT8BZ2YN1SV7H1X3NG8, 01M77FHTXBCWA4FG793TEB5XCY |
 //! | The start | `riff lead start` starts no lead (#1793): it attaches to the lead of the project when its container runs on this host. Else it names the host of the lead and the step there, or says that the daemon of a host that joined the project starts the lead ([`start`], [`text::lead_not_here`]) | 01M77Y6ZBV7C8Z332SAFKQCZ5A |
 //! | The repository | the daemon serves it while the lead runs, so `riff who` and the commands with `--host` reach the host, with the main clone of the wave ([`main_of`], `Daemon::serve_lead`) | 01M6QVSWQZE41BMQ6YN2963C4V, 01M7EAZ9N9DY7JPXZP1V8JY01E |
 //! | The restart | `riff lead restart`: riff finds the lead of the project ([`to_restart`]), the lead writes its notes ([`restart_notes`]), then the daemon of its host ends its container ([`crate::daemon::Daemon::stop_lead`]); the host loses the part lead, an update starts the old lead no more, and a host that joined the project starts a new lead ([`crate::lead_host`]) | 01M77Y6ZEQ4A6C6E0XZ56WRE89, 01M6QVSWWM3EA4ZS47XCKV38D0 |
+//! | The folder `projects` | riff sees the turns of the lead in the folder `projects` of its Claude folder; with a link there, or with more than [`crate::usage::MAX_ENTRIES`] entries, riff sees no write, and the log names the folder ([`idle`]). `riff lead clean` on the host of the lead moves each entry of `projects` but the conversations of the lead ([`claude_name`]) into a new folder `projects-left/TIME` of the folder of the lead, with no follow of a link; it reads at most [`crate::usage::MAX_ENTRIES`] entries at each run ([`clean_projects`]) | 01M7FX6YQKTN9EVPTZJ9XB8PM4, 01M7GF9QGV86BENYWT1TDJPM64, 01M7FNTSHXPQXXKZF761V0NN9Z |
 //!
 //! The Claude folder stays between the starts of the lead: the lead
 //! keeps the history of its conversations, and a dialog of `claude` that
@@ -675,9 +676,158 @@ fn started(record: &daemon::Record) -> std::time::SystemTime {
 }
 
 /// The last write to the transcript of the lead of `record`, if it has
-/// one.
+/// one. A folder `projects` that riff does not list, for example with
+/// more than [`crate::usage::MAX_ENTRIES`] entries, gives none: the line
+/// of [`text::lead_turns_unseen`] goes to the log of the daemon
+/// (01M7FX6YQKTN9EVPTZJ9XB8PM4).
 fn written(record: &daemon::Record) -> Option<std::time::SystemTime> {
-    crate::usage::written_in(&record.folder.join("claude"), &record.live.session)
+    last_write(record).unwrap_or_else(|line| {
+        eprintln!("{line}");
+        None
+    })
+}
+
+/// The last write of [`written`], or the line of the log of the daemon
+/// when riff cannot list the folder `projects` of the lead of `record`.
+fn last_write(record: &daemon::Record) -> Result<Option<std::time::SystemTime>, String> {
+    let claude = record.folder.join("claude");
+    crate::usage::written_in(&claude, &record.live.session).map_err(|e| {
+        let line = text::lead_turns_unseen(&format!("{e:#}"));
+        format!("riff daemon: {}: {line}", record.live.name)
+    })
+}
+
+/// The folder of the lead with the entries that `riff lead clean` moved
+/// out of its folder `projects`, one new folder for each run
+/// ([`clean_projects`]). No session binds it.
+pub const PROJECTS_LEFT: &str = "projects-left";
+
+/// The most characters of the name that `claude` gives a folder of
+/// conversations in the folder `projects`. A longer name is its first
+/// characters, `-` and a hash ([`claude_name`]).
+const CLAUDE_NAME: usize = 200;
+
+/// The name that `claude` gives the folder of the conversations that it
+/// keeps for the working folder `dir`, in the folder `projects` of a
+/// Claude folder (01M7GF9QGV86BENYWT1TDJPM64): the path of `dir` with `-`
+/// for each character that is no ASCII letter and no digit, as
+/// JavaScript counts characters. A name over 200 characters is its first
+/// 200 characters, `-` and the hash of the path that `claude` makes: the
+/// hash of Java of each character, its size with no sign, in base 36.
+///
+/// ```
+/// use std::path::Path;
+/// use riff::lead::claude_name;
+///
+/// let clone = Path::new("/home/mike/.local/share/riff/leads/acme-app/clone");
+/// assert_eq!(claude_name(clone), "-home-mike--local-share-riff-leads-acme-app-clone");
+/// // A character out of the BMP is two characters of JavaScript.
+/// assert_eq!(claude_name(Path::new("/a/😀")), "-a---");
+///
+/// // A path of 300 characters: its first 200, `-` and the hash.
+/// let long = Path::new("/h").join("a".repeat(297));
+/// assert_eq!(claude_name(&long), format!("-h-{}-rhfl2j", "a".repeat(197)));
+/// ```
+pub fn claude_name(dir: &Path) -> String {
+    let path = dir.to_string_lossy();
+    let full: String = path
+        .encode_utf16()
+        .map(|unit| match char::from_u32(u32::from(unit)) {
+            Some(c) if c.is_ascii_alphanumeric() => c,
+            _ => '-',
+        })
+        .collect();
+    if full.len() <= CLAUDE_NAME {
+        return full;
+    }
+    let hash = base36(u64::from(java_hash(&path).unsigned_abs()));
+    format!("{}-{hash}", &full[..CLAUDE_NAME])
+}
+
+/// The hash of `text` as Java makes it for a string: `31 * hash + unit`
+/// for each unit of UTF-16, in 32 bits with a sign.
+fn java_hash(text: &str) -> i32 {
+    text.encode_utf16().fold(0, |hash: i32, unit| {
+        hash.wrapping_mul(31).wrapping_add(i32::from(unit))
+    })
+}
+
+/// `n` in base 36, with the small letters, as JavaScript writes it.
+fn base36(mut n: u64) -> String {
+    let mut digits = Vec::new();
+    loop {
+        digits.push(char::from_digit((n % 36) as u32, 36).expect("a digit of base 36"));
+        n /= 36;
+        if n == 0 {
+            return digits.into_iter().rev().collect();
+        }
+    }
+}
+
+/// `riff lead clean` (01M7GF9QGV86BENYWT1TDJPM64): moves each entry of
+/// the folder `projects` of the Claude folder of the lead of `repo`, in
+/// the data folder `data` of riff, out of it, apart from the folder of
+/// the conversations of the lead ([`claude_name`]). The entries
+/// go into the new folder `projects-left/NOW` of the folder of the lead
+/// ([`PROJECTS_LEFT`]), where `NOW` is `now_ms`. The lead writes its
+/// Claude folder, so the move goes through
+/// [`crate::host_file::move_out`], with no follow of a link: a link at
+/// `projects` gives the error [`text::host_file_link`], and nothing
+/// moves. It reads at most [`crate::usage::MAX_ENTRIES`] entries
+/// (01M7FNTSHXPQXXKZF761V0NN9Z). It gives the line for the person
+/// ([`text::lead_cleaned`]), and an error when an entry stayed
+/// ([`text::lead_clean_stayed`]), when `projects` has more entries
+/// ([`text::lead_clean_more`]), or when the lead has no folder
+/// `projects` on this host ([`text::lead_no_projects`]).
+///
+/// ```
+/// use std::path::Path;
+///
+/// let data = tempfile::tempdir()?;
+/// let lead = riff::lead::folder_of(data.path(), "acme/app");
+/// let projects = lead.join("claude/projects");
+/// let own = riff::lead::claude_name(&lead.join("clone"));
+/// std::fs::create_dir_all(projects.join(&own))?;
+/// std::fs::write(projects.join(".hidden"), "")?;
+/// std::fs::create_dir(projects.join(format!("{own}-2")))?;
+/// let line = riff::lead::clean_projects(data.path(), "acme/app", 7)?;
+/// let left = lead.join("projects-left/7");
+/// assert_eq!(line, riff::text::lead_cleaned(&projects, 2, &left));
+/// assert_eq!(std::fs::read_dir(&projects)?.count(), 1);
+/// assert_eq!(std::fs::read_dir(&left)?.count(), 2);
+///
+/// // Nothing more to move: riff makes no new folder.
+/// let line = riff::lead::clean_projects(data.path(), "acme/app", 8)?;
+/// assert_eq!(line, riff::text::lead_cleaned(&projects, 0, &lead.join("projects-left/8")));
+/// assert!(!lead.join("projects-left/8").exists());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn clean_projects(data: &Path, repo: &str, now_ms: u64) -> Result<String> {
+    let folder = folder_of(data, repo);
+    let claude = folder.join("claude");
+    let own = claude_name(&folder.join("clone"));
+    let projects = claude.join(crate::usage::PROJECTS);
+    let left = folder.join(PROJECTS_LEFT).join(now_ms.to_string());
+    let keep = |name: &std::ffi::OsStr| name == own.as_str();
+    let name = Path::new(crate::usage::PROJECTS);
+    let most = crate::usage::MAX_ENTRIES;
+    let Some(moved) = crate::host_file::move_out(&claude, name, &left, most, keep)? else {
+        bail!("{}", text::lead_no_projects(repo, &projects));
+    };
+    if let Some(stayed) = moved.stayed {
+        let why = format!("{:#}", stayed.first);
+        bail!(
+            "{}",
+            text::lead_clean_stayed(&projects, moved.moved, &left, stayed.count(), &why)
+        );
+    }
+    if moved.more {
+        bail!(
+            "{}",
+            text::lead_clean_more(&projects, moved.moved, &left, most)
+        );
+    }
+    Ok(text::lead_cleaned(&projects, moved.moved, &left))
 }
 
 /// The file of the end of the last turn of a lead, in the folder of the
@@ -701,9 +851,11 @@ pub fn end_turn(folder: &Path) -> Result<()> {
 
 /// True when the lead of `record` is between two turns
 /// (01M6WBX2FQEHW92Y1A5HM4H8BM): a turn of its container ended
-/// ([`end_turn`]), and its transcript got no write later than
-/// [`TURN_TAIL`] after that end. A lead from a riff with no `Stop` hook
-/// never is: [`quiet`] holds for it.
+/// ([`end_turn`]), and riff sees no write to its transcript later than
+/// [`TURN_TAIL`] after that end. When riff cannot list the folder
+/// `projects` of the lead, it sees no write (01M7FX6YQKTN9EVPTZJ9XB8PM4).
+/// A lead from a riff with no `Stop` hook never is: [`quiet`] holds for
+/// it.
 pub fn between_turns(record: &daemon::Record) -> bool {
     let Ok(ended) = std::fs::metadata(record.folder.join(TURN_ENDED)).and_then(|m| m.modified())
     else {
@@ -712,9 +864,10 @@ pub fn between_turns(record: &daemon::Record) -> bool {
     ended >= started(record) && written(record).is_none_or(|written| written <= ended + TURN_TAIL)
 }
 
-/// True when no turn of the lead of `record` runs: it is between two
-/// turns ([`between_turns`]), or its transcript got no write in `quiet`
-/// ([`quiet`], 01M6WBX2FQEHW92Y1A5HM4H8BM).
+/// True when no turn of the lead of `record` runs, as far as riff can
+/// see: it is between two turns ([`between_turns`]), or riff sees no
+/// write to its transcript in `quiet` ([`quiet`],
+/// 01M6WBX2FQEHW92Y1A5HM4H8BM, 01M7FX6YQKTN9EVPTZJ9XB8PM4).
 pub fn idle(record: &daemon::Record, quiet: std::time::Duration) -> bool {
     between_turns(record) || self::quiet(record, quiet)
 }
@@ -1294,6 +1447,10 @@ const OBJECTS: &str = ".git/objects";
 /// the clone links to.
 const ALTERNATES: &str = "info/alternates";
 
+/// The most bytes that riff reads of the file `alternates` of a clone
+/// (01M7FNTSHXPQXXKZF761V0NN9Z).
+pub const MAX_ALTERNATES: u64 = 1 << 20;
+
 /// The main clone that the clone at `clone` links to: `git clone
 /// --reference MAIN` ([`fresh_clone`]) writes `MAIN/.git/objects` in the
 /// file `.git/objects/info/alternates` of the clone. The session writes
@@ -1302,7 +1459,9 @@ const ALTERNATES: &str = "info/alternates";
 /// the folder that it names: the main clone of a lead comes from
 /// [`main_of`] (01M7EAZ9N9DY7JPXZP1V8JY01E). It reads the file through
 /// [`crate::host_file`]: a link in the clone gives an error, as no file
-/// does (01M7FE5FYFAR92PM3EJJ211VM2).
+/// does (01M7FE5FYFAR92PM3EJJ211VM2). So does a file over
+/// [`MAX_ALTERNATES`]: riff reads no more of it
+/// (01M7FNTSHXPQXXKZF761V0NN9Z).
 ///
 /// ```
 /// let dir = tempfile::tempdir()?;
@@ -1319,12 +1478,21 @@ const ALTERNATES: &str = "info/alternates";
 /// std::fs::write(dir.path().join("person"), "/src/riff/.git/objects\n")?;
 /// std::os::unix::fs::symlink(dir.path().join("person"), info.join("alternates"))?;
 /// assert!(riff::lead::linked_main(&clone).is_err());
+///
+/// // A sparse file of 64 GiB: riff reads none of it.
+/// std::fs::remove_file(info.join("alternates"))?;
+/// std::fs::File::create(info.join("alternates"))?.set_len(64 << 30)?;
+/// let error = riff::lead::linked_main(&clone).unwrap_err();
+/// assert_eq!(
+///     error.to_string(),
+///     riff::text::host_file_too_large(&info.join("alternates"), riff::lead::MAX_ALTERNATES)
+/// );
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn linked_main(clone: &Path) -> Result<PathBuf> {
     let name = Path::new(OBJECTS).join(ALTERNATES);
     let (objects, file) = (clone.join(OBJECTS), clone.join(&name));
-    let text = crate::host_file::read_to_string(clone, &name)?
+    let text = crate::host_file::read_to_string(clone, &name, MAX_ALTERNATES)?
         .with_context(|| format!("cannot read {}", file.display()))?;
     let line = text
         .lines()
@@ -2302,22 +2470,31 @@ mod tests {
     /// The transcript of the lead of `record`, with its last write `ago`
     /// before now.
     fn written_ago(record: &daemon::Record, ago: std::time::Duration) {
+        written_at(record, std::time::SystemTime::now() - ago);
+    }
+
+    /// The transcript of the lead of `record`, with its last write at
+    /// `time`.
+    fn written_at(record: &daemon::Record, time: std::time::SystemTime) {
         let project = record.folder.join("claude/projects/-d-clone");
         std::fs::create_dir_all(&project).unwrap();
         let file = std::fs::File::create(project.join("s1.jsonl")).unwrap();
-        file.set_modified(std::time::SystemTime::now() - ago)
-            .unwrap();
+        file.set_modified(time).unwrap();
     }
 
     /// The end of the last turn of the lead of `record`, `ago` before now.
     fn ended_ago(record: &daemon::Record, ago: std::time::Duration) {
+        ended_at(record, std::time::SystemTime::now() - ago);
+    }
+
+    /// The end of the last turn of the lead of `record`, at `time`.
+    fn ended_at(record: &daemon::Record, time: std::time::SystemTime) {
         end_turn(&record.folder).unwrap();
         let file = std::fs::File::options()
             .write(true)
             .open(record.folder.join(TURN_ENDED))
             .unwrap();
-        file.set_modified(std::time::SystemTime::now() - ago)
-            .unwrap();
+        file.set_modified(time).unwrap();
     }
 
     /// 01M6WBX2FQEHW92Y1A5HM4H8BM: a lead is idle at the end of its turn,
@@ -2365,6 +2542,229 @@ mod tests {
         written_ago(&record, Duration::from_secs(600));
         assert!(!between_turns(&record));
         assert!(idle(&record, quiet));
+    }
+
+    /// 01M7FX6YQKTN9EVPTZJ9XB8PM4: the lead makes more entries than the
+    /// limit in its folder `projects`. riff sees no write of the lead
+    /// there, and the line of the log names the folder: after the end of
+    /// a turn, the lead is between two turns, and 5 minutes after the
+    /// start of its container, it is quiet. The turn ends at a fixed time
+    /// after now, so no step depends on the time of the test.
+    #[test]
+    fn a_folder_of_projects_over_the_limit_shows_no_turn_of_the_lead() {
+        use std::time::{Duration, UNIX_EPOCH};
+        let dir = tempfile::tempdir().unwrap();
+        let record = record_in(dir.path());
+        let ended = UNIX_EPOCH + Duration::from_secs(4_000_000_000);
+        ended_at(&record, ended);
+        written_at(&record, ended + Duration::from_secs(59));
+        let quiet_for = Duration::from_secs(300);
+        assert!(!between_turns(&record));
+        assert!(!quiet(&record, quiet_for));
+        let projects = dir.path().join("claude/projects");
+        for n in 0..crate::usage::MAX_ENTRIES {
+            std::fs::write(projects.join(format!("{n}.jsonl")), "").unwrap();
+        }
+        let cause = text::host_file_too_many(&projects, crate::usage::MAX_ENTRIES);
+        assert_eq!(
+            last_write(&record),
+            Err(format!(
+                "riff daemon: {NAME}: {}",
+                text::lead_turns_unseen(&cause)
+            ))
+        );
+        assert_eq!(written(&record), None);
+        assert!(between_turns(&record));
+        // The container started long ago: `since_ms` is 0.
+        assert!(quiet(&record, quiet_for));
+    }
+
+    /// 01M7GF9QGV86BENYWT1TDJPM64, 01M7FX6YQKTN9EVPTZJ9XB8PM4: the lead
+    /// made more entries than the limit in its folder `projects`, so riff
+    /// sees no write after the end of its turn. `riff lead clean` reads at
+    /// most the limit of entries: it moves them, and says that `projects`
+    /// has more. Then riff sees the write 59 s after the end again: the
+    /// lead is in a turn. The next clean moves the rest.
+    #[test]
+    fn after_the_clean_riff_sees_the_turns_of_the_lead_again() {
+        use std::time::{Duration, UNIX_EPOCH};
+        let data = tempfile::tempdir().unwrap();
+        let folder = folder_of(data.path(), "acme/app");
+        let record = record_in(&folder);
+        let projects = folder.join("claude/projects");
+        let own = projects.join(claude_name(&folder.join("clone")));
+        std::fs::create_dir_all(&own).unwrap();
+        let ended = UNIX_EPOCH + Duration::from_secs(4_000_000_000);
+        ended_at(&record, ended);
+        let file = std::fs::File::create(own.join("s1.jsonl")).unwrap();
+        file.set_modified(ended + Duration::from_secs(59)).unwrap();
+        let most = crate::usage::MAX_ENTRIES;
+        for n in 0..most {
+            std::fs::write(projects.join(format!("{n}.jsonl")), "").unwrap();
+        }
+        assert!(last_write(&record).is_err());
+        assert!(between_turns(&record));
+        let error = clean_projects(data.path(), "acme/app", 1).unwrap_err();
+        let left = folder.join(PROJECTS_LEFT).join("1");
+        let moved = std::fs::read_dir(&left).unwrap().count();
+        assert!(moved >= most - 1, "{moved}");
+        let more = text::lead_clean_more(&projects, moved, &left, most);
+        assert_eq!(error.to_string(), more);
+        assert_eq!(
+            last_write(&record),
+            Ok(Some(ended + Duration::from_secs(59)))
+        );
+        assert!(!between_turns(&record));
+        let line = clean_projects(data.path(), "acme/app", 2).unwrap();
+        let again = folder.join(PROJECTS_LEFT).join("2");
+        assert_eq!(line, text::lead_cleaned(&projects, most - moved, &again));
+        let kept: Vec<_> = std::fs::read_dir(&projects)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        assert_eq!(kept, [own]);
+    }
+
+    /// 01M7FX6YQKTN9EVPTZJ9XB8PM4, 01M7GF9QGV86BENYWT1TDJPM64: the lead put
+    /// a link at its folder `projects`, to a folder of the person. The
+    /// line of the log names the link with no step, as riff goes on.
+    /// `riff lead clean` refuses the link with the error that names it,
+    /// and moves nothing.
+    #[test]
+    fn a_link_at_projects_gives_a_line_with_no_step_and_the_clean_moves_nothing() {
+        let data = tempfile::tempdir().unwrap();
+        let folder = folder_of(data.path(), "acme/app");
+        let record = record_in(&folder);
+        let person = data.path().join("person");
+        std::fs::create_dir_all(person.join("-d-clone")).unwrap();
+        std::fs::write(person.join("-d-clone/s1.jsonl"), "").unwrap();
+        std::fs::write(person.join("id_ed25519"), "SECRET").unwrap();
+        std::fs::create_dir_all(folder.join("claude")).unwrap();
+        let projects = folder.join("claude/projects");
+        std::os::unix::fs::symlink(&person, &projects).unwrap();
+        let link = text::host_file_link(&projects);
+        let line = last_write(&record).unwrap_err();
+        let unseen = text::lead_turns_unseen(&link);
+        assert_eq!(line, format!("riff daemon: {NAME}: {unseen}"));
+        assert!(!line.contains(text::REMOVE_IT), "{line}");
+        let error = clean_projects(data.path(), "acme/app", 1).unwrap_err();
+        assert_eq!(error.to_string(), link);
+        assert_eq!(std::fs::read_dir(&person).unwrap().count(), 2);
+        assert!(!folder.join(PROJECTS_LEFT).exists());
+    }
+
+    /// The data folder of riff in `dir` whose clone of the lead of
+    /// `acme/app` gives a name of `chars` characters, as `claude` makes
+    /// it before its cut, and that name.
+    fn data_with_name_of(dir: &Path, chars: usize) -> (PathBuf, String) {
+        let short = folder_of(&dir.join("d"), "acme/app").join("clone");
+        let pad = chars - short.as_os_str().len();
+        let data = dir.join("d".repeat(pad + 1));
+        let clone = folder_of(&data, "acme/app").join("clone");
+        let full: String = clone
+            .to_string_lossy()
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+            .collect();
+        assert_eq!(full.len(), chars);
+        (data, full)
+    }
+
+    /// 01M7GF9QGV86BENYWT1TDJPM64: the name of the folder of the
+    /// conversations of a clone whose path has 200 characters is its
+    /// whole path, and with 201 characters, its first 200 characters, `-`
+    /// and the hash that `claude` makes.
+    #[test]
+    fn a_name_of_200_characters_has_no_hash_and_one_more_has_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let (data, full) = data_with_name_of(dir.path(), CLAUDE_NAME);
+        let clone = folder_of(&data, "acme/app").join("clone");
+        assert_eq!(claude_name(&clone), full);
+        let (data, full) = data_with_name_of(dir.path(), CLAUDE_NAME + 1);
+        let clone = folder_of(&data, "acme/app").join("clone");
+        let name = claude_name(&clone);
+        let (start, hash) = name.split_at(CLAUDE_NAME);
+        assert_eq!(start, &full[..CLAUDE_NAME]);
+        assert!(hash.len() > 1 && hash.starts_with('-'), "{name}");
+        assert!(
+            hash[1..]
+                .bytes()
+                .all(|b| b.is_ascii_digit() || b.is_ascii_lowercase())
+        );
+    }
+
+    /// The hash of `claude` for a name over 200 characters: the hash that
+    /// Java gives the path as a string, with no sign, in base 36. Java
+    /// gives `hello` the hash 99162322, the emoji 😀 (two units of UTF-16)
+    /// 1772899, and `polygenelubricants` -2^31, whose size is 2^31.
+    #[test]
+    fn the_hash_of_a_long_name_is_the_hash_of_claude() {
+        assert_eq!(java_hash(""), 0);
+        assert_eq!(java_hash("hello"), 99_162_322);
+        assert_eq!(java_hash("😀"), 1_772_899);
+        assert_eq!(java_hash("polygenelubricants"), i32::MIN);
+        assert_eq!(base36(0), "0");
+        assert_eq!(base36(35), "z");
+        assert_eq!(base36(36), "10");
+        assert_eq!(base36(99_162_322), "1n1e4y");
+        assert_eq!(base36(u64::from(i32::MIN.unsigned_abs())), "zik0zk");
+    }
+
+    /// 01M7GF9QGV86BENYWT1TDJPM64: the path of the clone of the lead has
+    /// more than 200 characters, so `claude` names the folder of the
+    /// conversations with its first 200 characters, `-` and its hash.
+    /// `riff lead clean` keeps that folder only, and moves an entry with
+    /// the same first 200 characters and another hash, or no `-` after
+    /// them.
+    #[test]
+    fn the_clean_keeps_the_conversations_of_a_clone_with_a_long_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let (data, full) = data_with_name_of(dir.path(), CLAUDE_NAME + 50);
+        let folder = folder_of(&data, "acme/app");
+        let projects = folder.join("claude/projects");
+        let own = projects.join(claude_name(&folder.join("clone")));
+        let start = &full[..CLAUDE_NAME];
+        let others = [
+            format!("{start}-1k2j3h"),
+            format!("{start}x"),
+            start.to_owned(),
+        ];
+        std::fs::create_dir_all(&own).unwrap();
+        for other in &others {
+            std::fs::create_dir_all(projects.join(other)).unwrap();
+        }
+        let line = clean_projects(&data, "acme/app", 5).unwrap();
+        let left = folder.join(PROJECTS_LEFT).join("5");
+        assert_eq!(line, text::lead_cleaned(&projects, others.len(), &left));
+        assert!(own.is_dir());
+        for other in &others {
+            assert!(left.join(other).is_dir(), "{other}");
+        }
+    }
+
+    /// 01M7GF9QGV86BENYWT1TDJPM64: an entry of `projects` cannot move,
+    /// for an entry of the same name in the new folder that is no empty
+    /// folder. It stays, the error names it with the count of the moves,
+    /// and the other entries move.
+    #[test]
+    fn an_entry_that_stays_gives_the_error_of_the_clean() {
+        let data = tempfile::tempdir().unwrap();
+        let folder = folder_of(data.path(), "acme/app");
+        let projects = folder.join("claude/projects");
+        std::fs::create_dir_all(projects.join("x")).unwrap();
+        std::fs::write(projects.join("a.jsonl"), "").unwrap();
+        let left = folder.join(PROJECTS_LEFT).join("3");
+        std::fs::create_dir_all(left.join("x/full")).unwrap();
+        let error = clean_projects(data.path(), "acme/app", 3).unwrap_err();
+        let why = format!(
+            "move {}: {}",
+            projects.join("x").display(),
+            std::io::Error::from(nix::errno::Errno::ENOTEMPTY)
+        );
+        let stayed = text::lead_clean_stayed(&projects, 1, &left, 1, &why);
+        assert_eq!(error.to_string(), stayed);
+        assert!(projects.join("x").is_dir());
+        assert!(left.join("a.jsonl").is_file());
     }
 
     /// 01M7E7A8QM8SRPQN3G1BXVJW1R: the new clone takes the place of the

@@ -7832,9 +7832,8 @@ of this part when they merge.
   the file that its container binds at `/opt/riff/riff` is not the file
   on disk: `riff update` replaced it. The daemon looks when it takes up
   the sessions that run, and each minute. It starts only a lead that is
-  idle (01M6WBX2FQEHW92Y1A5HM4H8BM). A lead in a turn waits for the end
-  of the turn. Supersedes in part 01M4Z60B800BH5BHX0H9JVDG6A and
-  01M5SNV7H3739PXW73H14XM4B8.
+  idle (01M6WBX2FQEHW92Y1A5HM4H8BM). Supersedes in part
+  01M4Z60B800BH5BHX0H9JVDG6A and 01M5SNV7H3739PXW73H14XM4B8.
 - **01M5TC2919TB9XPF42YFNJBP79** The daemon stops the container of an
   old lead and starts it again with the same session, the same clone and
   the same Claude folder. The new container binds the riff on disk. Its
@@ -7880,11 +7879,12 @@ of this part when they merge.
   `claude`. It tells the riff daemon on the socket of the session,
   prints nothing, and always exits with status 0. For the lead, the
   daemon writes the time of the end in the file `turn-ended` of the
-  folder of the lead. A lead is idle when its transcript got no write
-  later than 5 s after that end, or got no write for 5 minutes. At the
-  end of a turn of an old lead, the daemon looks again after 2 s, so the
-  lead starts again on the new riff at the first end of its turn. This
-  supersedes 01M5TC24PB3YC2CC8BA275WSEN in part: when a lead is idle.
+  folder of the lead. A lead is idle when riff sees no write to its
+  transcript later than 5 s after that end, or no write for 5 minutes.
+  At the end of a turn of an old lead, the daemon looks again after 2 s,
+  so the lead starts again on the new riff at the first end of its turn.
+  This supersedes 01M5TC24PB3YC2CC8BA275WSEN in part: when a lead is
+  idle.
 - **01M6WBX2FT7Y9FV9VGGPDBKAHM** The daemon starts no lead again while
   the daemon itself runs a riff that `riff update` replaced on disk. The
   daemon starts again on the new riff first, and the new daemon starts
@@ -8165,6 +8165,30 @@ of this part when they merge.
   (#1606). When the daemon starts to serve the repository of a lead, the
   main clone is the main clone of the wave. This supersedes
   01M6QB89JJEM9Z1V3RVZYHKYT0 and 01M6QVSWQZE41BMQ6YN2963C4V in part.
+- **01M7FX6YQKTN9EVPTZJ9XB8PM4** riff sees the writes to the transcript
+  of a lead in the folder `projects` of its Claude folder. When riff
+  cannot list that folder, for example with a link at it or with more
+  than 10,000 entries in it, riff sees no write, and the log of the
+  daemon names the folder. So the lead is idle at the end of a turn, and
+  5 minutes after the start of its container: after an update, the lead
+  does not wait for the end of a turn that riff does not see. This
+  supersedes 01M6WBX2FQEHW92Y1A5HM4H8BM in part: the writes that riff
+  sees, and 01M5TC24PB3YC2CC8BA275WSEN in part: the wait for the end of
+  a turn.
+- **01M7GF9QGV86BENYWT1TDJPM64** `riff lead clean` moves each entry of
+  the folder `projects` of the Claude folder of the lead out of it, on
+  the host of the lead, apart from the folder of the conversations of
+  the lead. That folder has the name that `claude` gives the path of the
+  clone of the lead: `-` for each character that is no ASCII letter and
+  no digit, and for a name over 200 characters, its first 200
+  characters, `-` and the hash of the path that `claude` makes. riff
+  moves each entry with no follow of a link, as one entry, into a new
+  folder `projects-left/TIME` in the folder of the lead, which no
+  session writes, and names that folder. A link at `projects` gives the
+  error that names the link, and riff moves nothing. riff reads at most
+  10,000 entries of `projects` at each run: when it has more, riff
+  moves the entries that it read, and its error tells the person to run
+  the command again. In a container, the command refuses.
 
 ### The first run
 
@@ -8956,6 +8980,53 @@ of this part when they merge.
   ends in the last token of the same start that they found. So the time
   to scrub a line grows with its length, not with its square, and a
   long line from a session holds the daemon for no long time.
+- **01M7FNTSHXPQXXKZF761V0NN9Z** The host reads at most a limit of each
+  file in a folder that a container writes, and at most a limit of the
+  entries of each folder there: 256 MB of a transcript, 16 MB of
+  `.claude.json`, 1 MB of `settings.json`, 1 MB of the file
+  `alternates` of a clone, and 10,000 entries of a folder. The host
+  reads none of a file whose size is over its limit, and stops one byte
+  past the limit when the file grows in the read. A file over its limit
+  gives an error that names it, and a folder with more entries gives an
+  error that names the folder. riff counts no tokens of a transcript
+  over its limit, and the log names it. A start with a `.claude.json`
+  or a `settings.json` over its limit, or with a new text of riff over
+  that limit, writes neither file, and its error tells the person to
+  remove the file. riff parses no value of `.claude.json` that it does
+  not change. A line of the log where riff goes on past a limit, or
+  counts no tokens of a transcript, gives the person no step.
+- **01M7FX6SWN3DGZMH5HS9BWEBY7** One count of the tokens of a session
+  reads at most 1 GB of transcripts in all, with the transcripts of its
+  helper agents, and at most 100,000 entries in all: each transcript
+  counts one, and each entry of the folder of its helpers counts one.
+  Each byte and each entry that the count reads counts, also of a file
+  or a folder that it skips, and an entry that riff cannot stat. The
+  count stops at the file or the folder where a limit runs out, and
+  reads at most one byte or one entry past the limit there. It counts
+  the tokens of the files before it, and no tokens of it or of the
+  files after it, and the log names it. The daemon reads the
+  transcripts of an ended session on a thread for blocking work, so the
+  other tasks of the daemon go on. The end of that session waits for
+  the count before its folder goes.
+- **01M7FX6SZ88S06N1AT6WJHKNMX** Each line of the log of riff that names
+  a file or a folder in a folder that a container writes shows each
+  control character of the name as its escape, for example `\n` for a
+  line break. So a name that a container chose makes no second line in
+  the log.
+- **01M7GF9G7ZNJD2SXZZ62XKJYBG** One count of the tokens of a session
+  keeps each reply in a fixed size: a hash of 64 bits of its id, its
+  time, its tokens, and the index of the name of its model. The name of
+  a model is the name that a report has: its first 100 characters, with
+  `-` for each character that a name cannot hold. The count keeps at
+  most 1,000,000 replies and 32 models. A transcript with more stops the
+  count there, as a limit of 01M7FX6SWN3DGZMH5HS9BWEBY7 does: riff
+  counts no tokens of it or of the files after it, and the log names it.
+  A count keeps no line of its log in memory. A process of riff reads
+  the transcripts of one count at a time, and holds the bytes of each
+  read in memory one time: a count copies no text of a line, apart from
+  the first 100 characters of the name of a model. So the memory of the
+  counts of the riff daemon does not grow with the number of sessions
+  that end at once.
 
 ### Process
 

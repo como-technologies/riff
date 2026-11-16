@@ -360,7 +360,7 @@ hold each decision of the design.
 
 | What sessions share | How riff keeps them apart | What a session can still do to another |
 |---|---|---|
-| The files of your machine | Each session is a rootless podman container (`--userns=keep-id`). It writes only its binds: its own clone, its own Claude folder, the folder of its socket and the volumes that `riff.toml` names. Each other write goes to the copy-on-write layer of the container, and goes when the session ends. riff on your machine follows no link in a folder that a session can write: its clone, its Claude folder and the folder of its socket. A link there gives an error, and riff reads and writes no file of yours through it: see [When a session puts a link in its folder](#when-a-session-puts-a-link-in-its-folder). | Nothing outside its binds. See the rows of git and of the caches. |
+| The files of your machine | Each session is a rootless podman container (`--userns=keep-id`). It writes only its binds: its own clone, its own Claude folder, the folder of its socket and the volumes that `riff.toml` names. Each other write goes to the copy-on-write layer of the container, and goes when the session ends. riff on your machine follows no link in a folder that a session can write: its clone, its Claude folder and the folder of its socket. A link there gives an error, and riff reads and writes no file of yours through it: see [When a session puts a link in its folder](#when-a-session-puts-a-link-in-its-folder). riff on your machine reads at most a limit of each file that a session writes there, and at most a limit of the entries of each folder there. So a large file of a session does not fill the memory of the riff daemon: see [When a session makes a large file in its folder](#when-a-session-makes-a-large-file-in-its-folder). | Nothing outside its binds. See the rows of git and of the caches. |
 | git: the clone and its alternates | Each session has its own clone, made with `git clone --reference MAIN` in a folder of riff, `new-clones/ITEM-ID8`, and then moved into the folder of the session. The lead gets a new clone in the same way at each start of a new lead, in `new-clones/lead-OWNER-REPO`, and its old clone goes (see [The clone of the lead at each start](development.md#the-clone-of-the-lead-at-each-start)). The container sees the objects of the main clone at the same path, with no write. No session writes the git dir of the main clone or of another session. The host runs no git in a folder that a session can write: the session writes the git config there, and a git config can name a program that git runs. One guard of riff refuses each git call on your machine in the folder of the sessions, in the folder of the leads, in each bind of a session with write, and in the folders of the podman volumes. When podman cannot list its volumes, no session with a volume starts: see [When podman cannot list its volumes](#when-podman-cannot-list-its-volumes). The daemon knows the main clone of a lead from its own records: the main clone of the wave of the repository, else the main clone that it serves for the repository. It never takes it from the file `.git/objects/info/alternates` of the clone of the lead: the lead writes that file. The sweep reads only GitHub and the file `repo` of the folder, and the council of a verify reads the main clone. The clone goes when its item ends. | Nothing in the clone of another session. A `git gc` of the main clone can remove an object that a session clone reads. |
 | git: the config | `~/.gitconfig` is bound with no write, or as an overlay whose changes go when the session ends. riff writes no git config of yours. A session writes only the config of its own clone. | Nothing. |
 | git: the commit | A commit has the bot of the GitHub App of the session as its author, for example `riff-como-technologies[bot]`, with the noreply email of the bot, and a `Riff-Session:` trailer that names the session. Where the Apps are not on the repository, it has your git identity. A session commits with no signature: riff sets `commit.gpgsign=false` in the environment of the container, so it applies to each git call of the session. The squash merge on GitHub makes the commit on `main` from the message that `riff verify pass` gives: the body of the pull request, which ends with `Riff-Session:` and `Co-authored-by:` you. No gpg agent goes into a container. See [Find the commits of a session](development.md#find-the-commits-of-a-session). | Nothing. The trailer `Riff-Session:` tells the commits of two sessions apart. |
@@ -481,6 +481,116 @@ rm ~/.local/share/riff/leads/OWNER-REPO/claude/settings.json
 The daemon starts the lead at the end of its wait. To start the lead at
 once, see
 [When the lead fails to start](#when-the-lead-fails-to-start).
+
+#### When a session makes a large file in its folder
+
+A session can make a large file in its clone or in its Claude folder,
+for example a sparse file of 64 GiB with `truncate -s 64G`. riff on
+your machine reads some files there: the transcripts at the end of each
+session, `.claude.json` and `settings.json` at each start of the lead,
+and the file `.git/objects/info/alternates` of each clone. So riff
+reads at most a limit of each one:
+
+| What riff reads | Its limit | Over the limit |
+|---|---|---|
+| A transcript, and the transcript of each helper agent | 256 MB | riff counts no tokens of it, and goes on. The log of the daemon names the file. |
+| `.claude.json` of a Claude folder, and its `settings.json` | 16 MB, and 1 MB | The start stops, and riff writes neither file. The error names the file. riff writes no new text over the limit either. See [When the start of the lead stops at a large file](#when-the-start-of-the-lead-stops-at-a-large-file). |
+| `.git/objects/info/alternates` of a clone | 1 MB | riff counts no main clone for the clone. The log has no line for it. |
+| The entries of the folder `projects` of a Claude folder, and of the folder of the helper agents of a transcript | 10,000 entries | riff counts no tokens of the transcripts there, and sees no write of the lead there: after an update, riff can start the lead again in the middle of a turn. riff goes on, and the log of the daemon names the folder. See [When riff sees no turn of the lead](#when-riff-sees-no-turn-of-the-lead). |
+| All the transcripts of a session, at each count of its tokens | 1 GB, 100,000 entries, 1,000,000 replies and 32 models in all | riff counts the tokens of the files before the limit, and no tokens of the rest. The log of the daemon names the file or the folder where riff stopped. |
+
+When the size of a file is over its limit, riff reads none of it. When
+the file grows in the read, riff stops one byte past the limit. Each
+byte and each entry that a count of tokens reads counts, also of a file
+that riff skips. A count stops at most one byte or one entry past its
+limit in all. It keeps each reply of the model in a fixed size, and no
+line of its log. The daemon reads the transcripts of an ended session
+on a thread of its own, so each other session goes on. It reads the
+transcripts of one count at a time, and holds the bytes of each file
+one time. The end of that session waits for the count. At a start,
+riff parses only the values of `.claude.json` that it changes. So a
+large file of a session does not fill the memory of the riff daemon.
+
+In the log, riff shows each control character of a name as its escape,
+for example `\n` for a line break: a name that a session chose makes no
+second line.
+
+```mermaid
+flowchart LR
+    R["riff reads a file<br/>that a session writes"] --> L{"over its limit?"}
+    L -- no --> G["riff reads it"]
+    L -- yes --> E["riff reads no more of it<br/>the error names the file<br/>the daemon goes on"]
+```
+
+To find each other limit that riff met, read the log of the daemon
+(see also
+[Read the log of the daemon](development.md#read-the-log-of-the-daemon)):
+
+```sh
+riff daemon log --grep 'reads at most' --grep 'writes at most' --grep 'lists at most'
+```
+
+A line that says "riff counts no tokens" needs no step: riff goes on.
+Do not remove a transcript of a session that runs: it holds the
+conversation that `claude --resume` reads.
+
+##### When the start of the lead stops at a large file
+
+The error names the file:
+
+```text
+riff reads at most 16MB of a file in a folder that a session can write: /home/mike/.local/share/riff/leads/acme-app/claude/.claude.json is larger. Remove it, and start again.
+```
+
+The error says "riff writes at most" when the file is under its limit,
+but the text with what riff adds is over it. Remove the file that the
+error names. At the next start, riff will write a new one:
+
+```sh
+rm ~/.local/share/riff/leads/OWNER-REPO/claude/.claude.json
+```
+
+A new `settings.json` has none of your answers. So after you remove
+`settings.json`, `claude` will ask a question of its first start again,
+for example the warning of the Bypass Permissions mode, and the lead
+will wait for you. Attach to the lead, and answer it:
+
+```sh
+riff lead start
+```
+
+##### When riff sees no turn of the lead
+
+The log of the daemon names the folder `projects` of the lead:
+
+```text
+riff daemon: riff-lead-acme-app: riff sees no turn of the lead in its transcripts, and goes on. riff lists at most 10000 entries of a folder that a session can write: /home/mike/.local/share/riff/leads/acme-app/claude/projects has more.
+```
+
+riff goes on, but after an update it can start the lead again in the
+middle of a turn. The conversations of the lead are in one entry of
+`projects`, which `claude` names from the path of the clone of the
+lead. The session made each other entry. To move each other entry out
+of `projects`, run this command in your clone of the repository, on the
+host of the lead:
+
+```sh
+riff lead clean
+```
+
+riff moves each entry into a new folder `projects-left/TIME` in the
+folder of the lead, and names that folder. No session writes there.
+riff follows no link: a link moves as a link. At the next look, riff
+will see the turns of the lead again. riff reads at most 10,000 entries
+of `projects` at each run. When `projects` has more, riff moves the
+entries that it read, and its error tells you to run `riff lead clean`
+again.
+
+When the line says that `projects` is a link, `riff lead clean` moves
+nothing. Remove the link, as in
+[When a session puts a link in its folder](#when-a-session-puts-a-link-in-its-folder).
+riff will see the turns of the lead again when `claude` writes its
+transcript in `projects`.
 
 ### The home of a session is in memory
 
@@ -1260,7 +1370,7 @@ idle, so no work stops:
 | `riff relay watch`, `riff tail`, `riff top` | runs the new `riff` in its place | at once |
 | `riff chat` | runs the new `riff` in its place | between two lines |
 | The riff daemon | starts again on the `riff` on `PATH`, or on its unit after it wrote the unit again (see [Each step of an update](#each-step-of-an-update)) | when it runs no session and no real-session test, else after its last session |
-| The lead in a container | the daemon stops its container and starts it again on the new `riff` with `claude --resume`; the lead goes on with its conversation (see [The lead starts again on the new riff](#the-lead-starts-again-on-the-new-riff)) | after the daemon started again on the new riff, at the first end of a turn of the lead; a lead of an older riff, when its transcript got no write for 5 minutes |
+| The lead in a container | the daemon stops its container and starts it again on the new `riff` with `claude --resume`; the lead goes on with its conversation (see [The lead starts again on the new riff](#the-lead-starts-again-on-the-new-riff)) | after the daemon started again on the new riff, at the first end of a turn of the lead; a lead of an older riff, when riff sees no write to its transcript for 5 minutes |
 
 You still start `riff-server` again yourself. `riff update` tells you
 when it runs the old build.
@@ -2683,7 +2793,7 @@ flowchart TD
     U["riff update"] --> D["the daemon starts again on the new riff,<br/>after its last session"]
     D --> O{"the container of the lead<br/>binds the old riff?"}
     O -- no --> N["nothing to do"]
-    O -- yes --> I{"the lead is idle?<br/>its turn ended, or no write to its transcript in 5 minutes"}
+    O -- yes --> I{"the lead is idle?<br/>its turn ended, or riff sees no write<br/>to its transcript in 5 minutes"}
     I -- no --> W["wait: look again at the end of the turn,<br/>or in a minute"]
     I -- yes --> S["stop the container, start it again:<br/>claude --resume of the conversation"]
     S --> C["one line in riff chat"]
@@ -2738,16 +2848,20 @@ grep '"command"' ~/.local/share/riff/leads/OWNER-REPO/claude/settings.json
 
 A turn writes the transcript of the conversation at each message and
 each tool call. A write more than 5 seconds after the end of the turn is
-a new turn: the lead waits for its end. To see the time of the last end
-of a turn of the lead, in milliseconds since 1970:
+a new turn: the lead waits for its end. When riff cannot list the
+folder `projects` of the lead, riff sees no write, and the lead does
+not wait: see
+[When riff sees no turn of the lead](#when-riff-sees-no-turn-of-the-lead).
+To see the time of the last end of a turn of the lead, in milliseconds
+since 1970:
 
 ```sh
 cat ~/.local/share/riff/leads/OWNER-REPO/turn-ended
 ```
 
 A lead that started on an older riff has no hook. It counts as idle
-when its transcript got no write for 5 minutes. A tool call that runs
-for more than 5 minutes with no output counts as idle too.
+when riff sees no write to its transcript for 5 minutes. A tool call
+that runs for more than 5 minutes with no output counts as idle too.
 
 The new container has the same session, the same clone and the same
 Claude folder. So the lead goes on with its conversation and its notes.
@@ -8134,9 +8248,9 @@ A step of a person, a claim, and a command that needs a program of the
 host refuse in the container before each call: `riff login`, `riff
 logout`, `riff invite`, `riff remove`, `riff admin`,
 `riff chat`, `riff tail`, `riff claim`, `riff release ITEM`, `riff
-lead start`, `riff lead move`, `riff lead notes`, `riff questions
---answered`, `riff server`, `riff update` and `riff cloud`. Run them in
-a terminal on the host:
+lead start`, `riff lead move`, `riff lead notes`, `riff lead clean`,
+`riff questions --answered`, `riff server`, `riff update` and `riff
+cloud`. Run them in a terminal on the host:
 
 ```sh
 riff claim issue-12

@@ -229,7 +229,7 @@ done
     let m = connect(&api, tools, &mike).await;
 
     let transcript = marks.path().join("a1.jsonl");
-    riff::usage::saw(marks.path(), "a1", &transcript).unwrap();
+    riff::usage::saw(marks.path(), "a1", std::slice::from_ref(&transcript)).unwrap();
     call(&m, "claim", json!({ "item": "issue-12" })).await;
     let at = chrono::Utc::now().to_rfc3339();
     let reply = json!({

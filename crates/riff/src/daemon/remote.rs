@@ -356,6 +356,14 @@ fn links_to(clone: &Path, main: &Path) -> bool {
 /// clone("data/sessions/issue-3-3c4d5e6f", &own.join(".git/objects"))?;
 /// std::os::unix::fs::symlink(&main, &own)?;
 /// assert_eq!(linked_clones(&root.path().join("data"), &main), 2);
+/// // A clone whose `alternates` names the main clone, and then grows to
+/// // one byte over the limit: the host counts no main clone for it, and
+/// // counts the others.
+/// clone("data/sessions/issue-4-4d5e6f7a", &main.join(".git/objects"))?;
+/// let alternates = root.path().join("data/sessions/issue-4-4d5e6f7a/clone/.git/objects/info/alternates");
+/// assert_eq!(linked_clones(&root.path().join("data"), &main), 3);
+/// std::fs::File::options().write(true).open(&alternates)?.set_len(riff::lead::MAX_ALTERNATES + 1)?;
+/// assert_eq!(linked_clones(&root.path().join("data"), &main), 2);
 /// # Ok::<(), std::io::Error>(())
 /// ```
 pub fn linked_clones(data: &Path, main: &Path) -> usize {

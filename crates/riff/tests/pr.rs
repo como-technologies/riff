@@ -1999,24 +1999,9 @@ async fn pr_open_needs_a_claimed_issue() {
     assert!(log(machine.bin.path()).is_empty());
 }
 
-/// The `###` how-to `heading` of how-it-works.md, to the next heading. A
-/// line that starts with `#` in a code block is no heading.
+/// The `###` how-to `heading` of how-it-works.md, to the next heading.
 fn how_to(heading: &str) -> String {
-    let page = book::page("how-it-works.md");
-    let start = page
-        .find(&format!("\n### {heading}\n"))
-        .unwrap_or_else(|| panic!("no how-to {heading:?}"));
-    let rest = &page[start + 1..];
-    let (mut fenced, mut at) = (false, 0);
-    for line in rest.split_inclusive('\n') {
-        if line.trim_start().starts_with("```") {
-            fenced = !fenced;
-        } else if !fenced && at > 0 && line.starts_with('#') {
-            return rest[..at - 1].to_owned();
-        }
-        at += line.len();
-    }
-    rest.to_owned()
+    book::how_to("how-it-works.md", &format!("### {heading}"))
 }
 
 /// 01M6Y6B8VBM3TKC3YHZKSA4PFZ, 01M6WZ2C8JXEA888XYMRXTS17V,
