@@ -1018,6 +1018,31 @@ async fn verify_pass_refuses_a_result_with_no_line_for_a_member_of_the_council()
     );
 }
 
+/// 01M7H6CW5TV0J4MNKM97N683RB, 01M7H9D4EZ8S0Y1F7JXCZ9V1YC: with no label
+/// `council` on issue 12 or on pull request 40, the council has no
+/// member. So `riff verify pass` of a result with no part `## The
+/// council` comments, sets the status and posts to the claim.
+#[tokio::test]
+async fn verify_pass_with_no_label_council_needs_no_part() {
+    let no_label = r#"*'issue view 12 --json labels'*) echo '{"labels":[]}' ;;"#;
+    let machine = Machine::new(&format!("{VERIFY}\n{no_label}")).await;
+    machine.claim("author", "issue-12").await;
+    let result = machine.write("result.md", "1. The wave shows.\n");
+    let pass = [
+        "verify", "pass", "40", "--file", &result, "--commit", "1a2b3c4d",
+    ];
+    machine.ok("verifier", &pass).await;
+    let calls = log(machine.bin.path());
+    assert!(calls.contains("gh issue view 12 --json labels"), "{calls}");
+    assert_eq!(calls.matches("gh pr comment").count(), 1, "{calls}");
+    assert!(calls.contains("-f state=success"), "{calls}");
+    let inbox = machine.ok("author", &["read"]).await;
+    assert!(
+        inbox.contains("verify result: PASS for issue-12, PR #40, commit 1a2b3c4d."),
+        "{inbox}"
+    );
+}
+
 /// The fake forge of a pull request that changes `riff.toml` from the
 /// pin of `ghcr.io/o/i` to the pin `head`.
 fn pin_cases(head: &str) -> String {
@@ -2232,7 +2257,8 @@ fn the_book_shows_the_line_of_a_pass_refused_for_an_image_that_a_host_cannot_pul
 /// 01M7CFBZSQEEZNZBR9H1S54GS1, 01M7D11KGEJ8ACFJK6Y10WENJZ: "Report a
 /// verify" says where the part `## The council` starts and ends, and
 /// that `riff verify pass` refuses a result with no line for a member of
-/// the council. It shows the line that `riff verify pass` prints.
+/// the council. It shows the line that `riff verify pass` prints. A
+/// council with no member needs no part (01M7H9D4EZ8S0Y1F7JXCZ9V1YC).
 #[test]
 fn the_book_shows_the_line_of_a_pass_with_no_line_for_a_member_of_the_council() {
     let part = how_to("Report a verify");
@@ -2250,8 +2276,12 @@ fn the_book_shows_the_line_of_a_pass_with_no_line_for_a_member_of_the_council() 
         "The part starts at the heading `## The council`, with that case, and ends at the next \
          `#` or `##` heading.",
         "also after a list mark such as `-` or `1.`",
-        "When the part has no line for a member, or the result has no such part, `riff verify \
-         pass` reports nothing and prints one line that names each member with no line",
+        "Last, when the council of the pull request has a member, a pass needs a line for each \
+         member in the part `## The council` of the result. A council with no member needs no \
+         such part.",
+        "When a member of the council has no line, in the part or because the result has no \
+         such part, `riff verify pass` reports nothing and prints one line that names each \
+         member with no line",
         "A fail needs no part `## The council`",
         "Its PASS with no line for a member is a result with no verdict: your lead gets a \
          message that names each member with no line, and the pull request waits for a new \

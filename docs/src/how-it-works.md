@@ -3540,11 +3540,12 @@ or has a container of its own. The requirements of the council are in
 [Product](requirements.md#product), and its design is #581.
 
 The council reviews only a pull request with the label `council`: a
-label of the pull request or of its issue. With no label `council`,
-the council has no member, and the verify has no council. A member
-file of your repository can also join for its own files or labels (see
-[The members of the council](#the-members-of-the-council)). To ask for
-the council, see
+label of the pull request or of its issue. riff builds in a default set
+of members, and each of them joins only for that label. A member of
+your repository can also join for its own files or labels, or join
+each council (see
+[The members of the council](#the-members-of-the-council)). When no
+member joins, the verify has no council. To ask for the council, see
 [Ask for the council of a pull request](#ask-for-the-council-of-a-pull-request).
 
 The start text of a verify of the wave gives each step of the council,
@@ -3577,7 +3578,7 @@ A verify by hand follows the same steps.
 flowchart TD
     V["the verifier of PR #40:<br/>each criterion, a control"] --> S["1. riff council show 40"]
     S --> Q{"a member in the council<br/>of PR #40?"}
-    Q -- "no: no label council" --> N["no subagent,<br/>and no part ## The council"]
+    Q -- "no" --> N["no subagent,<br/>and no part ## The council"]
     Q -- "yes" --> M["the members: the files of the base branch,<br/>at most 6"]
     M --> D["2. subagent: design"]
     M --> T["2. subagent: testing"]
@@ -3627,9 +3628,6 @@ file with a new name adds a member (see
 `riff council list` shows the members of your repository (see
 [List the members of the council](development.md#list-the-members-of-the-council)).
 
-Each member of the default set has `labels = ["council"]` and no
-`files`.
-
 | Member | Reviews |
 |---|---|
 | `design` | the fit with the design: one place for each thing, no dead code |
@@ -3648,6 +3646,9 @@ removes or renames, or when one of its `labels` is a label of the pull
 request or of its issue. In a glob, `*` matches each text in one part
 of a path, `?` matches one character, and the part `**` matches no
 part or more.
+
+Each member of the default set has `labels = ["council"]` and no
+`files`.
 
 A council has at most 6 members. riff takes first the members that
 join each council (see
@@ -4293,16 +4294,18 @@ prints the fix. See
 [Leave the issue open for a check after the
 release](development.md#leave-the-issue-open-for-a-check-after-the-release).
 
-Last, a pass needs a line for each member of the council in the part
-`## The council` of the result. riff reads the council of the pull
-request as `riff council show 40` does (see
+Last, when the council of the pull request has a member, a pass needs
+a line for each member in the part `## The council` of the result. A
+council with no member needs no such part. riff reads the council of
+the pull request as `riff council show 40` does (see
 [See the council of a pull request](#see-the-council-of-a-pull-request)).
 The part starts at the heading `## The council`, with that case, and
 ends at the next `#` or `##` heading. A line of a member starts with
 its name, also after a list mark such as `-` or `1.`, for example
-`- rust: no finding.`. When the part has no line for a member, or the
-result has no such part, `riff verify pass` reports nothing and prints
-one line that names each member with no line:
+`- rust: no finding.`. When a member of the council has no line, in
+the part or because the result has no such part, `riff verify pass`
+reports nothing and prints one line that names each member with no
+line:
 
 ```text
 riff verify pass: the result has no line in the part `## The council` for docs and rust. Fix: add one line for each member of the council, for example `- docs: no finding.`, and report again. Nothing is reported.

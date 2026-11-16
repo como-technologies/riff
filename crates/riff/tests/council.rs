@@ -601,9 +601,12 @@ fn the_book_shows_the_council_of_a_pull_request() {
 /// 01M7H6CW5TV0J4MNKM97N683RB: "The council of a verify" says that the
 /// council reviews only a pull request with the label `council`, and its
 /// how-to "Ask for the council of a pull request" makes the label and
-/// gives it to the issue in a copyable `sh` block. The levers of a verify
-/// and the Rust expert say no more that each verify or each change of
-/// Rust code has a council.
+/// gives it to the issue in a copyable `sh` block. With no label
+/// `council`, no member of the default set joins, and a member of the
+/// repository can still join (01M7CFBZ9TJ83FNHN0APY41175). The keys of
+/// the default set come after the text that says what `files` and
+/// `labels` are. The levers of a verify and the Rust expert say no more
+/// that each verify or each change of Rust code has a council.
 #[test]
 fn the_book_asks_for_the_council_with_the_label_council() {
     let flat = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -611,15 +614,28 @@ fn the_book_asks_for_the_council_with_the_label_council() {
     let words = flat(&part);
     for said in [
         "The council reviews only a pull request with the label `council`: a label of the pull \
-         request or of its issue. With no label `council`, the council has no member, and the \
-         verify has no council.",
+         request or of its issue. riff builds in a default set of members, and each of them \
+         joins only for that label. A member of your repository can also join for its own \
+         files or labels, or join each council",
+        "When no member joins, the verify has no council.",
         "(#ask-for-the-council-of-a-pull-request)",
     ] {
         assert!(words.contains(said), "no {said:?} in {words}");
     }
+    assert!(!words.contains("the council has no member, and"), "{words}");
     let members = flat(&under("how-it-works.md", "#### The members of the council"));
     assert!(
         members.contains("The Rust expert, `rust`, reviews the Rust code of a change"),
+        "{members}"
+    );
+    let at = |said: &str| {
+        members
+            .find(said)
+            .unwrap_or_else(|| panic!("no {said:?} in {members}"))
+    };
+    assert!(
+        at("when a glob of its `files` matches")
+            < at("Each member of the default set has `labels = [\"council\"]` and no `files`."),
         "{members}"
     );
     let levers = flat(&under("how-it-works.md", "### The levers of a verify"));
