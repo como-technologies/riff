@@ -3339,7 +3339,7 @@ sequenceDiagram
     E->>V: wake
     V->>E: claim verify-issue-6
     E-->>V: granted
-    V->>V: check out the commit, test each criterion, run the council
+    V->>V: check out the commit, test each criterion, run the council when it has a member
     V->>G: riff verify: the squash message of a pass, comment the result, set riff/verify
     V->>E: riff verify: post to [claim=issue-6] the result
     V->>E: release verify-issue-6
@@ -3403,10 +3403,10 @@ place:
 | A check of each criterion of the `Done when:` line, and the Gate | Each verify, as this section says. The verify reads the Gate, and does not run it again. |
 | A control: a test that finds the fault | The start text of each verify gives the control in a step of its own, "Run a control": see [Verify finished work](#verify-finished-work). |
 | A test for each new requirement | The job `Hygiene` of each pull request, with the rule `unnamed`: see [Name a new requirement in a test](development.md#name-a-new-requirement-in-a-test). |
-| An adversarial review: what can break, invalid states, round trips, the docs and security | The council of each verify: see [The council of a verify](#the-council-of-a-verify). |
+| An adversarial review: what can break, invalid states, round trips, the docs and security | The council of a pull request with the label `council`: see [The council of a verify](#the-council-of-a-verify). |
 | A person and a risk level | The gates before the code and the sign-off of a person, a design: [#585](https://github.com/como-technologies/riff/issues/585). |
 | Another model | None. Each session runs on the model of `riff.toml`: see [Set the model of the sessions](development.md#set-the-model-of-the-sessions). A verify has its own effort: see [Set the effort of the sessions](development.md#set-the-effort-of-the-sessions). |
-| A second verify | None. A head commit gets one verify that passes. The council gives the second view. |
+| A second verify | None. A head commit gets one verify that passes. The council gives the second view, for a pull request with the label `council`. |
 | A mutation test and a stress run | Not in the Gate. Run `just stress` by hand: see [Run a test on a busy machine](development.md#run-a-test-on-a-busy-machine). |
 | The measure of the faults that a verify missed | The label `escaped` on the issue of each such fault: see [Count the faults that a verify missed](development.md#count-the-faults-that-a-verify-missed). |
 
@@ -3414,7 +3414,7 @@ place:
 flowchart LR
     P["a pull request"] --> H["Hygiene: a file under crates/<br/>names each new requirement"]
     P --> G["the Gate"]
-    H --> V["the verify: each criterion,<br/>a control, the council"]
+    H --> V["the verify: each criterion, a control,<br/>the council for the label council"]
     G --> V
     V -- "PASS" --> M["the merge"]
     M --> F{"a fault<br/>later?"}
@@ -3539,12 +3539,22 @@ for each member, on the model of the session. No member claims an item
 or has a container of its own. The requirements of the council are in
 [Product](requirements.md#product), and its design is #581.
 
+The council reviews only a pull request with the label `council`: a
+label of the pull request or of its issue. riff builds in a default set
+of members, and each of them joins only for that label. A member of
+your repository can also join for its own files or labels, or join
+each council (see
+[The members of the council](#the-members-of-the-council)). When no
+member joins, the verify has no council. To ask for the council, see
+[Ask for the council of a pull request](#ask-for-the-council-of-a-pull-request).
+
 The start text of a verify of the wave gives each step of the council,
 after the check of each criterion and the control:
 
 1. The verifier runs `riff council show 40`. It gets each member, why
    it joins, and the text of its file (see
    [See the council of a pull request](#see-the-council-of-a-pull-request)).
+   When the council has no member, the verifier skips steps 2 to 5.
 2. It starts one subagent for each member with the Agent tool, on the
    model of the session. Each subagent gets the text of its member,
    the diff of the pull request and the rules of the repository for
@@ -3567,7 +3577,9 @@ A verify by hand follows the same steps.
 ```mermaid
 flowchart TD
     V["the verifier of PR #40:<br/>each criterion, a control"] --> S["1. riff council show 40"]
-    S --> M["the members: the files of the base branch,<br/>picked by the files and the labels of the change"]
+    S --> Q{"a member in the council<br/>of PR #40?"}
+    Q -- "no" --> N["no subagent,<br/>and no part ## The council"]
+    Q -- "yes" --> M["the members: the files of the base branch,<br/>at most 6"]
     M --> D["2. subagent: design"]
     M --> T["2. subagent: testing"]
     M --> O["2. subagent: docs"]
@@ -3584,6 +3596,26 @@ flowchart TD
     F -- "a live security fault" --> E["tell: to the lead,<br/>not into the result"]
 ```
 
+#### Ask for the council of a pull request
+
+Give the label `council` to the issue of the pull request, here issue
+12 of pull request 40. The first command makes the label, or updates
+it:
+
+```sh
+gh label create council --description "The council of reviewers reviews the pull request of this issue" --force
+gh issue edit 12 --add-label council
+```
+
+The label on the pull request works too:
+`gh pr edit 40 --add-label council`. Give the label before the verify
+starts. riff reads the council again for a pass. So a PASS of a verify
+that started before the label has no line for a member: it is a result
+with no verdict, and the pull request waits for a new verify (see
+[Report a verify](#report-a-verify)). `riff council show 40` shows the
+members of the next verify (see
+[See the council of a pull request](#see-the-council-of-a-pull-request)).
+
 #### The members of the council
 
 Each member has one file in the repository, `.riff/council/NAME.md`:
@@ -3596,34 +3628,42 @@ file with a new name adds a member (see
 `riff council list` shows the members of your repository (see
 [List the members of the council](development.md#list-the-members-of-the-council)).
 
-| Member | Joins | Reviews |
-|---|---|---|
-| `design` | each council | the fit with the design: one place for each thing, no dead code |
-| `testing` | each council | a test for each criterion, and a test that can fail |
-| `docs` | each council | a how-to for each new command, flag or setting, and no stale text |
-| `rust` | a change of a `.rs` file | idiomatic Rust, and the patterns of its file |
-| `security` | a change of the tokens, the sign-in, riff-server, the deploy or CI; the label `security` | no secret in text, and the rights of each call |
-| `attacker` | the same as `security` | the change as an attacker reads it |
-| `requirements` | a change of a requirements page or of the book | a requirement for each new rule, and the fit with the book |
-| `newcomer` | a change of the book | the book as a person who knows nothing about riff reads it |
-| `operations` | a change of the daemon, the release or the cloud; the label `operations` | the fix of each fault, a stop that loses nothing, and the cost |
+| Member | Reviews |
+|---|---|
+| `design` | the fit with the design: one place for each thing, no dead code |
+| `testing` | a test for each criterion, and a test that can fail |
+| `docs` | a how-to for each new command, flag or setting, and no stale text |
+| `rust` | idiomatic Rust, and the patterns of its file |
+| `security` | the tokens, the sign-in, riff-server, the deploy and CI: no secret in text, and the rights of each call |
+| `attacker` | the change as an attacker reads it |
+| `requirements` | a requirement for each new rule, and the fit with the book |
+| `newcomer` | the book as a person who knows nothing about riff reads it |
+| `operations` | the daemon, the release and the cloud: the fix of each fault, a stop that loses nothing, and the cost |
 
-A member by area joins when a glob of its `files` matches the path of
-a file that the pull request adds, changes, removes or renames, or when
-one of its `labels` is a label of the pull request or of its issue. In
-a glob, `*` matches each text in one part of a path, `?` matches one
-character, and the part `**` matches no part or more.
+A member of your repository can join by area: when a glob of its
+`files` matches the path of a file that the pull request adds, changes,
+removes or renames, or when one of its `labels` is a label of the pull
+request or of its issue. In a glob, `*` matches each text in one part
+of a path, `?` matches one character, and the part `**` matches no
+part or more.
+
+Each member of the default set has `labels = ["council"]` and no
+`files`.
 
 A council has at most 6 members. riff takes first the members that
-join each council, then the others. In each group, the members come in
-the order of the table, and the other members of your repository after
-them, in the order of their names.
+join each council (see
+[Add a member to the council](development.md#add-a-member-to-the-council)),
+then the others. In each group, the members come in the order of the
+table, and the other members of your repository after them, in the
+order of their names. So with the label `council`, the council of the
+default set is `design`, `testing`, `docs`, `rust`, `security` and
+`attacker`.
 
 The council of a pull request reads the member files of its base
 branch, not of its head. So a pull request cannot change the council
 of its own verify.
 
-The Rust expert, `rust`, reviews each change of Rust code for
+The Rust expert, `rust`, reviews the Rust code of a change for
 idiomatic Rust and for the patterns of `.riff/council/rust.md`. Each
 `##` heading of that file is one pattern, for example "An invalid
 state cannot be made" and "Each conversion names each field". To add a
@@ -3645,28 +3685,29 @@ the labels of its issue. It fetches the base branch, for example
 `main`, and reads the member files of `origin/main` over the default
 set. It does not read the files of the head or of your folder. For a
 pull request that changes `crates/riff/src/council.rs` and
-`docs/src/how-it-works.md`, with the label `security`, the output
+`docs/src/how-it-works.md`, with the label `council`, the output
 starts and ends so:
 
 ```text
 The council of pull request #40 has 6 members. riff read the member files of origin/main.
 
-== design (riff): each council
+== design (riff): the label council
 
 # Design
 
 You review the fit of the change with the design of the repository:
 ...
-== rust (riff): the path crates/riff/src/council.rs matches **/*.rs
+== rust (riff): the label council
 
 # The Rust expert
 ...
-== security (riff): the label security
+== security (riff): the label council
 ...
 == Left out by the limit of 6
 
-requirements (riff): the path docs/src/how-it-works.md matches docs/**
-newcomer (riff): the path docs/src/how-it-works.md matches docs/**
+requirements (riff): the label council
+newcomer (riff): the label council
+operations (riff): the label council
 ```
 
 Each member has a line `== NAME (SOURCE): WHY`, then the text of its
@@ -3674,6 +3715,13 @@ file after the table. The source is `riff` or the path of the file.
 The last part names each member that the limit of 6 leaves out. When
 riff cannot fetch the base branch, it says so, and reads the base
 branch as your clone has it.
+
+For the same pull request with no label `council`, the output is one
+line:
+
+```text
+The council of pull request #40 has no member. riff read the member files of origin/main.
+```
 
 #### The findings of the council
 
@@ -4171,8 +4219,10 @@ request, with the steps of
 [The council of a verify](#the-council-of-a-verify).
 
 Write the result to a file: each criterion, and what you did to check
-it, then the part `## The council` with one line for each member. For
-a fail, give the steps to see each failure. A result of a pass:
+it, then, when the council has a member, the part `## The council`
+with one line for each member. For a fail, give the steps to see each
+failure. A result of a pass of a pull request with the label
+`council`:
 
 ```markdown
 PASS
@@ -4187,6 +4237,8 @@ PASS
 - testing: no finding.
 - docs: not shown: docs/src/start-a-riff.md:40: .riff/council/docs.md "No stale text": the step names an old flag.
 - rust: no finding.
+- security: no finding.
+- attacker: no finding.
 ```
 
 Then report a pass:
@@ -4242,16 +4294,18 @@ prints the fix. See
 [Leave the issue open for a check after the
 release](development.md#leave-the-issue-open-for-a-check-after-the-release).
 
-Last, a pass needs a line for each member of the council in the part
-`## The council` of the result. riff reads the council of the pull
-request as `riff council show 40` does (see
+Last, when the council of the pull request has a member, a pass needs
+a line for each member in the part `## The council` of the result. A
+council with no member needs no such part. riff reads the council of
+the pull request as `riff council show 40` does (see
 [See the council of a pull request](#see-the-council-of-a-pull-request)).
 The part starts at the heading `## The council`, with that case, and
 ends at the next `#` or `##` heading. A line of a member starts with
 its name, also after a list mark such as `-` or `1.`, for example
-`- rust: no finding.`. When the part has no line for a member, or the
-result has no such part, `riff verify pass` reports nothing and prints
-one line that names each member with no line:
+`- rust: no finding.`. When a member of the council has no line, in
+the part or because the result has no such part, `riff verify pass`
+reports nothing and prints one line that names each member with no
+line:
 
 ```text
 riff verify pass: the result has no line in the part `## The council` for docs and rust. Fix: add one line for each member of the council, for example `- docs: no finding.`, and report again. Nothing is reported.

@@ -190,16 +190,16 @@
   `riff help server` shows the forms of a value and the default. No
   help, and no error for a missing command, names a hidden command.
 - **01M7CF3FPNSR0G8EZ3JY3CA34S** Each lever of an independent verify has
-  one place. The council of the verify gives an adversarial review: what
-  can break, invalid states, round trips, the docs and security. The
-  gates before the code give a person and a risk level. Each session
-  runs on `model` in `riff.toml`, and a verify has its own effort (`riff
-  daemon limit --effort-verify`). The prompt of each verify gives the
-  control of 01M5174ASF376JDNBQ4423TTAR.
+  one place. The council gives an adversarial review: what can break,
+  invalid states, round trips, the docs and security. The gates before
+  the code give a person and a risk level. Each session runs on `model`
+  in `riff.toml`, and a verify has its own effort (`riff daemon limit
+  --effort-verify`). The prompt of each verify gives the control of
+  01M5174ASF376JDNBQ4423TTAR.
 - **01M7CF3NYSQX8WFHSQNKV0Q3QN** riff runs no second verify of a head
-  commit for a second view. The council of the verify gives the second
-  view (01M7CF3FPNSR0G8EZ3JY3CA34S).
-- **01M7CFBNAKQ0CKCCY9S7WM62FE** Each verify runs a council of focused
+  commit for a second view. The council gives the second view
+  (01M7CF3FPNSR0G8EZ3JY3CA34S).
+- **01M7CFBNAKQ0CKCCY9S7WM62FE** A verify runs a council of focused
   reviewers (#581): each member reviews the change in one area only. The
   verifier runs the council in its own session, with one subagent for
   each member, on the model of the session (`model` of `riff.toml`). No
@@ -219,17 +219,15 @@
   heading with the name of the member, the text of its area, and one
   `##` heading for each rule. riff refuses a file with no table or no
   `#` heading, and names the file and the line.
-- **01M7CFBZCDFGG1MV4DEAACQVXK** Design, testing and docs join each
-  council. The Rust expert, `rust`, joins the council of each pull
-  request that changes a `.rs` file. It reviews for idiomatic Rust and
-  for the patterns of its file: an invalid state cannot be made (#552,
-  #553), one type for each layout, and each conversion names each field.
-- **01M7CFBZF1BZ0E7H0D4Q7KKY1T** The members by area join from the files
-  and the labels of the change: `security` (the tokens, the sign-in,
-  riff-server, the deploy, CI), `operations` (the daemon, the release,
-  the cloud) and `requirements` (`requirements.md`, the book). Two
-  personas join by area too: `newcomer`, a person who knows nothing
-  about riff, for a change of the book, and `attacker`, for a change of
+- **01M7CFBZCDFGG1MV4DEAACQVXK** The Rust expert, `rust`, reviews for
+  idiomatic Rust and for the patterns of its file: an invalid state
+  cannot be made (#552, #553), one type for each layout, and each
+  conversion names each field.
+- **01M7CFBZF1BZ0E7H0D4Q7KKY1T** The members `security` (the tokens, the
+  sign-in, riff-server, the deploy, CI), `operations` (the daemon, the
+  release, the cloud) and `requirements` (`requirements.md`, the book)
+  each review one area. Two personas review too: `newcomer`, a person
+  who knows nothing about riff, for the book, and `attacker`, for
   security. A glob of `files` matches the path of each file that the
   pull request adds, changes, removes or renames. A label matches a
   label of the pull request or of its issue.
@@ -251,14 +249,14 @@
   the code. A finding that the verifier shows, with a test, a run or a
   read of the code, fails the verify. A finding that it cannot show goes
   in the result as not shown, and does not fail the verify.
-- **01M7CFBZSQEEZNZBR9H1S54GS1** The result of a verify has the part `##
-  The council`, with one line for each member of the council: its
-  findings, or `no finding`. A finding of a live security fault goes to
-  the lead with `tell`, not into the result. `riff verify pass` refuses
-  a result with no line for a member of the council, and names the
-  member. `riff verify fail` takes such a result. The daemon reads such
-  a PASS of a verify of the wave as a result with no verdict. Supersedes
-  01M3W62QG36F9RD4SZ1X508T3A in part.
+- **01M7CFBZSQEEZNZBR9H1S54GS1** The result of a verify with a council
+  has the part `## The council`, with one line for each member of the
+  council: its findings, or `no finding`. A finding of a live security
+  fault goes to the lead with `tell`, not into the result. `riff verify
+  pass` refuses a result with no line for a member of the council, and
+  names the member. `riff verify fail` takes such a result. The daemon
+  reads such a PASS of a verify of the wave as a result with no verdict.
+  Supersedes 01M3W62QG36F9RD4SZ1X508T3A in part.
 - **01M7CN1GWPHVBMGAGRVE9ZGVCK** riff also refuses a member file with a
   table that is not TOML, a key other than `files` and `labels`, a value
   that is not a list of strings, an empty list, or an empty string in a
@@ -310,6 +308,20 @@
   Each such part counts. For a PASS of the wave with no line for a
   member, the message to the lead names each member with no line
   (01M7CFBZSQEEZNZBR9H1S54GS1).
+- **01M7H6CW5TV0J4MNKM97N683RB** Each member file of `.riff/council/` of
+  the riff repository has `labels = ["council"]` and no `files`. So a
+  member of the default set joins only the council of a pull request
+  when the pull request or its issue has the label `council`. The
+  council of a pull request with no label `council` has no member of the
+  default set. Supersedes 01M7CFBZCDFGG1MV4DEAACQVXK and
+  01M7CFBZF1BZ0E7H0D4Q7KKY1T in part.
+- **01M7H9D4EZ8S0Y1F7JXCZ9V1YC** A verify runs the council only when the
+  council of its pull request has a member. When `riff council show`
+  shows no member, the verifier starts no subagent, and its result needs
+  no part `## The council`: `riff verify pass` needs no line of a
+  member. The start text of a verify of the wave says so. Supersedes
+  01M7CFBNAKQ0CKCCY9S7WM62FE, 01M7CF3FPNSR0G8EZ3JY3CA34S,
+  01M7CF3NYSQX8WFHSQNKV0Q3QN and 01M7CFBZSQEEZNZBR9H1S54GS1 in part.
 
 ## Waves
 

@@ -117,8 +117,8 @@ fn each_reply_of_the_forge_that_riff_reads_has_no_control_character() {
     clean(&riff::text::gate_not_passed(40, "ended", &full, &gate));
 
     // `riff verify`: the commit and the URL go into the result. A pass
-    // reads the council in a clone: design, testing and docs. The clone
-    // has no `origin`, so the fetch fails at once.
+    // reads the council in a clone: with no label `council`, it has no
+    // member. The clone has no `origin`, so the fetch fails at once.
     let clone = tempfile::tempdir().unwrap();
     let init = std::process::Command::new("git")
         .args(["init", "-q"])

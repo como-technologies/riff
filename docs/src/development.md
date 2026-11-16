@@ -6401,8 +6401,8 @@ name when `rules` has another value, or when the file is not TOML.
 
 ## Add a member to the council
 
-The council of a verify reviews each change in focused areas, with
-one member for each area (see
+The council of a verify reviews a change in focused areas, with one
+member for each area (see
 [The council of a verify](how-it-works.md#the-council-of-a-verify)).
 Each member is one file in `.riff/council/` of your repository. To add
 a member, write its file, and merge it with a pull request. This member
@@ -6468,7 +6468,7 @@ member in the order of its name. In a repository with the member
 
 ```text
 MEMBER        SOURCE                        RULES  JOINS
-design        riff                          4      each council
+design        riff                          4      labels council
 ...
 performance   .riff/council/performance.md  1      files crates/riff-server/**; labels performance
 ```

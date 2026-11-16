@@ -1,5 +1,5 @@
 +++
-files = ["docs/**", "README.md"]
+labels = ["council"]
 +++
 
 # A person who knows nothing about riff

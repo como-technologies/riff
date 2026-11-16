@@ -155,7 +155,9 @@
 //! verify session (01M7DZ4E5BZAD38E3K9A3N277E). Then it checks the part
 //! ([`crate::council::result::check`]). The error of a member with no
 //! line is a [`crate::council::result::NoLine`], so the verify of the wave
-//! can read it as a result with no verdict. A fail needs no such part.
+//! can read it as a result with no verdict. A council with no member, for
+//! example of a pull request with no label `council`, and a fail need no
+//! such part (01M7H9D4EZ8S0Y1F7JXCZ9V1YC).
 //!
 //! The author of a pull request releases its item at the verify
 //! request. So the issue can have no holder. Then the result wakes the
