@@ -3792,6 +3792,15 @@ them, and the others wait until it merges or its verify fails:
   rebase at once.
 - So after a merge, only the next pull request of the order gets its
   rebase. The others keep their conflict until their turn.
+- A rebase that waits for its turn after the pull request #N waits for
+  no other pull request. Its turn comes when #N merges or the verify of
+  #N fails. It also comes when #N has no place in the order, for
+  example while you hold the verify of #N. Then the rebase starts, also
+  while the verify of another pull request whose head conflicts with it
+  runs. When #N comes back later, for example with a fix after its
+  failed verify, the rebase does not wait for it again. The rebase
+  keeps its turn through a pause, a wait for a lead and a hold of its
+  item.
 - A pull request that cannot merge by itself for another reason does
   not go first, for example with a failed check or with auto-merge off.
   A conflict gets no verify: its rebase comes first.
@@ -3819,6 +3828,16 @@ flowchart TD
     V --> N["#42 merges"]
     X --> N
     N --> T["the rebase of #43 starts"]
+```
+
+Three pull requests whose heads conflict, in the order #41, #42, #43.
+The verifies of #41 and #42 run, and #43 needs a rebase:
+
+```mermaid
+flowchart TD
+    W["#43: rebase waits for #41"] --> E{"#41"}
+    E -- "its verify runs, or it waits for its merge" --> W
+    E -- "merges, or its verify fails" --> T["the rebase of #43 starts,<br/>while the verify of #42 runs"]
 ```
 
 The wave reads the files of each pull request from GitHub: one REST

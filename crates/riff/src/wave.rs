@@ -522,6 +522,8 @@
 //! their conflict. The loop tells the lead one time for each head and
 //! each pull request before it that the rebase waits
 //! ([`text::wave_rebase_waits`], 01M7E075M743X8TE00T5PFMTVR).
+//! The loop keeps the turn of each rebase that waits from look to look
+//! ([`turns`], [`crate::order`]).
 //! A pull request keeps its place while a session rebases it, and after
 //! its push, also while it reads `UNKNOWN`. The session does not make it
 //! go first (01M74EP20TDQEXW42MK0XE73QF).
@@ -1463,6 +1465,10 @@ pub struct Look {
     /// None while fewer than two are open or no verify and no rebase of
     /// them is free work.
     pub lanes: BTreeMap<u64, order::Lane>,
+    /// The turns of the rebases from the looks before ([`turns`], #2219,
+    /// 01M7GSJNHWDC22KG9AG2ZWZ0K8). The look reads none: the loop of the
+    /// wave gives them.
+    pub turns: order::Turns,
     /// The pull requests that cannot merge by themselves.
     pub fixes: Fixes,
     /// The issues that would be free work but for the missing line
@@ -1726,11 +1732,80 @@ pub fn build_of(look: &Look, issue: u64) -> Work {
 /// assert_eq!(order(&pushed, &none, &BTreeMap::new()), BTreeMap::from([(5, 44)]));
 /// assert_eq!(pick(&pushed, &none, &BTreeMap::new()), None);
 /// ```
+///
+/// The turns of the rebases come from [`Look::turns`] ([`order::waits`]).
 pub fn order(
     look: &Look,
     running: &BTreeSet<String>,
     starts: &BTreeMap<String, u32>,
 ) -> BTreeMap<u64, u64> {
+    let (first, asked) = places(look, running, starts);
+    order::waits(first, asked, &look.turns)
+}
+
+/// The turns of the rebases after `look` ([`order::Turns::after`]), from
+/// the items that it runs (`running`) and the starts of each item
+/// (`starts`), as for [`order()`]. The loop of the wave gives them to the
+/// next look ([`Look::turns`]).
+///
+/// ```
+/// use std::collections::{BTreeMap, BTreeSet};
+/// use riff::order::Lane;
+/// use riff::wave::{Conflict, Fixes, Look, Work, order, pick, turns};
+///
+/// let lane = |issue, conflict| Lane {
+///     issue,
+///     pull: 40 + issue,
+///     head: format!("c{issue}"),
+///     files: ["tui.rs".to_owned()].into(),
+///     conflict,
+///     asked: Some(issue as usize),
+///     ..Lane::default()
+/// };
+/// // The verifies of 1 and 2 run, and 3 has a conflict.
+/// let look = Look {
+///     free: vec!["issue-3".into()],
+///     lanes: [(1, lane(1, false)), (2, lane(2, false)), (3, lane(3, true))].into(),
+///     fixes: Fixes { conflicts: [(3, Conflict { pull: 43, commit: "c3".into() })].into(), ..Fixes::default() },
+///     ..Look::default()
+/// };
+/// let running: BTreeSet<String> = ["verify-issue-1".to_owned(), "verify-issue-2".to_owned()].into();
+/// let starts = BTreeMap::new();
+/// assert_eq!(order(&look, &running, &starts), BTreeMap::from([(3, 41)]));
+/// let kept = turns(&look, &running, &starts);
+/// // The wave is paused for a look: it has no lanes, and the turns stay.
+/// let paused = Look { paused: true, turns: kept.clone(), ..Look::default() };
+/// assert_eq!(turns(&paused, &running, &starts), kept);
+/// // The verify of 1 failed: it leaves the order.
+/// let mut failed = look.clone();
+/// failed.lanes.remove(&1);
+/// let running: BTreeSet<String> = ["verify-issue-2".to_owned()].into();
+/// // With no turn, the rebase of 3 waits for #42 now.
+/// assert_eq!(order(&failed, &running, &starts), BTreeMap::from([(3, 42)]));
+/// // With its turn, it starts.
+/// failed.turns = kept;
+/// assert!(order(&failed, &running, &starts).is_empty());
+/// let rebase = Work::Rebase { issue: 3, pull: 43, commit: "c3".into() };
+/// assert_eq!(pick(&failed, &running, &starts), Some(rebase));
+/// ```
+pub fn turns(
+    look: &Look,
+    running: &BTreeSet<String>,
+    starts: &BTreeMap<String, u32>,
+) -> order::Turns {
+    let (first, asked) = places(look, running, starts);
+    let placed: BTreeSet<u64> = asked.iter().map(|lane| lane.issue).collect();
+    let waits = order::waits(first, asked, &look.turns);
+    look.turns.after(&look.lanes, &placed, &waits)
+}
+
+/// The lanes of `look` that go first, and the lanes that wait for a
+/// verify or for a rebase, for [`order()`] and [`turns`].
+fn places<'a>(
+    look: &'a Look,
+    running: &BTreeSet<String>,
+    starts: &BTreeMap<String, u32>,
+) -> (Vec<&'a order::Lane>, Vec<&'a order::Lane>) {
     let busy = |item: &str| running.contains(item) || look.claims.contains(item);
     let left = |work: Work| starts.get(&work.key()).copied().unwrap_or(0) < work.most();
     // Its verify runs, or it waits for its merge. A session of its item
@@ -1767,9 +1842,13 @@ pub fn order(
             });
         !look.holds.contains(&verify) && (lane.unknown || free)
     };
-    let first = look.lanes.values().filter(|lane| goes(lane));
-    let asked = look.lanes.values().filter(|lane| !goes(lane) && next(lane));
-    order::waits(first, asked)
+    let first = look.lanes.values().filter(|lane| goes(lane)).collect();
+    let asked = look
+        .lanes
+        .values()
+        .filter(|lane| !goes(lane) && next(lane))
+        .collect();
+    (first, asked)
 }
 
 /// The pull requests of `look` with a conflict whose rebase the pick does
@@ -2835,6 +2914,8 @@ pub(crate) async fn run<R: Runtime + 'static>(
     // heard of ([`no_rebase_key`], [`rebase_waits_key`]), each with the
     // start of a spent rebase ([`Work::key`]).
     let mut rebases: BTreeMap<String, Option<String>> = BTreeMap::new();
+    // The turns of the rebases at the last look ([`turns`], #2219).
+    let mut rebase_turns = order::Turns::default();
     // The issues with no `Done when:` line that the lead heard of.
     let mut bare: BTreeSet<u64> = BTreeSet::new();
     // The issues and the merged pull requests whose comment `Merged in`
@@ -2991,22 +3072,25 @@ pub(crate) async fn run<R: Runtime + 'static>(
                     world.tell(&wave, &body, Some(&notice.post_key())).await;
                 }
                 let busy = running(&daemon, &wave, &taken);
+                // The turns of the rebases from the looks before (#2219).
+                look.turns = std::mem::take(&mut rebase_turns);
                 let next = pick(&look, &busy, &lock(&starts));
-                let turns = order(&look, &busy, &lock(&starts));
+                let order_waits = order(&look, &busy, &lock(&starts));
+                rebase_turns = turns(&look, &busy, &lock(&starts));
                 // Why each other rebase does not start: the lead hears of
                 // each one time (#2128).
                 let kept = records(&daemon, &wave, &taken);
-                let stops = no_rebases(&look, &busy, &kept, &lock(&starts), &turns);
+                let stops = no_rebases(&look, &busy, &kept, &lock(&starts), &order_waits);
                 let unstarted = Unstarted {
                     look: &look,
-                    waits: &turns,
+                    waits: &order_waits,
                     stops: &stops,
                 };
                 let end = |item: &str| daemon.last_end(item);
                 let spent = |key: &str| lock(&starts).get(key).is_some_and(|n| *n >= REBASES);
                 tell_unstarted(&*world, &wave, unstarted, end, spent, &mut rebases).await;
                 *lock(&ordered) = Ordered {
-                    waits: turns,
+                    waits: order_waits,
                     stops,
                 };
                 // A fault of the host stops each item: the wave waits,
@@ -5261,6 +5345,7 @@ fn look_from(
         holds,
         pulls,
         lanes,
+        turns: order::Turns::default(),
         fixes,
         no_done_when,
         merged,
@@ -6599,6 +6684,15 @@ mod tests {
                 if forge.branch_unread {
                     bail!("gh api repos/o/r: HTTP 502");
                 }
+                // A repository with no live lead: the look of riff-server
+                // only ([`stopped`]).
+                if forge.no_lead {
+                    let no_lead = Look {
+                        no_lead: true,
+                        ..Look::default()
+                    };
+                    return Ok(no_lead);
+                }
                 // The free work of the forge, as `look_on` takes it. The
                 // pick skips a held item.
                 let open = forge.open();
@@ -6631,12 +6725,13 @@ mod tests {
                 let lanes = lanes(&open, &free, &HashMap::new(), files);
                 Ok(Look {
                     paused: false,
-                    no_lead: forge.no_lead,
+                    no_lead: false,
                     free,
                     claims: forge.seen_claims(),
                     holds: forge.holds.clone(),
                     pulls,
                     lanes,
+                    turns: order::Turns::default(),
                     fixes,
                     no_done_when: no_done_when.into_iter().collect(),
                     merged: open.unsaid(),
@@ -7330,6 +7425,13 @@ mod tests {
                 tokio::time::sleep(Duration::from_millis(20)).await;
                 assert!(self.daemon.live_count() <= limit, "more than {limit} live");
             }
+        }
+
+        /// Waits until the wave starts `n` more looks at the forge: with 2,
+        /// one whole look ran. At most `limit` sessions live.
+        async fn looked(&self, limit: usize, n: usize) {
+            let end = self.forge().branch_reads + n;
+            self.until(limit, |h| h.forge().branch_reads >= end).await;
         }
     }
 
@@ -11058,6 +11160,91 @@ esac
         .unwrap();
         let sample = text::wave_rebase_waits(40, 12, "main", "1a2b3c4d5e", 44);
         assert!(book.contains(&format!("\n{sample}\n")), "{sample}");
+    }
+
+    /// The wave of the tests of #2219 (01M7GSJNHWDC22KG9AG2ZWZ0K8): the
+    /// pull requests of 1, 2 and 3 change one file, and their heads
+    /// conflict. The verifies of 1 and 2 run on another host, and 3 has a
+    /// conflict: its rebase waits for its turn after #41. It gives the
+    /// message of that wait.
+    async fn a_rebase_waits_after_41(here: &Here) -> String {
+        {
+            let mut forge = here.forge();
+            forge
+                .pulls
+                .extend([(1, Pr::Asked), (2, Pr::Asked), (3, Pr::Passed)]);
+            forge.conflicting.insert(3);
+            for n in [1, 2, 3] {
+                forge.files.insert(n, vec!["crates/riff/src/tui.rs".into()]);
+            }
+            for n in [1, 2] {
+                let item = format!("verify-issue-{n}");
+                forge.claims.insert(item, format!("verify{n}"));
+            }
+        }
+        here.run();
+        let waits = text::wave_rebase_waits(43, 3, "main", "c3", 41);
+        here.until(3, |h| h.forge().told == [waits.clone()]).await;
+        here.looked(3, 2).await;
+        assert!(here.forge().works.is_empty(), "{:?}", here.forge().works);
+        assert_eq!(here.daemon.order_waits("o/r"), BTreeMap::from([(3, 41)]));
+        waits
+    }
+
+    /// The end of the tests of #2219: the rebase of 3 starts, while the
+    /// verify of 2 runs, and the lead got only the message `waits`.
+    async fn the_rebase_of_3_starts(here: &Here, waits: &str) {
+        let told = |h: &Here| h.forge().told.len() > 1;
+        here.until(3, |h| h.running("issue-3").is_some() || told(h))
+            .await;
+        here.looked(3, 2).await;
+        let forge = here.forge();
+        assert_eq!(forge.told, [waits], "no new message");
+        let rebase = Work::Rebase {
+            issue: 3,
+            pull: 43,
+            commit: "c3".into(),
+        };
+        assert!(forge.works.contains(&rebase), "{:?}", forge.works);
+    }
+
+    /// #2219: the rebase of 3 waits for its turn after #41. The verify of
+    /// 1 fails: the rebase of 3 starts while the verify of 2 runs, and the
+    /// lead gets no message that it waits for #42.
+    #[tokio::test]
+    async fn a_rebase_that_waits_for_its_turn_starts_when_the_verify_before_it_fails() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1, 2, 3], 3, free).await;
+        let waits = a_rebase_waits_after_41(&here).await;
+        {
+            let mut forge = here.forge();
+            forge.claims.remove("verify-issue-1");
+            forge.pulls.insert(1, Pr::Failed);
+        }
+        the_rebase_of_3_starts(&here, &waits).await;
+    }
+
+    /// #2219: the rebase of 3 waits for its turn after #41. The lead
+    /// ends, and the looks of the wave have no lanes. The verify of 1
+    /// fails, and a lead starts: the rebase of 3 keeps its turn, and
+    /// starts while the verify of 2 runs.
+    #[tokio::test]
+    async fn a_rebase_keeps_its_turn_through_a_look_with_no_lead() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1, 2, 3], 3, free).await;
+        let waits = a_rebase_waits_after_41(&here).await;
+        here.forge().no_lead = true;
+        let word = text::wave_no_lead("o/r");
+        here.until(3, |h| h.daemon.waves_shown()[0].word == word)
+            .await;
+        here.looked(3, 2).await;
+        {
+            let mut forge = here.forge();
+            forge.claims.remove("verify-issue-1");
+            forge.pulls.insert(1, Pr::Failed);
+            forge.no_lead = false;
+        }
+        the_rebase_of_3_starts(&here, &waits).await;
     }
 
     /// 01M57FJ3WWMQSDBFRRHXN3SMFQ: a pull request with a passed verify

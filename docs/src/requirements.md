@@ -581,6 +581,14 @@
   branch changed the same lines, the test keeps the lines of both, those
   of the head first. A newer head that changes lines next to a change of
   the default branch does not clash with the head.
+- **01M7GSJNHWDC22KG9AG2ZWZ0K8** A rebase that waits for its turn after
+  the pull request #N (01M7E075M743X8TE00T5PFMTVR) waits for no other
+  pull request. Its turn comes when #N is no longer before it in its
+  group: #N merges, the verify of #N fails, or #N has no place in the
+  order. The rebase then starts, also while the verify of another pull
+  request of its group runs. The riff daemon keeps the turn of each head
+  commit with a conflict from look to look of the wave. A new head
+  commit has no turn yet.
 
 ## Waves on GitHub
 
