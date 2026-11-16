@@ -311,6 +311,27 @@ pub fn token_refused(stdout: &str, stderr: &str) -> bool {
     stderr.contains("Bad credentials") || has_status(stdout, stderr, &["401"])
 }
 
+/// True when the `error` of `gh pr view BRANCH` says that the branch has
+/// no pull request (#2170, 01M7FVQP0N4ZEZ7SBP9WE9YWMS). Each other error
+/// of the read is a fault: it says nothing of a pull request.
+///
+/// ```
+/// let dir = tempfile::tempdir()?;
+/// let gh = |name: &str, stderr: &str| {
+///     let script = format!("#!/bin/sh\necho '{stderr}' >&2\nexit 1\n");
+///     riff::pr::Gh::at(isolated::write_program(dir.path().join(name), &script))
+/// };
+/// let view = |gh: riff::pr::Gh| gh.run(&["pr", "view", "worktree-issue-12"], None).unwrap_err();
+/// let none = view(gh("none", "no pull requests found for branch \"worktree-issue-12\""));
+/// assert!(riff::pr::no_pull(&none));
+/// assert!(!riff::pr::no_pull(&view(gh("down", "gh: Bad Gateway (HTTP 502)"))));
+/// assert!(!riff::pr::no_pull(&view(gh("silent", ""))));
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn no_pull(error: &anyhow::Error) -> bool {
+    format!("{error:#}").contains("no pull requests found for branch")
+}
+
 /// True when a failed call of `gh` ended in one of the HTTP status
 /// `codes`: `HTTP CODE` in `stderr`, or the status line of
 /// `gh api --include` in `stdout`.

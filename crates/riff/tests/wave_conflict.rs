@@ -204,7 +204,7 @@ fn a_pull_request_that_reads_unknown_gets_its_verify_at_the_next_look() {
 }
 
 /// A pull request whose verify failed is free work as a build, with the
-/// failed result: no rebase.
+/// failed result: the fix of its head (#2170), and no rebase.
 #[test]
 fn a_failed_verify_with_a_conflict_is_a_build() {
     let dir = tempfile::tempdir().unwrap();
@@ -216,7 +216,11 @@ fn a_failed_verify_with_a_conflict_is_a_build() {
     assert!(look.fixes.conflicts.is_empty());
     assert_eq!(
         wave::pick(&look, &BTreeSet::new(), &BTreeMap::new()),
-        Some(Work::Build { issue: 1 })
+        Some(Work::Fix {
+            issue: 1,
+            pull: 41,
+            commit: "aaaa111".into()
+        })
     );
 }
 

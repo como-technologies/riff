@@ -337,8 +337,9 @@ fn a_conflict_with_auto_merge_on_still_starts_the_rebase() {
     );
 }
 
-/// A failed verify is free work as a build already: a failed check on the
-/// head is no second state. A held item gets no session.
+/// A failed verify is free work as a build already, the fix of its head
+/// (#2170): a failed check on the head is no second state. A held item
+/// gets no session.
 #[test]
 fn a_failed_verify_and_a_held_item_get_no_fix_of_checks() {
     let dir = tempfile::tempdir().unwrap();
@@ -355,7 +356,11 @@ fn a_failed_verify_and_a_held_item_get_no_fix_of_checks() {
     assert!(!look.fixes.failed.contains_key(&1));
     assert_eq!(
         wave::pick(&look, &BTreeSet::new(), &BTreeMap::new()),
-        Some(Work::Build { issue: 1 })
+        Some(Work::Fix {
+            issue: 1,
+            pull: 41,
+            commit: "aaaa111".into()
+        })
     );
 }
 

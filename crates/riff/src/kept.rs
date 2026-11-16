@@ -17,6 +17,13 @@
 //! ([`crate::daemon::sweep`]). The report of a kept PASS reads the council
 //! of the pull request in the main clone of the wave, never in the clone
 //! of the folder ([`crate::pr::report`], 01M7DZ4E5BZAD38E3K9A3N277E).
+//! When riff refuses a kept PASS for a member of the council with no
+//! line, the person posts the end of the session of the verify in the
+//! thread `ends` before the folder goes, as the end step does
+//! ([`crate::wave::refused_pass`], 01M7G6H601C6NYC7ACSF6GVW50). So the file
+//! has the session and how it ended. The daemon keeps the reason of that
+//! end for the message "started N times" ([`Reports::ends`],
+//! 01M7G3DR4R4KF5RSD94F6ZN80H).
 //!
 //! ```mermaid
 //! flowchart TD
@@ -25,7 +32,9 @@
 //!     R -- "fails: the limit is out" --> K["keep the result in the folder"]
 //!     K --> W["the wave waits for the reset"]
 //!     W --> H{"the pull request is open<br/>at the same head commit?"}
-//!     H -- yes --> R2["report, post, and remove the file"]
+//!     H -- yes --> R2{"report to GitHub"}
+//!     R2 -- "done" --> P2["post, and remove the file"]
+//!     R2 -- "refused: a member of the council<br/>has no line" --> N["a record in ends, a message<br/>to the lead; the folder goes"]
 //!     H -- "no: the head changed, or it closed" --> D["drop the result;<br/>the wave starts a new verify"]
 //! ```
 //!
@@ -39,6 +48,8 @@ use riff_client::api::Api;
 use riff_core::name::SessionUri;
 use serde::{Deserialize, Serialize};
 
+use crate::daemon::Ended;
+use crate::ends::{End, Session};
 use crate::pr::{self, Gh, Verdict};
 use crate::wave::Wave;
 use crate::{ghcalls, run, text};
@@ -53,6 +64,10 @@ pub struct Kept {
     pub repo: String,
     /// The item of the verify, for example `verify-issue-12`.
     pub item: String,
+    /// The session ID of the verify.
+    pub session: String,
+    /// How the session of the verify ended.
+    pub ended: Ended,
     /// The pull request that the verify tested.
     pub pull: u64,
     /// The commit that the verifier tested.
@@ -67,6 +82,7 @@ impl Kept {
     /// Writes the result in `folder`.
     ///
     /// ```
+    /// use riff::daemon::Ended;
     /// use riff::kept::Kept;
     /// use riff::pr::Verdict;
     ///
@@ -74,6 +90,8 @@ impl Kept {
     /// let kept = Kept {
     ///     repo: "o/r".into(),
     ///     item: "verify-issue-12".into(),
+    ///     session: "9f8e7d6c5b4a".into(),
+    ///     ended: Ended { code: Some(0), failed: false },
     ///     pull: 40,
     ///     commit: "1a2b3c4d5e".into(),
     ///     verdict: Verdict::Pass,
@@ -95,6 +113,30 @@ impl Kept {
         let text = std::fs::read_to_string(folder.join(FILE)).ok()?;
         serde_json::from_str(&text).ok()
     }
+
+    /// The session of the verify, with its events in `folder`: the head
+    /// of its end is the tested commit.
+    pub fn session<'a>(&'a self, folder: &'a Path) -> Session<'a> {
+        Session {
+            item: &self.item,
+            id: &self.session,
+            commit: Some(&self.commit),
+            folder,
+            ended: self.ended,
+        }
+    }
+}
+
+/// What [`report_all`] did.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Reports {
+    /// A line for each result that it reported or dropped.
+    pub lines: Vec<String>,
+    /// The end of each session of a verify whose kept PASS riff refused
+    /// for a member of the council with no line ([`crate::wave::refused_pass`]).
+    /// The daemon keeps its reason for the message "started N times", in
+    /// place of the reason of the end step (01M7G3DR4R4KF5RSD94F6ZN80H).
+    pub ends: Vec<End>,
 }
 
 /// The folders in `sessions` with a kept result of `repo`.
@@ -119,30 +161,33 @@ pub fn find(sessions: &Path, repo: &str) -> Vec<(PathBuf, Kept)> {
 /// `me` (#1557). It does nothing while a limit of GitHub is out, and it
 /// stops at a report that fails on a limit. A result of a pull request that
 /// is not open at the tested commit goes. It gives a line for each result
-/// that it reported or dropped.
+/// that it reported or dropped, and the end of each verify whose kept PASS
+/// riff refused ([`Reports`]).
 pub async fn report_all(
     gh: &Gh,
     api: &Api,
     me: &SessionUri,
     wave: &Wave,
     sessions: &Path,
-) -> Vec<String> {
-    let mut lines = Vec::new();
+) -> Reports {
+    let mut reports = Reports::default();
     for (folder, kept) in find(sessions, &wave.repo) {
         if gh.limit_wait().is_some() {
             break;
         }
-        match report_one(gh, api, me, wave, &folder, &kept).await {
-            Ok(line) => lines.push(line),
+        match report_one(gh, api, me, wave, &folder, &kept, &mut reports.ends).await {
+            Ok(line) => reports.lines.push(line),
             Err(e) if ghcalls::is_limit_error(&e) => break,
             Err(e) => eprintln!("riff daemon: {}: {}: {e:#}", wave.repo, kept.item),
         }
     }
-    lines
+    reports
 }
 
 /// Reports the result `kept` of the folder `folder`, and gives its line. A
-/// report that fails on a limit is an error, and the result stays.
+/// report that fails on a limit is an error, and the result stays. A
+/// refused PASS puts the end of its session in `ends` before the message
+/// to the lead, so a fault of that message keeps the end.
 async fn report_one(
     gh: &Gh,
     api: &Api,
@@ -150,6 +195,7 @@ async fn report_one(
     wave: &Wave,
     folder: &Path,
     kept: &Kept,
+    ends: &mut Vec<End>,
 ) -> Result<String> {
     let Kept {
         item,
@@ -187,6 +233,8 @@ async fn report_one(
         Err(e) if ghcalls::is_limit_error(&e) => return Err(e),
         Err(e) => {
             // The same end as a report that fails with no kept result.
+            let failed = crate::wave::refused_pass(api, me, kept.session(folder), &e).await;
+            ends.extend(failed.refused());
             let _ = std::fs::remove_dir_all(folder);
             // The read above found the pull request open.
             let body = crate::wave::no_report(item, *pull, &e, true);

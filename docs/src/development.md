@@ -2773,7 +2773,7 @@ Then the wave does not start the rebase of that commit again. Your lead
 gets one message with the cause and the fix:
 
 ```text
-PR #40 of issue-12 has a conflict with main at commit 1a2b3c4, and the riff daemon of thelio will not start its rebase again: the rebase of this commit started in this run of the wave, and the conflict is still there. The last session ended: exit code 0. Start the rebase again with riff host join on thelio, or on another machine with riff host join --host thelio
+PR #40 of issue-12 has a conflict with main at commit 1a2b3c4, and the riff daemon of thelio will not start its rebase again: the rebase of this commit started in this run of the wave, and the conflict is still there. The last session ended: exit code 0, and pull request #40 is open. Start the rebase again with riff host join on thelio, or on another machine with riff host join --host thelio
 ```
 
 To start the rebase of the same commit again, see
@@ -3944,7 +3944,13 @@ riff session why issue-1203
 It shows one line for each session of the item that ended with no pull
 request, and the last lines of the output of the last one. The message
 "started 3 times" to your lead names the same reason. A session that
-ends with an open pull request leaves no record.
+ends with an open pull request leaves no record. Then the reason in the
+message names that pull request, for example `exit code 0, and pull
+request #41 is open`. When riff cannot read the pull request of the
+branch, for a limit of GitHub or another fault, your lead gets a note
+with the cause. Then riff leaves no record, the reason says nothing of a
+pull request, and the wave reads the pull request again at its next
+look.
 
 A verify session can end with no PASS or FAIL. Your lead gets the
 message "ended with no PASS or FAIL", and the pull request waits for a
@@ -3974,7 +3980,14 @@ request. A pull request that gets a new head, for example after a
 rebase, starts a new count. A verify with a PASS or a FAIL that riff put
 on the pull request does not count. The wave starts a verify of one head
 3 times at most in a run of the wave, and only the sessions that ended
-with no PASS or FAIL use these starts.
+with no PASS or FAIL use these starts. riff refuses a PASS whose result
+has no line for a member of the council (see
+[The findings of the council](how-it-works.md#the-findings-of-the-council)).
+Such a PASS counts as no PASS or FAIL, and its session leaves a record
+too. This is also true when riff kept the PASS for a limit of GitHub
+and refuses it after the reset (see
+[Know what the daemon does when the GitHub limit runs out](#know-what-the-daemon-does-when-the-github-limit-runs-out)).
+Then the message "started 3 times" names the reason of that record.
 
 ```mermaid
 flowchart TD
@@ -3993,7 +4006,7 @@ session ended, and only for the head that the pull request has then, so
 your lead gets none for an old head:
 
 ```text
-The riff daemon started verify-issue-1597 3 times for the head 988cb7b of its pull request, and it is still free work. The last session ended: exit code 0, and no PASS or FAIL. It starts no more session for this head until riff host join again. A new head starts a new count. Read why: riff session why verify-issue-1597
+The riff daemon started verify-issue-1597 3 times for the head 988cb7b of its pull request #1600, and it is still free work. The last session ended: exit code 0, and no PASS or FAIL. It starts no more session for this head until riff host join again. A new head starts a new count. Read why: riff session why verify-issue-1597
 ```
 
 To read each of these sessions, run this on any machine:
@@ -4024,9 +4037,25 @@ The wave starts one item at most 3 times in a run of the wave. Then
 your lead gets a message, and the wave starts no more session for the
 item. A verify counts for each head commit of its pull request: see
 [See why a verify stopped for a head](#see-why-a-verify-stopped-for-a-head).
-Read the cause first: [See why a session ended with no pull
-request](#see-why-a-session-ended-with-no-pull-request). When you fixed
-it, run this in your clone of the repository:
+
+The fix of a pull request after a FAIL of its verify counts for each
+head commit too. A fix that pushes a new head counts as no failed
+start. The FAIL of the new head starts a new count, and the wave goes
+on with no `riff host join`. Three fixes that leave the same head stop
+the fix of that head only.
+
+```mermaid
+flowchart LR
+    F["the verify of head A fails"] --> X["the wave starts a fix of A"]
+    X --> Q{"the fix pushed<br/>a new head B?"}
+    Q -- yes --> V["the verify of B,<br/>and a new count for B"]
+    Q -- no --> C["one start of the fix of A:<br/>3 stop the fix of A"]
+```
+
+For a spent item, read the cause first: [See why a session ended with
+no pull request](#see-why-a-session-ended-with-no-pull-request). For a
+spent fix, see [Start a spent fix again](#start-a-spent-fix-again).
+When you fixed the cause, run this in your clone of the repository:
 
 ```sh
 riff host join
@@ -4036,6 +4065,39 @@ The wave goes on, and the starts of each item go back to 0. The
 sessions that run go on. The rebase of a pull request with a conflict
 starts again too, also for the same commit (see
 [Start the rebase of a conflict again](#start-the-rebase-of-a-conflict-again)).
+
+#### Start a spent fix again
+
+For a spent fix, the message to your lead names the pull request, the
+head and the end of the last session. For example, for pull request 41:
+
+```text
+The riff daemon started issue-1 3 times to fix the head 988cb7b of its pull request #41 after the FAIL of its verify, and the pull request still has that head. The last session ended: exit code 0, and pull request #41 is open. It starts no more fix of this head until riff host join again. A new head starts a new count. Read the FAIL: gh pr view 41 --comments
+```
+
+1. Read the FAIL on the pull request:
+
+   ```sh
+   gh pr view 41 --comments
+   ```
+
+2. Fix the cause. When you push a new head to the pull request, the
+   wave verifies the new head, with no `riff host join`. When its verify
+   fails, the fix of the new head gets a new count of 3.
+3. To start the fix of the same head again, run this on the host of
+   the wave, in your clone of the repository:
+
+   ```sh
+   riff host join
+   ```
+
+   On another machine, or in the container of your lead, name the host
+   of the wave. The line of the wave in `riff wave list` names it, for
+   example `runs on host-a`:
+
+   ```sh
+   riff host join --host host-a
+   ```
 
 ### Add a Done when line to an issue
 
@@ -5023,6 +5085,8 @@ first free work:
    counts for each head commit of its pull request, and a verify with a
    PASS or FAIL does not count (see
    [See why a verify stopped for a head](#see-why-a-verify-stopped-for-a-head)).
+   The fix of a pull request after a FAIL counts for each head commit
+   too.
    Then your lead gets a message, and the item waits for you (see
    [Start a spent item again](#start-a-spent-item-again)).
 7. It starts nothing while a fact of the machine fails: the sign-in of

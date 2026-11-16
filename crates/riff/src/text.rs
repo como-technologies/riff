@@ -13167,35 +13167,61 @@ pub fn wave_host_fault(repo: &str, item: &str, why: &str) -> String {
 
 /// An item of a wave started `starts` times, and the last session ended
 /// for `reason` (01M5A5HXRH4PFQDFA7XPFFRHWS). The starts of a verify are
-/// for one head commit `head` of its pull request: the text names it, and
-/// says that a new head starts a new count (#1651).
+/// for one head commit of its pull request (`at`: the pull request and
+/// the head): the text names both, and says that a new head starts a new
+/// count (#1651, #2170).
 ///
 /// ```
 /// let text = riff::text::wave_spent("issue-1", None, 3, "exit code 1");
 /// assert!(text.contains("The last session ended: exit code 1."));
 /// assert!(text.ends_with("Read why: riff session why issue-1"));
 ///
-/// let text = riff::text::wave_spent("verify-issue-1", Some("988cb7b1a2"), 3, "exit code 0, and no PASS or FAIL");
-/// assert!(text.starts_with("The riff daemon started verify-issue-1 3 times for the head 988cb7b of its pull request"));
+/// let text = riff::text::wave_spent("verify-issue-1", Some((41, "988cb7b1a2")), 3, "exit code 0, and no PASS or FAIL");
+/// assert!(text.starts_with("The riff daemon started verify-issue-1 3 times for the head 988cb7b of its pull request #41,"));
 /// assert!(text.contains("It starts no more session for this head until riff host join again."));
 /// assert!(text.contains("A new head starts a new count."));
 /// assert!(text.ends_with("Read why: riff session why verify-issue-1"));
 /// ```
-pub fn wave_spent(item: &str, head: Option<&str>, starts: u32, reason: &str) -> String {
-    match head {
+pub fn wave_spent(item: &str, at: Option<(u64, &str)>, starts: u32, reason: &str) -> String {
+    match at {
         None => format!(
             "The riff daemon started {item} {starts} times for the wave, and it is still free \
              work. The last session ended: {reason}. It starts no more session for it until riff host \
              join again. Read why: riff session why {item}"
         ),
-        Some(head) => format!(
-            "The riff daemon started {item} {starts} times for the head {} of its pull request, \
-             and it is still free work. The last session ended: {reason}. It starts no more \
-             session for this head until riff host join again. A new head starts a new count. \
-             Read why: riff session why {item}",
+        Some((pull, head)) => format!(
+            "The riff daemon started {item} {starts} times for the head {} of its pull request \
+             #{pull}, and it is still free work. The last session ended: {reason}. It starts no \
+             more session for this head until riff host join again. A new head starts a new \
+             count. Read why: riff session why {item}",
             head.get(..7).unwrap_or(head)
         ),
     }
+}
+
+/// The fix of `item` after the FAIL of the verify of the head `head` of
+/// its pull request #`pull` started `starts` times, and the last session
+/// ended for `reason` (#2170). The starts of a fix are for one head: the
+/// text names the pull request and the head, and says that a new head
+/// starts a new count.
+///
+/// ```
+/// let text = riff::text::wave_spent_fix("issue-1", 41, "988cb7b1a2", 3, "exit code 0");
+/// assert!(text.starts_with("The riff daemon started issue-1 3 times to fix the head 988cb7b of its pull request #41"));
+/// assert!(text.contains("The last session ended: exit code 0."));
+/// assert!(text.contains("It starts no more fix of this head until riff host join again."));
+/// assert!(text.contains("A new head starts a new count."));
+/// assert!(text.ends_with("Read the FAIL: gh pr view 41 --comments"));
+/// assert!(!text.contains("no pull request"), "{text}");
+/// ```
+pub fn wave_spent_fix(item: &str, pull: u64, head: &str, starts: u32, reason: &str) -> String {
+    format!(
+        "The riff daemon started {item} {starts} times to fix the head {} of its pull request \
+         #{pull} after the FAIL of its verify, and the pull request still has that head. The \
+         last session ended: {reason}. It starts no more fix of this head until riff host join \
+         again. A new head starts a new count. Read the FAIL: gh pr view {pull} --comments",
+        short(head)
+    )
 }
 
 /// The message to the lead for an issue whose body has no `Done when:`
@@ -13611,6 +13637,25 @@ pub fn wave_build_limit(item: &str, branch: &str) -> String {
         "{item}: the session of the wave ended while the GitHub limit is out. riff cannot read \
          the pull request of the branch {branch}. After the reset, the wave looks at it and sends \
          the verify."
+    )
+}
+
+/// A build ended, and the read of the pull request of its branch failed
+/// with `error`, not on a limit of GitHub: riff does not know if the
+/// branch has one, and tells the lead that the wave will read it again
+/// (#2170, 01M7FVQP0N4ZEZ7SBP9WE9YWMS).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::wave_build_unread("issue-12", "worktree-issue-12", "HTTP 502"),
+///     "issue-12: the session of the wave ended, and riff could not read the pull request of \
+///      the branch worktree-issue-12: HTTP 502. The wave will read it again at its next look."
+/// );
+/// ```
+pub fn wave_build_unread(item: &str, branch: &str, error: &str) -> String {
+    format!(
+        "{item}: the session of the wave ended, and riff could not read the pull request of the \
+         branch {branch}: {error}. The wave will read it again at its next look."
     )
 }
 

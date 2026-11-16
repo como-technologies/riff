@@ -9,10 +9,14 @@
 //! After the end of a build, the daemon looks for the open pull request
 //! of its branch. When there is none, it posts one note in the thread
 //! [`THREAD`], as the session ([`post`]), and the session leaves the
-//! thread. A verify has a pull request, so the daemon looks for its
-//! PASS or FAIL: when there is none, it posts the same note for the item
-//! `verify-issue-N`. The lead reads it with `riff session why ITEM`
-//! ([`read`]).
+//! thread. When a limit of GitHub or a fault stops the read, it posts no
+//! note (01M7FVQP0N4ZEZ7SBP9WE9YWMS). A verify has a pull request, so
+//! the daemon looks for its PASS or FAIL: when there is none, or riff
+//! refuses its PASS for a member of the council with no line, it posts
+//! the same note for the item `verify-issue-N`
+//! (01M7G6H601C6NYC7ACSF6GVW50). The person posts it when riff refuses
+//! a kept PASS after the reset of a limit of GitHub ([`crate::kept`]).
+//! The lead reads it with `riff session why ITEM` ([`read`]).
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -30,9 +34,9 @@
 //! # The record
 //!
 //! The first line has the tags, then a colon and the reason. The tag `head`
-//! is the head commit (7 characters) that a verify, a rebase or a fix of
-//! the checks is for, and `-` for a build (#1651). The last lines of the
-//! output follow:
+//! is the head commit (7 characters) that a verify, a rebase, a fix of the
+//! checks or a fix after a FAIL is for, and `-` for a build (#1651,
+//! 01M7FQED2JSP2QVPTKBC4405T1). The last lines of the output follow:
 //!
 //! ```text
 //! ended item=issue-1202 session=1a2b3c4d head=- code=1 failed=yes denied=2: exit code 1, 2 denied tool calls (Bash, Write)
@@ -40,12 +44,13 @@
 //! ```
 //!
 //! ```
-//! use riff::ends::{End, Record};
+//! use riff::ends::{End, Record, Said};
 //!
 //! let end = End {
 //!     item: "issue-1202".into(),
 //!     session: "1a2b3c4d".into(),
 //!     head: None,
+//!     said: Said::Lacks,
 //!     code: Some(1),
 //!     failed: true,
 //!     denied: vec!["Bash".into(), "Write".into(), "Bash".into()],
@@ -63,6 +68,7 @@
 //! ```
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use anyhow::Result;
 use riff_client::api::Api;
@@ -71,6 +77,7 @@ use riff_core::wire::Kind;
 use serde::{Deserialize, Serialize};
 
 use crate::daemon::{EVENTS, Ended};
+use crate::pr::Verdict;
 use crate::room::Role;
 use crate::run::Scrub;
 
@@ -89,8 +96,9 @@ pub fn thread() -> ThreadName {
 }
 
 /// What a session of `item` lacks when its record is in the thread
-/// [`THREAD`]: a verify has no PASS or FAIL, any other item has no pull
-/// request.
+/// [`THREAD`], or when its reason says that it made no result
+/// ([`Said::Lacks`]): a verify has no PASS or FAIL, any other item has no
+/// pull request.
 ///
 /// ```
 /// assert_eq!(riff::ends::lacks("issue-7"), "pull request");
@@ -103,6 +111,65 @@ pub fn lacks(item: &str) -> &'static str {
     }
 }
 
+/// What the steps after the end of a session found of its work
+/// ([`crate::wave::Finish::found`], #2170). The reason of the end says it
+/// with no role ([`Found::said`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Found {
+    /// The steps found nothing that the reason names: a limit of GitHub
+    /// or a fault stopped them, or no step ran.
+    #[default]
+    Unread,
+    /// The result of a verify has no PASS or FAIL, or riff refused its
+    /// PASS for a member of the council with no line
+    /// (01M7CFBZSQEEZNZBR9H1S54GS1).
+    NoVerdict,
+    /// riff put this PASS or FAIL of a verify on its pull request.
+    Reported(Verdict),
+    /// The branch of a build has no open pull request.
+    NoPull,
+    /// The open pull request of the branch of a build.
+    Open(u64),
+}
+
+impl Found {
+    /// What the reason of the end says of what the steps found.
+    ///
+    /// ```
+    /// use riff::ends::{Found, Said};
+    /// use riff::pr::Verdict;
+    ///
+    /// assert_eq!(Found::NoVerdict.said(), Said::Lacks);
+    /// assert_eq!(Found::NoPull.said(), Said::Lacks);
+    /// assert_eq!(Found::Open(41).said(), Said::Open(41));
+    /// assert_eq!(Found::Reported(Verdict::Fail).said(), Said::Nothing);
+    /// assert_eq!(Found::Unread.said(), Said::Nothing);
+    /// ```
+    pub fn said(self) -> Said {
+        match self {
+            Found::NoVerdict | Found::NoPull => Said::Lacks,
+            Found::Open(pull) => Said::Open(pull),
+            Found::Unread | Found::Reported(_) => Said::Nothing,
+        }
+    }
+}
+
+/// What the reason of the end of a session says of its work
+/// ([`End::reason`], #2170, 01M7FQECZY6RY5JE5QPY8NFRZR). It names no role:
+/// the words for a session with no result come from its item
+/// ([`lacks`]), so they cannot disagree with the item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Said {
+    /// Nothing: no step read the work, a limit of GitHub or a fault
+    /// stopped the read, or riff put the PASS or FAIL of a verify on its
+    /// pull request.
+    Nothing,
+    /// That the session made no result: what its item lacks ([`lacks`]).
+    Lacks,
+    /// That the pull request #N of the work of the session is open.
+    Open(u64),
+}
+
 /// How a session ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct End {
@@ -110,9 +177,12 @@ pub struct End {
     pub item: String,
     /// The start of the session ID.
     pub session: String,
-    /// The head commit (7 characters) of the work of a verify, a rebase or a
-    /// fix of the checks: none for a build (#1651).
+    /// The head commit (7 characters) of the work of a verify, a rebase, a
+    /// fix of the checks or a fix after a FAIL: none for a build (#1651).
     pub head: Option<String>,
+    /// What the reason says of the work of the session (#2170,
+    /// 01M7FQECZY6RY5JE5QPY8NFRZR).
+    pub said: Said,
     /// The exit code of `claude`, or none after a signal.
     pub code: Option<i32>,
     /// True when a turn ended with an error, or a stop ended it.
@@ -123,29 +193,94 @@ pub struct End {
     pub tail: Vec<String>,
 }
 
-impl End {
-    /// The end of the session of `record`, as it `ended`. It reads the
-    /// events of the session, and replaces each secret of `scrub`.
-    pub fn of(record: &crate::daemon::Record, ended: Ended, scrub: &Scrub) -> End {
-        let events = std::fs::read_to_string(record.folder.join(EVENTS)).unwrap_or_default();
-        let head = record
-            .job
-            .as_ref()
-            .and_then(|job| job.work.commit())
-            .map(|commit| commit.get(..7).unwrap_or(commit).to_owned());
-        End {
-            head,
-            ..End::from_events(
-                &record.live.item,
-                &record.live.session,
-                ended,
-                &events,
-                scrub,
-            )
+/// A session that ended, as its record names it: the session of a job of
+/// a wave ([`Session::of`]), or the verify of a kept result
+/// ([`crate::kept::Kept::session`]).
+#[derive(Debug, Clone, Copy)]
+pub struct Session<'a> {
+    /// The item.
+    pub item: &'a str,
+    /// The session ID.
+    pub id: &'a str,
+    /// The head commit of the work of a verify, a rebase, a fix of the
+    /// checks or a fix after a FAIL: none for a build (#1651).
+    pub commit: Option<&'a str>,
+    /// The folder of the session, with its events.
+    pub folder: &'a Path,
+    /// How it ended.
+    pub ended: Ended,
+}
+
+impl<'a> Session<'a> {
+    /// The session of `record`, as it `ended`.
+    pub fn of(record: &'a crate::daemon::Record, ended: Ended) -> Session<'a> {
+        Session {
+            item: &record.live.item,
+            id: &record.live.session,
+            commit: record.job.as_ref().and_then(|job| job.work.commit()),
+            folder: &record.folder,
+            ended,
         }
     }
 
-    /// [`End::of`] for the text `events` of the events file.
+    /// The end of the session, with what the steps after the end `found`
+    /// ([`Found::said`]). It reads the events in its folder, and replaces
+    /// each secret of `scrub`.
+    ///
+    /// ```
+    /// use riff::daemon::{EVENTS, Ended};
+    /// use riff::ends::{Found, Session};
+    /// use riff::run::Scrub;
+    ///
+    /// let folder = tempfile::tempdir()?;
+    /// std::fs::write(folder.path().join(EVENTS), "the result\n")?;
+    /// let session = Session {
+    ///     item: "verify-issue-7",
+    ///     id: "1a2b3c4d5e6f",
+    ///     commit: Some("988cb7b1"),
+    ///     folder: folder.path(),
+    ///     ended: Ended { code: Some(0), failed: false },
+    /// };
+    /// let end = session.end(Found::NoVerdict, &Scrub::new([]));
+    /// assert_eq!(end.body(), "ended item=verify-issue-7 session=1a2b3c4d head=988cb7b code=0 failed=no denied=0: exit code 0, and no PASS or FAIL\nthe result");
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn end(&self, found: Found, scrub: &Scrub) -> End {
+        let events = std::fs::read_to_string(self.folder.join(EVENTS)).unwrap_or_default();
+        End {
+            head: self
+                .commit
+                .map(|commit| commit.get(..7).unwrap_or(commit).to_owned()),
+            said: found.said(),
+            ..End::from_events(self.item, self.id, self.ended, &events, scrub)
+        }
+    }
+
+    /// Posts the end of the session, with what the steps after the end
+    /// `found`, in the thread [`THREAD`], as `me` ([`post`]), and gives
+    /// it. It replaces each secret of the host
+    /// ([`crate::session_relay::secrets_here`]). It reads the folder of
+    /// the session, so it comes before the folder goes. A fault of the
+    /// post goes to the log of the daemon, and stops no step after it.
+    pub async fn post_end(&self, api: &Api, me: &SessionUri, found: Found) -> End {
+        let scrub = Scrub::new(crate::session_relay::secrets_here());
+        let end = self.end(found, &scrub);
+        if let Err(e) = post(api, me, &end).await {
+            eprintln!("riff daemon: {}: {e:#}", self.item);
+        }
+        end
+    }
+}
+
+impl End {
+    /// The end of the session of `record`, as it `ended`, with what the
+    /// steps after the end `found` ([`Session::end`]).
+    pub fn of(record: &crate::daemon::Record, ended: Ended, found: Found, scrub: &Scrub) -> End {
+        Session::of(record, ended).end(found, scrub)
+    }
+
+    /// [`End::of`] for the text `events` of the events file, with no step
+    /// after the end ([`Said::Nothing`]).
     pub fn from_events(
         item: &str,
         session: &str,
@@ -181,6 +316,7 @@ impl End {
             item: item.to_owned(),
             session: crate::run::short(session).to_owned(),
             head: None,
+            said: Said::Nothing,
             code: ended.code,
             failed: ended.failed,
             denied,
@@ -189,10 +325,36 @@ impl End {
     }
 
     /// The reason in words: the exit code, or the signal, and the denied
-    /// tool calls.
+    /// tool calls. Only [`End::said`] names a result: a clean exit with
+    /// no result says what its item lacks ([`lacks`]), and the reason
+    /// names the open pull request of the work (#2170).
+    ///
+    /// ```
+    /// use riff::daemon::Ended;
+    /// use riff::ends::{End, Said};
+    /// use riff::run::Scrub;
+    ///
+    /// let clean = Ended { code: Some(0), failed: false };
+    /// let end = End::from_events("issue-7", "1a2b3c4d", clean, "", &Scrub::new([]));
+    /// assert_eq!(end.reason(), "exit code 0");
+    /// let none = End { said: Said::Lacks, ..end.clone() };
+    /// assert_eq!(none.reason(), "exit code 0, and no pull request");
+    /// let verify = End { item: "verify-issue-7".into(), ..none };
+    /// assert_eq!(verify.reason(), "exit code 0, and no PASS or FAIL");
+    /// let open = End { said: Said::Open(41), ..end };
+    /// assert_eq!(open.reason(), "exit code 0, and pull request #41 is open");
+    /// let signal = End { code: None, failed: true, ..open };
+    /// assert_eq!(
+    ///     signal.reason(),
+    ///     "no exit code: a signal, or the container ended before its relay, and pull request #41 is open"
+    /// );
+    /// ```
     pub fn reason(&self) -> String {
         let mut reason = match (self.code, self.failed) {
-            (Some(0), false) => format!("exit code 0, and no {}", lacks(&self.item)),
+            (Some(0), false) => match self.said {
+                Said::Lacks => format!("exit code 0, and no {}", lacks(&self.item)),
+                Said::Nothing | Said::Open(_) => "exit code 0".to_owned(),
+            },
             (Some(0), true) => {
                 "exit code 0, but a turn ended with an error or a stop ended it".to_owned()
             }
@@ -210,6 +372,9 @@ impl End {
                 self.denied.len(),
                 tools.join(", ")
             );
+        }
+        if let Said::Open(pull) = self.said {
+            reason += &format!(", and pull request #{pull} is open");
         }
         reason
     }
@@ -358,8 +523,10 @@ mod tests {
     /// 01M5A5HXKZTDP5M5HY2FHCEBZA: a signal and a clean exit have words.
     #[test]
     fn the_reason_names_a_signal_and_a_clean_exit() {
-        let of =
-            |code, failed| End::from_events("i", "s", ended(code, failed), "", &Scrub::new([]));
+        let of = |code, failed| End {
+            said: Said::Lacks,
+            ..End::from_events("i", "s", ended(code, failed), "", &Scrub::new([]))
+        };
         assert!(of(None, true).reason().starts_with("no exit code"));
         assert_eq!(
             of(Some(0), false).reason(),
@@ -371,6 +538,77 @@ mod tests {
                 .contains("a turn ended with an error")
         );
         assert!(of(Some(137), true).reason().starts_with("exit code 137"));
+    }
+
+    /// #2170, 01M7FQECZY6RY5JE5QPY8NFRZR: the reason of the end of a build
+    /// whose branch has an open pull request names it, after each exit,
+    /// and a clean end does not say that it has none. A branch that no
+    /// step read gets no word on a pull request. Only what the steps
+    /// found names a result: a verify with no PASS or FAIL says so, and
+    /// a verify whose verdict riff reported, or could not report, says
+    /// only its exit.
+    #[test]
+    fn the_reason_names_the_open_pull_request_of_the_branch() {
+        let of = |item: &str, code, failed, found: Found| End {
+            said: found.said(),
+            head: Some("988cb7b".into()),
+            ..End::from_events(item, "s", ended(code, failed), "", &Scrub::new([]))
+        };
+        let open = |code, failed| of("issue-7", code, failed, Found::Open(41));
+        let fix = open(Some(0), false);
+        assert_eq!(fix.reason(), "exit code 0, and pull request #41 is open");
+        let denied = End {
+            denied: vec!["Bash".into()],
+            ..fix.clone()
+        };
+        assert_eq!(
+            denied.reason(),
+            "exit code 0, 1 denied tool calls (Bash), and pull request #41 is open"
+        );
+        assert_eq!(
+            open(Some(1), true).reason(),
+            "exit code 1, and pull request #41 is open"
+        );
+        assert_eq!(
+            open(None, true).reason(),
+            "no exit code: a signal, or the container ended before its relay, and pull request \
+             #41 is open"
+        );
+        let record = Record::parse(&fix.body(), 9).unwrap();
+        assert_eq!(record.tag("head"), "988cb7b");
+        assert_eq!(record.reason, fix.reason());
+        // The pull request closed: the branch has none.
+        let closed = of("issue-7", Some(0), false, Found::NoPull);
+        assert_eq!(closed.reason(), "exit code 0, and no pull request");
+        // A limit of GitHub or a fault stopped the read.
+        let unread = of("issue-7", Some(0), false, Found::Unread);
+        assert_eq!(unread.reason(), "exit code 0");
+        let verify = |found| of("verify-issue-7", Some(0), false, found).reason();
+        assert_eq!(verify(Found::NoVerdict), "exit code 0, and no PASS or FAIL");
+        assert_eq!(verify(Found::Reported(Verdict::Fail)), "exit code 0");
+        assert_eq!(verify(Found::Unread), "exit code 0");
+    }
+
+    /// #2170: what the reason says of the work names no role, so it cannot
+    /// disagree with the item. The words for no result come from the item,
+    /// and the record of the end gives the same reason.
+    #[test]
+    fn the_words_for_no_result_come_from_the_item() {
+        let none = |item: &str| End {
+            said: Said::Lacks,
+            ..End::from_events(item, "s", ended(Some(0), false), "", &Scrub::new([]))
+        };
+        let build = none("issue-7");
+        let verify = none("verify-issue-7");
+        assert_eq!(build.reason(), "exit code 0, and no pull request");
+        assert_eq!(verify.reason(), "exit code 0, and no PASS or FAIL");
+        for end in [build, verify] {
+            let record = Record::parse(&end.body(), 9).unwrap();
+            assert_eq!(record.tag("item"), end.item);
+            assert_eq!(record.reason, end.reason());
+        }
+        // No result of a build and no result of a verify say the same.
+        assert_eq!(Found::NoPull.said(), Found::NoVerdict.said());
     }
 
     #[test]
