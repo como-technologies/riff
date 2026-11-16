@@ -522,10 +522,12 @@ flowchart LR
     L -- yes --> E["riff reads no more of it<br/>the error names the file<br/>the daemon goes on"]
 ```
 
-To find each other limit that riff met, read the log of the daemon:
+To find each other limit that riff met, read the log of the daemon
+(see also
+[Read the log of the daemon](development.md#read-the-log-of-the-daemon)):
 
 ```sh
-journalctl --user -u riff | grep -E 'reads at most|writes at most|lists at most'
+riff daemon log --grep 'reads at most' --grep 'writes at most' --grep 'lists at most'
 ```
 
 A line that says "riff counts no tokens" needs no step: riff goes on.

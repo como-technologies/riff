@@ -301,7 +301,7 @@ fn the_book_says_what_to_do_with_a_large_file_in_the_folder_of_the_lead() {
     assert!(start.contains("\"riff writes at most\""), "{start}");
     assert_eq!(
         crate::book::commands_in(how_to),
-        ["journalctl --user -u riff | grep -E 'reads at most|writes at most|lists at most'"]
+        ["riff daemon log --grep 'reads at most' --grep 'writes at most' --grep 'lists at most'"]
     );
     assert_eq!(
         crate::book::commands_in(start),
