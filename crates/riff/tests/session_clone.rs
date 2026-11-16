@@ -9,8 +9,9 @@
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use riff::daemon::{Say, SessionAsk};
 use riff::run::{ClaudeSignIn, Facts};
@@ -209,20 +210,33 @@ impl Session {
         terminal: bool,
         command: &[&str],
     ) -> Output {
+        self.relay_process(env, plan, terminal, command)
+            .output()
+            .unwrap()
+    }
+
+    /// The process of [`Session::relay_command`], not yet started.
+    fn relay_process(
+        &self,
+        env: &isolated::Isolated,
+        plan: &Plan,
+        terminal: bool,
+        command: &[&str],
+    ) -> Command {
         std::fs::create_dir_all(&plan.path).unwrap();
         let mut args = vec!["relay"];
         args.extend(terminal.then_some("--terminal"));
         args.push("--");
         args.extend(command);
-        env.riff()
+        let mut relay = env.riff();
+        relay
             .args(args)
             .env(VAR, plan.to_var().unwrap())
             .env("RIFF_SOCKET", &self.socket)
             .env(riff::daemon::gh_token::CONFIG_VAR, &self.gh)
             .env("GIT_CONFIG_GLOBAL", &self.gitconfig)
-            .current_dir(&plan.path)
-            .output()
-            .unwrap()
+            .current_dir(&plan.path);
+        relay
     }
 }
 
@@ -374,8 +388,8 @@ fn a_session_with_no_token_starts_from_the_main_clone_on_a_private_repository() 
 /// #2139, 01M7G824SYKB3BN2MN9A9JKAG0: a clone that fails starts no
 /// command, and the folder of the clone is empty again. The relay says
 /// one note that names the step on one line, and no other text of the
-/// fault: with a terminal, it prints the note on stderr, and here no
-/// daemon takes it. It exits with 1.
+/// fault: it says the note to the daemon, and with a terminal it prints
+/// the same note on stderr too. It exits with 1.
 #[test]
 fn a_clone_that_fails_starts_no_command() {
     let env = isolated::Isolated::new();
@@ -384,7 +398,8 @@ fn a_clone_that_fails_starts_no_command() {
     let (_, main) = origin_and_main(&root);
     let none = format!("file://{}", root.join("none.git").display());
     let plan = plan_at(root.join("s/clone"), &none, &main, Checkout::Default);
-    let out = Session::new(&root, true).relay(&env, &plan, "touch ../ran");
+    let session = Session::new(&root, true);
+    let out = session.relay(&env, &plan, "touch ../ran");
     assert_eq!(out.status.code(), Some(1), "{out:?}");
     let stderr = String::from_utf8_lossy(&out.stderr);
     let note = riff::text::relay_clone_failed("");
@@ -393,6 +408,15 @@ fn a_clone_that_fails_starts_no_command() {
         line.is_some_and(|l| l.contains("fetch -q --prune origin")),
         "{out:?}"
     );
+    let asks = session.daemon.take();
+    let [
+        SessionAsk::NoteKey { .. },
+        SessionAsk::Note { line: said, .. },
+    ] = &asks[..]
+    else {
+        panic!("{asks:?}");
+    };
+    assert_eq!(Some(said.as_str()), line, "{out:?}");
     assert_eq!(
         stderr.matches("claude did not start").count(),
         1,
@@ -658,6 +682,61 @@ fn the_relay_starts_nothing_before_the_daemon_takes_its_key() {
         assert_eq!(*line, riff::text::relay_cloned(&plan, true), "{terminal}");
         assert!(plan.path.with_file_name("ran").exists(), "{terminal}");
     }
+}
+
+/// 01M7GXY2SAK89TEQVP72764DR4: a SIGTERM while the relay waits for the
+/// answer of the daemon to its key ends the relay with 1 at once. It
+/// makes no clone, and starts no command. Here the daemon never answers
+/// the key.
+#[test]
+fn a_sigterm_before_claude_ends_the_relay_with_1_at_once() {
+    let env = isolated::Isolated::new();
+    let root = env.path().join("work");
+    std::fs::create_dir_all(&root).unwrap();
+    let (url, main) = origin_and_main(&root);
+    let session = Session::new(&root, true);
+    *session.daemon.unanswered.lock().unwrap() = usize::MAX;
+    let plan = plan_at(
+        env.riff_home().join("sessions/issue-12-1a2b3c4d/clone"),
+        &url,
+        &main,
+        branch(false),
+    );
+    let mut relay = session
+        .relay_process(&env, &plan, false, &["sh", "-c", "touch ../ran"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    // The relay gave its key, so its handlers of the signals are there.
+    let span = isolated::Span::start();
+    let mut gave = !session.daemon.take().is_empty();
+    while !gave && span.within(isolated::HANG) {
+        std::thread::sleep(Duration::from_millis(10));
+        gave = !session.daemon.take().is_empty();
+    }
+    if gave {
+        let pid = nix::unistd::Pid::from_raw(i32::try_from(relay.id()).unwrap());
+        nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGTERM).unwrap();
+    }
+    let span = isolated::Span::start();
+    let mut ended = relay.try_wait().unwrap();
+    while gave && ended.is_none() && span.within(Duration::from_secs(10)) {
+        std::thread::sleep(Duration::from_millis(10));
+        ended = relay.try_wait().unwrap();
+    }
+    if ended.is_none() {
+        let _ = relay.kill();
+        let _ = relay.wait();
+    }
+    assert!(gave, "the relay gave no key");
+    assert_eq!(
+        ended.map(|status| status.code()),
+        Some(Some(1)),
+        "the relay did not end with 1 after the signal"
+    );
+    assert!(!plan.path.with_file_name("ran").exists());
+    assert_eq!(std::fs::read_dir(&plan.path).unwrap().count(), 0);
 }
 
 /// 01M7GJBFAJDCYCMRDSWSX3VNWX: each line that `riff relay` itself prints

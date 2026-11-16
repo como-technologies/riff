@@ -595,11 +595,13 @@ each line of the relay has the key of the relay. At its start, before
 the clone and before `claude`, the relay makes a new key, gives it to
 the daemon, and waits for the answer. While the daemon is away, the
 relay gives the same key again. So nothing else runs in the container
-before the daemon has the key. The daemon takes only the first key of
-a container, and keeps no line with another key. Only the relay has the
-key, in its memory, and no other process of the container can read that
-memory. When the daemon keeps no line, the relay prints it on its
-stderr.
+before the daemon has the key. The daemon takes a key only as the first
+ask of a container, and keeps no line with another key. Each other ask
+that comes first shuts the key, and so does a key that the daemon
+cannot write to its disk. A session that an older riff started gets no
+key after an update of riff. Only the relay has the key, in its memory,
+and no other process of the container can read that memory. When the
+daemon keeps no line, the relay prints it on its stderr.
 
 ```mermaid
 sequenceDiagram

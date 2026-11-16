@@ -3,9 +3,12 @@
 //!
 //! # Design
 //!
-//! A container writes each bind with write: its clone, its Claude folder
-//! and its volumes. It sees the folder of its socket with no write
-//! (01M7GJBEG0S8N30EXD7DWYTKK8), and the host keeps the guard there too.
+//! A container writes each bind with write: its Claude folder, its
+//! volumes, and the folder `out/` of the bundle of a session with no
+//! GitHub (01M7EY3WHQQP9330CZ736HK0FJ). Its clone is a volume of its own
+//! container, which the host does not see. It sees the folder of its
+//! socket with no write (01M7GJBEG0S8N30EXD7DWYTKK8), and the host keeps
+//! the guard there too.
 //! A container can put a link in a folder that it writes, for
 //! example `.claude.json -> ~/.bashrc`, and the paths are the same in the
 //! container and on the host. A write of the host that follows the link
@@ -14,8 +17,8 @@
 //! folder that the container reads. So the host follows no link there.
 //!
 //! - Each read and write of the host in a folder that a container writes
-//!   goes through this module: [`read()`], [`write()`], [`list`],
-//!   [`modified`] and [`set_mode`]. Each one takes that folder, `root`,
+//!   goes through this module: [`read()`], [`open()`], [`write()`],
+//!   [`list`], [`modified`] and [`set_mode`]. Each one takes that folder, `root`,
 //!   and a name in it. riff made `root`, and a container cannot change
 //!   it: it is the source of a bind. So a link above `root` counts, for
 //!   example a data folder of riff on another disk.
@@ -33,8 +36,9 @@
 //! - The steps of the host there: the Claude folder of each start
 //!   ([`crate::run::claude_folder`]), the transcripts
 //!   ([`crate::usage::transcripts_in`], [`crate::usage::written_in`],
-//!   [`crate::usage::Replies::read`]), and the mode of the socket of a
-//!   session. The host also writes the list of the branches of `origin`
+//!   [`crate::usage::Replies::read`]), the mode of the socket of a
+//!   session, and the bundle in `out/` ([`crate::run::take_bundle`]). The
+//!   host also writes the list of the branches of `origin`
 //!   of the main clone through it, in the folder of a session or a lead,
 //!   which no container writes ([`crate::session_clone::write_refs`]).
 //!   The host makes no clone of a session, and reads no file in a clone
@@ -214,6 +218,44 @@ fn open_parent(root: &Path, name: &Path) -> Result<Option<(OwnedFd, OsString, Pa
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn read(root: &Path, name: &Path) -> Result<Option<Vec<u8>>> {
+    let Some((mut file, _)) = open(root, name)? else {
+        return Ok(None);
+    };
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .with_context(|| format!("read {}", root.join(name).display()))?;
+    Ok(Some(bytes))
+}
+
+/// The plain file `ROOT/NAME`, open to read, and its length in bytes, or
+/// `None` when it is not there: the open of [`read()`], for a read in
+/// parts, for example of a large file with a limit
+/// ([`crate::run::take_bundle`]). It has the same errors as [`read()`]. A
+/// new file in the place of `NAME` after the open does not change what
+/// the open file reads.
+///
+/// ```
+/// use std::io::Read;
+/// use std::path::Path;
+///
+/// let root = tempfile::tempdir()?;
+/// std::fs::write(root.path().join("a.bundle"), "bytes")?;
+/// let (mut file, len) = riff::host_file::open(root.path(), Path::new("a.bundle"))?.unwrap();
+/// assert_eq!(len, 5);
+/// std::fs::write(root.path().join("a.bundle.new"), "other")?;
+/// std::fs::rename(root.path().join("a.bundle.new"), root.path().join("a.bundle"))?;
+/// let mut text = String::new();
+/// file.read_to_string(&mut text)?;
+/// assert_eq!(text, "bytes");
+/// assert!(riff::host_file::open(root.path(), Path::new("none.bundle"))?.is_none());
+///
+/// // A folder is no plain file.
+/// std::fs::create_dir(root.path().join("b.bundle"))?;
+/// let error = riff::host_file::open(root.path(), Path::new("b.bundle")).unwrap_err();
+/// assert_eq!(error.to_string(), riff::text::host_file_not_plain(&root.path().join("b.bundle")));
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn open(root: &Path, name: &Path) -> Result<Option<(File, u64)>> {
     let Some((dir, last, at)) = open_parent(root, name)? else {
         return Ok(None);
     };
@@ -225,17 +267,14 @@ pub fn read(root: &Path, name: &Path) -> Result<Option<Vec<u8>>> {
         Err(errno) => return Err(fault(&dir, &at, &last, errno)),
     };
     let path = at.join(&last);
-    let mut file = File::from(fd);
+    let file = File::from(fd);
     let meta = file
         .metadata()
         .with_context(|| format!("read {}", path.display()))?;
     if !meta.is_file() {
         bail!("{}", text::host_file_not_plain(&path));
     }
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)
-        .with_context(|| format!("read {}", path.display()))?;
-    Ok(Some(bytes))
+    Ok(Some((file, meta.len())))
 }
 
 /// The text of [`read()`]: an error when it is no UTF-8.
@@ -672,10 +711,12 @@ mod scan {
 
     /// The steps of the host that read or write a file in such a folder,
     /// each one through [`super`]: the file and the start of the
-    /// function. The list of the refs of `origin` goes through it too, in
-    /// a folder that no container writes.
+    /// function. The bundle in `out/` goes through it too
+    /// ([`crate::run::take_bundle`]). The list of the refs of `origin`
+    /// goes through it too, in a folder that no container writes.
     const STEPS: &[(&str, &str)] = &[
         ("run.rs", "pub fn claude_folder("),
+        ("run.rs", "fn of(out: &Path, limit: u64)"),
         ("usage.rs", "fn transcripts_with_times("),
         ("usage.rs", "pub fn read(paths: &[PathBuf]) -> Replies {"),
         ("daemon.rs", "fn bind_in("),
@@ -686,9 +727,10 @@ mod scan {
     /// function of riff that calls it. A function with one of them gets
     /// the path from a line of [`NAMED`] or from its caller, so it follows
     /// no link, as a function with a line of [`NAMED`].
-    const GUARDED: [&str; 6] = [
+    const GUARDED: [&str; 7] = [
         "host_file::",
         "claude_folder(",
+        "Opened::of(",
         "transcripts_with_times(",
         "Replies::read(",
         "bind_in(",

@@ -213,8 +213,10 @@ impl FromStr for Branch {
 
 impl Branch {
     /// The full name of the branch of `origin` in a clone:
-    /// `refs/remotes/origin/NAME`. riff names each start point of a clone
-    /// with it, so a tag `origin/NAME` changes none.
+    /// `refs/remotes/origin/NAME`: the one place of that name. riff names
+    /// each start point of a clone with it, so a tag `origin/NAME` changes
+    /// none, and each read of the default branch of `origin` in the main
+    /// clone ([`crate::session_image::merged_config`]).
     ///
     /// ```
     /// let main: riff::session_clone::Branch = "main".parse()?;

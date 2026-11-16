@@ -2762,8 +2762,10 @@ pub const BUNDLE_LIMIT: u64 = 1 << 30;
 /// there, and runs no git on it (#2169). These are the checks, in this
 /// order:
 ///
-/// 1. It opens `out` with no link (`O_NOFOLLOW`), and only a plain file
-///    counts: no link, no folder, no pipe.
+/// 1. It opens `out` with the guard of the files of the host
+///    ([`crate::host_file::open`]), from the folder of `out`, which riff
+///    made: with no link (`O_NOFOLLOW`), and only a plain file counts: no
+///    link, no folder, no pipe.
 /// 2. The file has at most [`BUNDLE_LIMIT`] bytes.
 /// 3. Its first [`BUNDLE_HEAD`] bytes, read from the open file, are one
 ///    of [`BUNDLE_HEADS`]: a `gitdir:` file is no bundle, riff copies no
@@ -2796,7 +2798,8 @@ pub const BUNDLE_LIMIT: u64 = 1 << 30;
 /// // A link is no plain file.
 /// std::fs::remove_file(&out)?;
 /// std::os::unix::fs::symlink(dir.path().join("elsewhere"), &out)?;
-/// assert!(riff::run::take_bundle(&out, &copy, dir.path()).is_err());
+/// let error = riff::run::take_bundle(&out, &copy, dir.path()).unwrap_err();
+/// assert_eq!(error.to_string(), riff::text::host_file_link(&out));
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn take_bundle(out: &Path, copy: &Path, main: &Path) -> Result<Option<PathBuf>> {
@@ -2822,26 +2825,13 @@ impl Opened {
     /// limit `limit`. `None` with no file at `out`.
     fn of(out: &Path, limit: u64) -> Result<Option<Opened>> {
         use std::io::Read;
-        use std::os::unix::fs::OpenOptionsExt;
-        let opened = std::fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK)
-            .open(out);
-        let mut file = match opened {
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(e) if e.raw_os_error() == Some(nix::libc::ELOOP) => {
-                bail!("{}", text::RUN_BUNDLE_LINK)
-            }
-            Err(e) => return Err(e).with_context(|| format!("cannot open {}", out.display())),
-            Ok(file) => file,
+        let (Some(root), Some(name)) = (out.parent(), out.file_name()) else {
+            bail!("riff takes no bundle at {}", out.display());
         };
-        let meta = file
-            .metadata()
-            .with_context(|| format!("cannot read {}", out.display()))?;
-        if !meta.is_file() {
-            bail!("{}", text::RUN_BUNDLE_NOT_FILE);
-        }
-        if meta.len() > limit {
+        let Some((mut file, len)) = crate::host_file::open(root, Path::new(name))? else {
+            return Ok(None);
+        };
+        if len > limit {
             bail!("{}", text::run_bundle_too_large(limit));
         }
         let mut head = [0; BUNDLE_HEAD];
@@ -2985,7 +2975,7 @@ mod tests {
         let link = root.join("out/link.bundle");
         std::os::unix::fs::symlink(&out, &link).unwrap();
         let error = take_bundle(&link, &copy, &git_dir).unwrap_err();
-        assert!(error.to_string().contains("a link"), "{error}");
+        assert_eq!(error.to_string(), text::host_file_link(&link));
 
         let other = root.join("other");
         git(root, &["clone", "-q", "origin.git", "other"]);

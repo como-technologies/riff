@@ -162,6 +162,11 @@
 //! | [`SessionAsk::Idle`] | keeps the end of the turn of the lead, looks at an old lead again soon, and says [`Say::Done`] ([`Daemon::turn_ended`]) |
 //! | [`SessionAsk::GhCalls`] | adds the calls of `gh` of the session to the tally of the calls, and says [`Say::Done`] ([`Daemon::tally_calls`], [`crate::ghcalls`]) |
 //! | [`SessionAsk::Note`] | keeps the note of the relay as a line of the session, at most [`NOTES`] of them, each cut to [`NOTE_MAX`] characters with no control character and no secret ([`kept_note`]), writes it to its log, and says [`Say::Done`] (01M7G824SYKB3BN2MN9A9JKAG0) |
+//! | [`SessionAsk::NoteKey`] | takes the key of the notes of the relay as the first ask of the container, keeps its seal in the record on disk, and says [`Say::Done`] ([`NoteKey`]) |
+//!
+//! Each ask of a container other than [`SessionAsk::NoteKey`] that comes
+//! before the key shuts the key: the daemon takes no key of that
+//! container from then on.
 //!
 //! # A session
 //!
@@ -669,7 +674,11 @@ pub const NOTE_MAX: usize = 500;
 /// before the clone and before `claude`, gives it to the daemon
 /// ([`SessionAsk::NoteKey`]), and waits for the answer
 /// (01M7GJBESDBCHWB7SAT60JETEJ). The daemon takes the first key of each
-/// container, and that key again. Each note has the key
+/// container, and that key again, only as the first ask of the container
+/// (01M7GXY2PHRN2RHVC3HW8FMAWT): each other ask first shuts the key, and
+/// so does a seal that does not save. A daemon that takes up a session
+/// whose record has no seal takes no key for it: the relay of an older
+/// riff gives none. Each note has the key
 /// ([`SessionAsk::Note`]). Only the relay has it, in its memory: so no
 /// other process of the container can send a note. The daemon keeps only
 /// its seal ([`NoteKey::seal`]), in the record of the session. The
@@ -1366,9 +1375,11 @@ pub enum SessionAsk {
     /// The key of the notes of the relay ([`NoteKey`]): the relay gives
     /// it at its start, before the clone and before `claude`, and waits
     /// for the answer (01M7GJBESDBCHWB7SAT60JETEJ). The daemon takes the
-    /// first key of each container, and that key again. The answer is
-    /// [`Say::Done`], or [`Say::Failed`] with
-    /// [`text::DAEMON_NOTE_KEY_TAKEN`] for another key.
+    /// first key of each container as its first ask, and that key again
+    /// (01M7GXY2PHRN2RHVC3HW8FMAWT). The answer is [`Say::Done`], or
+    /// [`Say::Failed`] with [`text::DAEMON_NOTE_KEY_TAKEN`] for another
+    /// key, [`text::DAEMON_NOTE_KEY_SHUT`] after another ask, and
+    /// [`text::DAEMON_NOTE_KEY_UNSAVED`] when the seal does not save.
     NoteKey {
         /// [`PROTOCOL`] of the relay.
         protocol: u32,
@@ -2353,7 +2364,9 @@ pub struct Record {
     /// The seal of the key of the notes of the relay of this container
     /// ([`NoteKey`], 01M7GE3KYR7JZHDV5S7PKAZX57): `None` until the relay
     /// gives its key. The relay gives it before the clone and before
-    /// `claude`, and waits for the answer (01M7GJBESDBCHWB7SAT60JETEJ).
+    /// `claude`, and waits for the answer (01M7GJBESDBCHWB7SAT60JETEJ). A
+    /// daemon that takes up a record with `None` takes no key for it
+    /// (01M7GXY2PHRN2RHVC3HW8FMAWT).
     pub notes_key: Option<NoteSeal>,
 }
 
@@ -2442,6 +2455,14 @@ struct SessionState {
     /// The number of notes of the relay in `lines`: at most [`NOTES`]
     /// ([`Owned::note`]).
     notes: usize,
+    /// True while the daemon takes the first key of the notes of the
+    /// relay ([`Owned::take_key`], 01M7GXY2PHRN2RHVC3HW8FMAWT): this
+    /// daemon started the container, and no ask of the container came
+    /// yet. The key of the relay, any other ask, and a seal that does not
+    /// save make it false. A daemon that takes up a session whose record
+    /// has no seal starts with false: the relay of an older riff gives no
+    /// key.
+    key_open: bool,
     /// The token of the session on GitHub, for its revoke at the end
     /// ([`gh_token`]). `None` for the token of the person.
     gh_token: Option<Zeroizing<String>>,
@@ -2588,23 +2609,37 @@ impl Owned {
 
     /// Takes the key `key` of the notes of the relay
     /// ([`SessionAsk::NoteKey`], 01M7GE3KYR7JZHDV5S7PKAZX57): only the
-    /// first key of the container. The same key again is done too: the
+    /// first key of the container, as its first ask
+    /// ([`SessionState::key_open`]). The same key again is done too: the
     /// relay gives it again when the answer did not reach it
     /// (01M7GJBESDBCHWB7SAT60JETEJ). It keeps the seal in the record on
-    /// disk, so a new daemon keeps the notes of the relay too.
+    /// disk before the answer, so a new daemon keeps the notes of the
+    /// relay too. When the record does not save, it takes no key, and
+    /// takes none later.
     fn take_key(&self, key: &NoteKey) -> Result<(), &'static str> {
         let mut state = self.lock();
         let seal = key.seal();
         match &state.record.notes_key {
             Some(taken) if *taken == seal => return Ok(()),
             Some(_) => return Err(text::DAEMON_NOTE_KEY_TAKEN),
+            None if !state.key_open => return Err(text::DAEMON_NOTE_KEY_SHUT),
             None => {}
         }
+        state.key_open = false;
         state.record.notes_key = Some(seal);
         if let Err(e) = self.save(&state) {
-            eprintln!("riff daemon: {e:#}");
+            state.record.notes_key = None;
+            eprintln!("riff daemon: {}: {e:#}", self.name);
+            return Err(text::DAEMON_NOTE_KEY_UNSAVED);
         }
         Ok(())
+    }
+
+    /// An ask of the container that is not the key of the relay came
+    /// first: the daemon takes no key of the notes from now on
+    /// ([`SessionState::key_open`], 01M7GXY2PHRN2RHVC3HW8FMAWT).
+    fn shut_key(&self) {
+        self.lock().key_open = false;
     }
 
     /// `claude` of the session refused its sign-in. With a token set, the
@@ -5706,6 +5741,7 @@ impl<R: Runtime + 'static> Daemon<R> {
         };
         let log = log.with_context(|| format!("cannot write {}", events.display()))?;
         private_dir(&self.dir.join(LIVE))?;
+        let key_open = !again && record.notes_key.is_none();
         let (notes, noted) = mpsc::unbounded_channel();
         let owned = Arc::new(Owned {
             dir: self.dir.clone(),
@@ -5730,6 +5766,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                 waiting: Vec::new(),
                 lines: Vec::new(),
                 notes: 0,
+                key_open,
                 gh_token: None,
             }),
             notes,
@@ -6377,7 +6414,12 @@ impl<R: Runtime + 'static> Daemon<R> {
         let Ok(Some(first)) = lines.next_line().await else {
             return;
         };
-        match session_hello(&first) {
+        let ask = session_hello(&first);
+        // The relay gives its key before each other ask of its container.
+        if !matches!(ask, Ok(SessionAsk::NoteKey { .. })) {
+            owned.shut_key();
+        }
+        match ask {
             Ok(SessionAsk::Relay {
                 protocol,
                 inputs,
@@ -8484,11 +8526,12 @@ mod tests {
     /// line, with no control character and no secret, also a secret that a
     /// control character splits, and cut to [`NOTE_MAX`] characters. It
     /// keeps at most [`NOTES`], and gives the line of its log for each kept
-    /// one. Past them, it says that it keeps no more. A note before the
-    /// key, or with a second key, is no line, and the daemon says so. The
-    /// same key again is done (01M7GJBESDBCHWB7SAT60JETEJ), and the record
-    /// on disk has its seal at once. The hello of the relay closes nothing:
-    /// a note after it counts, as the note of the bundle after `claude`. The
+    /// one. Past them, it says that it keeps no more. A note with a second
+    /// key is no line, and the daemon says so. The same key again is done
+    /// (01M7GJBESDBCHWB7SAT60JETEJ), and the record on disk has its seal
+    /// before the answer. The hello of the relay after its key closes
+    /// nothing: a note after it counts, as the note of the bundle after
+    /// `claude`. The
     /// follower of the start gets the notes, and so does a follower after
     /// the end, as `riff daemon events NAME` shows them. A line of the
     /// output of the container is a line of stderr for the followers of
@@ -8515,13 +8558,10 @@ mod tests {
         };
         let refused = failed(text::DAEMON_NOTE_REFUSED);
 
-        // A note before the key of the relay is no line.
+        // The relay gives its key as the first ask: its notes count, and
+        // the record on disk has the seal. The same key again is done. A
+        // second key does not count, and its notes are no lines.
         let key = NoteKey::random();
-        let early = note("riff relay: early", &key);
-        assert_eq!(ask_in(&dir, &early).await, refused);
-        // The relay gives its key: its notes count, and the record on disk
-        // has the seal. The same key again is done. A second key does not
-        // count, and its notes are no lines.
         assert_eq!(ask_in(&dir, &give(&key)).await, Say::Done);
         let record: Record =
             serde_json::from_slice(&std::fs::read(record_path(&here.dir, &name)).unwrap()).unwrap();
@@ -8557,8 +8597,8 @@ mod tests {
         for _ in 2..NOTES - 1 {
             assert_eq!(ask_in(&dir, &note(&long, &key)).await, Say::Done);
         }
-        // The hello of the relay closes nothing: the last note comes after
-        // it.
+        // The hello of the relay after its key changes nothing: the last
+        // note comes after it.
         let (mut relay, _) = Relay::connect(&dir, 0, false).await;
         assert!(matches!(relay.next().await, Say::Input { .. }));
         assert_eq!(ask_in(&dir, &note(&long, &key)).await, Say::Done);
@@ -8619,42 +8659,112 @@ mod tests {
         );
     }
 
-    /// 01M7GJBESDBCHWB7SAT60JETEJ: the first hello of the relay closes
-    /// nothing, and seals no key. A key after it counts: the record on
-    /// disk keeps its seal, and its notes are lines. A second key does
-    /// not count.
+    /// The ask of the key `key` of the notes of a relay.
+    fn give_key(key: &NoteKey) -> SessionAsk {
+        SessionAsk::NoteKey {
+            protocol: PROTOCOL,
+            key: key.clone(),
+        }
+    }
+
+    /// A note of a relay with the key `key`.
+    fn note_with(key: &NoteKey) -> SessionAsk {
+        SessionAsk::Note {
+            protocol: PROTOCOL,
+            line: "riff relay: cloned.".into(),
+            key: key.clone(),
+        }
+    }
+
+    /// The record of the session `name` on disk in the daemon folder `dir`.
+    fn record_in(dir: &Path, name: &str) -> Record {
+        serde_json::from_slice(&std::fs::read(record_path(dir, name)).unwrap()).unwrap()
+    }
+
+    /// 01M7GXY2PHRN2RHVC3HW8FMAWT: the daemon takes the key of the notes
+    /// only as the first ask of a container. The hello of a relay of an
+    /// older riff, which gives no key, a note, and a hello of another
+    /// process each shut the key when they come first: a key after them
+    /// does not count, its notes are no lines, and the record has no
+    /// seal.
     #[tokio::test]
-    async fn the_first_hello_of_the_relay_seals_no_key_of_the_notes() {
+    async fn an_ask_before_the_key_of_the_relay_shuts_the_key_of_the_notes() {
+        for first in ["relay", "note", "hello"] {
+            let here = Here::new(Fake::default().with_image(IMAGE)).await;
+            let start = here.start("riff-issue-12-1a2b3c4d", "issue-12");
+            let (_client, name) = here.started(start).await;
+            let dir = session_dir(&here.dir, &name);
+            let key = NoteKey::random();
+            let _relay = match first {
+                "relay" => {
+                    let (mut relay, _) = Relay::connect(&dir, 0, false).await;
+                    assert!(matches!(relay.next().await, Say::Input { .. }));
+                    Some(relay)
+                }
+                "note" => {
+                    let refused = Say::Failed {
+                        error: text::DAEMON_NOTE_REFUSED.into(),
+                    };
+                    assert_eq!(ask_in(&dir, &note_with(&key)).await, refused);
+                    None
+                }
+                _ => {
+                    let hello = SessionAsk::Hello { protocol: PROTOCOL };
+                    let said = ask_in(&dir, &hello).await;
+                    assert!(matches!(said, Say::Session { .. }), "{said:?}");
+                    None
+                }
+            };
+            assert_eq!(
+                ask_in(&dir, &give_key(&key)).await,
+                Say::Failed {
+                    error: text::DAEMON_NOTE_KEY_SHUT.into()
+                },
+                "{first}"
+            );
+            assert_eq!(
+                ask_in(&dir, &note_with(&key)).await,
+                Say::Failed {
+                    error: text::DAEMON_NOTE_REFUSED.into()
+                },
+                "{first}"
+            );
+            assert_eq!(record_in(&here.dir, &name).notes_key, None, "{first}");
+        }
+    }
+
+    /// 01M7GXY2PHRN2RHVC3HW8FMAWT: the daemon writes the seal of the key to
+    /// the record before its answer. When the write fails, it says so, and
+    /// takes no key of the container: the same key again does not count,
+    /// also after the disk is good again, and its notes are no lines.
+    #[tokio::test]
+    async fn a_seal_that_does_not_save_shuts_the_key_of_the_notes() {
         let here = Here::new(Fake::default().with_image(IMAGE)).await;
         let start = here.start("riff-issue-12-1a2b3c4d", "issue-12");
         let (_client, name) = here.started(start).await;
         let dir = session_dir(&here.dir, &name);
-        let (mut relay, _) = Relay::connect(&dir, 0, false).await;
-        assert!(matches!(relay.next().await, Say::Input { .. }));
-        let record = || -> Record {
-            serde_json::from_slice(&std::fs::read(record_path(&here.dir, &name)).unwrap()).unwrap()
-        };
-        assert_eq!(record().notes_key, None);
-        let give = |key: &NoteKey| SessionAsk::NoteKey {
-            protocol: PROTOCOL,
-            key: key.clone(),
-        };
+        // A folder in the place of the new record: the write fails.
+        let new = record_path(&here.dir, &name).with_extension("json.new");
+        std::fs::create_dir(&new).unwrap();
         let key = NoteKey::random();
-        assert_eq!(ask_in(&dir, &give(&key)).await, Say::Done);
-        assert_eq!(record().notes_key, Some(key.seal()));
-        let note = SessionAsk::Note {
-            protocol: PROTOCOL,
-            line: "riff relay: cloned.".into(),
-            key: key.clone(),
+        let failed = |error: &str| Say::Failed {
+            error: error.into(),
         };
-        assert_eq!(ask_in(&dir, &note).await, Say::Done);
         assert_eq!(
-            ask_in(&dir, &give(&NoteKey::random())).await,
-            Say::Failed {
-                error: text::DAEMON_NOTE_KEY_TAKEN.into()
-            }
+            ask_in(&dir, &give_key(&key)).await,
+            failed(text::DAEMON_NOTE_KEY_UNSAVED)
         );
-        assert_eq!(record().notes_key, Some(key.seal()));
+        assert_eq!(record_in(&here.dir, &name).notes_key, None);
+        std::fs::remove_dir(&new).unwrap();
+        assert_eq!(
+            ask_in(&dir, &give_key(&key)).await,
+            failed(text::DAEMON_NOTE_KEY_SHUT)
+        );
+        assert_eq!(
+            ask_in(&dir, &note_with(&key)).await,
+            failed(text::DAEMON_NOTE_REFUSED)
+        );
+        assert_eq!(record_in(&here.dir, &name).notes_key, None);
     }
 
     #[tokio::test]
@@ -9776,7 +9886,9 @@ mod tests {
     }
 
     /// When podman cannot say whether the container of a record runs, a
-    /// new daemon takes up the session (01M4ZHT01HH88KPA8628M7VBEY).
+    /// new daemon takes up the session (01M4ZHT01HH88KPA8628M7VBEY). Its
+    /// record has no seal of a key of the notes, so the new daemon takes
+    /// no key for it (01M7GXY2PHRN2RHVC3HW8FMAWT).
     #[tokio::test]
     async fn a_new_daemon_takes_up_a_session_when_podman_cannot_say() {
         let root = tempfile::tempdir().unwrap();
@@ -9834,7 +9946,25 @@ mod tests {
             .collect();
         assert_eq!(names, [name]);
         assert!(record_path(&dir, name).exists());
-        let (_relay, had) = Relay::connect(&session_dir(&dir, name), 1, false).await;
+        // The record has no seal: the relay of an older riff gives no key,
+        // so the new daemon takes none, also as the first ask
+        // (01M7GXY2PHRN2RHVC3HW8FMAWT).
+        let socket = session_dir(&dir, name);
+        let key = NoteKey::random();
+        assert_eq!(
+            ask_in(&socket, &give_key(&key)).await,
+            Say::Failed {
+                error: text::DAEMON_NOTE_KEY_SHUT.into()
+            }
+        );
+        assert_eq!(
+            ask_in(&socket, &note_with(&key)).await,
+            Say::Failed {
+                error: text::DAEMON_NOTE_REFUSED.into()
+            }
+        );
+        assert_eq!(record_in(&dir, name).notes_key, None);
+        let (_relay, had) = Relay::connect(&socket, 1, false).await;
         assert_eq!(had, 0);
     }
 

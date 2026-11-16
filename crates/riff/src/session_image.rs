@@ -342,7 +342,7 @@ pub fn merged_config(main: &Path, mut say: impl FnMut(&str)) -> Result<Merged> {
 /// each line about the pin.
 pub fn merged_config_on(main: &Path, base: Branch, mut say: impl FnMut(&str)) -> Result<Merged> {
     let head = format!("origin/{base}");
-    let rev = format!("refs/remotes/origin/{base}");
+    let rev = base.of_origin();
     let config = match git(main, &["show", &format!("{rev}:{FILE}")]) {
         Ok(config) => config,
         Err(_) if lacks_config(main, &rev) => bail!("{}", text::image_no_config(&head)),
@@ -653,7 +653,7 @@ pub fn merged_sources(main: &Path) -> Result<Vec<String>> {
     let Ok(base) = head_here(main) else {
         return Ok(Vec::new());
     };
-    let show = format!("refs/remotes/origin/{base}:{FILE}");
+    let show = format!("{}:{FILE}", base.of_origin());
     let Ok(config) = git(main, &["show", &show]) else {
         return Ok(Vec::new());
     };
@@ -704,10 +704,7 @@ pub fn merged_sources(main: &Path) -> Result<Vec<String>> {
 /// ```
 pub fn merged_here(main: &Path) -> Result<Image> {
     let base = head_here(main)?;
-    let config = git(
-        main,
-        &["show", &format!("refs/remotes/origin/{base}:{FILE}")],
-    )?;
+    let config = git(main, &["show", &format!("{}:{FILE}", base.of_origin())])?;
     Image::of_config(&config, &format!("{FILE} of origin/{base}"))
 }
 

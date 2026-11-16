@@ -110,7 +110,8 @@ async fn a_write_over_the_size_of_a_tmpfs_of_the_home_fails_with_no_space() {
 /// volume of its container at the path of the clone, the working folder.
 /// It belongs to the session user, it is no tmpfs of the home, and git
 /// makes a repository there. `podman run --rm` removes the volume with
-/// the container.
+/// the container: no new volume holds the mark of the test. A volume of a
+/// session that starts in the same time does not count.
 #[tokio::test]
 async fn the_clone_of_a_session_is_an_empty_volume_of_the_session_user() {
     if let Err(why) = ready() {
@@ -118,12 +119,14 @@ async fn the_clone_of_a_session_is_an_empty_volume_of_the_session_user() {
         return;
     }
     let clone = format!("{HOME}/.local/share/riff/s/clone");
-    let script = "stat -c '%u' . && ls -A | wc -l && \
-                  awk -v d=\"$PWD\" '$2 == d {print $3}' /proc/mounts && \
-                  git init -q . && test -d .git && echo made"
-        .to_owned();
+    let name = format!("riff-clone-volume-test-{}", std::process::id());
+    let script = format!(
+        "stat -c '%u' . && ls -A | wc -l && \
+         awk -v d=\"$PWD\" '$2 == d {{print $3}}' /proc/mounts && \
+         git init -q . && test -d .git && touch {name} && echo made"
+    );
     let spec = SessionSpec {
-        name: format!("riff-clone-volume-test-{}", std::process::id()),
+        name: name.clone(),
         workdir: clone.clone().into(),
         binds: vec![Bind {
             source: Source::Empty,
@@ -134,7 +137,11 @@ async fn the_clone_of_a_session_is_an_empty_volume_of_the_session_user() {
     };
     let before = volumes();
     let (out, errors) = output(&spec).await;
-    let left: Vec<String> = volumes().difference(&before).cloned().collect();
+    let left: Vec<String> = volumes()
+        .difference(&before)
+        .filter(|volume| holds(volume, &name))
+        .cloned()
+        .collect();
     assert!(left.is_empty(), "the volume of the clone stays: {left:?}");
 
     let uid = nix::unistd::getuid().as_raw();
@@ -157,6 +164,20 @@ fn volumes() -> std::collections::BTreeSet<String> {
         .lines()
         .map(str::to_owned)
         .collect()
+}
+
+/// True when the podman volume `volume` holds the file `mark`, or when
+/// the test cannot tell. A volume that is gone holds nothing.
+fn holds(volume: &str, mark: &str) -> bool {
+    let out = Command::new("podman")
+        .args(["volume", "inspect", "--format", "{{.Mountpoint}}", volume])
+        .output()
+        .unwrap();
+    if !out.status.success() {
+        return false;
+    }
+    let folder = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+    Path::new(&folder).join(mark).try_exists().unwrap_or(true)
 }
 
 /// A spec of the test that runs `script` in the session image.

@@ -6052,12 +6052,11 @@ of this part when they merge.
   main clone or of another session.
 - **01M4Z60B7QDWEFQ96H448RE9N2** Each session is a rootless podman
   container (`podman run --rm --userns=keep-id`) from the image of its
-  repository. riff binds with write: its Claude folder, the folder of
-  its socket, and the volumes that `riff.toml` names
-  (01M5SMVVC4GQS310CVK3H9CMQ7). riff binds `~/.gitconfig` with no write,
-  or as an overlay (`:O`) whose changes go when the session ends. Each
-  other write goes to the copy-on-write layer of the container, and goes
-  when the session ends.
+  repository. riff binds with write: its Claude folder, and the volumes
+  that `riff.toml` names (01M5SMVVC4GQS310CVK3H9CMQ7). riff binds
+  `~/.gitconfig` with no write, or as an overlay (`:O`) whose changes go
+  when the session ends. Each other write goes to the copy-on-write
+  layer of the container, and goes when the session ends.
 - **01M4Z60B7SHAMXXFK15BE3KZSP** The home of the person is a tmpfs in
   the container, at the same path, with `HOME` set. The binds of
   `~/.gitconfig` and of the Claude folder go on top of it. Each other
@@ -6779,7 +6778,8 @@ of this part when they merge.
   socket of a session at /run/riff with no write. A connect to the
   socket needs no write of its folder. So no process of the container
   can rename the socket, or put another socket in its place. This
-  supersedes 01M4ZDTVSP0T1YENKAWGKA114D in part: the bind with write.
+  supersedes 01M4ZDTVSP0T1YENKAWGKA114D and 01M4Z60B7QDWEFQ96H448RE9N2
+  in part: the bind with write of the folder of the socket.
 
 ### riff relay
 
@@ -8865,15 +8865,27 @@ of this part when they merge.
 - **01M7GJBESDBCHWB7SAT60JETEJ** The relay waits for the answer of the
   daemon to its key before the clone and before claude. While the daemon
   is away, or gives no answer, the relay gives the same key again each
-  250 ms. The daemon takes the same key again as done. The first hello
-  of the relay closes nothing. When the daemon refuses the key, the
-  relay says each note on its stderr only. This supersedes
-  01M7GE3KYR7JZHDV5S7PKAZX57 in part: the key only before the first
-  hello.
+  250 ms. The daemon takes the same key again as done. When the daemon
+  refuses the key, the relay says each note on its stderr only. This
+  supersedes 01M7GE3KYR7JZHDV5S7PKAZX57 in part: the key only before the
+  first hello.
 - **01M7GJBFAJDCYCMRDSWSX3VNWX** Each line that riff relay -- COMMAND
   itself prints on its stderr starts with `riff relay: `: also the error
   when the command does not start, and the error when the relay has no
   socket.
+- **01M7GXY2PHRN2RHVC3HW8FMAWT** The daemon takes the key of the notes
+  only as the first ask of a container. Each other ask that comes first
+  shuts the key: the daemon takes no key of that container from then on.
+  A new daemon that takes up a session whose record has no seal takes no
+  key for it: the relay of an older riff gives none. The daemon writes
+  the seal to the record of the session before its answer. When the
+  write fails, it answers failed, and takes no key of that container.
+  This supersedes 01M7GJBESDBCHWB7SAT60JETEJ in part: the first hello of
+  the relay that closes nothing.
+- **01M7GXY2SAK89TEQVP72764DR4** A SIGTERM or a SIGINT before claude
+  starts ends riff relay -- COMMAND with 1 at once: also while it waits
+  for the answer of the daemon to its key, and while it clones. After
+  claude starts, the signal goes to claude.
 
 ### The home of the person
 

@@ -2580,9 +2580,7 @@ For a folder on another host, add `--host thelio`.
   `riff.slice`. See
   [The priority of a session](#the-priority-of-a-session).
 - The folder of its own socket of the daemon at `/run/riff`, with no
-  write, and `RIFF_SOCKET=/run/riff/riff.sock`. A process of the
-  session can connect to the socket, but cannot rename it or put
-  another socket in its place.
+  write, and `RIFF_SOCKET=/run/riff/riff.sock`.
 - Your riff binary at `/opt/riff/riff`, with no write. Its
   `riff relay` is the entrypoint of the container. So the riff in a
   session is the riff of your machine.

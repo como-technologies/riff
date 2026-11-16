@@ -7968,7 +7968,9 @@ pub fn run_pushed_nothing(bundle: Option<&Path>, branch: &str) -> String {
 /// ([`crate::run::take_bundle`]). The session can write that file, so
 /// riff ran no git on it. The session wrote the bytes that the error of
 /// git quotes, so `why` goes through [`safe`]: no escape sequence and no
-/// control character.
+/// control character. A `why` that is a sentence, for example the error
+/// of the guard of the files of the host ([`host_file_link`]), keeps one
+/// full stop.
 ///
 /// ```
 /// assert_eq!(
@@ -7981,13 +7983,16 @@ pub fn run_pushed_nothing(bundle: Option<&Path>, branch: &str) -> String {
 /// assert!(shown.contains("unrecognized header: "), "{shown}");
 /// assert!(shown.ends_with("x. riff ran no git on it."), "{shown}");
 /// assert!(!shown.chars().any(char::is_control), "{shown:?}");
+/// let link = riff::text::host_file_link("/s/out/b.bundle".as_ref());
+/// let shown = riff::text::run_bundle_refused("/s/out/b.bundle".as_ref(), &link);
+/// assert!(shown.ends_with("start again. riff ran no git on it."), "{shown}");
 /// ```
 pub fn run_bundle_refused(file: &Path, why: &str) -> String {
     format!(
         "The session had no GitHub, so it pushed nothing. riff refused the file {}: {}. riff \
          ran no git on it.",
         file.display(),
-        safe(why)
+        safe(why).trim_end_matches('.')
     )
 }
 
@@ -8006,14 +8011,6 @@ pub fn run_bundle_too_large(limit: u64) -> String {
         limit >> 30
     )
 }
-
-/// The reason of [`run_bundle_refused`] for a link at the path of the
-/// bundle ([`crate::run::take_bundle`]).
-pub const RUN_BUNDLE_LINK: &str = "it is a link";
-
-/// The reason of [`run_bundle_refused`] for a folder or another file
-/// that is no plain file at the path of the bundle.
-pub const RUN_BUNDLE_NOT_FILE: &str = "it is no plain file";
 
 /// The reason of [`run_bundle_refused`] for a file whose first line is
 /// not that of a git bundle ([`crate::run::BUNDLE_HEADS`]).
@@ -8805,6 +8802,18 @@ pub fn daemon_relay_note(name: &str, note: &str) -> String {
 /// ([`crate::daemon::NoteKey`], 01M7GE3KYR7JZHDV5S7PKAZX57).
 pub const DAEMON_NOTE_KEY_TAKEN: &str =
     "The riff daemon has the key of the notes of this container already.";
+
+/// The daemon takes no key of the notes of this container: another ask
+/// came first, or the daemon took up the session from a record with no
+/// seal ([`crate::daemon::NoteKey`], 01M7GE3KYR7JZHDV5S7PKAZX57).
+pub const DAEMON_NOTE_KEY_SHUT: &str = "The riff daemon takes no key of the notes of this \
+                                        container: the key comes before each other ask.";
+
+/// The record of the session did not save with the seal of the key of
+/// the notes: the daemon takes no key of this container
+/// ([`crate::daemon::NoteKey`], 01M7GE3KYR7JZHDV5S7PKAZX57).
+pub const DAEMON_NOTE_KEY_UNSAVED: &str = "The riff daemon cannot keep the key of the notes of \
+                                           this container on its disk, so it takes no key.";
 
 /// A note with no key of the relay of the container
 /// ([`crate::daemon::NoteKey`], 01M7GE3KYR7JZHDV5S7PKAZX57).

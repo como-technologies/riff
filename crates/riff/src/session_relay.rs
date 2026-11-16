@@ -77,9 +77,11 @@
 //! answer. While the daemon is away, or gives no answer, the relay gives
 //! the same key again ([`NoteTo::give`], 01M7GJBESDBCHWB7SAT60JETEJ). So
 //! no other process of the container runs before the daemon has the key.
-//! The daemon takes only the first key of the container, and that key
-//! again, and keeps only its seal ([`daemon::NoteKey::seal`]). It keeps
-//! no note with another key. The socket is in a folder with no write
+//! The daemon takes only the first key of the container, as its first
+//! ask, and that key again, and keeps only its seal
+//! ([`daemon::NoteKey::seal`], 01M7GXY2PHRN2RHVC3HW8FMAWT). Each other
+//! ask first shuts the key. It keeps no note with another key. The
+//! socket is in a folder with no write
 //! ([`daemon::IN_SESSION`]): no process of the container can take the
 //! place of the socket, and get the key of a note.
 //!
@@ -1006,6 +1008,15 @@ impl NoteTo {
     /// daemon takes that key again too. It gives `self` when the daemon
     /// took the key, and `None` when the daemon refused it ([`Refused`]).
     async fn given(self) -> Option<NoteTo> {
+        self.given_after(|| tokio::time::sleep(RETRY)).await
+    }
+
+    /// [`NoteTo::given`], with `pause` in place of the wait of [`RETRY`]
+    /// before each give again: a test waits for its own sign there.
+    async fn given_after<F: Future<Output = ()>>(
+        self,
+        mut pause: impl FnMut() -> F,
+    ) -> Option<NoteTo> {
         let key = SessionAsk::NoteKey {
             protocol: PROTOCOL,
             key: self.key.clone(),
@@ -1014,7 +1025,7 @@ impl NoteTo {
             match self.ask(&key).await {
                 Ok(()) => return Some(self),
                 Err(e) if e.is::<Refused>() => return None,
-                Err(_) => tokio::time::sleep(RETRY).await,
+                Err(_) => pause().await,
             }
         }
     }
@@ -1115,8 +1126,10 @@ pub async fn clone_here(
 /// `riff relay -- COMMAND`: starts `COMMAND` with the riff tools, and
 /// relays it on the socket of `RIFF_SOCKET` ([`relay`]). After a
 /// takeover, it starts the [`resumed`] command. A SIGTERM or a SIGINT
-/// goes to `claude`. It gives the exit code of `claude`, or 1 after a
-/// signal, and 1 when the clone failed ([`NoClone`]).
+/// goes to `claude`. Before `claude` starts, one ends the relay with 1 at
+/// once: also while it waits for the daemon, and while it clones
+/// (01M7GXY2SAK89TEQVP72764DR4). It gives the exit code of `claude`, or 1
+/// after a signal, and 1 when the clone failed ([`NoClone`]).
 pub async fn main(command: Vec<String>) -> Result<i32> {
     use tokio::signal::unix::{SignalKind, signal};
     let socket = socket_here()?;
@@ -1129,10 +1142,20 @@ pub async fn main(command: Vec<String>) -> Result<i32> {
     let mut int = signal(SignalKind::interrupt())?;
     // The key of the notes comes before the clone and before claude: the
     // relay waits for the answer (01M7GE3KYR7JZHDV5S7PKAZX57,
-    // 01M7GJBESDBCHWB7SAT60JETEJ).
+    // 01M7GJBESDBCHWB7SAT60JETEJ). A signal before claude ends the relay
+    // at once (01M7GXY2SAK89TEQVP72764DR4).
     not_dumpable();
-    let to = NoteTo::give(&socket).await;
-    let Ok(plan) = clone_here(to.as_ref(), false).await else {
+    let ready = async {
+        let to = NoteTo::give(&socket).await;
+        let plan = clone_here(to.as_ref(), false).await;
+        (to, plan)
+    };
+    let (to, plan) = tokio::select! {
+        ready = ready => ready,
+        _ = term.recv() => return Ok(1),
+        _ = int.recv() => return Ok(1),
+    };
+    let Ok(plan) = plan else {
         return Ok(1);
     };
     let pid = Arc::new(AtomicU32::new(0));
@@ -1613,7 +1636,8 @@ mod tests {
             },
         };
         let daemon = Daemon::new();
-        let to = daemon.to(NOTE_WAIT);
+        // A long wait: the end waits for the answer of the test.
+        let to = daemon.to(Duration::from_secs(60));
         let end = |plan: &crate::session_clone::Plan, code: i32| {
             plan.make(false).unwrap();
             let script = format!(
@@ -1628,20 +1652,29 @@ mod tests {
                 .end;
             tokio::spawn(end)
         };
-        // The daemon takes the note before the end.
         let note = || async {
-            let (ask, _, mut write) = daemon.accept().await;
+            let (ask, _, write) = daemon.accept().await;
             let SessionAsk::Note { line, key, .. } = ask else {
                 panic!("{ask:?}");
             };
             assert_eq!(key, to.key);
-            say(&mut write, &Say::Done).await;
-            line
+            (line, write)
+        };
+        // The daemon takes the note before the end: the end waits for the
+        // answer to the note.
+        let answer = |ended: &tokio::task::JoinHandle<Option<i32>>, mut write: OwnedWriteHalf| {
+            assert!(
+                !ended.is_finished(),
+                "the end came before the answer to the note"
+            );
+            async move { say(&mut write, &Say::Done).await }
         };
         let done = plan("s");
         let ended = end(&done, 0);
         let bundle = root.join("s/out/worktree-issue-12.bundle");
-        assert_eq!(note().await, text::relay_bundled(&bundle));
+        let (line, write) = note().await;
+        assert_eq!(line, text::relay_bundled(&bundle));
+        answer(&ended, write).await;
         assert_eq!(ended.await.unwrap(), Some(0));
         assert_eq!(done.bundle_file(), Some(bundle.clone()));
         assert!(bundle.is_file(), "no bundle at the end of claude");
@@ -1653,10 +1686,11 @@ mod tests {
             std::fs::create_dir_all(root.join(name)).unwrap();
             std::fs::write(root.join(name).join("out"), "").unwrap();
             let ended = end(&fails, code);
-            let line = note().await;
+            let (line, write) = note().await;
             let failed = text::relay_bundle_failed("");
             assert!(line.starts_with(failed.trim_end()), "{line}");
             assert!(!line.contains('\n'), "{line}");
+            answer(&ended, write).await;
             assert_eq!(ended.await.unwrap(), Some(want), "{name}");
         }
     }
@@ -1738,8 +1772,9 @@ mod tests {
     /// 01M7GJBESDBCHWB7SAT60JETEJ: the relay waits for the answer of the
     /// daemon to its key. The daemon is away at first, then it goes away
     /// before its answer, then it gives no answer in time: each time, the
-    /// relay gives the same key again. The give ends when the daemon takes
-    /// the key. When the daemon refuses the key, the relay has none.
+    /// relay waits, and gives the same key again. The give ends when the
+    /// daemon takes the key. When the daemon refuses the key, the relay
+    /// has none.
     #[tokio::test]
     async fn the_relay_gives_its_key_again_until_the_daemon_answers() {
         let key_of = |ask: SessionAsk| match ask {
@@ -1750,18 +1785,59 @@ mod tests {
         daemon.stop();
         let to = daemon.to(Duration::from_millis(50));
         let key = to.key.clone();
-        let given = tokio::spawn(to.given());
+        // Each wait of the relay before it gives the key again says so,
+        // and ends at the sign of the test.
+        let (waits, mut waited) = mpsc::unbounded_channel();
+        let go = Arc::new(tokio::sync::Notify::new());
+        let mut given = {
+            let go = go.clone();
+            tokio::spawn(to.given_after(move || {
+                let _ = waits.send(());
+                let go = go.clone();
+                async move { go.notified().await }
+            }))
+        };
+        async fn wait(waited: &mut mpsc::UnboundedReceiver<()>) {
+            tokio::time::timeout(Duration::from_secs(30), waited.recv())
+                .await
+                .expect("the relay did not wait in 30 seconds")
+                .unwrap();
+        }
+        // The daemon is away: the relay waits.
+        wait(&mut waited).await;
         daemon.start();
+        go.notify_one();
+        // The daemon goes away before its answer.
         let (ask, lines, write) = daemon.accept().await;
         assert_eq!(key_of(ask), key);
         drop((lines, write));
+        wait(&mut waited).await;
+        go.notify_one();
+        // The daemon gives no answer: the relay waits after its limit.
         let (ask, _lines, _write) = daemon.accept().await;
         assert_eq!(key_of(ask), key);
-        let (ask, _, mut write) = daemon.accept().await;
-        assert_eq!(key_of(ask), key);
+        wait(&mut waited).await;
         assert!(!given.is_finished(), "the give ended with no answer");
-        say(&mut write, &Say::Done).await;
-        let to = given.await.unwrap().unwrap();
+        go.notify_one();
+        // The daemon takes the key. A slow test can answer after the limit
+        // of the relay: then the relay gives the key again, and the daemon
+        // answers again.
+        let answered = async {
+            loop {
+                tokio::select! {
+                    to = &mut given => return to.unwrap(),
+                    Some(()) = waited.recv() => go.notify_one(),
+                    (ask, _, mut write) = daemon.accept() => {
+                        assert_eq!(key_of(ask), key);
+                        say(&mut write, &Say::Done).await;
+                    }
+                }
+            }
+        };
+        let to = tokio::time::timeout(Duration::from_secs(30), answered)
+            .await
+            .expect("the give did not end in 30 seconds")
+            .unwrap();
         assert_eq!(to.key, key);
 
         let refused = tokio::spawn(daemon.to(NOTE_WAIT).given());
