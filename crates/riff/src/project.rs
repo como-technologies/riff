@@ -348,7 +348,8 @@ fn set_up(
 /// the clone is on the branch `branch`, and has no change. A clone with
 /// commits that `origin` lacks does not fast-forward, so git stops and
 /// changes nothing. It gives why riff ran no pull, or why git failed, in
-/// one line.
+/// one line. It runs no pull when riff refuses the remote `origin`
+/// ([`crate::identity::origin`], 01M7GMV5ZYYF94ZKQ5ECQYTJXH).
 ///
 /// ```
 /// use riff::project::pull;
@@ -385,6 +386,7 @@ pub fn pull(clone: &Path, branch: &str) -> Result<(), String> {
     if !git(&["status", "--porcelain"])?.is_empty() {
         return Err(text::INIT_CLONE_CHANGED.to_owned());
     }
+    identity::origin(clone).map_err(|e| format!("{e:#}"))?;
     git(&["pull", "--ff-only", "origin", branch]).map(drop)
 }
 
@@ -469,7 +471,7 @@ pub async fn init(
     server: &str,
 ) -> Result<i32> {
     let here = identity::working_dir()?;
-    let Some(origin) = identity::github_origin(&here) else {
+    let Some(origin) = identity::github_origin(&here)? else {
         anyhow::bail!("{}", text::PROJECT_NO_ORIGIN);
     };
     let repo: ThreadName = origin.parse()?;

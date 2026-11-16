@@ -126,6 +126,167 @@ pub fn copy_program(from: impl AsRef<Path>, to: impl AsRef<Path>) -> PathBuf {
     to.to_owned()
 }
 
+/// The origins with the token `T0KEN` in their URL that riff refuses
+/// (01M7GMV5ZYYF94ZKQ5ECQYTJXH): one for each form of a URL whose user
+/// info a cleanup of the text missed, and two near the origin of a
+/// Claude Code cloud session, `http://local_proxy@127.0.0.1:PORT/PATH`.
+pub const ORIGINS_WITH_TOKEN: [&str; 7] = [
+    "https://U:T0KEN@h/o/r.git",
+    "https:/U:T0KEN@h/o/r.git",
+    "https::U:T0KEN@h/o/r.git",
+    "https::https:/U:T0KEN@h/o/r.git",
+    "https://T0KEN#x@h/o/r.git",
+    "http://local_proxy:T0KEN@127.0.0.1:8080/git/o/r",
+    "http://T0KEN@127.0.0.1:8080/git/o/r",
+];
+
+/// The clean URL of `origin` that each setup of [`ORIGIN_SETUPS_WITH_TOKEN`]
+/// starts from.
+pub const CLEAN_ORIGIN: &str = "https://github.com/o/r.git";
+
+/// The setups that put the token `T0KEN` in a URL of `origin` that git
+/// keeps or uses, past the first URL: each one is the words of the `git`
+/// calls that a test runs in the top folder of a clone whose `origin` is
+/// [`CLEAN_ORIGIN`]. riff refuses each of them
+/// (01M7GMV5ZYYF94ZKQ5ECQYTJXH).
+pub const ORIGIN_SETUPS_WITH_TOKEN: [&[&[&str]]; 10] = [
+    // A line break in the URL, and the line after it looks like SSH.
+    &[&[
+        "config",
+        "remote.origin.url",
+        "https://U:T0KEN\ngit@127.0.0.1:1/o/r.git",
+    ]],
+    // An empty URL, and a push URL with a token.
+    &[
+        &["config", "remote.origin.url", ""],
+        &[
+            "config",
+            "remote.origin.pushurl",
+            "https://U:T0KEN@h/o/r.git",
+        ],
+    ],
+    // A push URL with a token, and no URL.
+    &[
+        &["config", "--unset", "remote.origin.url"],
+        &[
+            "config",
+            "remote.origin.pushurl",
+            "https://U:T0KEN@h/o/r.git",
+        ],
+    ],
+    // A URL with a token, and a push URL with none.
+    &[
+        &["remote", "set-url", "origin", "https://U:T0KEN@h/o/r.git"],
+        &["remote", "set-url", "--push", "origin", CLEAN_ORIGIN],
+    ],
+    // A second URL, and a second push URL.
+    &[&[
+        "remote",
+        "set-url",
+        "--add",
+        "origin",
+        "https://U:T0KEN@h/o/r.git",
+    ]],
+    &[
+        &[
+            "remote",
+            "set-url",
+            "--add",
+            "--push",
+            "origin",
+            CLEAN_ORIGIN,
+        ],
+        &[
+            "remote",
+            "set-url",
+            "--add",
+            "--push",
+            "origin",
+            "https://U:T0KEN@h/o/r.git",
+        ],
+    ],
+    // A rule of git that puts the token in the URL.
+    &[&[
+        "config",
+        "url.https://T0KEN@github.com/.insteadOf",
+        "https://github.com/",
+    ]],
+    &[&[
+        "config",
+        "url.https://T0KEN@github.com/.pushInsteadOf",
+        "https://github.com/",
+    ]],
+    // A control character, with no `@`.
+    &[&[
+        "config",
+        "remote.origin.url",
+        "https://github.com/o\t/r.git",
+    ]],
+    // A second URL with a token in a file that the git config includes.
+    &[
+        &[
+            "config",
+            "--file",
+            ".git/token.inc",
+            "remote.origin.url",
+            "https://U:T0KEN@h/o/r.git",
+        ],
+        &["config", "include.path", "token.inc"],
+    ],
+];
+
+/// Writes a `git` in the folder `bin` that adds its words to
+/// `bin/git.log`, one line for each call, then runs the first other `git`
+/// of `PATH`. Gives the path of the log. A test puts `bin` first in
+/// `PATH`, and reads in the log which calls of git ran.
+///
+/// ```
+/// let bin = tempfile::tempdir()?;
+/// let log = isolated::logged_git(bin.path());
+/// let out = std::process::Command::new(bin.path().join("git")).arg("--version").output()?;
+/// assert!(out.status.success());
+/// assert_eq!(std::fs::read_to_string(&log)?, "--version\n");
+/// # Ok::<(), std::io::Error>(())
+/// ```
+///
+/// # Panics
+///
+/// When `PATH` has no other `git`.
+pub fn logged_git(bin: &Path) -> PathBuf {
+    let real = git_of_path(bin);
+    let log = bin.join("git.log");
+    write_program(
+        bin.join("git"),
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexec '{}' \"$@\"\n",
+            log.display(),
+            real.display()
+        ),
+    );
+    log
+}
+
+/// The first `git` of `PATH` out of the folder `bin`: the real git, for a
+/// fake `git` in `bin` that runs it.
+///
+/// ```
+/// let bin = tempfile::tempdir()?;
+/// let git = isolated::git_of_path(bin.path());
+/// assert!(git.ends_with("git") && !git.starts_with(bin.path()));
+/// # Ok::<(), std::io::Error>(())
+/// ```
+///
+/// # Panics
+///
+/// When `PATH` has no other `git`.
+pub fn git_of_path(bin: &Path) -> PathBuf {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    std::env::split_paths(&path)
+        .map(|dir| dir.join("git"))
+        .find(|git| git.is_file() && !git.starts_with(bin))
+        .expect("a git in PATH")
+}
+
 /// Writes `text` to the file `path` in one step (see "The answer of a fake
 /// program" above): a new file in the folder of `path` gets the text, and
 /// a rename puts it in the place of `path`. A program that reads `path`

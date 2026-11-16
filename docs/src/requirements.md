@@ -4691,6 +4691,32 @@
   the token again at the next call. Each refusal gives at most one new
   read. riff does not run the refused call again. Supersedes
   01M54510SFK1Z9VPFYBYYSV10F in part.
+- **01M7G1J1F1QWT4S45CDMMXP6J5** When a git call of riff on the host
+  with a URL in its words fails, its error text shows each URL with no
+  user info: riff takes the user info out of each URL of the command and
+  of the output of git where it follows a `:` and one or more `/`, or a
+  `::`. This holds for the terminal and for the log of the daemon.
+- **01M7GMV5ZYYF94ZKQ5ECQYTJXH** riff refuses the remote `origin` when
+  one of its URLs has a control character, or an `@` other than in three
+  forms whose user is a fixed name with no secret: `git@HOST:PATH`,
+  `ssh://git@HOST/PATH`, and `http://local_proxy@127.0.0.1:PORT/PATH`,
+  the origin of a Claude Code cloud session (R100). It checks each form
+  by its exact start. It checks each value of `remote.origin.url` and of
+  `remote.origin.pushurl` as git keeps it, and each URL that git uses
+  for a fetch and for a push of `origin`. It checks all of them before
+  it takes an empty URL as no URL. Each read of riff of the URL of
+  `origin` goes through one function, and each git of riff that names
+  `origin` and talks to it reads that URL first. Its error names
+  `origin`, never its URL and no value of a rule of git. It says how to
+  fix each setup that it refuses: `git config --unset-all
+  remote.origin.url`, `git config --unset-all remote.origin.pushurl` and
+  `git config remote.origin.url https://github.com/OWNER/REPO.git`, then
+  `gh auth setup-git`; for a rule of git or another file of the git
+  config, a command that lists each rule and each URL of `origin` with
+  its file, and one that removes a line by its file and its name. The
+  command exits with 1. A failed read of the URL shows the output of git
+  with no user info. The cleanup of 01M7G1J1F1QWT4S45CDMMXP6J5 stays as
+  a second guard, and its time is linear in the size of the text.
 
 ## Terminal
 

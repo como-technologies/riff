@@ -73,7 +73,7 @@ pub fn riff_of(check: &Path) -> PathBuf {
 /// riff of the build.
 pub fn build(here: &Path, check: &Path, just: &Path) -> Result<PathBuf> {
     if !check.exists() {
-        let remote = crate::host_git::output(here, &["remote", "get-url", "origin"])?;
+        let remote = crate::identity::origin(here)?.with_context(|| text::no_origin(here))?;
         let parent = check.parent().context("the check clone has no parent")?;
         std::fs::create_dir_all(parent)
             .with_context(|| format!("cannot make {}", parent.display()))?;
@@ -113,10 +113,7 @@ mod tests {
         let home = isolated::outside_git();
         let check = dir(home.path());
         let err = build(here.path(), &check, Path::new("just")).unwrap_err();
-        assert!(
-            format!("{err:#}").contains("git remote get-url origin"),
-            "{err:#}"
-        );
+        assert_eq!(format!("{err:#}"), text::no_origin(here.path()));
         assert!(!check.exists());
     }
 }

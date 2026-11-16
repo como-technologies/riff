@@ -1523,6 +1523,38 @@ async fn the_daemon_runs_the_test_and_the_build_with_the_release_table_that_orig
     );
 }
 
+/// 01M7GMV5ZYYF94ZKQ5ECQYTJXH: the origin of the main clone has a token
+/// in its URL. The daemon refuses `riff build --host` before each git
+/// with the URL. The reply, as the terminal of the lead shows it, names
+/// `origin` and no token, no git of the daemon has the token in its words,
+/// and the build does not run.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_daemon_refuses_a_build_of_an_origin_with_a_token() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (log, code) = (tmp.path().join("gh.log"), tmp.path().join("code"));
+    let extra = fake_build(tmp.path(), &log, &code);
+    let calls = isolated::logged_git(&tmp.path().join("bin"));
+    let r = riff_env(300, 300, &extra).await;
+    add_origin(&r.main, tmp.path());
+    let refused = riff::text::origin_with_user(Path::new("DIR"));
+    let (head, tail) = refused.split_once("DIR").unwrap();
+
+    let wait = Duration::from_secs(30);
+    for url in isolated::ORIGINS_WITH_TOKEN {
+        git(&r.main, &["remote", "set-url", "origin", url]);
+        let err = remote::ask(&r.api(&r.lead), &r.lead, "a", &remote::Request::Build, wait)
+            .await
+            .unwrap_err();
+        let err = format!("{err:#}");
+        assert!(err.contains(head) && err.contains(tail), "{err}");
+        assert!(!err.contains("T0KEN"), "{err}");
+    }
+    let calls = std::fs::read_to_string(&calls).unwrap();
+    assert!(calls.contains("config -z --list"), "{calls}");
+    assert!(!calls.contains("T0KEN"), "{calls}");
+    assert!(!tmp.path().join("check").exists(), "the build ran");
+}
+
 /// #1262: a daemon that runs the wave of a repository serves `--host` for
 /// it at its start, with no `riff host join`: it writes `served.json`
 /// from `waves.json`.

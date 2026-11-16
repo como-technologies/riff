@@ -237,7 +237,7 @@ pub fn git(dir: &Path) -> Result<Command> {
 
 /// Runs `git ARGS` in `dir` after the [`guard`], and gives its stdout
 /// with no space at the ends. An error names the command and its
-/// stderr.
+/// stderr, and shows no user info of a URL ([`no_user_info`]).
 pub fn output(dir: &Path, args: &[&str]) -> Result<String> {
     let out = git(dir)?
         .args(args)
@@ -246,22 +246,128 @@ pub fn output(dir: &Path, args: &[&str]) -> Result<String> {
         .with_context(|| text::no_program("git"))?;
     if !out.status.success() {
         bail!(
-            "git {}: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&out.stderr).trim()
+            "{}",
+            no_user_info(&format!(
+                "git {}: {}",
+                args.join(" "),
+                String::from_utf8_lossy(&out.stderr).trim()
+            ))
         );
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
 }
 
 /// [`output`] with no prompt for a credential and the time limit `limit`
-/// (`run::output_within`).
+/// (`run::output_within`). An error shows no user info of a URL
+/// ([`no_user_info`]).
 pub fn within(dir: &Path, args: &[&str], limit: Duration) -> Result<String> {
     guard(dir)?;
     let dir_text = dir.to_string_lossy();
     let program = ["GIT_TERMINAL_PROMPT=0", "git", "-C", &dir_text];
     let all = [&program[..], args].concat();
     crate::run::output_within("env", dir, &all, limit)
+}
+
+/// `text` with no user info in a URL: `SCHEME://USER:TOKEN@HOST/PATH`
+/// is `SCHEME://HOST/PATH` (01M7G1J1F1QWT4S45CDMMXP6J5). It is the second
+/// guard of an error text: riff refuses an `origin` with user info before
+/// each git with its URL ([`crate::identity::origin`],
+/// 01M7GMV5ZYYF94ZKQ5ECQYTJXH). The error texts of [`output`], of
+/// [`within`] and of [`crate::git_credential::keyring_open`] go through
+/// it, with the stderr of git.
+///
+/// The user info starts after a `:` and one or more `/`: curl reads
+/// `SCHEME:/USER:TOKEN@HOST` and `SCHEME:///USER:TOKEN@HOST` as URLs with
+/// user info. It also starts after each `::`, as in the form
+/// `TRANSPORT::ADDRESS` of git. So it can take out more than a user info.
+/// It ends at the last `@` before the next `/`, or before the end of the
+/// text. Each other sign is part of it: for example a quote, a space, a
+/// tab, a `?` or a `#`. After a URL with no path, the text up to that
+/// last `@` goes out too. It reads the text one time, so its time is
+/// linear in the size of the text.
+///
+/// It misses a user info with no such start: for example the `ADDRESS`
+/// of `https::USER:TOKEN@HOST/PATH`, which git shows in its stderr with no
+/// `::`, and the part before a `?` or a `#` of a user info, which curl
+/// names as the host. riff refuses such an `origin` first.
+///
+/// ```
+/// use riff::host_git::no_user_info;
+///
+/// assert_eq!(
+///     no_user_info("git clone -q -- https://USER:TOKEN@github.com/o/r.git /c: fatal"),
+///     "git clone -q -- https://github.com/o/r.git /c: fatal"
+/// );
+/// // One `/` after the scheme, or more than two, in the command and in
+/// // the stderr of git.
+/// assert_eq!(no_user_info("git clone -- https:/U:T@h/o/r.git /c"), "git clone -- https:/h/o/r.git /c");
+/// assert_eq!(
+///     no_user_info("git clone -- https:///U:T@h/o/r.git /c: unable to access 'https:///U:T@h/o/r.git/'"),
+///     "git clone -- https:///h/o/r.git /c: unable to access 'https:///h/o/r.git/'"
+/// );
+/// assert_eq!(no_user_info("http:////U:T@h"), "http:////h");
+/// assert_eq!(
+///     no_user_info("'http://a@b@127.0.0.1:8080' and ssh://git@github.com/o/r.git"),
+///     "'http://127.0.0.1:8080' and ssh://github.com/o/r.git"
+/// );
+/// // The form `TRANSPORT::ADDRESS`.
+/// assert_eq!(no_user_info("git clone -- https::U:T@h/o/r.git /c"), "git clone -- https::h/o/r.git /c");
+/// assert_eq!(no_user_info("http::/U:T@h/o"), "http::/h/o");
+/// assert_eq!(no_user_info("https::https://U:T@h/o"), "https::https://h/o");
+/// assert_eq!(no_user_info("https::https:/U:T@h/o"), "https::https:/h/o");
+/// // A quote, a space, a tab, a `?` or a `#` in the password.
+/// assert_eq!(
+///     no_user_info("git ls-remote -- https://U:T'O\"K E\tN@h/o/r.git: fatal"),
+///     "git ls-remote -- https://h/o/r.git: fatal"
+/// );
+/// assert_eq!(
+///     no_user_info("git clone -q -- https://U:T?O#K@h/o/r.git /c: fatal"),
+///     "git clone -q -- https://h/o/r.git /c: fatal"
+/// );
+/// // A URL with no path.
+/// assert_eq!(no_user_info("git fetch https://U:T@h"), "git fetch https://h");
+/// assert_eq!(no_user_info("https://U:T@h?a=b"), "https://h?a=b");
+/// assert_eq!(no_user_info("https://U:T@h#a"), "https://h#a");
+/// assert_eq!(no_user_info("git fetch https://h: no a@b/c"), "git fetch https://b/c");
+/// // An empty user info.
+/// assert_eq!(no_user_info("https://@h/o, git@h:o"), "https://h/o, git@h:o");
+/// // No user info: the text stays as it is.
+/// let plain = "git@github.com:o/r.git, https://github.com/o/r@v1, file:///tmp/a@b, \
+///              http://[::1]:8080/o@v1";
+/// assert_eq!(no_user_info(plain), plain);
+/// // What it misses: a user info with no `:/` or `::` before it.
+/// let missed = "url has no scheme: U:T@h/o/r.git/";
+/// assert_eq!(no_user_info(missed), missed);
+/// ```
+pub fn no_user_info(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    // The `:` signs at the end of the last part with no `/`, and the `/`
+    // signs after it.
+    let (mut colons, mut slashes) = (0usize, 0usize);
+    for (n, part) in text.split('/').enumerate() {
+        if n > 0 {
+            out.push('/');
+            slashes += 1;
+        }
+        if part.is_empty() {
+            continue;
+        }
+        let start = if colons > 0 && slashes > 0 {
+            Some(0)
+        } else {
+            part.find("::").map(|at| at + "::".len())
+        };
+        match start.and_then(|start| Some((start, start + part[start..].rfind('@')? + 1))) {
+            Some((start, end)) => {
+                out.push_str(&part[..start]);
+                out.push_str(&part[end..]);
+            }
+            None => out.push_str(part),
+        }
+        colons = part.len() - part.trim_end_matches(':').len();
+        slashes = 0;
+    }
+    out
 }
 
 /// The name of the check of the git of the host in the checks of the
@@ -545,6 +651,67 @@ pub(crate) mod tests {
             );
         }
         assert!(!mark.exists(), "the program of the config ran");
+    }
+
+    /// 01M7G1J1F1QWT4S45CDMMXP6J5: a git call with a URL with user info
+    /// fails, with a quote, a space, a `?` and a `#` in the password, or
+    /// with a third `/` after the scheme. The error of [`output`] and of
+    /// [`within`] names the URL with no user info, in the command and in
+    /// the stderr of git.
+    #[test]
+    fn an_error_of_git_shows_no_user_info_of_a_url() {
+        let root = tempfile::tempdir().unwrap();
+        for (url, clean) in [
+            (
+                "https://USER:TO'K E?N#@127.0.0.1:1/o/r.git",
+                "https://127.0.0.1:1/o/r.git",
+            ),
+            (
+                "https:///USER:TOKEN@127.0.0.1:1/o/r.git",
+                "https:///127.0.0.1:1/o/r.git",
+            ),
+        ] {
+            let args = ["ls-remote", "--", url, "refs/heads/main"];
+            for error in [
+                output(root.path(), &args).unwrap_err(),
+                within(root.path(), &args, Duration::from_secs(30)).unwrap_err(),
+            ] {
+                let error = format!("{error:#}");
+                let command = format!("ls-remote -- {clean} refs/heads/main: ");
+                assert!(error.contains(&command), "{error}");
+                assert!(!error.contains("N#@") && !error.contains("USER"), "{error}");
+            }
+        }
+        // Only the stderr of git holds the token.
+        let say = "alias.say=!echo \"no https://USER:$(echo TO)KEN@h/o/r.git\" >&2; false";
+        let error = output(root.path(), &["-c", say, "say"]).unwrap_err();
+        assert!(
+            error.to_string().ends_with(": no https://h/o/r.git"),
+            "{error}"
+        );
+        assert!(!error.to_string().contains("KEN"), "{error}");
+    }
+
+    /// 01M7GMV5ZYYF94ZKQ5ECQYTJXH: the time of [`no_user_info`] is linear
+    /// in the size of the text. A time that grows with the square of the
+    /// size takes minutes for these texts of 2 MB.
+    #[test]
+    fn the_cleanup_of_a_large_text_takes_a_linear_time() {
+        let n = 1 << 20;
+        let nested = format!("remote: https://a@h/ {}{}", "a".repeat(n), "@".repeat(n));
+        let many = "https://a@h/ https::b@h/o ".repeat(n / 13);
+        let slashes = format!("x:{}a@b", "/".repeat(2 * n));
+        let colons = format!("{}/a@b", ":".repeat(2 * n));
+        let started = std::time::Instant::now();
+        for text in [&nested, &many, &slashes, &colons] {
+            assert!(no_user_info(text).len() <= text.len());
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "{:?}",
+            started.elapsed()
+        );
+        assert_eq!(no_user_info(&slashes), format!("x:{}b", "/".repeat(2 * n)));
     }
 
     /// 01M7E7ACTYP4RX8TCJ9XSYMMPM: the clone of a lead is in the folder of

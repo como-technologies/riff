@@ -177,6 +177,34 @@ fn when_the_new_clone_fails_the_old_clone_stays_as_it_is() {
     assert!(!none.exists());
 }
 
+/// 01M7GMV5ZYYF94ZKQ5ECQYTJXH: the origin of the main clone has a token
+/// in its URL. The new clone of the lead refuses it before each git with
+/// the URL: the old clone stays, and its note names `origin` and no
+/// token. With no old clone, the start fails with the same error.
+#[test]
+fn the_clone_of_the_lead_refuses_an_origin_with_a_token() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_, main) = origin_and_main(dir.path());
+    let clone = lead_clone(dir.path());
+    fresh_clone(&main, &clone).unwrap();
+    let old = git(&clone, &["rev-parse", "HEAD"]);
+    let refused = riff::text::origin_with_user(&main);
+
+    for url in isolated::ORIGINS_WITH_TOKEN {
+        git(&main, &["remote", "set-url", "origin", url]);
+        let Fresh::Kept(why) = fresh_clone(&main, &clone).unwrap() else {
+            panic!("the old clone did not stay");
+        };
+        assert_eq!(why, refused);
+        assert!(!riff::text::lead_clone_kept(&clone, &why).contains("T0KEN"));
+        assert_eq!(git(&clone, &["rev-parse", "HEAD"]), old);
+        let none = dir.path().join("leads/o-other/clone");
+        let error = format!("{:#}", fresh_clone(&main, &none).unwrap_err());
+        assert_eq!(error, refused);
+        assert!(!none.exists());
+    }
+}
+
 /// 01M6QB89JJEM9Z1V3RVZYHKYT0: a host that runs no wave of the repository
 /// still finds the main clone of the lead: the clone links to it.
 #[test]
