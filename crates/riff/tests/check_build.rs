@@ -189,9 +189,10 @@ fn riff_build_refuses_an_origin_with_a_token() {
 /// 01M7GMV5ZYYF94ZKQ5ECQYTJXH: `riff build` refuses an origin with a token
 /// in a URL past its first URL, in each setup of
 /// [`isolated::ORIGIN_SETUPS_WITH_TOKEN`]: a line break in the URL, an
-/// empty URL with a push URL that holds a token, a second URL, and a rule
-/// `insteadOf` of git. It exits with 1, and starts no git that talks to
-/// the origin. No output and no word of a git holds the token.
+/// empty URL with a push URL that holds a token, a second URL, a rule
+/// `insteadOf` of git, and a file that the git config includes. It exits
+/// with 1, and starts no git that talks to the origin. No output and no
+/// word of a git holds the token.
 #[test]
 fn riff_build_refuses_a_token_in_each_url_of_origin() {
     let env = Isolated::new();
@@ -228,6 +229,45 @@ fn riff_build_refuses_a_token_in_each_url_of_origin() {
     assert_eq!(remote_calls(&log), Vec::<String>::new());
     assert!(!env.home().join(".cache/riff/check").exists());
     assert!(!fake.path().join("just.log").exists());
+}
+
+/// 01M7GMV5ZYYF94ZKQ5ECQYTJXH: when git cannot read the URLs of `origin`,
+/// the error of `riff build` gives the output of git with no user info. A
+/// rule `insteadOf` with no value has a token in its name, and git names
+/// it when it fails. `riff build` exits with 1, and starts no git that
+/// talks to the origin.
+#[test]
+fn riff_build_shows_no_user_info_of_a_rule_that_git_cannot_read() {
+    let env = Isolated::new();
+    let root = isolated::outside_git();
+    let (_origin, here) = repo(root.path());
+    git(
+        &here,
+        &["remote", "set-url", "origin", isolated::CLEAN_ORIGIN],
+    );
+    let config = here.join(".git/config");
+    let mut text = std::fs::read_to_string(&config).unwrap();
+    text.push_str("[url \"https://U:T0KEN@127.0.0.1:1/\"]\n\tinsteadOf\n");
+    std::fs::write(&config, text).unwrap();
+    let fake = isolated::outside_git();
+    let just = isolated::write_program(fake.path().join("just"), FAKE_JUST);
+    let log = isolated::logged_git(fake.path());
+
+    let out = build_with(&env, &here, &just, fake.path());
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("`git remote get-url --all origin` failed"),
+        "{err}"
+    );
+    assert!(
+        err.contains("missing value for 'url.https://127.0.0.1:1/.insteadof'"),
+        "{err}"
+    );
+    assert!(!err.contains("T0KEN"), "{err}");
+    assert!(!String::from_utf8_lossy(&out.stdout).contains("T0KEN"));
+    assert_eq!(remote_calls(&log), Vec::<String>::new());
+    assert!(!env.home().join(".cache/riff/check").exists());
 }
 
 /// 01M7GMV5ZYYF94ZKQ5ECQYTJXH: an origin with no user, with the user

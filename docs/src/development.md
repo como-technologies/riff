@@ -1949,17 +1949,18 @@ flowchart LR
    riff refuses an `origin` with a token or another user in one of its
    URLs, for example `https://USER:TOKEN@github.com/OWNER/REPO.git`.
    It reads each URL and each push URL of `origin`, and each URL that a
-   rule `insteadOf` or `pushInsteadOf` of git makes. Each `@` counts. It
-   also refuses a URL with a control character, for example a line
-   break. The command stops with exit code 1, and runs no git with that
-   URL. Its error names `origin`, never the URL, so the token goes to no
-   terminal and no log. riff takes two users only, because each one is
-   a fixed name with no secret:
+   rule `insteadOf` or `pushInsteadOf` of git makes. It refuses each
+   `@` in them, apart from two users with a fixed name and no secret:
 
    - the user `git` of an SSH URL: `git@HOST:PATH` or
      `ssh://git@HOST/PATH`;
    - the user `local_proxy` of the origin of a Claude Code cloud
      session: `http://local_proxy@127.0.0.1:PORT/PATH`.
+
+   It also refuses a URL with a control character, for example a line
+   break. The command stops with exit code 1, and runs no git with that
+   URL. Its error names `origin`, never the URL, so the token goes to no
+   terminal and no log.
 
    To see the URL, to change it to HTTPS, and to let `gh` give git
    your token:
@@ -1970,15 +1971,31 @@ flowchart LR
    gh auth setup-git
    ```
 
-   When riff still refuses `origin`, a push URL or a rule of git can
-   hold the token. To see each URL and each push URL, to change the
-   push URL to HTTPS, and to see the rules of git:
+   When riff still refuses `origin`, or when `git remote set-url` says
+   that `remote.origin.url` has multiple values, `origin` has more than
+   one URL or push URL. To give it one URL and no push URL of its own,
+   run this in the top folder of your clone. A command with nothing to
+   remove exits with 5, and changes nothing:
 
    ```sh
-   git remote get-url --all origin
-   git remote get-url --push --all origin
-   git remote set-url --push origin https://github.com/OWNER/REPO.git
-   git config --get-regexp '^url\.'
+   git config --unset-all remote.origin.url
+   git config --unset-all remote.origin.pushurl
+   git config remote.origin.url https://github.com/OWNER/REPO.git
+   ```
+
+   When riff refuses `origin` after that, a rule of git or another file
+   of the git config puts the token in a URL. To list each rule of git
+   and each URL of `origin`, one line each, as `file:FILE NAME VALUE`:
+
+   ```sh
+   git config --show-origin --get-regexp '^(url|remote\.origin)\.'
+   ```
+
+   To remove a line with a user or a token, run this in the top folder
+   of your clone, with the FILE and the NAME of that line:
+
+   ```sh
+   git config --file FILE --unset-all NAME
    ```
 
 ### Give the container sessions a long-lived sign-in of claude

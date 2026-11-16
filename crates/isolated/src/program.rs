@@ -146,9 +146,10 @@ pub const CLEAN_ORIGIN: &str = "https://github.com/o/r.git";
 
 /// The setups that put the token `T0KEN` in a URL of `origin` that git
 /// keeps or uses, past the first URL: each one is the words of the `git`
-/// calls that a test runs in a clone whose `origin` is [`CLEAN_ORIGIN`].
-/// riff refuses each of them (01M7GMV5ZYYF94ZKQ5ECQYTJXH).
-pub const ORIGIN_SETUPS_WITH_TOKEN: [&[&[&str]]; 9] = [
+/// calls that a test runs in the top folder of a clone whose `origin` is
+/// [`CLEAN_ORIGIN`]. riff refuses each of them
+/// (01M7GMV5ZYYF94ZKQ5ECQYTJXH).
+pub const ORIGIN_SETUPS_WITH_TOKEN: [&[&[&str]]; 10] = [
     // A line break in the URL, and the line after it looks like SSH.
     &[&[
         "config",
@@ -221,6 +222,17 @@ pub const ORIGIN_SETUPS_WITH_TOKEN: [&[&[&str]]; 9] = [
         "remote.origin.url",
         "https://github.com/o\t/r.git",
     ]],
+    // A second URL with a token in a file that the git config includes.
+    &[
+        &[
+            "config",
+            "--file",
+            ".git/token.inc",
+            "remote.origin.url",
+            "https://U:T0KEN@h/o/r.git",
+        ],
+        &["config", "include.path", "token.inc"],
+    ],
 ];
 
 /// Writes a `git` in the folder `bin` that adds its words to

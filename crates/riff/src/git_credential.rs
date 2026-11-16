@@ -16,11 +16,21 @@
 //! unlock the keyring at the desktop, and the next try of the step runs
 //! the `git` (01M78TSH2VNHA75RR1HXC5Z27G).
 //!
+//! In each process, a `git` that names the remote `origin` first reads
+//! the URLs of `origin` ([`crate::identity::origin_urls`]). riff runs no
+//! such `git` when it refuses one of them (01M7GMV5ZYYF94ZKQ5ECQYTJXH).
+//!
 //! ```mermaid
 //! flowchart LR
-//!     G["a git of the daemon:<br/>fetch, clone, push, ls-remote"] --> U["the URL of the remote"]
+//!     G["a git of riff:<br/>fetch, clone, push, ls-remote"] --> O{"the remote<br/>is origin?"}
+//!     O -- yes --> X{"riff refuses<br/>a URL of origin?"}
+//!     X -- yes --> F["riff refuses the remote origin ..."]
+//!     X -- no --> P
+//!     O -- no --> P{"the process can prompt,<br/>or gh has a token?"}
+//!     P -- yes --> R["git runs"]
+//!     P -- no --> U["the URL of the remote"]
 //!     U --> H{"a helper of git<br/>for the URL is gh?"}
-//!     H -- no --> R["git runs"]
+//!     H -- no --> R
 //!     H -- yes --> L{"the item of gh<br/>is locked?"}
 //!     L -- no --> R
 //!     L -- yes --> E["riff did not run git ...:<br/>unlock it at the desktop"]
@@ -28,7 +38,7 @@
 //!
 //! A remote over SSH, a local path and a `file://` URL use no helper,
 //! so their `git` runs. A command that a person types asks for the
-//! prompt itself, so it runs each `git`, and reads no config for it.
+//! prompt itself, so it runs each `git`, and reads no helper for it.
 //! [`run`] is the `git` of the daemon that talks to a remote: the check,
 //! then the `git`.
 
@@ -118,6 +128,15 @@ pub fn run(dir: &Path, remote: &str, args: &[&str]) -> Result<String> {
 /// git(&["remote", "set-url", "origin", "https://U:T0KEN@github.example/o/r.git"])?;
 /// let error = keyring_open(dir.path(), "origin", &["fetch", "-q", "origin"]).unwrap_err();
 /// assert_eq!(error.to_string(), riff::text::origin_with_user(dir.path()));
+/// // git cannot read a rule with no value, and names it with its token:
+/// // the error shows no user info of a URL.
+/// git(&["remote", "set-url", "origin", "https://github.example/o/r.git"])?;
+/// let config = dir.path().join(".git/config");
+/// let rule = "[url \"https://U:T0KEN@127.0.0.1:1/\"]\n\tinsteadOf\n";
+/// std::fs::write(&config, std::fs::read_to_string(&config)? + rule)?;
+/// let error = format!("{:#}", keyring_open(dir.path(), "origin", &["fetch", "-q", "origin"]).unwrap_err());
+/// assert!(error.contains("missing value for 'url.https://127.0.0.1:1/.insteadof'"), "{error}");
+/// assert!(!error.contains("T0KEN"), "{error}");
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn keyring_open(dir: &Path, remote: &str, args: &[&str]) -> Result<()> {

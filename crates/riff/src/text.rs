@@ -4454,28 +4454,53 @@ pub fn git_not_run(args: &str) -> String {
     format!("riff did not run git {args}")
 }
 
-/// The error of a remote `origin` of the clone `dir` with user info or a
+/// The commands that give the remote `origin` of a clone one URL with no
+/// user, and no push URL of its own, in the top folder of the clone
+/// ([`origin_with_user`]). They work with more than one URL or push URL.
+/// A command with nothing to remove exits with 5, and changes nothing.
+pub const ORIGIN_FIX: [&str; 3] = [
+    "git config --unset-all remote.origin.url",
+    "git config --unset-all remote.origin.pushurl",
+    "git config remote.origin.url https://github.com/OWNER/REPO.git",
+];
+
+/// The command that lists each rule of git and each URL of `origin`, in
+/// each file of the git config, one line each: `file:FILE NAME VALUE`
+/// ([`origin_with_user`]).
+pub const ORIGIN_LIST: &str = r"git config --show-origin --get-regexp '^(url|remote\.origin)\.'";
+
+/// The command that removes the line `NAME` of the file `FILE` of the
+/// list of [`ORIGIN_LIST`], in the top folder of the clone
+/// ([`origin_with_user`]).
+pub const ORIGIN_REMOVE: &str = "git config --file FILE --unset-all NAME";
+
+/// The error of a remote `origin` of the clone `dir` with an `@` or a
 /// control character in a URL ([`crate::identity::origin_urls`],
 /// 01M7GMV5ZYYF94ZKQ5ECQYTJXH). It names `origin`, never the URL, and
-/// says how to fix it.
+/// no value of a rule of git. It says how to fix it: [`ORIGIN_FIX`], then
+/// `gh auth setup-git`, then [`ORIGIN_LIST`] and [`ORIGIN_REMOVE`] for a
+/// rule of git or another file of the git config.
 ///
 /// ```
+/// use riff::text::{ORIGIN_FIX, ORIGIN_LIST, ORIGIN_REMOVE};
+///
 /// let text = riff::text::origin_with_user(std::path::Path::new("/src/r"));
-/// assert!(text.starts_with("riff refuses the remote origin of /src/r: a URL of it holds a user, a token"));
-/// assert!(text.contains("git remote set-url origin https://github.com/OWNER/REPO.git"));
+/// assert!(text.starts_with("riff refuses the remote origin of /src/r: a URL of it holds an @"));
+/// for command in ORIGIN_FIX.iter().chain([&ORIGIN_LIST, &ORIGIN_REMOVE]) {
+///     assert!(text.contains(&format!("`{command}`")), "{command}");
+/// }
 /// assert!(text.contains("then `gh auth setup-git`"));
-/// assert!(text.contains("git remote set-url --push origin https://github.com/OWNER/REPO.git"));
-/// assert!(text.contains("git config --get-regexp '^url\\.'"));
 /// ```
 pub fn origin_with_user(dir: &Path) -> String {
+    let [url, push, set] = ORIGIN_FIX;
     format!(
-        "riff refuses the remote origin of {}: a URL of it holds a user, a token or a control \
-         character, and riff runs no git with that URL. Give origin a URL with no user, and let \
-         gh give git the token: run `git remote set-url origin \
-         https://github.com/OWNER/REPO.git` in that clone, then `gh auth setup-git`. For a push \
-         URL, also run `git remote set-url --push origin https://github.com/OWNER/REPO.git`. A \
-         rule insteadOf of git can also make such a URL: `git config --get-regexp '^url\\.'` \
-         shows each rule.",
+        "riff refuses the remote origin of {}: a URL of it holds an @ (a user or a token) or a \
+         control character, and riff runs no git with that URL. Give origin one URL with no \
+         user, and let gh give git the token. In the top folder of that clone, run `{url}`, \
+         `{push}` and `{set}`, then `gh auth setup-git`. When riff still refuses origin, a rule \
+         insteadOf of git or another file of the git config puts the token in a URL: \
+         `{ORIGIN_LIST}` lists each rule and each URL of origin as `file:FILE NAME VALUE`. Remove \
+         each line with a user or a token: `{ORIGIN_REMOVE}`.",
         dir.display()
     )
 }

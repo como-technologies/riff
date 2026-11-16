@@ -113,3 +113,89 @@ fn a_cloud_session_keeps_its_place_and_an_origin_with_a_token_has_none() {
         assert_eq!(error, riff::text::origin_with_user(tmp.path()), "{url}");
     }
 }
+
+/// 01M7GMV5ZYYF94ZKQ5ECQYTJXH: the fix that the refusal and the book give
+/// works for each setup that riff refuses. In the top folder of the
+/// clone, the test runs each command of [`riff::text::ORIGIN_FIX`], then
+/// [`riff::text::ORIGIN_REMOVE`] for each line of
+/// [`riff::text::ORIGIN_LIST`] with the token. Then riff takes `origin`.
+/// The refusal and an `sh` block of the book hold each command.
+#[test]
+fn the_fix_of_the_refusal_gives_origin_a_url_that_riff_takes() {
+    use riff::text::{ORIGIN_FIX, ORIGIN_LIST, ORIGIN_REMOVE};
+    let book = crate::book::commands_of_part("development.md", "Run one item in a container");
+    let refusal = riff::text::origin_with_user(Path::new("DIR"));
+    for command in ORIGIN_FIX.iter().chain([&ORIGIN_LIST, &ORIGIN_REMOVE]) {
+        assert!(book.iter().any(|line| line == command), "{command}");
+        assert!(refusal.contains(&format!("`{command}`")), "{command}");
+    }
+    let sh = |dir: &Path, command: &str| {
+        let out = Command::new("sh")
+            .args(["-c", command])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        // A command with nothing to remove exits with 5.
+        assert!(
+            matches!(out.status.code(), Some(0 | 5)),
+            "{command}: {out:?}"
+        );
+        String::from_utf8(out.stdout).unwrap()
+    };
+    let urls: Vec<[&str; 4]> = isolated::ORIGINS_WITH_TOKEN
+        .iter()
+        .map(|url| ["remote", "set-url", "origin", *url])
+        .collect();
+    let urls: Vec<[&[&str]; 1]> = urls.iter().map(|args| [&args[..]]).collect();
+    let setups = isolated::ORIGIN_SETUPS_WITH_TOKEN
+        .into_iter()
+        .chain(urls.iter().map(|setup| &setup[..]));
+    // The names of the lines that the fix removes: two rules, and one URL
+    // in an include file.
+    let mut removed = Vec::new();
+
+    for setup in setups {
+        let tmp = tempfile::tempdir().unwrap();
+        repo(tmp.path(), Some(isolated::CLEAN_ORIGIN));
+        for args in setup {
+            git(tmp.path(), args);
+        }
+        let error = format!("{:#}", place_in(tmp.path(), "pangolin").unwrap_err());
+        assert_eq!(error, riff::text::origin_with_user(tmp.path()), "{setup:?}");
+        for command in ORIGIN_FIX {
+            sh(tmp.path(), command);
+        }
+        for line in sh(tmp.path(), ORIGIN_LIST).lines() {
+            if !line.contains("T0KEN") {
+                continue;
+            }
+            let (file, rest) = line
+                .strip_prefix("file:")
+                .unwrap()
+                .split_once('\t')
+                .unwrap();
+            let name = rest.split(' ').next().unwrap();
+            let remove = ORIGIN_REMOVE
+                .replace("FILE", &format!("'{file}'"))
+                .replace("NAME", &format!("'{name}'"));
+            sh(tmp.path(), &remove);
+            removed.push(name.to_owned());
+        }
+        let taken = riff::identity::origin_urls(tmp.path()).unwrap().unwrap();
+        let fixed = ["https://github.com/OWNER/REPO.git"];
+        assert_eq!(taken.of(false), fixed, "{setup:?}");
+        assert_eq!(taken.of(true), fixed, "{setup:?}");
+        assert_eq!(
+            name(tmp.path()),
+            "riff://mike@pangolin/OWNER/REPO?session=a6cf"
+        );
+    }
+    assert_eq!(
+        removed,
+        [
+            "url.https://T0KEN@github.com/.insteadof",
+            "url.https://T0KEN@github.com/.pushinsteadof",
+            "remote.origin.url",
+        ]
+    );
+}

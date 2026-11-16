@@ -4707,11 +4707,16 @@
   it takes an empty URL as no URL. Each read of riff of the URL of
   `origin` goes through one function, and each git of riff that names
   `origin` and talks to it reads that URL first. Its error names
-  `origin` and never its URL, and says how to fix it: `git remote
-  set-url origin https://github.com/OWNER/REPO.git`, then `gh auth
-  setup-git`. The command exits with 1. The cleanup of
-  01M7G1J1F1QWT4S45CDMMXP6J5 stays as a second guard, and its time is
-  linear in the size of the text.
+  `origin`, never its URL and no value of a rule of git. It says how to
+  fix each setup that it refuses: `git config --unset-all
+  remote.origin.url`, `git config --unset-all remote.origin.pushurl` and
+  `git config remote.origin.url https://github.com/OWNER/REPO.git`, then
+  `gh auth setup-git`; for a rule of git or another file of the git
+  config, a command that lists each rule and each URL of `origin` with
+  its file, and one that removes a line by its file and its name. The
+  command exits with 1. A failed read of the URL shows the output of git
+  with no user info. The cleanup of 01M7G1J1F1QWT4S45CDMMXP6J5 stays as
+  a second guard, and its time is linear in the size of the text.
 
 ## Terminal
 

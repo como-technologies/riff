@@ -450,7 +450,8 @@ const GIT_WAIT: Duration = Duration::from_millis(100);
 /// `git -C dir ARGS` for the place: the text, or `None` when git says
 /// that the thing is not there (`absent`). A fault of git is tried
 /// [`GIT_TRIES`] times, then it is an error that names the call and the
-/// reason ([`reading`]).
+/// reason ([`reading`]), with no user info of a URL
+/// ([`crate::host_git::no_user_info`]).
 fn asked(dir: &Path, args: &[&str], absent: &[&str]) -> Result<Option<String>> {
     let mut tried = 0;
     loop {
@@ -466,7 +467,8 @@ fn asked(dir: &Path, args: &[&str], absent: &[&str]) -> Result<Option<String>> {
                 "riff cannot read git in {}: `git {}` {why}. riff does not guess where \
                  you work. Run the command again.",
                 dir.display(),
-                args.join(" ")
+                args.join(" "),
+                why = crate::host_git::no_user_info(&why)
             ),
         }
     }
@@ -859,6 +861,8 @@ mod tests {
     /// reads the URL of `origin`. [`crate::git_credential::urls`] reads the
     /// URLs of each other remote for its helpers: for `origin`,
     /// [`crate::git_credential::keyring_open`] takes those of [`origin_urls`].
+    /// Only the commands of the fix for a person name the key
+    /// ([`crate::text::ORIGIN_FIX`]).
     #[test]
     fn each_read_of_the_url_of_origin_goes_through_one_function() {
         use crate::host_git::tests::{production, sources};
@@ -885,15 +889,25 @@ mod tests {
                 "identity.rs",
                 "identity.rs",
                 "identity.rs",
+                "text.rs",
+                "text.rs",
             ],
             "{found:?}"
         );
-        let body = std::fs::read_to_string(src.join("identity.rs")).unwrap();
-        let start = body.find("pub fn origin_urls(").unwrap();
-        let end = start + body[start..].find("\n}\n").unwrap();
-        let lines = body[..start].lines().count() + 1..=body[..end].lines().count();
+        // The lines of the item that starts with `start` in the file `name`,
+        // to the first line `end` after it.
+        let lines = |name: &str, start: &str, end: &str| {
+            let body = std::fs::read_to_string(src.join(name)).unwrap();
+            let from = body.find(start).unwrap();
+            let to = from + body[from..].find(end).unwrap();
+            body[..from].lines().count() + 1..=body[..to].lines().count()
+        };
+        let read = lines("identity.rs", "pub fn origin_urls(", "\n}\n");
+        // The commands of the fix for a person, in the refusal.
+        let fix = lines("text.rs", "pub const ORIGIN_FIX:", "\n];\n");
         for (name, n) in &found {
-            assert!(name != "identity.rs" || lines.contains(n), "{name}:{n}");
+            assert!(name != "identity.rs" || read.contains(n), "{name}:{n}");
+            assert!(name != "text.rs" || fix.contains(n), "{name}:{n}");
         }
         assert!(all.len() > 100, "the code of riff: {}", all.len());
     }
