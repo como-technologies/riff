@@ -470,6 +470,34 @@
 //!     W->>G: gh issue view 12: #12 leaves the kept list
 //! ```
 //!
+//! # The verify of a merge group
+//!
+//! The merge queue runs the required checks on the merge group commit,
+//! and the verify is a status of the head commit of the pull request. A
+//! ruleset that requires `riff/verify` from the lead App counts only a
+//! status of that App, on a merge group too (01M7GQKYK5VJESMTFE6X6QKMH6).
+//! So the loop sets it as the lead App (01M7GQKZ0WR6RHKJC9MB43X6MN). The
+//! read of the queue gives the merge group commit of each pull request in
+//! the queue ([`rollout::groups_from`], [`Look::groups`]). The status is
+//! success when the newest `riff/verify` of the head whose creator is the
+//! bot of the lead App is a success, else failure: the queue removes the
+//! pull request ([`pr::verify_group`]). The loop sets it one time for
+//! each merge group commit ([`World::verify_group`]); a write that fails
+//! comes at the next look. A daemon that writes with the token of the
+//! person sets none: its status would not count.
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant G as GitHub
+//!     participant W as the loop of the wave
+//!     G->>G: #40 enters the queue: the merge group commit 9f8e7d6
+//!     G->>W: the event merge_group of #40
+//!     W->>G: look: the queue, with the merge group commit of each entry
+//!     W->>G: gh api .../commits/HEAD/statuses: the newest riff/verify of the lead App
+//!     W->>G: riff/verify on 9f8e7d6, as riff-OWNER-lead[bot]
+//!     G->>G: Gate, Hygiene and riff/verify pass: the queue merges #40
+//! ```
+//!
 //! # A conflict with main
 //!
 //! `main` is the default branch of the repository, also in the start text
@@ -1435,6 +1463,16 @@ pub struct Fixes {
     pub asking: BTreeSet<u64>,
 }
 
+/// A pull request in the merge queue, with its merge group commit
+/// ([`rollout::Pull::group`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Group {
+    /// The head commit of the pull request.
+    pub head: String,
+    /// The merge group commit: the commit whose checks the queue runs.
+    pub commit: String,
+}
+
 /// The facts of a wave at one look.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Look {
@@ -1474,6 +1512,11 @@ pub struct Look {
     /// by issue. They are no free work. The loop adds the comment to each
     /// before it starts any work ([`World::merged_in`], #1754).
     pub merged: BTreeMap<u64, rollout::Merge>,
+    /// The pull requests in the merge queue whose merge group GitHub
+    /// built, by number. The loop sets `riff/verify` on each merge group
+    /// commit as the lead App ([`World::verify_group`],
+    /// 01M7GQKZ0WR6RHKJC9MB43X6MN).
+    pub groups: BTreeMap<u64, Group>,
     /// The default branch of the repository on the forge, for example
     /// `main` or `master`. The look reads it from the forge (a read of the
     /// last [`pr::Gh::SLOW`] serves), and keeps it in no file
@@ -2279,6 +2322,22 @@ pub trait World: Send + Sync {
         commit: &'a str,
     ) -> BoxFuture<'a, Result<()>>;
 
+    /// Sets `riff/verify` on the merge group commit of `group`, the pull
+    /// request `pull` of `repo` in the merge queue, with `gh`
+    /// ([`pr::verify_group`], 01M7GQKZ0WR6RHKJC9MB43X6MN): `Some(true)`
+    /// for success, `Some(false)` for failure, and `None` when `gh` writes
+    /// with the token of the person and sets nothing. `gh` writes as the
+    /// daemon ([`gh_token::writer`]). The default sets nothing.
+    fn verify_group<'a>(
+        &'a self,
+        _gh: pr::Gh,
+        _repo: &'a str,
+        _pull: u64,
+        _group: &'a Group,
+    ) -> BoxFuture<'a, Result<Option<bool>>> {
+        Box::pin(async { Ok(None) })
+    }
+
     /// Tells the lead of the wave `body`, as a message. The post has `key`,
     /// when there is one: riff-server drops a post with the key of a kept
     /// message of the person in the thread of the wave
@@ -2685,6 +2744,50 @@ async fn say_merged(world: &dyn World, wave: &Wave, look: &Look, said: &mut BTre
     }
 }
 
+/// Sets `riff/verify` on the merge group commit of each pull request of
+/// `look.groups` one time ([`World::verify_group`],
+/// 01M7GQKZ0WR6RHKJC9MB43X6MN): `set` holds each pull request and merge
+/// group commit that got it from the loop, while the look still finds
+/// them in the queue. A write that fails comes at the next look, and so
+/// does a write with no token of the lead App: the status goes as the
+/// daemon ([`gh_token::writer`]), and a daemon that writes with the token
+/// of the person sets none.
+async fn verify_groups(
+    world: &dyn World,
+    wave: &Wave,
+    look: &Look,
+    set: &mut BTreeSet<(u64, String)>,
+) {
+    set.retain(|(pull, commit)| look.groups.get(pull).is_some_and(|g| g.commit == *commit));
+    let mut writer = None;
+    for (pull, group) in &look.groups {
+        if set.contains(&(*pull, group.commit.clone())) {
+            continue;
+        }
+        let gh = match &writer {
+            Some(gh) => pr::Gh::clone(gh),
+            None => {
+                let gh = pr::Gh::clone(&world.gh(&wave.repo)).by("wave");
+                let gh = gh_token::writer(world, Some(&wave.server), &wave.repo, gh).await;
+                writer.insert(gh).clone()
+            }
+        };
+        match world.verify_group(gh, &wave.repo, *pull, group).await {
+            Ok(Some(passed)) => {
+                set.insert((*pull, group.commit.clone()));
+                let line = text::wave_group_verify(*pull, &group.commit, passed);
+                println!("riff daemon: {}: {line}", wave.repo);
+            }
+            Ok(None) => {}
+            Err(e) => {
+                let e = format!("{e:#}");
+                let line = text::wave_no_group_verify(*pull, &group.commit, &e);
+                eprintln!("riff daemon: {}: {line}", wave.repo);
+            }
+        }
+    }
+}
+
 /// The key of the message to the lead for the rebase of `conflict` that
 /// does not start for `stop` (#2128). The key of a spent start and of a
 /// record names `host`: they are facts of the daemon of that host. The
@@ -2840,6 +2943,9 @@ pub(crate) async fn run<R: Runtime + 'static>(
     // The issues and the merged pull requests whose comment `Merged in`
     // this loop added.
     let mut said: BTreeSet<(u64, u64)> = BTreeSet::new();
+    // The pull requests and the merge group commits whose riff/verify this
+    // loop set.
+    let mut grouped: BTreeSet<(u64, String)> = BTreeSet::new();
     // True while the wave waits for a fact of the host: the lead heard
     // of it.
     let mut waits = false;
@@ -2936,6 +3042,7 @@ pub(crate) async fn run<R: Runtime + 'static>(
                 // (#2019).
                 daemon.drop_verified(&wave.repo, &mut look);
                 say_merged(&*world, &wave, &look, &mut said).await;
+                verify_groups(&*world, &wave, &look, &mut grouped).await;
                 let spent = spent(&look, &running(&daemon, &wave, &taken), &lock(&starts));
                 // `riff host join` cleared the starts of these items.
                 told.retain(|key| lock(&starts).get(key).is_some_and(|n| *n >= STARTS));
@@ -5253,6 +5360,7 @@ fn look_from(
     let lanes = lanes(&open, &free, &requests(&bodies), |pull| {
         order::files(gh, repo, pull.number, &pull.head).unwrap_or_default()
     });
+    let groups = groups_of(&open);
     Ok(Look {
         paused: false,
         no_lead: false,
@@ -5264,8 +5372,48 @@ fn look_from(
         fixes,
         no_done_when,
         merged,
+        groups,
         branch,
     })
+}
+
+/// The pull requests of `open` in the merge queue whose merge group GitHub
+/// built, by number ([`Look::groups`], 01M7GQKZ0WR6RHKJC9MB43X6MN).
+///
+/// ```
+/// use riff::rollout::{Open, Pull, Queue};
+/// use riff::wave::{Group, groups_of};
+///
+/// let pull = |number: u64, queue: Queue, group: Option<&str>| Pull {
+///     number,
+///     head: format!("head{number}"),
+///     queue,
+///     group: group.map(String::from),
+///     ..Pull::default()
+/// };
+/// let open = Open {
+///     pulls: vec![
+///         pull(40, Queue::In, Some("9f8e7d6")),
+///         // In the queue, and GitHub did not build its group yet.
+///         pull(41, Queue::In, None),
+///         pull(42, Queue::Out, None),
+///     ],
+///     ..Open::default()
+/// };
+/// let groups = groups_of(&open);
+/// assert_eq!(groups.len(), 1);
+/// assert_eq!(groups[&40], Group { head: "head40".into(), commit: "9f8e7d6".into() });
+/// ```
+pub fn groups_of(open: &rollout::Open) -> BTreeMap<u64, Group> {
+    open.pulls
+        .iter()
+        .filter(|pull| pull.queued())
+        .filter_map(|pull| {
+            let commit = pull.group.clone()?;
+            let head = pull.head.clone();
+            Some((pull.number, Group { head, commit }))
+        })
+        .collect()
 }
 
 /// The read before the claim of the build of the issue `issue` of `repo`
@@ -5730,6 +5878,19 @@ impl World for Live {
         let commit = commit.to_owned();
         Box::pin(blocking(move || {
             sweep::merged_in_on(&gh, issue, pull, &commit)
+        }))
+    }
+
+    fn verify_group<'a>(
+        &'a self,
+        gh: pr::Gh,
+        repo: &'a str,
+        pull: u64,
+        group: &'a Group,
+    ) -> BoxFuture<'a, Result<Option<bool>>> {
+        let (repo, group) = (repo.to_owned(), group.clone());
+        Box::pin(blocking(move || {
+            pr::verify_group(&gh, &repo, pull, &group.head, &group.commit)
         }))
     }
 
@@ -6313,6 +6474,16 @@ mod tests {
         /// The place of the pull request of each issue in the merge queue,
         /// else `Queue::Out`.
         queue: BTreeMap<u64, rollout::Queue>,
+        /// The merge group commit of the pull request of each issue in the
+        /// merge queue.
+        groups: BTreeMap<u64, String>,
+        /// Each `riff/verify` of a merge group that the wave set: the pull
+        /// request, the head and the merge group commit
+        /// (01M7GQKZ0WR6RHKJC9MB43X6MN).
+        group_verifies: Vec<(u64, String, String)>,
+        /// The number of the next writes of `riff/verify` of a merge group
+        /// that fail.
+        group_verify_fails: usize,
         /// The issues whose pull request has a failed check `Gate`.
         failing: BTreeSet<u64>,
         /// The issues whose pull request has a failed check of another app
@@ -6505,6 +6676,7 @@ mod tests {
                 merge_state: self.approvals.contains_key(n).then(|| "BLOCKED".into()),
                 waiting: self.approvals.get(n).cloned().unwrap_or_default(),
                 queue: self.queue.get(n).cloned().unwrap_or_default(),
+                group: self.groups.get(n).cloned(),
                 said: match pr {
                     Pr::Reasked => Some(rollout::Verify::Asked),
                     Pr::Repassed => Some(rollout::Verify::Passed),
@@ -6640,6 +6812,7 @@ mod tests {
                     fixes,
                     no_done_when: no_done_when.into_iter().collect(),
                     merged: open.unsaid(),
+                    groups: groups_of(&open),
                     branch: "main".into(),
                 })
             })
@@ -6975,6 +7148,25 @@ mod tests {
                 let body = text::wave_merged(pull, commit);
                 forge.comments.entry(issue).or_default().push(body);
                 Ok(())
+            })
+        }
+
+        fn verify_group<'a>(
+            &'a self,
+            _: pr::Gh,
+            _: &'a str,
+            pull: u64,
+            group: &'a Group,
+        ) -> BoxFuture<'a, Result<Option<bool>>> {
+            Box::pin(async move {
+                let mut forge = lock(&self.forge);
+                if forge.group_verify_fails > 0 {
+                    forge.group_verify_fails -= 1;
+                    bail!("gh api repos/o/r/statuses: HTTP 502");
+                }
+                let set = (pull, group.head.clone(), group.commit.clone());
+                forge.group_verifies.push(set);
+                Ok(Some(true))
             })
         }
 
@@ -11363,6 +11555,55 @@ esac
         let forge = here.forge();
         assert!(forge.works.is_empty(), "{forge:?}");
         assert!(forge.told.is_empty(), "{forge:?}");
+    }
+
+    /// 01M7GQKZ0WR6RHKJC9MB43X6MN: the wave sets `riff/verify` on the merge
+    /// group commit of a pull request in the queue one time, as the lead
+    /// App. A write that failed comes at the next look, a new merge group
+    /// gets its own, and a pull request in the queue with no group yet
+    /// gets none.
+    #[tokio::test]
+    async fn the_wave_sets_the_verify_of_each_merge_group_one_time() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1, 2], 3, free).await;
+        {
+            let mut forge = here.forge();
+            forge.pulls.insert(1, Pr::Passed);
+            forge.pulls.insert(2, Pr::Passed);
+            forge.queue.insert(1, rollout::Queue::In);
+            forge.queue.insert(2, rollout::Queue::In);
+            forge.groups.insert(1, "g1".into());
+            forge.group_verify_fails = 1;
+        }
+        here.run();
+        here.until(3, |h| !h.forge().group_verifies.is_empty())
+            .await;
+        here.idle(3).await;
+        {
+            let forge = here.forge();
+            assert_eq!(forge.group_verify_fails, 0);
+            assert_eq!(
+                forge.group_verifies,
+                [(41, "c1".to_owned(), "g1".to_owned())]
+            );
+            assert!(forge.works.is_empty(), "{forge:?}");
+        }
+        // The queue built a new group for #41, and the first one for #42.
+        {
+            let mut forge = here.forge();
+            forge.groups.insert(1, "g1b".into());
+            forge.groups.insert(2, "g2".into());
+        }
+        here.until(3, |h| h.forge().group_verifies.len() == 3).await;
+        here.idle(3).await;
+        let forge = here.forge();
+        assert_eq!(
+            forge.group_verifies[1..],
+            [
+                (41, "c1".to_owned(), "g1b".to_owned()),
+                (42, "c2".to_owned(), "g2".to_owned()),
+            ]
+        );
     }
 
     /// 01M5TKPNGG27Z1SQKTA296D9H7: a pull request that the queue removed

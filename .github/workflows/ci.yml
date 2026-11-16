@@ -304,8 +304,11 @@ jobs:
     # merge group commit has none, and the queue would wait for it
     # (01M5TKPHH2627K9NDS4P1Y1N3T). This job sets riff/verify on the merge
     # group commit from the status of the head of the pull request, and
-    # starts no verify. A pull request without a passed verify gets
-    # failure, and the queue removes it.
+    # starts no verify. Only a riff/verify that the lead App set counts
+    # (01M7GQKYSE0XZ1QFXCVR73JQ5R). A pull request without a passed verify
+    # gets failure, and the queue removes it. A ruleset that requires
+    # riff/verify from the lead App does not count this status: the
+    # daemon sets one as the lead App (01M7GQKZ0WR6RHKJC9MB43X6MN).
     name: Verify of the merge group
     if: github.event_name == 'merge_group'
     runs-on: ${{ vars.RIFF_RUNNER || 'ubuntu-latest' }}

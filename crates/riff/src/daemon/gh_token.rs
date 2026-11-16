@@ -116,7 +116,8 @@
 //!
 //! The daemon itself writes on GitHub with a token of the lead App
 //! (01M6XZJFE2ZTR5RE3AWM30R704): the comment of the tokens of a claim,
-//! the comment `Merged in`, the result of a verify, the issue of a broken
+//! the comment `Merged in`, the result of a verify, the `riff/verify` of
+//! a merge group (01M7GQKZ0WR6RHKJC9MB43X6MN), the issue of a broken
 //! main, and the delete of an old branch `riff-kept`. So GitHub shows the
 //! bot of the lead App, not the person. [`Writes`] keeps one token for
 //! each repository, from riff-server ([`crate::wave::World::daemon_token`],

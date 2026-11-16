@@ -3219,9 +3219,13 @@ instead. This repository has one: see
 
 A pull request with auto-merge on enters the queue when its checks and
 its verify passed. GitHub builds a merge group for it: `main` and the
-pull request. The Gate and Hygiene run on the merge group, and the job
-`Verify of the merge group` sets `riff/verify` on it from the passed
-verify of the head commit of the pull request. No new verify starts.
+pull request. The Gate and Hygiene run on the merge group. The daemon
+of the wave sets `riff/verify` on it as the lead App: success when the
+newest `riff/verify` of the lead App on the head commit of the pull
+request is a success, else failure. The daemon log says each one. The
+job `Verify of the merge group` of CI sets `riff/verify` from the same
+status, as GitHub Actions: the ruleset does not count it. No new
+verify starts.
 GitHub squash-merges the group when the checks pass. The merge group
 takes no artifact of the pull request: its Gate builds and tests its
 tree once, and the push to `main` takes its tests and their pass (see
@@ -3231,7 +3235,7 @@ tree once, and the push to `main` takes its tests and their pass (see
 flowchart LR
     P["pull request: verify passed,<br/>checks passed, auto-merge on"] --> Q["GitHub adds it to the queue"]
     Q --> G["merge group: main and the pull request"]
-    G --> C["Gate and Hygiene run on the group,<br/>riff/verify comes from the head"]
+    G --> C["Gate and Hygiene run on the group,<br/>the daemon sets riff/verify as the lead App<br/>from the head"]
     C -- pass --> M["squash merge into main"]
     C -- "fail, or a conflict" --> R["GitHub removes it from the queue"]
     R -- "a conflict with main" --> B["the wave starts a rebase session"]
@@ -3296,8 +3300,9 @@ Turn the queue on only when the `main` of the repository has the event
 never start, and it removes each pull request after 60 minutes. The
 workflows of this repository have it: the Gate and Hygiene run on the
 merge group, and the job `Verify of the merge group` sets `riff/verify`
-on it. So `riff project init` puts no merge queue in a repository with
-no `[release]`.
+on it. The daemon sets the `riff/verify` of the lead App on it in each
+repository. So `riff project init` puts no merge queue in a repository
+with no `[release]`.
 
 ### Add a host to the wave
 
@@ -6511,10 +6516,32 @@ It has no bypass, also not for an admin.
 The project settings of Claude Code (`.claude/settings.json`) also
 deny a push to `main` and `gh pr merge --admin` in each session.
 
-Each session uses your GitHub account. So the author of a pull request
-can set `riff/verify` on its own commit. The rules forbid it, but
-nothing stops it until the sessions have their own GitHub identity
-(#97).
+### Only the lead App sets riff/verify
+
+Only the lead App of the riff can set a `riff/verify` that counts. The
+ruleset `main` names the App ID of the lead App for that check.
+`Gate` and `Hygiene` name no App. A worker can set a status
+`riff/verify` with a workflow of its pull request, and a person can
+set one with `gh`, but GitHub does not count it. On a merge group, the
+daemon sets `riff/verify` as the lead App: see
+[Merge the pull requests of a wave with a merge queue](#merge-the-pull-requests-of-a-wave-with-a-merge-queue).
+
+The lead App cannot change a ruleset, so a person puts the rule on the
+ruleset `main`. First, each host that runs the wave must run a riff
+whose daemon sets `riff/verify` on a merge group: else the queue waits
+for that status, and removes each pull request after 60 minutes. Then,
+as an admin of the repository, in a checkout of `main`:
+
+```sh
+just github
+```
+
+To see the App ID of each required check, run this. `riff/verify` has
+the `integration_id` of the lead App:
+
+```sh
+gh api repos/como-technologies/riff/rules/branches/main --jq '.[] | select(.type == "required_status_checks") | .parameters.required_status_checks'
+```
 
 ### Set up the repository
 
@@ -6529,8 +6556,10 @@ It turns on auto-merge and squash merge only, and makes or updates
 two rulesets:
 
 - `main`: a change needs a pull request and the checks `Gate`,
-  `Hygiene` and `riff/verify`. A merge queue with the method `squash`
-  merges each pull request: see
+  `Hygiene` and `riff/verify`. Only a `riff/verify` of the lead App
+  counts: see
+  [Only the lead App sets riff/verify](#only-the-lead-app-sets-riffverify).
+  A merge queue with the method `squash` merges each pull request: see
   [Turn the merge queue on or off](#turn-the-merge-queue-on-or-off).
   `riff project init` sets the same queue.
 - `releases` on the tags `v*`: only the repository admin role and the

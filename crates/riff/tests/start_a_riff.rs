@@ -421,7 +421,7 @@ fn the_page_has_the_how_to_add_another_repository_to_the_riff() {
         "printf '[session]\\nimage = \"%s\"\\n' \"$IMAGE\" > riff.toml",
         "git push",
         "gh api -X PATCH repos/{owner}/{repo} -F allow_auto_merge=true -F allow_squash_merge=true",
-        "gh api -X POST repos/{owner}/{repo}/rulesets --input - <<'JSON'",
+        "gh api -X POST repos/{owner}/{repo}/rulesets --input - <<JSON",
         "riff wave make \"Wave 1\"",
         "gh api -X POST repos/{owner}/{repo}/milestones -f title=Backlog",
         "printf '[session]\\nimage = \"%s@%s\"\\n' \"$IMAGE\" \"$DIGEST\" > riff.toml",
@@ -668,15 +668,39 @@ fn the_how_to_says_what_riff_does_with_no_ci_and_names_no_job_gate() {
 
 /// The ruleset of the how-to is the ruleset that the step of `riff project init`
 /// makes (01M5QWA0E9A4ZJ8X49EM2MJM5Q), and it requires the checks that
-/// riff reads: the verify alone, for a repository with no CI.
+/// riff reads: the verify alone, for a repository with no CI. The verify
+/// counts only from the lead App, by its App ID from `gh api apps/SLUG`
+/// (01M7GQKYK5VJESMTFE6X6QKMH6).
 #[test]
 fn the_ruleset_of_the_how_to_is_the_ruleset_of_the_step() {
     let how_to = part(PAGE, HOW_TO);
-    let start = how_to.find("<<'JSON'\n").expect("the ruleset") + "<<'JSON'\n".len();
-    let json = &how_to[start..start + how_to[start..].find("\nJSON\n").expect("its end")];
-    let ruleset: serde_json::Value = serde_json::from_str(json).expect("the ruleset is JSON");
-    let step: serde_json::Value = serde_json::from_str(riff::repo_setup::RULESET).unwrap();
-    assert_eq!(ruleset, step);
+    let step = how_to
+        .split("\n#### Make the ruleset of the default branch\n")
+        .nth(1)
+        .expect("the how-to");
+    let step = step.split("\n#### ").next().unwrap();
+    assert_eq!(
+        book::commands_in(step)[..2],
+        [
+            "LEAD_ID=$(gh api apps/riff-acme-lead --jq .id)",
+            "gh api -X POST repos/{owner}/{repo}/rulesets --input - <<JSON",
+        ]
+    );
+    assert!(
+        step.contains("remove `, \"integration_id\": $LEAD_ID`"),
+        "{step}"
+    );
+    let start = step.find("<<JSON\n").expect("the ruleset") + "<<JSON\n".len();
+    let json = &step[start..start + step[start..].find("\nJSON\n").expect("its end")];
+    assert_eq!(json, riff::repo_setup::RULESET);
+    let ruleset: serde_json::Value =
+        serde_json::from_str(&json.replace(riff::repo_setup::LEAD_ID, "7"))
+            .expect("the ruleset is JSON");
+    assert_eq!(ruleset, riff::repo_setup::ruleset_for(&[], Some(7)));
+    // With no lead App, the ruleset of the step has no integration_id.
+    let free = json.replace(", \"integration_id\": $LEAD_ID", "");
+    let free: serde_json::Value = serde_json::from_str(&free).expect("the ruleset is JSON");
+    assert_eq!(free, riff::repo_setup::ruleset_for(&[], None));
     let checks: Vec<&str> = ruleset["rules"]
         .as_array()
         .unwrap()

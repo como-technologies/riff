@@ -10,10 +10,12 @@
 #   deletes the branch after the merge.
 # - The ruleset `main` on the default branch: a change needs a pull
 #   request with 0 approvals and the checks Gate, Hygiene and
-#   riff/verify. No force push, no deletion. No actor can bypass it
-#   (01M3JN4QQCM0GXK9BCGXVS2YC7). A merge queue with the squash method
-#   merges each pull request, after the checks ran on its merge group
-#   (01M75NAPJVW8FJZTJEF416MR4J). The rule is the one of
+#   riff/verify. riff/verify counts only from the lead App: its
+#   integration_id is the App ID of the lead App
+#   (01M7GQKYP6E1YASQ1XCTWYH6XZ). No force push, no deletion. No actor
+#   can bypass it (01M3JN4QQCM0GXK9BCGXVS2YC7). A merge queue with the
+#   squash method merges each pull request, after the checks ran on its
+#   merge group (01M75NAPJVW8FJZTJEF416MR4J). The rule is the one of
 #   deploy/merge-queue.sh and riff project init
 #   (riff::repo_setup::merge_queue).
 # - The ruleset `releases` on the tags `v*`: only the repository admin
@@ -62,7 +64,7 @@ ruleset() {
     -f squash_merge_commit_message=PR_BODY \
     -F delete_branch_on_merge=true >/dev/null
 
-ruleset main <<'JSON'
+ruleset main <<JSON
 {
   "name": "main",
   "target": "branch",
@@ -90,7 +92,7 @@ ruleset main <<'JSON'
         "required_status_checks": [
           { "context": "Gate" },
           { "context": "Hygiene" },
-          { "context": "riff/verify" }
+          { "context": "riff/verify", "integration_id": $LEAD_ID }
         ]
       }
     },
@@ -130,4 +132,4 @@ ruleset releases <<JSON
   ]
 }
 JSON
-echo "Set up $REPO: auto-merge, squash only, the checks Gate, Hygiene and riff/verify and a merge queue on main, release tags only by an admin and the lead App $LEAD_APP."
+echo "Set up $REPO: auto-merge, squash only, the checks Gate, Hygiene and riff/verify (only from the lead App $LEAD_APP) and a merge queue on main, release tags only by an admin and the lead App $LEAD_APP."
