@@ -1454,6 +1454,7 @@ impl State {
             activity: None,
             prompt_secs: None,
             container: false,
+            host_session: false,
             binary: None,
         };
         self.signal(me.who(), alive, now)
@@ -1514,6 +1515,68 @@ impl State {
             activity: None,
             prompt_secs: None,
             container: true,
+            host_session: false,
+            binary: None,
+        };
+        self.signal(me.who(), alive, now)
+    }
+
+    /// A keep-alive of `me` at `now` from `riff host-session`: a person
+    /// started `me` on the host, for the lead
+    /// (01M7GTF5GZYET0F5R0KTGT59C1). Such a session is live with no watch,
+    /// while it is not gone, and `who` shows its mark. At the end of
+    /// `claude`, `riff host-session` ends it, and it is gone at once.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::name::SessionUri;
+    /// use riff_core::wire::{RiffState, SessionState};
+    /// use riff_state::state::{GONE, State};
+    ///
+    /// let lead: SessionUri = "riff://mike@thelio/como-technologies/riff?session=l1".parse()?;
+    /// let helper: SessionUri = "riff://mike@thelio/como-technologies/riff?session=h1".parse()?;
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// state.register(&lead, now);
+    /// state.lead(&lead, now).unwrap();
+    /// state.riff(&lead, Some(RiffState::Running), now).unwrap();
+    /// state.register(&helper, now);
+    /// let shown = |state: &State, at: Instant| {
+    ///     state.who(at, 0, false).into_iter().find(|s| s.uri.who() == helper.who())
+    /// };
+    ///
+    /// // With no watch, the session is offline, with no mark.
+    /// let s = shown(&state, now).unwrap();
+    /// assert!(!s.live && !s.host_session);
+    ///
+    /// // The keep-alive of riff host-session makes it live, with the mark.
+    /// state.alive_in_host_session(&helper, now);
+    /// let s = shown(&state, now).unwrap();
+    /// assert!(s.live && s.host_session && !s.container && !s.worker);
+    /// assert_eq!(s.state, Some(SessionState::Idle));
+    ///
+    /// // A keep-alive with no mark keeps the mark.
+    /// state.alive(&helper, now);
+    /// assert!(shown(&state, now).unwrap().host_session);
+    ///
+    /// // With no keep-alive for 3 minutes, it is gone.
+    /// assert!(shown(&state, now + GONE).is_none());
+    ///
+    /// // Its end ends it: it is gone at once.
+    /// state.alive_in_host_session(&helper, now);
+    /// state.end(&helper, now);
+    /// assert!(shown(&state, now).is_none());
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn alive_in_host_session(&mut self, me: &SessionUri, now: Instant) -> AliveReply {
+        if !self.knows(me.who()) {
+            self.arrive(me, now);
+        }
+        let alive = Signal::Alive {
+            activity: None,
+            prompt_secs: None,
+            container: false,
+            host_session: true,
             binary: None,
         };
         self.signal(me.who(), alive, now)
@@ -1530,6 +1593,7 @@ impl State {
             activity: Some(activity),
             prompt_secs: None,
             container: false,
+            host_session: false,
             binary: None,
         };
         self.signal(me.who(), alive, now)
@@ -1674,9 +1738,10 @@ impl State {
         // A lead that calls only the command line has no watch
         // (01M48VDGQ5KETKPM4G6TKTC2MB). Nor has a session in a
         // container: the riff daemon keeps it alive
-        // (01M510MG0CKDXAKF6YJ768K7E8).
-        let live =
-            session.watching(now) || ((uri.lead() || session.container) && !session.gone(now));
+        // (01M510MG0CKDXAKF6YJ768K7E8). Nor has a session of `riff
+        // host-session` (01M7GTF5GZYET0F5R0KTGT59C1).
+        let kept = uri.lead() || session.container || session.host_session;
+        let live = session.watching(now) || (kept && !session.gone(now));
         let repository = session.place.default_thread();
         let status = session.status.as_ref().map(|s| {
             let SetStatus {
@@ -1760,6 +1825,7 @@ impl State {
             status,
             worker: sessions.worker(who),
             container: session.container,
+            host_session: session.host_session,
             binary: session.binary.clone(),
             claims_secs: now
                 .saturating_duration_since(session.claims_changed)
@@ -3353,6 +3419,7 @@ mod tests {
             activity: None,
             prompt_secs: None,
             container: false,
+            host_session: false,
             binary,
         };
         let shown = |state: &State| {

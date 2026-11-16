@@ -126,7 +126,7 @@ impl Cursor {
 /// let (mut presence, mut riff) = (Presence::default(), Riff::default());
 /// let place = Signal::Place { place: mike.place().clone() };
 /// place.set(&mut presence, mike.who(), Instant::now());
-/// Signal::Alive { activity: None, prompt_secs: None, container: false, binary: None }.set(&mut presence, mike.who(), Instant::now());
+/// Signal::Alive { activity: None, prompt_secs: None, container: false, host_session: false, binary: None }.set(&mut presence, mike.who(), Instant::now());
 /// # let _ = &mut riff;
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
@@ -143,7 +143,7 @@ impl Cursor {
 /// let (mut presence, mut riff) = (Presence::default(), Riff::default());
 /// let place = Signal::Place { place: mike.place().clone() };
 /// place.set(&mut presence, mike.who(), Instant::now());
-/// Signal::Alive { activity: None, prompt_secs: None, container: false, binary: None }.set(&mut riff, mike.who(), Instant::now());
+/// Signal::Alive { activity: None, prompt_secs: None, container: false, host_session: false, binary: None }.set(&mut riff, mike.who(), Instant::now());
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -161,13 +161,16 @@ pub enum Signal {
     /// container gives it (01M5GVQQ8NK3RD9CM3VTGXEHZQ). With
     /// `container`, the riff daemon sends it for a session in a
     /// container: the mark stays until the session ends
-    /// (01M510MG0CKDXAKF6YJ768K7E8). A `binary` replaces
-    /// the riff of the session; none keeps it
+    /// (01M510MG0CKDXAKF6YJ768K7E8). With `host_session`, `riff
+    /// host-session` sends it for its session on the host: that mark
+    /// stays until the session ends too (01M7GTF5GZYET0F5R0KTGT59C1). A
+    /// `binary` replaces the riff of the session; none keeps it
     /// (01M514C11BPE93PJT4221PYVHS).
     Alive {
         activity: Option<Activity>,
         prompt_secs: Option<u64>,
         container: bool,
+        host_session: bool,
         binary: Option<RiffBinary>,
     },
     /// The place of the session, from a `register`. It makes a session
@@ -280,10 +283,12 @@ impl Signal {
                 activity,
                 prompt_secs,
                 container,
+                host_session,
                 binary,
             } => {
                 session.live(now);
                 session.container |= container;
+                session.host_session |= host_session;
                 if binary.is_some() {
                     session.binary = binary;
                 }
@@ -845,6 +850,9 @@ pub(super) struct Session {
     /// True when the riff daemon keeps the session alive: it runs in a
     /// container (01M510MG0CKDXAKF6YJ768K7E8).
     pub(super) container: bool,
+    /// True when `riff host-session` keeps the session alive: a person
+    /// started it on the host (01M7GTF5GZYET0F5R0KTGT59C1).
+    pub(super) host_session: bool,
     /// The riff of the session, from its last keep-alive that named
     /// one (01M514C11BPE93PJT4221PYVHS).
     pub(super) binary: Option<RiffBinary>,
@@ -928,6 +936,7 @@ impl Session {
             alive: Some(now),
             ended: false,
             container: false,
+            host_session: false,
             binary: None,
             status: None,
             work: None,

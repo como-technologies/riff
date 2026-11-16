@@ -1446,19 +1446,19 @@
   with the token of the person. `riff daemon status` names the
   repository of the lead and the reason, and `riff whoami` in the lead
   shows `no token`. This supersedes 01M6WPMWSMQABE97YCMS5Z3M1P in part.
-- **01M6Z87A04EXTT1FFJSJ1EM6TB** No session gets the token of the person
-  on GitHub. riff keeps no `gh auth token` for a session, and the
-  daemon refuses to start a container whose env names `GH_TOKEN` or
-  `GITHUB_TOKEN`. When riff-server gives no token of an App, because
-  the riff has no App of the role or no sign-in, the App is not on the
-  repository, the `gh` of the person cannot push there, or riff-server
-  is older, no container of a worker or of a verify starts. The wave
-  then counts no start, tells the lead the reason one time, and starts
-  no item of the repository for 10 minutes. The lead starts with no
-  token on GitHub: no `GH_TOKEN`, and no `hosts.yml` in the folder `gh`
-  of the session. `riff whoami` in the lead shows `no token` and the
-  reason. The daemon keeps the `gh` of the person for its own calls on
-  the host (01M6XZJFE2ZTR5RE3AWM30R704). This supersedes
+- **01M6Z87A04EXTT1FFJSJ1EM6TB** No session in a container gets the
+  token of the person on GitHub. riff keeps no `gh auth token` for a
+  session, and the daemon refuses to start a container whose env names
+  `GH_TOKEN` or `GITHUB_TOKEN`. When riff-server gives no token of an
+  App, because the riff has no App of the role or no sign-in, the App is
+  not on the repository, the `gh` of the person cannot push there, or
+  riff-server is older, no container of a worker or of a verify starts.
+  The wave then counts no start, tells the lead the reason one time, and
+  starts no item of the repository for 10 minutes. The lead starts with
+  no token on GitHub: no `GH_TOKEN`, and no `hosts.yml` in the folder
+  `gh` of the session. `riff whoami` in the lead shows `no token` and
+  the reason. The daemon keeps the `gh` of the person for its own calls
+  on the host (01M6XZJFE2ZTR5RE3AWM30R704). This supersedes
   01M6WPMWSMQABE97YCMS5Z3M1P in full, and 01M6WPMWYSW98MQYQCCJ54ZX04 and
   01M6WZ2C8JXEA888XYMRXTS17V in part.
 - **01M6Z87JTXW0Y99X08VHA2SSSR** Each state with no token of an App
@@ -6128,11 +6128,10 @@ of this part when they merge.
   terminal (`podman run -it`). conmon holds its PTY. The ratatui view of
   riff shows the sessions, and attaches to the lead or to a takeover.
   riff uses no tmux.
-- **01M59BXNPR3AZ0HAS9GQCZ4PH2** riff has no plugin, no hooks and no
-  commands for a session on the host: `riff connect`, `riff enable`,
-  `riff disable`, `riff watch`, `riff hook`, `riff statusline` and
-  `riff mcp` do not exist. A session runs in a container, and gets its
-  tools from `riff relay mcp`.
+- **01M59BXNPR3AZ0HAS9GQCZ4PH2** riff has no plugin and no hooks for a
+  session on the host: `riff connect`, `riff enable`, `riff disable`,
+  `riff watch`, `riff hook`, `riff statusline` and `riff mcp` do not
+  exist. A session gets its tools from `riff relay mcp`.
 
 ### The riff daemon
 
@@ -8165,6 +8164,42 @@ of this part when they merge.
   (#1606). When the daemon starts to serve the repository of a lead, the
   main clone is the main clone of the wave. This supersedes
   01M6QB89JJEM9Z1V3RVZYHKYT0 and 01M6QVSWQZE41BMQ6YN2963C4V in part.
+- **01M7GTEYVRA3549J3PCA0DG22R** `riff host-session`, and `riff host
+  session`, start `claude` on the host, in the terminal of the person
+  and in the clone of the folder, as the person: with the Claude
+  sign-in, the settings, the model, the effort and the permission mode
+  of the person, and with the `gh` and the keyring of the person. riff
+  gives `claude` only a new session ID, the first prompt and the riff
+  tools, and no token in its arguments. Only a person in a terminal on
+  the host runs it: it refuses each agent session, each session in a
+  container and the lead before each call (`Caller::person_step`), and
+  asks no role. The first prompt names the person, the host, the
+  repository and the lead, and says that the lead asks for the steps on
+  the host, that the session may do any step, and that the person
+  watches it. riff tells the lead of the repository the session ID at
+  the start and at the end. At the end of `claude`, riff ends the
+  session on riff-server, and exits with the exit code of `claude`. The
+  instructions of the lead tell it to ask its person for a host session
+  when it needs a step on the host. This supersedes
+  01M59BXNPR3AZ0HAS9GQCZ4PH2 and 01M6Z87A04EXTT1FFJSJ1EM6TB in part.
+- **01M7GTF5EE7KN7PZX0YYP537C8** In a session of `riff host-session`,
+  `RIFF_HOST_SESSION` and `RIFF_SESSION` hold its session ID, and
+  `RIFF_SOCKET` is not set. Then `riff relay mcp` serves the riff tools
+  that only talk (`whoami`, `who`, `threads`, `read`, `post`, `tell`,
+  `status` and `blocked`) as the session, with the sign-in of the person
+  on the host, and with instructions for a host session. `riff relay
+  watch`, also with `--follow`, gets each wake of the session from
+  riff-server with the sign-in of the person, and prints its line, once
+  for each message. The first prompt tells the session to start `riff
+  relay watch --follow` with the Monitor tool, so a message of the lead
+  wakes it with no poll.
+- **01M7GTF5GZYET0F5R0KTGT59C1** `riff host-session` sends the
+  keep-alive of its session each minute, with the mark `host_session`.
+  riff-server keeps the mark until the session ends, and shows the
+  session live while it is not gone, also with no watch. `riff who`, the
+  MCP `who` tool and `riff top` give such a session the kind and the tag
+  `host session`. An idle one shows `waits for host steps for` and the
+  time.
 
 ### The first run
 

@@ -144,6 +144,7 @@ pub fn work(activity: &Activity) -> String {
 ///     status: Some(step("tests", false)),
 ///     worker: true,
 ///     container: false,
+///     host_session: false,
 ///     binary: None,
 ///     claims_secs: 300,
 ///     must_clear: false,
@@ -348,7 +349,9 @@ pub fn detail(
 /// What an idle session does, by its kind ([`SessionKind`],
 /// 01M589HH8Z1TCYDCZHQQHTYWMK): the lead `monitoring work`, the session
 /// of `riff workers host` `hosts workers`, the session of the riff daemon
-/// `hosts containers`, and each other session `ready for work`.
+/// `hosts containers`, the session of `riff host-session` `waits for host
+/// steps` (01M7GTF5GZYET0F5R0KTGT59C1), and each other session `ready for
+/// work`.
 ///
 /// ```
 /// use riff_core::wire::SessionInfo;
@@ -358,12 +361,16 @@ pub fn detail(
 /// };
 /// assert_eq!(riff::state::idle(&info("riff://mike@thelio/o/r?session=l1&lead=true")), "monitoring work");
 /// assert_eq!(riff::state::idle(&info("riff://mike@thelio/o/r?session=w1")), "ready for work");
+/// let mut helper = info("riff://mike@thelio/o/r?session=s1");
+/// helper.host_session = true;
+/// assert_eq!(riff::state::idle(&helper), "waits for host steps");
 /// ```
 pub fn idle(s: &SessionInfo) -> &'static str {
     match SessionKind::of(s) {
         Some(SessionKind::Lead) => "monitoring work",
         Some(SessionKind::Host) => "hosts workers",
         Some(SessionKind::Daemon) => "hosts containers",
+        Some(SessionKind::HostSession) => "waits for host steps",
         _ => "ready for work",
     }
 }

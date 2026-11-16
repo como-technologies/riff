@@ -350,10 +350,25 @@ enum Command {
     /// riff host join gives workers to the repository of this folder from
     /// a host, and riff host leave takes them. The repository must be a
     /// project of the riff that allows the host: see riff project list.
+    /// riff host session starts a session on the host for the lead, as riff
+    /// host-session does.
     Host {
         #[command(subcommand)]
         command: HostCommand,
     },
+    /// Start a session on the host for the lead, as you
+    ///
+    /// It starts claude in this terminal, in the clone of this folder, as
+    /// you: with your Claude sign-in, settings, model, effort and
+    /// permission mode, and with your gh and your keyring. riff adds only
+    /// the riff tools and the wakes. The session has the role host session
+    /// in riff who. riff tells the lead of the repository its session ID at
+    /// the start and at the end, and the lead asks it for the steps on the
+    /// host with tell. It is a break-glass: the session may do any step,
+    /// and you watch it. /exit ends it. Only you in a terminal on the host
+    /// can run it: it refuses in each agent session, in a container and in
+    /// the lead. riff host session does the same.
+    HostSession,
     /// Sign out of the riff on this device
     ///
     /// It removes the sign-in at riff-server from this device. With
@@ -1929,6 +1944,12 @@ enum HostCommand {
         #[arg(long)]
         now: bool,
     },
+    /// Start a session on the host for the lead, as you
+    ///
+    /// The same as riff host-session: claude in this terminal, as you,
+    /// with the riff tools and the wakes, for the lead of the repository
+    /// of this folder.
+    Session,
 }
 
 #[derive(Subcommand)]
@@ -2163,7 +2184,7 @@ async fn cli() -> Result<()> {
         command,
     } = command
     {
-        return relay_command(terminal, session, command).await;
+        return relay_command(terminal, session, command, cli.server.as_deref()).await;
     }
     if let Command::Takeover { name, at_end } = &command {
         // A take-over stops the turn of the session: a step of the list
@@ -2183,6 +2204,13 @@ async fn cli() -> Result<()> {
     // In a container, the socket of the session reaches riff-server
     // (01M5GVPNAKAPA596K9361HSAAV).
     let reach = Reach::of(&server, source, riff::session_relay::socket_here().ok());
+    if let Command::HostSession
+    | Command::Host {
+        command: HostCommand::Session,
+    } = command
+    {
+        return host_session_command(&server).await;
+    }
     // In a container, a step of a person or a claim refuses before each
     // call: the container has no riff-server of its own
     // (01M74A8CXVRD352VRJ9FH54HJ1).
@@ -2590,6 +2618,7 @@ async fn cli() -> Result<()> {
             HostCommand::Leave { host, now } => {
                 leave_command(host.as_deref(), *now, &here, &reach).await
             }
+            HostCommand::Session => unreachable!("handled before the identity"),
         };
     }
     if let Command::Wave { command } = &command {
@@ -2938,6 +2967,7 @@ async fn cli() -> Result<()> {
         | Command::Admin { .. }
         | Command::Run { .. }
         | Command::Host { .. }
+        | Command::HostSession
         | Command::Wave { .. } => unreachable!("handled before the identity"),
     }
     Ok(())
@@ -2983,6 +3013,20 @@ fn needs_the_host(command: &Command) -> Option<&'static str> {
 fn person(api: &Api) -> Result<SessionUri> {
     let here = identity::place(&identity::working_dir()?)?;
     identity::person(&Place::host_only(here.host())?, api.base())
+}
+
+/// `riff host-session` and `riff host session`
+/// (01M7GTEYVRA3549J3PCA0DG22R): only a person in a terminal on the host,
+/// with no ask before the refusal ([`riff::cycle::Caller::person_step`]).
+/// It exits with the exit code of `claude`.
+async fn host_session_command(server: &str) -> Result<()> {
+    if riff::cycle::Caller::here().person_step().is_some() {
+        eprintln!("{}", text::HOST_SESSION_REFUSED);
+        std::process::exit(1);
+    }
+    let dir = identity::working_dir()?;
+    let code = riff::host_session::run(server, &dir).await?;
+    std::process::exit(code)
 }
 
 /// `riff github create`, `install`, `check` and `events`
@@ -3559,8 +3603,23 @@ async fn relay_command(
     terminal: bool,
     session: Vec<String>,
     command: Option<RelayCommand>,
+    server: Option<&str>,
 ) -> Result<()> {
+    // A session of riff host-session has no socket
+    // (01M7GTF5EE7KN7PZX0YYP537C8).
+    let host_session = match riff::session_relay::socket_here() {
+        Ok(_) => None,
+        Err(_) => riff::host_session::session_here(),
+    };
     match command {
+        Some(RelayCommand::Mcp) if let Some(id) = &host_session => {
+            let (server, _) = server_of(server)?;
+            riff::host_session::mcp(&server, id).await
+        }
+        Some(RelayCommand::Watch { follow }) if let Some(id) = &host_session => {
+            let (server, _) = server_of(server)?;
+            riff::host_session::follow(&server, id, follow, |line| println!("{line}")).await
+        }
         Some(RelayCommand::Mcp) => {
             let socket = riff::session_relay::socket_here()?;
             riff::session_relay::mcp(&socket, tokio::io::stdin(), tokio::io::stdout()).await
@@ -3840,15 +3899,8 @@ async fn lead_and_role(
 /// lead and the role only when `ask_role` is true: for an agent session
 /// with a session ID, and for a person in a terminal.
 async fn release_caller(server: &str, ask_role: bool) -> riff::cycle::Caller {
-    let worker = std::env::var(riff::identity::WORKER).is_ok_and(|v| v == "1");
-    let container = riff::cycle::in_container();
-    let agent = riff::cycle::in_agent();
-    let mut caller = riff::cycle::Caller {
-        worker,
-        container,
-        agent,
-        ..riff::cycle::Caller::default()
-    };
+    let mut caller = riff::cycle::Caller::here();
+    let (worker, container, agent) = (caller.worker, caller.container, caller.agent);
     let id = identity::session_id();
     if container && !worker {
         // The daemon knows by the socket of the session whether it is
@@ -5063,7 +5115,14 @@ mod tests {
         use clap::Parser;
         use riff::reach::Way;
         // These refuse in a container with words of their own.
-        let own: [&[&str]; 4] = [&["github"], &["device"], &["project"], &["host", "leave"]];
+        let own: [&[&str]; 6] = [
+            &["github"],
+            &["device"],
+            &["project"],
+            &["host", "leave"],
+            &["host", "session"],
+            &["host-session"],
+        ];
         for row in riff::reach::COMMANDS {
             let words = std::iter::once("riff").chain(row.args.iter().copied());
             let command = Cli::try_parse_from(words).unwrap().command.unwrap();

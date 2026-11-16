@@ -97,6 +97,7 @@ pub const GROUPS: &[Group] = &[
             "init",
             "run",
             "host",
+            "host-session",
             "wave",
             "takeover",
             "ps",

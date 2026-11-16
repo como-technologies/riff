@@ -1817,6 +1817,11 @@ session.
   containers. Its status starts with `daemon host:`. It takes no
   claims, so when it is idle it shows `hosts containers`, not
   `ready for work`.
+- `host session`: the session that you start on the host with `riff
+  host-session`, for the lead (see
+  [Start a session on the host](development.md#start-a-session-on-the-host)).
+  `riff host-session` keeps it alive, so it shows its state, not
+  `offline`. When it is idle, it shows `waits for host steps`.
 
 The row of a daemon on thelio:
 
@@ -6542,13 +6547,13 @@ matches wins:
 
 | State | Color | When | Detail |
 |---|---|---|---|
-| `offline` | grey | the session has no open watch. A lead is not offline while it calls. A session in a container is not offline while the riff daemon keeps it alive | `seen 2h ago`, then the claims and the last step |
+| `offline` | grey | the session has no open watch. A lead is not offline while it calls. A session in a container is not offline while the riff daemon keeps it alive, nor a host session while `riff host-session` runs | `seen 2h ago`, then the claims and the last step |
 | `paused` | yellow | the riff or the repository of the session is paused | the claims, and `stopped at:` the step |
 | `blocked` | red | the session said `blocked`, and the block holds. Not the lead | the reason with its age, `the lead gave no answer` when the lead gave none, then the claims |
 | `must clear` | yellow | a worker released its last claim | `must clear its context before its next claim` |
 | `waiting` | cyan | each claim waits for a verify, a merge, or an item of its `Needs:` line that is open and has no comment `Merged in #`. Or the lead waits for its person | the claims, then `waits for a verify of PR #418`, `waits for the merge of PR #418` or `waits for #12`. The lead: `waiting for mike: REASON` |
 | `busy` | green | the session holds a claim. Or the lead is in a turn | `working on #7`, or `reviewing #7` for a verify claim, then the work, then the step |
-| `idle` | dim | each other session | `ready for work for 6m`, then a current step. The lead: `monitoring work for 6m`.. The session of the riff daemon: `hosts containers for 6m` |
+| `idle` | dim | each other session | `ready for work for 6m`, then a current step. The lead: `monitoring work for 6m`.. The session of the riff daemon: `hosts containers for 6m`. A host session: `waits for host steps for 6m` |
 
 The work is the newest fact of the session: `runs Bash: run just ci for
 12m`, `works, 5s ago` between two tools, or `turn ended 5m ago`.
@@ -8147,8 +8152,9 @@ riff: riff claim does not run in a container session. It needs the host: the sig
 ```
 
 `riff github`, `riff device`, `riff project init`, `riff project
-remove` and `riff host leave` with no `--host` refuse in the container
-with words of their own: each names the step on the host.
+remove`, `riff host leave` with no `--host`, `riff host-session` and
+`riff host session` refuse in the container with words of their own:
+each names the step on the host.
 
 ### Watch the riff on another machine
 
