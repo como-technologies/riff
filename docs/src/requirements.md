@@ -219,17 +219,15 @@
   heading with the name of the member, the text of its area, and one
   `##` heading for each rule. riff refuses a file with no table or no
   `#` heading, and names the file and the line.
-- **01M7CFBZCDFGG1MV4DEAACQVXK** Design, testing and docs join each
-  council. The Rust expert, `rust`, joins the council of each pull
-  request that changes a `.rs` file. It reviews for idiomatic Rust and
-  for the patterns of its file: an invalid state cannot be made (#552,
-  #553), one type for each layout, and each conversion names each field.
-- **01M7CFBZF1BZ0E7H0D4Q7KKY1T** The members by area join from the files
-  and the labels of the change: `security` (the tokens, the sign-in,
-  riff-server, the deploy, CI), `operations` (the daemon, the release,
-  the cloud) and `requirements` (`requirements.md`, the book). Two
-  personas join by area too: `newcomer`, a person who knows nothing
-  about riff, for a change of the book, and `attacker`, for a change of
+- **01M7CFBZCDFGG1MV4DEAACQVXK** The Rust expert, `rust`, reviews for
+  idiomatic Rust and for the patterns of its file: an invalid state
+  cannot be made (#552, #553), one type for each layout, and each
+  conversion names each field.
+- **01M7CFBZF1BZ0E7H0D4Q7KKY1T** The members `security` (the tokens, the
+  sign-in, riff-server, the deploy, CI), `operations` (the daemon, the
+  release, the cloud) and `requirements` (`requirements.md`, the book)
+  each review one area. Two personas review too: `newcomer`, a person
+  who knows nothing about riff, for the book, and `attacker`, for
   security. A glob of `files` matches the path of each file that the
   pull request adds, changes, removes or renames. A label matches a
   label of the pull request or of its issue.
@@ -310,6 +308,13 @@
   Each such part counts. For a PASS of the wave with no line for a
   member, the message to the lead names each member with no line
   (01M7CFBZSQEEZNZBR9H1S54GS1).
+- **01M7H6CW5TV0J4MNKM97N683RB** Each member file of `.riff/council/` of
+  the riff repository has `labels = ["council"]` and no `files`. So a
+  member of the default set joins only the council of a pull request
+  when the pull request or its issue has the label `council`. The
+  council of a pull request with no label `council` has no member of the
+  default set. Supersedes 01M7CFBZCDFGG1MV4DEAACQVXK and
+  01M7CFBZF1BZ0E7H0D4Q7KKY1T in part.
 
 ## Waves
 

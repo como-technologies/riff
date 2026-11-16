@@ -1,18 +1,5 @@
 +++
-files = [
-    "crates/riff-server/**",
-    "deploy/**",
-    ".github/**",
-    "Dockerfile",
-    "**/*token*",
-    "**/*login*",
-    "**/*auth*",
-    "**/*secret*",
-    "**/*keyring*",
-    "**/*credential*",
-    "**/*permission*",
-]
-labels = ["security"]
+labels = ["council"]
 +++
 
 # Security

@@ -14,18 +14,30 @@ use isolated::Isolated;
 
 use crate::book;
 
-/// The default set, in the order of 01M7CFBZHQZ8FDT3Q0NGYKBZWB, with
-/// the start of the column JOINS of each member.
-const DEFAULT_SET: [(&str, &str); 9] = [
-    ("design", "each council"),
-    ("testing", "each council"),
-    ("docs", "each council"),
-    ("rust", "files **/*.rs"),
-    ("security", "files crates/riff-server/**"),
-    ("attacker", "files crates/riff-server/**"),
-    ("requirements", "files **/requirements*.md"),
-    ("newcomer", "files docs/**"),
-    ("operations", "files **/*daemon*"),
+/// The default set, in the order of 01M7CFBZHQZ8FDT3Q0NGYKBZWB.
+const DEFAULT_SET: [&str; 9] = [
+    "design",
+    "testing",
+    "docs",
+    "rust",
+    "security",
+    "attacker",
+    "requirements",
+    "newcomer",
+    "operations",
+];
+
+/// The council of a pull request with the label `council`: the first 6
+/// members of the default set, then the 3 that the limit leaves out
+/// (01M7H6CW5TV0J4MNKM97N683RB).
+const WITH_LABEL: [&str; 7] = [
+    "design (riff): the label council",
+    "testing (riff): the label council",
+    "docs (riff): the label council",
+    "rust (riff): the label council",
+    "security (riff): the label council",
+    "attacker (riff): the label council",
+    "Left out by the limit of 6",
 ];
 
 /// The member of the how-to "Add a member to the council".
@@ -87,7 +99,8 @@ fn rows(out: &str) -> Vec<Vec<String>> {
 /// with the file `.riff/council/performance.md`, also from a folder
 /// under the top, the list names the 9 default members with the source
 /// riff, then `performance` with the path of its file, each with when it
-/// joins and the count of its rules.
+/// joins and the count of its rules. Each default member joins for
+/// `labels council` (01M7H6CW5TV0J4MNKM97N683RB).
 #[test]
 fn riff_council_list_names_the_default_set_and_a_member_of_the_folder() {
     let root = repository();
@@ -100,14 +113,14 @@ fn riff_council_list_names_the_default_set_and_a_member_of_the_folder() {
         let stdout = String::from_utf8(out.stdout).unwrap();
         let rows = rows(&stdout);
         assert_eq!(rows.len(), 10, "{stdout}");
-        for ((name, joins), row) in DEFAULT_SET.iter().zip(&rows) {
+        for (name, row) in DEFAULT_SET.iter().zip(&rows) {
             assert_eq!(
                 (row[0].as_str(), row[1].as_str()),
                 (*name, "riff"),
                 "{stdout}"
             );
             assert!(row[2].parse::<usize>().unwrap() > 0, "{stdout}");
-            assert!(row[3..].join(" ").starts_with(joins), "{name}: {stdout}");
+            assert_eq!(row[3..], ["labels", "council"], "{name}: {stdout}");
         }
         assert_eq!(
             rows[9],
@@ -328,16 +341,26 @@ type Pull<'a> = (u64, &'a [&'a str], &'a [&'a str]);
 /// `riff council show` for the pull requests `pulls`. The issue of each
 /// one is issue 12, with no label. Each other call fails.
 fn fake_gh(pulls: &[Pull]) -> tempfile::TempDir {
+    fake_gh_with(pulls, &[])
+}
+
+/// The JSON list of the labels `labels`, as `gh` gives it.
+fn labels_json(labels: &[&str]) -> String {
+    let labels: Vec<String> = labels
+        .iter()
+        .map(|label| format!("{{\"name\":\"{label}\"}}"))
+        .collect();
+    format!("[{}]", labels.join(","))
+}
+
+/// The fake `gh` of [`fake_gh`], with the labels `issue` on issue 12.
+fn fake_gh_with(pulls: &[Pull], issue: &[&str]) -> tempfile::TempDir {
     let bin = tempfile::tempdir().unwrap();
     let mut cases = String::new();
     for (number, paths, labels) in pulls {
-        let labels: Vec<String> = labels
-            .iter()
-            .map(|label| format!("{{\"name\":\"{label}\"}}"))
-            .collect();
         cases.push_str(&format!(
-            "  'pr view {number} --json baseRefName,body,labels') printf '%s' '{{\"baseRefName\":\"main\",\"body\":\"Closes #12\\n\\nIssue: #12\\n\",\"labels\":[{}]}}' ;;\n",
-            labels.join(",")
+            "  'pr view {number} --json baseRefName,body,labels') printf '%s' '{{\"baseRefName\":\"main\",\"body\":\"Closes #12\\n\\nIssue: #12\\n\",\"labels\":{}}}' ;;\n",
+            labels_json(labels)
         ));
         let paths: Vec<String> = paths.iter().map(|path| format!("'{path}'")).collect();
         cases.push_str(&format!(
@@ -345,7 +368,10 @@ fn fake_gh(pulls: &[Pull]) -> tempfile::TempDir {
             paths.join(" ")
         ));
     }
-    cases.push_str("  'issue view 12 --json labels') printf '%s' '{\"labels\":[]}' ;;\n");
+    cases.push_str(&format!(
+        "  'issue view 12 --json labels') printf '%s' '{{\"labels\":{}}}' ;;\n",
+        labels_json(issue)
+    ));
     isolated::write_program(
         bin.path().join("gh"),
         format!(
@@ -386,11 +412,12 @@ fn headings(out: &str) -> Vec<&str> {
 /// 01M7CFBZ7839WHMFARR4T6W13W, 01M7CRX66K9Q750SB8M2MPG6V7: a pull
 /// request that adds `.riff/council/performance.md` with `files =
 /// ["**"]` does not get `performance`, because the base branch has no
-/// such file. The folder has it, and riff does not read it. Another clone
-/// merges the file into the base branch. Then a second pull request gets
-/// `performance`, from a folder with no such file: riff fetches the base
-/// branch and reads it. When the fetch fails, riff says so, and reads the
-/// base branch as the clone has it.
+/// such file. The folder has it, and riff does not read it. With no label
+/// `council`, it gets no member (01M7H6CW5TV0J4MNKM97N683RB). Another
+/// clone merges the file into the base branch. Then a second pull
+/// request gets `performance`, from a folder with no such file: riff
+/// fetches the base branch and reads it. When the fetch fails, riff says
+/// so, and reads the base branch as the clone has it.
 #[test]
 fn riff_council_show_reads_the_member_files_of_the_base_branch() {
     let root = tempfile::tempdir().unwrap();
@@ -407,20 +434,10 @@ fn riff_council_show_reads_the_member_files_of_the_base_branch() {
         (41, &["src/a.rs"], &[]),
     ]);
     let stdout = stdout_of(show(&work, bin.path(), 40));
-    assert!(
-        stdout.starts_with("The council of pull request #40 has 3 members. riff read the member files of origin/main.\n"),
-        "{stdout}"
-    );
     assert_eq!(
-        headings(&stdout),
-        [
-            "design (riff): each council",
-            "testing (riff): each council",
-            "docs (riff): each council"
-        ],
-        "{stdout}"
+        stdout,
+        "The council of pull request #40 has no member. riff read the member files of origin/main.\n"
     );
-    assert!(!stdout.contains("performance"), "{stdout}");
 
     git(
         root.path(),
@@ -442,13 +459,11 @@ fn riff_council_show_reads_the_member_files_of_the_base_branch() {
     git(&work, &["switch", "-q", "main"]);
     assert!(!work.join(".riff/council/performance.md").exists());
     let stdout = stdout_of(show(&work, bin.path(), 41));
-    let joined = [
-        "design (riff): each council",
-        "testing (riff): each council",
-        "docs (riff): each council",
-        "rust (riff): the path src/a.rs matches **/*.rs",
-        "performance (.riff/council/performance.md): the path src/a.rs matches **",
-    ];
+    assert!(
+        stdout.starts_with("The council of pull request #41 has 1 member. riff read the member files of origin/main.\n"),
+        "{stdout}"
+    );
+    let joined = ["performance (.riff/council/performance.md): the path src/a.rs matches **"];
     assert_eq!(headings(&stdout), joined, "{stdout}");
     // The text of the file after the table.
     let text = &ALL[ALL.find("# Performance").unwrap()..];
@@ -468,6 +483,58 @@ fn riff_council_show_reads_the_member_files_of_the_base_branch() {
     assert_eq!(headings(&stdout_of(out)), joined);
 }
 
+/// 01M7H6CW5TV0J4MNKM97N683RB: `riff council show` of a pull request
+/// with no label `council` shows no member, also for a change of a `.rs`
+/// file, a page of the book and riff-server with the label `security`.
+/// With the label `council` on the pull request, or on its issue only,
+/// it shows each member up to the limit of 6, and names the 3 that the
+/// limit leaves out.
+#[test]
+fn riff_council_show_has_a_member_only_with_the_label_council() {
+    let root = tempfile::tempdir().unwrap();
+    let work = clone_with_origin(root.path());
+    let paths = &[
+        "crates/riff/src/council.rs",
+        "crates/riff-server/src/main.rs",
+        "docs/src/how-it-works.md",
+    ][..];
+    let bin = fake_gh(&[
+        (40, paths, &[]),
+        (41, paths, &["security"]),
+        (42, paths, &["council"]),
+    ]);
+    for number in [40, 41] {
+        let stdout = stdout_of(show(&work, bin.path(), number));
+        assert_eq!(
+            stdout,
+            format!(
+                "The council of pull request #{number} has no member. riff read the member files of origin/main.\n"
+            )
+        );
+    }
+    let of_issue = fake_gh_with(&[(43, paths, &[])], &["council"]);
+    for (number, bin) in [(42, &bin), (43, &of_issue)] {
+        let stdout = stdout_of(show(&work, bin.path(), number));
+        assert!(
+            stdout.starts_with(&format!(
+                "The council of pull request #{number} has 6 members."
+            )),
+            "{stdout}"
+        );
+        assert_eq!(headings(&stdout), WITH_LABEL, "{stdout}");
+        let last: Vec<&str> = stdout.lines().rev().take(3).collect();
+        assert_eq!(
+            last,
+            [
+                "operations (riff): the label council",
+                "newcomer (riff): the label council",
+                "requirements (riff): the label council",
+            ],
+            "{stdout}"
+        );
+    }
+}
+
 /// `riff council show` exits with 1 when `gh` cannot read the pull
 /// request, and names the call.
 #[test]
@@ -485,8 +552,7 @@ fn riff_council_show_exits_with_1_when_gh_cannot_read_the_pull_request() {
 /// "See the council of a pull request" in the book has
 /// `riff council show 40` in a copyable `sh` block. Each line of its
 /// example comes, in that order, in the output for a pull request that
-/// changes a `.rs` file and a page of the book, with the label
-/// `security`.
+/// changes a `.rs` file and a page of the book, with the label `council`.
 #[test]
 fn the_book_shows_the_council_of_a_pull_request() {
     let how_to = under("how-it-works.md", "#### See the council of a pull request");
@@ -502,7 +568,7 @@ fn the_book_shows_the_council_of_a_pull_request() {
     let bin = fake_gh(&[(
         40,
         &["crates/riff/src/council.rs", "docs/src/how-it-works.md"],
-        &["security"],
+        &["council"],
     )]);
     let stdout = stdout_of(show(&work, bin.path(), 40));
     let mut rest = stdout.lines();
@@ -516,6 +582,52 @@ fn the_book_shows_the_council_of_a_pull_request() {
         example.contains("== Left out by the limit of 6"),
         "{example}"
     );
+
+    // The same pull request with no label `council`: the one line of the
+    // second example (01M7H6CW5TV0J4MNKM97N683RB).
+    let none = how_to
+        .split("```text\n")
+        .nth(2)
+        .and_then(|rest| rest.split("```").next())
+        .expect("an example of a council with no member");
+    let bin = fake_gh(&[(
+        40,
+        &["crates/riff/src/council.rs", "docs/src/how-it-works.md"],
+        &[],
+    )]);
+    assert_eq!(stdout_of(show(&work, bin.path(), 40)), none);
+}
+
+/// 01M7H6CW5TV0J4MNKM97N683RB: "The council of a verify" says that the
+/// council reviews only a pull request with the label `council`, and its
+/// how-to "Ask for the council of a pull request" makes the label and
+/// gives it to the issue in a copyable `sh` block.
+#[test]
+fn the_book_asks_for_the_council_with_the_label_council() {
+    let part = under("how-it-works.md", "### The council of a verify");
+    let words = part.split_whitespace().collect::<Vec<_>>().join(" ");
+    for said in [
+        "The council reviews only a pull request with the label `council`: a label of the pull \
+         request or of its issue.",
+        "So for a pull request with no label `council`, `riff council show` shows no member, \
+         and the result needs no part `## The council`.",
+        "(#ask-for-the-council-of-a-pull-request)",
+    ] {
+        assert!(words.contains(said), "no {said:?} in {words}");
+    }
+    let how_to = under(
+        "how-it-works.md",
+        "#### Ask for the council of a pull request",
+    );
+    let commands = book::commands_in(&how_to);
+    assert_eq!(
+        commands.last().map(String::as_str),
+        Some("gh issue edit 12 --add-label council"),
+        "{how_to}"
+    );
+    let create = book::shell_words(&commands[0]);
+    assert_eq!(create[..3], ["gh", "label", "create"], "{commands:?}");
+    assert_eq!(create[3], "council", "{commands:?}");
 }
 
 /// 01M7CFBNAKQ0CKCCY9S7WM62FE, 01M7CFBZQ0QNE65WBQ31FSDWGR: "The council
@@ -523,9 +635,9 @@ fn the_book_shows_the_council_of_a_pull_request() {
 /// its mermaid diagram, in the order of the start text of a verify of the
 /// wave. "Report a verify" sends a verify by hand to the same steps, and
 /// shows a result with the part `## The council`
-/// (01M7CFBZSQEEZNZBR9H1S54GS1): one line for each member of a council of
-/// a `.rs` file, in the order of the council and in the form of
-/// 01M7CX5BTPFX77KS5J87C7GBY2.
+/// (01M7CFBZSQEEZNZBR9H1S54GS1): one line for each member of the council
+/// of a pull request with the label `council`, in the order of the
+/// council and in the form of 01M7CX5BTPFX77KS5J87C7GBY2.
 #[test]
 fn the_book_says_each_step_of_the_council_of_a_verify() {
     let part = under("how-it-works.md", "### The council of a verify");
@@ -600,14 +712,17 @@ fn the_book_says_each_step_of_the_council_of_a_verify() {
             name
         })
         .collect();
-    assert_eq!(names, ["design", "testing", "docs", "rust"]);
+    assert_eq!(
+        names,
+        ["design", "testing", "docs", "rust", "security", "attacker"]
+    );
 }
 
 /// 01M7CFBNAKQ0CKCCY9S7WM62FE: the step of the start text of a verify of
 /// the wave that picks the council runs as it is written, in the clone
 /// of a verify: at the head of the pull request, detached. It calls the
-/// riff of the container by its path, and prints the council of a change
-/// of a `.rs` file.
+/// riff of the container by its path, and prints the council of a pull
+/// request with the label `council` (01M7H6CW5TV0J4MNKM97N683RB).
 #[test]
 fn the_start_text_of_a_verify_picks_the_council_in_the_clone_of_the_verify() {
     let root = tempfile::tempdir().unwrap();
@@ -637,7 +752,7 @@ fn the_start_text_of_a_verify_picks_the_council_in_the_clone_of_the_verify() {
     assert_eq!(words[0], riff::daemon::RELAY_BIN, "{step}");
     assert_eq!(words[1..], ["council", "show", "40"], "{step}");
 
-    let bin = fake_gh(&[(40, &["src/a.rs"], &[])]);
+    let bin = fake_gh(&[(40, &["src/a.rs"], &["council"])]);
     let mut path = OsString::from(bin.path());
     path.push(":");
     path.push(std::env::var_os("PATH").unwrap_or_default());
@@ -649,14 +764,5 @@ fn the_start_text_of_a_verify_picks_the_council_in_the_clone_of_the_verify() {
         .output()
         .unwrap();
     let stdout = stdout_of(out);
-    assert_eq!(
-        headings(&stdout),
-        [
-            "design (riff): each council",
-            "testing (riff): each council",
-            "docs (riff): each council",
-            "rust (riff): the path src/a.rs matches **/*.rs",
-        ],
-        "{stdout}"
-    );
+    assert_eq!(headings(&stdout), WITH_LABEL, "{stdout}");
 }

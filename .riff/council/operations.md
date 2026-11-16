@@ -1,14 +1,5 @@
 +++
-files = [
-    "**/*daemon*",
-    "**/daemon/**",
-    "**/*release*",
-    "**/*update*",
-    "**/cloud.rs",
-    "deploy/**",
-    ".github/workflows/**",
-]
-labels = ["operations"]
+labels = ["council"]
 +++
 
 # Operations

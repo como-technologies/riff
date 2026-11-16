@@ -525,11 +525,13 @@ enum Command {
     },
     /// Show the members of the council of a verify
     ///
-    /// The council of a verify reviews each change in focused areas, with
-    /// one member for each area. Each member is one file,
-    /// .riff/council/NAME.md. riff builds in a default set. A file of the
-    /// repository with the name of a default member takes its place, and a
-    /// file with a new name adds a member.
+    /// The council of a verify reviews a change in focused areas, with one
+    /// member for each area. Each member is one file,
+    /// .riff/council/NAME.md. riff builds in a default set. Each member of
+    /// the default set joins only a pull request with the label council, on
+    /// the pull request or on its issue. A file of the repository with the
+    /// name of a default member takes its place, and a file with a new name
+    /// adds a member.
     Council {
         #[command(subcommand)]
         command: CouncilCommand,

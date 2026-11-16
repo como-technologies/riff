@@ -35,13 +35,15 @@
 //! use riff::council::pick::{Change, pick};
 //! use riff::council::result::check;
 //!
-//! let change = Change { paths: vec!["src/a.rs".into()], labels: vec![] };
+//! let change = Change { paths: vec!["src/a.rs".into()], labels: vec!["council".into()] };
 //! let council = pick(default_set()?, &change);
 //! let result = "PASS\n\n- It works.\n\n## The council\n\n\
 //!               - design: no finding.\n\
 //!               - testing: no finding.\n\
 //!               - **docs**: not shown: docs/a.md:3: .riff/council/docs.md \"No stale text\": an old flag.\n\
-//!               - rust: no finding.\n";
+//!               - rust: no finding.\n\
+//!               - security: no finding.\n\
+//!               - attacker: no finding.\n";
 //! assert!(check(&council, result).is_ok());
 //! let fault = check(&council, &result.replace("- rust: no finding.\n", "")).unwrap_err();
 //! assert_eq!(fault.members().map(|m| m.as_str()).collect::<Vec<_>>(), ["rust"]);
@@ -88,17 +90,25 @@ impl std::error::Error for NoLine {}
 /// Checks that the part `## The council` of `result` has a line for each
 /// member of `council` (01M7CFBZSQEEZNZBR9H1S54GS1,
 /// 01M7D11KGEJ8ACFJK6Y10WENJZ). A result with no such part has a line for
-/// no member.
+/// no member. A council with no member, for example of a pull request
+/// with no label `council` (01M7H6CW5TV0J4MNKM97N683RB), needs no line.
 ///
 /// ```
 /// use riff::council::default_set;
 /// use riff::council::pick::{Change, pick};
 /// use riff::council::result::check;
 ///
-/// let council = pick(default_set()?, &Change { paths: vec!["justfile".into()], labels: vec![] });
+/// let change = Change { paths: vec!["justfile".into()], labels: vec!["council".into()] };
+/// let council = pick(default_set()?, &change);
 /// let fault = check(&council, "PASS\n\n- It works.\n").unwrap_err();
-/// assert_eq!(fault.members().count(), 3);
-/// assert!(fault.to_string().contains("for design, testing and docs."), "{fault}");
+/// assert_eq!(fault.members().count(), 6);
+/// assert!(
+///     fault.to_string().contains("for design, testing, docs, rust, security and attacker."),
+///     "{fault}"
+/// );
+///
+/// let everyday = pick(default_set()?, &Change { labels: vec![], ..change });
+/// assert!(check(&everyday, "PASS\n\n- It works.\n").is_ok());
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn check(council: &Council, result: &str) -> Result<(), NoLine> {
@@ -170,16 +180,48 @@ pub fn first_word(line: &str) -> Option<&str> {
 mod tests {
     use super::*;
     use crate::council::default_set;
-    use crate::council::pick::{Change, pick};
+    use crate::council::pick::{Change, Seat, Why, pick};
 
-    /// The council of a change of a `.rs` file: design, testing, docs and
-    /// rust.
+    /// A council of design, testing, docs and rust: the first 4 members of
+    /// the default set, for the label `council`.
     fn council() -> Council {
-        let change = Change {
+        let seats = default_set()
+            .unwrap()
+            .into_iter()
+            .take(4)
+            .map(|member| Seat {
+                member,
+                why: Why::Label("council".into()),
+            })
+            .collect();
+        Council {
+            seats,
+            left_out: vec![],
+        }
+    }
+
+    /// 01M7H6CW5TV0J4MNKM97N683RB: the council of a pull request with no
+    /// label `council` has no member, so a PASS needs no line and no part
+    /// `## The council`. With the label, a PASS needs a line for each of
+    /// the 6 members.
+    #[test]
+    fn a_pass_with_no_label_council_needs_no_part() {
+        let change = |labels: &[&str]| Change {
             paths: vec!["crates/riff/src/council.rs".into()],
-            labels: vec![],
+            labels: labels.iter().map(|label| label.to_string()).collect(),
         };
-        pick(default_set().unwrap(), &change)
+        let everyday = pick(default_set().unwrap(), &change(&["security"]));
+        for text in ["PASS\n\n- It works.\n", result(&[]).as_str()] {
+            assert_eq!(check(&everyday, text), Ok(()), "{text}");
+        }
+        let council = pick(default_set().unwrap(), &change(&["council"]));
+        let fault = check(&council, "PASS\n\n- It works.\n").unwrap_err();
+        assert_eq!(
+            fault.members().map(Name::as_str).collect::<Vec<_>>(),
+            ["design", "testing", "docs", "rust", "security", "attacker"]
+        );
+        let all = ["design", "testing", "docs", "rust", "security", "attacker"];
+        assert_eq!(check(&council, &result(&all)), Ok(()));
     }
 
     /// A PASS with the part `## The council`, with the line of each name

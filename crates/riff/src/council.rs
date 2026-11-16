@@ -18,7 +18,10 @@
 //! file with the name of a default member takes its place, and a file
 //! with a new name adds a member. The default set comes first, in the
 //! order of 01M7CFBZHQZ8FDT3Q0NGYKBZWB, then each other member in the
-//! order of its name (01M7CN1H1XGQVBGFH30MRE1BP4).
+//! order of its name (01M7CN1H1XGQVBGFH30MRE1BP4). Each member of the
+//! default set has `labels = ["council"]` and no `files`: it joins only
+//! the council of a pull request when the pull request or its issue has
+//! the label `council` (01M7H6CW5TV0J4MNKM97N683RB).
 //!
 //! ```mermaid
 //! flowchart TD
@@ -737,8 +740,8 @@ fn member_name(path: &Path) -> Result<Option<Name>> {
 /// let plain = anstream::adapter::strip_str(&riff::council::list(&members)).to_string();
 /// let lines: Vec<&str> = plain.lines().collect();
 /// assert!(lines[0].starts_with("MEMBER"), "{plain}");
-/// assert!(lines[1].starts_with("design ") && lines[1].ends_with("each council"), "{plain}");
-/// assert!(lines[4].starts_with("rust ") && lines[4].ends_with("files **/*.rs"), "{plain}");
+/// assert!(lines[1].starts_with("design ") && lines[1].ends_with(" labels council"), "{plain}");
+/// assert!(lines[4].starts_with("rust ") && lines[4].ends_with(" labels council"), "{plain}");
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn list(members: &[Member]) -> String {
@@ -787,20 +790,12 @@ mod tests {
         out
     }
 
-    /// The globs and the labels of `member`.
-    fn area(member: &Member) -> (&[String], &[String]) {
-        match &member.joins {
-            Joins::Each => panic!("{} joins each council", member.name),
-            Joins::Area { files, labels } => (files, labels),
-        }
-    }
-
     /// 01M7CFBZ7839WHMFARR4T6W13W: each file of `.riff/council/` is a
     /// member of the default set that riff builds in, with the text of
     /// the file. The set has the 9 members, in the order of
-    /// 01M7CFBZHQZ8FDT3Q0NGYKBZWB, with their keys
-    /// (01M7CFBZCDFGG1MV4DEAACQVXK, 01M7CFBZF1BZ0E7H0D4Q7KKY1T) and
-    /// their rules.
+    /// 01M7CFBZHQZ8FDT3Q0NGYKBZWB, with their rules
+    /// (01M7CFBZCDFGG1MV4DEAACQVXK). Each member has `labels =
+    /// ["council"]` and no `files` (01M7H6CW5TV0J4MNKM97N683RB).
     #[test]
     fn the_default_set_is_each_file_of_the_folder_of_riff() {
         let set = default_set().unwrap();
@@ -846,12 +841,22 @@ mod tests {
             for rule in &member.rules {
                 assert!(!rule.text.is_empty(), "{}: {rule:?}", member.name);
             }
+            assert_eq!(
+                member.joins,
+                Joins::Area {
+                    files: vec![],
+                    labels: vec!["council".into()]
+                },
+                "{}",
+                member.name
+            );
+            assert!(
+                text.starts_with("+++\nlabels = [\"council\"]\n+++\n"),
+                "{}",
+                member.name
+            );
         }
         let member = |name: &str| set.iter().find(|m| m.name.as_str() == name).unwrap();
-        for name in ["design", "testing", "docs"] {
-            assert_eq!(member(name).joins, Joins::Each, "{name}");
-        }
-        assert_eq!(area(member("rust")), (&["**/*.rs".to_owned()][..], &[][..]));
         let rust: Vec<&str> = member("rust")
             .rules
             .iter()
@@ -864,18 +869,6 @@ mod tests {
         ] {
             assert!(rust.contains(&pattern), "{pattern}: {rust:?}");
         }
-        let (files, labels) = area(member("security"));
-        assert!(
-            files.contains(&"crates/riff-server/**".to_owned()),
-            "{files:?}"
-        );
-        assert_eq!(labels, ["security"]);
-        assert_eq!(member("attacker").joins, member("security").joins);
-        assert_eq!(area(member("operations")).1, ["operations"]);
-        let (files, labels) = area(member("requirements"));
-        assert!(files.contains(&"**/requirements*.md".to_owned()) && labels.is_empty());
-        let (files, labels) = area(member("newcomer"));
-        assert!(files.contains(&"docs/**".to_owned()) && labels.is_empty());
     }
 
     /// 01M7CFBZ9TJ83FNHN0APY41175: a file with no table, a table that

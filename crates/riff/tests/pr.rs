@@ -36,16 +36,19 @@ fn fake_gh(bin: &Path, cases: &str) {
 }
 
 /// The reads of `riff council show 40` (01M7D11KGEJ8ACFJK6Y10WENJZ): the
-/// base branch `main`, the path `src/lib.rs` and no label. With the base
-/// branch of [`repo`], the council is design, testing, docs and rust.
+/// base branch `main`, the path `src/lib.rs`, and the label `council` on
+/// issue 12 (01M7H6CW5TV0J4MNKM97N683RB). With the base branch of
+/// [`repo`], the council is design, testing, docs, rust, security and
+/// attacker.
 const COUNCIL_READS: &str = r#"*'pr view 40 --json baseRefName,body,labels'*) printf '%s' '{"baseRefName":"main","body":"Closes #12\n\nIssue: #12\n","labels":[]}' ;;
 *'pulls/40/files?per_page=100 --paginate'*) echo src/lib.rs ;;
-*'issue view 12 --json labels'*) echo '{"labels":[]}' ;;"#;
+*'issue view 12 --json labels'*) echo '{"labels":[{"name":"council"}]}' ;;"#;
 
 /// A result with a line for each member of the council of
 /// [`COUNCIL_READS`].
 const RESULT: &str = "1. The wave shows.\n\n## The council\n\n- design: no finding.\n\
-                      - testing: no finding.\n- docs: no finding.\n- rust: no finding.\n";
+                      - testing: no finding.\n- docs: no finding.\n- rust: no finding.\n\
+                      - security: no finding.\n- attacker: no finding.\n";
 
 fn log(bin: &Path) -> String {
     std::fs::read_to_string(bin.join("gh.log")).unwrap_or_default()
@@ -943,7 +946,8 @@ async fn verify_pass_refuses_a_body_that_closes_an_issue_with_a_live_line() {
 
 /// 01M7CFBZSQEEZNZBR9H1S54GS1, 01M7D11KGEJ8ACFJK6Y10WENJZ: `riff verify
 /// pass` reads the council of the pull request as `riff council show`
-/// does: design, testing, docs and rust for a change of `src/lib.rs`. A
+/// does: design, testing, docs, rust, security and attacker for an issue
+/// with the label `council`. A
 /// result with no part `## The council` gets no squash message, no
 /// comment, no status and no post, and the line names each member. A
 /// result with no line for docs names docs only. `riff verify fail`
@@ -959,7 +963,13 @@ async fn verify_pass_refuses_a_result_with_no_line_for_a_member_of_the_council()
     let no_part = machine.write("result.md", "1. The wave shows.\n");
     let no_docs = machine.write("no-docs.md", &RESULT.replace("- docs: no finding.\n", ""));
     for (result, members) in [
-        (&no_part, no_line("design", &["testing", "docs", "rust"])),
+        (
+            &no_part,
+            no_line(
+                "design",
+                &["testing", "docs", "rust", "security", "attacker"],
+            ),
+        ),
         (&no_docs, no_line("docs", &[])),
     ] {
         let pass = [
@@ -987,8 +997,11 @@ async fn verify_pass_refuses_a_result_with_no_line_for_a_member_of_the_council()
         assert!(!inbox.contains("verify result:"), "{inbox}");
     }
     assert!(
-        riff::text::verify_no_council_line(&no_line("design", &["testing", "docs", "rust"]))
-            .contains("for design, testing, docs and rust.")
+        riff::text::verify_no_council_line(&no_line(
+            "design",
+            &["testing", "docs", "rust", "security", "attacker"]
+        ))
+        .contains("for design, testing, docs, rust, security and attacker.")
     );
 
     // A fail can stop early: it needs no part `## The council`.

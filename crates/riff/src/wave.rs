@@ -14813,7 +14813,7 @@ esac
         keep_pass_with_no_line(&built, &fork, &folder);
 
         let reports = kept::report_all(&gh, &built.api, &built.lead, &wave, &sessions).await;
-        let message = text::wave_no_council_line("verify-issue-12", 7, &docs_and_big_o(), true);
+        let message = text::wave_no_council_line("verify-issue-12", 7, &big_o(), true);
         assert_eq!(reports.lines, std::slice::from_ref(&message));
         let [end] = &reports.ends[..] else {
             panic!("one end: {reports:?}");
@@ -14871,8 +14871,8 @@ esac
 
     /// Keeps in the folder `folder` of a session the PASS of the verify of
     /// pull request 7 of `fork`, as the end step keeps it on a limit of
-    /// GitHub. Its result has no line for docs and big-o
-    /// ([`docs_and_big_o`]), and its session ended with exit code 0.
+    /// GitHub. Its result has no line for big-o ([`big_o`]), and its
+    /// session ended with exit code 0.
     fn keep_pass_with_no_line(built: &Built, fork: &Fork, folder: &Path) {
         verify_folder(fork, folder);
         let result = "- It works.\n\n## The council\n\n- design: no finding.\n\
@@ -14976,11 +14976,12 @@ esac
 
     /// The git of a test of the council of a verify of the wave: a
     /// [`Fork`] whose `origin` got the member file `big-o` on `main` after
-    /// the main clone was made. `big-o` joins each council, so the council
-    /// of pull request 7 is design, testing, docs and big-o, and only a
-    /// fetch in the main clone reads `big-o`. It also gives the folder of
-    /// the sessions of the test, where the host runs no git, as in the
-    /// folder of the sessions of a daemon ([`crate::host_git::guard_also`]).
+    /// the main clone was made. `big-o` joins each council, and pull request
+    /// 7 has no label `council` (01M7H6CW5TV0J4MNKM97N683RB). So its council
+    /// is big-o, and only a fetch in the main clone reads `big-o`. It also
+    /// gives the folder of the sessions of the test, where the host runs no
+    /// git, as in the folder of the sessions of a daemon
+    /// ([`crate::host_git::guard_also`]).
     fn council_fork() -> (Fork, PathBuf) {
         let fork = Fork::new();
         let work = &fork.fork;
@@ -15011,12 +15012,12 @@ esac
         );
     }
 
-    /// The members of the council of pull request 7 of [`council_fork`]
+    /// The member of the council of pull request 7 of [`council_fork`]
     /// with no line in a result that has the lines of design and testing.
-    fn docs_and_big_o() -> crate::council::result::NoLine {
+    fn big_o() -> crate::council::result::NoLine {
         crate::council::result::NoLine {
-            first: "docs".parse().unwrap(),
-            rest: vec!["big-o".parse().unwrap()],
+            first: "big-o".parse().unwrap(),
+            rest: vec![],
         }
     }
 
@@ -15041,7 +15042,7 @@ esac
             },
         };
 
-        let refused = anyhow::Error::new(docs_and_big_o());
+        let refused = anyhow::Error::new(big_o());
         let failed = refused_pass(&built.api, &built.lead, session, &refused).await;
         let found = failed.found();
         assert_eq!(found, Found::NoVerdict);
@@ -15069,11 +15070,11 @@ esac
     /// 01M7DZ4E5BZAD38E3K9A3N277E: the report of a verify of the wave reads
     /// the council of the pull request in the main clone of the wave, as
     /// `riff council show` does: it fetches `main` there, and the council is
-    /// design, testing, docs and big-o. It runs no git in the clone of the
+    /// big-o. It runs no git in the clone of the
     /// verify, and the member file `evil` of that clone counts for nothing.
-    /// A PASS with no line for docs and big-o is a result with no verdict:
+    /// A PASS with no line for big-o is a result with no verdict:
     /// no squash message, no comment and no status. The lead gets a message
-    /// that names docs and big-o, the session leaves a record in the thread
+    /// that names big-o, the session leaves a record in the thread
     /// `ends`, the folder goes, and the start counts. The same PASS with a
     /// line for each member is on the pull request, and leaves no record.
     #[tokio::test]
@@ -15124,7 +15125,7 @@ esac
         };
 
         let (record, done) = verify(1, "- design: no finding.\n- testing: no finding.\n").await;
-        let message = text::wave_no_council_line("verify-issue-12", 7, &docs_and_big_o(), true);
+        let message = text::wave_no_council_line("verify-issue-12", 7, &big_o(), true);
         assert_eq!(done.lines, std::slice::from_ref(&message));
         assert!(!done.reported(), "no verdict: the start counts");
         // The reason of the end, as the daemon keeps it for the message
@@ -15175,9 +15176,7 @@ esac
             (Kind::Message, &message)
         );
         assert!(
-            one.message
-                .body
-                .contains("`## The council` for docs and big-o."),
+            one.message.body.contains("`## The council` for big-o."),
             "{one:?}"
         );
 
@@ -15200,10 +15199,10 @@ esac
     /// 01M7DZ4E5BZAD38E3K9A3N277E, 01M7G6H601C6NYC7ACSF6GVW50: the report
     /// of a kept PASS reads the council of the pull request in the main
     /// clone of the wave, and runs no git in the clone of its folder. A
-    /// kept PASS with no line for docs and big-o is a result with no
+    /// kept PASS with no line for big-o is a result with no
     /// verdict: no squash message, no comment and no status. Its session
     /// leaves a record in the thread `ends`, the folder goes, and the lead
-    /// gets the message that names docs and big-o. The report gives the
+    /// gets the message that names big-o. The report gives the
     /// end of that session, with the reason of its record, for the
     /// message "started N times" (01M7G3DR4R4KF5RSD94F6ZN80H). A kept PASS
     /// with a line for each member is on the pull request, and leaves no
@@ -15245,7 +15244,7 @@ esac
         let report = || kept::report_all(&gh, &built.api, &built.lead, &wave, &sessions);
 
         let folder = keep(1, "- design: no finding.\n- testing: no finding.\n");
-        let message = text::wave_no_council_line("verify-issue-12", 7, &docs_and_big_o(), true);
+        let message = text::wave_no_council_line("verify-issue-12", 7, &big_o(), true);
         let reports = report().await;
         assert_eq!(reports.lines, std::slice::from_ref(&message));
         let [end] = &reports.ends[..] else {

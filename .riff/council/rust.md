@@ -1,5 +1,5 @@
 +++
-files = ["**/*.rs"]
+labels = ["council"]
 +++
 
 # The Rust expert

@@ -42,7 +42,9 @@
 //! ([`Why::of`]). The council takes first the members that join each
 //! council, then the others. In each group, the default set comes in its
 //! order, then each other member in the order of its name. A council has
-//! at most [`LIMIT`] members ([`pick`]).
+//! at most [`LIMIT`] members ([`pick`]). Each member of the default set
+//! joins only for the label `council` (01M7H6CW5TV0J4MNKM97N683RB): a
+//! change with no such label gets no member of the default set.
 //!
 //! ```
 //! use riff::council::default_set;
@@ -50,14 +52,18 @@
 //!
 //! let change = Change {
 //!     paths: vec!["crates/riff/src/council.rs".into()],
-//!     labels: vec!["security".into()],
+//!     labels: vec!["council".into()],
 //! };
 //! let council = pick(default_set()?, &change);
 //! let names: Vec<&str> = council.seats.iter().map(|seat| seat.member.name.as_str()).collect();
 //! assert_eq!(names, ["design", "testing", "docs", "rust", "security", "attacker"]);
-//! assert_eq!(council.seats[3].why.to_string(), "the path crates/riff/src/council.rs matches **/*.rs");
-//! assert_eq!(council.seats[4].why.to_string(), "the label security");
-//! assert!(council.left_out.is_empty());
+//! assert_eq!(council.seats[3].why.to_string(), "the label council");
+//! let left_out: Vec<&str> = council.left_out.iter().map(|seat| seat.member.name.as_str()).collect();
+//! assert_eq!(left_out, ["requirements", "newcomer", "operations"]);
+//!
+//! let everyday = Change { labels: vec!["security".into()], ..change };
+//! let council = pick(default_set()?, &everyday);
+//! assert!(council.seats.is_empty() && council.left_out.is_empty());
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
@@ -295,14 +301,20 @@ impl Council {
     /// use riff::council::default_set;
     /// use riff::council::pick::{Change, pick};
     ///
-    /// let change = Change { paths: vec!["src/a.rs".into()], labels: vec![] };
+    /// let change = Change { paths: vec!["src/a.rs".into()], labels: vec!["council".into()] };
     /// let text = pick(default_set()?, &change).text(40, "origin/main");
     /// let lines: Vec<&str> = text.lines().collect();
-    /// assert_eq!(lines[0], "The council of pull request #40 has 4 members. riff read the member files of origin/main.");
-    /// assert_eq!(lines[2], "== design (riff): each council");
+    /// assert_eq!(lines[0], "The council of pull request #40 has 6 members. riff read the member files of origin/main.");
+    /// assert_eq!(lines[2], "== design (riff): the label council");
     /// assert_eq!(lines[4], "# Design");
-    /// assert!(lines.contains(&"== rust (riff): the path src/a.rs matches **/*.rs"), "{text}");
-    /// assert!(!text.contains("Left out"), "{text}");
+    /// assert!(lines.contains(&"== rust (riff): the label council"), "{text}");
+    /// assert!(lines.contains(&"newcomer (riff): the label council"), "{text}");
+    ///
+    /// let everyday = Change { labels: vec![], ..change };
+    /// assert_eq!(
+    ///     pick(default_set()?, &everyday).text(40, "origin/main"),
+    ///     "The council of pull request #40 has no member. riff read the member files of origin/main.\n"
+    /// );
     /// # Ok::<(), anyhow::Error>(())
     /// ```
     pub fn text(&self, number: u64, branch: &str) -> String {
@@ -499,40 +511,53 @@ mod tests {
         seats.iter().map(|seat| seat.member.name.as_str()).collect()
     }
 
-    /// 01M7CFBZCDFGG1MV4DEAACQVXK, 01M7CFBZF1BZ0E7H0D4Q7KKY1T: a change of
-    /// a `.rs` file gets design, testing, docs and rust. A change of
-    /// `docs/src/start-a-riff.md` gets design, testing, docs, requirements
-    /// and newcomer. The label `security` brings security and attacker.
+    /// 01M7H6CW5TV0J4MNKM97N683RB: a change with no label `council` gets
+    /// no member of the default set, also for a `.rs` file, a page of the
+    /// book, `requirements.md`, the files of riff-server, the daemon, or
+    /// the old labels `security` and `operations`. With the label
+    /// `council`, of the pull request or of its issue, each member joins
+    /// for that label, up to the limit, also with no path.
     #[test]
-    fn the_files_and_the_labels_of_the_change_pick_the_members() {
-        for (paths, labels, want) in [
-            (
-                &["crates/riff/src/council.rs"][..],
-                &[][..],
-                &["design", "testing", "docs", "rust"][..],
-            ),
-            (
-                &["docs/src/start-a-riff.md"],
-                &[],
-                &["design", "testing", "docs", "requirements", "newcomer"],
-            ),
-            (
-                &["justfile"],
-                &["security"],
-                &["design", "testing", "docs", "security", "attacker"],
-            ),
-            (&["justfile"], &[], &["design", "testing", "docs"]),
-        ] {
-            let council = pick(default_set().unwrap(), &change(paths, labels));
-            assert_eq!(names(&council.seats), want, "{paths:?} {labels:?}");
-            assert!(council.left_out.is_empty(), "{paths:?} {labels:?}");
+    fn only_the_label_council_picks_the_members_of_the_default_set() {
+        let everyday = [
+            &["crates/riff/src/council.rs"][..],
+            &["docs/src/start-a-riff.md"],
+            &["docs/src/requirements.md"],
+            &["crates/riff-server/src/main.rs", "deploy/Dockerfile"],
+            &[
+                "crates/riff/src/daemon/sweep.rs",
+                ".github/workflows/ci.yml",
+            ],
+            &["justfile"],
+            &[],
+        ];
+        for paths in everyday {
+            for labels in [&[][..], &["security", "operations"]] {
+                let council = pick(default_set().unwrap(), &change(paths, labels));
+                assert_eq!(
+                    council,
+                    Council {
+                        seats: vec![],
+                        left_out: vec![]
+                    },
+                    "{paths:?} {labels:?}"
+                );
+            }
+            let council = pick(default_set().unwrap(), &change(paths, &["bug", "council"]));
+            assert_eq!(
+                names(&council.seats),
+                ["design", "testing", "docs", "rust", "security", "attacker"],
+                "{paths:?}"
+            );
+            assert_eq!(
+                names(&council.left_out),
+                ["requirements", "newcomer", "operations"],
+                "{paths:?}"
+            );
+            for seat in council.seats.iter().chain(&council.left_out) {
+                assert_eq!(seat.why, Why::Label("council".into()), "{paths:?}");
+            }
         }
-        let council = pick(
-            default_set().unwrap(),
-            &change(&["justfile"], &["security"]),
-        );
-        assert_eq!(council.seats[0].why, Why::Each);
-        assert_eq!(council.seats[3].why, Why::Label("security".into()));
     }
 
     /// 01M7CFBZHQZ8FDT3Q0NGYKBZWB: a change that each member matches gets
@@ -542,7 +567,7 @@ mod tests {
     fn a_change_that_each_member_matches_gets_6_and_names_the_3_left_out() {
         let each = change(
             &["crates/riff-server/src/main.rs", "docs/src/requirements.md"],
-            &["operations"],
+            &["council"],
         );
         let council = pick(default_set().unwrap(), &each);
         assert_eq!(
@@ -566,21 +591,21 @@ mod tests {
         assert_eq!(
             headings,
             [
-                "design (riff): each council",
-                "testing (riff): each council",
-                "docs (riff): each council",
-                "rust (riff): the path crates/riff-server/src/main.rs matches **/*.rs",
-                "security (riff): the path crates/riff-server/src/main.rs matches crates/riff-server/**",
-                "attacker (riff): the path crates/riff-server/src/main.rs matches crates/riff-server/**",
+                "design (riff): the label council",
+                "testing (riff): the label council",
+                "docs (riff): the label council",
+                "rust (riff): the label council",
+                "security (riff): the label council",
+                "attacker (riff): the label council",
                 "Left out by the limit of 6",
             ]
         );
         assert_eq!(
             lines[lines.len() - 3..],
             [
-                "requirements (riff): the path docs/src/requirements.md matches **/requirements*.md",
-                "newcomer (riff): the path docs/src/requirements.md matches docs/**",
-                "operations (riff): the label operations",
+                "requirements (riff): the label council",
+                "newcomer (riff): the label council",
+                "operations (riff): the label council",
             ]
         );
         for seat in &council.seats {
@@ -598,8 +623,9 @@ mod tests {
     }
 
     /// 01M7CFBZHQZ8FDT3Q0NGYKBZWB: a member of the repository with no keys
-    /// comes after docs, and a new member by area comes after operations.
-    /// Each other member comes in the order of its name.
+    /// comes first, and a new member by area comes after operations. Each
+    /// other member comes in the order of its name. With no label
+    /// `council`, only the members of the repository join.
     #[test]
     fn a_member_of_the_repository_comes_after_the_default_set_of_its_group() {
         let top = tempfile::tempdir().unwrap();
@@ -612,34 +638,37 @@ mod tests {
         write(
             top.path(),
             "big-o.md",
-            "+++\nlabels = [\"slow\"]\n+++\n# Big O\n",
+            "+++\nlabels = [\"slow\", \"council\"]\n+++\n# Big O\n",
         );
         let members = of_tree(top.path()).unwrap();
         let council = pick(members.clone(), &change(&["notes/daemon.txt"], &[]));
+        assert_eq!(names(&council.seats), ["attic", "performance"]);
+        assert_eq!(council.seats[0].why, Why::Each);
         assert_eq!(
-            names(&council.seats),
-            [
-                "design",
-                "testing",
-                "docs",
-                "attic",
-                "operations",
-                "performance"
-            ]
-        );
-        assert_eq!(
-            council.seats[5].why,
+            council.seats[1].why,
             Why::Path {
                 path: "notes/daemon.txt".into(),
                 glob: "**".into()
             }
         );
-        let council = pick(members, &change(&["notes/daemon.txt"], &["slow"]));
+        let council = pick(members.clone(), &change(&["notes/daemon.txt"], &["slow"]));
+        assert_eq!(names(&council.seats), ["attic", "big-o", "performance"]);
+        let council = pick(members, &change(&["notes/daemon.txt"], &["council"]));
         assert_eq!(
             names(&council.seats),
-            ["design", "testing", "docs", "attic", "operations", "big-o"]
+            ["attic", "design", "testing", "docs", "rust", "security"]
         );
-        assert_eq!(names(&council.left_out), ["performance"]);
+        assert_eq!(
+            names(&council.left_out),
+            [
+                "attacker",
+                "requirements",
+                "newcomer",
+                "operations",
+                "big-o",
+                "performance"
+            ]
+        );
     }
 
     /// A file of the default set that takes the place of a member keeps
@@ -648,9 +677,18 @@ mod tests {
     fn a_file_in_the_place_of_a_default_member_keeps_its_place() {
         let top = tempfile::tempdir().unwrap();
         write(top.path(), "rust.md", "+++\n+++\n# Our Rust\n");
+        write(top.path(), "attic.md", "+++\n+++\n# Attic\n");
         let council = pick(of_tree(top.path()).unwrap(), &change(&["justfile"], &[]));
-        assert_eq!(names(&council.seats), ["design", "testing", "docs", "rust"]);
-        assert_eq!(council.seats[3].why, Why::Each);
+        assert_eq!(names(&council.seats), ["rust", "attic"]);
+        assert_eq!(council.seats[0].why, Why::Each);
+        let council = pick(
+            of_tree(top.path()).unwrap(),
+            &change(&["justfile"], &["council"]),
+        );
+        assert_eq!(
+            names(&council.seats),
+            ["rust", "attic", "design", "testing", "docs", "security"]
+        );
     }
 
     /// A text of a member file, of a path or of a label goes to the
@@ -663,6 +701,11 @@ mod tests {
             "perf.md",
             "+++\nlabels = [\"a\\u001b]0;x\\u0007b\"]\n+++\n# Perf\x1b[2J\n\nYou review.\n",
         );
+        write(
+            top.path(),
+            "lint.md",
+            "+++\nfiles = [\"**/*.rs\"]\n+++\n# Lint\n",
+        );
         let council = pick(
             of_tree(top.path()).unwrap(),
             &change(&["src/\u{1b}[31ma.rs"], &["a\u{1b}]0;x\u{7}b"]),
@@ -674,7 +717,10 @@ mod tests {
             text.contains("== perf (.riff/council/perf.md): the label ab"),
             "{text}"
         );
-        assert!(text.contains("the path src/a.rs matches **/*.rs"), "{text}");
+        assert!(
+            text.contains("== lint (.riff/council/lint.md): the path src/a.rs matches **/*.rs"),
+            "{text}"
+        );
     }
 
     /// The glob matches by the parts of the path.

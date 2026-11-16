@@ -1,5 +1,5 @@
 +++
-files = ["**/requirements*.md", "docs/**"]
+labels = ["council"]
 +++
 
 # Requirements
