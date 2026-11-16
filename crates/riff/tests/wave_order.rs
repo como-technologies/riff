@@ -9,7 +9,8 @@
 //! that change one file, and whose heads merge with no conflict in a real
 //! git, get their verifies side by side (#1895). A verify request or a
 //! verify result counts only from its right sender (#2027). A rebase that
-//! waits for its turn after a pull request waits for no other (#2219).
+//! waits for its turn after a pull request waits for no other, also
+//! through a look with no lanes (#2219).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -17,7 +18,7 @@ use std::process::Command;
 
 use riff::pr::Gh;
 use riff::wave::{self, Work};
-use riff_core::wire::{Kind, Message};
+use riff_core::wire::{Kind, Message, RiffState};
 
 const REPO: &str = "o/r";
 
@@ -410,7 +411,7 @@ fn a_rebase_that_waits_for_its_turn_waits_for_no_other_pull_request() {
         BTreeMap::from([(3, 42)]),
         "with no turn, it would wait for #42"
     );
-    turns.mark(&mut failed.lanes);
+    failed.turns = turns;
     assert!(wave::order(&failed, &running, &starts).is_empty());
     assert_eq!(
         wave::pick(&failed, &running, &starts),
@@ -423,12 +424,80 @@ fn a_rebase_that_waits_for_its_turn_waits_for_no_other_pull_request() {
     at(pull(1, fixed, None));
     let running = items(&["verify-issue-1", "verify-issue-2"]);
     let mut again = look(&gh, &messages);
-    turns.mark(&mut again.lanes);
+    again.turns = turns;
     assert!(wave::order(&again, &running, &starts).is_empty());
     assert_eq!(
         wave::pick(&again, &running, &starts),
         Some(rebase(3, three))
     );
+}
+
+/// #2219: as in the test above, the rebase of 3 waits for its turn after
+/// #41. Then a person holds `issue-3`: the rebase has no place in the
+/// order. Then the issue 3 gets the label `question`: no verify and no
+/// rebase is free work, so the look has no lanes. Then the wave is
+/// paused. The rebase of 3 keeps its turn through these looks: after the
+/// failed verify of 1, it starts while the verify of 2 runs.
+#[test]
+fn a_rebase_keeps_its_turn_through_a_look_with_no_lanes() {
+    let dir = tempfile::tempdir().unwrap();
+    let (one, two, three) = ("aaaa1111", "bbbb2222", "cccc3333");
+    let tui: &[&str] = &["crates/riff/src/tui.rs"];
+    let files = [(41, tui), (42, tui), (43, tui)];
+    let at = |first: String| {
+        let third = pull_in(3, three, None, "CONFLICTING");
+        forge(dir.path(), &[first, pull(2, two, None), third], &files)
+    };
+    let gh = at(pull(1, one, None));
+    let mut messages = vec![request(1, one), request(2, two), request(3, three)];
+    let items =
+        |names: &[&str]| -> BTreeSet<String> { names.iter().map(|n| n.to_string()).collect() };
+    let look = |claims: &[&str], holds: &[&str], messages: &[Message]| {
+        wave::look_with(&gh, REPO, items(claims), items(holds), messages).unwrap()
+    };
+    let (none, starts) = (BTreeSet::new(), BTreeMap::new());
+
+    // The sessions of another host claim the verifies of 1 and 2.
+    let verifies = ["verify-issue-1", "verify-issue-2"];
+    let both = look(&verifies, &[], &messages);
+    assert_eq!(
+        wave::order(&both, &none, &starts),
+        BTreeMap::from([(3, 41)])
+    );
+    let turns = wave::turns(&both, &none, &starts);
+
+    let mut held = look(&verifies, &["issue-3"], &messages);
+    held.turns = turns;
+    assert!(wave::order(&held, &none, &starts).is_empty());
+    assert_eq!(wave::pick(&held, &none, &starts), None);
+    let turns = wave::turns(&held, &none, &starts);
+
+    let labels = r#""number":3,"body":"Done when: x.","comments":[],"milestone":{"title":"Wave 1"},"labels":["#;
+    let question = ISSUES.replace(labels, &format!(r#"{labels}{{"name":"question"}}"#));
+    assert_ne!(question, ISSUES);
+    std::fs::write(dir.path().join("issues"), question).unwrap();
+    let mut asking = look(&verifies, &[], &messages);
+    assert!(asking.lanes.is_empty(), "{asking:?}");
+    asking.turns = turns;
+    let turns = wave::turns(&asking, &none, &starts);
+
+    let thread = REPO.parse().unwrap();
+    let mut paused = wave::stopped(&RiffState::Paused.into(), &thread).unwrap();
+    paused.turns = turns;
+    let turns = wave::turns(&paused, &none, &starts);
+
+    // The verify of 1 failed, and a session fixes 1.
+    messages.push(fail(1, one));
+    at(pull(1, one, Some("FAILURE")));
+    let mut failed = look(&["verify-issue-2", "issue-1"], &[], &messages);
+    assert_eq!(
+        wave::order(&failed, &none, &starts),
+        BTreeMap::from([(3, 42)]),
+        "with no turn, it would wait for #42"
+    );
+    failed.turns = turns;
+    assert!(wave::order(&failed, &none, &starts).is_empty());
+    assert_eq!(wave::pick(&failed, &none, &starts), Some(rebase(3, three)));
 }
 
 /// The senders that may not send a verify request of issue 2 (#2027): a

@@ -35,15 +35,15 @@
 //!   before it starts beside the others.
 //! - A rebase that waits for its turn after the pull request N waits for
 //!   no other ([`Turns`], #2219, 01M7GSJNHWDC22KG9AG2ZWZ0K8). The pull
-//!   requests before it can fail and come back many times, and a verify
-//!   of another pull request of its group can start while N runs: a
-//!   rebase that waited for each of them could wait with no end. So its
-//!   turn comes when N is no longer before it in its group: N merges, the
-//!   verify of N fails, or N has no place in the order. Then it waits for
-//!   nobody, also while the verify of another pull request of its group
-//!   runs. The loop of the wave keeps the turn of each head with a
-//!   conflict from look to look ([`Lane::turn`]). A new head has no turn
-//!   yet.
+//!   requests before it can fail and come back many times: a rebase that
+//!   waited for each of them could wait with no end. So its turn comes
+//!   when N is no longer before it in its group: N merges, the verify of
+//!   N fails, or N has no place in the order. Then it waits for nobody,
+//!   also while the verify of another pull request of its group runs.
+//!   The loop of the wave keeps the turn of each head with a conflict from
+//!   look to look, also through a look with no order: a pause, a wait for
+//!   a lead, or a hold of its item. A new head has no turn. Nor has a head
+//!   with no conflict: its verify waits in the order.
 //! - Two pull requests that change one file often merge with no conflict,
 //!   for example a new requirement in each of two sections of
 //!   `requirements.md`. So the wave tests the merge of each two heads that
@@ -149,32 +149,23 @@ pub struct Lane {
     /// messages of the thread, oldest first. A new head keeps it. `None`:
     /// the thread has none.
     pub asked: Option<usize>,
-    /// The turn of the rebase of its head, from the last look of the loop
-    /// of the wave ([`Turns::mark`], #2219). The look gives
-    /// [`Turn::Order`].
-    pub turn: Turn,
 }
 
-/// The turn of the rebase of the head of a [`Lane`] with a conflict
-/// (#2219, 01M7GSJNHWDC22KG9AG2ZWZ0K8).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// The turn of the rebase of a head with a conflict (#2219,
+/// 01M7GSJNHWDC22KG9AG2ZWZ0K8). A head with no turn waits for the first
+/// pull request before it in its group.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Turn {
-    /// It has no turn yet: it waits for the first pull request before it
-    /// in its group.
-    #[default]
-    Order,
     /// It waits for its turn after the pull request N, and for no other.
     After(u64),
     /// Its turn came: it waits for no pull request.
     Came,
 }
 
-/// The turns of the rebases of a wave, by issue, each with its head
-/// commit (#2219, 01M7GSJNHWDC22KG9AG2ZWZ0K8). The loop of the wave keeps
-/// them from look to look. A rebase that waits for its turn after the
-/// pull request N waits for no other. Its turn comes when N is no longer
-/// before it in its group, for example when N merges or its verify
-/// fails. A new head has no turn yet.
+/// The turns of the rebases of a wave, by issue, each with the head
+/// commit that has it (#2219, 01M7GSJNHWDC22KG9AG2ZWZ0K8). The loop of
+/// the wave keeps them from look to look
+/// ([`crate::wave::Look::turns`]).
 ///
 /// ```
 /// use std::collections::{BTreeMap, BTreeSet};
@@ -191,59 +182,85 @@ pub enum Turn {
 /// };
 /// // The verifies of 1 and 2 run, and 3 needs a rebase: it waits for #41.
 /// let mut lanes: BTreeMap<u64, Lane> = [(1, lane(1, false)), (2, lane(2, false)), (3, lane(3, true))].into();
-/// let found = waits([&lanes[&1], &lanes[&2]], [&lanes[&3]]);
+/// let none = Turns::default();
+/// let found = waits([&lanes[&1], &lanes[&2]], [&lanes[&3]], &none);
 /// assert_eq!(found, BTreeMap::from([(3, 41)]));
-/// let turns = Turns::after(&lanes, &BTreeSet::from([3]), &found);
-/// // The verify of 1 failed: it has no lane now.
+/// let turns = none.after(&lanes, &BTreeSet::from([3]), &found);
+/// assert_eq!(turns.of(&lanes[&3]), Some(Turn::After(41)));
+/// // The wave is paused: the look has no lanes, and 3 keeps its turn.
+/// let turns = turns.after(&BTreeMap::new(), &BTreeSet::new(), &BTreeMap::new());
+/// assert_eq!(turns.of(&lanes[&3]), Some(Turn::After(41)));
+/// // The verify of 1 failed: it has no lane now, and 3 does not wait for #42.
 /// lanes.remove(&1);
-/// turns.mark(&mut lanes);
-/// assert_eq!(lanes[&3].turn, Turn::After(41));
-/// // The turn of 3 came: it does not wait for #42.
-/// let found = waits([&lanes[&2]], [&lanes[&3]]);
+/// let found = waits([&lanes[&2]], [&lanes[&3]], &turns);
 /// assert!(found.is_empty(), "3 waits for no other pull request");
-/// let turns = Turns::after(&lanes, &BTreeSet::from([3]), &found);
-/// turns.mark(&mut lanes);
-/// assert_eq!(lanes[&3].turn, Turn::Came);
-/// // A new head of 3 has no turn yet.
-/// let mut pushed: BTreeMap<u64, Lane> = [(3, Lane { head: "d3".into(), ..lane(3, true) })].into();
-/// turns.mark(&mut pushed);
-/// assert_eq!(pushed[&3].turn, Turn::Order);
+/// let turns = turns.after(&lanes, &BTreeSet::from([3]), &found);
+/// assert_eq!(turns.of(&lanes[&3]), Some(Turn::Came));
+/// // A new head of 3 has no turn.
+/// assert_eq!(turns.of(&Lane { head: "d3".into(), ..lane(3, true) }), None);
 /// ```
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Turns(BTreeMap<u64, (String, Turn)>);
 
 impl Turns {
-    /// Gives each lane of `lanes` the turn of its head.
-    pub fn mark(&self, lanes: &mut BTreeMap<u64, Lane>) {
-        for (issue, (head, turn)) in &self.0 {
-            if let Some(lane) = lanes.get_mut(issue).filter(|lane| &lane.head == head) {
-                lane.turn = *turn;
-            }
-        }
+    /// The turn of the head of `lane`. A head with no conflict has none,
+    /// but one that reads `UNKNOWN` keeps it ([`Lane::unknown`]).
+    pub fn of(&self, lane: &Lane) -> Option<Turn> {
+        let (head, turn) = self.0.get(&lane.issue)?;
+        (head == &lane.head && (lane.conflict || lane.unknown)).then_some(*turn)
     }
 
-    /// The turns after a look: the lanes of the look with their turns
-    /// (`lanes`, [`Turns::mark`]), the issues of the lanes that wait for a
-    /// verify or for a rebase (`asked`, as for [`waits`]) and the waits
-    /// of the look (`waits`). A rebase that waits gets
-    /// [`Turn::After`] that pull request. A rebase that waited, and waits
-    /// no more, gets [`Turn::Came`]. A lane with no place in the order,
-    /// for example while a person holds its item, keeps its turn. A
-    /// lane that is gone, or has a new head, loses it.
+    /// The turns after a look with these turns: from the lanes of the
+    /// look (`lanes`), the issues of the lanes that wait for a verify or
+    /// for a rebase (`placed`, as `asked` of [`waits`]) and the waits of
+    /// the look (`waits`). A rebase that waits gets [`Turn::After`] that
+    /// pull request. A rebase that waited, and has a place and no wait
+    /// now, gets [`Turn::Came`]. A rebase with no place keeps its turn,
+    /// for example while a person holds its item, and so does an issue
+    /// with no lane. A new head has no turn, nor has a head with no
+    /// conflict ([`Turns::of`]).
+    ///
+    /// ```
+    /// use std::collections::{BTreeMap, BTreeSet};
+    /// use riff::order::{Lane, Turn, Turns};
+    ///
+    /// let rebase = Lane { issue: 3, pull: 43, head: "c3".into(), conflict: true, ..Lane::default() };
+    /// let lanes = BTreeMap::from([(3, rebase.clone())]);
+    /// let turns = Turns::default().after(&lanes, &BTreeSet::from([3]), &BTreeMap::from([(3, 41)]));
+    /// // A person holds 3: it has no place, and keeps its turn.
+    /// let held = turns.after(&lanes, &BTreeSet::new(), &BTreeMap::new());
+    /// assert_eq!(held.of(&rebase), Some(Turn::After(41)));
+    /// // Its head reads `UNKNOWN`, then `MERGEABLE`: its verify has no turn.
+    /// let unknown = Lane { conflict: false, unknown: true, ..rebase.clone() };
+    /// let lanes = BTreeMap::from([(3, unknown.clone())]);
+    /// let kept = held.after(&lanes, &BTreeSet::from([3]), &BTreeMap::new());
+    /// assert_eq!(kept.of(&unknown), Some(Turn::After(41)));
+    /// let verify = Lane { unknown: false, ..unknown };
+    /// let lanes = BTreeMap::from([(3, verify.clone())]);
+    /// assert_eq!(kept.of(&verify), None);
+    /// assert_eq!(kept.after(&lanes, &BTreeSet::from([3]), &BTreeMap::new()), Turns::default());
+    /// ```
     pub fn after(
+        &self,
         lanes: &BTreeMap<u64, Lane>,
-        asked: &BTreeSet<u64>,
+        placed: &BTreeSet<u64>,
         waits: &BTreeMap<u64, u64>,
     ) -> Turns {
-        let turns = lanes.values().filter_map(|lane| {
-            let turn = match (waits.get(&lane.issue), lane.turn) {
-                (Some(&before), _) if lane.conflict => Turn::After(before),
-                (None, Turn::After(_)) if asked.contains(&lane.issue) => Turn::Came,
-                (_, turn) => turn,
+        let mut turns = self.0.clone();
+        for lane in lanes.values() {
+            let turn = match (self.of(lane), waits.get(&lane.issue)) {
+                (turn, _) if lane.unknown => turn,
+                _ if !lane.conflict => None,
+                (_, Some(&before)) => Some(Turn::After(before)),
+                (Some(Turn::After(_)), None) if placed.contains(&lane.issue) => Some(Turn::Came),
+                (turn, None) => turn,
             };
-            (turn != Turn::Order).then(|| (lane.issue, (lane.head.clone(), turn)))
-        });
-        Turns(turns.collect())
+            match turn {
+                Some(turn) => turns.insert(lane.issue, (lane.head.clone(), turn)),
+                None => turns.remove(&lane.issue),
+            };
+        }
+        Turns(turns)
     }
 }
 
@@ -295,13 +312,13 @@ impl Lane {
 /// ([`Lane::clashes`]). The pull requests of `first` go first: their
 /// verify runs or passed. Then `asked` go in the order of the verify
 /// requests of their items ([`Lane::asked`]). A pull request that waits
-/// for nobody goes before the next ones. A rebase that waits for its turn
-/// after the pull request N waits only for N, and a rebase whose turn
-/// came waits for nobody ([`Lane::turn`], #2219).
+/// for nobody goes before the next ones. A rebase with a turn of `turns`
+/// waits only for the pull request of its turn, or for nobody
+/// ([`Turns::of`], #2219).
 ///
 /// ```
-/// use std::collections::BTreeMap;
-/// use riff::order::{Lane, waits};
+/// use std::collections::{BTreeMap, BTreeSet};
+/// use riff::order::{Lane, Turns, waits};
 ///
 /// let lane = |issue, files: &[&str], asked| Lane {
 ///     issue,
@@ -310,47 +327,54 @@ impl Lane {
 ///     asked,
 ///     ..Lane::default()
 /// };
+/// let none = Turns::default();
 /// // The verify request of 2 came first: 1 waits for its pull request #42.
 /// let one = lane(1, &["tui.rs"], Some(5));
 /// let two = lane(2, &["tui.rs", "view.rs"], Some(3));
 /// let three = lane(3, &["wave.rs"], Some(4));
-/// assert_eq!(waits([], [&one, &two, &three]), BTreeMap::from([(1, 42)]));
+/// assert_eq!(waits([], [&one, &two, &three], &none), BTreeMap::from([(1, 42)]));
 /// // The verify of 4 runs: each verify with a file of it waits for #44.
 /// let four = lane(4, &["wave.rs"], None);
-/// assert_eq!(waits([&four], [&one, &two, &three]), BTreeMap::from([(1, 42), (3, 44)]));
+/// assert_eq!(waits([&four], [&one, &two, &three], &none), BTreeMap::from([(1, 42), (3, 44)]));
 /// // A request with no place in the thread comes last.
 /// let five = lane(5, &["view.rs"], None);
-/// assert_eq!(waits([], [&five, &two]), BTreeMap::from([(5, 42)]));
+/// assert_eq!(waits([], [&five, &two], &none), BTreeMap::from([(5, 42)]));
 /// // A rebase takes its place as a verify does (#1801): 2 waits for the rebase of 6.
 /// let six = Lane { conflict: true, ..lane(6, &["tui.rs"], Some(1)) };
-/// assert_eq!(waits([], [&two, &six]), BTreeMap::from([(2, 46)]));
+/// assert_eq!(waits([], [&two, &six], &none), BTreeMap::from([(2, 46)]));
 /// // #1895: the heads of 1 and 2 merge with no conflict. 1 waits for nobody.
 /// let clean = Lane { clean: [42].into(), ..one.clone() };
-/// assert!(waits([], [&clean, &two]).is_empty());
+/// assert!(waits([], [&clean, &two], &none).is_empty());
 /// // #2219: the rebase of 6 waits for its turn after #44. The verify of 2
 /// // runs now too, and 6 still waits only for #44.
-/// use riff::order::Turn;
-/// let after = Lane { turn: Turn::After(44), ..six.clone() };
 /// let four = lane(4, &["tui.rs"], None);
-/// assert_eq!(waits([&two, &four], [&after]), BTreeMap::from([(6, 44)]));
+/// let found = waits([&four], [&six], &none);
+/// let turns = none.after(&BTreeMap::from([(6, six.clone())]), &BTreeSet::from([6]), &found);
+/// assert_eq!(waits([&two, &four], [&six], &turns), BTreeMap::from([(6, 44)]));
+/// // A new head of 4 merges with the head of 6 with no conflict: 6 waits for nobody.
+/// let merges = Lane { clean: [46].into(), ..four };
+/// assert!(waits([&two, &merges], [&six], &turns).is_empty());
 /// // 4 merged: the turn of 6 came, and it waits for nobody.
-/// assert!(waits([&two], [&after]).is_empty());
-/// let came = Lane { turn: Turn::Came, ..six };
-/// assert!(waits([&two], [&came]).is_empty());
+/// assert!(waits([&two], [&six], &turns).is_empty());
 /// ```
 pub fn waits<'a>(
     first: impl IntoIterator<Item = &'a Lane>,
     asked: impl IntoIterator<Item = &'a Lane>,
+    turns: &Turns,
 ) -> BTreeMap<u64, u64> {
     let mut ahead: Vec<&Lane> = first.into_iter().collect();
     let mut asked: Vec<&Lane> = asked.into_iter().collect();
     asked.sort_by_key(|lane| (lane.asked.unwrap_or(usize::MAX), lane.pull));
     let mut waits = BTreeMap::new();
     for lane in asked {
-        let first = ahead.iter().find(|before| match lane.turn {
-            Turn::Order => before.clashes(lane),
-            Turn::After(pull) => before.pull == pull && before.clashes(lane),
-            Turn::Came => false,
+        let turn = turns.of(lane);
+        let first = ahead.iter().find(|before| {
+            before.clashes(lane)
+                && match turn {
+                    None => true,
+                    Some(Turn::After(pull)) => before.pull == pull,
+                    Some(Turn::Came) => false,
+                }
         });
         match first {
             Some(before) => {
@@ -774,7 +798,7 @@ mod tests {
             .map(|n| lane(n, &["crates/riff/src/tui.rs"], false, Some(n as usize)))
             .collect();
         assert_eq!(
-            waits([], &items),
+            waits([], &items, &Turns::default()),
             BTreeMap::from([(2, 41), (3, 41), (4, 41)])
         );
         // The verify of 1 passed: the others still wait for its merge.
@@ -783,11 +807,14 @@ mod tests {
             ..items[0].clone()
         };
         assert_eq!(
-            waits([&passed], &items[1..]),
+            waits([&passed], &items[1..], &Turns::default()),
             BTreeMap::from([(2, 41), (3, 41), (4, 41)])
         );
         // 1 merged: 2 goes, the others wait for it.
-        assert_eq!(waits([], &items[1..]), BTreeMap::from([(3, 42), (4, 42)]));
+        assert_eq!(
+            waits([], &items[1..], &Turns::default()),
+            BTreeMap::from([(3, 42), (4, 42)])
+        );
     }
 
     #[test]
@@ -796,7 +823,7 @@ mod tests {
         let b = lane(2, &["b.rs"], false, Some(2));
         let unread = lane(3, &[], false, Some(0));
         let running = lane(4, &["c.rs"], false, None);
-        assert!(waits([&running], [&a, &b, &unread]).is_empty());
+        assert!(waits([&running], [&a, &b, &unread], &Turns::default()).is_empty());
     }
 
     /// #1895, Wave 54: the pull requests 1 to 4 each change
@@ -816,15 +843,21 @@ mod tests {
             with(3, &[1, 2, 4]),
             with(4, &[2, 3]),
         ];
-        assert_eq!(waits([], &lanes), BTreeMap::from([(4, 41)]));
+        assert_eq!(
+            waits([], &lanes, &Turns::default()),
+            BTreeMap::from([(4, 41)])
+        );
         // The verify of 1 passed: 4 still waits for its merge.
         let passed = Lane {
             passed: true,
             ..lanes[0].clone()
         };
-        assert_eq!(waits([&passed], &lanes[1..]), BTreeMap::from([(4, 41)]));
+        assert_eq!(
+            waits([&passed], &lanes[1..], &Turns::default()),
+            BTreeMap::from([(4, 41)])
+        );
         // 1 merged: the verify of 4 starts.
-        assert!(waits([], &lanes[1..]).is_empty());
+        assert!(waits([], &lanes[1..], &Turns::default()).is_empty());
     }
 
     /// A verify waits for the first pull request before it with a file in
@@ -836,11 +869,14 @@ mod tests {
         let third = lane(3, &["b.rs"], false, Some(2));
         // 2 waits for 1, and 3 starts: it shares no file with 1.
         assert_eq!(
-            waits([&first], [&second, &third]),
+            waits([&first], [&second, &third], &Turns::default()),
             BTreeMap::from([(2, 41)])
         );
         // With no 1, 2 starts and 3 waits for it.
-        assert_eq!(waits([], [&second, &third]), BTreeMap::from([(3, 42)]));
+        assert_eq!(
+            waits([], [&second, &third], &Turns::default()),
+            BTreeMap::from([(3, 42)])
+        );
     }
 
     /// #1801: the merge of 1 gave 2 and 3 a conflict. Only the rebase of 2
@@ -852,60 +888,93 @@ mod tests {
             ..lane(issue, &["tui.rs"], false, Some(asked))
         };
         let (two, three) = (conflict(2, 2), conflict(3, 3));
-        assert_eq!(waits([], [&two, &three]), BTreeMap::from([(3, 42)]));
+        assert_eq!(
+            waits([], [&two, &three], &Turns::default()),
+            BTreeMap::from([(3, 42)])
+        );
         // A session rebases 2: it keeps its place (#1894).
-        assert_eq!(waits([], [&three, &two]), BTreeMap::from([(3, 42)]));
+        assert_eq!(
+            waits([], [&three, &two], &Turns::default()),
+            BTreeMap::from([(3, 42)])
+        );
         // The new head of 2 keeps the place of its item, and waits for a verify.
         let pushed = lane(2, &["tui.rs"], false, Some(2));
-        assert_eq!(waits([], [&three, &pushed]), BTreeMap::from([(3, 42)]));
+        assert_eq!(
+            waits([], [&three, &pushed], &Turns::default()),
+            BTreeMap::from([(3, 42)])
+        );
         // 2 merged: the rebase of 3 starts.
-        assert!(waits([], [&three]).is_empty());
+        assert!(waits([], [&three], &Turns::default()).is_empty());
     }
 
     /// #2219: a rebase that waits for its turn keeps it while it has no
-    /// place in the order, for example while a person holds its item, and
-    /// while its head reads `UNKNOWN`. A verify that waits gets no turn.
+    /// place in the order, for example while a person holds its item,
+    /// through a look with no lanes, and while its head reads `UNKNOWN`.
+    /// A new head has no turn. Nor has a head with no conflict: its verify
+    /// waits in the order.
     #[test]
-    fn a_rebase_keeps_its_turn_while_it_has_no_place() {
-        let with = |issue: u64, conflict, turn| Lane {
+    fn a_rebase_keeps_its_turn_until_a_new_head_or_no_conflict() {
+        let with = |issue: u64, conflict| Lane {
             head: format!("c{issue}"),
             conflict,
-            turn,
             ..lane(issue, &["tui.rs"], false, Some(issue as usize))
         };
-        let turn_of = |turns: &Turns, lane: &Lane| {
-            let mut lanes = BTreeMap::from([(
-                lane.issue,
-                Lane {
-                    turn: Turn::Order,
-                    ..lane.clone()
-                },
-            )]);
-            turns.mark(&mut lanes);
-            lanes[&lane.issue].turn
+        let lanes = |all: &[&Lane]| -> BTreeMap<u64, Lane> {
+            all.iter()
+                .map(|lane| (lane.issue, (*lane).clone()))
+                .collect()
         };
-        let (verify, rebase) = (with(2, false, Turn::Order), with(3, true, Turn::After(41)));
-        let lanes = BTreeMap::from([(2, verify.clone()), (3, rebase.clone())]);
-        let waits = BTreeMap::from([(2, 41)]);
-        // 3 is held: it has no place, and no wait.
-        let held = Turns::after(&lanes, &BTreeSet::from([2]), &waits);
-        assert_eq!(turn_of(&held, &rebase), Turn::After(41));
-        assert_eq!(turn_of(&held, &verify), Turn::Order);
-        // Its turn came, and then its head reads UNKNOWN: it keeps the turn.
-        let came = Turns::after(&lanes, &BTreeSet::from([2, 3]), &waits);
-        assert_eq!(turn_of(&came, &rebase), Turn::Came);
+        let (one, two, three) = (with(1, false), with(2, false), with(3, true));
+        let placed = BTreeSet::from([3]);
+        // The verifies of 1 and 2 run: 3 waits for its turn after #41.
+        let found = waits([&one, &two], [&three], &Turns::default());
+        assert_eq!(found, BTreeMap::from([(3, 41)]));
+        let after = Turns::default().after(&lanes(&[&one, &two, &three]), &placed, &found);
+        assert_eq!(after.of(&three), Some(Turn::After(41)));
+        assert_eq!(after.of(&two), None, "a verify has no turn");
+        // A look with no lanes, for example of a paused wave, and a hold
+        // of 3: it keeps its turn.
+        let paused = after.after(&BTreeMap::new(), &BTreeSet::new(), &BTreeMap::new());
+        assert_eq!(paused, after);
+        let held = paused.after(&lanes(&[&two, &three]), &BTreeSet::new(), &BTreeMap::new());
+        assert_eq!(held, after);
+        // The verify of 1 failed: the turn of 3 came, also while 2 runs.
+        assert!(waits([&two], [&three], &held).is_empty());
+        let came = held.after(&lanes(&[&two, &three]), &placed, &BTreeMap::new());
+        assert_eq!(came.of(&three), Some(Turn::Came));
+        // 1 runs again: 3 waits for nobody, and keeps its turn.
+        assert!(waits([&one, &two], [&three], &came).is_empty());
+        let again = came.after(&lanes(&[&one, &two, &three]), &placed, &BTreeMap::new());
+        assert_eq!(again, came);
+        // Its head reads UNKNOWN: it keeps its turn.
         let unknown = Lane {
             conflict: false,
             unknown: true,
-            turn: Turn::Came,
-            ..rebase.clone()
+            ..three.clone()
         };
-        let lanes = BTreeMap::from([(3, unknown.clone())]);
-        let kept = Turns::after(&lanes, &BTreeSet::from([3]), &BTreeMap::new());
-        assert_eq!(turn_of(&kept, &unknown), Turn::Came);
-        // The pull request of 3 is gone: so is its turn.
-        let gone = Turns::after(&BTreeMap::new(), &BTreeSet::new(), &BTreeMap::new());
+        let found = waits([&two], [&unknown], &came);
+        assert!(found.is_empty());
+        let kept = came.after(&lanes(&[&two, &unknown]), &placed, &found);
+        assert_eq!(kept.of(&unknown), Some(Turn::Came));
+        // Its head reads MERGEABLE: its verify waits for #42, and it has no
+        // turn.
+        let verify = Lane {
+            unknown: false,
+            ..unknown
+        };
+        let found = waits([&two], [&verify], &kept);
+        assert_eq!(found, BTreeMap::from([(3, 42)]));
+        let gone = kept.after(&lanes(&[&two, &verify]), &placed, &found);
         assert_eq!(gone, Turns::default());
+        // A new head of 3 with a conflict has no turn: it waits for #42.
+        let pushed = Lane {
+            head: "d3".into(),
+            ..three
+        };
+        let found = waits([&two], [&pushed], &kept);
+        assert_eq!(found, BTreeMap::from([(3, 42)]));
+        let new = kept.after(&lanes(&[&two, &pushed]), &placed, &found);
+        assert_eq!(new.of(&pushed), Some(Turn::After(42)));
     }
 
     /// The forms of a commit that the merge test takes: no option and no
@@ -931,6 +1000,9 @@ mod tests {
         let mut lanes: BTreeMap<u64, Lane> = [(1, with(1)), (2, with(2))].into();
         merges(&none, "main", &mut lanes);
         assert!(lanes.values().all(|lane| lane.clean.is_empty()));
-        assert_eq!(waits([], lanes.values()), BTreeMap::from([(2, 41)]));
+        assert_eq!(
+            waits([], lanes.values(), &Turns::default()),
+            BTreeMap::from([(2, 41)])
+        );
     }
 }
