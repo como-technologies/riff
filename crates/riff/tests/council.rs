@@ -601,19 +601,49 @@ fn the_book_shows_the_council_of_a_pull_request() {
 /// 01M7H6CW5TV0J4MNKM97N683RB: "The council of a verify" says that the
 /// council reviews only a pull request with the label `council`, and its
 /// how-to "Ask for the council of a pull request" makes the label and
-/// gives it to the issue in a copyable `sh` block.
+/// gives it to the issue in a copyable `sh` block. The levers of a verify
+/// and the Rust expert say no more that each verify or each change of
+/// Rust code has a council.
 #[test]
 fn the_book_asks_for_the_council_with_the_label_council() {
+    let flat = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
     let part = under("how-it-works.md", "### The council of a verify");
-    let words = part.split_whitespace().collect::<Vec<_>>().join(" ");
+    let words = flat(&part);
     for said in [
         "The council reviews only a pull request with the label `council`: a label of the pull \
-         request or of its issue.",
-        "So for a pull request with no label `council`, `riff council show` shows no member, \
-         and the result needs no part `## The council`.",
+         request or of its issue. With no label `council`, the council has no member, and the \
+         verify has no council.",
         "(#ask-for-the-council-of-a-pull-request)",
     ] {
         assert!(words.contains(said), "no {said:?} in {words}");
+    }
+    let members = flat(&under("how-it-works.md", "#### The members of the council"));
+    assert!(
+        members.contains("The Rust expert, `rust`, reviews the Rust code of a change"),
+        "{members}"
+    );
+    let levers = flat(&under("how-it-works.md", "### The levers of a verify"));
+    for said in [
+        "| The council of a pull request with the label `council`: see",
+        "The council gives the second view, for a pull request with the label `council`. |",
+    ] {
+        assert!(levers.contains(said), "no {said:?} in {levers}");
+    }
+    for stale in [
+        "The council of each verify",
+        "The council gives the second view. |",
+    ] {
+        assert!(!levers.contains(stale), "{stale:?} in {levers}");
+    }
+    for (page, stale) in [
+        ("how-it-works.md", "reviews each change of Rust code"),
+        ("requirements.md", "Each verify runs a council"),
+        ("requirements.md", "The council of the verify gives"),
+    ] {
+        assert!(
+            !flat(&book::page(page)).contains(stale),
+            "{stale:?} in {page}"
+        );
     }
     let how_to = under(
         "how-it-works.md",
@@ -637,7 +667,10 @@ fn the_book_asks_for_the_council_with_the_label_council() {
 /// shows a result with the part `## The council`
 /// (01M7CFBZSQEEZNZBR9H1S54GS1): one line for each member of the council
 /// of a pull request with the label `council`, in the order of the
-/// council and in the form of 01M7CX5BTPFX77KS5J87C7GBY2.
+/// council and in the form of 01M7CX5BTPFX77KS5J87C7GBY2. With no member,
+/// the verifier skips the steps after the pick, and its result needs no
+/// part `## The council`, in the book and in the start text
+/// (01M7H9D4EZ8S0Y1F7JXCZ9V1YC).
 #[test]
 fn the_book_says_each_step_of_the_council_of_a_verify() {
     let part = under("how-it-works.md", "### The council of a verify");
@@ -646,6 +679,7 @@ fn the_book_says_each_step_of_the_council_of_a_verify() {
     assert!(words.contains("```mermaid"), "{part}");
     let steps = [
         "1. The verifier runs `riff council show 40`.",
+        "When the council has no member, the verifier skips steps 2 to 5.",
         "2. It starts one subagent for each member with the Agent tool, on the model of the \
          session.",
         "Each subagent reads only, and changes nothing.",
@@ -667,10 +701,11 @@ fn the_book_says_each_step_of_the_council_of_a_verify() {
     let text = riff::text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &[]);
     let order = [
         "/opt/riff/riff council show 40",
+        "When it prints no member, skip steps 8 and 9.",
         "start one subagent for each member",
         "Each subagent reads only, and changes nothing.",
         "Check each finding in the code.",
-        "Then the part `## The council`",
+        "Then, when the council has a member, the part `## The council`",
     ]
     .map(|words| {
         text.find(words)
@@ -684,6 +719,13 @@ fn the_book_says_each_step_of_the_council_of_a_verify() {
         flat.contains(
             "Then run the council of the pull request, with the steps of [The council of a \
              verify](#the-council-of-a-verify)."
+        ),
+        "{flat}"
+    );
+    assert!(
+        flat.contains(
+            "then, when the council has a member, the part `## The council` with one line for \
+             each member."
         ),
         "{flat}"
     );

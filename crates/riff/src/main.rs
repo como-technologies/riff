@@ -499,10 +499,10 @@ enum Command {
     /// ruleset of the default branch requires, but riff/verify. A repository
     /// with no CI has none: riff/verify is its only check. riff refuses a
     /// pass when the body has Closes #N for an issue with a line Live: in
-    /// Done when: change that line to Refs #N. A pass needs the part
-    /// "## The council" in the result, with one line for each member of the
-    /// council of the pull request (riff council show N), for example
-    /// "- docs: no finding.". Before its comment, a pass
+    /// Done when: change that line to Refs #N. When the council of the pull
+    /// request has a member (riff council show N), a pass needs the part
+    /// "## The council" in the result, with one line for each member, for
+    /// example "- docs: no finding.". Before its comment, a pass
     /// gives the squash message to the auto-merge: the title with (#N), and
     /// the body with its trailers as the last paragraph. This turns
     /// auto-merge on, also when it was off: to keep a pull request from the
@@ -513,7 +513,7 @@ enum Command {
         /// The number of the pull request.
         number: u64,
         /// The result: each criterion, what you did to check it, and for a
-        /// pass the part "## The council".
+        /// pass with a council the part "## The council".
         #[arg(long)]
         file: std::path::PathBuf,
         /// The commit that you tested. The default is HEAD of this

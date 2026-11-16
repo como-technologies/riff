@@ -91,7 +91,8 @@ impl std::error::Error for NoLine {}
 /// member of `council` (01M7CFBZSQEEZNZBR9H1S54GS1,
 /// 01M7D11KGEJ8ACFJK6Y10WENJZ). A result with no such part has a line for
 /// no member. A council with no member, for example of a pull request
-/// with no label `council` (01M7H6CW5TV0J4MNKM97N683RB), needs no line.
+/// with no label `council` (01M7H6CW5TV0J4MNKM97N683RB), needs no line
+/// and no such part (01M7H9D4EZ8S0Y1F7JXCZ9V1YC).
 ///
 /// ```
 /// use riff::council::default_set;
@@ -200,10 +201,10 @@ mod tests {
         }
     }
 
-    /// 01M7H6CW5TV0J4MNKM97N683RB: the council of a pull request with no
-    /// label `council` has no member, so a PASS needs no line and no part
-    /// `## The council`. With the label, a PASS needs a line for each of
-    /// the 6 members.
+    /// 01M7H6CW5TV0J4MNKM97N683RB, 01M7H9D4EZ8S0Y1F7JXCZ9V1YC: the council
+    /// of a pull request with no label `council` has no member, so a PASS
+    /// needs no line and no part `## The council`. With the label, a PASS
+    /// needs a line for each of the 6 members.
     #[test]
     fn a_pass_with_no_label_council_needs_no_part() {
         let change = |labels: &[&str]| Change {

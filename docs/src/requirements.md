@@ -190,16 +190,16 @@
   `riff help server` shows the forms of a value and the default. No
   help, and no error for a missing command, names a hidden command.
 - **01M7CF3FPNSR0G8EZ3JY3CA34S** Each lever of an independent verify has
-  one place. The council of the verify gives an adversarial review: what
-  can break, invalid states, round trips, the docs and security. The
-  gates before the code give a person and a risk level. Each session
-  runs on `model` in `riff.toml`, and a verify has its own effort (`riff
-  daemon limit --effort-verify`). The prompt of each verify gives the
-  control of 01M5174ASF376JDNBQ4423TTAR.
+  one place. The council gives an adversarial review: what can break,
+  invalid states, round trips, the docs and security. The gates before
+  the code give a person and a risk level. Each session runs on `model`
+  in `riff.toml`, and a verify has its own effort (`riff daemon limit
+  --effort-verify`). The prompt of each verify gives the control of
+  01M5174ASF376JDNBQ4423TTAR.
 - **01M7CF3NYSQX8WFHSQNKV0Q3QN** riff runs no second verify of a head
-  commit for a second view. The council of the verify gives the second
-  view (01M7CF3FPNSR0G8EZ3JY3CA34S).
-- **01M7CFBNAKQ0CKCCY9S7WM62FE** Each verify runs a council of focused
+  commit for a second view. The council gives the second view
+  (01M7CF3FPNSR0G8EZ3JY3CA34S).
+- **01M7CFBNAKQ0CKCCY9S7WM62FE** A verify runs a council of focused
   reviewers (#581): each member reviews the change in one area only. The
   verifier runs the council in its own session, with one subagent for
   each member, on the model of the session (`model` of `riff.toml`). No
@@ -249,14 +249,14 @@
   the code. A finding that the verifier shows, with a test, a run or a
   read of the code, fails the verify. A finding that it cannot show goes
   in the result as not shown, and does not fail the verify.
-- **01M7CFBZSQEEZNZBR9H1S54GS1** The result of a verify has the part `##
-  The council`, with one line for each member of the council: its
-  findings, or `no finding`. A finding of a live security fault goes to
-  the lead with `tell`, not into the result. `riff verify pass` refuses
-  a result with no line for a member of the council, and names the
-  member. `riff verify fail` takes such a result. The daemon reads such
-  a PASS of a verify of the wave as a result with no verdict. Supersedes
-  01M3W62QG36F9RD4SZ1X508T3A in part.
+- **01M7CFBZSQEEZNZBR9H1S54GS1** The result of a verify with a council
+  has the part `## The council`, with one line for each member of the
+  council: its findings, or `no finding`. A finding of a live security
+  fault goes to the lead with `tell`, not into the result. `riff verify
+  pass` refuses a result with no line for a member of the council, and
+  names the member. `riff verify fail` takes such a result. The daemon
+  reads such a PASS of a verify of the wave as a result with no verdict.
+  Supersedes 01M3W62QG36F9RD4SZ1X508T3A in part.
 - **01M7CN1GWPHVBMGAGRVE9ZGVCK** riff also refuses a member file with a
   table that is not TOML, a key other than `files` and `labels`, a value
   that is not a list of strings, an empty list, or an empty string in a
@@ -315,6 +315,13 @@
   council of a pull request with no label `council` has no member of the
   default set. Supersedes 01M7CFBZCDFGG1MV4DEAACQVXK and
   01M7CFBZF1BZ0E7H0D4Q7KKY1T in part.
+- **01M7H9D4EZ8S0Y1F7JXCZ9V1YC** A verify runs the council only when the
+  council of its pull request has a member. When `riff council show`
+  shows no member, the verifier starts no subagent, and its result needs
+  no part `## The council`: `riff verify pass` needs no line of a
+  member. The start text of a verify of the wave says so. Supersedes
+  01M7CFBNAKQ0CKCCY9S7WM62FE, 01M7CF3FPNSR0G8EZ3JY3CA34S,
+  01M7CF3NYSQX8WFHSQNKV0Q3QN and 01M7CFBZSQEEZNZBR9H1S54GS1 in part.
 
 ## Waves
 

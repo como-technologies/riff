@@ -14285,11 +14285,14 @@ pub fn wave_checks_rerun(
 /// the result as not shown. The result has the part `## The council`,
 /// with one line for each member in the form of
 /// 01M7CX5BTPFX77KS5J87C7GBY2, and a live security fault goes to the
-/// lead, not into the result (01M7CFBZSQEEZNZBR9H1S54GS1).
+/// lead, not into the result (01M7CFBZSQEEZNZBR9H1S54GS1). When the
+/// council has no member, the verifier skips steps 8 and 9, and the
+/// result has no such part (01M7H9D4EZ8S0Y1F7JXCZ9V1YC).
 ///
 /// ```mermaid
 /// flowchart TD
 ///     C["5. each criterion, 6. a control"] --> S["7. riff council show PR"]
+///     S -- "no member" --> Z["11. the result, with no part ## The council"]
 ///     S --> A["8. one subagent for each member:<br/>its text, the diff, the rules"]
 ///     A --> F["the findings: the file, the line, the rule"]
 ///     F --> K{"9. the verifier shows it<br/>in the code?"}
@@ -14325,7 +14328,9 @@ pub fn wave_checks_rerun(
 /// // The council, after the control (01M7CFBNAKQ0CKCCY9S7WM62FE).
 /// assert!(text.contains("\n7. Pick the council of the pull request: /opt/riff/riff council show 40\n"));
 /// assert!(text.contains("start one subagent for each member with the Agent tool"));
-/// assert!(text.contains("Then the part `## The council`, with one line for each member of the council"));
+/// assert!(text.contains("Then, when the council has a member, the part `## The council`, with one line for each member"));
+/// // No member: no subagent and no part (01M7H9D4EZ8S0Y1F7JXCZ9V1YC).
+/// assert!(text.contains("When it prints no member, skip steps 8 and 9.\n"));
 /// let two = ["Lint".to_owned(), "Test".to_owned()];
 /// let text = riff::text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4d5e6f", &two);
 /// assert!(text.contains("was done: the checks Lint, Test."));
@@ -14386,7 +14391,8 @@ pub fn wave_verify_start(
          of each criterion, and run that test by its name when you must.{build}\n\
          6. {control}\n\
          7. Pick the council of the pull request: /opt/riff/riff council show {pull}\n   \
-         It prints each member of the council, why it joins, and the text of its file.\n\
+         It prints each member of the council, why it joins, and the text of its file. When it \
+         prints no member, skip steps 8 and 9.\n\
          8. Run the council: start one subagent for each member with the Agent tool, all at the \
          same time. Give each subagent the model of this session, the text of its member, the \
          diff of the pull request (git diff origin/{base}...HEAD) and the rules of the \
@@ -14401,8 +14407,9 @@ pub fn wave_verify_start(
          result.\n\
          11. Your last reply is the result, in markdown, and nothing else. The first line is \
          PASS or FAIL. Then each criterion: for a pass, what you did to check it; for a fail, \
-         the steps to see the failure. Then the part `{COUNCIL_HEADING}`, with one line for each \
-         member of the council: its findings, each after shown or not shown, or no finding. \
+         the steps to see the failure. Then, when the council has a member, the part \
+         `{COUNCIL_HEADING}`, with one line for each member: its findings, each after shown or \
+         not shown, or no finding. \
          For example:\n   \
          - design: no finding.\n   \
          - rust: shown: src/main.rs:40: .riff/council/rust.md \"Each conversion names each \
@@ -16639,9 +16646,11 @@ mod tests {
     /// gives its findings with the file, the line and the rule. Step 9
     /// checks each finding: a finding that the verifier shows fails the
     /// verify, and one that it cannot show goes in the result as not
-    /// shown. The result has the part `## The council`, with an example
-    /// of the line of a member (01M7CX5BTPFX77KS5J87C7GBY2), and a live
-    /// security fault that a member finds goes to the lead.
+    /// shown. The result of a council with a member has the part `## The
+    /// council`, with an example of the line of a member
+    /// (01M7CX5BTPFX77KS5J87C7GBY2), and a live security fault that a
+    /// member finds goes to the lead. With no member, the verifier skips
+    /// steps 8 and 9, and gives no part (01M7H9D4EZ8S0Y1F7JXCZ9V1YC).
     #[test]
     fn the_start_text_of_a_verify_runs_the_council() {
         let step = |text: &str, n: u8| -> String {
@@ -16657,7 +16666,8 @@ mod tests {
             assert_eq!(
                 step(&text, 7),
                 "Pick the council of the pull request: /opt/riff/riff council show 40\n   It \
-                 prints each member of the council, why it joins, and the text of its file."
+                 prints each member of the council, why it joins, and the text of its file. \
+                 When it prints no member, skip steps 8 and 9."
             );
             let eight = step(&text, 8);
             for words in [
@@ -16690,8 +16700,9 @@ mod tests {
             };
             let criteria = at("Then each criterion");
             let part = at(
-                "Then the part `## The council`, with one line for each member of \
-                 the council: its findings, each after shown or not shown, or no finding.",
+                "Then, when the council has a member, the part `## The council`, with \
+                 one line for each member: its findings, each after shown or not shown, or no \
+                 finding.",
             );
             let none = at("\n   - design: no finding.\n");
             let shown = at(

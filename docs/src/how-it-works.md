@@ -3339,7 +3339,7 @@ sequenceDiagram
     E->>V: wake
     V->>E: claim verify-issue-6
     E-->>V: granted
-    V->>V: check out the commit, test each criterion, run the council
+    V->>V: check out the commit, test each criterion, run the council when it has a member
     V->>G: riff verify: the squash message of a pass, comment the result, set riff/verify
     V->>E: riff verify: post to [claim=issue-6] the result
     V->>E: release verify-issue-6
@@ -3403,10 +3403,10 @@ place:
 | A check of each criterion of the `Done when:` line, and the Gate | Each verify, as this section says. The verify reads the Gate, and does not run it again. |
 | A control: a test that finds the fault | The start text of each verify gives the control in a step of its own, "Run a control": see [Verify finished work](#verify-finished-work). |
 | A test for each new requirement | The job `Hygiene` of each pull request, with the rule `unnamed`: see [Name a new requirement in a test](development.md#name-a-new-requirement-in-a-test). |
-| An adversarial review: what can break, invalid states, round trips, the docs and security | The council of each verify: see [The council of a verify](#the-council-of-a-verify). |
+| An adversarial review: what can break, invalid states, round trips, the docs and security | The council of a pull request with the label `council`: see [The council of a verify](#the-council-of-a-verify). |
 | A person and a risk level | The gates before the code and the sign-off of a person, a design: [#585](https://github.com/como-technologies/riff/issues/585). |
 | Another model | None. Each session runs on the model of `riff.toml`: see [Set the model of the sessions](development.md#set-the-model-of-the-sessions). A verify has its own effort: see [Set the effort of the sessions](development.md#set-the-effort-of-the-sessions). |
-| A second verify | None. A head commit gets one verify that passes. The council gives the second view. |
+| A second verify | None. A head commit gets one verify that passes. The council gives the second view, for a pull request with the label `council`. |
 | A mutation test and a stress run | Not in the Gate. Run `just stress` by hand: see [Run a test on a busy machine](development.md#run-a-test-on-a-busy-machine). |
 | The measure of the faults that a verify missed | The label `escaped` on the issue of each such fault: see [Count the faults that a verify missed](development.md#count-the-faults-that-a-verify-missed). |
 
@@ -3414,7 +3414,7 @@ place:
 flowchart LR
     P["a pull request"] --> H["Hygiene: a file under crates/<br/>names each new requirement"]
     P --> G["the Gate"]
-    H --> V["the verify: each criterion,<br/>a control, the council"]
+    H --> V["the verify: each criterion, a control,<br/>the council for the label council"]
     G --> V
     V -- "PASS" --> M["the merge"]
     M --> F{"a fault<br/>later?"}
@@ -3540,11 +3540,9 @@ or has a container of its own. The requirements of the council are in
 [Product](requirements.md#product), and its design is #581.
 
 The council reviews only a pull request with the label `council`: a
-label of the pull request or of its issue. Each member of the default
-set joins only for that label. So for a pull request with no label
-`council`, `riff council show` shows no member, and the result needs no
-part `## The council`. A member file of your repository can join for
-its own files or labels (see
+label of the pull request or of its issue. With no label `council`,
+the council has no member, and the verify has no council. A member
+file of your repository can also join for its own files or labels (see
 [The members of the council](#the-members-of-the-council)). To ask for
 the council, see
 [Ask for the council of a pull request](#ask-for-the-council-of-a-pull-request).
@@ -3555,6 +3553,7 @@ after the check of each criterion and the control:
 1. The verifier runs `riff council show 40`. It gets each member, why
    it joins, and the text of its file (see
    [See the council of a pull request](#see-the-council-of-a-pull-request)).
+   When the council has no member, the verifier skips steps 2 to 5.
 2. It starts one subagent for each member with the Agent tool, on the
    model of the session. Each subagent gets the text of its member,
    the diff of the pull request and the rules of the repository for
@@ -3577,8 +3576,8 @@ A verify by hand follows the same steps.
 ```mermaid
 flowchart TD
     V["the verifier of PR #40:<br/>each criterion, a control"] --> S["1. riff council show 40"]
-    S --> Q{"the label council on PR #40<br/>or on its issue?"}
-    Q -- "no" --> N["no member: no subagent,<br/>and no part ## The council"]
+    S --> Q{"a member in the council<br/>of PR #40?"}
+    Q -- "no: no label council" --> N["no subagent,<br/>and no part ## The council"]
     Q -- "yes" --> M["the members: the files of the base branch,<br/>at most 6"]
     M --> D["2. subagent: design"]
     M --> T["2. subagent: testing"]
@@ -3629,7 +3628,7 @@ file with a new name adds a member (see
 [List the members of the council](development.md#list-the-members-of-the-council)).
 
 Each member of the default set has `labels = ["council"]` and no
-`files`: it joins only for the label `council`.
+`files`.
 
 | Member | Reviews |
 |---|---|
@@ -3648,20 +3647,22 @@ A member of your repository can join by area: when a glob of its
 removes or renames, or when one of its `labels` is a label of the pull
 request or of its issue. In a glob, `*` matches each text in one part
 of a path, `?` matches one character, and the part `**` matches no
-part or more. A member with neither key joins each council.
+part or more.
 
 A council has at most 6 members. riff takes first the members that
-join each council, then the others. In each group, the members come in
-the order of the table, and the other members of your repository after
-them, in the order of their names. So with the label `council`, the
-council of the default set is `design`, `testing`, `docs`, `rust`,
-`security` and `attacker`.
+join each council (see
+[Add a member to the council](development.md#add-a-member-to-the-council)),
+then the others. In each group, the members come in the order of the
+table, and the other members of your repository after them, in the
+order of their names. So with the label `council`, the council of the
+default set is `design`, `testing`, `docs`, `rust`, `security` and
+`attacker`.
 
 The council of a pull request reads the member files of its base
 branch, not of its head. So a pull request cannot change the council
 of its own verify.
 
-The Rust expert, `rust`, reviews each change of Rust code for
+The Rust expert, `rust`, reviews the Rust code of a change for
 idiomatic Rust and for the patterns of `.riff/council/rust.md`. Each
 `##` heading of that file is one pattern, for example "An invalid
 state cannot be made" and "Each conversion names each field". To add a
@@ -4217,9 +4218,10 @@ request, with the steps of
 [The council of a verify](#the-council-of-a-verify).
 
 Write the result to a file: each criterion, and what you did to check
-it, then the part `## The council` with one line for each member. For
-a fail, give the steps to see each failure. A result of a pass of a
-pull request with the label `council`:
+it, then, when the council has a member, the part `## The council`
+with one line for each member. For a fail, give the steps to see each
+failure. A result of a pass of a pull request with the label
+`council`:
 
 ```markdown
 PASS
