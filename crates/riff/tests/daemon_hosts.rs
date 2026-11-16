@@ -1157,7 +1157,7 @@ fn fake_real_session(dir: &Path, log: &Path, code: &Path) -> Vec<(String, String
     let run = script(
         "run",
         format!(
-            "printf %s \"$RIFF_SERVER\" > {}\necho \"$*\" > {}\necho \"a line\"\necho \"GH_TOKEN=ghp_secret1\"\necho \"real-session: FAIL at step 6 of 10, run the item: exit 1\" >&2\nwhile [ -e {} ]; do sleep 0.1; done\nexit $(cat {})",
+            "printf %s \"$RIFF_SERVER\" > {}\necho \"$*\" > {}\necho \"a line\"\necho \"GH_TOKEN=ghp_secret1\"\necho \"x=1,DB_PASSWORD=hunter2 tail1\"\necho \"--env=GH_TOKEN=hunter2\"\necho \"real-session: FAIL at step 6 of 10, run the item: exit 1\" >&2\nwhile [ -e {} ]; do sleep 0.1; done\nexit $(cat {})",
             dir.join("server").display(),
             dir.join("args").display(),
             dir.join("hold").display(),
@@ -1322,6 +1322,14 @@ async fn the_daemon_runs_the_real_session_test_and_sets_the_status() {
             assert!(comment.contains("a line"), "{comment}");
             assert!(comment.contains("GH_TOKEN=[secret]"), "{comment}");
             assert!(!comment.contains("ghp_secret1"), "{comment}");
+            // 01M7GGCT0Z0GXM3BCAAGX7CE6Q: the rest of the line after each
+            // secret NAME=, also after a `,` or another `=`.
+            assert!(
+                comment.contains("x=1,DB_PASSWORD=[secret]\n--env=GH_TOKEN=[secret]\n"),
+                "{comment}"
+            );
+            assert!(!comment.contains("hunter2"), "{comment}");
+            assert!(!comment.contains("tail1"), "{comment}");
             std::fs::remove_file(tmp.path().join("comment")).unwrap();
         } else {
             assert!(comment.is_empty(), "{comment}");

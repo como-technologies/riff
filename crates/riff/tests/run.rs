@@ -29,7 +29,25 @@ use crate::common::fake_github::FakeGitHub;
 
 const GH_TOKEN: &str = "gho_FAKEtoken0123456789";
 const ACCESS: &str = "sk-ant-oat01-FAKEaccess";
-const REFRESH: &str = "sk-ant-ort01-FAKErefresh";
+/// The access token is in it: the scrub hides all of the refresh token,
+/// also after the access token in the list (01M7G01XCJGVYZBHW20GVGWG6K).
+const REFRESH: &str = "sk-ant-oat01-FAKEaccess-FAKErefresh";
+/// The part of the refresh token after the access token in it.
+const REFRESH_REST: &str = REFRESH.split_at(ACCESS.len()).1;
+/// Where an escape sequence splits a token in a tool result ([`split`]).
+const SPLIT: usize = 7;
+/// The escape sequences that split a token in a tool result, as JSON
+/// writes them: a CSI, an ST, and an ESC with an intermediate byte.
+const SPLITS: [&str; 3] = [r"\u001b[0m", r"\u001b\\", r#"\u001b\"X"#];
+/// The parts of the tokens that no output shows: also the part after an
+/// escape sequence that splits a token (01M7G9W5W1VMDJEETMXNXFK9ZD).
+const NEVER_SHOWN: [&str; 5] = [
+    GH_TOKEN,
+    ACCESS,
+    REFRESH_REST,
+    GH_TOKEN.split_at(SPLIT).1,
+    ACCESS.split_at(SPLIT).1,
+];
 const IMAGE: &str = "localhost/riff-session:test";
 /// The image that `riff.toml` of the repository pins.
 const PINNED: &str = "ghcr.io/como-technologies/riff-session@sha256:\
@@ -430,13 +448,51 @@ fn who_is(dir: &Path) -> Value {
     serde_json::from_str(&line).unwrap()
 }
 
+/// `token` with the escape sequence `escape` after its first [`SPLIT`]
+/// bytes.
+fn split(token: &str, escape: &str) -> String {
+    let (start, rest) = token.split_at(SPLIT);
+    format!("{start}{escape}{rest}")
+}
+
+/// The tokens in the tool result of [`events`]: each one, the refresh
+/// token, and each one split by each of [`SPLITS`].
+fn leaked() -> Vec<String> {
+    let mut all = vec![GH_TOKEN.to_owned(), ACCESS.to_owned(), REFRESH.to_owned()];
+    for escape in SPLITS {
+        all.extend([split(GH_TOKEN, escape), split(ACCESS, escape)]);
+    }
+    all
+}
+
+/// The line of the tool result of [`events`] on the terminal: one
+/// `[secret]` for each token of [`leaked`].
+fn tool_failed() -> String {
+    let hidden = vec!["[secret]"; leaked().len()].join(" and ");
+    format!("! the tool failed: token {hidden} leaked")
+}
+
+/// The second tool result of [`events`]: an OSC splits the access token
+/// across two text blocks (01M7GKJNQ7TTGGWSF56YM8784Q).
+fn osc_split() -> String {
+    let (start, rest) = ACCESS.split_at(SPLIT);
+    format!(
+        r#"{{"type":"tool_result","is_error":true,"content":[{{"type":"text","text":"{start}\u001b]0;"}},{{"type":"text","text":"t\u0007{rest}"}}]}}"#
+    )
+}
+
+/// The line of [`osc_split`] on the terminal.
+const OSC_FAILED: &str = "! the tool failed: [secret] [secret]";
+
 /// The events of one turn of a fake `claude`. A tool result holds the
-/// tokens: riff must not show them.
+/// tokens, also split by an escape sequence: riff must not show them.
 fn events() -> String {
+    let leaked = leaked().join(" and ");
+    let osc = osc_split();
     [
         r#"{"type":"system","subtype":"init","session_id":"s","model":"claude-opus-5-5","permissionMode":"auto"}"#.to_owned(),
         r#"{"type":"assistant","message":{"content":[{"type":"text","text":"I read the issue."},{"type":"tool_use","name":"Bash","input":{"command":"gh issue view 12 --comments"}}]}}"#.to_owned(),
-        format!(r#"{{"type":"user","message":{{"content":[{{"type":"tool_result","is_error":true,"content":"token {GH_TOKEN} and {ACCESS} leaked"}}]}}}}"#),
+        format!(r#"{{"type":"user","message":{{"content":[{{"type":"tool_result","is_error":true,"content":"token {leaked} leaked"}},{osc}]}}}}"#),
         r#"{"type":"system","subtype":"vcs_state_changed","action":"push","branch":"worktree-issue-12"}"#.to_owned(),
         r#"{"type":"result","subtype":"success","is_error":false,"num_turns":3,"duration_ms":5000,"total_cost_usd":0.25,"result":"https://github.com/como-technologies/riff/pull/40"}"#.to_owned(),
     ]
@@ -1364,7 +1420,8 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         "start: model claude-opus-5-5, permission mode auto",
         "I read the issue.",
         "> Bash: gh issue view 12 --comments",
-        "! the tool failed: token [secret] and [secret] leaked",
+        &tool_failed(),
+        OSC_FAILED,
         "vcs_state_changed: action push, branch worktree-issue-12",
         "end: success, 3 turns, 5 s, 0.25 USD",
         "The pull request #40: https://github.com/como-technologies/riff/pull/40",
@@ -1379,7 +1436,7 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
     let log = std::fs::read_to_string(folder.join("events.jsonl")).unwrap();
     assert_eq!(log.lines().count(), 5, "{log}");
     let daemon = machine.read("daemon.out");
-    for secret in [GH_TOKEN, ACCESS] {
+    for secret in NEVER_SHOWN {
         for (name, shown) in [
             ("stdout", &stdout),
             ("stderr", &stderr),
@@ -2223,11 +2280,13 @@ async fn a_restart_of_the_daemon_loses_no_event_and_riff_run_goes_on() {
     // Each event one time, on the terminal and in the log, with no
     // secret.
     // The first event is the one of hanging_run.
+    let failed = tool_failed();
     let parts = [
         "start: model m, permission mode auto",
         "I read the issue.",
         "> Bash: gh issue view 12 --comments",
-        "! the tool failed: token [secret] and [secret] leaked",
+        failed.as_str(),
+        OSC_FAILED,
         "vcs_state_changed: action push, branch worktree-issue-12",
         "end: success, 3 turns, 5 s, 0.25 USD",
     ];
@@ -2237,7 +2296,7 @@ async fn a_restart_of_the_daemon_loses_no_event_and_riff_run_goes_on() {
     let logged = std::fs::read_to_string(&log).unwrap();
     assert_eq!(logged.lines().count(), 5, "{logged}");
     assert!(
-        !logged.contains(GH_TOKEN) && !logged.contains(ACCESS),
+        NEVER_SHOWN.iter().all(|secret| !logged.contains(secret)),
         "{logged}"
     );
 
@@ -4362,9 +4421,15 @@ async fn relay_hook(socket: &Path, hook: &str, input: &'static [u8]) -> Output {
 /// Runs `riff relay ARGS` with the socket `socket`, and `input` on its
 /// stdin. Its Claude folder is the folder of the socket.
 async fn relay_args(socket: &Path, args: &[&str], input: &'static [u8]) -> Output {
+    relay_env(socket, args, &[], input.to_vec()).await
+}
+
+/// [`relay_args`], with each variable of `env` set.
+async fn relay_env(socket: &Path, args: &[&str], env: &[(&str, &str)], input: Vec<u8>) -> Output {
     let mut cmd = Command::new(Isolated::shared().riff_path());
     cmd.arg("relay")
         .args(args)
+        .envs(env.iter().copied())
         .env("RIFF_SOCKET", socket)
         .env("CLAUDE_CONFIG_DIR", socket.parent().unwrap())
         .stdin(Stdio::piped())
@@ -4372,7 +4437,7 @@ async fn relay_args(socket: &Path, args: &[&str], input: &'static [u8]) -> Outpu
         .stderr(Stdio::piped());
     tokio::task::spawn_blocking(move || {
         let mut child = cmd.spawn().unwrap();
-        std::io::Write::write_all(&mut child.stdin.take().unwrap(), input).unwrap();
+        std::io::Write::write_all(&mut child.stdin.take().unwrap(), &input).unwrap();
         child.wait_with_output().unwrap()
     })
     .await
@@ -4496,6 +4561,62 @@ async fn each_hook_exits_with_0_when_the_daemon_does_not_answer() {
             text(&out.stderr)
         );
         assert_eq!(text(&out.stdout), "", "{args:?}");
+    }
+}
+
+/// 01M7G9W5YP7B25E30VRZMJ8S02: `riff relay denied` makes the head and
+/// the text of a refusal from the scrubbed input. No part of a secret
+/// that an escape sequence splits, or that the cut of the head at 60
+/// characters cuts, goes into the file of the kept refusals.
+#[tokio::test]
+async fn riff_relay_denied_keeps_no_part_of_a_secret() {
+    let dir = tempfile::tempdir().unwrap();
+    let away = dir.path().join("none.sock");
+    let secret = isolated::fake_secret();
+    let servers = serde_json::json!({"docs": {"command": "docs-mcp", "env": {"DOCS_KEY": secret}}});
+    let servers = servers.to_string();
+    let url = format!("https://example.com/{}?k=", "a".repeat(34));
+    let inputs = [
+        (
+            "Bash",
+            serde_json::json!({"command": "echo gho_sec\x1b[0mret1 done"}),
+        ),
+        (
+            "WebFetch",
+            serde_json::json!({ "url": format!("{url}{secret}") }),
+        ),
+    ];
+    for (tool, input) in &inputs {
+        let hook = serde_json::json!({
+            "hook_event_name": "PermissionDenied",
+            "session_id": "s1",
+            "tool_name": tool,
+            "tool_input": input,
+            "reason": "[Credential Leak]",
+        });
+        let env = [("RIFF_MCP_SERVERS", servers.as_str())];
+        let out = relay_env(&away, &["denied"], &env, hook.to_string().into_bytes()).await;
+        assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    }
+    // No daemon takes a refusal: each one stays in the file.
+    let file = dir.path().join("denials.jsonl");
+    let started = Instant::now();
+    let kept = loop {
+        let kept = std::fs::read_to_string(&file).unwrap_or_default();
+        if kept.lines().count() == inputs.len() {
+            break kept;
+        }
+        assert!(started.elapsed() < isolated::HANG, "{kept}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    let heads: BTreeSet<String> = kept
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap()["head"].to_string())
+        .collect();
+    let want = [r#""echo [secret]""#.to_owned(), format!(r#""{url}[se""#)];
+    assert_eq!(heads, BTreeSet::from(want), "{kept}");
+    for part in ["ret1", "fak"] {
+        assert!(!kept.contains(part), "{part}: {kept}");
     }
 }
 

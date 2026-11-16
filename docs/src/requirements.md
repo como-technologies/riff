@@ -8956,6 +8956,46 @@ of this part when they merge.
   ends in the last token of the same start that they found. So the time
   to scrub a line grows with its length, not with its square, and a
   long line from a session holds the daemon for no long time.
+- **01M7G9W1GMGYDY64DP2QVSJ9WX** The scrub of a line of an event reads
+  the line as JSON: also a line with a `\u` escape of a surrogate with
+  no pair. It reads only the strings and the numbers of the event, and
+  keeps each other byte of the line: also a key that comes twice, and a
+  number of any size. It scrubs each string on its own, each key and
+  each value, after the JSON decode, as it scrubs a text. It puts
+  `[secret]` in place of the JSON of each run in a string. A number with
+  a secret in it becomes the string `"[secret]"`. A line that is no JSON
+  is a text. So a secret with a `"`, a `\` or a line break goes, no
+  match takes out JSON syntax, and each event stays valid JSON.
+- **01M7G9W5W1VMDJEETMXNXFK9ZD** The scrub of a text also finds each
+  match of 01M7G01XCJGVYZBHW20GVGWG6K in the text that `text::safe`
+  gives of it: with each escape sequence and each control character
+  taken out, but a newline and a tab. The range of such a match in the
+  text goes from the start of the match to its end, with each escape
+  sequence in it, and joins the union. So a secret goes in full when a
+  CSI, an OSC, an ST, or an ESC with an intermediate byte comes between
+  two of its characters.
+- **01M7G9W5YP7B25E30VRZMJ8S02** `riff relay denied` scrubs the input of
+  the tool as an event (01M7G9W1GMGYDY64DP2QVSJ9WX) before it makes the
+  tag `head` and the text of a record. So the cut of the head at 60
+  characters, a `"` that becomes `'` and a control character that
+  becomes a space show no part of a secret.
+- **01M7GKJNQ7TTGGWSF56YM8784Q** The scrub of a line of an event also
+  matches each secret on the text that a terminal shows of all strings
+  of the event: each key and each value, in their order in the line,
+  with `@ ` between each two. The `@` ends a CSI or an ESC sequence that
+  is open at the end of a string. An OSC, a DCS, an SOS, a PM or an APC
+  goes on to its end in a later string. For each match, the scrub hides
+  the part in each string that has a shown character of it: from the
+  start of the match, or of the string, to the end of the match, or of
+  the string. So a secret that an OSC splits across two strings goes in
+  full.
+- **01M7GKJNTJK7434G41JYW3EVRS** The scrub of a line of an event takes
+  out of each string the escape sequence that is open at its end: the
+  part after the last character that a terminal prints, when the
+  terminal is not in its ground state at the end of the string. So no
+  escape sequence of a string goes on into the next text that a view
+  shows, and no view joins two parts of a secret that are in two
+  strings.
 
 ### Process
 

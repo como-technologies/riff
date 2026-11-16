@@ -305,7 +305,7 @@ impl End {
         let tail = lines[lines.len().saturating_sub(TAIL)..]
             .iter()
             .map(|line| {
-                let line = scrub.clean(line);
+                let line = scrub.event(line);
                 match line.char_indices().nth(LINE_MAX) {
                     Some((at, _)) => format!("{}...", &line[..at]),
                     None => line.into_owned(),
@@ -517,6 +517,27 @@ mod tests {
         assert_eq!(
             end.reason(),
             "exit code 1, 2 denied tool calls (Bash, Write)"
+        );
+    }
+
+    /// 01M7G9W1GMGYDY64DP2QVSJ9WX: a line of JSON in the tail is an
+    /// event, and the scrub works on each of its strings after the JSON
+    /// decode. So no part shows of a secret that an escape sequence
+    /// splits, or of a secret with a `"`.
+    #[test]
+    fn a_line_of_json_in_the_tail_shows_no_part_of_a_secret() {
+        let events = concat!(
+            r#"{"type":"user","message":{"content":[{"type":"tool_result","is_error":true,"content":"gho_sec\u001b[0mret1 and pa\"ss1234"}]}}"#,
+            "\nplain gho_sec\x1b[0mret1\n",
+        );
+        let scrub = Scrub::new([r#"pa"ss1234"#.to_owned()]);
+        let end = End::from_events("issue-9", "s", ended(Some(1), true), events, &scrub);
+        assert_eq!(
+            end.tail,
+            [
+                r#"{"type":"user","message":{"content":[{"type":"tool_result","is_error":true,"content":"[secret] and [secret]"}]}}"#,
+                "plain [secret]",
+            ]
         );
     }
 

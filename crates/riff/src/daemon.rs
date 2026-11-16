@@ -2398,7 +2398,7 @@ impl Owned {
         if seq != state.seq + 1 {
             return state.seq;
         }
-        let line = self.scrub.clean(line).into_owned();
+        let line = self.scrub.event(line).into_owned();
         if state.log.write_all(format!("{line}\n").as_bytes()).is_err() {
             return state.seq;
         }
@@ -14640,8 +14640,14 @@ mod tests {
         drop(client);
         let socket = session_dir(&h.b.dir, &name);
         let (mut relay, _) = Relay::connect(&socket, 1, false).await;
-        relay.event(1, TURN[0]).await;
-        relay.event(2, TURN[1]).await;
+        // 01M7G9W1GMGYDY64DP2QVSJ9WX: the daemon scrubs the decoded text
+        // of the JSON, so an escape sequence that splits a token, as JSON
+        // writes it, keeps no part of it.
+        let split = r#"{"type":"user","message":{"content":[{"type":"tool_result","is_error":true,"content":"gho_sec\u001b[0mret1"}]}}"#;
+        let early = [TURN[0], TURN[1], split];
+        for (seq, line) in (1..).zip(early) {
+            relay.event(seq, line).await;
+        }
 
         let lines = Arc::new(Mutex::new(Vec::new()));
         let follow = {
@@ -14655,11 +14661,11 @@ mod tests {
         // The lines of `riff daemon events` on b: with no secret.
         let scrub = Scrub::new(["gho_secret1".to_owned()]);
         let mut view = crate::run::View::default();
-        let mut on_b = |line: &str| view.shown(&scrub.clean(line));
-        let first: Vec<String> = TURN[..2].iter().flat_map(|l| on_b(l)).collect();
+        let mut on_b = |line: &str| view.shown(&scrub.event(line));
+        let first: Vec<String> = early.iter().flat_map(|l| on_b(l)).collect();
         until_async(|| async { lines.lock().unwrap().len() >= first.len() }).await;
-        relay.event(3, TURN[2]).await;
-        relay.exit(4, 0).await;
+        relay.event(4, TURN[2]).await;
+        relay.exit(5, 0).await;
         let failed = follow.await.unwrap().unwrap();
         assert!(!failed);
 
@@ -14668,7 +14674,11 @@ mod tests {
         want.push(text::daemon_session_ends(&name, Some(0)));
         let got = lines.lock().unwrap().clone();
         assert_eq!(got, want);
-        assert!(got.iter().all(|l| !l.contains("gho_secret1")), "{got:?}");
+        assert!(
+            got.contains(&"! the tool failed: [secret]".to_owned()),
+            "{got:?}"
+        );
+        assert!(got.iter().all(|l| !l.contains("ret1")), "{got:?}");
 
         // The daemon of a owns no such session.
         let none = remote::follow_events(&h.api, &h.lead, "a", &name, |_| {}).await;

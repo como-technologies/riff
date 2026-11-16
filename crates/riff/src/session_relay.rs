@@ -509,7 +509,7 @@ fn read_claude(
         let mut lines = BufReader::new(stdout).lines();
         let mut seq = first;
         while let Ok(Some(line)) = lines.next_line().await {
-            let line = scrub.clean(&line).into_owned();
+            let line = scrub.event(&line).into_owned();
             if ups.send(Up::Event { seq, line }).is_err() {
                 return;
             }
@@ -1286,7 +1286,7 @@ mod tests {
         let scrub = Scrub::new(secrets(var, None));
         let line = r#"{"tool":"docs","env":"env-s3cret","auth":"Bearer head-s3cret","url":"https://unifi.example"}"#;
         assert_eq!(
-            scrub.clean(line),
+            scrub.event(line),
             format!(
                 r#"{{"tool":"docs","env":"{0}","auth":"{0}","url":"https://unifi.example"}}"#,
                 crate::run::HIDDEN

@@ -1034,10 +1034,15 @@ pub fn sign_in(file: &str, now_ms: i64) -> Result<SignIn> {
 /// of the person for a session (01M6Z87A04EXTT1FFJSJ1EM6TB), so no list
 /// holds that one either.
 ///
-/// The scrub finds the range of each match in the text first, then
-/// hides their union ([`Scrub::found`], [`hide`],
-/// 01M7G01XCJGVYZBHW20GVGWG6K). So a short secret in a long one does not
-/// cut the long one, in each order of the list.
+/// The scrub finds the range of each match in the first text, then hides
+/// their union ([`Scrub::found`], [`hide`], 01M7G01XCJGVYZBHW20GVGWG6K).
+/// So a short secret in a long one does not cut the long one, in each
+/// order of the list. It also finds each match in the text that a
+/// terminal shows, with each escape sequence taken out ([`text::Shown`],
+/// 01M7G9W5W1VMDJEETMXNXFK9ZD). So a secret goes in full when an escape
+/// sequence comes between two of its characters. In a line of an event,
+/// it scrubs each string of the JSON on its own, and all of them together
+/// ([`Scrub::event`]).
 ///
 /// ```
 /// use riff::run::Scrub;
@@ -1056,6 +1061,13 @@ pub fn sign_in(file: &str, now_ms: i64) -> Result<SignIn> {
 ///     Scrub::default().clean("gho_a1 ghp_b2 ghu_c3 ghr_d4 github_pat_11AB_cd"),
 ///     "[secret] [secret] [secret] [secret] [secret]"
 /// );
+///
+/// // A secret that an escape sequence splits, in a text and in an event.
+/// assert_eq!(Scrub::default().clean("a gho_sec\x1b[0mret1 b"), "a [secret] b");
+/// assert_eq!(
+///     scrub.event(r#"{"text":"sk-ant-\u001b[0moat01-secret1","is_error":false}"#),
+///     r#"{"text":"[secret]","is_error":false}"#
+/// );
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct Scrub {
@@ -1072,14 +1084,120 @@ impl Scrub {
     }
 
     /// `text` with one [`HIDDEN`] in place of each run of the union of
-    /// [`Scrub::found`] ([`hide`]).
+    /// [`Scrub::found`] ([`hide`]): in `text`, and in the text that a
+    /// terminal shows of it (01M7G9W5W1VMDJEETMXNXFK9ZD).
     pub fn clean<'a>(&self, text: &'a str) -> Cow<'a, str> {
-        let found = self.found(text);
+        let found = self.ranges(text);
         if found.is_empty() {
             Cow::Borrowed(text)
         } else {
             Cow::Owned(hide(text, found))
         }
+    }
+
+    /// The line `line` of an event with no secret. The event is JSON
+    /// that `claude` writes, so the scrub reads only its strings and its
+    /// numbers, and keeps each other byte of the line: also a key that
+    /// comes twice, and a number of any size (01M7G9W1GMGYDY64DP2QVSJ9WX).
+    /// It scrubs the text of each string after the JSON decode, each key
+    /// and each value: on its own ([`Scrub::clean`]), and all of them
+    /// together (01M7GKJNQ7TTGGWSF56YM8784Q). It puts `[secret]` in place
+    /// of the JSON of each run in a string, and takes out the escape
+    /// sequence that is open at the end of a string ([`text::open_at`]).
+    /// A number with a secret in it becomes the string `"[secret]"`. So
+    /// each event stays valid JSON. A line that is no JSON is a text.
+    ///
+    /// ```
+    /// use riff::run::Scrub;
+    ///
+    /// let scrub = Scrub::new(["sk-ant-oat01-secret1".to_owned(), "12345678".to_owned()]);
+    /// assert_eq!(
+    ///     scrub.event(r#"{"a":"gho_x1","a":"ok","pin":912345678,"n":1}"#),
+    ///     r#"{"a":"[secret]","a":"ok","pin":"[secret]","n":1}"#
+    /// );
+    /// // An OSC that splits the secret across two strings.
+    /// assert_eq!(
+    ///     scrub.event(r#"["sk-ant-oat01-\u001b]0;","t\u0007secret1"]"#),
+    ///     r#"["[secret]","[secret]"]"#
+    /// );
+    /// assert_eq!(scrub.event("no json sk-ant-oat01-secret1"), "no json [secret]");
+    /// ```
+    pub fn event<'a>(&self, line: &'a str) -> Cow<'a, str> {
+        if serde_json::from_str::<serde::de::IgnoredAny>(line).is_err() {
+            return self.clean(line);
+        }
+        let (strings, numbers) = json_parts(line);
+        let mut hidden: Vec<_> = strings.iter().map(|s| self.ranges(&s.text)).collect();
+        self.across(&strings, &mut hidden);
+        let quoted = format!("\"{HIDDEN}\"");
+        let mut edits: Vec<_> = strings
+            .iter()
+            .zip(hidden)
+            .flat_map(|(string, hidden)| string.edits(hidden))
+            .collect();
+        edits.extend(
+            numbers
+                .into_iter()
+                .filter(|number| !self.found(&line[number.clone()]).is_empty())
+                .map(|number| (number, quoted.as_str())),
+        );
+        if edits.is_empty() {
+            return Cow::Borrowed(line);
+        }
+        edits.sort_by_key(|(range, _)| range.start);
+        Cow::Owned(edit(line, edits))
+    }
+
+    /// Adds to `hidden`, the ranges to hide in each of `strings`, each
+    /// match in the text that a terminal shows of all of `strings`, in
+    /// their order, with `@ ` between each two. The `@` ends a CSI or an
+    /// ESC sequence that is open at the end of a string, as the cut of
+    /// [`JsonString::edits`] does. An OSC, a DCS, an SOS, a PM or an APC
+    /// goes on to its end in a later string. A match goes in each string
+    /// that has a shown character of it: from the start of the match, or
+    /// of the string, to the end of the match, or of the string
+    /// (01M7GKJNQ7TTGGWSF56YM8784Q).
+    fn across(&self, strings: &[JsonString], hidden: &mut [Vec<Range<usize>>]) {
+        let mut all = String::new();
+        let mut spans = Vec::with_capacity(strings.len());
+        for (at, string) in strings.iter().enumerate() {
+            if at > 0 {
+                all.push_str("@ ");
+            }
+            spans.push(all.len()..all.len() + string.text.len());
+            all.push_str(&string.text);
+        }
+        let Some(shown) = text::Shown::of(&all) else {
+            return;
+        };
+        for run in runs(self.found(shown.text())) {
+            let Some(whole) = shown.first(run.clone(), 0..all.len()) else {
+                continue;
+            };
+            let from = spans.partition_point(|span| span.end <= whole.start);
+            let parts = spans[from..].iter().zip(&mut hidden[from..]);
+            for (span, hidden) in parts.take_while(|(span, _)| span.start < whole.end) {
+                if shown.first(run.clone(), span.clone()).is_some() {
+                    let part = whole.start.max(span.start)..whole.end.min(span.end);
+                    hidden.push(part.start - span.start..part.end - span.start);
+                }
+            }
+        }
+    }
+
+    /// The range of each match in `text`, and of each match in the text
+    /// that a terminal shows of it, with each escape sequence in it
+    /// (01M7G9W5W1VMDJEETMXNXFK9ZD).
+    fn ranges(&self, text: &str) -> Vec<Range<usize>> {
+        let mut found = self.found(text);
+        if let Some(shown) = text::Shown::of(text) {
+            let more = self.found(shown.text());
+            found.extend(
+                more.into_iter()
+                    .filter_map(|range| shown.first(range, 0..text.len())),
+            );
+        }
+        found
     }
 
     /// The range in `text` of each match of each secret, also of two
@@ -1161,6 +1279,20 @@ pub fn tokens<'a>(
     })
 }
 
+/// The runs of the union of `found`, in their order: two ranges that
+/// overlap or touch make one run.
+fn runs(mut found: Vec<Range<usize>>) -> Vec<Range<usize>> {
+    found.sort_by_key(|range| range.start);
+    let mut runs: Vec<Range<usize>> = Vec::new();
+    for range in found {
+        match runs.last_mut() {
+            Some(run) if range.start <= run.end => run.end = run.end.max(range.end),
+            _ => runs.push(range),
+        }
+    }
+    runs
+}
+
 /// `text` with one [`HIDDEN`] in place of each run of the union of
 /// `found`: two ranges that overlap or touch make one run. Each range
 /// starts and ends at a character of `text`.
@@ -1172,24 +1304,139 @@ pub fn tokens<'a>(
 /// assert_eq!(hide("abcdef", vec![0..2, 2..4]), "[secret]ef");
 /// assert_eq!(hide("no secret", Vec::new()), "no secret");
 /// ```
-pub fn hide(text: &str, mut found: Vec<Range<usize>>) -> String {
-    found.sort_by_key(|range| range.start);
-    let mut runs: Vec<Range<usize>> = Vec::new();
-    for range in found {
-        match runs.last_mut() {
-            Some(run) if range.start <= run.end => run.end = run.end.max(range.end),
-            _ => runs.push(range),
+pub fn hide(text: &str, found: Vec<Range<usize>>) -> String {
+    edit(text, runs(found).into_iter().map(|run| (run, HIDDEN)))
+}
+
+/// `text` with the text of each edit in place of its range. The ranges
+/// are in their order, and do not overlap.
+fn edit<'a>(text: &str, edits: impl IntoIterator<Item = (Range<usize>, &'a str)>) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut kept = 0;
+    for (range, with) in edits {
+        out.push_str(&text[kept..range.start]);
+        out.push_str(with);
+        kept = range.end;
+    }
+    out.push_str(&text[kept..]);
+    out
+}
+
+/// A string of a line of JSON, a key or a value: its text after the
+/// JSON decode, and where each byte of the text comes from in the line.
+struct JsonString {
+    text: String,
+    /// The start in the line of the character or the escape of each byte
+    /// of `text`, and last the place of the closing quote.
+    at: Vec<usize>,
+}
+
+impl JsonString {
+    /// The string of `line` that starts at `from`, just after its opening
+    /// quote. `line` is valid JSON.
+    fn read(line: &str, from: usize) -> JsonString {
+        let mut string = JsonString {
+            text: String::new(),
+            at: Vec::new(),
+        };
+        let mut at = from;
+        loop {
+            let rest = &line[at..];
+            let (c, len) = match rest.chars().next() {
+                None | Some('"') => break,
+                Some('\\') => unescape(rest),
+                Some(c) => (c, c.len_utf8()),
+            };
+            string.text.push(c);
+            string.at.extend(std::iter::repeat_n(at, c.len_utf8()));
+            at += len;
+        }
+        string.at.push(at);
+        string
+    }
+
+    /// The place of the closing quote in the line.
+    fn end(&self) -> usize {
+        self.at[self.text.len()]
+    }
+
+    /// The edits of the line for `hidden`, ranges of the text: one
+    /// [`HIDDEN`] in place of the JSON of each run, and none in place of
+    /// the escape sequence that is open at the end of the text, with each
+    /// run in it (01M7GKJNTJK7434G41JYW3EVRS).
+    fn edits<'a>(&self, hidden: Vec<Range<usize>>) -> Vec<(Range<usize>, &'a str)> {
+        let mut runs = runs(hidden);
+        let mut cut = None;
+        if let Some(open) = text::open_at(&self.text) {
+            runs.retain(|run| run.start < open);
+            let from = runs.last().map_or(open, |run| run.end.max(open));
+            cut = Some(from..self.text.len()).filter(|cut| !cut.is_empty());
+        }
+        let line = |range: Range<usize>| self.at[range.start]..self.at[range.end];
+        let mut edits: Vec<_> = runs.into_iter().map(|run| (line(run), HIDDEN)).collect();
+        edits.extend(cut.map(|cut| (line(cut), "")));
+        edits
+    }
+}
+
+/// The character of the JSON escape at the start of `rest`, and the
+/// length of the escape. A surrogate with no pair is U+FFFD.
+fn unescape(rest: &str) -> (char, usize) {
+    let hex = |at: usize| {
+        rest.get(at..at + 4)
+            .and_then(|hex| u32::from_str_radix(hex, 16).ok())
+    };
+    match rest.as_bytes().get(1) {
+        Some(b'b') => ('\x08', 2),
+        Some(b'f') => ('\x0c', 2),
+        Some(b'n') => ('\n', 2),
+        Some(b'r') => ('\r', 2),
+        Some(b't') => ('\t', 2),
+        Some(b'u') => {
+            let high = hex(2).unwrap_or(0);
+            let low = rest.get(6..8).filter(|&u| u == "\\u").and_then(|_| hex(8));
+            let (code, len) = match (high, low) {
+                (0xD800..=0xDBFF, Some(low @ 0xDC00..=0xDFFF)) => {
+                    (0x10000 + ((high - 0xD800) << 10) + (low - 0xDC00), 12)
+                }
+                _ => (high, 6),
+            };
+            (
+                char::from_u32(code).unwrap_or(char::REPLACEMENT_CHARACTER),
+                len,
+            )
+        }
+        // `\"`, `\\` and `\/` stand for the character after the `\`.
+        Some(&other) => (char::from(other), 2),
+        None => ('\\', 1),
+    }
+}
+
+/// Each string, a key or a value, and the range of each number of
+/// `line`, a line of valid JSON, in their order.
+fn json_parts(line: &str) -> (Vec<JsonString>, Vec<Range<usize>>) {
+    let bytes = line.as_bytes();
+    let (mut strings, mut numbers) = (Vec::new(), Vec::new());
+    let mut at = 0;
+    while let Some(&byte) = bytes.get(at) {
+        match byte {
+            b'"' => {
+                let string = JsonString::read(line, at + 1);
+                at = string.end() + 1;
+                strings.push(string);
+            }
+            b'-' | b'0'..=b'9' => {
+                let len = bytes[at..]
+                    .iter()
+                    .take_while(|b| matches!(b, b'0'..=b'9' | b'-' | b'+' | b'.' | b'e' | b'E'))
+                    .count();
+                numbers.push(at..at + len);
+                at += len;
+            }
+            _ => at += 1,
         }
     }
-    let mut out = String::with_capacity(text.len());
-    let mut shown = 0;
-    for run in runs {
-        out.push_str(&text[shown..run.start]);
-        out.push_str(HIDDEN);
-        shown = run.end;
-    }
-    out.push_str(&text[shown..]);
-    out
+    (strings, numbers)
 }
 
 /// The one stream-json line that gives `claude` the text of a person.
@@ -3306,6 +3553,286 @@ mod tests {
         let found: Vec<_> = tokens(" é1 b", "", alnum).collect();
         assert_eq!(found, [3..4, 5..6]);
         assert_eq!(tokens("", "", alnum).count(), 0);
+    }
+
+    /// 01M7G01XCJGVYZBHW20GVGWG6K: the values of an MCP server go into
+    /// the list in the order of `mcp.json`. A short one in a long one
+    /// does not cut the long one, in each order of the list.
+    #[test]
+    fn a_short_secret_in_a_long_one_cuts_it_in_no_order() {
+        let (short, long) = ("live", "sk_live_51HxyzAbCdEf");
+        for list in [[short, long], [long, short]] {
+            let scrub = Scrub::new(list.map(str::to_owned));
+            assert_eq!(
+                scrub.clean("stripe refused sk_live_51HxyzAbCdEf, mode live"),
+                "stripe refused [secret], mode [secret]",
+                "{list:?}"
+            );
+        }
+    }
+
+    /// 01M7G01XCJGVYZBHW20GVGWG6K: two matches that overlap, two secrets
+    /// that touch, and a token of GitHub that holds a secret each make
+    /// one run, with one `[secret]`.
+    #[test]
+    fn the_scrub_hides_the_union_of_the_matches() {
+        let scrub = Scrub::new(["aaaa".to_owned(), "abcd".to_owned(), "cdef".to_owned()]);
+        assert_eq!(scrub.clean("x aaaaa y"), "x [secret] y");
+        assert_eq!(scrub.clean("x abcdef y"), "x [secret] y");
+        assert_eq!(scrub.clean("x abcdaaaa y"), "x [secret] y");
+        assert_eq!(scrub.clean("x ghs_abcdXYZ y"), "x [secret] y");
+        assert_eq!(scrub.clean("abcd"), "[secret]");
+        assert!(matches!(scrub.clean("x abc y"), Cow::Borrowed("x abc y")));
+        let wide = Scrub::new(["ééé1".to_owned()]);
+        assert_eq!(wide.clean("é ééééé1 é"), "é éé[secret] é");
+        assert_eq!(wide.clean("ééé1 ééé1"), "[secret] [secret]");
+    }
+
+    /// The secrets of the tests of an escape sequence: a token of the
+    /// sign-in, a secret with a `"`, one with a `\`, and a key on lines.
+    fn split_secrets() -> Scrub {
+        Scrub::new(
+            [
+                "sk-ant-oat01-secret1",
+                r#"pa"ss1234"#,
+                r"ab\cd1234",
+                "-----BEGIN KEY-----\nline1-secret\nline2-secret\n-----END KEY-----",
+            ]
+            .map(str::to_owned),
+        )
+    }
+
+    /// 01M7G9W5W1VMDJEETMXNXFK9ZD: an escape sequence or a control
+    /// character in a secret of a text keeps no part of the secret: a
+    /// CSI, an OSC, an ST, an ESC with an intermediate byte. A newline and
+    /// a tab stay.
+    #[test]
+    fn a_secret_that_an_escape_sequence_splits_shows_no_part() {
+        let scrub = split_secrets();
+        for (raw, want) in [
+            ("gho_sec\x1b[0mret1", "[secret]"),
+            ("a gho_s\x1b[0mecret1 b", "a [secret] b"),
+            ("sk-ant-\x1b[0moat01-secret1", "[secret]"),
+            ("sk-ant-\x1b\\oat01-secret1 ok", "[secret] ok"),
+            ("plain sk-ant-oat01-sec\x1b\\ret1 end", "plain [secret] end"),
+            ("gho_sec\x1b\"Xret1", "[secret]"),
+            ("sk-ant-\x1b]0;t\x07oat01-\rsecret1 ok", "[secret] ok"),
+            (
+                "a\x1b]0;x\x07 gho_sec\x1b[0mret1 b",
+                "a\x1b]0;x\x07 [secret] b",
+            ),
+            ("sk-ant-oat01-\u{9b}secret1", "[secret]"),
+            ("ghs_ab\x08cd", "[secret]"),
+            ("ghs_ab\ncd ghs_ef\tgh", "[secret]\ncd [secret]\tgh"),
+            (r#"q pa"ss1234 end"#, "q [secret] end"),
+            (r"b ab\cd1234 end", "b [secret] end"),
+            (
+                "key: -----BEGIN KEY-----\nline1-secret\nline2-secret\n-----END KEY----- end",
+                "key: [secret] end",
+            ),
+        ] {
+            assert_eq!(scrub.clean(raw), want, "{raw:?}");
+            let shown = text::safe(&scrub.clean(raw));
+            assert!(
+                !shown.contains("ret1") && !shown.contains("oat01"),
+                "{shown}"
+            );
+        }
+        assert!(matches!(scrub.clean("a\x1b[0mb"), Cow::Borrowed(_)));
+    }
+
+    /// The text that a terminal shows of the lines of `riff run` for the
+    /// line `line` of an event.
+    fn on_terminal(line: &str) -> String {
+        let lines = View::default().shown(line);
+        text::safe(&lines.join("\n"))
+    }
+
+    /// 01M7G9W1GMGYDY64DP2QVSJ9WX: the scrub of an event scrubs each
+    /// string of its JSON on its own, after the JSON decode, and keeps
+    /// each other byte of the line: also a key that comes twice, two keys
+    /// that become one text, and a surrogate with no pair. No match takes
+    /// out JSON syntax, and each event stays valid JSON.
+    #[test]
+    fn the_scrub_of_an_event_scrubs_each_string_on_its_own() {
+        let scrub = split_secrets();
+        for (raw, want) in [
+            (
+                r#"{"t":"sk-ant-\u001b\\oat01-secret1","n":1}"#,
+                r#"{"t":"[secret]","n":1}"#,
+            ),
+            (
+                r#"{"text":"gho_sec\u001b\"Xret1"}"#,
+                r#"{"text":"[secret]"}"#,
+            ),
+            // An OSC opens in one string and ends in a later one.
+            (
+                r#"{"content":[{"text":"a\u001b]0;x"},{"text":"ok\u0007 gho_sec\u001b[0mret1"}]}"#,
+                r#"{"content":[{"text":"a"},{"text":"ok\u0007 [secret]"}]}"#,
+            ),
+            (
+                r#"{"text":"q pa\"ss1234 end"}"#,
+                r#"{"text":"q [secret] end"}"#,
+            ),
+            (
+                r#"{"text":"b ab\\cd1234 end"}"#,
+                r#"{"text":"b [secret] end"}"#,
+            ),
+            (
+                r#"{"text":"key: -----BEGIN KEY-----\nline1-secret\nline2-secret\n-----END KEY-----\n"}"#,
+                r#"{"text":"key: [secret]\n"}"#,
+            ),
+            (
+                r#"{"gho_key1":{"pin":12345678}}"#,
+                r#"{"[secret]":{"pin":12345678}}"#,
+            ),
+            (r#"{"a":"gho_x1","a":"ok"}"#, r#"{"a":"[secret]","a":"ok"}"#),
+            (
+                r#"{"gho_a1":"x","gho_b2":"y"}"#,
+                r#"{"[secret]":"x","[secret]":"y"}"#,
+            ),
+            (
+                r#"{"t":"\ud83d pa\"ss1234 sk-ant-\u001b[0moat01-secret1"}"#,
+                r#"{"t":"\ud83d [secret] [secret]"}"#,
+            ),
+            (
+                r#"{"t":"😀 é ab\\cd1234 gho_ab1"}"#,
+                r#"{"t":"😀 é [secret] [secret]"}"#,
+            ),
+            (
+                r#"{"c":"gho_\u001b[","is_error":true}"#,
+                r#"{"c":"gho_","is_error":true}"#,
+            ),
+            ("plain gho_sec\x1b[0mret1", "plain [secret]"),
+        ] {
+            let clean = scrub.event(raw);
+            assert_eq!(clean, want, "{raw}");
+            let json = serde_json::from_str::<serde::de::IgnoredAny>(&clean);
+            assert_eq!(json.is_ok(), raw.starts_with('{'), "{clean}");
+            let shown = on_terminal(&clean);
+            for part in ["ret1", "oat01", "ss1234", "cd1234", "line1"] {
+                assert!(!shown.contains(part), "{part}: {shown}");
+            }
+        }
+        // A secret that is a word of JSON: the event stays as it is.
+        let words = Scrub::new(["false".to_owned(), "true".to_owned()]);
+        for raw in [
+            r#"{"type":"result","is_error":false}"#,
+            r#"{"t":"\ud83d","is_error":true}"#,
+        ] {
+            assert!(matches!(words.event(raw), Cow::Borrowed(_)), "{raw}");
+        }
+    }
+
+    /// 01M7G9W1GMGYDY64DP2QVSJ9WX: a number with a secret in it, of any
+    /// size, becomes the string `"[secret]"`. Each other number stays.
+    #[test]
+    fn a_number_with_a_secret_becomes_a_string() {
+        let long = "123456789012345678901234";
+        let scrub = Scrub::new(["12345678".to_owned(), long.to_owned()]);
+        for (raw, want) in [
+            (r#"{"pin":12345678}"#, r#"{"pin":"[secret]"}"#),
+            (r#"{"pin":912345678}"#, r#"{"pin":"[secret]"}"#),
+            (
+                r#"{"n":123456789012345678901234,"x":-1.5e3}"#,
+                r#"{"n":"[secret]","x":-1.5e3}"#,
+            ),
+            (r#"[912345678.5,7]"#, r#"["[secret]",7]"#),
+        ] {
+            assert_eq!(scrub.event(raw), want, "{raw}");
+        }
+        assert!(matches!(scrub.event(r#"{"n":1234567}"#), Cow::Borrowed(_)));
+    }
+
+    /// 01M7GKJNQ7TTGGWSF56YM8784Q: a secret that an escape sequence
+    /// splits across two strings goes in full, in each string: in two
+    /// text blocks of a tool result, in two values of a `system` event,
+    /// and in two strings of a list. The strings between them stay.
+    #[test]
+    fn a_secret_that_an_escape_sequence_splits_across_two_strings_goes() {
+        let scrub = split_secrets();
+        for (raw, want, shown) in [
+            (
+                r#"{"type":"user","message":{"content":[{"type":"tool_result","is_error":true,"content":[{"type":"text","text":"sk-ant-oat01-\u001b]0;"},{"type":"text","text":"t\u0007secret1"}]}]}}"#,
+                r#"{"type":"user","message":{"content":[{"type":"tool_result","is_error":true,"content":[{"type":"text","text":"[secret]"},{"type":"text","text":"[secret]"}]}]}}"#,
+                "! the tool failed: [secret] [secret]",
+            ),
+            (
+                r#"{"type":"system","subtype":"permission_denied","a":"sk-ant-oat01-\u001b]0;","b":"t\u0007secret1"}"#,
+                r#"{"type":"system","subtype":"permission_denied","a":"[secret]","b":"[secret]"}"#,
+                "permission_denied: a [secret], b [secret]",
+            ),
+            (
+                r#"["ok gho_sec\u001b]8;;","x\u001b\\ret1 ok"]"#,
+                r#"["ok [secret]","[secret] ok"]"#,
+                "",
+            ),
+        ] {
+            let clean = scrub.event(raw);
+            assert_eq!(clean, want, "{raw}");
+            assert_eq!(on_terminal(&clean), shown, "{clean}");
+        }
+    }
+
+    /// 01M7GKJNTJK7434G41JYW3EVRS: the scrub takes out of each string
+    /// the escape sequence that is open at its end, with each match in
+    /// it. So no view joins two parts of a secret in two strings, in each
+    /// order of the strings. A sequence that ends stays.
+    #[test]
+    fn an_escape_sequence_that_is_open_at_the_end_of_a_string_goes() {
+        let scrub = split_secrets();
+        for (raw, want) in [
+            // A CSI: the keys between the strings end it in the order of
+            // the line, but a view joins the two texts.
+            (
+                r#"{"type":"user","message":{"content":[{"type":"tool_result","is_error":true,"content":[{"type":"text","text":"sk-ant-oat01-\u001b["},{"type":"text","text":"0msecret1"}]}]}}"#,
+                r#"{"type":"user","message":{"content":[{"type":"tool_result","is_error":true,"content":[{"type":"text","text":"sk-ant-oat01-"},{"type":"text","text":"0msecret1"}]}]}}"#,
+            ),
+            // A view sorts the values of a `system` event.
+            (
+                r#"{"type":"system","subtype":"permission_denied","b":"t\u0007secret1","a":"sk-ant-oat01-\u001b]0;"}"#,
+                r#"{"type":"system","subtype":"permission_denied","b":"t\u0007secret1","a":"sk-ant-oat01-"}"#,
+            ),
+            (r#"["x\u001b]0;gho_ab1"]"#, r#"["x"]"#),
+            (r#"["gho_ab\u001b["]"#, r#"["[secret]"]"#),
+            (r#"["a\u001b[0m\u001b"]"#, r#"["a"]"#),
+        ] {
+            let clean = scrub.event(raw);
+            assert_eq!(clean, want, "{raw}");
+            let shown = on_terminal(&clean);
+            assert!(!shown.contains("oat01-secret1"), "{shown}");
+        }
+        for raw in [r#"["a\u001b[0m"]"#, r#"["a\u001b]0;t\u0007"]"#] {
+            assert!(matches!(scrub.event(raw), Cow::Borrowed(_)), "{raw}");
+        }
+    }
+
+    /// 01M7G3CSVWSV6RTGJY1WMFGV7V: the scrub of a long run of token
+    /// starts, plain, with an escape sequence after each one, or in an
+    /// event, ends in a short time. So does the scrub of an event with
+    /// many strings, each with an open escape sequence or a part of a
+    /// token.
+    #[test]
+    fn a_long_run_of_token_starts_takes_a_short_time() {
+        let run = |after: &str| format!("ghs_{after}").repeat(1 << 16);
+        let parts = |part: &str| json!(vec![part; 1 << 16]).to_string();
+        let pairs = |a: &str, b: &str| json!([a, b].repeat(1 << 15)).to_string();
+        for (text, want) in [
+            (run(""), HIDDEN.to_owned()),
+            (run("\x1b[0m"), format!("{HIDDEN}\x1b[0m")),
+            (
+                json!({ "t": run("\x1b[0m") }).to_string(),
+                json!({ "t": format!("{HIDDEN}\x1b[0m") }).to_string(),
+            ),
+            (parts("a\x1b]0;"), parts("a")),
+            (parts("gho_\x1b]0;"), parts("gho_")),
+            (pairs("gho_\x1b]0;", "\x07ab1"), parts(HIDDEN)),
+        ] {
+            let begun = std::time::Instant::now();
+            assert_eq!(Scrub::default().event(&text), want);
+            let took = begun.elapsed();
+            assert!(took < Duration::from_secs(5), "{took:?}");
+        }
     }
 
     #[test]
