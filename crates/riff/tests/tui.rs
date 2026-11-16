@@ -1,5 +1,5 @@
 //! `riff` with no command in a pseudo-terminal: the TUI
-//! (01M6VAZ7WH3MFAYF4PAZW6EDVY). It shows the six tabs and the frame,
+//! (01M6VAZ7WH3MFAYF4PAZW6EDVY). It shows the seven tabs and the frame,
 //! the keys and a click change the tab, `?` shows the help, and `q`
 //! ends it. The first look that fails ends it with the error of the
 //! CLI, before it draws a screen (01M6VAZKAH6B53YKR8W4YKNSH6).
@@ -224,7 +224,7 @@ echo '[{"number": 12, "title": "Show the wave", "milestone": null}]'
 }
 
 #[tokio::test]
-async fn riff_with_no_command_in_a_terminal_shows_the_six_tabs_and_the_frame() {
+async fn riff_with_no_command_in_a_terminal_shows_the_seven_tabs_and_the_frame() {
     let server = crate::common::start_signed().await;
     let mut tty = Tty::start(&server, "brett", "thelio", true);
     let rows = tty
@@ -232,7 +232,7 @@ async fn riff_with_no_command_in_a_terminal_shows_the_six_tabs_and_the_frame() {
         .await;
     assert_eq!(
         rows[0],
-        "[1 Sessions]  2 Chat  3 Waves  4 Machines  5 Devices  6 Reports"
+        "[1 Sessions]  2 Chat  3 Waves  4 Machines  5 Devices  6 Reports  7 Decisions"
     );
     let build: String = riff_core::build::Build::this().id.chars().take(7).collect();
     assert!(
@@ -1213,14 +1213,14 @@ async fn the_chat_tab_shows_the_chat_and_sends_a_line_that_wakes_a_lead() {
         .await;
     assert_eq!(
         rows[0],
-        " 1 Sessions  [2 Chat]  3 Waves  4 Machines  5 Devices  6 Reports"
+        " 1 Sessions  [2 Chat]  3 Waves  4 Machines  5 Devices  6 Reports  7 Decisions"
     );
     assert!(rows[2].starts_with(" chat · online: brett"), "{rows:#?}");
     assert_eq!(shown(&rows, "<mike> hello brett"), 1, "{rows:#?}");
     assert_eq!(rows[21], ">");
     assert_eq!(
         rows[23],
-        " Enter send  Esc log  Ctrl-U/K/L clear  PgUp older  Alt-1..6 tab  Ctrl-C quit"
+        " Enter send  Esc log  Ctrl-U/K/L clear  PgUp older  Alt-1..7 tab  Ctrl-C quit"
     );
 
     // The note line says nothing of whom the line wakes. Enter sends the
@@ -1303,7 +1303,7 @@ async fn at_in_the_chat_tab_shows_the_names_and_tab_completes_one() {
     let rows = tty.shows(|rows| rows[21] == "> @riff").await;
     assert_eq!(
         rows[0],
-        " 1 Sessions  [2 Chat]  3 Waves  4 Machines  5 Devices  6 Reports"
+        " 1 Sessions  [2 Chat]  3 Waves  4 Machines  5 Devices  6 Reports  7 Decisions"
     );
     assert_eq!(rows[20], "", "{rows:#?}");
     tty.press("is #12 done?\r").await;
@@ -1573,7 +1573,7 @@ async fn ctrl_l_k_and_u_in_the_chat_tab_clear_a_line_of_two_rows() {
     let rows = tty.shows(|rows| rows[21] == ">").await;
     assert_eq!(
         rows[23],
-        " Enter send  Esc log  Ctrl-U/K/L clear  PgUp older  Alt-1..6 tab  Ctrl-C quit"
+        " Enter send  Esc log  Ctrl-U/K/L clear  PgUp older  Alt-1..7 tab  Ctrl-C quit"
     );
     let line = "typing in the TUI chat does not wrap lines, they just scroll off the screen \
                 to the left. Now the line wraps.";
@@ -1934,6 +1934,285 @@ async fn the_waves_tab_shows_the_merged_items_of_riff_wave_list() {
         list.contains("\n  live check: #1854 (in #1866)\n"),
         "{list}"
     );
+
+    tty.press("q").await;
+    assert_eq!(tty.exits().await, Some(0));
+}
+
+/// A fake `gh` for the clone of acme/app with two decisions (#2188): #20,
+/// a question in the Backlog for brett, and #21, a design issue of Wave 3
+/// for mike. #22 is neither. `gh issue edit 20 --remove-label question`
+/// writes the file `answered` of its folder, and from then on #20 has no
+/// label. It logs each call to the file `calls` of its folder.
+const DECISIONS_GH: &str = r###"#!/bin/sh
+dir=$(dirname "$0")
+echo "$*" >> "$dir/calls"
+labels='[{"name":"question"}]'
+if [ -f "$dir/answered" ]; then labels='[]'; fi
+case "$*" in
+  'issue view 20 --repo acme/app --json labels') printf '{"labels":%s}\n' "$labels" ;;
+  'issue edit 20 --repo acme/app --remove-label question') touch "$dir/answered" ;;
+  *'issues?state=open'*)
+    printf 'HTTP/2.0 200 OK\r\n\r\n'
+    printf '[{"number":20,"title":"Which name?","labels":%s,"milestone":{"number":1,"title":"Backlog"},"body":"## Questions for brett\\n\\nQ1. Which name?"},' "$labels"
+    printf '{"number":21,"title":"Design: the board","labels":[{"name":"design"}],"milestone":{"number":3,"title":"Wave 3"},"body":"## Questions for mike"},'
+    printf '{"number":22,"title":"Show the board","milestone":{"number":3,"title":"Wave 3"}}]' ;;
+  *) echo '[]' ;;
+esac
+"###;
+
+/// 01M7FYVA218ARDXTFPWSZV6N4P, 01M7FYVHB1APFXPXA71PMD18EH,
+/// 01M7FYVHDJJ288RRV8EBRKSY49 (#2188): in a clone of acme/app, `7` opens
+/// the Decisions tab. It lists the question of the Backlog for brett
+/// first, then the design issue of Wave 3, from the conditional read of
+/// the open issues and no other call of `gh`, and `r` reads them again at
+/// once. On Linux, `Enter` opens the issue in the browser, here a fake
+/// `xdg-open`, and shows its URL. On macOS, riff opens the browser with
+/// `/usr/bin/open`, which no fake on `PATH` replaces: there, the test
+/// does not press `Enter`. `o` shows the URL of the selected issue. `a`
+/// and `y` mark the questions of #20 as answered with the code of `riff
+/// questions --answered`: its label goes, and #20 leaves the tab.
+#[tokio::test]
+async fn the_decisions_tab_lists_the_questions_and_the_designs_and_opens_one() {
+    let server = crate::common::start_signed_log(vec![crate::common::project("acme/app")]).await;
+    let bin = tempfile::tempdir().unwrap();
+    isolated::write_program(bin.path().join("gh"), DECISIONS_GH);
+    let mut tty = Tty::start_in(
+        crate::common::clone_of("acme/app"),
+        &server,
+        "brett",
+        "thelio",
+        true,
+        &[("PATH", crate::common::path_with(bin.path()))],
+    );
+    tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
+
+    tty.press("7").await;
+    let rows = tty
+        .shows(|rows| rows.iter().any(|r| r.contains("#21")))
+        .await;
+    assert_eq!(
+        rows[0],
+        " 1 Sessions  2 Chat  3 Waves  4 Machines  5 Devices  6 Reports  [7 Decisions]"
+    );
+    assert_eq!(rows[2], " QUESTIONS FOR BRETT · 1", "{rows:#?}");
+    assert!(
+        rows[4].starts_with(" > ?   #20    Backlog   Which name?"),
+        "{rows:#?}"
+    );
+    assert!(rows[4].ends_with("question          brett"), "{rows:#?}");
+    assert_eq!(rows[6], " OTHER DECISIONS · 1", "{rows:#?}");
+    assert!(
+        rows[8].starts_with("   ·   #21    Wave 3    Design: the board"),
+        "{rows:#?}"
+    );
+    assert!(rows[8].ends_with("design            mike"), "{rows:#?}");
+    assert!(!rows.iter().any(|r| r.contains("#22")), "{rows:#?}");
+    // Each call of `gh` is the conditional read of the open issues, but
+    // `gh auth token`, which reads only the token, for no point.
+    let calls = || std::fs::read_to_string(bin.path().join("calls")).unwrap();
+    let reads = |calls: &str| {
+        calls
+            .lines()
+            .filter(|call| call.contains("api -i repos/acme/app/issues?state=open"))
+            .count()
+    };
+    let before = calls();
+    assert!(reads(&before) > 0, "{before}");
+    let others = before.lines().filter(|call| *call != "auth token").count();
+    assert_eq!(reads(&before), others, "no other call: {before}");
+
+    // `r` reads them again at once, long before the next read of each
+    // 60 seconds.
+    tty.press("r").await;
+    let span = Span::start();
+    while reads(&calls()) == reads(&before) {
+        assert!(span.within(WAIT), "r reads again: {}", calls());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    // Enter opens the issue in the browser, and `o` shows its URL.
+    let url = "https://github.com/acme/app/issues/20";
+    #[cfg(target_os = "linux")]
+    {
+        let opened = bin.path().join("opened");
+        isolated::write_program(
+            bin.path().join("xdg-open"),
+            format!("#!/bin/sh\nprintf '%s' \"$1\" > {}\n", opened.display()),
+        );
+        tty.press("\r").await;
+        tty.shows(|rows| rows[22] == format!(" {url}")).await;
+        let span = Span::start();
+        while std::fs::read_to_string(&opened).ok().as_deref() != Some(url) {
+            assert!(span.within(WAIT), "the browser opens {url}");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+    // `o` on #21, then back to #20.
+    tty.press("j").await;
+    tty.press("o").await;
+    tty.shows(|rows| rows[22] == " https://github.com/acme/app/issues/21")
+        .await;
+    tty.press("k").await;
+    tty.press("o").await;
+    tty.shows(|rows| rows[22] == format!(" {url}")).await;
+
+    // `a` and `y`: the label goes, and #20 leaves the tab.
+    tty.press("a").await;
+    tty.shows(|rows| rows[22] == " Mark the questions of #20 of acme/app as answered? y/N")
+        .await;
+    tty.press("y").await;
+    let rows = tty
+        .shows(|rows| {
+            rows[2] == " OTHER DECISIONS · 1" && !rows[2..22].iter().any(|r| r.contains("#20"))
+        })
+        .await;
+    assert!(rows[4].starts_with(" > ·   #21"), "{rows:#?}");
+    let calls = calls();
+    assert!(
+        calls.contains("issue edit 20 --repo acme/app --remove-label question"),
+        "{calls}"
+    );
+
+    tty.press("q").await;
+    assert_eq!(tty.exits().await, Some(0));
+}
+
+/// Sends riff-server `server` the delivery `delivery` of the webhook of
+/// the GitHub App: the label of the issue #20 of acme/app changed.
+async fn issue_labeled(server: &crate::common::Signed, delivery: &str) {
+    use crate::common::fake_github::{REPO, webhook_secret};
+
+    let body = serde_json::to_vec(&serde_json::json!({
+        "action": "labeled",
+        "repository": { "full_name": REPO },
+        "issue": { "number": 20 },
+    }))
+    .unwrap();
+    let reply = reqwest::Client::new()
+        .post(format!("{}/hooks/github", &**server))
+        .header("x-github-event", "issues")
+        .header("x-github-delivery", delivery)
+        .header(
+            "x-hub-signature-256",
+            riff_server::hooks::signature(webhook_secret(), &body),
+        )
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(reply.status().as_u16(), 202);
+}
+
+/// 01M7FYVHB1APFXPXA71PMD18EH (#2188): while the Decisions tab shows, a
+/// wake of the GitHub App of the repository of the folder reads the
+/// decisions again soon, long before the next read of each 60 seconds.
+/// The TUI may follow the wakes a little after the tab shows, so the test
+/// sends a new delivery each second until the read comes.
+#[tokio::test]
+async fn a_wake_of_github_reads_the_decisions_again_soon() {
+    let fake = crate::common::fake_github::FakeGitHub::start().await;
+    let keys = crate::github_apps::keys_dir();
+    let github = riff_server::github::Settings {
+        api: fake.url.clone(),
+        web: fake.url.clone(),
+        keys: riff_server::keys::At::Dir(keys.path().to_owned()),
+        debounce: Duration::from_millis(50),
+        ..riff_server::github::Settings::default()
+    };
+    let server = crate::common::start_signed_log_config(
+        vec![crate::common::project("acme/app")],
+        |config| config.github = github,
+    )
+    .await;
+    let bin = tempfile::tempdir().unwrap();
+    isolated::write_program(bin.path().join("gh"), DECISIONS_GH);
+    let mut tty = Tty::start_in(
+        crate::common::clone_of("acme/app"),
+        &server,
+        "brett",
+        "thelio",
+        true,
+        &[("PATH", crate::common::path_with(bin.path()))],
+    );
+    tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
+    tty.press("7").await;
+    tty.shows(|rows| rows.iter().any(|r| r.contains("#21")))
+        .await;
+    let reads = || {
+        std::fs::read_to_string(bin.path().join("calls"))
+            .unwrap()
+            .lines()
+            .filter(|call| call.contains("api -i repos/acme/app/issues?state=open"))
+            .count()
+    };
+    let before = reads();
+    let span = Span::start();
+    let mut sent = 0;
+    while reads() == before {
+        assert!(span.within(WAIT), "a wake reads the decisions again");
+        if span.wall() >= Duration::from_secs(sent) {
+            sent += 1;
+            issue_labeled(&server, &format!("d-{sent}")).await;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    tty.press("q").await;
+    assert_eq!(tty.exits().await, Some(0));
+}
+
+/// 01M6VGHCDTDJ69B7C02B5K61PW, 01M74N357CC7DN6B8QX8GDR0ZM: in a clone of
+/// acme/app, the TUI of a person follows the thread of the repository of
+/// the folder, so that a message in it starts a look, and the wakes of
+/// its GitHub App. The URI of the person names only the host, so both
+/// take the repository from the clone.
+#[tokio::test]
+async fn the_tui_of_a_person_in_a_clone_follows_the_thread_and_the_wakes_of_the_folder() {
+    // The path and the query of each stream that the TUI follows.
+    let follows: Arc<Mutex<Vec<String>>> = Arc::default();
+    let server = crate::common::start_signed_with({
+        let follows = follows.clone();
+        move |router| {
+            router.layer(axum::middleware::from_fn(
+                move |request: axum::extract::Request, next: axum::middleware::Next| {
+                    let uri = request.uri();
+                    if ["/v1/tail", "/v1/github/watch"].contains(&uri.path()) {
+                        let query = uri.query().unwrap_or_default();
+                        follows
+                            .lock()
+                            .unwrap()
+                            .push(format!("{} {query}", uri.path()));
+                    }
+                    next.run(request)
+                },
+            ))
+        }
+    })
+    .await;
+    let bin = tempfile::tempdir().unwrap();
+    isolated::write_program(bin.path().join("gh"), DECISIONS_GH);
+    let mut tty = Tty::start_in(
+        crate::common::clone_of("acme/app"),
+        &server,
+        "brett",
+        "thelio",
+        true,
+        &[("PATH", crate::common::path_with(bin.path()))],
+    );
+    tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
+    let folder = |path: &str| {
+        follows
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|follow| follow.starts_with(path) && follow.contains("thread=acme%2Fapp"))
+    };
+    let span = Span::start();
+    while !(folder("/v1/tail ") && folder("/v1/github/watch ")) {
+        assert!(span.within(WAIT), "{:?}", follows.lock().unwrap());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 
     tty.press("q").await;
     assert_eq!(tty.exits().await, Some(0));

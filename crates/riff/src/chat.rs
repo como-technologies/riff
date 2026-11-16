@@ -725,7 +725,9 @@ async fn read_issues(api: Api, me: SessionUri, known: Arc<Mutex<Known>>) {
         let (gh, kept) = (gh.clone(), kept.clone());
         let (tx, rx) = tokio::sync::oneshot::channel();
         std::thread::spawn(move || {
-            let _ = tx.send(forge::open_issues_each(&gh, &repos, &kept));
+            let _ = tx.send(forge::each(&repos, |repo| {
+                forge::open_issues(&gh, repo, &kept)
+            }));
         });
         if let Ok(read) = rx.await
             && let Ok(mut known) = known.lock()

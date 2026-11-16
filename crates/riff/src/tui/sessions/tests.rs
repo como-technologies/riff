@@ -214,7 +214,8 @@ fn the_sessions_tab_at_80_x_24_is_the_mock_up() {
     let mut state = mock_up();
     state.note("The lead of riff runs on. (Ctrl-P Ctrl-Q detached.)");
     let mut want = vec![
-        "[1 Sessions]  2 Chat•2  3 Waves•  4 Machines  5 Devices  6 Reports".to_owned(),
+        "[1 Sessions]  2 Chat•2  3 Waves•  4 Machines  5 Devices  6 Reports  7 Decisions"
+            .to_owned(),
         " riff running · build 10df8a4 · link ok 2s".to_owned(),
         " 6 sessions: 1 blocked · 1 done · 3 busy · 1 idle · 1 to update         by repo"
             .to_owned(),
@@ -254,7 +255,7 @@ fn the_sessions_tab_at_40_x_24_is_the_narrow_mock_up() {
     let mut state = mock_up();
     state.note("The lead of riff runs on.");
     let mut want = vec![
-        "‹ 1/6 Sessions ›",
+        "‹ 1/7 Sessions ›",
         "riff running · link ok 2s",
         "1 blocked · 1 done · 3 busy · 1 idle",
         "▼ riff › mike                4 sessions",

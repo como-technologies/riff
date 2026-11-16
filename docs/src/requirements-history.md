@@ -3360,6 +3360,14 @@ Backlog (01M53NGWN190T2MYB1EZAD36VB).
   and attaches. On another host, the note says to run `riff lead start`
   in a clone of the repository.
   Superseded by 01M77XYN04KX35QZ06NDPSXHRP.
+- **01M6VAZJYYQZDHD6YDB0NBQ7KW** The TUI has six tabs, in this order:
+  Sessions, Chat, Waves, Machines, Devices and Reports. `Alt-1` to
+  `Alt-6` open a tab. `Tab` opens the next tab, and `Shift-Tab` the tab
+  before. Outside the prompt of the Chat tab and a text that the note
+  line asks for, the keys `1` to `6` open a tab too. While a question of
+  the TUI waits in the note line, these keys answer no
+  (01M6VFD0S90SB8M8WV952NT4Y1).
+  Superseded by 01M7FYVA218ARDXTFPWSZV6N4P.
 
 ## The notes of the lead
 

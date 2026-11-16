@@ -4484,8 +4484,8 @@ From then on, riff waits for the answer:
   [See which wave runs, and where](#see-which-wave-runs-and-where)).
   The Waves tab of the TUI shows it in each wave (see
   [See the questions of each wave in the TUI](how-it-works.md#see-the-questions-of-each-wave-in-the-tui)).
-- riff posts no line in `riff chat` for the question. The Waves tab and
-  `riff questions` show it (see
+- riff posts no line in `riff chat` for the question. The Waves tab,
+  the Decisions tab and `riff questions` show it (see
   [See all your open questions](#see-all-your-open-questions)).
 
 The person answers in the body or in a comment, and can then mark the
@@ -4505,7 +4505,7 @@ a new repository, when it is not there.
 ```mermaid
 flowchart LR
     L["the lead: the questions in the body,<br/>gh issue edit --add-label question"] --> G["the group question:<br/>no build"]
-    L --> C["the Waves tab and riff questions<br/>show the question"]
+    L --> C["the Waves tab, the Decisions tab<br/>and riff questions show the question"]
     P["the person answers<br/>in the body or in a comment"] --> R["the lead records the answer,<br/>gh issue edit --remove-label question"]
     G --> P
     R --> F["the wave takes the issue"]
@@ -4513,9 +4513,11 @@ flowchart LR
 
 ### See all your open questions
 
-riff posts no line in `riff chat` for a question. Two places show your
-open questions: the Waves tab of the TUI (see
+riff posts no line in `riff chat` for a question. Three places show
+your open questions: the Waves tab of the TUI (see
 [See the questions of each wave in the TUI](how-it-works.md#see-the-questions-of-each-wave-in-the-tui)),
+the Decisions tab of the TUI (see
+[Work through the decisions in the TUI](how-it-works.md#work-through-the-decisions-in-the-tui)),
 and `riff questions`. To see each open question for you, in all your
 projects, run this in any folder:
 

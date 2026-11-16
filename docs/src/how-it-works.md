@@ -2196,7 +2196,7 @@ riff
 ```
 
 ```text
-[1 Sessions]  2 Chat•2  3 Waves•  4 Machines  5 Devices  6 Reports
+[1 Sessions]  2 Chat•2  3 Waves•  4 Machines  5 Devices  6 Reports  7 Decisions
  riff running · build 10df8a4 · link ok 2s
  6 sessions: 1 blocked · 1 done · 3 busy · 1 idle · 1 to update         by repo
  ▼ riff  lead thelio  › mike  admin  online                          4 sessions
@@ -5260,7 +5260,7 @@ riff
 ```
 
 ```text
- 1 Sessions  [2 Chat]  3 Waves  4 Machines  5 Devices  6 Reports
+ 1 Sessions  [2 Chat]  3 Waves  4 Machines  5 Devices  6 Reports  7 Decisions
  riff running · build 10df8a4 · link ok 2s
  chat · online: mike, brett · away: ann · @NAME wakes a person or a project
 ──── Friday 2026-11-06 ──────────────────────────────────────────────
@@ -5271,7 +5271,7 @@ riff
 
 > @riff what is next?
 
- Enter send  Esc log  Ctrl-U/K/L clear  PgUp older  Alt-1..6 tab  Ctrl-C quit
+ Enter send  Esc log  Ctrl-U/K/L clear  PgUp older  Alt-1..7 tab  Ctrl-C quit
 ```
 
 The row under the header names the people who are online and away,
@@ -5295,7 +5295,7 @@ until you send the next line.
 | Key | Does |
 |---|---|
 | `Enter` | Send the line. While a list of names or issues shows: pick the first one. |
-| `Esc` | Leave the prompt. Then the keys of the TUI work: `1` to `6`, `?` and `q`. While a list of names or issues shows: close the list. |
+| `Esc` | Leave the prompt. Then the keys of the TUI work: `1` to `7`, `?` and `q`. While a list of names or issues shows: close the list. |
 | `i`, `Enter` | Go back to the prompt. |
 | `↑`, `↓` | Move the cursor one row in a long line. On the first row, `↑` goes to the start of the line, and on the last row, `↓` goes to the end. `↑` brings back a line that you sent only on an empty line: see "Send a line again". Out of the prompt: scroll one row. |
 | `←`, `→` | Move the cursor one character, also over the end of a row. |
@@ -5303,7 +5303,7 @@ until you send the next line.
 | `Ctrl-U`, `Ctrl-K`, `Ctrl-L` | Delete the text before the cursor, after it, or the whole line: see "Clear the line in the Chat tab". |
 | `PgUp`, `PgDn` | Show older or newer lines. |
 | `g`, `G` | Out of the prompt: show the oldest or the newest line. |
-| `Alt-1` to `Alt-6`, `Tab` | Open another tab, also from the prompt. While a list of names or issues shows, `Tab` picks the first one. |
+| `Alt-1` to `Alt-7`, `Tab` | Open another tab, also from the prompt. While a list of names or issues shows, `Tab` picks the first one. |
 | `Ctrl-C` | End the TUI. The sessions go on. |
 | a paste | Put the text in the line at the cursor, with its new lines. Also from the log. |
 | `@` | Show the list of the names: see "Pick a name in the Chat tab". |
@@ -5400,7 +5400,7 @@ riff
  12:46 <riff> #994 still has no answer; I wait for mike
  2 new lines below: End
 >
- Enter send  Esc log  Ctrl-U/K/L clear  PgUp older  Alt-1..6 tab  Ctrl-C quit
+ Enter send  Esc log  Ctrl-U/K/L clear  PgUp older  Alt-1..7 tab  Ctrl-C quit
 ```
 
 The row shows while the log is not at the bottom and a new line is
@@ -6022,7 +6022,9 @@ The board of the current wave has an `asked` row for each question:
   later wave: see
   [Mark the questions of an issue as answered](development.md#mark-the-questions-of-an-issue-as-answered).
 - A question with no wave, for example in the Backlog, is not on the
-  board. `riff questions` lists it: see
+  board. The Decisions tab lists it: see
+  [Work through the decisions in the TUI](#work-through-the-decisions-in-the-tui).
+  `riff questions` lists it too: see
   [See all your open questions](development.md#see-all-your-open-questions).
 
 ```mermaid
@@ -6032,7 +6034,96 @@ flowchart LR
     G --> N["no wave"]
     C --> A["the asked rows of the board"]
     L -- "Wave N · TITLE" --> A
-    N --> Q["riff questions"]
+    N --> Q["the Decisions tab,<br/>riff questions"]
+```
+
+### Work through the decisions in the TUI
+
+The Decisions tab shows in one place each decision that waits for a
+person. A decision is an open issue with the label `question` or
+`design`, in a wave, in the Backlog, or in neither. It shows the issues
+of your projects, the same projects as the Waves tab (see
+[What reads the projects](#what-reads-the-projects)). Run riff with no
+command, and press `7` for the Decisions tab:
+
+```sh
+riff
+```
+
+Your questions come first, under `QUESTIONS FOR` and your name. The
+other decisions come after them:
+
+```text
+ QUESTIONS FOR MIKE · 2
+       ITEM   WAVE      TITLE                       LABELS            FOR
+ > ?   #2173  Wave 60   The verify of a pull requ…  design question   mike
+   ?   #1489  Backlog   Design: one place where a…  question          mike
+
+ OTHER DECISIONS · 3
+       ITEM   WAVE      TITLE                       LABELS            FOR
+   ?   #2189  Wave 60   Design: a Plan tab in the…  design question   nate
+   ·   #1739  Backlog   Design: take over or atta…  design            -
+   ?   #1532  -         A wave item whose result …  question          -
+```
+
+- `FOR` names each person of the riff that a heading `Questions for
+  PERSON` in the body of the issue names, as `## Questions for mike`
+  (see
+  [Ask the person a question](development.md#ask-the-person-a-question)).
+  The heading starts its line with `#` or `**`. PERSON is the riff
+  name of the person, for example `mike` or `ada.lovelace`, in any
+  case: `Mike` and `mike` are the same name. More names come after
+  `and` or a comma: `Questions for mike and nate`. After a name, each
+  other word ends the names. So `Questions for the discussion` and
+  `Questions for the lead and mike` show `-`.
+- `?` marks an issue with the label `question`. `·` marks a design
+  issue with no open question.
+- `WAVE` is `Wave N`, `Backlog`, or `-` for an issue in neither. In
+  each part, the waves come first in the order of their number, then
+  the Backlog, then the issues in neither.
+- With more than one project, the item names its repository, as
+  `riff#2173`. When two of your projects have the same name, the item
+  names the owner too, as `como-technologies/riff#2173`.
+- Under 80 columns, a row shows the mark, the item, the wave and the
+  title.
+- Each row fits the terminal. With a long item, the title and the
+  labels get fewer columns. An item that does not fit its column loses
+  its start, as `…ies/riff#2173`.
+
+To answer the questions of the selected issue, open it, and write the
+answers in the body or in a comment. Then mark the questions as
+answered:
+
+| Key | Does |
+|---|---|
+| `↑` `↓`, `j` `k` | Select an issue. |
+| `PgUp` `PgDn`, `g` `G` | Move a page, or go to the first or the last issue. |
+| a click | Select an issue. A click on the selected issue, or a double click, opens it. |
+| `Enter` | Open the issue in your browser, and show its URL in the note line: in a terminal over SSH, click the URL. A terminal narrower than the URL cuts it. |
+| `o` | Show the URL of the issue in the note line. |
+| `a` | Mark the questions of the issue as answered, after `y`: the label `question` goes, and the lead wakes. See [Mark the questions of an issue as answered](development.md#mark-the-questions-of-an-issue-as-answered). An issue with no label `question` has nothing to mark: `a` asks nothing. |
+| `r` | Read GitHub again now. |
+
+The tab reads the open issues from GitHub when you open it. While it
+shows, it reads them each 60 seconds, and at once on `r` and after
+`a`. It also reads them soon after a change on GitHub in the
+repository of your folder. An issue leaves the tab at the next read
+after its labels `question` and `design` go. With no other note, the
+note line shows the age of the last read. When a read fails, the tab
+keeps the last issues of the project, and the note line shows the
+error once. When no read of a project worked yet, the last line of the
+tab names the project: `No read of the decisions of o/r worked yet.`
+With no project, the tab says
+`None of your repositories is a project of the riff.`
+
+```mermaid
+flowchart LR
+    G["gh: the open issues<br/>of your projects"] -- "the label question or design" --> D["the Decisions tab"]
+    D -- "Questions for you" --> M["QUESTIONS FOR YOU, first"]
+    D --> O["OTHER DECISIONS"]
+    M -- "Enter" --> B["the issue in your browser"]
+    O -- "Enter" --> B
+    M -- "a, then y" --> L["the label question goes,<br/>the lead wakes"]
 ```
 
 ### See the merged items in the TUI
@@ -6918,6 +7009,7 @@ each person and each session. These views read the projects there:
 |---|---|
 | `riff questions` | The questions of your projects only: each project where you have a session, live or gone, a lead or the notes of a lead, and the project of your folder. See [See all your open questions](development.md#see-all-your-open-questions). |
 | The Waves tab of the TUI | A board for each of your projects: the projects of `riff questions`. See [See the open items of a wave](waves.md#see-the-open-items-of-a-wave). |
+| The Decisions tab of the TUI | The open questions and design issues of your projects: the projects of the Waves tab. See [Work through the decisions in the TUI](#work-through-the-decisions-in-the-tui). |
 | `riff top` | A board for each project with a live session. The tree groups the sessions by project. See [See each session in a live table](#see-each-session-in-a-live-table). |
 | `riff who` | The table groups the rows by project. See [See who is in the riff](#see-who-is-in-the-riff). |
 
@@ -6934,6 +7026,7 @@ riff who
 flowchart LR
     S["riff-server: who"] -- "the projects" --> Q["riff questions:<br/>your projects"]
     S --> W["the Waves tab:<br/>your projects"]
+    S --> D["the Decisions tab:<br/>your projects"]
     S --> T["riff top:<br/>project › person › host › session"]
     S --> R["riff who:<br/>a group for each project"]
 ```

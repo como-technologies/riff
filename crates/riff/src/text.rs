@@ -1781,6 +1781,25 @@ pub fn questions_not_asked(repo: &str, number: u64) -> String {
     )
 }
 
+/// The line of the Decisions tab of the TUI for the projects `repos`
+/// that no read gave yet (01M7GBGD8EH2B1DXZ8NADZ1A85).
+///
+/// ```
+/// let (r, s) = ("o/r".parse()?, "o/s".parse()?);
+/// assert_eq!(
+///     riff::text::decisions_unread(&[&r, &s]),
+///     "No read of the decisions of o/r and o/s worked yet."
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn decisions_unread(repos: &[&ThreadName]) -> String {
+    let repos: Vec<String> = repos.iter().map(|repo| safe(&repo.to_string())).collect();
+    format!(
+        "No read of the decisions of {} worked yet.",
+        repos.join(" and ")
+    )
+}
+
 /// The line of `riff questions --answered N` after the change (#1782):
 /// the label went, and the post to the lead ([`posted`]).
 ///

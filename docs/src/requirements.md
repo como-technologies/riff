@@ -9700,13 +9700,6 @@ that builds it merges.
   with 2. The TUI is `riff`, not `riff ui`. An error of the start, for
   example no sign-in, prints as in the CLI, before the TUI draws a
   screen.
-- **01M6VAZJYYQZDHD6YDB0NBQ7KW** The TUI has six tabs, in this order:
-  Sessions, Chat, Waves, Machines, Devices and Reports. `Alt-1` to
-  `Alt-6` open a tab. `Tab` opens the next tab, and `Shift-Tab` the tab
-  before. Outside the prompt of the Chat tab and a text that the note
-  line asks for, the keys `1` to `6` open a tab too. While a question of
-  the TUI waits in the note line, these keys answer no
-  (01M6VFD0S90SB8M8WV952NT4Y1).
 - **01M6VAZK1R932VQMJBC32MTTJB** Each tab of the TUI has five parts: the
   tab strip on the first row, the header on the second row, the body,
   the note line on the row before the last, and the key line on the last
@@ -9740,8 +9733,8 @@ that builds it merges.
   click closes the help popup. The setting `tui.mouse` turns the mouse
   off. It is on by default.
 - **01M6VAZKK4KHCDCX4RKG9B95D7** Under 80 columns, the TUI shows the
-  narrow layout: the strip is `‹ N/6 NAME ›` with no news, the
-  header has only the state of the riff and the link, and the rows have
+  narrow layout: the strip has no news, the header has only the state of
+  the riff and the link, and the rows have
   no margin. A click on `‹` or `›` opens the tab before or after.
   Under 40 columns or 10 rows, the TUI asks for a bigger terminal.
 - **01M6VAZKNXZV1RTG7MT0GMHKT3** The render of the TUI is pure.
@@ -9816,8 +9809,8 @@ that builds it merges.
   header names the people who are online and away. `riff chat` stays.
 - **01M6VG1PA4PM47777ZT4PNGETF** The prompt of the Chat tab has the
   focus when you open the tab. In the prompt, each key that types a
-  character types it, also `1` to `6`, `q`, `r` and `?`. There `Alt-1`
-  to `Alt-6` and `Shift-Tab` open a tab, and `Ctrl-C` ends the TUI. In
+  character types it, also `q`, `r` and `?`. There `Shift-Tab` opens a
+  tab, and `Ctrl-C` ends the TUI. In
   the log, the keys of the frame work and `?` shows the keys of the Chat
   tab. `i` or `Enter` gives the focus back to the prompt. `PgUp` and
   `PgDn` show older and newer lines. Supersedes
@@ -10001,8 +9994,8 @@ that builds it merges.
   hosts that match against all the hosts, and ends with the filter. From
   120 columns, the key line shows `/ filter`.
 - **01M6VJQPNJ4AX4RT877F1QAPPX** While the person types a filter in the
-  TUI, each character is a letter of the filter, also `1` to `6`, `q`,
-  `r`, `?`, `j`, `k`, `g` and `G`. `Ctrl-C` still ends the TUI.
+  TUI, each character is a letter of the filter, also `q`, `r`, `?`,
+  `j`, `k`, `g` and `G`. `Ctrl-C` still ends the TUI.
 - **01M6VT7TTV8J90C5E3QAZ454GY** `q` and `Ctrl-C` end the TUI and give
   back the screen at once, also while a read of `gh` runs. The read may
   go on in the background, and its result goes nowhere.
@@ -10304,6 +10297,46 @@ that builds it merges.
   line in its "Done when", the pull request says `live check` in place
   of `merged`: `PR #1866 live check`. Such an item is never a `free`
   row. Supersedes 01M6VFGK4P2FWMFQHBZKR3JXSZ in part.
+- **01M7FYVA218ARDXTFPWSZV6N4P** The TUI has seven tabs, in this order:
+  Sessions, Chat, Waves, Machines, Devices, Reports and Decisions.
+  `Alt-1` to `Alt-7` open a tab. `Tab` opens the next tab, and
+  `Shift-Tab` the tab before. Outside the prompt of the Chat tab and a
+  text that the note line asks for, the keys `1` to `7` open a tab too.
+  While a question of the TUI waits in the note line, these keys answer
+  no (01M6VFD0S90SB8M8WV952NT4Y1). In the prompt of the Chat tab and in
+  a filter, `1` to `7` type. The narrow strip is `‹ N/7 NAME ›`.
+  Supersedes 01M6VAZJYYQZDHD6YDB0NBQ7KW in full, and
+  01M6VAZKK4KHCDCX4RKG9B95D7, 01M6VG1PA4PM47777ZT4PNGETF and
+  01M6VJQPNJ4AX4RT877F1QAPPX in part.
+- **01M7FYVHB1APFXPXA71PMD18EH** The Decisions tab of the TUI lists each
+  open issue with the label `question` or `design` of each project of
+  the person, the projects of the Waves tab: in a wave, in the Backlog,
+  or in neither. In the wide layout, a row shows a mark, the number, the
+  wave, the title, the labels, and the persons of its questions
+  (01M7G7SCW5AR1P73R1CMA2QWF7). In the narrow layout, a row shows the
+  mark, the number, the wave and the title. The mark is `?` for an issue
+  with the label `question`, and `·` for the others. The wave is `Wave
+  N`, `Backlog`, or `-` in neither. The rows whose questions name the
+  person of the TUI come first, under `QUESTIONS FOR PERSON`, and the
+  others after them, under `OTHER DECISIONS`. In each part, the rows go
+  in the order of the waves by their number, then the Backlog, then the
+  issues in neither, and then by the repository and the number. With
+  more than one project, an item names its repository, as `riff#2173`,
+  and its owner too when two projects have the same name. While the tab
+  shows, the TUI reads the open issues with the conditional REST read of
+  the Waves tab, and makes no other call. It reads when the tab opens,
+  each 60 seconds, and at once on `r` and at the end of an action. A
+  wake of the GitHub App of the repository of the folder makes it read
+  soon. An issue whose labels `question` and `design` go leaves the tab
+  at the next read.
+- **01M7FYVHDJJ288RRV8EBRKSY49** In the Decisions tab of the TUI, `↑`
+  and `↓`, `j` and `k`, `PgUp` and `PgDn`, and `g` and `G` select a row,
+  as in the Waves tab. A click on a row selects it. `Enter`, a click on
+  the selected row, or a double click on a row opens the issue of the
+  row in the browser, and puts its URL in the note line. `o` puts the
+  URL in the note line, as in the Waves tab. `a` marks the questions of
+  the issue as answered after `y`, with the code of
+  `riff questions --answered`.
 - **01M7FZAW2DT0KE72HB2VQ3SQBG** In the prompt of the Chat tab of the
   TUI, `Ctrl-U` deletes the text before the cursor, `Ctrl-K` deletes the
   text from the cursor to the end of the line, and `Ctrl-L` deletes the
@@ -10312,6 +10345,47 @@ that builds it merges.
   wide tab with no list of names or issues, the key line of the prompt
   says `Ctrl-U/K/L clear`, and a click on it presses `Ctrl-L`. The help
   of the Chat tab says what each of the three keys deletes.
+- **01M7G7SCW5AR1P73R1CMA2QWF7** In the Decisions tab of the TUI, the
+  persons of a row are the persons of the riff that a heading `Questions
+  for PERSON` of the body of the issue names. A heading is a line that
+  starts with `#` or `**`. PERSON is the USER of a person of the riff,
+  or of the person of the TUI, in any case, with an `@` before it or
+  not, and the row shows the USER. A USER can have a `.`, as
+  `ada.lovelace`. More names come after `and` or a comma, also a comma
+  with no space: `Questions for mike and nate`. The first other word, a
+  `.` at the end of a word, or a mark other than a comma, ends the
+  names, so `Questions for the discussion` names nobody.
+- **01M7G7SHRDEA6BCNSYQA8RGZ23** In the Decisions tab of the TUI, a read
+  of a project that fails keeps the last decisions of that project, and
+  the note line names the fault once. With no other note, the note line
+  shows the age of the last read, as `The decisions come from gh, 41s
+  ago`.
+- **01M7G7SHTXPF9Z6SD4N981HFQH** In the wide layout of the TUI, the
+  strip has two spaces between two tabs. When the news make the strip
+  wider than the terminal, it has one space between two tabs, so the
+  last tab shows whole.
+- **01M7GBGD8EH2B1DXZ8NADZ1A85** In the Decisions tab of the TUI, the
+  body has no line while the first read runs. When each project read
+  well and has no decision, the body says `No question and no design
+  issue is open.` When no read of a project worked yet, the body ends
+  with a line that names it: `No read of the decisions of o/r worked
+  yet.` A row whose questions name no person of the riff shows `-` under
+  `FOR`.
+- **01M7GFGRJMAYZVG68EP3B916T8** In the Decisions tab of the TUI, a row
+  fits the width of the terminal. The title gets the columns that the
+  other columns leave, and at least 10. In the wide layout, when fewer
+  are left, the column `LABELS` gives its columns first. An item wider
+  than its column loses its start, as `…ies/riff#2173`, so that its
+  number shows.
+- **01M7GFH1D93M7F7S82E788EFHG** In the Decisions tab of the TUI, with
+  no project of the person, the body says `None of your repositories is
+  a project of the riff.` as the Waves tab does. While the first read
+  runs, the note line says `The decisions come from gh: the first read
+  runs.` in place of the age of the read.
+- **01M7GFH204647G2B9NTX72JKFR** In the Decisions tab of the TUI, `a` on
+  a row with no label `question` asks nothing. The note line says that
+  nothing changed, as `#1739 of o/r has no label question. Nothing
+  changed.` for the issue 1739 of o/r.
 
 ## The notes of the lead
 

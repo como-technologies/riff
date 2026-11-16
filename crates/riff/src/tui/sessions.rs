@@ -6,7 +6,7 @@
 //! # Design
 //!
 //! ```text
-//! [1 Sessions]  2 Chat•2  3 Waves•  4 Machines  5 Devices  6 Reports
+//! [1 Sessions]  2 Chat•2  3 Waves•  4 Machines  5 Devices  6 Reports  7 Decisions
 //!  riff running · build 10df8a4 · link ok 2s
 //!  6 sessions: 1 blocked · 1 done · 3 busy · 1 idle · 1 to update         by repo
 //!  ▼ riff  lead thelio  › mike  admin  online                          4 sessions

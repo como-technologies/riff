@@ -12,7 +12,7 @@
 //!   and the other rows start after a margin of one column. From
 //!   [`WIDER`] columns, a tab adds columns: the clock and the pool in
 //!   the Machines tab ([`super::machines`]).
-//! - [`Layout::Narrow`], under 80 columns: the strip is `‹ N/6 NAME ›`
+//! - [`Layout::Narrow`], under 80 columns: the strip is `‹ N/7 NAME ›`
 //!   with no news, the header has only the state of the riff and the
 //!   link, and the rows have no margin.
 //! - [`Layout::Small`], under 40 columns or 10 rows: a line that asks
@@ -31,12 +31,12 @@
 //! bottom.
 //!
 //! ```text
-//! ‹ 1/6 Sessions ›
+//! ‹ 1/7 Sessions ›
 //! riff running · link ok 2s
 //! the body of the tab
 //!
 //! the note
-//! 1-6 tab  ? help  q quit
+//! 1-7 tab  ? help  q quit
 //! ```
 //!
 //! ```
@@ -188,6 +188,54 @@ impl View {
             .iter()
             .find(|hit| hit.area.contains(at))
             .map(|hit| hit.key)
+    }
+}
+
+/// The lines of `lines` that fit in `height` rows of a body, each with
+/// the index of its row: the first ones, or the ones that end at the
+/// line of the selected row `selected`. The Waves tab and the Decisions
+/// tab show their rows so.
+///
+/// ```
+/// use ratatui::text::Line;
+/// use riff::tui::view::window;
+///
+/// let lines = || (0..5).map(|i| (Line::raw(format!("row {i}")), i)).collect::<Vec<_>>();
+/// let indexes = |shown: Vec<(Line, usize)>| shown.into_iter().map(|(_, i)| i).collect::<Vec<_>>();
+/// assert_eq!(indexes(window(lines(), Some(1), 3)), [0, 1, 2]);
+/// assert_eq!(indexes(window(lines(), Some(4), 3)), [2, 3, 4]);
+/// assert_eq!(indexes(window(lines(), None, 3)), [0, 1, 2]);
+/// ```
+pub fn window(
+    lines: Vec<(Line<'static>, usize)>,
+    selected: Option<usize>,
+    height: u16,
+) -> Vec<(Line<'static>, usize)> {
+    let height = usize::from(height);
+    let at = selected
+        .and_then(|s| lines.iter().position(|(_, i)| *i == s))
+        .unwrap_or(0);
+    let start = (at + 1).saturating_sub(height);
+    lines.into_iter().skip(start).take(height).collect()
+}
+
+/// Places the lines `lines` of a body in the rows `places`, each with the
+/// index of its row. A click on a line whose row the person can select
+/// (`picks`) presses [`Key::Row`].
+fn place(
+    view: &mut View,
+    lines: Vec<(Line<'static>, usize)>,
+    picks: impl Fn(usize) -> bool,
+    places: impl Iterator<Item = Rect>,
+) {
+    for ((line, index), area) in lines.into_iter().zip(places) {
+        if picks(index) {
+            view.hits.push(Hit {
+                area,
+                key: Key::Row(index),
+            });
+        }
+        view.rows.push(Placed { area, line });
     }
 }
 
@@ -354,15 +402,20 @@ pub fn compute_view(state: &State, area: Rect, now_ms: i64) -> View {
                 body.height,
                 now_ms,
             );
-            for ((line, index), y) in lines.into_iter().zip(2..area.height - 2) {
-                if rows[index].pick().is_some() {
-                    view.hits.push(Hit {
-                        area: row(y),
-                        key: Key::Row(index),
-                    });
-                }
-                view.rows.push(Placed { area: row(y), line });
-            }
+            let picks = |index: usize| rows[index].pick().is_some();
+            place(&mut view, lines, picks, (2..area.height - 2).map(row));
+        }
+        Tab::Decisions => {
+            let rows = state.decision_rows();
+            let lines = super::decisions::body(
+                state.decisions(),
+                &rows,
+                layout,
+                area.width - margin,
+                body.height,
+            );
+            let picks = |index: usize| rows[index].pick().is_some();
+            place(&mut view, lines, picks, (2..area.height - 2).map(row));
         }
         Tab::Chat => chat::place(state, area, layout, &mut view),
         tab => {
@@ -447,9 +500,9 @@ fn warning_rows(line: &str, columns: u16) -> Vec<Line<'static>> {
 /// in the Sessions tab, else the fault of the link, else in the Chat tab
 /// a post that failed after the last key or whom the line in the prompt
 /// will wake ([`chat::note`]), else the note of the last action, else in
-/// the Waves tab the age of its last read of `gh`
-/// (01M6VFGYW0XVJ5JSX6R1NCR6W7), and in the Reports tab the age of the
-/// read of its report ([`super::reports::note`],
+/// the Waves tab and the Decisions tab the age of their last read of `gh`
+/// (01M6VFGYW0XVJ5JSX6R1NCR6W7, 01M7G7SHRDEA6BCNSYQA8RGZ23), and in the
+/// Reports tab the age of the read of its report ([`super::reports::note`],
 /// 01M6VT3JHVFQ27VJE8987WET34).
 fn note_line(state: &State, layout: Layout, now_ms: i64) -> Option<Line<'static>> {
     if let Some(asked) = state.asked() {
@@ -472,6 +525,10 @@ fn note_line(state: &State, layout: Layout, now_ms: i64) -> Option<Line<'static>
     }
     match state.tab() {
         Tab::Waves => Some(Line::styled(super::waves::note(state.waves(), now_ms), DIM)),
+        Tab::Decisions => Some(Line::styled(
+            super::decisions::note(state.decisions(), now_ms),
+            DIM,
+        )),
         Tab::Reports => {
             super::reports::note(state, layout, now_ms).map(|note| Line::styled(note, DIM))
         }
@@ -482,26 +539,45 @@ fn note_line(state: &State, layout: Layout, now_ms: i64) -> Option<Line<'static>
 /// The strip of the wide layout, and the place of each tab
 /// (01M6VAZK1R932VQMJBC32MTTJB): the tabs with two spaces between
 /// them, the active tab in `[ ]`, and the news of a tab after its name.
-/// The digit of the first tab stays in the second column.
+/// The digit of the first tab stays in the second column. When the news
+/// make the strip wider than `area`, one space comes between two tabs
+/// (01M7G7SHTXPF9Z6SD4N981HFQH).
 fn strip_wide(state: &State, area: Rect) -> (Line<'static>, Vec<Hit>) {
+    let items: Vec<(Tab, Vec<Span<'static>>)> = Tab::ALL
+        .into_iter()
+        .map(|tab| {
+            let label = format!("{} {}", tab.number(), tab.name());
+            let item = match (tab == state.tab(), state.news_of(tab)) {
+                (true, _) => vec![Span::styled(format!("[{label}]"), ACTIVE)],
+                (false, Some(news)) => vec![Span::raw(label), Span::styled(news.text(), NEWS)],
+                (false, None) => vec![Span::raw(label)],
+            };
+            (tab, item)
+        })
+        .collect();
+    let lead = u16::from(state.tab() != Tab::Sessions);
+    let names: u16 = items
+        .iter()
+        .flat_map(|(_, item)| item.iter().map(|span| width(&span.content)))
+        .sum();
+    let gaps = u16::try_from(Tab::ALL.len() - 1).unwrap_or(u16::MAX);
+    let gap = if lead + names + 2 * gaps > area.width {
+        " "
+    } else {
+        "  "
+    };
     let mut spans = Vec::new();
     let mut hits = Vec::new();
     let mut x = area.x;
-    if state.tab() != Tab::Sessions {
+    if lead > 0 {
         spans.push(Span::raw(" "));
         x += 1;
     }
-    for tab in Tab::ALL {
+    for (tab, item) in items {
         if tab != Tab::Sessions {
-            spans.push(Span::raw("  "));
-            x += 2;
+            spans.push(Span::raw(gap));
+            x += width(gap);
         }
-        let label = format!("{} {}", tab.number(), tab.name());
-        let item = match (tab == state.tab(), state.news_of(tab)) {
-            (true, _) => vec![Span::styled(format!("[{label}]"), ACTIVE)],
-            (false, Some(news)) => vec![Span::raw(label), Span::styled(news.text(), NEWS)],
-            (false, None) => vec![Span::raw(label)],
-        };
         let wide = item.iter().map(|span| width(&span.content)).sum();
         hits.push(Hit {
             area: Rect::new(x, area.y, wide, 1).intersection(area),
@@ -513,7 +589,7 @@ fn strip_wide(state: &State, area: Rect) -> (Line<'static>, Vec<Hit>) {
     (Line::from(spans), hits)
 }
 
-/// The strip of the narrow layout: `‹ N/6 NAME ›`, with no news. A
+/// The strip of the narrow layout: `‹ N/7 NAME ›`, with no news. A
 /// click on `‹` or `›` opens the tab before or after.
 fn strip_narrow(state: &State, area: Rect) -> (Line<'static>, Vec<Hit>) {
     let tab = state.tab();
@@ -607,9 +683,9 @@ fn body_lines(tab: Tab, columns: u16) -> Vec<Line<'static>> {
 /// it presses. A built tab has its own keys first
 /// ([`super::machines::keys`]), or all its keys
 /// ([`super::sessions::keys`], [`super::waves::keys_of`],
-/// [`chat::keys`], [`super::reports::keys`]). While the person types a
-/// filter, the line has only the keys of the filter
-/// (01M6VJQPJXKHKJ8WT1CAQMN1YR).
+/// [`chat::keys`], [`super::reports::keys`],
+/// [`super::decisions::keys_of`]). While the person types a filter, the
+/// line has only the keys of the filter (01M6VJQPJXKHKJ8WT1CAQMN1YR).
 fn keys_of(
     state: &State,
     layout: Layout,
@@ -622,9 +698,10 @@ fn keys_of(
         Tab::Sessions => return super::sessions::keys(state, layout),
         Tab::Chat => return chat::keys(state.chat(), layout),
         Tab::Waves => return super::waves::keys_of(layout),
+        Tab::Decisions => return super::decisions::keys_of(layout),
         Tab::Reports => return super::reports::keys(state, layout),
         Tab::Machines => super::machines::keys(layout, columns >= WIDER),
-        _ => vec![("1-6", "tab", None)],
+        _ => vec![("1-7", "tab", None)],
     };
     if layout == Layout::Wide {
         keys.push(("r", "read again", Some(Key::Again)));
@@ -668,13 +745,15 @@ fn key_line(
 /// (01M6VAZKDEQ6951KGPGAMF1SNJ). A built tab has its own keys first
 /// ([`super::sessions::help_keys`], [`super::waves::help_keys`],
 /// [`super::machines::help_keys`], [`chat::HELP`],
-/// [`super::reports::help_keys`]). Each tab has the keys of the frame.
+/// [`super::reports::help_keys`], [`super::decisions::help_keys`]). Each
+/// tab has the keys of the frame.
 ///
 /// ```
 /// use riff::tui::Tab;
 /// use riff::tui::view::help_keys;
 ///
-/// assert_eq!(help_keys(Tab::Devices)[0], ("1 to 6", "open a tab"));
+/// assert_eq!(help_keys(Tab::Devices)[0], ("1 to 7", "open a tab"));
+/// assert_eq!(help_keys(Tab::Decisions)[3], ("Enter", "open the issue in the browser"));
 /// assert_eq!(help_keys(Tab::Reports)[0], ("← →", "show the report before or after"));
 /// assert_eq!(help_keys(Tab::Sessions)[0], ("↑ ↓ j k", "select a row"));
 /// assert_eq!(help_keys(Tab::Waves)[0], ("↑ ↓, j k", "select a row"));
@@ -691,10 +770,11 @@ pub fn help_keys(tab: Tab) -> Vec<(&'static str, &'static str)> {
         Tab::Machines => super::machines::help_keys(),
         Tab::Chat => chat::HELP.to_vec(),
         Tab::Reports => super::reports::help_keys(),
+        Tab::Decisions => super::decisions::help_keys(),
         Tab::Devices => Vec::new(),
     };
     keys.extend([
-        ("1 to 6", "open a tab"),
+        ("1 to 7", "open a tab"),
         ("Tab", "open the next tab"),
         ("Shift-Tab", "open the tab before"),
         ("r", "look again now"),
@@ -824,14 +904,14 @@ mod tests {
         state.on_key(Key::Open(Tab::Devices));
         state.note("Read again 2s ago.");
         let mut want = vec![
-            " 1 Sessions  2 Chat•2  3 Waves•  4 Machines  [5 Devices]  6 Reports",
+            " 1 Sessions  2 Chat•2  3 Waves•  4 Machines  [5 Devices]  6 Reports  7 Decisions",
             " riff running · build 10df8a4 · link ok 2s",
             " The Devices tab is not built yet.",
         ];
         want.resize(22, "");
         want.extend([
             " Read again 2s ago.",
-            " 1-6 tab  r read again  ? help  q quit",
+            " 1-7 tab  r read again  ? help  q quit",
         ]);
         assert_eq!(drawn(&state, 80, 24), want);
     }
@@ -844,27 +924,30 @@ mod tests {
         state.on_key(Key::Open(Tab::Devices));
         state.note("Read again 2s ago.");
         let mut want = vec![
-            "‹ 5/6 Devices ›",
+            "‹ 5/7 Devices ›",
             "riff running · link ok 2s",
             "The Devices tab is not built yet.",
         ];
         want.resize(22, "");
-        want.extend(["Read again 2s ago.", "1-6 tab  ? help  q quit"]);
+        want.extend(["Read again 2s ago.", "1-7 tab  ? help  q quit"]);
         assert_eq!(drawn(&state, 40, 24), want);
     }
 
     /// The strip of the mock-up of each tab of #994: the active tab in
-    /// `[ ]`, and no news on it (01M6VAZK1R932VQMJBC32MTTJB).
+    /// `[ ]`, and no news on it (01M6VAZK1R932VQMJBC32MTTJB). The seven
+    /// tabs fit in 80 columns (01M7FYVA218ARDXTFPWSZV6N4P).
     #[test]
     fn the_strip_of_each_tab_is_the_strip_of_its_mock_up() {
         let strips = [
-            "[1 Sessions]  2 Chat•2  3 Waves•  4 Machines  5 Devices  6 Reports",
-            " 1 Sessions  [2 Chat]  3 Waves•  4 Machines  5 Devices  6 Reports",
-            " 1 Sessions  2 Chat•2  [3 Waves]  4 Machines  5 Devices  6 Reports",
-            " 1 Sessions  2 Chat•2  3 Waves•  [4 Machines]  5 Devices  6 Reports",
-            " 1 Sessions  2 Chat•2  3 Waves•  4 Machines  [5 Devices]  6 Reports",
-            " 1 Sessions  2 Chat•2  3 Waves•  4 Machines  5 Devices  [6 Reports]",
+            "[1 Sessions]  2 Chat•2  3 Waves•  4 Machines  5 Devices  6 Reports  7 Decisions",
+            " 1 Sessions  [2 Chat]  3 Waves•  4 Machines  5 Devices  6 Reports  7 Decisions",
+            " 1 Sessions  2 Chat•2  [3 Waves]  4 Machines  5 Devices  6 Reports  7 Decisions",
+            " 1 Sessions  2 Chat•2  3 Waves•  [4 Machines]  5 Devices  6 Reports  7 Decisions",
+            " 1 Sessions  2 Chat•2  3 Waves•  4 Machines  [5 Devices]  6 Reports  7 Decisions",
+            " 1 Sessions  2 Chat•2  3 Waves•  4 Machines  5 Devices  [6 Reports]  7 Decisions",
+            " 1 Sessions  2 Chat•2  3 Waves•  4 Machines  5 Devices  6 Reports  [7 Decisions]",
         ];
+        assert_eq!(strips.len(), Tab::ALL.len());
         for (tab, strip) in Tab::ALL.into_iter().zip(strips) {
             let mut state = mock_up();
             state.on_key(Key::Open(tab));
@@ -892,7 +975,47 @@ mod tests {
         // The narrow strip names the tab and its number.
         let mut state = mock_up();
         state.on_key(Key::Open(Tab::Reports));
-        assert_eq!(drawn(&state, 40, 24)[0], "‹ 6/6 Reports ›");
+        assert_eq!(drawn(&state, 40, 24)[0], "‹ 6/7 Reports ›");
+        state.on_key(Key::Open(Tab::Decisions));
+        assert_eq!(drawn(&state, 40, 24)[0], "‹ 7/7 Decisions ›");
+    }
+
+    /// 01M7G7SHTXPF9Z6SD4N981HFQH: when the news make the strip wider
+    /// than 80 columns, one space comes between two tabs, so the last tab
+    /// stays whole, and a click on it still opens it.
+    #[test]
+    fn a_strip_with_more_news_than_fits_has_one_space_between_two_tabs() {
+        let mut state = mock_up();
+        state.on_key(Key::Open(Tab::Decisions));
+        state.news(Tab::Sessions, News::Dot);
+        state.news(Tab::Chat, News::Lines(12));
+        let rows = drawn(&state, 80, 24);
+        assert_eq!(
+            rows[0],
+            " 1 Sessions• 2 Chat•12 3 Waves• 4 Machines 5 Devices 6 Reports [7 Decisions]"
+        );
+        let view = compute_view(&state, Rect::new(0, 0, 80, 24), NOW);
+        let at = u16::try_from(rows[0].chars().count()).unwrap() - 2;
+        assert_eq!(view.hit(at, 0), Some(Key::Open(Tab::Decisions)));
+        // A click on the number of each tab opens it.
+        for tab in Tab::ALL {
+            let label = format!("{} {}", tab.number(), tab.name());
+            let start = rows[0].find(&label).unwrap();
+            let at = u16::try_from(rows[0][..start].chars().count()).unwrap();
+            assert_eq!(view.hit(at, 0), Some(Key::Open(tab)), "{label}");
+        }
+        // With fewer news, two spaces fit again.
+        state.on_key(Key::Open(Tab::Chat));
+        state.on_key(Key::Open(Tab::Decisions));
+        assert!(drawn(&state, 80, 24)[0].starts_with(" 1 Sessions•  2 Chat  "));
+        // With two spaces, the strip and the space before it would be 81
+        // columns: one space.
+        state.news(Tab::Chat, News::Lines(2));
+        state.news(Tab::Waves, News::Dot);
+        assert_eq!(
+            drawn(&state, 80, 24)[0],
+            " 1 Sessions• 2 Chat•2 3 Waves• 4 Machines 5 Devices 6 Reports [7 Decisions]"
+        );
     }
 
     /// 01M6VAZKAH6B53YKR8W4YKNSH6: a look that fails keeps the last
@@ -1023,7 +1146,8 @@ mod tests {
             state.on_key(Key::Open(Tab::Devices));
             state.note("Read again 2s ago.");
             let mut want = vec![
-                " 1 Sessions  2 Chat•2  3 Waves•  4 Machines  [5 Devices]  6 Reports".to_owned(),
+                " 1 Sessions  2 Chat•2  3 Waves•  4 Machines  [5 Devices]  6 Reports  7 Decisions"
+                    .to_owned(),
                 header(paused),
             ];
             want.extend(lines.iter().map(ToString::to_string));
@@ -1031,7 +1155,7 @@ mod tests {
             want.resize(22, String::new());
             want.extend([
                 " Read again 2s ago.".to_owned(),
-                " 1-6 tab  r read again  ? help  q quit".to_owned(),
+                " 1-7 tab  r read again  ? help  q quit".to_owned(),
             ]);
             assert_eq!(drawn(&state, 80, 24), want, "{step:?}");
         }
@@ -1215,7 +1339,8 @@ mod tests {
         );
         let state = with(mock_up(), &newer);
         let mut want = vec![
-            " 1 Sessions  2 Chat•2  3 Waves•  4 Machines  [5 Devices]  6 Reports".to_owned(),
+            " 1 Sessions  2 Chat•2  3 Waves•  4 Machines  [5 Devices]  6 Reports  7 Decisions"
+                .to_owned(),
             " riff running · build 10df8a4 · link ok 2s".to_owned(),
             format!(" {line}"),
             " The Devices tab is not built yet.".to_owned(),
@@ -1223,7 +1348,7 @@ mod tests {
         want.resize(22, String::new());
         want.extend([
             " Read again 2s ago.".to_owned(),
-            " 1-6 tab  r read again  ? help  q quit".to_owned(),
+            " 1-7 tab  r read again  ? help  q quit".to_owned(),
         ]);
         assert_eq!(drawn(&state, 80, 24), want);
         // The row is in the color of a word that needs a look.
@@ -1339,12 +1464,12 @@ mod tests {
         assert_eq!(wide.hit(12, 0), None);
         assert_eq!(wide.hit(0, 0), Some(Key::Open(Tab::Sessions)));
         // The key line of a tab that is not built yet:
-        // ` 1-6 tab  r read again  ? help  q quit`.
+        // ` 1-7 tab  r read again  ? help  q quit`.
         state.on_key(Key::Open(Tab::Devices));
         let wide = compute_view(&state, Rect::new(0, 0, 80, 24), NOW);
-        let keys = " 1-6 tab  r read again  ? help  q quit";
+        let keys = " 1-7 tab  r read again  ? help  q quit";
         let at = |word: &str| u16::try_from(keys.find(word).unwrap()).unwrap();
-        assert_eq!(wide.hit(at("1-6"), 23), None);
+        assert_eq!(wide.hit(at("1-7"), 23), None);
         assert_eq!(wide.hit(at("read again"), 23), Some(Key::Again));
         assert_eq!(wide.hit(at("? help"), 23), Some(Key::Help));
         assert_eq!(
@@ -1356,14 +1481,14 @@ mod tests {
 
         state.on_key(Key::Open(Tab::Waves));
         let narrow = compute_view(&state, Rect::new(0, 0, 40, 24), NOW);
-        let next = u16::try_from("‹ 3/6 Waves ".chars().count()).unwrap();
+        let next = u16::try_from("‹ 3/7 Waves ".chars().count()).unwrap();
         assert_eq!(narrow.hit(next, 0), Some(Key::Next));
         assert_eq!(narrow.hit(0, 0), Some(Key::Before));
         assert_eq!(narrow.hit(3, 0), None);
         state.on_click(&narrow, 0, 0, false);
         assert_eq!(state.tab(), Tab::Chat);
         let narrow = compute_view(&state, Rect::new(0, 0, 40, 24), NOW);
-        let next = u16::try_from("‹ 2/6 Chat ".chars().count()).unwrap();
+        let next = u16::try_from("‹ 2/7 Chat ".chars().count()).unwrap();
         state.on_click(&narrow, next, 0, false);
         assert_eq!(state.tab(), Tab::Waves);
     }
@@ -1395,7 +1520,7 @@ mod tests {
         let wide = drawn(&state, 200, 30);
         let narrow = drawn(&state, 80, 30);
         assert_eq!(wide, narrow);
-        assert_eq!(wide[29], " 1-6 tab  r read again  ? help  q quit");
+        assert_eq!(wide[29], " 1-7 tab  r read again  ? help  q quit");
     }
 
     /// A view starts at the corner of its area: a frame of an area that

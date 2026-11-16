@@ -1,6 +1,6 @@
-//! The reads of the forge for the Waves tab and the Sessions tab of the
-//! TUI (#1638, #1707, 01M6VFGK4P2FWMFQHBZKR3JXSZ,
-//! 01M6VT7TXBW8EJKY0FTYQ0H49M).
+//! The reads of the forge for the Waves tab, the Sessions tab and the
+//! Decisions tab of the TUI (#1638, #1707, #2188,
+//! 01M6VFGK4P2FWMFQHBZKR3JXSZ, 01M6VT7TXBW8EJKY0FTYQ0H49M).
 //!
 //! # Design
 //!
@@ -50,7 +50,8 @@
 //! conditional read, and with no other call ([`titles`]). The two tabs
 //! share one [`Kept`], so a read of one tab after a read of the other
 //! gets a `304` too. The list of `#` of the Chat tab and of `riff chat`
-//! reads the open issues in the same way ([`open_issues`]).
+//! reads the open issues in the same way ([`open_issues`]), and so does
+//! the Decisions tab ([`decisions`]).
 //!
 //! An open issue with the label [`crate::cycle::LABEL`] is a release
 //! whose checks after the deploy have not passed: the release issue
@@ -77,8 +78,10 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use riff_client::waves::{Issues, wave_number};
+use riff_core::name::ThreadName;
 use serde::Deserialize;
 
+use super::decisions::Decision;
 use crate::pr::{Gate, Gh, Reply};
 use crate::rollout::{Comment, Label, Merge, MergedPull, Pull, Verify};
 use crate::typeahead::OpenIssue;
@@ -95,6 +98,127 @@ pub const MOST_PAGES: u32 = 10;
 
 /// The title of the milestone of the items for later waves.
 pub const BACKLOG: &str = "Backlog";
+
+/// The read `read` of each repository of `repos`, in order, with the
+/// error of `gh` in one line: [`read`] for the Waves tab,
+/// [`open_issues`] for the Chat tab, and [`decisions`] for the Decisions
+/// tab.
+///
+/// ```
+/// use riff::tui::forge::each;
+///
+/// let read = each(&["o/r", "o/s"], |repo| match *repo {
+///     "o/r" => Ok(1),
+///     _ => Err(anyhow::anyhow!("gh: HTTP 502")),
+/// });
+/// assert_eq!(read, [("o/r", Ok(1)), ("o/s", Err("gh: HTTP 502".to_owned()))]);
+/// ```
+pub fn each<K: Clone, T>(
+    repos: &[K],
+    read: impl Fn(&K) -> Result<T>,
+) -> Vec<(K, Result<T, String>)> {
+    repos
+        .iter()
+        .map(|repo| (repo.clone(), read(repo).map_err(|e| format!("{e:#}"))))
+        .collect()
+}
+
+/// The last good read of `gh` of each repository `K`, the time of the
+/// last read, and the fault of the last read that failed, while it holds:
+/// the reads of the Waves tab and of the Decisions tab
+/// (01M6VFGK4P2FWMFQHBZKR3JXSZ, 01M7G7SHRDEA6BCNSYQA8RGZ23).
+///
+/// ```
+/// use riff::tui::forge::Reads;
+///
+/// let mut reads: Reads<&str, u32> = Reads::default();
+/// assert!(reads.due(0));
+/// assert_eq!(reads.take(vec![("o/r", Ok(1)), ("o/s", Ok(2))], 1_000), None);
+/// assert!(!reads.due(60_999));
+/// assert!(reads.due(61_000));
+/// // A read that fails keeps the last read of its repository, and the
+/// // note line gets its fault once.
+/// let failed = || vec![("o/r", Ok(3)), ("o/s", Err("gh: HTTP 502".to_owned()))];
+/// assert_eq!(reads.take(failed(), 60_000).as_deref(), Some("riff: gh: HTTP 502"));
+/// assert_eq!(reads.take(failed(), 120_000), None);
+/// assert_eq!((reads.get(&"o/r"), reads.get(&"o/s")), (Some(&3), Some(&2)));
+/// // A repository that the read does not name goes.
+/// reads.take(vec![("o/r", Ok(4))], 180_000);
+/// assert_eq!(reads.iter().collect::<Vec<_>>(), [(&"o/r", &4)]);
+/// assert_eq!(reads.at(), Some(180_000));
+/// ```
+#[derive(Debug, Clone)]
+pub struct Reads<K, T> {
+    /// The last good read of each repository.
+    each: BTreeMap<K, T>,
+    /// The time of the last read, in milliseconds since the epoch.
+    at_ms: Option<i64>,
+    /// The fault of the last read that failed, while it holds.
+    fault: Option<String>,
+}
+
+impl<K, T> Default for Reads<K, T> {
+    fn default() -> Self {
+        Reads {
+            each: BTreeMap::new(),
+            at_ms: None,
+            fault: None,
+        }
+    }
+}
+
+impl<K: Ord, T> Reads<K, T> {
+    /// True when a read is due at `now_ms`: none yet, or the last one is
+    /// [`READ_EVERY`] old.
+    pub fn due(&self, now_ms: i64) -> bool {
+        let every = i64::try_from(READ_EVERY.as_millis()).unwrap_or(i64::MAX);
+        self.at_ms.is_none_or(|at| now_ms - at >= every)
+    }
+
+    /// Takes the read `read` of each repository at `at_ms`. A good read
+    /// replaces the last one of its repository. A read that failed keeps
+    /// it. A repository that `read` does not name goes. It gives the line
+    /// of the first fault when it is new, for the note line.
+    pub fn take(&mut self, read: Vec<(K, Result<T, String>)>, at_ms: i64) -> Option<String> {
+        let mut last = std::mem::take(&mut self.each);
+        let mut fault = None;
+        for (repo, read) in read {
+            match read {
+                Ok(found) => {
+                    self.each.insert(repo, found);
+                }
+                Err(e) => {
+                    fault.get_or_insert(crate::text::top_gh_fault(&e));
+                    if let Some(found) = last.remove(&repo) {
+                        self.each.insert(repo, found);
+                    }
+                }
+            }
+        }
+        self.at_ms = Some(at_ms);
+        let new = fault.clone().filter(|f| self.fault.as_ref() != Some(f));
+        self.fault = fault;
+        new
+    }
+
+    /// The last good read of `repo`.
+    pub fn get<Q: Ord + ?Sized>(&self, repo: &Q) -> Option<&T>
+    where
+        K: std::borrow::Borrow<Q>,
+    {
+        self.each.get(repo)
+    }
+
+    /// The last good read of each repository, in the order of `K`.
+    pub fn iter(&self) -> impl Iterator<Item = (&K, &T)> {
+        self.each.iter()
+    }
+
+    /// The time of the last read.
+    pub fn at(&self) -> Option<i64> {
+        self.at_ms
+    }
+}
 
 /// The REST path of the page `page` of the open issues of `repo`.
 ///
@@ -156,8 +280,9 @@ pub struct Entry {
     /// The time it opened, for example `2026-11-07T10:00:00Z`.
     #[serde(default, deserialize_with = "crate::text::forge_de_opt")]
     pub created_at: Option<String>,
-    /// The body. Only its `Needs:` line ([`crate::rollout::needs`]) and
-    /// its `Live:` line ([`crate::rollout::has_live_check`]) count.
+    /// The body. Only its `Needs:` line ([`crate::rollout::needs`]), its
+    /// `Live:` line ([`crate::rollout::has_live_check`]) and its headings
+    /// `Questions for PERSON` ([`super::decisions::names`]) count.
     #[serde(default)]
     pub body: Option<String>,
     /// The number of its comments.
@@ -475,7 +600,8 @@ pub fn closed_of(entries: Vec<Entry>) -> Vec<Closed> {
 /// The `ETag` and the body of each conditional read of the TUI, by its
 /// path, from one read to the next, and the last merged pull requests of
 /// each repository ([`Kept::merges`]). A clone shares them: the reads of
-/// the Waves tab and of the Sessions tab keep one set.
+/// the Waves tab, the Sessions tab, the Chat tab and the Decisions tab
+/// keep one set.
 #[derive(Debug, Clone, Default)]
 pub struct Kept {
     replies: Arc<Mutex<BTreeMap<String, (String, String)>>>,
@@ -737,19 +863,52 @@ pub fn open_issues(gh: &Gh, repo: &str, kept: &Kept) -> Result<Vec<OpenIssue>> {
         .collect())
 }
 
-/// [`open_issues`] of each repository of `repos`, in order.
-pub fn open_issues_each(
-    gh: &Gh,
-    repos: &[String],
-    kept: &Kept,
-) -> Vec<(String, Result<Vec<OpenIssue>, String>)> {
-    repos
-        .iter()
-        .map(|repo| {
-            let read = open_issues(gh, repo, kept).map_err(|e| format!("{e:#}"));
-            (repo.clone(), read)
-        })
-        .collect()
+/// The decisions of `repo` for the Decisions tab (#2188,
+/// 01M7FYVHB1APFXPXA71PMD18EH): each open issue with the label
+/// `question` or `design`, with its wave, its labels and the names of
+/// its questions ([`Decision::of`]). It makes the conditional read of the
+/// open issues of [`read`], and no other call, so a read that changed
+/// nothing costs no point. It fails with the error of `gh`.
+///
+/// ```
+/// use riff::pr::Gh;
+/// use riff::tui::forge::{Kept, decisions};
+///
+/// let dir = tempfile::tempdir()?;
+/// let script = r###"#!/bin/sh
+/// echo "$*" >> "$(dirname "$0")/calls"
+/// case "$*" in
+///   *'If-None-Match: "v1"'*) echo 'gh: HTTP 304' >&2; exit 1 ;;
+///   *'issues?state=open'*)
+///     printf 'HTTP/2.0 200 OK\r\nEtag: "v1"\r\n\r\n[
+///       {"number":12,"title":"Which name?","labels":[{"name":"question"}],
+///        "milestone":{"number":1,"title":"Backlog"},"body":"## Questions for mike"},
+///       {"number":13,"title":"Design: the board","labels":[{"name":"design"}],
+///        "milestone":{"number":5,"title":"Wave 3"}},
+///       {"number":14,"title":"Fix it","milestone":{"number":5,"title":"Wave 3"}},
+///       {"number":40,"title":"Which name?","labels":[{"name":"question"}],"pull_request":{}}]' ;;
+///   *) echo 'gh: Not Found (HTTP 404)' >&2; exit 1 ;;
+/// esac
+/// "###;
+/// let gh = Gh::at(isolated::write_program(dir.path().join("gh"), script));
+/// let kept = Kept::default();
+/// let repo = "o/r".parse()?;
+/// let found = decisions(&gh, &repo, &kept)?;
+/// let numbers: Vec<u64> = found.iter().map(|d| d.issue().number).collect();
+/// assert_eq!(numbers, [12, 13]);
+/// assert_eq!(found[0].named(), ["mike"]);
+/// // The second read is a `304`: the same decisions, for no point.
+/// assert_eq!(decisions(&gh, &repo, &kept)?, found);
+/// let calls = std::fs::read_to_string(dir.path().join("calls"))?;
+/// assert_eq!(calls.lines().count(), 2, "{calls}");
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn decisions(gh: &Gh, repo: &ThreadName, kept: &Kept) -> Result<Vec<Decision>> {
+    let (open, _) = open(gh, &repo.to_string(), kept)?;
+    Ok(open
+        .into_iter()
+        .filter_map(|entry| Decision::of(repo, entry))
+        .collect())
 }
 
 /// The issues of the current wave in the open entries `open`: the
@@ -879,17 +1038,6 @@ fn read_main(gh: &Gh, repo: &str) -> Result<Option<Main>> {
             conclusion: conclusion.clone(),
         }),
     })
-}
-
-/// [`read`] of each repository of `repos`, in order.
-pub fn read_each(gh: &Gh, repos: &[String], kept: &Kept) -> Vec<(String, Result<Forge, String>)> {
-    repos
-        .iter()
-        .map(|repo| {
-            let read = read(gh, repo, kept).map_err(|e| format!("{e:#}"));
-            (repo.clone(), read)
-        })
-        .collect()
 }
 
 #[cfg(test)]
@@ -1152,7 +1300,7 @@ esac
             dir.path().join("gh"),
             "#!/bin/sh\necho 'gh: API rate limit exceeded (HTTP 403)' >&2\nexit 1\n",
         ));
-        let read = read_each(&gh, &["o/r".to_owned()], &Kept::default());
+        let read = each(&["o/r"], |repo| super::read(&gh, repo, &Kept::default()));
         let error = read[0].1.as_ref().unwrap_err();
         assert!(error.contains("API rate limit exceeded"), "{error}");
     }
