@@ -41,7 +41,8 @@
 //! `riff daemon status`, `riff daemon limit`, `riff daemon cache`, `riff
 //! daemon events`, `riff daemon sweep`, `riff daemon end`, `riff daemon
 //! restart`, `riff host join` and `riff host leave` take `--host HOST`
-//! (01M579Z9MPS86MX7890T6HV18S). With it, riff posts the [`Request`] as
+//! (01M579Z9MPS86MX7890T6HV18S), and so does `riff daemon log`
+//! (01M7EX1PYJ99BDSVJK7MAPDFD0). With it, riff posts the [`Request`] as
 //! a direct message to the session of the daemon of HOST ([`ask`]).
 //! The daemon judges it ([`judge`]), does it through its own control
 //! socket, as the command does on that host ([`answer`]), and posts the
@@ -472,6 +473,28 @@ pub fn remove_clone(dir: &Path, data: &Path, wave: &Wave) -> Vec<String> {
 /// assert!("daemon events n --after 7 --notes x".parse::<Request>().is_err());
 /// assert!("daemon cache 20G".parse::<Request>().is_err());
 /// assert!("daemon cache 20G --clear".parse::<Request>().is_err());
+/// // `riff daemon log`: each text of `--grep` on a line of its own.
+/// for body in [
+///     "daemon log",
+///     "daemon log --since 2026-11-14T07:12:00Z",
+///     // The first and the last time of `--since`: each one has 4 digits in its year.
+///     "daemon log --since 1970-01-01T00:00:00Z",
+///     "daemon log --since 9999-12-31T23:59:59Z",
+///     "daemon log --lines 50",
+///     "daemon log --since 2026-11-14T07:12:00Z --lines 50\n--grep issue-12\n--grep  the cause: x",
+/// ] {
+///     assert_eq!(body.parse::<Request>().unwrap().to_string(), body);
+/// }
+/// let Ok(Request::Log(query)) = "daemon log --lines 50\n--grep  a b".parse() else { panic!() };
+/// assert_eq!((query.lines(), query.grep()), (50, &[" a b".to_owned()][..]));
+/// for bad in [
+///     "daemon log --lines 0", "daemon log --lines x", "daemon log --lines", "daemon log --since 07:12",
+///     "daemon log --grep x", "daemon log\nissue-12", "daemon log\n--grep ", "daemon status\n--grep x",
+///     "daemon log --since +10000-01-01T00:00:00Z", "daemon log --since 1969-12-31T23:59:59Z",
+///     "daemon log--lines 5", "daemon logs",
+/// ] {
+///     assert!(bad.parse::<Request>().is_err(), "{bad}");
+/// }
 /// assert_eq!("join o/r".parse(), Ok(Request::Join { repo: "o/r".into(), no_lead: false }));
 /// assert_eq!("join o/r --no-lead".parse(), Ok(Request::Join { repo: "o/r".into(), no_lead: true }));
 /// assert!("lead stop".parse::<Request>().is_err());
@@ -530,6 +553,12 @@ pub enum Request {
         /// ([`Page::notes`]).
         notes: u64,
     },
+    /// `riff daemon log`: the lines of the log of the daemon that the
+    /// query picks, with no secret ([`super::log::read`], #2156). Its
+    /// first line has `--since` and `--lines`. Each text of `--grep` is on
+    /// a line of its own, after `--grep ` (the text of
+    /// [`super::log::Query`]).
+    Log(super::log::Query),
     /// `riff daemon sweep`.
     Sweep,
     /// `riff daemon sweep --remove NAME`, with `--force` when `force`.
@@ -590,6 +619,11 @@ impl FromStr for Request {
     type Err = ();
 
     fn from_str(body: &str) -> Result<Self, ()> {
+        if let Some(flags) = body.strip_prefix("daemon log")
+            && (flags.is_empty() || flags.starts_with([' ', '\n']))
+        {
+            return flags.parse().map(Request::Log).map_err(|_| ());
+        }
         match body.split_whitespace().collect::<Vec<_>>()[..] {
             ["daemon", "status"] => Ok(Request::Status),
             ["daemon", "cache"] => Ok(Request::Cache { clear: false }),
@@ -731,6 +765,7 @@ impl fmt::Display for Request {
             Request::Events { name, after, notes } => {
                 write!(f, "daemon events {name} --after {after} --notes {notes}")
             }
+            Request::Log(query) => write!(f, "daemon log{query}"),
             Request::Sweep => write!(f, "daemon sweep"),
             Request::Remove { name, force: false } => write!(f, "daemon sweep --remove {name}"),
             Request::Remove { name, force: true } => {
@@ -1243,6 +1278,7 @@ pub async fn answer(
         Request::Events { name, after, notes } => page(dir, name, (*after, *notes), EVENT_HOLD)
             .await
             .map(|page| page.to_string()),
+        Request::Log(query) => log_text(dir, query).await,
         Request::Sweep => lines_of(dir, Ask::Sweep).await,
         Request::Remove { name, force } => {
             lines_of(
@@ -1417,6 +1453,14 @@ pub fn clone_main(gh: &crate::pr::Gh, dir: &Path, repo: &str) -> Result<(PathBuf
             Err(e)
         }
     }
+}
+
+/// The text of `riff daemon log` for `query`, from the log of the daemon
+/// in its folder `dir` ([`super::log::read_here`]). The read of up to
+/// 20 MB holds up no task of the runtime.
+pub async fn log_text(dir: &Path, query: &super::log::Query) -> Result<String> {
+    let (dir, query) = (dir.to_owned(), query.clone());
+    tokio::task::spawn_blocking(move || super::log::read_here(&dir, &query)).await?
 }
 
 /// Each line of the daemon in the folder `dir` for `ask`, up to its
@@ -2001,6 +2045,27 @@ impl Session {
         let post = self.api.post(&self.me, None, &to, &body, Kind::Note);
         if let Err(e) = post.await {
             eprintln!("riff daemon: cannot reply: {e:#}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #2156: a request is `daemon log` only with a space or a line
+    /// break after `log`, or nothing. `daemon log--lines 5` is no request.
+    #[test]
+    fn a_log_request_has_a_space_or_a_line_break_after_log() {
+        for body in ["daemon log", "daemon log --lines 5", "daemon log\n--grep x"] {
+            assert!(matches!(body.parse(), Ok(Request::Log(_))), "{body}");
+        }
+        for body in [
+            "daemon log--lines 5",
+            "daemon logs",
+            "daemon log\t--lines 5",
+        ] {
+            assert!(body.parse::<Request>().is_err(), "{body}");
         }
     }
 }

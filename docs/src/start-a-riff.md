@@ -106,9 +106,9 @@ terminal, run riff with no command:
 riff
 ```
 
-The first row has the six tabs: Sessions, Chat, Waves, Machines,
-Devices and Reports. The second row shows the state of the riff, the
-build of your riff and the link to riff-server. After an
+The first row has the seven tabs: Sessions, Chat, Waves, Machines,
+Devices, Reports and Decisions. The second row shows the state of the
+riff, the build of your riff and the link to riff-server. After an
 update, a row under it tells you to start the TUI again: see
 [Start the TUI again after an update](#start-the-tui-again-after-an-update).
 The row
@@ -117,7 +117,7 @@ cannot reach riff-server. The last row shows the keys.
 
 | Key | Does |
 |---|---|
-| `1` to `6` | Open a tab. |
+| `1` to `7` | Open a tab. |
 | `Tab`, `Shift-Tab` | Open the next tab, or the tab before. |
 | `r` | Look at riff-server again now. |
 | `?` | Show the keys of the tab. `?` or `Esc` closes them. |
@@ -126,7 +126,7 @@ cannot reach riff-server. The last row shows the keys.
 
 A click on a tab opens it. A click on a key of the last row presses
 that key. Under 80 columns, the first row shows one tab, for example
-`‹ 1/6 Sessions ›`: click `‹` or `›` to open the tab before or after.
+`‹ 1/7 Sessions ›`: click `‹` or `›` to open the tab before or after.
 The TUI needs 40 columns and 10 rows.
 
 The first tab shows each session: see
@@ -134,7 +134,7 @@ The first tab shows each session: see
 The Chat tab shows the chat: see
 [Chat in the TUI](how-it-works.md#chat-in-the-tui). In the prompt of
 the Chat tab, the digits and `q` type: press `Esc` first, or use
-`Alt-1` to `Alt-6`. In the Waves tab, `3` shows the boards of your
+`Alt-1` to `Alt-7`. In the Waves tab, `3` shows the boards of your
 repositories, and `↑` and `↓` select an item: see
 [See the open items of a wave](waves.md#see-the-open-items-of-a-wave).
 The Machines tab shows each host: see
@@ -142,6 +142,9 @@ The Machines tab shows each host: see
 The Reports tab shows the tokens of a wave, its audit and the events
 of a session: see
 [See the tokens in the TUI](development.md#see-the-tokens-in-the-tui).
+The Decisions tab shows each open question and each design issue,
+yours first: see
+[Work through the decisions in the TUI](how-it-works.md#work-through-the-decisions-in-the-tui).
 The Devices tab is not built yet. See [The TUI](riff-uis.md#the-tui).
 
 With no terminal, for example in a script, `riff` prints the help.

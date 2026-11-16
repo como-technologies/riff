@@ -16,7 +16,7 @@
 //! [`super::reads`], 01M7GFY7EBGFJJY27VZ6544B7W).
 //!
 //! ```text
-//!  1 Sessions  2 Chat•2  [3 Waves]  4 Machines  5 Devices  6 Reports
+//!  1 Sessions  2 Chat•2  [3 Waves]  4 Machines  5 Devices  6 Reports  7 Decisions
 //!  riff running · build 10df8a4 · link ok 2s
 //!  ▼ como-technologies/riff · Wave 48        1 stuck 2 free 1 held 3 work 2 verify
 //!        STATE   ITEM   TITLE                           WHO / PULL REQUEST   AGE
@@ -116,9 +116,10 @@ use riff_client::waves::{Board, Issues, wave_number};
 use riff_core::name::ThreadName;
 use riff_core::wire::{HoldInfo, RiffState, SessionInfo};
 
-use super::forge::{Closed, Forge, Main};
+use super::decisions::IssueRef;
+use super::forge::{Closed, Forge, Main, Reads};
 use super::view::Layout;
-use super::{Action, Effect, Key, Look, Mark, NOTHING_CHANGED, Question, State};
+use super::{Action, Effect, Key, Look, Mark, NOTHING_CHANGED, OnRows, Question, State};
 use crate::text;
 
 /// The body of the tab when the person has no project, so no board: two
@@ -138,10 +139,10 @@ const CYAN: Style = Style::new().fg(Color::Cyan);
 const DIM: Style = Style::new().add_modifier(Modifier::DIM);
 
 /// The style of a title.
-const BOLD: Style = Style::new().add_modifier(Modifier::BOLD);
+pub(super) const BOLD: Style = Style::new().add_modifier(Modifier::BOLD);
 
 /// The style of the selected row.
-const SELECTED: Style = Style::new().add_modifier(Modifier::REVERSED);
+pub(super) const SELECTED: Style = Style::new().add_modifier(Modifier::REVERSED);
 
 /// The state of an item on a board (01M6VFGJWVB3WEEYBCNSZ2FJT0), in the
 /// order of the rows.
@@ -333,6 +334,18 @@ impl Row {
             _ => None,
         }
     }
+
+    /// The issue of this row, for an item. Each repository of a board
+    /// parses: riff-server names each one as a thread.
+    fn issue(&self) -> Option<IssueRef> {
+        match self {
+            Row::Item { repo, item } => Some(IssueRef {
+                repo: repo.parse().ok()?,
+                number: item.number,
+            }),
+            _ => None,
+        }
+    }
 }
 
 /// What the Waves tab knows, and the choices of the person.
@@ -341,12 +354,7 @@ pub struct Waves {
     /// The repository of the working folder, `OWNER/REPO`, if any.
     here: Option<String>,
     /// The last good read of the forge of each repository.
-    forge: BTreeMap<String, Forge>,
-    /// The time of the last read of the forge, in milliseconds since the
-    /// epoch.
-    read_ms: Option<i64>,
-    /// The fault of the last read that failed, while it holds.
-    fault: Option<String>,
+    forge: Reads<String, Forge>,
     /// The selected row.
     pick: Option<Pick>,
     /// The folds that the person chose: `true` for an open board.
@@ -529,24 +537,7 @@ impl Waves {
         at_ms: i64,
     ) -> (Option<String>, bool) {
         let stuck_before = self.stuck();
-        let mut last = std::mem::take(&mut self.forge);
-        let mut fault = None;
-        for (repo, read) in read {
-            match read {
-                Ok(forge) => {
-                    self.forge.insert(repo, forge);
-                }
-                Err(e) => {
-                    fault.get_or_insert(text::top_gh_fault(&e));
-                    if let Some(forge) = last.remove(&repo) {
-                        self.forge.insert(repo, forge);
-                    }
-                }
-            }
-        }
-        self.read_ms = Some(at_ms);
-        let new = fault.clone().filter(|f| self.fault.as_ref() != Some(f));
-        self.fault = fault;
+        let new = self.forge.take(read, at_ms);
         let turned = !self.stuck().is_subset(&stuck_before);
         (new, turned)
     }
@@ -566,7 +557,7 @@ impl Waves {
 
     /// The time of the last read of the forge.
     pub fn read_at(&self) -> Option<i64> {
-        self.read_ms
+        self.forge.at()
     }
 
     /// The selected row.
@@ -595,38 +586,13 @@ impl Waves {
         (look, now_ms): (&Look, i64),
         page: usize,
     ) -> Option<Answer> {
-        let picks: Vec<usize> = (0..rows.len())
-            .filter(|&i| rows[i].pick().is_some())
-            .collect();
-        let at = self
-            .selected(rows)
-            .and_then(|i| picks.iter().position(|&p| p == i));
-        let mut go = |to: usize| {
-            if let Some(&row) = picks.get(to.min(picks.len().saturating_sub(1))) {
-                self.pick = rows[row].pick();
-            }
-            None
-        };
-        let at_or_0 = at.unwrap_or(0);
-        match key {
-            Key::Up => go(at_or_0.saturating_sub(1)),
-            Key::Down => go(at.map_or(0, |at| at + 1)),
-            Key::PageUp => go(at_or_0.saturating_sub(page.max(1))),
-            Key::PageDown => go(at_or_0 + page.max(1)),
-            Key::First => go(0),
-            Key::Last => go(picks.len().saturating_sub(1)),
-            Key::Row(row) => {
-                let pick = rows.get(row).and_then(Row::pick)?;
-                if self.selected(rows) == Some(row) {
-                    return self.enter(rows.get(row)?, now_ms);
-                }
-                self.pick = Some(pick);
+        match key.on_rows(rows, self.selected(rows), page, |row| row.pick().is_some()) {
+            OnRows::Select(row) => {
+                self.pick = row.pick();
                 None
             }
-            key => {
-                let row = rows.get(self.selected(rows)?)?;
-                self.act(key, row, look, now_ms)
-            }
+            OnRows::Act(key, row) => self.act(key, row, look, now_ms),
+            OnRows::Nothing => None,
         }
     }
 
@@ -669,14 +635,10 @@ impl Waves {
                     .forge
                     .get(repo)
                     .is_some_and(|forge| forge.issues.questions.contains(&item.number));
-                if !asked {
-                    return Some(Answer::Note(text::questions_not_asked(repo, item.number)));
-                }
-                let answered = Effect::Answered {
-                    repo: repo.clone(),
-                    item: item.number,
-                };
-                Some(Answer::Ask(answered.question()))
+                Some(match Effect::answered(&row.issue()?, asked) {
+                    Ok(question) => Answer::Ask(question),
+                    Err(note) => Answer::Note(note),
+                })
             }
             (Key::Char('a'), _) => Some(Answer::Note(
                 "Select an item with the label question to mark it as answered.".to_owned(),
@@ -751,16 +713,22 @@ fn paused(look: &Look, repo: &str) -> bool {
 /// assert_eq!(url(&Row::Text("x".into())), None);
 /// ```
 pub fn url(row: &Row) -> Option<String> {
-    let base = |repo: &str| format!("https://github.com/{}", text::safe(repo));
     match row {
-        Row::Item { repo, item } => Some(match item.pull {
-            Some(pull) => format!("{}/pull/{pull}", base(repo)),
-            None => format!("{}/issues/{}", base(repo), item.number),
-        }),
-        Row::Repo(row) => Some(base(&row.repo)),
-        Row::Closed { repo, .. } => Some(format!("{}/issues?q=is%3Aclosed", base(repo))),
+        Row::Item { repo, item } => match item.pull {
+            Some(pull) => Some(format!("{}/pull/{pull}", repo_url(repo))),
+            None => row.issue().map(|issue| issue.url()),
+        },
+        Row::Repo(row) => Some(repo_url(&row.repo)),
+        Row::Closed { repo, .. } => Some(format!("{}/issues?q=is%3Aclosed", repo_url(repo))),
         _ => None,
     }
+}
+
+/// The URL of the repository `repo` on GitHub: of a row of the Waves
+/// tab, and the start of the URL of an issue
+/// ([`super::decisions::IssueRef::url`]).
+pub(super) fn repo_url(repo: &str) -> String {
+    format!("https://github.com/{}", text::safe(repo))
 }
 
 /// The whole row of `item` at `now_ms`, for the note line.
@@ -781,8 +749,9 @@ fn whole(item: &ItemRow, now_ms: i64) -> String {
     parts.join(" · ")
 }
 
-/// The age of a time `since_ms` at `now_ms`, as `2h`.
-fn age(since_ms: Option<i64>, now_ms: i64) -> Option<String> {
+/// The age of a time `since_ms` at `now_ms`, as `2h`: of an item, and
+/// of the last read of the Waves tab and of the Decisions tab.
+pub(super) fn age(since_ms: Option<i64>, now_ms: i64) -> Option<String> {
     let since = since_ms?;
     Some(text::ago(
         u64::try_from((now_ms - since) / 1000).unwrap_or(0),
@@ -1061,7 +1030,7 @@ pub fn rows(waves: &Waves, look: &Look, look_ms: i64) -> Vec<Row> {
         .map(str::to_owned);
     let next = repo
         .into_iter()
-        .chain(waves.forge.keys().cloned())
+        .chain(waves.forge.iter().map(|(repo, _)| repo.clone()))
         .find_map(|repo| Some((next_waves(waves.forge.get(&repo)?)?, repo)));
     if let Some((next, repo)) = next {
         rows.extend([Row::Blank, Row::NextTitle(repo), Row::Next(next)]);
@@ -1096,7 +1065,17 @@ fn next_waves(forge: &Forge) -> Option<Vec<(String, usize)>> {
 /// assert_eq!(wave_name("Backlog"), "Backlog");
 /// ```
 pub fn wave_name(title: &str) -> String {
-    wave_number(title).map_or_else(|| title.to_owned(), |n| format!("Wave {n}"))
+    wave_number(title).map_or_else(|| title.to_owned(), short_wave)
+}
+
+/// The short name of the wave `n`: the name of a wave in the Waves tab
+/// ([`wave_name`]) and in the Decisions tab.
+///
+/// ```
+/// assert_eq!(riff::tui::waves::short_wave(56), "Wave 56");
+/// ```
+pub fn short_wave(n: u64) -> String {
+    format!("Wave {n}")
 }
 
 /// The questions of the later waves of `issues`, as `riff questions`
@@ -1182,7 +1161,14 @@ pub fn cut(text: &str, columns: usize) -> String {
 /// `text` cut to `columns - 1` and padded to `columns`: a column with
 /// one space after it.
 fn column(text: &str, columns: usize) -> String {
-    let text = cut(text, columns.saturating_sub(1));
+    padded(text, columns, 1)
+}
+
+/// `text` cut to `columns - gap` and padded to `columns`: a column with
+/// at least `gap` spaces after it, in the Waves tab and in the Decisions
+/// tab.
+pub(super) fn padded(text: &str, columns: usize, gap: usize) -> String {
+    let text = cut(text, columns.saturating_sub(gap));
     let pad = columns.saturating_sub(width(&text));
     format!("{text}{}", " ".repeat(pad))
 }
@@ -1210,12 +1196,7 @@ pub fn body(
             (line, i)
         })
         .collect();
-    let height = usize::from(rows);
-    let at = selected
-        .and_then(|s| lines.iter().position(|(_, i)| *i == s))
-        .unwrap_or(0);
-    let start = (at + 1).saturating_sub(height);
-    lines.into_iter().skip(start).take(height).collect()
+    super::view::window(lines, selected, rows)
 }
 
 /// The line of `row`, `selected` or not, in the wide layout or not, in
@@ -1398,7 +1379,7 @@ fn item_line(item: &ItemRow, sel: &str, wide: bool, columns: usize, now_ms: i64)
 /// assert_eq!(note(&waves, 42_000), "The boards come from gh, 41s ago.");
 /// ```
 pub fn note(waves: &Waves, now_ms: i64) -> String {
-    match age(waves.read_ms, now_ms) {
+    match age(waves.forge.at(), now_ms) {
         Some(age) => format!("The boards come from gh, {age} ago."),
         None => "The boards come from gh: the first read runs.".to_owned(),
     }
@@ -1427,23 +1408,37 @@ pub fn keys_of(layout: Layout) -> Vec<(&'static str, &'static str, Option<Key>)>
     }
 }
 
+/// The move keys of the Waves tab and of the Decisions tab in the help
+/// popup (01M6VFGKCJ02G33TXR01GY6M0G, 01M7FYVHDJJ288RRV8EBRKSY49).
+pub(super) const MOVE_KEYS: [(&str, &str); 3] = [
+    ("↑ ↓, j k", "select a row"),
+    ("PgUp PgDn", "move a page"),
+    ("g G", "the first or last row"),
+];
+
+/// The keys of an issue in the help popup of the Waves tab and of the
+/// Decisions tab (01M7FYVHDJJ288RRV8EBRKSY49).
+pub(super) const ISSUE_KEYS: [(&str, &str); 3] = [
+    ("o", "show the URL"),
+    ("a", "mark as answered"),
+    ("y n", "answer the question"),
+];
+
 /// The keys of the Waves tab in the help popup, before the keys of the
 /// frame.
 pub fn help_keys() -> Vec<(&'static str, &'static str)> {
-    vec![
-        ("↑ ↓, j k", "select a row"),
-        ("PgUp PgDn", "move a page"),
-        ("g G", "the first or last row"),
-        ("Enter", "open the row"),
-        ("← → Space", "fold a board"),
-        ("h", "hold the item"),
-        ("f", "free the item"),
-        ("a", "mark as answered"),
-        ("p", "pause the repository"),
-        ("P", "pause the whole riff"),
-        ("o", "show the URL"),
-        ("y n", "answer the question"),
-    ]
+    MOVE_KEYS
+        .into_iter()
+        .chain([
+            ("Enter", "open the row"),
+            ("← → Space", "fold a board"),
+            ("h", "hold the item"),
+            ("f", "free the item"),
+            ("p", "pause the repository"),
+            ("P", "pause the whole riff"),
+        ])
+        .chain(ISSUE_KEYS)
+        .collect()
 }
 
 #[cfg(test)]
@@ -1670,7 +1665,7 @@ mod tests {
     #[test]
     fn the_waves_tab_at_80_x_24_is_the_mock_up() {
         let want = [
-            " 1 Sessions  2 Chat•2  [3 Waves]  4 Machines  5 Devices  6 Reports",
+            " 1 Sessions  2 Chat•2  [3 Waves]  4 Machines  5 Devices  6 Reports  7 Decisions",
             " riff running · build 10df8a4 · link ok 2s",
             " ▼ como-technologies/riff · Wave 48        1 stuck 2 free 1 held 3 work 2 verify",
             "       STATE   ITEM   TITLE                           WHO / PULL REQUEST   AGE",
@@ -1757,7 +1752,7 @@ mod tests {
     #[test]
     fn the_waves_tab_at_40_x_24_is_the_narrow_mock_up() {
         let want = [
-            "‹ 3/6 Waves ›",
+            "‹ 3/7 Waves ›",
             "riff running · link ok 2s",
             "▼ riff · Wave 48",
             "  ! stuck   #1601  Fix the help",
@@ -2300,9 +2295,9 @@ mod tests {
         state.on_key(Key::Open(Tab::Waves));
         assert_eq!(state.boards(), ["o/r"]);
         assert_eq!(drawn(&state, 80, 24)[2], " ▶ o/r · not read yet");
-        // Another tab reads no board.
+        // Another tab reads the board too (01M7GFY7EBGFJJY27VZ6544B7W).
         state.on_key(Key::Open(Tab::Sessions));
-        assert!(state.boards().is_empty());
+        assert_eq!(state.boards(), ["o/r"]);
     }
 
     /// 01M77F7R7RERVQH7XS39GWJJKF: a repository that a live session of

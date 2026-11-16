@@ -327,7 +327,7 @@ impl OpenIssues {
     }
 
     /// Takes the read `read` of the open issues of each repository
-    /// ([`crate::tui::forge::open_issues_each`]). A read that failed
+    /// ([`crate::tui::forge::open_issues`]). A read that failed
     /// keeps the issues of the last read of its repository. A repository
     /// that `read` does not name goes.
     ///

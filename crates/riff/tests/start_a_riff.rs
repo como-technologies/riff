@@ -356,7 +356,7 @@ fn the_book_says_that_each_lead_and_session_gets_the_new_rights_at_once() {
     assert!(renew.contains("```mermaid"), "{renew}");
     assert_eq!(
         book::commands_in(renew),
-        ["journalctl --user -u riff | grep 'has new rights'"]
+        ["riff daemon log --grep 'has new rights'"]
     );
     assert!(renew.contains("riff daemon: The install 2020 of a GitHub App has new rights."));
 }

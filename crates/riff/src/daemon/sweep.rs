@@ -57,11 +57,14 @@
 //! A session runs, and its folder stays, while one of these is true:
 //!
 //! - the daemon has the record of the session;
-//! - a job of the daemon runs for the item of the folder, from before
+//! - a job of the daemon runs for the session of the folder, from before
 //!   the clone of its session to its last step after the end, which reads
 //!   `events.jsonl` in the folder (`Daemon::in_job`,
 //!   01M53S7WDPQ2GWHJWJ6SZXZ5PN). The daemon has no record of the
-//!   session after its end;
+//!   session after its end. A job keeps each folder of its item that was
+//!   not there at its start, and the folder of the session that a new
+//!   daemon took up (01M7GCESN7RY3GW6ZPP9PBM87D). The folder of an older
+//!   session of the item, which ended, does not run;
 //! - the `riff run` that made the folder runs. It holds the lock
 //!   `ITEM-ID8.lock` beside the folder from before the clone to its own
 //!   end ([`hold`]): its start can wait long for room, and the daemon has
@@ -106,6 +109,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{File, OpenOptions, TryLockError};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
@@ -678,12 +682,14 @@ async fn blocking<T: Send + 'static>(
         .map_err(|e| anyhow!("{e}"))?
 }
 
-/// The folders of the sessions of a daemon: the items of its jobs, one
-/// sweep at a time, and the line of each kept folder that the log got.
+/// The folders of the sessions of a daemon: the jobs that run, one sweep
+/// at a time, and the line of each kept folder that the log got.
 #[derive(Default)]
 pub struct Folders {
-    /// The items of the jobs that run, with their count.
-    jobs: Mutex<BTreeMap<String, usize>>,
+    /// The jobs that run, by the number of their [`InJob`].
+    jobs: Mutex<BTreeMap<u64, JobFolders>>,
+    /// The number of the next job.
+    next: AtomicU64,
     /// Held while a sweep runs.
     sweep: tokio::sync::Mutex<()>,
     /// The last line of each kept folder that the log got
@@ -712,7 +718,7 @@ impl Folders {
         };
     }
 
-    fn jobs(&self) -> MutexGuard<'_, BTreeMap<String, usize>> {
+    fn jobs(&self) -> MutexGuard<'_, BTreeMap<u64, JobFolders>> {
         self.jobs.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
@@ -721,22 +727,35 @@ impl Folders {
     }
 }
 
-/// A job of the daemon for its item: the sweep keeps each folder of the
-/// item until the drop (01M53S7WDPQ2GWHJWJ6SZXZ5PN).
+/// The folders that a job of the daemon keeps: each folder of its item
+/// that was not there at its start ([`Daemon::in_job`]).
+struct JobFolders {
+    /// The item of the job.
+    item: String,
+    /// The folders `ITEM-ID8` of the item that were there at the start of
+    /// the job, with no folder of its own session: the folders of older
+    /// sessions of the item.
+    before: BTreeSet<String>,
+}
+
+impl JobFolders {
+    /// True when the folder `name` can be the folder of the session of
+    /// the job.
+    fn keeps(&self, name: &str) -> bool {
+        item_of_folder(name) == Some(self.item.as_str()) && !self.before.contains(name)
+    }
+}
+
+/// A job of the daemon for its item: the sweep keeps the folder of its
+/// session until the drop (01M53S7WDPQ2GWHJWJ6SZXZ5PN).
 pub struct InJob {
     folders: Arc<Folders>,
-    item: String,
+    job: u64,
 }
 
 impl Drop for InJob {
     fn drop(&mut self) {
-        let mut jobs = self.folders.jobs();
-        if let Some(count) = jobs.get_mut(&self.item) {
-            *count -= 1;
-            if *count == 0 {
-                jobs.remove(&self.item);
-            }
-        }
+        self.folders.jobs().remove(&self.job);
     }
 }
 
@@ -762,16 +781,37 @@ impl<R: Runtime + 'static> Daemon<R> {
         self.dir.with_file_name("sessions")
     }
 
-    /// Keeps each folder of `item` while a job of the item runs: from
-    /// before the clone of its session to its last step after the end,
-    /// which reads the folder (01M53S7WDPQ2GWHJWJ6SZXZ5PN). Take it
-    /// before the job starts, and keep it to the end of
-    /// [`crate::wave::finish`].
-    pub(crate) fn in_job(&self, item: &str) -> InJob {
-        *self.folders.jobs().entry(item.to_owned()).or_default() += 1;
+    /// Keeps the folder of the session of a job of `item` while the job
+    /// runs: from before the clone of its session to its last step after
+    /// the end, which reads the folder (01M53S7WDPQ2GWHJWJ6SZXZ5PN). Take
+    /// it before the job starts, and keep it to the end of
+    /// [`crate::wave::finish`]. `own` is the folder of the session that a
+    /// new daemon took up.
+    ///
+    /// The job keeps each folder of `item` that was not there at its
+    /// start, and `own`: a new session makes a new folder `ITEM-ID8`. So
+    /// the folder of an older session of the item, which ended, goes as
+    /// the folder of a session that does not run (#2205).
+    pub(crate) fn in_job(&self, item: &str, own: Option<&Path>) -> InJob {
+        let own = own.and_then(Path::file_name);
+        let before = std::fs::read_dir(self.sessions_dir())
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.file_name())
+            .filter(|name| Some(name.as_os_str()) != own)
+            .filter_map(|name| name.into_string().ok())
+            .filter(|name| item_of_folder(name) == Some(item))
+            .collect();
+        let job = self.folders.next.fetch_add(1, Ordering::Relaxed);
+        let folders = JobFolders {
+            item: item.to_owned(),
+            before,
+        };
+        self.folders.jobs().insert(job, folders);
         InJob {
             folders: self.folders.clone(),
-            item: item.to_owned(),
+            job,
         }
     }
 
@@ -935,7 +975,7 @@ impl<R: Runtime + 'static> Daemon<R> {
         let Some(issue) = issue_of(item) else {
             return Ok(None);
         };
-        if self.runs(folder, item) {
+        if self.runs(folder) {
             return Ok(None);
         }
         let repo = repo_of(folder);
@@ -1004,8 +1044,10 @@ impl<R: Runtime + 'static> Daemon<R> {
 
     /// Removes the folder `name` of one ended session on purpose
     /// (01M5P26VW5GBJDQZGEYW9A77Y0): it never removes a session that
-    /// runs. With no `force`, the pull request of its work must have
-    /// merged. The leftover work of the clone goes with the folder.
+    /// runs. The folder of an ended session of an item that runs again
+    /// can go (01M7GCESN7RY3GW6ZPP9PBM87D). With no `force`, the pull
+    /// request of its work must have merged. The leftover work of the
+    /// clone goes with the folder.
     pub async fn remove_one(&self, name: &str, force: bool) -> Result<String> {
         let _one = self.folders.sweep.lock().await;
         let Some(item) = item_of_folder(name).filter(|_| !name.contains('/')) else {
@@ -1015,7 +1057,7 @@ impl<R: Runtime + 'static> Daemon<R> {
         if !folder.is_dir() {
             bail!("{}", text::remove_no_folder(&folder));
         }
-        if self.runs(&folder, item) {
+        if self.runs(&folder) {
             bail!("{}", text::remove_runs(name));
         }
         let why = if force {
@@ -1041,15 +1083,17 @@ impl<R: Runtime + 'static> Daemon<R> {
         Ok(text::folder_removed(&folder, &why))
     }
 
-    /// True when the session of the folder `folder` of `item` runs: see
-    /// the design. A record names its folder by the path of the host of
-    /// `riff run`, so the name `ITEM-ID8` of the folder counts, not its
-    /// path.
-    fn runs(&self, folder: &Path, item: &str) -> bool {
+    /// True when the session of the folder `folder` runs: see the design.
+    /// A record names its folder by the path of the host of `riff run`,
+    /// so the name `ITEM-ID8` of the folder counts, not its path. A job
+    /// keeps the folder of its own session, not each folder of its item
+    /// ([`Daemon::in_job`]).
+    fn runs(&self, folder: &Path) -> bool {
         let name = folder.file_name();
-        self.records().iter().any(|r| r.folder.file_name() == name)
-            || self.folders.jobs().contains_key(item)
-            || held(folder)
+        let in_job = name
+            .and_then(|n| n.to_str())
+            .is_some_and(|name| self.folders.jobs().values().any(|job| job.keeps(name)));
+        self.records().iter().any(|r| r.folder.file_name() == name) || in_job || held(folder)
     }
 
     /// Sweeps at once, then each [`every`], until the daemon stops. Call
@@ -1177,9 +1221,10 @@ pub(crate) mod tests {
         // The riff run that made the folder holds its lock.
         let locked = folder(&here, "issue-6-00000006");
         let lock = hold(&locked).unwrap();
-        // A job of the daemon runs for issue-7.
+        // A job of the daemon runs for issue-7, and made the folder of its
+        // session.
+        let job = here.daemon.in_job("issue-7", None);
         let in_job = folder(&here, "issue-7-00000007");
-        let job = here.daemon.in_job("issue-7");
         let other = here.daemon.sessions_dir().join("lead-00000008");
         std::fs::create_dir_all(&other).unwrap();
 
@@ -1641,6 +1686,74 @@ esac
             .await
             .unwrap();
         assert!(!open.exists());
+    }
+
+    /// 01M7GCESN7RY3GW6ZPP9PBM87D (#2205): an item with a live session and
+    /// an older ended session. `--remove OLD --force` removes the old
+    /// folder, and `--remove LIVE` is refused.
+    #[tokio::test]
+    async fn remove_takes_the_folder_of_an_ended_session_of_an_item_that_runs_again() {
+        let (here, _) = here(&[(7, Fate::Stays)]).await;
+        let old = folder(&here, "issue-7-00000017");
+        // A new job of issue-7 starts its session: the daemon has its
+        // record.
+        let job = here.daemon.in_job("issue-7", None);
+        let start = here.start("issue-7-00000007", "issue-7");
+        note_repo(&start.folder, "o/r").unwrap();
+        let live = start.folder.clone();
+        let (_client, _) = here.started(start).await;
+
+        let ask = |name: &str| Ask::Remove {
+            name: name.into(),
+            force: true,
+        };
+        let mut said = Vec::new();
+        ask_done(&here.dir, ask("issue-7-00000017"), |l| {
+            said.push(l.to_owned())
+        })
+        .await
+        .unwrap();
+        assert_eq!(said, [text::folder_removed(&old, text::REMOVE_FORCED)]);
+        assert!(!old.exists());
+
+        let err = ask_done(&here.dir, ask("issue-7-00000007"), |_| {})
+            .await
+            .unwrap_err();
+        let runs = text::remove_runs("issue-7-00000007");
+        assert!(format!("{err:#}").contains(&runs), "{err:#}");
+        assert!(live.exists());
+        drop(job);
+    }
+
+    /// 01M7GCESN7RY3GW6ZPP9PBM87D: a job keeps each folder of its item that
+    /// was not there at its start, and the folder of the session that a
+    /// new daemon took up. The sweep removes the folder of an older session
+    /// of the item. When one job ends, the folder of the other job stays.
+    #[tokio::test]
+    async fn a_job_keeps_the_folder_of_its_own_session_and_not_an_older_one() {
+        let (here, _) = here(&[(7, Fate::Closed { pull: 47 })]).await;
+        let old = folder(&here, "issue-7-00000017");
+        let taken_up = folder(&here, "issue-7-00000027");
+        let took_up = here.daemon.in_job("issue-7", Some(&taken_up));
+        let job = here.daemon.in_job("issue-7", None);
+        let new = folder(&here, "issue-7-00000007");
+
+        let swept = lines(here.daemon.sweep(None).await);
+
+        let closed = "the pull request #47 closed with no merge";
+        assert_eq!(swept, [text::swept(&old, closed)]);
+        assert!(!old.exists());
+        assert!(taken_up.exists() && new.exists());
+
+        // The job that a new daemon took up ends: its folder goes, and the
+        // folder of the other job stays.
+        drop(took_up);
+        let swept = lines(here.daemon.sweep(None).await);
+        assert_eq!(swept, [text::swept(&taken_up, closed)]);
+        assert!(new.exists());
+        drop(job);
+        assert_eq!(here.daemon.sweep(None).await.len(), 1);
+        assert!(!new.exists());
     }
 
     /// Runs git in `dir` with no config of the person, and gives its

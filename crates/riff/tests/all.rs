@@ -34,6 +34,7 @@ mod council;
 mod daemon;
 #[cfg(target_os = "linux")]
 mod daemon_hosts;
+mod daemon_log;
 mod device;
 #[cfg(target_os = "linux")]
 mod first_run;

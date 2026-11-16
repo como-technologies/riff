@@ -198,7 +198,7 @@ fn the_rustdoc_and_the_book_show_the_screen() {
 #[test]
 fn the_reports_tab_at_80_x_24_is_the_mock_up() {
     let mut want: Vec<String> = [
-        " 1 Sessions  2 Chat•2  3 Waves•  4 Machines  5 Devices  [6 Reports]",
+        " 1 Sessions  2 Chat•2  3 Waves•  4 Machines  5 Devices  [6 Reports]  7 Decisions",
         " riff running · build 10df8a4 · link ok 2s",
         " [Usage]  Audit  Session log",
         " USAGE OF WAVE 48 · como-technologies/riff · 14.3M tokens in 6 issues",
@@ -224,7 +224,7 @@ fn the_reports_tab_at_80_x_24_is_the_mock_up() {
 #[test]
 fn the_reports_tab_at_40_x_24_is_the_narrow_mock_up() {
     let mut want: Vec<String> = [
-        "‹ 6/6 Reports ›",
+        "‹ 6/7 Reports ›",
         "riff running · link ok 2s",
         "[Usage]  Audit  Session log",
         "WAVE 48 · 14.3M tokens in 6 issues",

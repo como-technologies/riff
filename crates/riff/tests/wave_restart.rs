@@ -33,8 +33,7 @@ fn the_book_says_what_happens_to_the_items_of_the_wave_at_a_restart_of_the_host(
         how.contains(&format!("\n{line}\n")),
         "the how-to has no {line:?}"
     );
-    let sh =
-        "```sh\njournalctl --user -u riff | grep -e 'steps after the end' -e 'claims issue-'\n```";
+    let sh = "```sh\nriff daemon log --grep 'steps after the end' --grep 'claims issue-'\n```";
     assert!(how.contains(sh), "the how-to has no {sh:?}");
     // The words of the how-to on one line, as the wrap breaks the lines.
     let prose = how.split_whitespace().collect::<Vec<_>>().join(" ");

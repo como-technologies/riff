@@ -1781,6 +1781,25 @@ pub fn questions_not_asked(repo: &str, number: u64) -> String {
     )
 }
 
+/// The line of the Decisions tab of the TUI for the projects `repos`
+/// that no read gave yet (01M7GBGD8EH2B1DXZ8NADZ1A85).
+///
+/// ```
+/// let (r, s) = ("o/r".parse()?, "o/s".parse()?);
+/// assert_eq!(
+///     riff::text::decisions_unread(&[&r, &s]),
+///     "No read of the decisions of o/r and o/s worked yet."
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn decisions_unread(repos: &[&ThreadName]) -> String {
+    let repos: Vec<String> = repos.iter().map(|repo| safe(&repo.to_string())).collect();
+    format!(
+        "No read of the decisions of {} worked yet.",
+        repos.join(" and ")
+    )
+}
+
 /// The line of `riff questions --answered N` after the change (#1782):
 /// the label went, and the post to the lead ([`posted`]).
 ///
@@ -8792,6 +8811,187 @@ pub const DAEMON_RUN_ONLY_LEAD: &str = "Only the lead can run an item through th
 /// session, for `riff daemon events` (#1441).
 pub const DAEMON_EVENTS_ONLY_LEAD: &str =
     "Only the lead can read the events of a session through the riff daemon.";
+
+/// A session that is not the lead asks the daemon for the lines of its
+/// log, for `riff daemon log` (#2156).
+pub const DAEMON_LOG_ONLY_LEAD: &str =
+    "Only the lead can read the log of the riff daemon through the riff daemon.";
+
+/// `riff daemon log --since` with a time out of its range
+/// ([`crate::daemon::log::SINCE`], #2156).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::daemon_log_since_range(),
+///     "riff daemon log: --since takes a time from 1970-01-01T00:00Z to 9999-12-31T23:59Z."
+/// );
+/// ```
+pub fn daemon_log_since_range() -> String {
+    let range = crate::daemon::log::SINCE;
+    let at = |secs: i64| {
+        DateTime::from_timestamp(secs, 0).map_or_else(
+            || secs.to_string(),
+            |t| t.format("%Y-%m-%dT%H:%MZ").to_string(),
+        )
+    };
+    format!(
+        "riff daemon log: --since takes a time from {} to {}.",
+        at(*range.start()),
+        at(*range.end())
+    )
+}
+
+/// `riff daemon log` cannot read the MCP servers of the host, so it
+/// cannot know their secrets (#2156).
+pub const DAEMON_LOG_NO_MCP: &str = "riff daemon log: riff shows no line, because it cannot \
+     read the MCP servers of the host, and so it cannot take their secrets out. Fix the file, \
+     or remove it";
+
+/// `riff daemon log` cannot read the OS keyring, so it cannot know the
+/// token of `riff claude-token` (#2156).
+pub const DAEMON_LOG_NO_KEYRING: &str = "riff daemon log: riff shows no line, because it cannot \
+     read the OS keyring, and so it cannot take the token of riff claude-token out";
+
+/// The text of `riff daemon log` for `found` (#2156): each line. When
+/// older lines match too, a first line names them and the limit that
+/// keeps them out (01M7F7GWP88VC0QETN4GNTTJEV). With no line, one line
+/// says so (01M7F0HEA4GVKQ47Q5GN29FQ22).
+///
+/// ```
+/// use riff::daemon::log::{Found, MOST_LINES, Query, pick};
+/// use riff::run::Scrub;
+///
+/// // The text of the newest `lines` of `count` lines, each one with
+/// // `quotes` quotes at its end.
+/// let shown = |count: usize, quotes: usize, lines: usize| {
+///     let log: String = (0..count)
+///         .map(|n| format!("2026-11-14T07:12:00Z line {n}{}\n", "\"".repeat(quotes)))
+///         .collect();
+///     let query = Query::new(None, Some(lines), vec![]).unwrap();
+///     riff::text::daemon_log(&pick([log.as_bytes()], &query, &Scrub::default()).unwrap())
+/// };
+/// assert_eq!(shown(1, 0, 1), "2026-11-14T07:12:00Z line 0");
+/// assert_eq!(
+///     shown(4, 0, 1),
+///     "riff daemon log: 3 older lines match too. Ask for more with --lines, up to 2000, or for \
+///      fewer with --since or --grep.\n2026-11-14T07:12:00Z line 3"
+/// );
+/// assert!(shown(2, 0, 1).starts_with("riff daemon log: 1 older line matches too. Ask for more"));
+/// assert!(shown(MOST_LINES + 1, 0, MOST_LINES).starts_with(
+///     "riff daemon log: 1 older line matches too, but one answer holds at most 2000 lines. Ask \
+///      for fewer with --since or --grep.\n2026-11-14T07:12:00Z line 1\n"
+/// ));
+/// let full = shown(MOST_LINES, 1000, MOST_LINES);
+/// let first = full.lines().next().unwrap();
+/// assert!(first.starts_with("riff daemon log: "), "{first}");
+/// assert!(
+///     first.ends_with(
+///         " older lines match too, but one answer holds at most 768 KiB of lines. Ask for fewer \
+///          with --since or --grep."
+///     ),
+///     "{first}"
+/// );
+/// assert_eq!(
+///     riff::text::daemon_log(&Found::default()),
+///     "riff daemon log: no line of the log of the riff daemon matches."
+/// );
+/// ```
+pub fn daemon_log(found: &crate::daemon::log::Found) -> String {
+    use crate::daemon::log::{Limit, MOST_BYTES, MOST_LINES};
+    if found.lines().is_empty() {
+        return "riff daemon log: no line of the log of the riff daemon matches.".to_owned();
+    }
+    let mut lines = Vec::with_capacity(found.lines().len() + 1);
+    if let Some(more) = found.more() {
+        let count = more.count.get();
+        let matches = if count == 1 {
+            "line matches"
+        } else {
+            "lines match"
+        };
+        let ask = match more.limit {
+            Limit::Lines => format!(
+                ". Ask for more with --lines, up to {MOST_LINES}, or for fewer with --since or \
+                 --grep."
+            ),
+            Limit::MostLines => format!(
+                ", but one answer holds at most {MOST_LINES} lines. Ask for fewer with --since or \
+                 --grep."
+            ),
+            Limit::MostBytes => format!(
+                ", but one answer holds at most {} KiB of lines. Ask for fewer with --since or \
+                 --grep.",
+                MOST_BYTES / 1024
+            ),
+        };
+        lines.push(format!("riff daemon log: {count} older {matches} too{ask}"));
+    }
+    lines.extend(found.lines().iter().cloned());
+    lines.join("\n")
+}
+
+/// The folder of the daemon has no log file: on a Mac, launchd writes
+/// the log (#2156).
+///
+/// ```
+/// let file = "/d/daemon.log".as_ref();
+/// assert_eq!(
+///     riff::text::daemon_no_log(file, Some("tail -f /l/daemon.log")),
+///     "riff daemon log: the riff daemon has no log file /d/daemon.log. See its log with: \
+///      tail -f /l/daemon.log"
+/// );
+/// assert_eq!(
+///     riff::text::daemon_no_log(file, None),
+///     "riff daemon log: the riff daemon has no log file /d/daemon.log."
+/// );
+/// ```
+pub fn daemon_no_log(file: &std::path::Path, log_command: Option<&str>) -> String {
+    let mut text = format!(
+        "riff daemon log: the riff daemon has no log file {}.",
+        file.display()
+    );
+    if let Some(command) = log_command {
+        text.push_str(&format!(" See its log with: {command}"));
+    }
+    text
+}
+
+/// `riff daemon log --since` with a text that is no time (#2156).
+///
+/// ```
+/// assert!(riff::text::daemon_log_bad_since("noon").contains("2026-11-14T07:12Z"));
+/// ```
+pub fn daemon_log_bad_since(since: &str) -> String {
+    format!(
+        "riff daemon log: --since {since} is no time. Give a time of the day in your local time, \
+         for example 02:12, or a date and a time with its zone, for example 2026-11-14T07:12Z."
+    )
+}
+
+/// `riff daemon log --lines` with a number out of its range (#2156).
+///
+/// ```
+/// assert!(riff::text::daemon_log_bad_lines(0).contains("1 to 2000"));
+/// ```
+pub fn daemon_log_bad_lines(lines: usize) -> String {
+    format!(
+        "riff daemon log: --lines {lines} is out of range. Give 1 to {}.",
+        crate::daemon::log::MOST_LINES
+    )
+}
+
+/// `riff daemon log --grep` with an empty text, or a text with a line
+/// break (#2156).
+///
+/// ```
+/// assert!(riff::text::daemon_log_bad_grep("").contains("one line"));
+/// ```
+pub fn daemon_log_bad_grep(grep: &str) -> String {
+    format!(
+        "riff daemon log: --grep {grep:?} finds no line. Give a text of one line, with one \
+         character or more."
+    )
+}
 
 /// The riff daemon on the socket of the session gave a page of events
 /// that this riff cannot read: it runs another riff.

@@ -2,10 +2,11 @@
 //!
 //! # Design
 //!
-//! Three tabs read `gh` on a timer ([`Read`]): the Sessions tab reads the
+//! Four tabs read `gh` on a timer ([`Read`]): the Sessions tab reads the
 //! titles of the issues, the Chat tab the open issues of its list of `#`,
-//! and the Waves tab the forge of its boards. Each one also reads while
-//! another tab shows, so a person who opens a tab sees its facts at once
+//! the Waves tab the forge of its boards, and the Decisions tab the open
+//! issues of its projects. Each one also reads while another tab shows,
+//! so a person who opens a tab sees its facts at once
 //! (01M7GFY7EBGFJJY27VZ6544B7W):
 //!
 //! - At the start of the TUI, each read starts, whichever tab shows.
@@ -14,12 +15,13 @@
 //!   minutes. So in an hour on another tab, the forge gets at most 12
 //!   reads, not 60.
 //! - A wake of GitHub, `r` and the end of an action ask for a read at
-//!   once ([`Reads::again`]). The ask waits until the tab shows: a tab
+//!   once ([`Timer::again`]). The ask waits until the tab shows: a tab
 //!   that does not show never reads sooner than [`AWAY_EVERY`].
 //! - When the person opens a tab whose last read is [`Read::every`] old
 //!   or older, its read starts at once. Until it ends, the tab shows the
-//!   facts that it has. The Waves tab shows their age in the note line
-//!   ([`super::waves::note`]).
+//!   facts that it has. The Waves tab and the Decisions tab show their
+//!   age in the note line ([`super::waves::note`],
+//!   [`super::decisions::note`]).
 //!
 //! Each read is the conditional read of its tab ([`super::forge`]): a
 //! `304` costs no point, and a read in the background adds no GraphQL
@@ -28,7 +30,7 @@
 //! rate, whichever tab shows ([`super::DAEMON_EVERY`], [`super::look`]).
 //!
 //! The time of a read is the time of its start, in milliseconds since
-//! the epoch. So a test steps a fake clock ([`Reads::starts`]).
+//! the epoch. So a test steps a fake clock ([`Timer::starts`]).
 //!
 //! ```mermaid
 //! flowchart TD
@@ -64,11 +66,14 @@ pub enum Read {
     OpenIssues,
     /// The forge of the boards of the Waves tab ([`super::forge::read`]).
     Forge,
+    /// The open issues of the projects of the Decisions tab
+    /// ([`super::forge::decisions`]).
+    Decisions,
 }
 
 impl Read {
     /// Each read.
-    pub const ALL: [Read; 3] = [Read::Titles, Read::OpenIssues, Read::Forge];
+    pub const ALL: [Read; 4] = [Read::Titles, Read::OpenIssues, Read::Forge, Read::Decisions];
 
     /// The tab of the read.
     ///
@@ -79,12 +84,14 @@ impl Read {
     /// assert_eq!(Read::Titles.tab(), Tab::Sessions);
     /// assert_eq!(Read::OpenIssues.tab(), Tab::Chat);
     /// assert_eq!(Read::Forge.tab(), Tab::Waves);
+    /// assert_eq!(Read::Decisions.tab(), Tab::Decisions);
     /// ```
     pub fn tab(self) -> Tab {
         match self {
             Read::Titles => Tab::Sessions,
             Read::OpenIssues => Tab::Chat,
             Read::Forge => Tab::Waves,
+            Read::Decisions => Tab::Decisions,
         }
     }
 
@@ -102,7 +109,7 @@ impl Read {
     pub fn every(self) -> Duration {
         match self {
             Read::Titles => crate::top::ISSUES_TTL,
-            Read::OpenIssues | Read::Forge => super::forge::READ_EVERY,
+            Read::OpenIssues | Read::Forge | Read::Decisions => super::forge::READ_EVERY,
         }
     }
 }
@@ -110,7 +117,7 @@ impl Read {
 /// When each read of `gh` of the TUI starts: the start of the last read
 /// of each kind, and the asks for a read at once.
 #[derive(Debug, Clone, Default)]
-pub struct Reads {
+pub struct Timer {
     /// The start of the last read of each kind, in milliseconds since the
     /// epoch.
     started: BTreeMap<Read, i64>,
@@ -119,29 +126,29 @@ pub struct Reads {
     asked: BTreeSet<Read>,
 }
 
-impl Reads {
+impl Timer {
     /// True when the read `read` is due at `now_ms` while the tab `shown`
-    /// shows (01M7GFY7EBGFJJY27VZ6544B7W): it never ran, or its tab shows and an ask
-    /// waits, or its last start is [`Read::every`] old while its tab
-    /// shows, else [`AWAY_EVERY`] old.
+    /// shows (01M7GFY7EBGFJJY27VZ6544B7W): it never ran, or its tab shows
+    /// and an ask waits, or its last start is [`Read::every`] old while
+    /// its tab shows, else [`AWAY_EVERY`] old.
     ///
     /// ```
     /// use riff::tui::Tab;
-    /// use riff::tui::reads::{Read, Reads};
+    /// use riff::tui::reads::{Read, Timer};
     ///
-    /// let mut reads = Reads::default();
+    /// let mut timer = Timer::default();
     /// // At the start, each read is due, whichever tab shows.
-    /// assert!(reads.due(Read::Forge, Tab::Sessions, 0));
-    /// reads.starts(Read::Forge, Tab::Sessions, 0);
+    /// assert!(timer.due(Read::Forge, Tab::Sessions, 0));
+    /// timer.starts(Read::Forge, Tab::Sessions, 0);
     /// // The tab that shows reads each minute, another one each 5 minutes.
-    /// assert!(!reads.due(Read::Forge, Tab::Waves, 59_999));
-    /// assert!(reads.due(Read::Forge, Tab::Waves, 60_000));
-    /// assert!(!reads.due(Read::Forge, Tab::Sessions, 299_999));
-    /// assert!(reads.due(Read::Forge, Tab::Sessions, 300_000));
+    /// assert!(!timer.due(Read::Forge, Tab::Waves, 59_999));
+    /// assert!(timer.due(Read::Forge, Tab::Waves, 60_000));
+    /// assert!(!timer.due(Read::Forge, Tab::Sessions, 299_999));
+    /// assert!(timer.due(Read::Forge, Tab::Sessions, 300_000));
     /// // An ask waits until the tab shows.
-    /// reads.again(Read::Forge);
-    /// assert!(!reads.due(Read::Forge, Tab::Sessions, 1_000));
-    /// assert!(reads.due(Read::Forge, Tab::Waves, 1_000));
+    /// timer.again(Read::Forge);
+    /// assert!(!timer.due(Read::Forge, Tab::Sessions, 1_000));
+    /// assert!(timer.due(Read::Forge, Tab::Waves, 1_000));
     /// ```
     pub fn due(&self, read: Read, shown: Tab, now_ms: i64) -> bool {
         let Some(&at) = self.started.get(&read) else {
@@ -157,20 +164,20 @@ impl Reads {
     }
 
     /// True when the read `read` starts at `now_ms` while the tab `shown`
-    /// shows: it is due ([`Reads::due`]). Then it takes the start, and
+    /// shows: it is due ([`Timer::due`]). Then it takes the start, and
     /// the ask of the read. The loop asks only while no read of that kind
     /// runs, so an ask while a read runs gives one more read after it.
     ///
     /// ```
     /// use riff::tui::Tab;
-    /// use riff::tui::reads::{Read, Reads};
+    /// use riff::tui::reads::{Read, Timer};
     ///
-    /// let mut reads = Reads::default();
-    /// assert!(reads.starts(Read::Titles, Tab::Sessions, 0));
-    /// assert!(!reads.starts(Read::Titles, Tab::Sessions, 0));
-    /// reads.again(Read::Titles);
-    /// assert!(reads.starts(Read::Titles, Tab::Sessions, 1_000));
-    /// assert!(!reads.starts(Read::Titles, Tab::Sessions, 1_000));
+    /// let mut timer = Timer::default();
+    /// assert!(timer.starts(Read::Titles, Tab::Sessions, 0));
+    /// assert!(!timer.starts(Read::Titles, Tab::Sessions, 0));
+    /// timer.again(Read::Titles);
+    /// assert!(timer.starts(Read::Titles, Tab::Sessions, 1_000));
+    /// assert!(!timer.starts(Read::Titles, Tab::Sessions, 1_000));
     /// ```
     pub fn starts(&mut self, read: Read, shown: Tab, now_ms: i64) -> bool {
         let due = self.due(read, shown, now_ms);
@@ -190,7 +197,7 @@ impl Reads {
 
 impl State {
     /// True when the read `read` starts at `now_ms` with the tab that
-    /// shows now ([`Reads::starts`], 01M7GFY7EBGFJJY27VZ6544B7W).
+    /// shows now ([`Timer::starts`], 01M7GFY7EBGFJJY27VZ6544B7W).
     ///
     /// ```
     /// use riff::tui::reads::Read;
@@ -210,12 +217,15 @@ impl State {
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     pub fn starts(&mut self, read: Read, now_ms: i64) -> bool {
-        self.reads.starts(read, self.tab, now_ms)
+        self.timer.starts(read, self.tab, now_ms)
     }
 
     /// Asks for the read `read` at once, while its tab shows or when it
-    /// opens ([`Reads::again`]).
+    /// opens ([`Timer::again`]).
     pub fn read_again(&mut self, read: Read) {
-        self.reads.again(read);
+        self.timer.again(read);
     }
 }
+
+#[cfg(test)]
+mod tests;

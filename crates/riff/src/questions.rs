@@ -40,9 +40,10 @@
 //!
 //! # Answered
 //!
-//! `riff questions --answered N` and the key `a` of the Waves tab
-//! ([`crate::tui::Effect::Answered`]) mark the questions of the issue N
-//! as answered ([`answered`], #1782, 01M6XZ2T9TPZC1X36Y2ZXZ83C0,
+//! `riff questions --answered N`, and the key `a` of the Waves tab and
+//! of the Decisions tab ([`crate::tui::Effect::Answered`]), mark the
+//! questions of the issue N as answered ([`answered`], #1782,
+//! 01M6XZ2T9TPZC1X36Y2ZXZ83C0,
 //! 01M6XZ2TCBVN69GTJYV9X8GBW5): riff removes the label `question`, and a
 //! message wakes the lead of the project, a session of any person
 //! (01M78A9FSHE9XEPGC3SJAB7PMX). The lead

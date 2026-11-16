@@ -4,7 +4,7 @@
 //! # Design
 //!
 //! ```text
-//!  1 Sessions  [2 Chat]  3 Waves•  4 Machines  5 Devices  6 Reports
+//!  1 Sessions  [2 Chat]  3 Waves•  4 Machines  5 Devices  6 Reports  7 Decisions
 //!  riff running · build 10df8a4 · link ok 2s
 //!  chat · online: mike, brett · away: ann · @NAME wakes a person or a project
 //! ──── Friday 2026-11-06 ─────────────────────────────────────────────
@@ -15,7 +15,7 @@
 //!
 //! > @riff what is next?
 //!
-//!  Enter send  Esc log  Ctrl-U/K/L clear  PgUp older  Alt-1..6 tab  Ctrl-C quit
+//!  Enter send  Esc log  Ctrl-U/K/L clear  PgUp older  Alt-1..7 tab  Ctrl-C quit
 //! ```
 //!
 //! - **The summary row** names the people who are online and away, from
@@ -47,9 +47,10 @@
 //!   ```
 //! - **The prompt** ([`Prompt`]) has the focus when you open the tab
 //!   ([`Focus`]). There each key types, also the digits, `q` and `?`.
-//!   `Alt-1` to `Alt-6`, `Tab` and `Ctrl-C` keep their work. `Esc` moves
-//!   the focus to the log, where the keys of the frame work, and `i` or
-//!   `Enter` gives it back (01M6VG1PA4PM47777ZT4PNGETF). A switch to
+//!   `Alt-1` to `Alt-7`, `Tab` and `Ctrl-C` keep their work
+//!   (01M7FYVA218ARDXTFPWSZV6N4P). `Esc` moves the focus to the log,
+//!   where the keys of the frame work, and `i` or `Enter` gives it back
+//!   (01M6VG1PA4PM47777ZT4PNGETF). A switch to
 //!   another window and back gives the focus to the prompt too
 //!   ([`State::focused`]), and a click on the log keeps it there
 //!   (01M6XT6MCZ38XEN7ZHWTRF50Z5).
@@ -281,9 +282,9 @@ pub enum Scroll {
 
 /// The key of the Chat tab in `event`, when the focus is `focus`, and
 /// `listed` while the list of the names shows (01M6VG1PA4PM47777ZT4PNGETF,
-/// 01M6Y1ES82XHFGANKZS7AF3CP2). `None`
+/// 01M6Y1ES82XHFGANKZS7AF3CP2, 01M7FYVA218ARDXTFPWSZV6N4P). `None`
 /// for a key that the frame takes ([`super::input_of`]): `Alt-1` to
-/// `Alt-6`, `Tab`, `Shift-Tab` and `Ctrl-C` in the prompt, and each key
+/// `Alt-7`, `Tab`, `Shift-Tab` and `Ctrl-C` in the prompt, and each key
 /// of the frame in the log. While the list shows, `Tab` and `Enter` pick
 /// a name, and `Esc` closes the list. The wheel of the mouse scrolls the
 /// log.
@@ -1118,7 +1119,7 @@ impl State {
     }
 
     /// Takes the read `read` of the open issues of each repository for
-    /// the list of `#` ([`super::forge::open_issues_each`],
+    /// the list of `#` ([`super::forge::open_issues`],
     /// 01M74CX9KVGQG4Y7ATT6268NMY). A read that failed keeps the issues
     /// of the last read of its repository, and gives no note.
     ///
@@ -1542,7 +1543,7 @@ pub(super) fn keys(
             if wide {
                 keys.push(("Ctrl-U/K/L", "clear", chat(Key::ClearLine)));
                 keys.push(("PgUp", "older", chat(Key::Scroll(Scroll::PageUp))));
-                keys.push(("Alt-1..6", "tab", None));
+                keys.push(("Alt-1..7", "tab", None));
             }
             keys.push(("Ctrl-C", "quit", Some(FrameKey::Quit)));
         }
@@ -1550,7 +1551,7 @@ pub(super) fn keys(
             keys.push(("i", "type", chat(Key::Prompt)));
             if wide {
                 keys.push(("↑↓ PgUp PgDn", "scroll", None));
-                keys.push(("1-6", "tab", None));
+                keys.push(("1-7", "tab", None));
                 keys.push(("r", "read again", Some(FrameKey::Again)));
             } else {
                 keys.push(("↑↓", "scroll", None));
@@ -1579,7 +1580,7 @@ pub const HELP: [(&str, &str); 12] = [
     ),
     ("PgUp, PgDn", "older or newer lines"),
     ("g, G", "the oldest or the newest line, in the log"),
-    ("Alt-1 to 6", "open a tab, also from the prompt"),
+    ("Alt-1 to 7", "open a tab, also from the prompt"),
     ("/me TEXT", "send an action"),
     (
         "@, #",
@@ -2208,7 +2209,8 @@ mod tests {
         type_in(&mut state, "@riff what is next?");
         let (rows, view) = drawn(&mut state, 80, 24);
         let mut want = vec![
-            " 1 Sessions  [2 Chat]  3 Waves•  4 Machines  5 Devices  6 Reports".to_owned(),
+            " 1 Sessions  [2 Chat]  3 Waves•  4 Machines  5 Devices  6 Reports  7 Decisions"
+                .to_owned(),
             " riff running · build 10df8a4 · link ok 2s".to_owned(),
             " chat · online: mike, brett · away: ann · @NAME wakes a person or a project"
                 .to_owned(),
@@ -2235,7 +2237,7 @@ mod tests {
                 "",
                 "> @riff what is next?",
                 "",
-                " Enter send  Esc log  Ctrl-U/K/L clear  PgUp older  Alt-1..6 tab  Ctrl-C quit",
+                " Enter send  Esc log  Ctrl-U/K/L clear  PgUp older  Alt-1..7 tab  Ctrl-C quit",
             ]
             .map(str::to_owned),
         );
@@ -2259,7 +2261,7 @@ mod tests {
         type_in(&mut state, "@brett hi");
         let (rows, _) = drawn(&mut state, 40, 24);
         let want = [
-            "‹ 2/6 Chat ›",
+            "‹ 2/7 Chat ›",
             "riff running · link ok 2s",
             "chat · 2 online · 1 away",
             "12:02 <mike> @brett:strata yes, after",
@@ -2332,7 +2334,7 @@ mod tests {
         assert_eq!(view.cursor, None);
         assert_eq!(
             rows[23],
-            " i type  ↑↓ PgUp PgDn scroll  1-6 tab  r read again  ? help  q quit"
+            " i type  ↑↓ PgUp PgDn scroll  1-7 tab  r read again  ? help  q quit"
         );
         // The note line says nothing of whom the line wakes, also while
         // the log has the focus.
@@ -2442,7 +2444,7 @@ mod tests {
             assert_eq!(view.cursor, Some(Position::new(13, 21)), "{events:?}");
             assert_eq!(
                 rows[23],
-                " Enter send  Esc log  Ctrl-U/K/L clear  PgUp older  Alt-1..6 tab  Ctrl-C quit",
+                " Enter send  Esc log  Ctrl-U/K/L clear  PgUp older  Alt-1..7 tab  Ctrl-C quit",
                 "{events:?}"
             );
         }
@@ -2950,7 +2952,7 @@ mod tests {
                 "  scroll off the screen to the left. Now the line wraps at the width of the",
                 "  tab, and the prompt grows up to five rows high now.",
                 "",
-                " Enter send  Esc log  Ctrl-U/K/L clear  PgUp older  Alt-1..6 tab  Ctrl-C quit",
+                " Enter send  Esc log  Ctrl-U/K/L clear  PgUp older  Alt-1..7 tab  Ctrl-C quit",
             ]
         );
         let end = "  tab, and the prompt grows up to five rows high now.".len();
@@ -3354,7 +3356,7 @@ mod tests {
 
     /// The keys of the prompt with no list.
     const PROMPT_KEYS: &str =
-        " Enter send  Esc log  Ctrl-U/K/L clear  PgUp older  Alt-1..6 tab  Ctrl-C quit";
+        " Enter send  Esc log  Ctrl-U/K/L clear  PgUp older  Alt-1..7 tab  Ctrl-C quit";
 
     /// `@r` shows the list of the names over the prompt, under the text
     /// of the line: `riff` first, in reverse video, and the note line

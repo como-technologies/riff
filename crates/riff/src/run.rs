@@ -217,6 +217,7 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
@@ -1033,9 +1034,16 @@ pub fn sign_in(file: &str, now_ms: i64) -> Result<SignIn> {
 /// of the person for a session (01M6Z87A04EXTT1FFJSJ1EM6TB), so no list
 /// holds that one either.
 ///
+/// The scrub finds the range of each match in the text first, then
+/// hides their union ([`Scrub::found`], [`hide`],
+/// 01M7G01XCJGVYZBHW20GVGWG6K). So a short secret in a long one does not
+/// cut the long one, in each order of the list.
+///
 /// ```
 /// use riff::run::Scrub;
 ///
+/// let mcp = Scrub::new(["live".to_owned(), "sk_live_51HxyzAbCdEf".to_owned()]);
+/// assert_eq!(mcp.clean("stripe refused sk_live_51HxyzAbCdEf"), "stripe refused [secret]");
 /// let scrub = Scrub::new(["sk-ant-oat01-secret1".to_owned(), "".to_owned()]);
 /// assert_eq!(scrub.clean("token sk-ant-oat01-secret1 here"), "token [secret] here");
 /// assert_eq!(scrub.clean("no token"), "no token");
@@ -1063,20 +1071,39 @@ impl Scrub {
         }
     }
 
-    /// `text` with each secret replaced by [`HIDDEN`].
+    /// `text` with one [`HIDDEN`] in place of each run of the union of
+    /// [`Scrub::found`] ([`hide`]).
     pub fn clean<'a>(&self, text: &'a str) -> Cow<'a, str> {
-        let mut out = Cow::Borrowed(text);
-        for secret in &self.secrets {
-            if out.contains(secret.as_str()) {
-                out = Cow::Owned(out.replace(secret.as_str(), HIDDEN));
-            }
+        let found = self.found(text);
+        if found.is_empty() {
+            Cow::Borrowed(text)
+        } else {
+            Cow::Owned(hide(text, found))
         }
-        for start in TOKEN_STARTS {
-            if out.contains(start) {
-                out = Cow::Owned(tokens_out(&out, start));
-            }
-        }
-        out
+    }
+
+    /// The range in `text` of each match of each secret, also of two
+    /// matches that overlap, and of each token of GitHub ([`tokens`]).
+    ///
+    /// ```
+    /// use riff::run::Scrub;
+    ///
+    /// let scrub = Scrub::new(["aaaa".to_owned()]);
+    /// assert_eq!(scrub.found("x aaaaa ghs_b1"), [2..6, 3..7, 8..14]);
+    /// let scrub = Scrub::new(["é-secret-1".to_owned()]);
+    /// assert_eq!(scrub.found("a é-secret-1 b é-secret-1"), [2..13, 16..27]);
+    /// ```
+    pub fn found(&self, text: &str) -> Vec<Range<usize>> {
+        let part = |c: char| c.is_ascii_alphanumeric() || c == '_';
+        self.secrets
+            .iter()
+            .flat_map(|secret| matches(text, secret))
+            .chain(
+                TOKEN_STARTS
+                    .iter()
+                    .flat_map(|start| tokens(text, start, part)),
+            )
+            .collect()
     }
 }
 
@@ -1084,24 +1111,84 @@ impl Scrub {
 /// person, of a user to server, of a refresh, and a fine-grained one.
 pub const TOKEN_STARTS: [&str; 6] = ["ghs_", "gho_", "ghp_", "ghu_", "ghr_", "github_pat_"];
 
-/// `text` with each token of GitHub that starts with `start` replaced
-/// by [`HIDDEN`].
-fn tokens_out(text: &str, start: &str) -> String {
-    let part = |c: char| c.is_ascii_alphanumeric() || c == '_';
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(at) = rest.find(start) {
-        let after = &rest[at + start.len()..];
-        let len = after.find(|c: char| !part(c)).unwrap_or(after.len());
-        out.push_str(&rest[..at]);
-        if len == 0 {
-            out.push_str(start);
-        } else {
-            out.push_str(HIDDEN);
+/// The range of each match of `secret` in `text`, also of two matches
+/// that overlap. `secret` is not empty.
+fn matches<'a>(text: &'a str, secret: &'a str) -> impl Iterator<Item = Range<usize>> + 'a {
+    let step = secret.chars().next().map_or(1, char::len_utf8);
+    let mut from = 0;
+    std::iter::from_fn(move || {
+        let at = from + text.get(from..)?.find(secret)?;
+        from = at + step;
+        Some(at..at + secret.len())
+    })
+}
+
+/// The range of each token in `text` that starts with `start`: `start`
+/// and each character after it that `part` takes. A `start` with no such
+/// character after it is no token. A `start` that ends in the last token
+/// that this scan found gives no range: its token is in the last token.
+/// So `part` looks at each character of `text` at most once, and the
+/// time grows with the length of `text` (01M7G3CSVWSV6RTGJY1WMFGV7V).
+/// An empty `start` gives each run of characters that `part` takes.
+///
+/// ```
+/// use riff::run::tokens;
+///
+/// let part = |c: char| c.is_ascii_alphanumeric() || c == '-';
+/// let found: Vec<_> = tokens("a=ghs_A-9,ghs_ end", "ghs_", part).collect();
+/// assert_eq!(found, [2..9]);
+/// let part = |c: char| c.is_ascii_alphanumeric() || c == '_';
+/// let found: Vec<_> = tokens("ghs_ghs_ghs_a1", "ghs_", part).collect();
+/// assert_eq!(found, [0..14]);
+/// let found: Vec<_> = tokens("ab c", "", part).collect();
+/// assert_eq!(found, [0..2, 3..4]);
+/// ```
+pub fn tokens<'a>(
+    text: &'a str,
+    start: &'a str,
+    part: fn(char) -> bool,
+) -> impl Iterator<Item = Range<usize>> + 'a {
+    let mut last_end = None;
+    text.match_indices(start).filter_map(move |(at, _)| {
+        let from = at + start.len();
+        if last_end.is_some_and(|end| from <= end) {
+            return None;
         }
-        rest = &after[len..];
+        let after = &text[from..];
+        let end = from + after.find(|c: char| !part(c)).unwrap_or(after.len());
+        last_end = Some(end);
+        (end > from).then_some(at..end)
+    })
+}
+
+/// `text` with one [`HIDDEN`] in place of each run of the union of
+/// `found`: two ranges that overlap or touch make one run. Each range
+/// starts and ends at a character of `text`.
+///
+/// ```
+/// use riff::run::hide;
+///
+/// assert_eq!(hide("a b c d e", vec![6..7, 2..3, 2..5]), "a [secret] [secret] e");
+/// assert_eq!(hide("abcdef", vec![0..2, 2..4]), "[secret]ef");
+/// assert_eq!(hide("no secret", Vec::new()), "no secret");
+/// ```
+pub fn hide(text: &str, mut found: Vec<Range<usize>>) -> String {
+    found.sort_by_key(|range| range.start);
+    let mut runs: Vec<Range<usize>> = Vec::new();
+    for range in found {
+        match runs.last_mut() {
+            Some(run) if range.start <= run.end => run.end = run.end.max(range.end),
+            _ => runs.push(range),
+        }
     }
-    out.push_str(rest);
+    let mut out = String::with_capacity(text.len());
+    let mut shown = 0;
+    for run in runs {
+        out.push_str(&text[shown..run.start]);
+        out.push_str(HIDDEN);
+        shown = run.end;
+    }
+    out.push_str(&text[shown..]);
     out
 }
 
@@ -3167,6 +3254,58 @@ mod tests {
             scrub.clean("gho_one sk-two gho_one ab"),
             "[secret] [secret] [secret] ab"
         );
+    }
+
+    /// #2156, 01M7G01XCJGVYZBHW20GVGWG6K: a secret that starts with a
+    /// character of two bytes goes each time: twice in one line, and in
+    /// two matches that overlap.
+    #[test]
+    fn a_secret_that_starts_with_a_wide_character_goes_each_time() {
+        let scrub = Scrub::new(["é-secret-1".to_owned()]);
+        assert_eq!(scrub.found("a é-secret-1 b é-secret-1"), [2..13, 16..27]);
+        assert_eq!(
+            scrub.clean("a é-secret-1 b é-secret-1"),
+            "a [secret] b [secret]"
+        );
+        let scrub = Scrub::new(["éaéa".to_owned()]);
+        assert_eq!(scrub.found("éaéaéa"), [0..6, 3..9]);
+        assert_eq!(scrub.clean("x éaéaéa y"), "x [secret] y");
+    }
+
+    /// #2156, 01M7G3CSVWSV6RTGJY1WMFGV7V: in a long run of token starts,
+    /// `part` looks at each character at most once, so a long line of a
+    /// session holds the daemon for no long time. A start that only
+    /// touches the end of the last token gives its own token.
+    #[test]
+    fn tokens_looks_at_each_character_at_most_once() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static LOOKS: AtomicUsize = AtomicUsize::new(0);
+        fn part(c: char) -> bool {
+            LOOKS.fetch_add(1, Ordering::Relaxed);
+            c.is_ascii_alphanumeric() || c == '_'
+        }
+        let text = "ghs_".repeat(2_000);
+        let found: Vec<_> = tokens(&text, "ghs_", part).collect();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0], 0..text.len());
+        assert!(LOOKS.load(Ordering::Relaxed) <= text.len());
+        assert_eq!(Scrub::default().clean(&text), HIDDEN);
+        let alnum = |c: char| c.is_ascii_alphanumeric();
+        let found: Vec<_> = tokens("sk-absk-cd", "sk-", alnum).collect();
+        assert_eq!(found, [0..7, 5..10]);
+    }
+
+    /// #2156: an empty start gives each run of characters that `part`
+    /// takes, also the run at the start of the text, and no empty range.
+    #[test]
+    fn tokens_with_an_empty_start_gives_each_run_of_parts() {
+        let alnum = |c: char| c.is_ascii_alphanumeric();
+        let found: Vec<_> = tokens("ab c", "", alnum).collect();
+        assert_eq!(found, [0..2, 3..4]);
+        let found: Vec<_> = tokens(" é1 b", "", alnum).collect();
+        assert_eq!(found, [3..4, 5..6]);
+        assert_eq!(tokens("", "", alnum).count(), 0);
     }
 
     #[test]

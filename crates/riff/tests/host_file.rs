@@ -169,7 +169,7 @@ fn the_book_says_what_to_do_with_a_link_in_the_folder_of_the_lead() {
     assert_eq!(
         crate::book::commands_in(how_to),
         [
-            "journalctl --user -u riff | grep 'follows no link'",
+            "riff daemon log --grep 'follows no link'",
             "find ~/.local/share/riff/leads/OWNER-REPO/claude -type l",
             "rm ~/.local/share/riff/leads/OWNER-REPO/claude/settings.json",
         ]

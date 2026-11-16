@@ -2,10 +2,10 @@
 
 This page is the design of the UI architecture of riff (#982). It
 decides the core library, the list of UIs and their order. Each UI has
-a child design of its own. The CLI is built, and the frame, the
-Sessions tab, the Chat tab, the Waves tab and the Machines tab of the
-TUI: see [The TUI](#the-tui). The other tabs of the TUI and the other
-UIs come with their build items (see [The order](#the-order)).
+a child design of its own. The CLI is built. The frame of the TUI and
+each tab but the Devices tab are built: see [The TUI](#the-tui). The
+Devices tab and the other UIs come with their build items (see
+[The order](#the-order)).
 `riff device` has only the kind `key` today: see
 [Add an authenticator](how-it-works.md#add-an-authenticator). The
 [requirements of the UIs](requirements.md#the-uis) hold each decision.
@@ -163,6 +163,7 @@ tab comes with a build item:
 | [D #1639](https://github.com/como-technologies/riff/issues/1639) | 4 Machines: the numbers of each host, the link and riff-server, the limit of a host, and the filter of the hosts (#1702). Built: see [See the hosts in the TUI](how-it-works.md#see-the-hosts-in-the-tui) and [Filter the hosts in the TUI](how-it-works.md#filter-the-hosts-in-the-tui). |
 | [G #1642](https://github.com/como-technologies/riff/issues/1642) | 5 Devices: list the devices, add one with a QR code, remove one. |
 | [F #1641](https://github.com/como-technologies/riff/issues/1641) | 6 Reports: the usage, the audit and the log of a session. Built: see [See the tokens in the TUI](development.md#see-the-tokens-in-the-tui), [Audit a wave in the TUI](development.md#audit-a-wave-in-the-tui) and [See the events in the TUI](development.md#see-the-events-in-the-tui). |
+| [#2188](https://github.com/como-technologies/riff/issues/2188) | 7 Decisions: each open issue with the label `question` or `design`, in a wave, in the Backlog or in neither, the questions for you first. Built: see [Work through the decisions in the TUI](how-it-works.md#work-through-the-decisions-in-the-tui). |
 
 Until its build item merges, the Devices tab says that it is not built
 yet.
@@ -176,21 +177,24 @@ flowchart LR
     TABS --> M["Machines: the hosts, the daemons,<br/>the limits"]
     TABS --> DV["Devices: list, add with a QR code,<br/>remove"]
     TABS --> RP["Reports: the usage, the audit,<br/>the log of a session"]
+    TABS --> DC["Decisions: each open question<br/>and each design issue"]
 ```
 
 Each tab has the same five parts:
 
 ```text
-[1 Sessions]  2 Chat•2  3 Waves•  4 Machines  5 Devices  6 Reports
+[1 Sessions]  2 Chat•2  3 Waves•  4 Machines  5 Devices  6 Reports  7 Decisions
  riff running · build 10df8a4 · link ok 2s
  the body of the tab
 
  the note: the result of the last action, or the fault of the link
- 1-6 tab  r read again  ? help  q quit
+ 1-7 tab  r read again  ? help  q quit
 ```
 
 - The tab strip shows the active tab in `[ ]`. A dot after a tab says
   that it has news since you looked at it: `Chat•2` is two new lines.
+  When the dots make the strip wider than the terminal, one space comes
+  between two tabs.
 - The header shows the state of the whole riff, the build of your
   riff, and the link: `link ok` with the age of the last look,
   or `link down`. When riff-server runs another build, the header
@@ -205,6 +209,9 @@ Each tab has the same five parts:
   screen, puts `link down` in the header and the fault in the note
   line, as `riff top` does. The first look that fails ends the TUI
   with the error, before it draws a screen.
+- Each tab reads its data at the start of the TUI and in the
+  background, so a tab that you open has its facts at once. See
+  [How the tabs read GitHub](#how-the-tabs-read-github).
 - The mouse does what the keys do. The setting `tui.mouse` turns it
   off. In a tab with rows, a click selects a row, and a second click
   opens it.
@@ -214,7 +221,7 @@ Each tab has the same five parts:
   `n` in the note line first. The attach and the takeover leave the
   screen of the TUI, and the TUI draws again at their end.
 - Under 80 columns the TUI shows the narrow layout, for a phone with
-  SSH: the strip is `‹ 1/6 Sessions ›`, and the rows have fewer words.
+  SSH: the strip is `‹ 1/7 Sessions ›`, and the rows have fewer words.
   Under 40 columns or 10 rows, the TUI asks for a bigger terminal.
 
 A session in a tab gets one of five marks. The worst mark comes first.
@@ -238,6 +245,39 @@ flowchart LR
     K["a key or a click"] --> ST
     ST --> V["compute_view<br/>the rows and the places of a click"]
     V --> R["render<br/>draws on a Buffer"]
+```
+
+### How the tabs read GitHub
+
+The Sessions tab, the Chat tab, the Waves tab and the Decisions tab
+read GitHub with `gh`. Each one reads at the start of the TUI, also
+when another tab shows:
+
+- The tab that shows reads again each minute.
+- A tab that does not show reads again in the background, each 5
+  minutes.
+- When you open a tab whose last read is a minute old or older, the
+  tab shows the facts that it has, and reads again at once. The Waves
+  tab and the Decisions tab show the age of their facts in the note
+  line.
+- `r`, the end of an action and a change on GitHub read a tab again at
+  once only while it shows, or when you open it.
+
+The reads in the background are the reads of the tab that shows: the
+answer "no change" costs no point, and they add no GraphQL call. Their
+calls show as `tui` in `riff daemon status`. The status of the riff
+daemon of this machine and the holds of the boards cost no point of
+GitHub: the TUI reads them whichever tab shows.
+
+```mermaid
+flowchart TD
+    S["the start of the TUI"] --> R["each tab reads GitHub"]
+    R --> Q{"the tab shows?"}
+    Q -- yes --> M["it reads again each minute"]
+    Q -- no --> F["it reads again each 5 minutes"]
+    O["you open a tab"] --> A{"its last read is<br/>a minute old?"}
+    A -- yes --> N["it shows the facts that it has,<br/>and reads at once"]
+    A -- no --> K["it shows its facts"]
 ```
 
 ## The graphical UIs

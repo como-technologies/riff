@@ -72,6 +72,7 @@
 //!     D -- "just real-session --skip .mozilla" --> T["the test: ~/.mozilla of HOST"]
 //! ```
 
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -83,6 +84,7 @@ use riff_client::daemons::Test;
 use super::remote::Served;
 use crate::cycle::{TestState, status_args};
 use crate::pr::Gh;
+use crate::run::hide;
 use crate::text;
 use crate::watches::{Op, Watches};
 
@@ -329,55 +331,161 @@ fn finish(
 /// How many last lines of the log the comment of a fail holds.
 const TAIL_LINES: usize = 30;
 
-/// `text` with each secret cut out: a word that starts like a token of
-/// GitHub or Anthropic, `Bearer X`, and the value of `NAME=value` when
-/// NAME names a token, a key, a secret or a password.
+/// `text` with each secret cut out: [`hide`] of [`redacted`], on each
+/// line. The white space stays, also at the end of the line.
 ///
 /// ```
 /// use riff::daemon::release_test::redact;
 ///
 /// assert_eq!(redact("push ghp_abc123 now"), "push [secret] now");
-/// assert_eq!(redact("GH_TOKEN=abc ok"), "GH_TOKEN=[secret] ok");
+/// assert_eq!(redact("a key sk-proj-abc1 here"), "a key [secret] here");
+/// assert_eq!(redact("-e GH_TOKEN=abc -e B=c"), "-e GH_TOKEN=[secret]");
 /// assert_eq!(redact("Authorization: Bearer xyz"), "Authorization: Bearer [secret]");
+/// assert_eq!(
+///     redact(r#"{"msg":"x y","env":"DB_PASSWORD=a b"} x"#),
+///     r#"{"msg":"x y","env":"DB_PASSWORD=[secret]"#
+/// );
 /// assert_eq!(redact("step 6 of 10"), "step 6 of 10");
 /// ```
 pub fn redact(text: &str) -> String {
-    const PREFIXES: [&str; 8] = [
-        "ghp_",
-        "gho_",
-        "ghs_",
-        "ghu_",
-        "ghr_",
-        "github_pat_",
-        "sk-ant-",
-        "sk-",
-    ];
-    const NAMES: [&str; 4] = ["TOKEN", "KEY", "SECRET", "PASSWORD"];
-    let mut out = Vec::new();
-    let mut after_bearer = false;
-    for line in text.lines() {
-        let mut words = Vec::new();
-        for word in line.split(' ') {
-            let upper = word.to_ascii_uppercase();
-            let word = if after_bearer && !word.is_empty() {
-                "[secret]".to_owned()
-            } else if let Some((name, value)) = word.split_once('=')
-                && !value.is_empty()
-                && NAMES.iter().any(|n| name.to_ascii_uppercase().contains(n))
-            {
-                format!("{name}=[secret]")
-            } else if PREFIXES.iter().any(|p| word.starts_with(p)) {
-                "[secret]".to_owned()
-            } else {
-                word.to_owned()
-            };
-            after_bearer = upper == "BEARER";
-            words.push(word);
+    let lines: Vec<String> = text
+        .lines()
+        .map(|line| hide(line, redacted(line)))
+        .collect();
+    lines.join("\n")
+}
+
+/// The range of each secret in `text` that [`redact`] cuts out, on each
+/// line (01M7GGCT0Z0GXM3BCAAGX7CE6Q): each word that starts like a token
+/// of GitHub or with `sk-`, whole, and the rest of the line from
+/// [`rest_from`]. It parses no quotes and no escapes.
+///
+/// ```
+/// use riff::daemon::release_test::redacted;
+///
+/// assert_eq!(redacted("ghp_a1 GH_TOKEN=abc ok"), [0..6, 16..22]);
+/// assert_eq!(redacted("key sk-proj-a1,API_KEY=x ok"), [4..24, 23..27]);
+/// assert_eq!(redacted("Bearer xyz\nBearer\nabc ghp_a1"), [7..10, 22..28]);
+/// ```
+pub fn redacted(text: &str) -> Vec<Range<usize>> {
+    // `sk-` is the start of each key of Anthropic.
+    let token = |word: &str| {
+        crate::run::TOKEN_STARTS
+            .iter()
+            .chain(&["sk-"])
+            .any(|start| word.starts_with(start))
+    };
+    let mut found = Vec::new();
+    let mut at = 0;
+    for line in text.split_inclusive('\n') {
+        let shown = &line[..line.trim_end().len()];
+        let rest = rest_from(shown);
+        let mut end = 0;
+        while let Some(skip) = shown[end..].find(|c: char| !c.is_whitespace()) {
+            let start = end + skip;
+            // A word after the start of the rest is in the rest.
+            if rest.is_some_and(|rest| start >= rest) {
+                break;
+            }
+            let word = &shown[start..];
+            let len = word.find(char::is_whitespace).unwrap_or(word.len());
+            if token(word) {
+                found.push(at + start..at + start + len);
+            }
+            end = start + len;
         }
-        after_bearer = false;
-        out.push(words.join(" "));
+        if let Some(rest) = rest {
+            found.push(at + rest..at + shown.len());
+        }
+        at += line.len();
     }
-    out.join("\n")
+    found
+}
+
+/// The start of the rest of `line` that [`redacted`] hides: after the
+/// first of [`after_a_secret_name`] and [`after_bearer`], and after the
+/// white space just after it. `None` when `line` has neither, or only
+/// white space after it.
+///
+/// ```
+/// use riff::daemon::release_test::rest_from;
+///
+/// assert_eq!(rest_from("a GH_TOKEN=x Bearer y"), Some(11));
+/// assert_eq!(rest_from("a Bearer  y GH_TOKEN=x"), Some(10));
+/// assert_eq!(rest_from("GH_TOKEN= x"), Some(10));
+/// assert_eq!(rest_from("GH_TOKEN=  "), None);
+/// assert_eq!(rest_from("step 6 of 10"), None);
+/// ```
+pub fn rest_from(line: &str) -> Option<usize> {
+    let after = [after_a_secret_name(line), after_bearer(line)]
+        .into_iter()
+        .flatten()
+        .min()?;
+    let skip = line[after..].find(|c: char| !c.is_whitespace())?;
+    Some(after + skip)
+}
+
+/// The end of the `=` of the first `NAME=` in `line` whose NAME names a
+/// secret: it has the text TOKEN, KEY, SECRET or PASSWORD, in any place
+/// and in any case (01M7GCP11AAPM078B2CXTDH03K). NAME is the run of
+/// letters, also of more than one byte, digits and `_` just before the
+/// `=`, at any place in the line: also after a quote, a `,`, a `&` or
+/// another `=`.
+///
+/// ```
+/// use riff::daemon::release_test::after_a_secret_name;
+///
+/// assert_eq!(after_a_secret_name("GH_TOKEN=abc"), Some(9));
+/// assert_eq!(after_a_secret_name("GH_TOKEN_ÉQUIPE=abc"), Some(17));
+/// assert_eq!(after_a_secret_name("--env=DB_PASSWORD=x"), Some(18));
+/// assert_eq!(after_a_secret_name(r#"{"env":"db_password=x"}"#), Some(20));
+/// assert_eq!(after_a_secret_name("?user=me&access_token=x"), Some(22));
+/// assert_eq!(after_a_secret_name("SECRET_KEY_BASE=8f2k"), Some(16));
+/// assert_eq!(after_a_secret_name("RIFF_ITEM=issue-12 key = x"), None);
+/// ```
+pub fn after_a_secret_name(line: &str) -> Option<usize> {
+    const NAMES: [&str; 4] = ["TOKEN", "KEY", "SECRET", "PASSWORD"];
+    line.match_indices('=').find_map(|(at, _)| {
+        let before = &line[..at];
+        // The run stops at the `=` before it, so each character of the
+        // line is read once for the runs.
+        let start = before
+            .char_indices()
+            .rev()
+            .find(|&(_, c)| !(c.is_alphanumeric() || c == '_'))
+            .map_or(0, |(i, c)| i + c.len_utf8());
+        let name = before[start..].to_ascii_uppercase();
+        NAMES.iter().any(|n| name.contains(n)).then_some(at + 1)
+    })
+}
+
+/// The end of the first word `Bearer` in `line`, in any case, with no
+/// letter or digit just before or after it: after a space, a quote, a
+/// colon or a `_`, and before a space, a quote, a colon or a `_`, as in
+/// `Bearer xyz`, `{"auth":"Bearer xyz"}`, `Authorization:Bearer:xyz` or
+/// `Bearer_xyz`.
+///
+/// ```
+/// use riff::daemon::release_test::after_bearer;
+///
+/// assert_eq!(after_bearer("Authorization: Bearer xyz"), Some(21));
+/// assert_eq!(after_bearer(r#"{"auth":"bearer xyz"}"#), Some(15));
+/// assert_eq!(after_bearer("Authorization:BEARER:xyz"), Some(20));
+/// assert_eq!(after_bearer("my_Bearer_xyz"), Some(9));
+/// assert_eq!(after_bearer("a Bearers Bearer"), Some(16));
+/// for line in ["Bearers", "MyBearer", "Bear", "érBearer", "Bearer2"] {
+///     assert_eq!(after_bearer(line), None, "{line}");
+/// }
+/// ```
+pub fn after_bearer(line: &str) -> Option<usize> {
+    const BEARER: &str = "bearer";
+    let word = |c: Option<char>| c.is_some_and(char::is_alphanumeric);
+    // The lower case keeps the place of each byte.
+    let lower = line.to_ascii_lowercase();
+    let at = lower.match_indices(BEARER).map(|(at, _)| at).find(|&at| {
+        !word(line[..at].chars().next_back()) && !word(line[at + BEARER.len()..].chars().next())
+    })?;
+    Some(at + BEARER.len())
 }
 
 /// The failed step in the log of the test: the text after the last
@@ -510,6 +618,314 @@ fn run_test(clone: &Path, log: &Path, server: &str, skips: &[String]) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #2156, 01M7EX1Q1F468NWGPJJS0W0ZG9, 01M7GGCT0Z0GXM3BCAAGX7CE6Q: a
+    /// word that starts as a token of GitHub or with `sk-`, also with no
+    /// `sk-ant-`, goes whole, also with a `NAME=` in it. A word with `sk-`
+    /// in it, not at its start, stays.
+    #[test]
+    fn a_word_with_the_start_of_a_token_goes() {
+        for start in crate::run::TOKEN_STARTS.iter().chain(&["sk-ant-", "sk-"]) {
+            let line = format!("a key {start}Ab1_c-9 here");
+            assert_eq!(redact(&line), "a key [secret] here", "{line}");
+        }
+        assert_eq!(redact("a disk-1 and task-2"), "a disk-1 and task-2");
+        assert_eq!(redact("key sk-proj-qw1,API_KEY=x ok"), "key [secret]");
+    }
+
+    /// #2156, 01M7GGCT0Z0GXM3BCAAGX7CE6Q: after the `=` of a NAME that
+    /// names a token, a key, a secret or a password, in any case, the rest
+    /// of the line goes. The white space just after the `=` stays. A
+    /// `NAME=` with nothing after it hides nothing.
+    #[test]
+    fn the_rest_of_the_line_after_each_secret_name_goes_in_any_case() {
+        for name in ["GH_TOKEN", "OPENAI_API_KEY", "CLIENT_SECRET", "DB_PASSWORD"] {
+            for name in [
+                name.to_owned(),
+                name.to_lowercase(),
+                format!("--{}", name.to_lowercase()),
+            ] {
+                let line = format!("-e {name}=abc1 -e B=c");
+                assert_eq!(after_a_secret_name(&line), Some(name.len() + 4), "{line}");
+                assert_eq!(redact(&line), format!("-e {name}=[secret]"));
+            }
+        }
+        assert_eq!(redact("-e API_KEY=c2VjcmV0== x"), "-e API_KEY=[secret]");
+        assert_eq!(redact("-e GH_TOKEN= x y"), "-e GH_TOKEN= [secret]");
+        assert_eq!(redact("-e GH_TOKEN="), "-e GH_TOKEN=");
+        assert_eq!(redact("-e GH_TOKEN= \t"), "-e GH_TOKEN= \t");
+        assert_eq!(redact("RIFF_ITEM=issue-12 ok"), "RIFF_ITEM=issue-12 ok");
+    }
+
+    /// #2156, 01M7GCP11AAPM078B2CXTDH03K: NAME names a secret with the
+    /// text at its start, in its middle or at its end, in any case, also
+    /// in a longer word. A NAME with none of the texts names no secret.
+    #[test]
+    fn a_name_with_the_text_in_any_place_names_a_secret() {
+        for name in [
+            "SECRET_KEY_BASE",
+            "AWS_ACCESS_KEY_ID",
+            "GITHUB_TOKEN_RO",
+            "PASSWORD_1",
+            "my_Secret_value",
+            "MONKEY",
+            "TOKEN",
+        ] {
+            let word = format!("{name}=hunter2");
+            assert_eq!(after_a_secret_name(&word), Some(name.len() + 1), "{word}");
+            assert_eq!(
+                redact(&format!("-e {word} ok")),
+                format!("-e {name}=[secret]")
+            );
+        }
+        for word in ["TOKE=2", "PASS_WORD=3", "K_E_Y=4", "KEY-ID=5"] {
+            assert_eq!(after_a_secret_name(word), None, "{word}");
+        }
+    }
+
+    /// #2156, 01M7GGCT0Z0GXM3BCAAGX7CE6Q: a letter of more than one byte
+    /// is a letter of NAME: between the text of the secret and the `=`,
+    /// just before the `=`, and before the text.
+    #[test]
+    fn a_name_with_a_wide_letter_in_it_names_a_secret() {
+        for (line, shown) in [
+            (
+                "-e GH_TOKEN_ÉQUIPE=hunter2 x",
+                "-e GH_TOKEN_ÉQUIPE=[secret]",
+            ),
+            ("DB_PASSWORDé=hunter2", "DB_PASSWORDé=[secret]"),
+            ("a clé_KEY=hunter2 b", "a clé_KEY=[secret]"),
+        ] {
+            assert_eq!(redact(line), shown, "{line}");
+        }
+    }
+
+    /// #2156, 01M7GGCT0Z0GXM3BCAAGX7CE6Q: NAME is at any place in the line:
+    /// after a quote, a `,`, a `;`, a `&`, a `?`, a space, another `=`, or
+    /// a character of more than one byte that is no letter, also when an
+    /// earlier quote of the line has a space in it. The rest of the line
+    /// goes, with its quotes.
+    #[test]
+    fn a_secret_name_at_any_place_in_the_line_hides_the_rest_of_it() {
+        for (line, shown) in [
+            (
+                r#"{"msg":"x y","env":"DB_PASSWORD=qi1 qi2"} x"#,
+                r#"{"msg":"x y","env":"DB_PASSWORD=[secret]"#,
+            ),
+            (
+                r#"["podman","run","--name","riff one","-e","DB_PASSWORD=qj1 qj2"]"#,
+                r#"["podman","run","--name","riff one","-e","DB_PASSWORD=[secret]"#,
+            ),
+            (
+                r#"env FOO="a b",DB_PASSWORD="ql1 ql2" x"#,
+                r#"env FOO="a b",DB_PASSWORD=[secret]"#,
+            ),
+            (
+                r#"sh -c "env DB_PASSWORD=qa1 qa2" x"#,
+                r#"sh -c "env DB_PASSWORD=[secret]"#,
+            ),
+            (
+                "podman run --env=DB_PASSWORD=qe1 x",
+                "podman run --env=DB_PASSWORD=[secret]",
+            ),
+            (r#"x=1,DB_PASSWORD="qd1 qd2" e"#, "x=1,DB_PASSWORD=[secret]"),
+            (
+                "grant_type=refresh_token&refresh_token=x",
+                "grant_type=refresh_token&refresh_token=[secret]",
+            ),
+            (
+                "https://h/?user=me&access_token=x",
+                "https://h/?user=me&access_token=[secret]",
+            ),
+            ("a;API_KEY=x b", "a;API_KEY=[secret]"),
+            ("'GH_TOKEN=a b' c", "'GH_TOKEN=[secret]"),
+            ("?secret=a", "?secret=[secret]"),
+            (
+                r#"{"env":"DB_PASSWORD=a b"} x"#,
+                r#"{"env":"DB_PASSWORD=[secret]"#,
+            ),
+            ("a\u{a0}GH_TOKEN=x y", "a\u{a0}GH_TOKEN=[secret]"),
+            ("a→DB_PASSWORD=x", "a→DB_PASSWORD=[secret]"),
+        ] {
+            assert_eq!(redact(line), shown, "{line}");
+        }
+    }
+
+    /// #2156, 01M7GGCT0Z0GXM3BCAAGX7CE6Q: no quote, no escape and no white
+    /// space ends the rest of the line that goes: a no-break space, a
+    /// value that starts with a space, two levels of escape, a `\` before
+    /// a space, a `'` in a `"` quote, a quote with no end, and a value
+    /// with a wide character. The white space at the end of the line
+    /// stays, and the next line has its own rules.
+    #[test]
+    fn no_quote_and_no_escape_ends_the_rest_that_goes() {
+        for (line, shown) in [
+            ("DB_PASSWORD=qq1\u{a0}qq2 x", "DB_PASSWORD=[secret]"),
+            ("DB_PASSWORD=qq1\u{3000}qq2 x", "DB_PASSWORD=[secret]"),
+            (r#""GH_TOKEN= qg1 qg2" x"#, r#""GH_TOKEN= [secret]"#),
+            (
+                r#"{"msg":"podman run -e DB_PASSWORD=\"qn1 \\\" qn2\" next"}"#,
+                r#"{"msg":"podman run -e DB_PASSWORD=[secret]"#,
+            ),
+            (r"DB_PASSWORD=qo1\\ qo2 x", "DB_PASSWORD=[secret]"),
+            (r"GH_TOKEN='qp1 '\''qp2 qp3' x", "GH_TOKEN=[secret]"),
+            (r#"DB_PASSWORD="it's a secret" x"#, "DB_PASSWORD=[secret]"),
+            (r#"DB_PASSWORD="a b c"#, "DB_PASSWORD=[secret]"),
+            ("GH_TOKEN=abé x", "GH_TOKEN=[secret]"),
+            ("GH_TOKEN='a b \t", "GH_TOKEN=[secret] \t"),
+        ] {
+            assert_eq!(redact(line), shown, "{line:?}");
+        }
+        assert_eq!(
+            redact("GH_TOKEN=\"a b\nnext line\" x"),
+            "GH_TOKEN=[secret]\nnext line\" x"
+        );
+    }
+
+    /// #2156, 01M7GGCT0Z0GXM3BCAAGX7CE6Q: the rest of the line after the
+    /// word `Bearer` goes in each form of a header: a plain one, in JSON,
+    /// in quotes, with no space after the colon, with two spaces, with a
+    /// tab, with a no-break space, with a `"`, a `'` or a `:` after
+    /// `Bearer`, in single quotes, and after a letter whose lower case has
+    /// more bytes. The white space just after `Bearer` stays.
+    #[test]
+    fn the_rest_of_the_line_after_bearer_goes_in_each_form_of_a_header() {
+        for (line, shown) in [
+            (
+                "Authorization: Bearer plain-form-1",
+                "Authorization: Bearer [secret]",
+            ),
+            (
+                r#"{"Authorization":"Bearer json-form-2"}"#,
+                r#"{"Authorization":"Bearer [secret]"#,
+            ),
+            (
+                r#"Authorization: "Bearer quoted-form-3""#,
+                r#"Authorization: "Bearer [secret]"#,
+            ),
+            (
+                "Authorization:Bearer nospace-form-4",
+                "Authorization:Bearer [secret]",
+            ),
+            (
+                "Authorization: Bearer  twospace-form-5 end",
+                "Authorization: Bearer  [secret]",
+            ),
+            (
+                "Authorization: bearer\ttab-form-6",
+                "Authorization: bearer\t[secret]",
+            ),
+            ("Bearer\u{a0}nbsp-form-7 x", "Bearer\u{a0}[secret]"),
+            (r#""Bearer" quoted-end-8"#, r#""Bearer[secret]"#),
+            ("'Bearer' single-end-9", "'Bearer[secret]"),
+            ("Bearer 'single-form-10'", "Bearer [secret]"),
+            (
+                "Authorization: Bearer: colon-end-11",
+                "Authorization: Bearer[secret]",
+            ),
+            ("Authorization: Bearer:xyz", "Authorization: Bearer[secret]"),
+            (r#"{"Bearer": "json-key-12"}"#, r#"{"Bearer[secret]"#),
+            (
+                r#""Authorization": "Bearer tok", "x": 1"#,
+                r#""Authorization": "Bearer [secret]"#,
+            ),
+            (
+                r#"{"token_type":"Bearer","access_token":"xyz"}"#,
+                r#"{"token_type":"Bearer[secret]"#,
+            ),
+            (
+                r#"header("Authorization", "Bearer abc:def")"#,
+                r#"header("Authorization", "Bearer [secret]"#,
+            ),
+            (r#"{"msg":"Bearer \"abc\""}"#, r#"{"msg":"Bearer [secret]"#),
+            (
+                r#"{"Authorization":"Bearer "} refused"#,
+                r#"{"Authorization":"Bearer [secret]"#,
+            ),
+            ("a Bearer xyz Bearer abc end", "a Bearer [secret]"),
+            ("ghp_abc1 Bearer xyz", "[secret] Bearer [secret]"),
+            ("İ Bearer xyz", "İ Bearer [secret]"),
+        ] {
+            assert_eq!(redact(line), shown, "{line:?}");
+        }
+        for line in ["Bearer", "Bearer ", "a Bearers b", "Bearer\nnext line"] {
+            assert_eq!(redact(line), line, "{line:?}");
+        }
+    }
+
+    /// #2156, 01M7GGCT0Z0GXM3BCAAGX7CE6Q: the rest of the line goes from
+    /// the first of a secret name and `Bearer`, in each order.
+    #[test]
+    fn the_rest_goes_from_the_first_of_a_secret_name_and_bearer() {
+        for (line, shown) in [
+            ("a GH_TOKEN=x Bearer y", "a GH_TOKEN=[secret]"),
+            ("a Bearer y GH_TOKEN=x", "a Bearer [secret]"),
+        ] {
+            assert_eq!(redact(line), shown, "{line}");
+        }
+    }
+
+    /// #2156, 01M7GGCT0Z0GXM3BCAAGX7CE6Q: the word `Bearer` next to a
+    /// letter of more than one byte is no word `Bearer`, and hides
+    /// nothing. A word with a wide letter where `Bearer` could end stays.
+    #[test]
+    fn a_bearer_next_to_a_wide_letter_hides_nothing() {
+        for line in ["éBearer x", "Beareré x", "a Résumé here"] {
+            assert_eq!(redact(line), line, "{line}");
+        }
+    }
+
+    /// #2156, 01M7GGCT0Z0GXM3BCAAGX7CE6Q: a `_` is no letter and no
+    /// digit. So `Bearer` with a `_` just before or after it is the word
+    /// `Bearer`, and the rest of the line after it goes, with the `_`.
+    #[test]
+    fn a_bearer_next_to_an_underscore_hides_the_rest_of_the_line() {
+        for (line, shown) in [
+            ("Authorization: Bearer_xyz", "Authorization: Bearer[secret]"),
+            ("auth=Bearer_tok-1", "auth=Bearer[secret]"),
+            ("my_bearer xyz b", "my_bearer [secret]"),
+            ("_BEARER_ xyz", "_BEARER[secret]"),
+        ] {
+            assert_eq!(redact(line), shown, "{line}");
+        }
+    }
+
+    /// #2156, 01M7GGCT0Z0GXM3BCAAGX7CE6Q: the white space at the end of a
+    /// line stays, after a word, after the rest that goes, and in a line
+    /// of white space only.
+    #[test]
+    fn the_white_space_at_the_end_of_a_line_stays() {
+        for (line, shown) in [
+            ("a word ", "a word "),
+            ("a word \t", "a word \t"),
+            ("Bearer xyz a ", "Bearer [secret] "),
+            ("Bearer xyz\t \t", "Bearer [secret]\t \t"),
+            ("GH_TOKEN=a b\u{a0}", "GH_TOKEN=[secret]\u{a0}"),
+            ("push ghp_abc123  ", "push [secret]  "),
+            ("   ", "   "),
+            ("\t", "\t"),
+        ] {
+            assert_eq!(redact(line), shown, "{line:?}");
+        }
+        assert_eq!(redact("Bearer xyz \nnext "), "Bearer [secret] \nnext ");
+    }
+
+    /// #2156, 01M7FXE86QYC8D6P6WDK69ZSMA, 01M7GGCT0Z0GXM3BCAAGX7CE6Q: the
+    /// range of a secret on a later line of the text counts each byte of
+    /// the lines before it, also of a wide character and of `\r\n`. A
+    /// `Bearer` at the end of a line hides nothing on the next line.
+    #[test]
+    fn a_secret_on_a_later_line_has_its_range_in_the_whole_text() {
+        let text = "é ok\r\nGH_TOKEN=abc\nBearer\nnext ghp_a1 Bearer x";
+        let found = redacted(text);
+        assert_eq!(found, [16..19, 32..38, 46..47]);
+        let parts: Vec<&str> = found.iter().map(|r| &text[r.clone()]).collect();
+        assert_eq!(parts, ["abc", "ghp_a1", "x"]);
+        assert_eq!(
+            hide(text, found),
+            "é ok\r\nGH_TOKEN=[secret]\nBearer\nnext [secret] Bearer [secret]"
+        );
+    }
 
     /// 01M5QVBTXE8YRY44A1C1VP71QS: the status shows the tag, the commit
     /// and the seconds of the test.
