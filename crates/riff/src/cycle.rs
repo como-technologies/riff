@@ -2888,6 +2888,17 @@ pub enum Refusal {
 }
 
 impl Caller {
+    /// The caller of this process, with no ask: a worker, a session in a
+    /// container, an agent session. It knows no lead and no role.
+    pub fn here() -> Caller {
+        Caller {
+            worker: std::env::var(crate::identity::WORKER).is_ok_and(|v| v == "1"),
+            container: in_container(),
+            agent: in_agent(),
+            ..Caller::default()
+        }
+    }
+
     /// Why this caller may not run a step of the lead: `riff release
     /// cut`, `check`, `retry` and `rollback`, or `None`
     /// (01M58KMMF9WMH39ZMD0MKGRVZB, 01M7641T7FX9416CYY1XKHTJE6). A person in

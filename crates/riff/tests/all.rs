@@ -50,6 +50,7 @@ mod help;
 #[cfg(target_os = "linux")]
 mod home_folders;
 mod host_file;
+mod host_session;
 mod identity;
 mod launchd;
 mod lead_book;

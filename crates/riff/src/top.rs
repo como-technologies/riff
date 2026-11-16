@@ -828,6 +828,7 @@ impl Top<'_> {
     ///     }),
     ///     worker,
     ///     container: false,
+    ///     host_session: false,
     ///     binary: None,
     ///     claims_secs: 600,
     ///     must_clear: false,
@@ -1308,6 +1309,7 @@ mod tests {
             status: None,
             worker: false,
             container: false,
+            host_session: false,
             binary: None,
 
             claims_secs: 0,
@@ -1524,6 +1526,7 @@ mod tests {
             ),
             SessionInfo {
                 container: true,
+                host_session: false,
                 worker: true,
                 ..info(
                     "riff://mike@thelio/o/riff?session=c1&claim=issue-12",

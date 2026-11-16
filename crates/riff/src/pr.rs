@@ -2824,6 +2824,7 @@ pub struct Reported {
 ///     status: None,
 ///     worker: true,
 ///     container: false,
+///     host_session: false,
 ///     binary: None,
 ///     claims_secs: 0,
 ///     must_clear: false,

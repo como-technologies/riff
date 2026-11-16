@@ -5540,6 +5540,56 @@ riff takeover --at-end riff-issue-12-1a2b3c4d
 riff does not stop the turn. `claude` opens when the turn ends. The
 first turn of `riff run` can be the whole item.
 
+### Start a session on the host
+
+The sessions of riff run in containers. Some steps need the host: the
+journal of `riff.service`, `podman`, the keyring, or a riff command of
+a person. Then the lead asks you for a session on the host. In a
+terminal on the host, in the clone of the repository:
+
+```sh
+riff host-session
+```
+
+`riff host session` does the same. riff starts `claude` in your
+terminal, as you: with your Claude sign-in, settings, model, effort and
+permission mode, and with your `gh` and your keyring. riff adds only
+the riff tools and the wakes. The session gets a new session ID, and
+the role `host session` in `riff who`. riff tells the lead of the
+repository the session ID at the start and at the end.
+
+```mermaid
+sequenceDiagram
+    participant P as you
+    participant H as claude on the host
+    participant S as riff-server
+    participant L as the lead in its container
+    P->>H: riff host-session
+    H->>L: tell: the session ID started
+    L->>S: tell ID: a step on the host
+    S-->>H: the wake
+    H->>L: tell lead: the result
+    P->>H: /exit
+    H->>L: tell: the session ID ended
+```
+
+The lead asks the session for each step with `tell`, and the session
+answers with `tell`. A message of the lead wakes the session at once:
+its first prompt starts `riff relay watch --follow` with the Monitor
+tool. For a long output, the session copies a file into
+`/tmp/from-host/` of the container of the lead with `podman cp`, and
+tells the lead the path.
+
+The session is a break-glass. It may do any step on the host that the
+lead asks for, also a write, as you. You watch it, and you take the
+responsibility for each step. Your permission mode decides which steps
+ask you first. Type `/exit` to end the session: riff tells the lead,
+and the session is gone from `riff who` at once.
+
+Only you start a session on the host, in a plain terminal.
+`riff host-session` refuses in each agent session, in a container and
+in the lead, before each call. The lead never starts one: it asks you.
+
 ## Run the real-session test
 
 The real-session test checks a release on a real machine, with your

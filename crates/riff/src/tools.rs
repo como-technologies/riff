@@ -112,6 +112,9 @@ enum Reach {
     Container,
     /// The lead in a container: [`LEAD_TOOLS`].
     Lead,
+    /// The session of `riff host-session` on the host: [`CONTAINER_TOOLS`]
+    /// (01M7GTF5EE7KN7PZX0YYP537C8).
+    HostSession,
 }
 
 /// The tools of a session in a container (01M4ZV3B6T2KB09WJ59F07HXET).
@@ -294,11 +297,19 @@ impl Tools {
         self
     }
 
+    /// Gives the session only the tools of [`CONTAINER_TOOLS`], with the
+    /// words of a session of `riff host-session` on the host
+    /// (01M7GTF5EE7KN7PZX0YYP537C8).
+    pub fn in_host_session(mut self) -> Self {
+        self.reach = Reach::HostSession;
+        self
+    }
+
     /// True when the session gets the tool `name`.
     fn serves(&self, name: &str) -> bool {
         match self.reach {
             Reach::Host => true,
-            Reach::Container => CONTAINER_TOOLS.contains(&name),
+            Reach::Container | Reach::HostSession => CONTAINER_TOOLS.contains(&name),
             Reach::Lead => LEAD_TOOLS.contains(&name),
         }
     }
@@ -755,6 +766,7 @@ impl ServerHandler for Tools {
             Reach::Host => text::MCP_TOOLS,
             Reach::Container => text::MCP_CONTAINER,
             Reach::Lead => text::MCP_LEAD,
+            Reach::HostSession => text::MCP_HOST_SESSION,
         };
         rmcp::model::ServerConfig::new(
             rmcp::model::ServerCapabilities::builder()
@@ -773,6 +785,7 @@ impl ServerHandler for Tools {
         if !self.serves(&request.name) {
             let refusal = match self.reach {
                 Reach::Lead => text::not_in_the_lead_container(&request.name),
+                Reach::HostSession => text::not_in_a_host_session(&request.name),
                 _ => text::not_in_a_container(&request.name),
             };
             return Ok(

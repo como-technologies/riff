@@ -1084,6 +1084,7 @@ impl Api {
             activity: None,
             prompt_secs: None,
             container: false,
+            host_session: false,
             binary: None,
         };
         self.call(&alive).await
@@ -1105,6 +1106,7 @@ impl Api {
             activity,
             prompt_secs,
             container: false,
+            host_session: false,
             binary: Some(crate::platform::get().binary()),
         };
         self.call(&alive).await
@@ -1121,6 +1123,23 @@ impl Api {
             activity: None,
             prompt_secs: None,
             container: true,
+            host_session: false,
+            binary: Some(crate::platform::get().binary()),
+        };
+        self.call(&alive).await
+    }
+
+    /// The keep-alive of `riff host-session` for `me`, its session on the
+    /// host (01M7GTF5GZYET0F5R0KTGT59C1). The server shows `me` as live
+    /// while it is not gone, also with no watch, with the mark of a host
+    /// session. It names the riff of this process.
+    pub async fn alive_in_host_session(&self, me: &SessionUri) -> Result<AliveReply> {
+        let alive = Alive {
+            me: me.clone(),
+            activity: None,
+            prompt_secs: None,
+            container: false,
+            host_session: true,
             binary: Some(crate::platform::get().binary()),
         };
         self.call(&alive).await
@@ -1137,6 +1156,7 @@ impl Api {
             activity: None,
             prompt_secs: Some(0),
             container: true,
+            host_session: false,
             binary: Some(crate::platform::get().binary()),
         };
         self.call(&alive).await
@@ -1151,6 +1171,7 @@ impl Api {
             activity: None,
             prompt_secs: None,
             container: false,
+            host_session: false,
             binary: Some(binary),
         };
         self.call(&alive).await

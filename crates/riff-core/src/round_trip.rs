@@ -399,6 +399,7 @@ mod tests {
             }),
             worker: true,
             container: true,
+            host_session: true,
             binary: Some(binary()),
             claims_secs: 6,
             must_clear: true,
@@ -463,6 +464,7 @@ mod tests {
             activity: Some(activity()),
             prompt_secs: Some(4),
             container: true,
+            host_session: true,
             binary: Some(binary()),
         });
         c.trip(&AliveReply { clear: true });

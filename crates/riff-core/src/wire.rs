@@ -372,6 +372,10 @@ pub struct Alive {
     /// (01M510MG0CKDXAKF6YJ768K7E8).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub container: bool,
+    /// True when `riff host-session` sends the keep-alive for its
+    /// session on the host. The session is live while it is not gone.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub host_session: bool,
     /// The riff of the process that lives as long as the session:
     /// `riff mcp`, the riff daemon, `riff run` or `riff workers host`.
     /// Each other keep-alive sends none, and the server keeps the last
@@ -688,6 +692,11 @@ pub struct SessionInfo {
     /// (01M510MG0CKDXAKF6YJ768K7E8).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub container: bool,
+    /// True when `riff host-session` keeps the session alive: a person
+    /// started it on the host for the lead. It is live while it is not
+    /// gone.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub host_session: bool,
     /// The riff that the session runs, from its last keep-alive that
     /// named one. `None` when no keep-alive named one, as from an older
     /// riff (01M514C11BPE93PJT4221PYVHS).

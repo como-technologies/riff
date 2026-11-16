@@ -9,7 +9,8 @@
 //! |---|---|
 //! | `riff tail` | Prints each new message in one thread, for people. |
 //! | `riff post`, `riff tell`, `riff read`, `riff claim`, `riff release`, `riff lead`, `riff who`, `riff whoami` | Commands for people. |
-//! | `riff relay mcp`, `riff relay watch` | The tools and the wakes of a session in a container. See [`tools`], [`session_relay`]. |
+//! | `riff relay mcp`, `riff relay watch` | The tools and the wakes of a session in a container, or of a session of `riff host-session`. See [`tools`], [`session_relay`], [`host_session`]. |
+//! | `riff host-session` | Starts `claude` on the host as the person, with the riff tools and the wakes, for the lead: the way out when a session in a container needs a step on the host. Only a person in a terminal runs it. See [`host_session`]. |
 //! | `riff server`, `riff update` | Show the riffs, and update riff on this machine. See [`lifecycle`], [`release`] for the static binaries of a release, and [`auto_update`] for a machine that updates riff by itself. |
 //! | `riff login`, `riff logout` | Sign in to the server, or out. See [`login`]. |
 //! | `riff device add --key NAME`, `riff device list`, `riff device remove NAME` | Add, list and remove the FIDO2 / WebAuthn authenticators of the person. See [`device`]. |
@@ -98,6 +99,7 @@ pub mod home;
 pub mod hooks;
 pub mod host_file;
 pub mod host_git;
+pub mod host_session;
 pub mod hygiene_rules;
 
 pub mod identity;

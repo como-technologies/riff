@@ -2476,6 +2476,7 @@ async fn alive(
         activity: r.activity,
         prompt_secs: r.prompt_secs,
         container: r.container,
+        host_session: r.host_session,
         binary: r.binary,
     };
     Ok(Json(s.engine.signal(&caller, alive).await?))
@@ -4903,6 +4904,7 @@ mod tests {
                 activity: None,
                 prompt_secs: None,
                 container: false,
+                host_session: false,
                 binary: None,
             }),
         )
@@ -4995,6 +4997,7 @@ mod tests {
                     activity: None,
                     prompt_secs: None,
                     container: false,
+                    host_session: false,
                     binary: None,
                 }),
             )
@@ -5451,6 +5454,7 @@ mod tests {
                 activity: None,
                 prompt_secs: None,
                 container: false,
+                host_session: false,
                 binary: None,
             }),
         )
@@ -5943,6 +5947,7 @@ mod tests {
                             activity: None,
                             prompt_secs: None,
                             container: false,
+                            host_session: false,
                             binary: None,
                         }),
                     )
@@ -6003,6 +6008,7 @@ mod tests {
                     activity: None,
                     prompt_secs: None,
                     container: false,
+                    host_session: false,
                     binary: None,
                 }),
             )
@@ -6102,6 +6108,7 @@ mod tests {
                 activity: None,
                 prompt_secs: None,
                 container: false,
+                host_session: false,
                 binary: None,
             }),
         )

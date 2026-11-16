@@ -118,15 +118,19 @@ fn the_help_lists_none_of_the_removed_commands() {
     }
 }
 
-/// #1643, #1863: `riff --help` lists `host`, and `riff host --help` lists
-/// `join` and `leave`. `riff join`, `riff leave`, `riff wave run`, `riff
-/// wave stop` and `riff daemon host` are gone, with no shim: no help lists
-/// them, and each one fails.
+/// #1643, #1863, #2157: `riff --help` lists `host` and `host-session`, and
+/// `riff host --help` lists `join`, `leave` and `session`. `riff join`,
+/// `riff leave`, `riff wave run`, `riff wave stop` and `riff daemon host`
+/// are gone, with no shim: no help lists them, and each one fails.
 #[test]
 fn the_help_lists_host_join_and_leave_and_not_join_leave_wave_run_wave_stop_or_daemon_host() {
     let help = riff(&["--help"]);
     assert!(
         help.contains("  host          Give or take the workers of a host in this repository\n"),
+        "{help}"
+    );
+    assert!(
+        help.contains("  host-session  Start a session on the host for the lead, as you\n"),
         "{help}"
     );
     for gone in ["join", "leave"] {
@@ -141,8 +145,9 @@ fn the_help_lists_host_join_and_leave_and_not_join_leave_wave_run_wave_stop_or_d
     }
     let host = riff(&["host", "--help"]);
     for line in [
-        "  join   Give workers to this repository from this host\n",
-        "  leave  Stop the workers of this host in this repository\n",
+        "  join     Give workers to this repository from this host\n",
+        "  leave    Stop the workers of this host in this repository\n",
+        "  session  Start a session on the host for the lead, as you\n",
     ] {
         assert!(host.contains(line), "{line}: {host}");
     }
