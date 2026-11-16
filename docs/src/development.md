@@ -2968,8 +2968,8 @@ wave ...`), `audit`, `questions`, `run`, `project init`, `claim` (the
 pull request line of a claim), `github` (`riff github create` and
 `install` read the account), `council` (`riff council show`, see
 [See the council of a pull request](how-it-works.md#see-the-council-of-a-pull-request)),
-`tui` (the Waves tab of the TUI, see
-[See the open items of a wave](waves.md#see-the-open-items-of-a-wave)),
+`tui` (each tab of the TUI that reads GitHub, also in the background,
+see [How the tabs read GitHub](riff-uis.md#how-the-tabs-read-github)),
 or `chat` (the list of `#` of `riff chat`, see
 [Pick an issue with #](how-it-works.md#pick-an-issue-with)).
 The caller `session` is a `gh` that a session runs in its

@@ -69,11 +69,14 @@
 //!
 //! # The reads
 //!
-//! While the tab shows, the TUI reads the open issues of each project
-//! each [`super::forge::READ_EVERY`], at once when the tab opens, on `r`
-//! and at the end of an action, and soon after a wake of the GitHub App
-//! of the repository of the folder ([`super::forge::decisions`],
-//! [`State::decisions_due`], 01M7FYVHB1APFXPXA71PMD18EH). It is the
+//! The TUI reads the open issues of each project at its start, each
+//! [`super::forge::READ_EVERY`] while the tab shows, and each
+//! [`super::reads::AWAY_EVERY`] while another tab shows. While the tab
+//! shows, or when it opens, it also reads at once on `r`, at the end of
+//! an action, and soon after a wake of the GitHub App of the repository
+//! of the folder. A tab that opens with a read 60 seconds old reads at
+//! once ([`super::forge::decisions`], [`State::decisions_due`],
+//! [`super::reads`], 01M7GFY7EBGFJJY27VZ6544B7W). It is the
 //! conditional REST read of the Waves tab, with no other call: a read
 //! that changed nothing costs no point. An issue whose labels `question`
 //! and `design` go leaves the tab at the next read. A read that fails
@@ -108,11 +111,12 @@ use riff_client::waves::{QUESTION, wave_number};
 use riff_core::name::{ThreadName, allowed};
 
 use super::forge::{BACKLOG, Entry, Reads};
+use super::reads::Read;
 use super::view::{DIM, Layout, WARNING, width, window};
 use super::waves::{
     BOLD, ISSUE_KEYS, MOVE_KEYS, SELECTED, age, cut, padded, repo_url, short_repo, short_wave,
 };
-use super::{Action, Effect, Key, OnRows, State, Tab};
+use super::{Action, Effect, Key, OnRows, State};
 use crate::text;
 
 /// The line of the body when the person has no open decision.
@@ -551,9 +555,6 @@ impl Item {
 pub struct Decisions {
     /// The last good read of the decisions of each repository.
     reads: Reads<ThreadName, Vec<Decision>>,
-    /// True when the tab opened, or `r`, a wake of GitHub or the end of
-    /// an action asked for a read, since the last start of a read.
-    again: bool,
     /// The selected row.
     pick: Option<IssueRef>,
 }
@@ -570,32 +571,6 @@ pub enum Answer {
 }
 
 impl Decisions {
-    /// Asks for a read at once: the next [`Decisions::starts`] is true.
-    pub fn again(&mut self) {
-        self.again = true;
-    }
-
-    /// True when a read starts at `now_ms`: none yet, the last one is
-    /// [`super::forge::READ_EVERY`] old, or [`Decisions::again`] asked for
-    /// one. It takes the ask, so an ask while the read runs asks for one
-    /// more.
-    ///
-    /// ```
-    /// use riff::tui::decisions::Decisions;
-    ///
-    /// let mut decisions = Decisions::default();
-    /// assert!(decisions.starts(0));
-    /// decisions.read(Vec::new(), 1_000);
-    /// assert!(!decisions.starts(60_999));
-    /// assert!(decisions.starts(61_000));
-    /// decisions.again();
-    /// assert!(decisions.starts(2_000));
-    /// assert!(!decisions.starts(2_000));
-    /// ```
-    pub fn starts(&mut self, now_ms: i64) -> bool {
-        std::mem::take(&mut self.again) || self.reads.due(now_ms)
-    }
-
     /// Takes the read `read` of each repository at `at_ms`
     /// ([`Reads::take`]): a good read gives the decisions of its
     /// repository now, so an issue whose labels went leaves the tab. It
@@ -1078,20 +1053,13 @@ impl State {
         }
     }
 
-    /// A wake of GitHub, or the end of an action: the Decisions tab reads
-    /// again at once while it shows, or when it opens.
-    pub fn decisions_again(&mut self) {
-        self.decisions.again();
-    }
-
     /// The projects of a read of the Decisions tab that starts at
-    /// `now_ms` (01M7FYVHB1APFXPXA71PMD18EH): while the tab shows, the
-    /// first read, a read each [`super::forge::READ_EVERY`], and a read at
-    /// once after the tab opened, after `r`, and after
-    /// [`State::decisions_again`] ([`Decisions::starts`]). `None` when no
+    /// `now_ms`, as each read of `gh` of a tab ([`Read::Decisions`],
+    /// [`State::starts`], 01M7GFY7EBGFJJY27VZ6544B7W). `None` when no
     /// read starts.
     pub fn decisions_due(&mut self, now_ms: i64) -> Option<Vec<ThreadName>> {
-        (self.tab == Tab::Decisions && self.decisions.starts(now_ms)).then(|| self.decision_repos())
+        self.starts(Read::Decisions, now_ms)
+            .then(|| self.decision_repos())
     }
 
     /// Takes a key of the Decisions tab that the frame does not take.

@@ -209,6 +209,9 @@ Each tab has the same five parts:
   screen, puts `link down` in the header and the fault in the note
   line, as `riff top` does. The first look that fails ends the TUI
   with the error, before it draws a screen.
+- Each tab reads its data at the start of the TUI and in the
+  background, so a tab that you open has its facts at once. See
+  [How the tabs read GitHub](#how-the-tabs-read-github).
 - The mouse does what the keys do. The setting `tui.mouse` turns it
   off. In a tab with rows, a click selects a row, and a second click
   opens it.
@@ -242,6 +245,39 @@ flowchart LR
     K["a key or a click"] --> ST
     ST --> V["compute_view<br/>the rows and the places of a click"]
     V --> R["render<br/>draws on a Buffer"]
+```
+
+### How the tabs read GitHub
+
+The Sessions tab, the Chat tab, the Waves tab and the Decisions tab
+read GitHub with `gh`. Each one reads at the start of the TUI, also
+when another tab shows:
+
+- The tab that shows reads again each minute.
+- A tab that does not show reads again in the background, each 5
+  minutes.
+- When you open a tab whose last read is a minute old or older, the
+  tab shows the facts that it has, and reads again at once. The Waves
+  tab and the Decisions tab show the age of their facts in the note
+  line.
+- `r`, the end of an action and a change on GitHub read a tab again at
+  once only while it shows, or when you open it.
+
+The reads in the background are the reads of the tab that shows: the
+answer "no change" costs no point, and they add no GraphQL call. Their
+calls show as `tui` in `riff daemon status`. The status of the riff
+daemon of this machine and the holds of the boards cost no point of
+GitHub: the TUI reads them whichever tab shows.
+
+```mermaid
+flowchart TD
+    S["the start of the TUI"] --> R["each tab reads GitHub"]
+    R --> Q{"the tab shows?"}
+    Q -- yes --> M["it reads again each minute"]
+    Q -- no --> F["it reads again each 5 minutes"]
+    O["you open a tab"] --> A{"its last read is<br/>a minute old?"}
+    A -- yes --> N["it shows the facts that it has,<br/>and reads at once"]
+    A -- no --> K["it shows its facts"]
 ```
 
 ## The graphical UIs

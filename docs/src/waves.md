@@ -359,15 +359,17 @@ Here the verify of #1599 and the rebase of #1601 wait for the merge of
 | `o` | Show the URL of the pull request, the item or the repository in the note line, to copy it. |
 | `r` | Read riff-server and `gh` again now. |
 
-The tab reads `gh` each minute while it shows. It asks GitHub whether
-the list of the open issues changed: the answer "no change" costs no
-point. It reads the open pull requests with `gh pr list` only while one
-is open, and the merged pull requests only when the list of the open
-issues changed. It asks for the comments of each item of the current
-wave that has a comment in the same way, and reads the check of `main`
-with a few REST calls. Its calls show as `tui` in `riff daemon status`.
-Under 80 columns, a row has the mark, the state, the item and the
-title.
+The tab reads `gh` at the start of the TUI, each minute while it
+shows, and each 5 minutes while another tab shows (see
+[How the tabs read GitHub](riff-uis.md#how-the-tabs-read-github)). It
+asks GitHub whether the list of the open issues changed: the answer
+"no change" costs no point. It reads the open pull requests with
+`gh pr list` only while one is open, and the merged pull requests only
+when the list of the open issues changed. It asks for the comments of
+each item of the current wave that has a comment in the same way, and
+reads the check of `main` with a few REST calls. Its calls show as
+`tui` in `riff daemon status`. Under 80 columns, a row has the mark,
+the state, the item and the title.
 
 To list the open items of a wave with `gh`, use the full title of the
 milestone, as `riff wave list` shows it. `"Wave 6"` does not find the

@@ -3913,9 +3913,9 @@
   live session and of the repository of the working folder. riff reads
   them with the conditional read of the open issues of the Waves tab
   (01M6VFGK4P2FWMFQHBZKR3JXSZ), so a `304` costs no point. `riff chat`
-  in a terminal reads them at its start, and the Chat tab when it shows.
-  Each one reads them again each 60 seconds. A read that fails keeps the
-  issues of the last read of its repository, and says nothing.
+  in a terminal reads them at its start, and again each 60 seconds. A
+  read that fails keeps the issues of the last read of its repository,
+  and says nothing.
 - **01M74E4D97PSHPVE4GC0EW0RMJ** The calls of `gh` of `riff chat` count
   as the caller `chat` in the tally of the riff daemon.
 - **01M76SB9ACMZWMY9Z6CC4WW3HD** The `read` tool of `riff mcp` with no
@@ -9923,8 +9923,6 @@ that builds it merges.
   one. A read that fails keeps the last facts of its repository, and the
   note line names the error of `gh`. The calls of `gh` of the TUI count
   as the caller `tui`.
-- **01M6VFGK79JGRF919BM8SJ6E08** While the Waves tab shows, each look of
-  the TUI also reads the holds of each board from riff-server.
 - **01M6VFGK9XXWCA8X7CE8EZNSJV** In the Waves tab, `h` holds the
   selected item with a reason that the person types, `f` frees a held
   item, `p` pauses or resumes the repository of the selected row, and
@@ -10011,13 +10009,12 @@ that builds it merges.
   only on a container session of the riff daemon of this machine. With
   no riff daemon on this machine, the Sessions tab shows the sessions of
   riff-server, and the note line says so.
-- **01M6VGHCDTDJ69B7C02B5K61PW** While the Sessions tab is open, the TUI
-  asks the riff daemon of this machine for its status each second. It
-  reads the titles of the open issues of each repository with a live
-  session from `gh` each 60 seconds, with no read of the pull requests,
-  and a read that fails keeps the last titles and names its error once
-  in the note line. A message in the thread of the repository of the
-  folder starts a look of riff-server at once, at most one each second.
+- **01M6VGHCDTDJ69B7C02B5K61PW** The TUI reads the titles of the open
+  issues of each repository with a live session from `gh`, with no read
+  of the pull requests, and a read that fails keeps the last titles and
+  names its error once in the note line. A message in the thread of the
+  repository of the folder starts a look of riff-server at once, at most
+  one each second.
 - **01M6VGHCJ8WNT6H9VJYE2HP8SP** A click on a row of the Sessions tab
   selects it, a click on `▶` or `▼` folds or opens its group, a
   double click presses Enter, and the wheel of the mouse moves the
@@ -10384,13 +10381,10 @@ that builds it merges.
   in the order of the waves by their number, then the Backlog, then the
   issues in neither, and then by the repository and the number. With
   more than one project, an item names its repository, as `riff#2173`,
-  and its owner too when two projects have the same name. While the tab
-  shows, the TUI reads the open issues with the conditional REST read of
-  the Waves tab, and makes no other call. It reads when the tab opens,
-  each 60 seconds, and at once on `r` and at the end of an action. A
-  wake of the GitHub App of the repository of the folder makes it read
-  soon. An issue whose labels `question` and `design` go leaves the tab
-  at the next read.
+  and its owner too when two projects have the same name. The TUI reads
+  the open issues with the conditional REST read of the Waves tab, and
+  makes no other call. An issue whose labels `question` and `design` go
+  leaves the tab at the next read.
 - **01M7FYVHDJJ288RRV8EBRKSY49** In the Decisions tab of the TUI, `↑`
   and `↓`, `j` and `k`, `PgUp` and `PgDn`, and `g` and `G` select a row,
   as in the Waves tab. A click on a row selects it. `Enter`, a click on
@@ -10448,6 +10442,21 @@ that builds it merges.
   a row with no label `question` asks nothing. The note line says that
   nothing changed, as `#1739 of o/r has no label question. Nothing
   changed.` for the issue 1739 of o/r.
+- **01M7GFY7EBGFJJY27VZ6544B7W** At its start, the TUI starts the read
+  of `gh` of the Sessions tab, of the Chat tab, of the Waves tab and of
+  the Decisions tab, whichever tab shows. The tab that shows reads `gh`
+  each 60 seconds. A tab that does not show reads `gh` each 5 minutes
+  at most: a wake of GitHub, `r` and the end of an action read it again
+  at once only while it shows, or when it opens. When a person opens a
+  tab whose last read of `gh` is 60 seconds old or older, the tab reads
+  again at once, and shows the facts that it has until the read ends:
+  the Waves tab and the Decisions tab with their age in the note line.
+  The reads in the background are the conditional reads of each tab,
+  and add no GraphQL call. Each look reads the holds of each board, and
+  the TUI asks the riff daemon of this machine for its status each
+  second, whichever tab shows. Supersedes 01M6VFGK79JGRF919BM8SJ6E08 in
+  full, and 01M6VGHCDTDJ69B7C02B5K61PW, 01M74CX9KVGQG4Y7ATT6268NMY and
+  01M7FYVHB1APFXPXA71PMD18EH in part.
 
 ## The notes of the lead
 

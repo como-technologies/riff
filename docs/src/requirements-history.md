@@ -3368,6 +3368,9 @@ Backlog (01M53NGWN190T2MYB1EZAD36VB).
   the TUI waits in the note line, these keys answer no
   (01M6VFD0S90SB8M8WV952NT4Y1).
   Superseded by 01M7FYVA218ARDXTFPWSZV6N4P.
+- **01M6VFGK79JGRF919BM8SJ6E08** While the Waves tab shows, each look of
+  the TUI also reads the holds of each board from riff-server.
+  Superseded by 01M7GFY7EBGFJJY27VZ6544B7W.
 
 ## The notes of the lead
 

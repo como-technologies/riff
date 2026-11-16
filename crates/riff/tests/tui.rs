@@ -1808,6 +1808,84 @@ async fn the_waves_tab_shows_the_board_and_holds_frees_and_pauses() {
     assert_eq!(tty.exits().await, Some(0));
 }
 
+/// 01M7GFY7EBGFJJY27VZ6544B7W (#2209): a TUI that starts on the Sessions
+/// tab reads the forge of the Waves tab once, at its start. A press of
+/// `3` after that read shows the board in the first frame of the tab,
+/// with its age, and starts no new read. The read is the read of today:
+/// one `gh pr list` of the merged pull requests, and no other GraphQL
+/// call.
+#[tokio::test]
+async fn the_tui_reads_the_forge_at_its_start_and_3_shows_the_board_with_no_new_read() {
+    let server = crate::common::start_signed_log(vec![crate::common::project("acme/app")]).await;
+    let bin = tempfile::tempdir().unwrap();
+    isolated::write_program(bin.path().join("gh"), FAKE_GH);
+    let mut tty = Tty::start_in(
+        crate::common::clone_of("acme/app"),
+        &server,
+        "brett",
+        "thelio",
+        true,
+        &[("PATH", crate::common::path_with(bin.path()))],
+    );
+    tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
+
+    // The read of the forge: its closed items, then no new call for half
+    // a second.
+    let calls = || std::fs::read_to_string(bin.path().join("calls")).unwrap_or_default();
+    let forge_reads = |calls: &str| {
+        calls
+            .lines()
+            .filter(|call| call.contains("repos/acme/app/issues?state=closed"))
+            .count()
+    };
+    let span = Span::start();
+    let mut last = (calls(), Span::start());
+    while forge_reads(&last.0) == 0 || last.1.wall() < Duration::from_millis(500) {
+        assert!(
+            span.within(WAIT),
+            "the forge is read at the start: {}",
+            calls()
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let now = calls();
+        if now != last.0 {
+            last = (now, Span::start());
+        }
+    }
+
+    tty.press("3").await;
+    let rows = tty.shows(|rows| rows[0].contains("[3 Waves]")).await;
+    assert!(
+        rows[2].starts_with(" ▼ acme/app · Wave 3"),
+        "the board shows at once: {rows:#?}"
+    );
+    assert!(
+        rows[5].starts_with("   ○   free    #13    Hold this one"),
+        "{rows:#?}"
+    );
+    assert!(
+        rows[22].starts_with(" The boards come from gh, "),
+        "the age of the read: {rows:#?}"
+    );
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let after = calls();
+    assert_eq!(forge_reads(&after), 1, "no new read: {after}");
+    let graphql: Vec<&str> = after
+        .lines()
+        .filter(|call| call.starts_with("pr ") || call.contains("graphql"))
+        .collect();
+    assert_eq!(
+        graphql,
+        [
+            "pr list --repo acme/app --state merged --limit 100 --json number,state,headRefName,body,mergeCommit,mergedAt"
+        ],
+        "{after}"
+    );
+
+    tty.press("q").await;
+    assert_eq!(tty.exits().await, Some(0));
+}
+
 /// A fake `gh` for the clone of acme/app with merged items (#2145): the
 /// open issues 872, 873 and 1854 of Wave 3. 872 has the comment `Merged
 /// in #882`, and the pull request #1866 of 1854 merged with `Refs #1854`.
@@ -2009,7 +2087,11 @@ async fn the_decisions_tab_lists_the_questions_and_the_designs_and_opens_one() {
     assert!(rows[8].ends_with("design            mike"), "{rows:#?}");
     assert!(!rows.iter().any(|r| r.contains("#22")), "{rows:#?}");
     // Each call of `gh` is the conditional read of the open issues, but
-    // `gh auth token`, which reads only the token, for no point.
+    // `gh auth token`, which reads only the token, for no point, and the
+    // read of the forge of the Waves tab, which starts at the start of
+    // the TUI too (01M7GFY7EBGFJJY27VZ6544B7W): the merged pull requests,
+    // the closed items and the default branch of its board. The test
+    // waits for the end of that read: the call of the default branch.
     let calls = || std::fs::read_to_string(bin.path().join("calls")).unwrap();
     let reads = |calls: &str| {
         calls
@@ -2017,9 +2099,22 @@ async fn the_decisions_tab_lists_the_questions_and_the_designs_and_opens_one() {
             .filter(|call| call.contains("api -i repos/acme/app/issues?state=open"))
             .count()
     };
+    let forge = |call: &str| {
+        call.starts_with("pr list --repo acme/app --state merged ")
+            || call.contains("repos/acme/app/issues?state=closed")
+            || call == "api repos/acme/app"
+    };
+    let span = Span::start();
+    while !calls().lines().any(|call| call == "api repos/acme/app") {
+        assert!(span.within(WAIT), "the read of the forge ends: {}", calls());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
     let before = calls();
     assert!(reads(&before) > 0, "{before}");
-    let others = before.lines().filter(|call| *call != "auth token").count();
+    let others = before
+        .lines()
+        .filter(|call| *call != "auth token" && !forge(call))
+        .count();
     assert_eq!(reads(&before), others, "no other call: {before}");
 
     // `r` reads them again at once, long before the next read of each

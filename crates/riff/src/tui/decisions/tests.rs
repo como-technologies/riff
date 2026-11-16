@@ -6,8 +6,9 @@ use ratatui::layout::Rect;
 use riff_core::build::Build;
 
 use super::*;
+use crate::tui::reads::Read;
 use crate::tui::view::{compute_view, render};
-use crate::tui::{Look, News};
+use crate::tui::{Look, News, Tab};
 
 /// The time of the screen tests, in milliseconds since the epoch.
 const NOW: i64 = 1_794_000_000_000;
@@ -851,31 +852,41 @@ fn a_long_list_shows_the_lines_up_to_the_selected_row() {
     assert_eq!(rows[2], " OTHER DECISIONS · 30", "{rows:#?}");
 }
 
-/// 01M7FYVHB1APFXPXA71PMD18EH: the tab reads its decisions at once when
-/// it opens, on `r`, and after a wake of GitHub, and each 60 seconds
-/// while it shows. Another tab reads none: the ask waits for the tab.
+/// 01M7GFY7EBGFJJY27VZ6544B7W: the tab reads its decisions at the start,
+/// each 60 seconds while it shows, and each 5 minutes while another tab
+/// shows. `r` and a wake of GitHub read at once while it shows: the ask
+/// of a wake waits for the tab. A tab that opens with a read 60 seconds
+/// old reads at once.
 #[test]
-fn the_tab_reads_at_once_when_it_opens_on_r_and_after_a_wake() {
+fn the_tab_reads_each_minute_and_each_5_minutes_while_another_tab_shows() {
     let mut state = mock_up();
-    // The tab opened: a read of the project starts at once.
+    // The first read of the project starts at once.
     assert_eq!(state.decisions_due(NOW), Some(vec![thread(RIFF)]));
-    // The last read is 41 seconds old.
     assert_eq!(state.decisions_due(NOW), None);
     assert_eq!(state.on_key(Key::Char('r')), Some(Action::Look));
     assert!(state.decisions_due(NOW).is_some());
     assert_eq!(state.decisions_due(NOW), None);
-    state.decisions_again();
+    state.read_again(Read::Decisions);
     assert!(state.decisions_due(NOW).is_some());
     // 60 seconds after the last read.
-    assert!(state.decisions_due(NOW + 19_000).is_some());
-    // Another tab: no read, and the ask of a wake waits for the tab.
+    assert_eq!(state.decisions_due(NOW + 59_999), None);
+    assert!(state.decisions_due(NOW + 60_000).is_some());
+    // Another tab: the ask of a wake waits, and a read starts each 5
+    // minutes.
     state.on_key(Key::Char('3'));
-    state.decisions_again();
+    state.read_again(Read::Decisions);
     assert_eq!(state.decisions_due(NOW + 120_000), None);
+    assert_eq!(state.decisions_due(NOW + 359_999), None);
+    assert!(state.decisions_due(NOW + 360_000).is_some());
+    // The tab opens 30 seconds after the last read: no read. The read of
+    // 5 minutes took the ask of the wake.
     assert_eq!(state.on_key(Key::Char('7')), None);
-    assert!(state.decisions_due(NOW).is_some());
-    assert_eq!(state.decisions_due(NOW), None);
+    assert_eq!(state.decisions_due(NOW + 390_000), None);
+    // The tab opens 80 seconds after the last read: a read at once.
+    state.on_key(Key::Char('3'));
+    state.on_key(Key::Char('7'));
+    assert!(state.decisions_due(NOW + 440_000).is_some());
     // `7` in the tab that shows asks for no read.
     state.on_key(Key::Char('7'));
-    assert_eq!(state.decisions_due(NOW), None);
+    assert_eq!(state.decisions_due(NOW + 440_000), None);
 }

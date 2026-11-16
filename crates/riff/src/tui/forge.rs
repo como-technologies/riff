@@ -5,9 +5,11 @@
 //! # Design
 //!
 //! The Waves tab reads `gh` each [`READ_EVERY`] while the person sees
-//! it, and at once on `r`. A read of a repository is one run of blocking
-//! calls ([`read`]). Its calls go to the tally of the daemon as the
-//! caller `tui` ([`crate::pr::Gh::here`]). The calls:
+//! it, and at once on `r`. While another tab shows, it reads `gh` each
+//! [`super::reads::AWAY_EVERY`] ([`super::reads`]). A read of a
+//! repository is one run of blocking calls ([`read`]). Its calls go to
+//! the tally of the daemon as the caller `tui` ([`crate::pr::Gh::here`]).
+//! The calls:
 //!
 //! | What | Call | Cost |
 //! |---|---|---|
@@ -86,7 +88,8 @@ use crate::pr::{Gate, Gh, Reply};
 use crate::rollout::{Comment, Label, Merge, MergedPull, Pull, Verify};
 use crate::typeahead::OpenIssue;
 
-/// The time between two reads of the forge while the Waves tab shows.
+/// The time between two reads of `gh` of the tab that shows
+/// ([`super::reads::Read::every`]).
 pub const READ_EVERY: Duration = Duration::from_secs(60);
 
 /// The entries of one page of a REST list.
@@ -132,10 +135,8 @@ pub fn each<K: Clone, T>(
 /// use riff::tui::forge::Reads;
 ///
 /// let mut reads: Reads<&str, u32> = Reads::default();
-/// assert!(reads.due(0));
 /// assert_eq!(reads.take(vec![("o/r", Ok(1)), ("o/s", Ok(2))], 1_000), None);
-/// assert!(!reads.due(60_999));
-/// assert!(reads.due(61_000));
+/// assert_eq!(reads.at(), Some(1_000));
 /// // A read that fails keeps the last read of its repository, and the
 /// // note line gets its fault once.
 /// let failed = || vec![("o/r", Ok(3)), ("o/s", Err("gh: HTTP 502".to_owned()))];
@@ -168,13 +169,6 @@ impl<K, T> Default for Reads<K, T> {
 }
 
 impl<K: Ord, T> Reads<K, T> {
-    /// True when a read is due at `now_ms`: none yet, or the last one is
-    /// [`READ_EVERY`] old.
-    pub fn due(&self, now_ms: i64) -> bool {
-        let every = i64::try_from(READ_EVERY.as_millis()).unwrap_or(i64::MAX);
-        self.at_ms.is_none_or(|at| now_ms - at >= every)
-    }
-
     /// Takes the read `read` of each repository at `at_ms`. A good read
     /// replaces the last one of its repository. A read that failed keeps
     /// it. A repository that `read` does not name goes. It gives the line

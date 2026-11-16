@@ -2246,10 +2246,12 @@ riff
   strip shows `Sessions•`.
 - With no riff daemon on this machine, the tab shows the sessions of
   riff-server, and the row before the last says so.
-- The titles of the items come from `gh` each minute, for each
-  repository with a live session. The tab asks GitHub whether the list
-  of the open issues changed, as the Waves tab does: the answer "no
-  change" costs no point.
+- The titles of the items come from `gh` for each repository with a
+  live session: at the start of the TUI, each minute while the tab
+  shows, and each 5 minutes while another tab shows (see
+  [How the tabs read GitHub](riff-uis.md#how-the-tabs-read-github)).
+  The tab asks GitHub whether the list of the open issues changed, as
+  the Waves tab does: the answer "no change" costs no point.
 
 | Mark | Word | When |
 |---|---|---|
@@ -5525,10 +5527,12 @@ riff
 The list shows over the prompt, as the list of the names does, and each
 row is cut to the width of the tab. The first issue is in reverse
 video: `Tab` or `Enter` puts `#1862` in the line, with a space after
-it. `Esc` closes the list. While the Chat tab shows, the TUI reads the
-open issues from `gh` each minute. The list has the issues of the
-repository of each live session, and of the repository of the folder
-where you start the TUI.
+it. `Esc` closes the list. The TUI reads the open issues from `gh` at
+its start, each minute while the Chat tab shows, and each 5 minutes
+while another tab shows (see
+[How the tabs read GitHub](riff-uis.md#how-the-tabs-read-github)). The
+list has the issues of the repository of each live session, and of the
+repository of the folder where you start the TUI.
 
 #### Paste lines into the chat
 
@@ -6158,17 +6162,18 @@ answered:
 | `a` | Mark the questions of the issue as answered, after `y`: the label `question` goes, and the lead wakes. See [Mark the questions of an issue as answered](development.md#mark-the-questions-of-an-issue-as-answered). An issue with no label `question` has nothing to mark: `a` asks nothing. |
 | `r` | Read GitHub again now. |
 
-The tab reads the open issues from GitHub when you open it. While it
-shows, it reads them each 60 seconds, and at once on `r` and after
-`a`. It also reads them soon after a change on GitHub in the
-repository of your folder. An issue leaves the tab at the next read
-after its labels `question` and `design` go. With no other note, the
-note line shows the age of the last read. When a read fails, the tab
-keeps the last issues of the project, and the note line shows the
-error once. When no read of a project worked yet, the last line of the
-tab names the project: `No read of the decisions of o/r worked yet.`
-With no project, the tab says
-`None of your repositories is a project of the riff.`
+The tab reads the open issues from GitHub at the start of the TUI, each
+minute while it shows, and each 5 minutes while another tab shows (see
+[How the tabs read GitHub](riff-uis.md#how-the-tabs-read-github)).
+While it shows, it reads them at once on `r` and after `a`, and soon
+after a change on GitHub in the repository of your folder. An issue
+leaves the tab at the next read after its labels `question` and
+`design` go. With no other note, the note line shows the age of the
+last read. When a read fails, the tab keeps the last issues of the
+project, and the note line shows the error once. When no read of a
+project worked yet, the last line of the tab names the project:
+`No read of the decisions of o/r worked yet.` With no project, the
+tab says `None of your repositories is a project of the riff.`
 
 ```mermaid
 flowchart LR
