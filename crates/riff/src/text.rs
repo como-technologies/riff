@@ -4,6 +4,7 @@
 //! in [`crate::style`].
 
 use std::fmt::Write;
+use std::ops::Range;
 use std::path::Path;
 
 use chrono::{DateTime, NaiveDate, TimeZone};
@@ -4379,11 +4380,119 @@ const INDENT: &str = "       ";
 /// assert_eq!(riff::text::safe("\x1b[31mred\x1b[0m\x08\r\n\tok\u{9b}"), "red\n\tok");
 /// ```
 pub fn safe(text: &str) -> String {
+    kept(text).map(|(_, c)| c).collect()
+}
+
+/// True for a character that [`safe`] takes out: a control character,
+/// but a newline and a tab.
+fn goes(c: char) -> bool {
+    c.is_control() && c != '\n' && c != '\t'
+}
+
+/// Each character of `text` that [`safe`] keeps, and where it starts in
+/// `text`.
+fn kept(text: &str) -> impl Iterator<Item = (usize, char)> + '_ {
     anstream::adapter::strip_str(text)
-        .to_string()
-        .chars()
-        .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
-        .collect()
+        .flat_map(move |part| {
+            let offset = offset(text, part);
+            part.char_indices().map(move |(at, c)| (offset + at, c))
+        })
+        .filter(|&(_, c)| !goes(c))
+}
+
+/// Where `part` starts in `text`: `part` is a part that the strip of
+/// [`safe`] gives of `text`.
+fn offset(text: &str, part: &str) -> usize {
+    part.as_ptr().addr() - text.as_ptr().addr()
+}
+
+/// Where the escape sequence that is open at the end of `text` starts:
+/// just after the last character that a terminal prints. None when no
+/// escape sequence is open at the end (01M7GKJNTJK7434G41JYW3EVRS).
+///
+/// ```
+/// use riff::text::open_at;
+///
+/// assert_eq!(open_at("red\x1b[31"), Some(3));
+/// assert_eq!(open_at("a\x1b]0;title"), Some(1));
+/// assert_eq!(open_at("a\x1b[0m\x1b"), Some(1));
+/// assert_eq!(open_at("\x1b\""), Some(0));
+/// assert_eq!(open_at("red\x1b[0m"), None);
+/// assert_eq!(open_at("a\x1b]0;t\x07"), None);
+/// assert_eq!(open_at("plain"), None);
+/// ```
+pub fn open_at(text: &str) -> Option<usize> {
+    if !text.contains('\x1b') {
+        return None;
+    }
+    let end = anstream::adapter::strip_str(text)
+        .last()
+        .map_or(0, |part| offset(text, part) + part.len());
+    // A terminal prints a space only when no escape sequence is open.
+    let probe = format!("{} ", &text[end..]);
+    anstream::adapter::strip_str(&probe)
+        .next()
+        .is_none()
+        .then_some(end)
+}
+
+/// The text that [`safe`] gives of a first text, and where each of its
+/// bytes is in the first text (01M7G9W5W1VMDJEETMXNXFK9ZD).
+///
+/// ```
+/// use riff::text::Shown;
+///
+/// let first = "gho_sec\x1b[0mret1 ok";
+/// let shown = Shown::of(first).unwrap();
+/// assert_eq!(shown.text(), "gho_secret1 ok");
+/// let all = 0..first.len();
+/// assert_eq!(&first[shown.first(0..11, all.clone()).unwrap()], "gho_sec\x1b[0mret1");
+/// assert_eq!(shown.first(0..11, 9..first.len()), Some(11..15));
+/// assert_eq!(shown.first(0..11, 15..first.len()), None);
+/// assert_eq!(shown.first(3..3, all), None);
+/// assert!(Shown::of("plain\ttext\n").is_none());
+/// ```
+pub struct Shown {
+    text: String,
+    /// Where each byte of `text` is in the first text.
+    at: Vec<usize>,
+}
+
+impl Shown {
+    /// The text that [`safe`] gives of `text`, or none when it is
+    /// `text`.
+    pub fn of(text: &str) -> Option<Shown> {
+        if !text.contains(goes) {
+            return None;
+        }
+        let mut shown = Shown {
+            text: String::with_capacity(text.len()),
+            at: Vec::with_capacity(text.len()),
+        };
+        for (at, c) in kept(text) {
+            shown.text.push(c);
+            shown.at.extend(at..at + c.len_utf8());
+        }
+        Some(shown)
+    }
+
+    /// The text.
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// Where the characters of `range` of [`Shown::text`] that come from
+    /// `part` of the first text are in the first text: from the start of
+    /// the first of them to the end of the last, with each escape
+    /// sequence between them. None when none of them comes from `part`.
+    /// `range` starts and ends at a character of [`Shown::text`], and
+    /// `part` at a character of the first text.
+    pub fn first(&self, range: Range<usize>, part: Range<usize>) -> Option<Range<usize>> {
+        let from = self.at.partition_point(|&at| at < part.start);
+        let to = self.at.partition_point(|&at| at < part.end);
+        let (from, to) = (from.max(range.start), to.min(range.end));
+        (from < to).then(|| self.at[from]..self.at[to - 1] + 1)
+    }
 }
 
 /// The most characters of a text of the forge that riff keeps

@@ -531,6 +531,94 @@ df -h ~ .. . /tmp
 The home `~` and the folder of the session `..` show `tmpfs` with a
 size of 1.0G. The clone `.` and `/tmp` show the disk.
 
+### The secrets in the events of a session
+
+No event of a session shows a secret: not on the terminal of `riff
+run`, not in `riff daemon events`, and not in `events.jsonl`, the file
+of the events in the folder of the session. The riff daemon and the
+relay in the container hide these secrets:
+
+- each token of GitHub: `ghs_`, `gho_`, `ghp_`, `ghu_`, `ghr_` or
+  `github_pat_`, and the letters, digits and `_` after it;
+- the tokens of the sign-in of `claude`, and the values of
+  `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` and `GH_TOKEN`;
+- each value of the `env` and the `headers` of the MCP servers of the
+  session (see
+  [Choose the MCP servers of the container sessions](development.md#choose-the-mcp-servers-of-the-container-sessions)).
+
+riff hides each match of each secret. First it finds each match in the
+text, also two matches that overlap. Matches that overlap or touch make
+one run. Then riff puts one `[secret]` in place of each run. So a short
+secret in a long secret does not cut the long secret, in any order of
+the secrets. For example, an MCP
+server has `"env": {"MODE": "live", "STRIPE_KEY":
+"sk_live_51HxyzAbCdEf"}`, and a tool fails with this text:
+
+```text
+stripe refused sk_live_51HxyzAbCdEf
+```
+
+`riff run` shows:
+
+```text
+! the tool failed: stripe refused [secret]
+```
+
+```mermaid
+flowchart LR
+    T["stripe refused sk_live_51HxyzAbCdEf"] -- "find each match of live and of sk_live_51HxyzAbCdEf" --> R["one run: sk_live_51HxyzAbCdEf"]
+    R -- "one [secret] for each run" --> E["stripe refused [secret]"]
+```
+
+riff also finds each match in the text that a terminal shows. That text
+has no escape sequence and no control character, except a newline and a
+tab. The run of such a match goes from its start to its end, with each
+escape sequence in it. So no part of a secret shows when an escape
+sequence comes between two of its characters. For example, a tool
+writes a token of GitHub in two colors: `gho_sec`, the escape sequence
+`ESC[0m`, then `ret1`. A terminal shows `gho_secret1`. `riff run` shows
+`[secret]`.
+
+```mermaid
+flowchart LR
+    T["gho_sec ESC[0m ret1"] -- "take out the escape sequences" --> S["gho_secret1: a token"]
+    S -- "its run: gho_sec ESC[0m ret1" --> E["[secret]"]
+```
+
+Each event is a line of JSON that `claude` writes. riff reads only the
+strings and the numbers of the JSON. It keeps each other part of the
+line as it is. riff hides the secrets in the text of each string on its
+own: in each key and in each value, as `riff run` shows them. It puts
+`[secret]` in place of the part of the string with a match. A number
+with a secret in it becomes the string `"[secret]"`. So riff also hides
+a secret with a `"`, a `\` or a line break, and each event stays valid
+JSON.
+
+```mermaid
+flowchart LR
+    L["a line of JSON"] -- "read the strings and the numbers" --> V["each key and each value"]
+    V -- "hide each match in each text" --> W["the same line, with [secret]"]
+```
+
+`riff run` can join two strings of an event on one line: the text
+blocks of a tool result, with a space between them. An escape sequence
+of the type OSC can start in one string and end in a later string. Then
+the terminal shows the two parts of a secret together. So riff also
+finds each match in all the strings of the event together, in their
+order, and hides the part of the match in each string. riff also takes
+out of each string an escape sequence that does not end in that
+string. So no view joins two parts of a secret that are in two strings.
+
+```mermaid
+flowchart LR
+    A["text 1: sk-ant-oat01- ESC]0;"] --> J["together, as a terminal shows them: sk-ant-oat01-secret1"]
+    B["text 2: t BEL secret1"] --> J
+    J -- "one part in each text" --> E["[secret] [secret]"]
+```
+
+To see the events of a session, see
+[See the events of a session](development.md#see-the-events-of-a-session).
+
 ## Where the env of a session comes from
 
 riff sets in a session what riff needs itself: the home, the user, the
@@ -2967,13 +3055,17 @@ denied reason=production-deploy tool=Bash head="git push" role=lead user=mike ho
 |---|---|
 | `reason` | The rule of the checker as a slug, `no-verdict`, or `checker-unavailable`. |
 | `tool` | The tool. An MCP tool also has `@SERVER`. |
-| `head` | For Bash: the first two words of the command. Else the path, or the first field of the input. |
+| `head` | For Bash: the first two words of the command. Else the path, or the first field of the input. At most 60 characters. |
 | `role` | `lead`, `worker`, `container` or `session`. A subagent adds `+subagent`. |
 | `claim` | The claim of the session, or `-`. |
 
 After the colon comes the command or the input, at most 300
 characters. No secret goes to the riff: riff puts `[secret]` in place
-of each token of the session.
+of each token of the session. riff hides the secrets in the input of
+the tool first, as in an event (see
+[The secrets in the events of a session](#the-secrets-in-the-events-of-a-session)).
+Then it makes the head and the text. So the cut of the head at 60
+characters shows no part of a secret.
 
 ### Count the refusals
 

@@ -156,21 +156,28 @@ impl Denial {
     /// # Ok::<(), serde_json::Error>(())
     /// ```
     pub fn of(input: &Input, scrub: &Scrub, worker: bool, at_ms: u64) -> Denial {
-        let clean = |text: &str| scrub.clean(text).into_owned();
-        let text = match &input.tool_input {
+        // The head and the text come from the scrubbed input
+        // (01M7G9W5YP7B25E30VRZMJ8S02). The scrub keeps the JSON valid.
+        let json = scrub.event(&input.tool_input.to_string()).into_owned();
+        let tool_input: Value = serde_json::from_str(&json).unwrap_or_default();
+        let text = match &tool_input {
             Value::Object(map) => match map.get("command") {
                 Some(Value::String(command)) => command.clone(),
-                _ => input.tool_input.to_string(),
+                _ => json,
             },
             Value::Null => String::new(),
-            other => other.to_string(),
+            _ => json,
         };
+        let server = input
+            .mcp_server
+            .as_deref()
+            .map(|server| scrub.clean(server));
         Denial {
             at_ms,
             reason: reason_tag(&input.reason),
-            tool: clean(&tool_tag(&input.tool_name, input.mcp_server.as_deref())),
-            head: clean(&head(&input.tool_name, &input.tool_input)),
-            text: shorten(&one_line(&clean(&text)), TEXT_MAX),
+            tool: tool_tag(&scrub.clean(&input.tool_name), server.as_deref()),
+            head: head(&input.tool_name, &tool_input),
+            text: shorten(&one_line(&text), TEXT_MAX),
             worker,
             subagent: input.agent_id.as_deref().is_some_and(|a| !a.is_empty()),
         }
@@ -975,6 +982,55 @@ mod tests {
         assert!(!text.contains(token), "{text}");
         assert!(text.contains(crate::run::HIDDEN), "{text}");
         assert_eq!(denial.reason, "credential-leak");
+    }
+
+    /// 01M7G9W5YP7B25E30VRZMJ8S02: `riff relay denied` makes the head and
+    /// the text from the scrubbed input. An escape sequence that splits a
+    /// secret, the cut of the head, and a `"` or a `\` in a secret show no
+    /// part of it.
+    #[test]
+    fn the_head_and_the_text_come_from_the_scrubbed_input() {
+        let secrets = [r#"pa"ss1234"#, r"ab\cd1234", "plainsecret9xyzLONG"];
+        let scrub = Scrub::new(secrets.map(str::to_owned));
+        let denial = |tool: &str, tool_input: Value| {
+            let hook = json!({
+                "tool_name": tool,
+                "tool_input": tool_input,
+                "mcp_server": "gho_sec\x1b[0mret1",
+            });
+            Denial::of(&input(hook), &scrub, true, 0)
+        };
+        let split = denial("Bash", json!({"command": "echo gho_sec\x1b[0mret1 done"}));
+        assert_eq!(split.head, "echo [secret]");
+        assert_eq!(split.text, "echo [secret] done");
+        assert_eq!(split.tool, "Bash@[secret]");
+        // The cut of the head at 60 characters falls in the secret.
+        let url = format!(
+            "https://example.com/{}?k=plainsecret9xyzLONG",
+            "a".repeat(34)
+        );
+        let cut = denial("WebFetch", json!({"url": url}));
+        assert_eq!(
+            cut.head,
+            format!("https://example.com/{}?k=[se", "a".repeat(34))
+        );
+        let quote = denial("Grep", json!({"pattern": r#"pa"ss1234"#}));
+        assert_eq!(quote.head, "[secret]");
+        assert_eq!(quote.text, r#"{"pattern":"[secret]"}"#);
+        let write = denial(
+            "Write",
+            json!({"file_path": "/a", "content": r#"q pa"ss1234 b ab\cd1234 g plainsecret9xyzLONG end"#}),
+        );
+        assert_eq!(
+            write.text,
+            r#"{"file_path":"/a","content":"q [secret] b [secret] g [secret] end"}"#
+        );
+        for denial in [split, cut, quote, write] {
+            let all = format!("{} {} {}", denial.tool, denial.head, denial.text);
+            for part in ["ret1", "pla", "ss1234", "cd1234"] {
+                assert!(!all.contains(part), "{part}: {all}");
+            }
+        }
     }
 
     /// 01M57XY3VP35QDP2KK88ERF82M: the text is one line of at most

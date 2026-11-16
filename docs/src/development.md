@@ -2653,8 +2653,8 @@ riff daemon mcp remove docs
 `mcp.json` in the folder of the daemon, which only you can read. After
 a change of the server in your Claude Code config, add it again. A
 session that runs keeps its servers. `riff daemon status` shows the
-list. A value of the `env` or the `headers` of a server is a secret:
-no event of the session shows it.
+list. For the secrets that riff hides in the events, see
+[The secrets in the events of a session](how-it-works.md#the-secrets-in-the-events-of-a-session).
 
 ```mermaid
 flowchart LR
@@ -9027,10 +9027,26 @@ run the test again on that commit.
 
 When the test fails, the daemon writes a comment on the release issue
 `Release vX.Y.Z`. The comment names the failed step. It holds the last
-30 lines of the output of the test, with no secret. The status
-`riff/real-session` of the commit has the failed step as its
-description. You need no access to the host. Read the comment in your
-container:
+30 lines of the output of the test, with no secret. riff puts
+`[secret]` in place of these parts of the output:
+
+- each word that starts like a token: `ghp_`, `gho_`, `ghs_`, `ghu_`,
+  `ghr_`, `github_pat_` or `sk-`, also with a `NAME=` in it;
+- the rest of the line after the first of these: the word `Bearer`, or
+  the `=` of a `NAME=` whose NAME has the text `TOKEN`, `KEY`, `SECRET`
+  or `PASSWORD`, in any place and in any case.
+
+NAME is the run of letters, digits and `_` just before the `=`, at any
+place in the line: also after a `,`, a `&`, a `?`, a quote or another
+`=`. riff reads no quotes. So `podman run -e DB_PASSWORD=a b` becomes
+`podman run -e DB_PASSWORD=[secret]`, and
+`https://h/?user=me&access_token=x` becomes
+`https://h/?user=me&access_token=[secret]`. `MONKEY=x` becomes
+`MONKEY=[secret]`, but `DB_PASSWD=x` stays.
+
+The status `riff/real-session` of the commit has the failed step as
+its description. You need no access to the host. Read the comment in
+your container:
 
 ```sh
 gh issue view ISSUE --comments

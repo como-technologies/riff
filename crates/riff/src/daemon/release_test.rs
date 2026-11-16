@@ -729,6 +729,9 @@ mod tests {
                 "podman run --env=DB_PASSWORD=[secret]",
             ),
             (r#"x=1,DB_PASSWORD="qd1 qd2" e"#, "x=1,DB_PASSWORD=[secret]"),
+            ("x=1,DB_PASSWORD=hunter2", "x=1,DB_PASSWORD=[secret]"),
+            ("--env=DB_PASSWORD=hunter2", "--env=DB_PASSWORD=[secret]"),
+            ("--env=GH_TOKEN=x", "--env=GH_TOKEN=[secret]"),
             (
                 "grant_type=refresh_token&refresh_token=x",
                 "grant_type=refresh_token&refresh_token=[secret]",
